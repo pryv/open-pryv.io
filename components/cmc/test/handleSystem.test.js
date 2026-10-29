@@ -97,6 +97,13 @@ const ACK_TRIGGER = {
 };
 
 describe('[CMCHS] cmc/handleSystem', () => {
+  // The accept validates account-stream permissions, which needs the
+  // account-stream schema a live server loads at start.
+  before(async () => {
+    require('test-helpers/src/api-server-tests-config.ts');
+    await require('business/src/system-streams/index.ts').init();
+  });
+
   describe('[CMCHS-PS] parseCollectorStreamId', () => {
     it('[HS49] parses flat :_cmc:apps:<app>:collectors:<slug>', () => {
       const r = parseCollectorStreamId(':_cmc:apps:my-app:collectors:provider-a--provider-example-org');
@@ -761,6 +768,32 @@ describe('[CMCHS] cmc/handleSystem', () => {
       });
       assert.equal(r.ok, true);
       assert.equal(updated, true);
+    });
+
+    it('[HSAS1] an account field above read is refused without triggerAccess too (retry replay), nothing applied', async () => {
+      const mall = fakeMall([CHANNEL_ACCESS]);
+      let updated = false;
+      mall.accesses.update = async () => { updated = true; };
+      const { fetch, calls } = fakeFetch({ status: 201, body: {} });
+      const trigger = {
+        ...SCOPE_UPDATE_TRIGGER,
+        content: {
+          ...SCOPE_UPDATE_TRIGGER.content,
+          accessId: 'acc-back-channel',
+          newPermissions: [{ streamId: 'fertility', level: 'read' }, { streamId: ':_system:language', level: 'contribute' }],
+        },
+      };
+      // The retry loop dispatches with deps that carry no triggerAccess.
+      const r = await handleSystemScopeUpdate({
+        userId: 'u1',
+        triggerEvent: trigger,
+        selfIdentity: SELF,
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false, JSON.stringify(r));
+      assert.equal(r.reason, 'cmc-offer-invalid-permissions');
+      assert.equal(updated, false);
+      assert.equal(calls.length, 0);
     });
 
     it('[HS28] local-apply failure surfaces as cmc-scope-update-local-apply-failed', async () => {

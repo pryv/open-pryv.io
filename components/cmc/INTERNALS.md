@@ -789,6 +789,8 @@ This matches what the `accesses.delete` route enforces, same primitive, no paral
 - **Per-handler chain checks** (defense in depth, the gate is the primary guard for mint/widen, but the handlers also run the check so any future bypass doesn't re-open the surface):
   - `handleAccept` → `triggerAccess.canCreateAccess(payload)` before `mall.accesses.create`. Failure: `cmc-insufficient-permissions`.
   - `handleSystemScopeUpdate` → `triggerAccess.canUpdateAccess(target)` + `triggerAccess.canCreateAccess({permissions: mergedPerms, type: 'shared'})` before `mall.accesses.update`. Failure: `cmc-insufficient-permissions`.
+  - `handleAccept` and `handleSystemScopeUpdate` also apply the account-stream rules of `accesses.create` (`validators.accountStreamPermissionsError`) to the set they store, on every dispatch, a retry replay included. Failure: `cmc-offer-invalid-permissions`.
+  - These refusals (`cmc-insufficient-permissions`, `cmc-offer-invalid-permissions`, `cmc-granted-permissions-not-subset`) are non-retryable: a retry replays the trigger without `triggerAccess`, so it could only skip the checks that depend on it.
   - `handleRevoke` → `triggerAccess.canDeleteAccess(target)` before each `mall.accesses.delete` (this is the primary guard for revoke since there's no events.create gate). Failure: `cmc-revoke-forbidden`.
 - The trigger-writer's `AccessLogic` is plumbed through `dispatch.ts`'s per-request deps (`triggerAccess: context?.access`) so the handlers can reach it.
 

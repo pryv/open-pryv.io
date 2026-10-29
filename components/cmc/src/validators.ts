@@ -374,6 +374,24 @@ function offerPermissionViolations (permissions: unknown): string[] {
   return errors;
 }
 
+/**
+ * The account-stream rules of accesses.create applied to a permission set
+ * the plugin is about to store through the mall (which applies none of
+ * them): hidden or unknown account streams, the account root or an account
+ * field above `read`. Judged on copies, so the caller's set keeps its
+ * spelling. Returns the refusal as an APIError, or null when the set passes.
+ */
+async function accountStreamPermissionsError (permissions: unknown): Promise<{ message: string; data?: unknown } | null> {
+  const accountStreams = require('business/src/system-streams/index.ts');
+  // Idempotent; the rules read the account-stream state it sets.
+  await accountStreams.init();
+  const { validateAccountStreamPermissions } = require('business/src/accesses/accountStreamPermissions.ts');
+  const copies = (Array.isArray(permissions) ? permissions : [])
+    .filter(isPlainObject)
+    .map((p) => ({ ...p }));
+  return validateAccountStreamPermissions(copies);
+}
+
 // --- Group accounts ---
 
 /** A stream-permission level a membership may hold on the group account. */
@@ -559,4 +577,5 @@ export {
   validateMemberRevoke,
   membershipOfferViolations,
   offerPermissionViolations,
+  accountStreamPermissionsError,
 };

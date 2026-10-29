@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### BREAKING and security
+
+- **BREAKING (security): account fields are written by the personal access only.** An app or
+  shared access could be granted `contribute` on a visible account stream (`:_system:language`,
+  `:system:<field>`), and through a consent whose offer came from a third party (an app access
+  request, a consent offer between accounts, an OAuth authorization) it then rewrote that account
+  field with `events.create` / `events.update`. Every access other than the personal one is now
+  limited to `read` (or `none`) on account streams:
+  - `accesses.create` and `accesses.update` refuse `contribute`, `manage` and `create-only` on an
+    account stream with `400 invalid-operation` (error message: account streams can only be
+    granted at the `read` or `none` level; `data.param` names the stream), whoever creates the
+    access. An app access request asking for such a level fails the same way; an OAuth
+    authorization asking for it is refused at the consent accept (next point).
+  - Accepting a consent offer, or a collector's scope request, now applies the same account-stream
+    rules as `accesses.create`: a granted set holding such a level, a hidden account stream (for
+    example `:_system:invitationToken`, which an offer could previously have granted at `read`), an
+    unknown account stream, or the account root above `read` fails with
+    `cmc-offer-invalid-permissions` and nothing is granted. When the offer allows choosing, leaving
+    that entry out still succeeds (a consent grants an offered entry as offered: it cannot lower it
+    to `read`).
+  - An access already stored with such a level keeps reading the field, but its `events.create` /
+    `events.update` / attachment writes on account streams are refused with `403 forbidden`.
+  - For app and shared accesses, a write on the email field answered `400 invalid-operation` (with
+    an email-specific message); it now answers `403 forbidden`, like every other account field.
+
+  Apps that set account fields (the language, platform-defined fields) for the user must ask for
+  `read` only and let the user change those fields with a personal session (the account app or
+  `account.update`).
+
+- **Security: a consent refused for its permissions is final.** A consent accept or a collector's
+  scope update refused with `cmc-offer-invalid-permissions`, `cmc-granted-permissions-not-subset`
+  or `cmc-insufficient-permissions` was queued for retry like a delivery failure, and the retry ran
+  without the checks that depend on the accepting access: a consent reported as failed could
+  complete about a second later and mint the grant. These refusals are no longer retried, and the
+  account-stream rules of the accept and the scope update run on every attempt.
+
 ### Fixed
 
 - **`events.get` with `includeDeletions` no longer returns the deletion records of internal

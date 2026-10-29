@@ -510,11 +510,9 @@ describe('[FG5R] Events of system streams', () => {
           .set('authorization', sharedAccess.attrs.token);
       });
 
-      it('[X49R] should return 400 refusing the delegated email write', () => {
-        assert.strictEqual(res.status, 400);
-        assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
-        assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
-        assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
+      it('[X49R] should return 403: only the personal access writes account fields', () => {
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
       });
       it('[764A] should not return a created event', () => {
         assert.strictEqual(res.body.event, undefined);
@@ -522,8 +520,9 @@ describe('[FG5R] Events of system streams', () => {
     });
 
     describe('[ASEM] when using a shared contribute access on a NON-coordinated account stream (phoneNumber)', () => {
-      // The email refusal must not over-block: a contribute grant on another
-      // visible, editable account field still writes through the events API.
+      // Not only the email: no account field is written by an access other
+      // than the personal one, whatever level it holds (here one stored
+      // directly, as the API no longer grants it).
       let sharedAccess;
       let systemStreamId;
       before(async function () {
@@ -543,12 +542,12 @@ describe('[FG5R] Events of system streams', () => {
           .send(eventData)
           .set('authorization', sharedAccess.attrs.token);
       });
-      it('[ASE1] should return 201', () => {
-        assert.strictEqual(res.status, 201);
+      it('[ASE1] should return 403', () => {
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
       });
-      it('[ASE2] should return the created event', () => {
-        assert.strictEqual(res.body.event.createdBy, sharedAccess.attrs.id);
-        assert.deepStrictEqual(res.body.event.streamIds, [systemStreamId]);
+      it('[ASE2] should not return a created event', () => {
+        assert.strictEqual(res.body.event, undefined);
       });
     });
 
@@ -843,13 +842,13 @@ describe('[FG5R] Events of system streams', () => {
             .send(eventData)
             .set('authorization', sharedAccess.attrs.token);
         });
-        it('[W8PQ] should return 200', () => {
-          assert.strictEqual(res.status, 200);
+        // Only the personal access writes account fields.
+        it('[W8PQ] should return 403', () => {
+          assert.strictEqual(res.status, 403);
         });
-        it('[TFOI] should return the updated event', () => {
-          assert.strictEqual(res.body.event.content, eventData.content);
-          assert.deepStrictEqual(res.body.event.streamIds, [
-            addCustomerPrefixToStreamId('phoneNumber')]);
+        it('[TFOI] should return the forbidden error', () => {
+          assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
+          assert.strictEqual(res.body.event, undefined);
         });
       });
     });
@@ -1011,11 +1010,9 @@ describe('[FG5R] Events of system streams', () => {
           .send(eventData)
           .set('authorization', sharedAccess.attrs.token);
       });
-      it('[ASE4] should return the events-API email refusal', () => {
-        assert.strictEqual(res.status, 400);
-        assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
-        assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
-        assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
+      it('[ASE4] should be refused (403: only the personal access writes account fields)', () => {
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
       });
     });
     describe('[ASE5] a shared contribute grant on the email account stream cannot update the email event', () => {
@@ -1038,11 +1035,9 @@ describe('[FG5R] Events of system streams', () => {
           .send(eventData)
           .set('authorization', sharedAccess.attrs.token);
       });
-      it('[ASE6] should return the events-API email refusal', () => {
-        assert.strictEqual(res.status, 400);
-        assert.strictEqual(res.body.error.id, ErrorIds.InvalidOperation);
-        assert.strictEqual(res.body.error.message, ErrorMessages[ErrorIds.ForbiddenAccountEmailEvent]);
-        assert.deepStrictEqual(res.body.error.data, { streamId: systemStreamId });
+      it('[ASE6] should be refused (403: only the personal access writes account fields)', () => {
+        assert.strictEqual(res.status, 403);
+        assert.strictEqual(res.body.error.id, ErrorIds.Forbidden);
       });
     });
   });

@@ -22,6 +22,20 @@
   not mount (no issuer can be derived). The rule lives in `components/oauth2/src/consentUrlCheck.ts`,
   shared by both. Tests `[OCUW1]`-`[OCUW3]`, `[CKOC1]`.
 
+### Account-stream permissions: one validator, use-time refusal, final consent refusals
+
+- `business/src/accesses/accountStreamPermissions.ts` holds the account-stream rules of a
+  permission set (hidden or unknown account streams, the account root, account fields above
+  `read`), shared by `accesses.create`, `accesses.update`, the CMC consent accept and the
+  collector scope update (through `cmc/src/validators.ts` `accountStreamPermissionsError`, which
+  initialises the account-stream state it reads). `AccessLogic.canCreateAccessForAccountStream`
+  is removed (its contribute cap is replaced by the stricter rule).
+- `AccessLogic.canCreateEventsOnStream` refuses any account-store stream for an access other than
+  the personal one; `canUpdateEventsOnStream` and the delete checks go through it.
+- `cmc/src/retryQueue.ts`: `cmc-offer-invalid-permissions`, `cmc-granted-permissions-not-subset`
+  and `cmc-insufficient-permissions` join `NON_RETRYABLE_REASONS`. The retry loop replays a
+  trigger without `triggerAccess`, so these checks could only be skipped on a replay.
+
 ### OAuth2 documentation brought in line with the code (no behaviour change)
 
 - `oauth.requireAppAccountMfa` and `oauth.audAllowList` are read by no code: `docs/oauth2.md` and

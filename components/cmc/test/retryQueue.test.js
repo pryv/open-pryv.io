@@ -105,6 +105,12 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(isRetryableReason('cmc-capability-consumed'), false);
       assert.equal(isRetryableReason('cmc-capability-already-accepted-by-you'), false);
     });
+    it('[RQAS1] refused permission sets are non-retryable (a replay runs without the accepting access)', () => {
+      assert.equal(isRetryableReason('cmc-offer-invalid-permissions'), false);
+      assert.equal(isRetryableReason('cmc-offer-invalid-permissions', { message: 'm', data: { param: ':_system:language' } }), false);
+      assert.equal(isRetryableReason('cmc-granted-permissions-not-subset'), false);
+      assert.equal(isRetryableReason('cmc-insufficient-permissions'), false);
+    });
     it('[RQ03] delivery-failed with peer 5xx / network / timeout is retryable', () => {
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'http-5xx' }), true);
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'network' }), true);

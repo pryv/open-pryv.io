@@ -104,6 +104,13 @@ const REFUSE_TRIGGER = {
 };
 
 describe('[CMCHA] cmc/handleAccept', () => {
+  // The accept validates account-stream permissions, which needs the
+  // account-stream schema a live server loads at start.
+  before(async () => {
+    require('test-helpers/src/api-server-tests-config.ts');
+    await require('business/src/system-streams/index.ts').init();
+  });
+
   describe('[CMCHA-OK] handleAccept happy path', () => {
     it('[HACVO] entries the chain check appends to the payload are the ones created', async () => {
       const mall = fakeMall();
@@ -464,6 +471,32 @@ describe('[CMCHA] cmc/handleAccept', () => {
       });
       assert.equal(r.ok, false);
       assert.equal(r.reason, 'cmc-handler-data-grant-no-apiendpoint');
+    });
+
+    it('[HAAS1] an account field above read is refused without triggerAccess too (retry replay), nothing minted', async () => {
+      const mall = fakeMall();
+      const offer = {
+        ...VALID_OFFER,
+        content: {
+          ...VALID_OFFER.content,
+          request: {
+            ...VALID_OFFER.content.request,
+            permissions: [{ streamId: 'fertility', level: 'read' }, { streamId: ':_system:language', level: 'contribute' }],
+          },
+        },
+      };
+      const { fetch, calls } = fakeFetch([{ status: 200, body: { events: [offer] } }]);
+      // The retry loop dispatches with deps that carry no triggerAccess.
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: ACCEPT_TRIGGER,
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch },
+      });
+      assert.equal(r.ok, false, JSON.stringify(r));
+      assert.equal(r.reason, 'cmc-offer-invalid-permissions');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.equal(calls.length, 1, 'only the offer read: no accept delivered');
     });
   });
 
