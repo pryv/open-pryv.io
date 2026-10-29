@@ -135,6 +135,36 @@ services:
     assert.match(legacyKey.stdout, /lockoutSeconds is no longer read/);
   });
 
+  it('[CKCF7] account.autoDeletion gets the boot check, merged over the shipped defaults', () => {
+    const bad = runCheck(BASE + `
+account:
+  autoDeletion:
+    reminders:
+      leadDays: [7, 30]
+`);
+    assert.strictEqual(bad.status, 1, bad.stdout + bad.stderr);
+    assert.match(bad.stderr, /account\.autoDeletion\.reminders\.leadDays: must be a non-empty list/);
+    const untracked = runCheck(BASE + `
+accessTracking:
+  isActive: false
+account:
+  autoDeletion:
+    inactivity:
+      defaultDays: 365
+`);
+    assert.strictEqual(untracked.status, 1, untracked.stdout + untracked.stderr);
+    assert.match(untracked.stderr, /account\.autoDeletion\.inactivity\.defaultDays: is set while accessTracking\.isActive is false/);
+    // A preset on a config without mail passes, with a warning.
+    const noMail = runCheck(BASE + `
+account:
+  autoDeletion:
+    inactivity:
+      defaultDays: 365
+`);
+    assert.strictEqual(noMail.status, 0, noMail.stdout + noMail.stderr);
+    assert.match(noMail.stdout, /defaultDays' is set but mail is not configured/);
+  });
+
   it('[CKCF6] letsEncrypt.email is optional, but a placeholder in it is a problem', () => {
     const le = `
 letsEncrypt:

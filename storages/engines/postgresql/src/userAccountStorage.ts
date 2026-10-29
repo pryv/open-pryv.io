@@ -12,6 +12,9 @@ const timestamp = require('unix-timestamp');
 const { _internals } = require('./_internals.ts');
 const encryption = require('utils').encryption;
 
+/** Same-instant writes of one account field placed after each other, at most. */
+const MAX_SAME_TIME_RETRIES = 10;
+
 interface PgQueryResult {
   rows: Array<Record<string, unknown>>;
 }
@@ -134,12 +137,21 @@ const userAccountStorage = (_internals.createUserAccountStorage as (impl: unknow
   },
 
   async setAccountField (userId: string, field: string, value: unknown, createdBy: string, time?: number): Promise<{ field: string; value: unknown; time: number; createdBy: string }> {
-    const t = time || timestamp.now();
-    await db.query(
-      'INSERT INTO account_fields (user_id, field, value, time, created_by) VALUES ($1, $2, $3, $4, $5)',
-      [userId, field, JSON.stringify(value), t, createdBy]
-    );
-    return { field, value, time: t, createdBy };
+    let t = time || timestamp.now();
+    // Versions are keyed by their time (milliseconds): a write landing on the
+    // same instant as another version of the field goes just after it.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await db.query(
+          'INSERT INTO account_fields (user_id, field, value, time, created_by) VALUES ($1, $2, $3, $4, $5)',
+          [userId, field, JSON.stringify(value), t, createdBy]
+        );
+        return { field, value, time: t, createdBy };
+      } catch (err) {
+        if ((err as { code?: string }).code !== '23505' || attempt >= MAX_SAME_TIME_RETRIES) throw err;
+        t = Math.round((t + 0.001) * 1000) / 1000;
+      }
+    }
   },
 
   async getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: unknown; time: number; createdBy: string }>> {

@@ -438,6 +438,27 @@ if (get('services.mfa') != null) {
   }
 }
 
+// account.autoDeletion: the same check master.js runs at boot, judged on the
+// configuration the file produces over the shipped defaults.
+if (get('account.autoDeletion') != null) {
+  try {
+    const defaults = yaml.load(fs.readFileSync(path.join(__dirname, '../config/default-config.yml'), 'utf8'));
+    const effective = merge(defaults, config);
+    const reader = { get: (key) => get(key.replace(/:/g, '.'), effective) };
+    const { describeAutoDeletionConfig } = require('../components/business/src/autoDeletion/config.ts');
+    const { describeMailCapability } = require('../components/business/src/emails/mailCapability.ts');
+    const report = describeAutoDeletionConfig(get('account.autoDeletion'), {
+      accessTrackingActive: !!get('accessTracking.isActive', effective),
+      mailOk: describeMailCapability(reader).ok,
+      accountAppSet: !isMissingOrSentinel(get('service.account', effective))
+    });
+    for (const p of report.problems) problems.push(`${p.path.join('.')}: ${p.message}`);
+    for (const w of report.warnings) warnings.push(w);
+  } catch (err) {
+    warnings.push(`account.autoDeletion could not be checked here (${err.message}); master.js still checks it at boot.`);
+  }
+}
+
 // http.trustedProxies: the same check master.js runs at boot (every entry an
 // IP, a CIDR or a proxy-addr name; loopback needed while HFS workers run).
 if (get('http.trustedProxies') != null) {

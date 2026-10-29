@@ -174,6 +174,34 @@ export default function conformanceTests (getStorage, cleanupFn) {
       });
     });
 
+    describe('setAccountField()', () => {
+      it('[ATM08] a write on the same instant as another version of the field goes just after it', async () => {
+        const uId = cuid();
+        await storage.setAccountField(uId, 'language', 'en', 'a', 1000);
+        const second = await storage.setAccountField(uId, 'language', 'fr', 'b', 1000);
+        assert.strictEqual(second.time, 1000.001);
+        const third = await storage.setAccountField(uId, 'language', 'de', 'c', 1000);
+        assert.strictEqual(third.time, 1000.002);
+        assert.strictEqual(await storage.getAccountField(uId, 'language'), 'de');
+        const history = await storage.getAccountFieldHistory(uId, 'language');
+        assert.deepStrictEqual(history.map((h) => [h.value, h.time]), [['de', 1000.002], ['fr', 1000.001], ['en', 1000]]);
+        // another field at the same instant is not moved
+        const other = await storage.setAccountField(uId, 'email', 'x@example.com', 'd', 1000);
+        assert.strictEqual(other.time, 1000);
+        if (cleanupFn) await cleanupFn(uId);
+      });
+
+      it('[ATM09] concurrent writes of one field all land', async () => {
+        const uId = cuid();
+        const values = ['a', 'b', 'c', 'd', 'e'];
+        await Promise.all(values.map((v) => storage.setAccountField(uId, 'language', v, v, 2000)));
+        const history = await storage.getAccountFieldHistory(uId, 'language');
+        assert.deepStrictEqual(history.map((h) => h.value).sort(), values);
+        assert.strictEqual(new Set(history.map((h) => h.time)).size, values.length);
+        if (cleanupFn) await cleanupFn(uId);
+      });
+    });
+
     describe('migration methods', () => {
       it('_exportAll() must return passwords and storeKeyValues', async () => {
         const uId = cuid();

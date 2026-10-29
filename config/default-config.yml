@@ -531,6 +531,57 @@ account:
     registrationCodeDailyLimit: 10
     registrationCodeFailuresPerDay: 20
     registrationProofMaxAgeMs: 1800000
+  # Account auto-deletion: an account is deleted (or handed to a beneficiary,
+  # if its holder chose a transfer) at a date the holder picks or after a
+  # period without use, with reminder mails before. Use is the latest use of
+  # the account's personal and app accesses, a delegate's included; shared
+  # accesses never count. Users set it in the account app
+  # (account.setAutoDeletion). Per core: for a platform-wide preset set the
+  # same values on every core.
+  autoDeletion:
+    # false hides the feature and stops the sweep; nothing is deleted.
+    enabled: true
+    # true: the sweep logs the reminders it would send and the accounts it
+    # would delete, and does neither. Use it to see the numbers before
+    # setting a preset on a platform with dormant accounts.
+    dryRun: false
+    inactivity:
+      # Operator preset: delete plain accounts unused for this many days.
+      # null (default) = never. A preset applies only to accounts with an
+      # email address, never to group or controlled accounts, and its clock
+      # starts the first time it applies to an account (a dormant account
+      # gets the full reminder schedule). Needs accessTracking.isActive.
+      defaultDays: null
+      # Periods a user may choose.
+      minDays: 90
+      maxDays: 3650
+    # A user may change the period of the preset (or set one when none).
+    userOverride: true
+    # A user may set "never" while a preset applies. false enforces the
+    # preset as a retention rule.
+    allowUserOptOut: true
+    date:
+      # Earliest fixed date a user may set, in days from now.
+      minLeadDays: 14
+    reminders:
+      # Reminder mails, days before the deletion, strictly decreasing.
+      leadDays: [60, 30, 7, 1]
+      # No account is deleted less than this many days after its first
+      # reminder was sent: the deletion waits.
+      minNoticeDays: 7
+    # How often the sweep runs (milliseconds, default 6 h).
+    sweepIntervalMs: 21600000
+    # At most this many deletions per sweep; the rest wait for the next one.
+    # 0 = no limit.
+    maxDeletionsPerPass: 20
+    transfer:
+      # How long a beneficiary has to claim an account once the transfer
+      # starts.
+      claimWindowDays: 90
+      # Key encrypting the beneficiary's name and date of birth (base64, 32
+      # bytes; YAML only, like other secrets). null = derived from
+      # auth.adminAccessKey.
+      identitySecretsKey: null
 
 # === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===
 # `custom.systemStreams` defines the account-field schema. All cores MUST agree.

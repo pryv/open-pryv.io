@@ -864,6 +864,34 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   deletionRecords:
 # #     retentionDays: 0
 
+# # account.autoDeletion: users may schedule their account's deletion (or a
+# # transfer to a beneficiary) at a date or after a period without use, with
+# # reminder mails at 60, 30, 7 and 1 day(s). inactivity.defaultDays is an
+# # operator preset for plain accounts with an email address (null = never,
+# # the default; needs accessTracking.isActive, mail and service.account).
+# # Per core: set the same values on every core for a platform-wide preset.
+# # Try a preset with dryRun: true first (logs, sends and deletes nothing).
+# # account:
+# #   autoDeletion:
+# #     enabled: true
+# #     dryRun: false
+# #     inactivity:
+# #       defaultDays: null
+# #       minDays: 90
+# #       maxDays: 3650
+# #     userOverride: true
+# #     allowUserOptOut: true
+# #     date:
+# #       minLeadDays: 14
+# #     reminders:
+# #       leadDays: [60, 30, 7, 1]
+# #       minNoticeDays: 7
+# #     sweepIntervalMs: 21600000
+# #     maxDeletionsPerPass: 20
+# #     transfer:
+# #       claimWindowDays: 90
+# #       identitySecretsKey: null
+
 # # caching.accessMaxAgeSeconds — max age of cached accesses, streams and
 # # username lookups (default 60). Bounds how long a worker that missed an
 # # invalidation keeps using a deleted or changed access; a lower value costs

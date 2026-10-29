@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Account fields: two writes of one field in the same millisecond both land
+
+- Account-field versions are keyed by their time (milliseconds) on PostgreSQL and SQLite. A second
+  write of the same field for the same account in the same millisecond (two concurrent
+  `account.update` calls, for instance) failed on the key and the request answered `500`. It is
+  now stored 1 ms after the other version. Conformance tests `[ATM08]` `[ATM09]`.
+
+### Account auto-deletion: configuration and per-account state (feature not exposed yet)
+
+- New per-core block `account.autoDeletion` in `default-config.yml` (off by default in effect:
+  no operator preset, `inactivity.defaultDays: null`), checked at boot and by `bin/check-config.js`:
+  malformed values and an inactivity preset with `accessTracking.isActive: false` refuse the boot;
+  a preset without mail or without `service.account` is a boot warning. Init-wizard appendix
+  updated.
+- Per-account state accessors (the holder's setting as an account field, the sweep's bookkeeping in
+  a key-value row written only on a material change, a transfer beneficiary's identity encrypted
+  with `account.autoDeletion.transfer.identitySecretsKey` or a key derived from the admin key).
+- Account activity helper: a delegate's use counts as use of the account and is reported as such,
+  with a per-access-type breakdown.
+
 ### OAuth2 documentation brought in line with the code (no behaviour change)
 
 - `oauth.requireAppAccountMfa` and `oauth.audAllowList` are read by no code: `docs/oauth2.md` and

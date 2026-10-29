@@ -440,6 +440,24 @@ function checkIntegrityAlgorithm (config, problems) {
   if (problem != null) problems.push({ message: problem + '.', path: ['integrity', 'algorithm'], payload: { algorithm } });
 }
 
+// account.autoDeletion: value shapes and bounds, and an inactivity preset
+// with access tracking off (inactivity cannot be measured).
+function describeAutoDeletion (config) {
+  const { describeAutoDeletionConfig } = require('../../components/business/src/autoDeletion/config.ts');
+  const { describeMailCapability } = require('../../components/business/src/emails/mailCapability.ts');
+  return describeAutoDeletionConfig(config.get('account:autoDeletion'), {
+    accessTrackingActive: !!config.get('accessTracking:isActive'),
+    mailOk: describeMailCapability(config).ok,
+    accountAppSet: !isMissingOrSentinel(config.get('service:account'))
+  });
+}
+
+function checkAutoDeletion (config, problems) {
+  for (const p of describeAutoDeletion(config).problems) {
+    problems.push({ message: 'account.autoDeletion: ' + p.path.slice(2).join('.') + ' ' + p.message, path: p.path, payload: {} });
+  }
+}
+
 // core.id becomes a DNS label and the host of derived core URLs; on a
 // multi-core deployment core.url is where peers send the admin key.
 function checkCoreIdentity (config, problems) {
@@ -557,6 +575,7 @@ async function validate (config) {
   checkWebhooks(config, problems);
   checkCmcOutbound(config, problems);
   checkIntegrityAlgorithm(config, problems);
+  checkAutoDeletion(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
@@ -694,6 +713,7 @@ function collectWarnings (config) {
   const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
   warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
   warnings.push(...revocationLagWarnings(config));
+  warnings.push(...describeAutoDeletion(config).warnings);
   return warnings;
 }
 
@@ -750,6 +770,7 @@ module.exports = {
   checkHostedSites,
   checkTrustedProxies,
   checkIntegrityAlgorithm,
+  checkAutoDeletion,
   checkUserDataRootPersistence,
   checkCoreIdentity,
   checkRaftTls,

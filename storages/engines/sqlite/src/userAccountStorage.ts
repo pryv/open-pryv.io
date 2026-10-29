@@ -25,6 +25,9 @@ const { _internals } = require('./_internals.ts');
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 const encryption = require('utils').encryption;
 
+/** Same-instant writes of one account field placed after each other, at most. */
+const MAX_SAME_TIME_RETRIES = 10;
+
 const CACHE_SIZE = 100;
 const logger = _internals.lazyLogger('sqlite-account-storage');
 const VERSION = '1.0.0';
@@ -170,12 +173,21 @@ async function getAccountField (userId: string, field: string): Promise<unknown 
 async function setAccountField (userId: string, field: string, value: unknown, createdBy: string, time: number = timestamp.now()): Promise<{ field: string, value: unknown, time: number, createdBy: string }> {
   const db = await getUserDB(userId);
   const item = { field, value: JSON.stringify(value), time, createdBy };
-  await concurrentSafeWrite.execute(() => {
-    db.prepare(
-      'INSERT INTO account_fields (field, value, time, createdBy) VALUES (@field, @value, @time, @createdBy)'
-    ).run(item);
-  });
-  return { field, value, time, createdBy };
+  // Versions are keyed by their time (milliseconds): a write landing on the
+  // same instant as another version of the field goes just after it.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await concurrentSafeWrite.execute(() => {
+        db.prepare(
+          'INSERT INTO account_fields (field, value, time, createdBy) VALUES (@field, @value, @time, @createdBy)'
+        ).run(item);
+      });
+      return { field, value, time: item.time, createdBy };
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'SQLITE_CONSTRAINT_PRIMARYKEY' || attempt >= MAX_SAME_TIME_RETRIES) throw err;
+      item.time = Math.round((item.time + 0.001) * 1000) / 1000;
+    }
+  }
 }
 
 async function getAccountFieldHistory (userId: string, field: string, limit?: number): Promise<Array<{ value: unknown, time: number, createdBy: string }>> {
