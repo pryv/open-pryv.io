@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 6 (2026-10-28), covering releases 2.0.0-rc.40 to 2.0.0-rc.63.
+**Report revision:** 7 (2026-10-29), covering releases 2.0.0-rc.40 to 2.0.0-rc.64.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -36,8 +36,10 @@ ran in full from 7 to 14 October 2026, release by release. A follow-up review of
 plugin, of delegation and of access teardown, made in October 2026 alongside the work on group
 accounts in consent, added the findings fixed in 2.0.0-rc.52 and rc.53, and a further review of
 how stream ids are compared by the access guards, together with the server's calls to consent
-counterparties, added those fixed in 2.0.0-rc.56; they were fixed under the same rules (tests that
-fail without the fix, independent review before merge).
+counterparties, added those fixed in 2.0.0-rc.56, and a review of the OAuth2 consent and session
+lifecycle and of event history reads, made in October 2026 alongside work on OAuth2 extensions,
+added those fixed in 2.0.0-rc.64; they were fixed under the same rules (tests that fail without the
+fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -47,7 +49,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 52 findings, each rated and described individually in
+The review and its follow-ups recorded 54 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -55,9 +57,9 @@ items reported through the public issue tracker, are described but not counted:
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
-| Medium | 23 | 0 | 0 |
+| Medium | 25 | 0 | 0 |
 | Low | 1 | 0 | 0 |
-| **Total** | **52** | **0** | **0** |
+| **Total** | **54** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -95,6 +97,7 @@ its applicability is stated with it.
 | 2.0.0-rc.58 | 2026-10-26 | dependency updates, not audit findings: `body-parser` 1.20.9 (GHSA-27r3-jxmh-p828, denial of service through trailing bytes after a compressed request body), `multer` 2.5.0 (GHSA-q7qp-rjg7-q26m, denial of service through a pending upload filter), `undici` 6.29.1 (GHSA-4qv8-2p9j-2685, GHSA-xjj6-f33q-929c, denial of service), `fast-uri` 3.1.9 (moderate URI parsing advisories); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-26) |
 | 2.0.0-rc.59 | 2026-10-26 | dependency update, not an audit finding: `nodemailer` 10.2.1 (GHSA-8c8m-p3m8-cjg8, GHSA-m943-m63m-w62w, GHSA-85x2-q946-cp5h, moderate: address-parser flaws that could turn display text into a recipient); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-26) |
 | 2.0.0-rc.63 | 2026-10-28 | dependency updates, not audit findings: `node-forge` 1.4.2 (GHSA-86w9-cpqp-85rv, high: RSA PKCS#1 v1.5 signature verification; no patched release existed before 1.4.2), `qs` 6.16.1 (GHSA-6pq8-jhm2-2vcw, moderate: denial of service in `qs.stringify` with `arrayFormat: 'comma'`, a function the server does not call at runtime); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-28) |
+| 2.0.0-rc.64 | 2026-10-29 | 2 Medium | yes (2026-10-29) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1210,6 +1213,39 @@ resolved the prefixed spelling to the protected stream.
   mind. Clients that enumerate invite statuses: `invalidated` now also applies to single-use
   invites.
 
+### Fixed in 2.0.0-rc.64 (deployed)
+
+#### Withdrawing an OAuth2 consent left the app's live session tokens working
+
+- **Severity:** Medium (deployments that serve OAuth2 clients). The exposure is bounded by the
+  lifetime of a session token (`oauth.accessTokenTTL`, one hour by default); the comparable
+  consent item of 2.0.0-rc.52 was High because its sub-accesses had no such bound.
+- **What could happen:** deleting the data grant behind an OAuth2 consent (from the account app,
+  with `accesses.delete`, or through a revocation sent by the client) ended the refresh chain, but
+  the client's current session accesses were not linked to the grant and stayed valid until their
+  own expiry, with the accesses they had created. An app whose consent was withdrawn could keep
+  reading and writing within the consented scope for up to one session lifetime.
+- **What changed:** a session access names its grant (`clientData.oauth.dataGrantId`, which
+  `accesses.update` refuses to change or remove, `403`), and deleting the grant deletes its live
+  sessions and the accesses they created, reported in the answer's `relatedDeletions` and dropped
+  from the access cache of every worker. The revocation that answers a reused refresh token now
+  goes through the same teardown as `accesses.delete`, so aliases are released, credentials are
+  removed from the deletion records and running webhooks are stopped there too.
+- **Operator action:** none. Sessions minted before the upgrade carry no link to their grant and
+  expire on their own, one session lifetime at most after the upgrade.
+
+#### `events.getOne` with `includeHistory` returned versions the access cannot read
+
+- **Severity:** Medium (deployments that keep event history, `versioning.forceKeepHistory: true`).
+  A caller needs read access to the event as it is now.
+- **What could happen:** the earlier versions of an event were returned as stored, without the read
+  check applied to the event itself. An event moved out of a stream the access cannot read, or out
+  of a stream it holds at `none`, still showed its earlier content and stream ids in `history`.
+- **What changed:** every earlier version goes through the same check as the current event
+  (forbidden, internal and hidden streams, forced streams, readable streams); a version that fails
+  it is left out of `history`.
+- **Operator action:** none.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1301,3 +1337,4 @@ This report is updated with every release that carries a security fix:
 | 4 | 2026-10-26 | 2.0.0-rc.40 to 2.0.0-rc.58 | Adds 2.0.0-rc.58 to the release table: dependency security updates (`body-parser`, `multer`, `undici`, `fast-uri`), not audit findings; counts unchanged. Deployed on the maintainers' platforms (2026-10-26). |
 | 5 | 2026-10-26 | 2.0.0-rc.40 to 2.0.0-rc.59 | Adds 2.0.0-rc.59 to the release table: `nodemailer` 10.2.1 (moderate dependency advisories), not an audit finding; counts unchanged. Deployed on the maintainers' platforms (2026-10-26). |
 | 6 | 2026-10-28 | 2.0.0-rc.40 to 2.0.0-rc.63 | Adds 2.0.0-rc.63 to the release table: `node-forge` 1.4.2 (high dependency advisory) and `qs` 6.16.1 (moderate), not audit findings; counts unchanged. rc.60 to rc.62 carried no security fix. Deployed on the maintainers' platforms (2026-10-28). |
+| 7 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.64 | Adds 2.0.0-rc.64 (follow-up review of the OAuth2 consent and session lifecycle and of event history reads): 2 Medium findings. Deployed on the maintainers' platforms (2026-10-29). |
