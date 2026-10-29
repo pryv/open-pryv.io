@@ -1,5 +1,17 @@
 # Changelog - Internal (no API impact)
 
+## npm: dependency install scripts approved in `package.json`
+
+- npm 11.19 checks dependency install scripts against an `allowScripts` list in `package.json`
+  and ends every `npm ci` / `npm install` with a warning naming the ones not on it (here
+  `bcrypt`, `better-sqlite3`, `fs-xattr`, `unix-dgram`, `unrs-resolver` and the `backloop.dev`
+  git dependency). The check is advisory in this npm release (the scripts still run and the
+  native modules are built), but npm announces that a later release will skip unapproved
+  scripts, which would leave the SQLite engine, the previews cache (extended attributes) and the
+  syslog socket without their native builds. `package.json` now approves these six by name (any version, so a
+  dependency bump keeps building), which also silences the warning. CI and the Dockerfile, which
+  install with `--ignore-scripts` then `npm rebuild`, are unchanged.
+
 ## Lint: the TypeScript sources are style-checked
 
 - `eslint.config.js` enables neostandard's `ts` option, so `just lint` and CI's `npx eslint .` now
