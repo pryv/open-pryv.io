@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, withInjectedConfig */
 
 describe('[ALIA] access aliases (randomAlias)', function () {
   let username;
@@ -218,6 +218,23 @@ describe('[ALIA] access aliases (randomAlias)', function () {
     assert.equal(res.status, 409, JSON.stringify(res.body));
     const after = await usersIndex.getAliasesForId(userId);
     assert.deepStrictEqual(after.sort(), before.sort(), 'the minted alias was given back');
+  });
+
+  it('[AL12] a create with randomAlias past accesses.maxAliasesPerAccount is refused and mints nothing', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const held = (await usersIndex.getAliasesForId(userId)).length;
+    await withInjectedConfig({ accesses: { maxAliasesPerAccount: held + 1 } }, async () => {
+      const first = await createAccess({ name: 'al12 under the cap', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      assert.equal(first.status, 201, JSON.stringify(first.body));
+      const refused = await createAccess({ name: 'al12 past the cap', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      assert.equal(refused.status, 400, JSON.stringify(refused.body));
+      assert.equal(refused.body.error.id, 'invalid-operation');
+      assert.match(refused.body.error.message, /maxAliasesPerAccount/);
+      assert.equal((await usersIndex.getAliasesForId(userId)).length, held + 1, 'no alias minted past the cap');
+      const plain = await createAccess({ name: 'al12 without alias', permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      assert.equal(plain.status, 201, 'a create without randomAlias is not capped: ' + JSON.stringify(plain.body));
+    });
   });
 
   it('[AL07] deleting an access whose stored alias is another user\'s releases nothing of that user', async function () {

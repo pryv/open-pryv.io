@@ -644,6 +644,11 @@ access:
 accesses:
   deletionRecords:
     retentionDays: 0
+  # Most aliases one account may hold: the `r-` names minted for accesses
+  # created with `randomAlias`, plus its former usernames. Past it, a create
+  # with `randomAlias` is refused (invalid-operation). An alias is held until
+  # its access is deleted: an expired access keeps it.
+  maxAliasesPerAccount: 1000
 
 # === PER-CORE: local tracing toggle ===
 trace:

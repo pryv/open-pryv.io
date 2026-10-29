@@ -860,9 +860,14 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # the master removes it, once a day. Past it, audit pages and event authors
 # # show that access by id only, and a breach cannot be scoped from its id.
 # # 0 (default) = kept until the account is deleted.
+# # accesses.maxAliasesPerAccount — most aliases one account may hold (the
+# # r- names of accesses created with randomAlias, plus its former usernames,
+# # default 1000). Past it, randomAlias is refused. An alias is held until its
+# # access is deleted: an expired access keeps it.
 # # accesses:
 # #   deletionRecords:
 # #     retentionDays: 0
+# #   maxAliasesPerAccount: 1000
 
 # # auth.usernameChangeLimit — how many times an account may change its
 # # username (default 2; 0 disables it). Every former username stays held by

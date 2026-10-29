@@ -147,6 +147,11 @@ class UsersRepository {
     return await this.usersIndex.getUsername(userId);
   }
 
+  /** Every alias the account holds: minted access aliases and former usernames. */
+  async getAliasesForUserId (userId: string): Promise<string[]> {
+    return await this.usersIndex.getAliasesForId(userId);
+  }
+
   /**
    * Reserve a routable alias for a user. Three coordinated writes:
    *  1. platform unique-field `alias` — atomic cross-core uniqueness claim;

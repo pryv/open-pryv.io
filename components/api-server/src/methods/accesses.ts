@@ -271,6 +271,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // true). When inactive each slot is a passthrough so the register chains
   // below stay structurally identical.
   const delegationActive = config.get('delegation:active') !== false;
+  // How many aliases (minted access aliases and former usernames) one account
+  // may hold before `randomAlias` is refused. Read per request so a config
+  // change applies without a restart.
+  const getMaxAliasesPerAccount = (): number => {
+    const max = config.get('accesses:maxAliasesPerAccount');
+    return Number.isInteger(max) && max >= 0 ? max : 1000;
+  };
   const delegationPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
   const delegationAccessCreateForgePreventionHook = delegationActive
     ? delegation.createAccessCreateForgePreventionHook({ errors })
@@ -547,6 +554,17 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     delete params.randomAlias;
     const usersRepository = wantsAlias ? await getUsersRepository() : null;
     if (usersRepository != null) {
+      // Every alias stays held until its access is deleted (an expired access
+      // keeps it): bound how many one account may hold.
+      const maxAliases = getMaxAliasesPerAccount();
+      const held = (await usersRepository.getAliasesForUserId(context.user.id)).length;
+      if (held >= maxAliases) {
+        return next(errors.invalidOperation(
+          'This account already holds ' + held + ' aliases, the most allowed (accesses.maxAliasesPerAccount = ' + maxAliases + '). ' +
+          'Delete accesses it no longer uses (an expired access keeps its alias until it is deleted), or create this access without "randomAlias".',
+          { maxAliasesPerAccount: maxAliases }
+        ));
+      }
       params.alias = await usersRepository.mintAlias(context.user.username, context.user.id);
     }
     accessesRepository.insertOne(context.user, params, async function (err: (Error & { isDuplicateIndex: (k: string) => boolean }) | null, newAccess: { id: string; [k: string]: unknown } | undefined) {

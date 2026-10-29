@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Per-account cap on aliases: `accesses.maxAliasesPerAccount` (default `1000`).** An account
+  could mint an unbounded number of `randomAlias` aliases, each one a platform-wide routing name
+  held until its access is deleted (an expired access keeps its alias). Once the account holds that
+  many aliases (its `r-` access aliases plus its former usernames), `accesses.create` with
+  `randomAlias` answers `400 invalid-operation` (the message names the setting); a create without
+  `randomAlias` is not affected. Deleting accesses the account no longer uses frees their aliases.
+
 ### Fixed
 
 - **Backup and restore keep the account aliases.** The aliases of an account (those of its
