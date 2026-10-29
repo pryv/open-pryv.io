@@ -463,6 +463,15 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
   });
 
   describe('[XIDD] deletion', function () {
+    // Self-contained: the namespace exists and holds one claimed id, whether
+    // or not the tests above ran.
+    before(async function () {
+      const put = await coreRequest.put('/system/admin/ext-id-ns/' + ns).set('authorization', adminKey).send({ label: 'Practice EHR' });
+      assert.ok([200, 201].includes(put.status), JSON.stringify(put.body));
+      const holder = await makeUser();
+      assert.strictEqual((await claim(holder, { namespace: ns, blindedValue: blinded() })).status, 201);
+    });
+
     it('[XIDD1] a namespace with claimed ids is not deleted without force', async function () {
       const res = await coreRequest.delete('/system/admin/ext-id-ns/' + ns).set('authorization', adminKey);
       assert.strictEqual(res.status, 409);
