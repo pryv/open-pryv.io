@@ -16,7 +16,8 @@
 - **OAuth: the refresh grant refuses a consent data-grant that expired less than a second ago.**
   Its expiry was compared with the current time rounded down to the second, so a grant stayed
   usable for refresh up to one second past its `expires`. It now answers `invalid_grant` as soon
-  as the grant has expired.
+  as the grant has expired. The authorization-code exchange applies the same exact comparison to
+  the access it hands back.
 
 - **SQLite engine: `events.getOne` no longer serves a history version by its own storage id.**
   With versioning on (`versioning.forceKeepHistory`), each earlier version of an event is stored

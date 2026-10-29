@@ -602,7 +602,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // would have to replicate the storage layer's canonicalization.
     await fromCallback((cb: (e: unknown) => void) =>
       accessesRepository.updateOne(user, { id: accessId },
-        { clientData: { ...existingClientData, dpop: { jkt } }, modified: Math.floor(Date.now() / 1000) }, cb));
+        { clientData: { ...existingClientData, dpop: { jkt } }, modified: Date.now() / 1000 }, cb));
     cache.unsetUserData(userId);
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
   }
@@ -630,7 +630,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }): Promise<{ accessToken: string; apiEndpoint: string } | null> {
     const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
     if (access == null || access.deleted != null || typeof access.token !== 'string') return null;
-    if (typeof access.expires === 'number' && access.expires <= Math.floor(Date.now() / 1000)) return null;
+    if (typeof access.expires === 'number' && access.expires <= Date.now() / 1000) return null;
     // Same builder accesses.create uses, so the exchange returns what /accept minted.
     const ApiEndpoint = require('utils').ApiEndpoint;
     return { accessToken: access.token, apiEndpoint: ApiEndpoint.buildForAccess(access, username) };
