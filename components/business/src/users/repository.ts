@@ -416,7 +416,7 @@ class UsersRepository {
     // former name, which would write under it again.
     pubsub.series.emit(pubsub.SERIES_USERNAME_CHANGED, { username: oldUsername, newUsername });
     if (!await this.#gatherSeriesNonFatal(userId, newUsername)) {
-      warnings.push({ step: 'hf-series', message: 'The HF series stored under a former username could not be moved under the new one (they are moved at the next username change, or sooner by the operator).' });
+      warnings.push({ step: 'hf-series', message: 'The HF series stored under a former username could not be moved under the new one (they are moved at the next username change, or by the operator with bin/gather-former-series.js).' });
     }
     return warnings;
   }
@@ -913,19 +913,27 @@ class UsersRepository {
    * single core got none before a release that wrote them (one-time repair).
    * Works in both piiModes: local names are hashed to the storage-form token
    * via `platform.hashFor` for comparison, exactly as user-core keys are stored.
-   * Idempotent; safe to run repeatedly and concurrently with live traffic
-   * (healing uses the atomic claim; stale deletion is guarded on ownership).
+   * Idempotent. Healing uses the atomic claim, but stale deletion works from
+   * one snapshot of the local index: a registration in flight (its row
+   * claimed, its index entry not yet written) can lose its row. Run it with
+   * this core's API stopped, or run it again afterwards (a second run heals
+   * what the first deleted).
+   * An empty local index facing self-rows is refused (`refusedEmptyLocal`,
+   * nothing written, dry run included) unless `forceEmptyLocal`: it is more
+   * likely a lost or wrong index (a partial restore, a wrong --config) than
+   * a core whose every account is gone, and deleting would unroute them all.
    *
    * @param dryRun when true, computes the summary without writing.
-   * @returns { deleted, healed, conflicts, scanned, skippedOtherCore } —
+   * @returns { deleted, healed, conflicts, scanned, skippedOtherCore, refusedEmptyLocal? } —
    *   `deleted`/`healed` are the affected name TOKENS (storage form; opaque HMAC
    *   in hashed mode). `conflicts` names each local user/alias whose routing row
    *   points at ANOTHER core (owned locally but claimed elsewhere): the tool will
    *   NOT clobber it, so the operator must resolve it by hand. Reported in both
    *   dry-run and apply so the two agree (a conflict is never counted as a heal).
    */
-  async reconcileUserCoreMap (dryRun = false): Promise<{ deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number }> {
-    const summary = { deleted: [] as string[], healed: [] as string[], conflicts: [] as Array<{ username: string; coreId: string }>, scanned: 0, skippedOtherCore: 0 };
+  async reconcileUserCoreMap (dryRun = false, options: { forceEmptyLocal?: boolean } = {}): Promise<{ deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number; refusedEmptyLocal?: boolean }> {
+    const summary: { deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number; refusedEmptyLocal?: boolean } =
+      { deleted: [], healed: [], conflicts: [], scanned: 0, skippedOtherCore: 0 };
     const selfCoreId = this.platform.coreId;
 
     // Build this core's owned name tokens (canonical usernames + aliases) in the
@@ -943,6 +951,13 @@ class UsersRepository {
 
     // (i) delete stale self-rows; heal missing self-rows in one pass over the map.
     const allMappings = await this.platform.getAllUserCores(); // { username: token, coreId }
+    if (Object.keys(byUsername).length === 0 && options.forceEmptyLocal !== true &&
+        allMappings.some(({ coreId }) => coreId === selfCoreId)) {
+      summary.scanned = allMappings.length;
+      summary.skippedOtherCore = allMappings.filter(({ coreId }) => coreId !== selfCoreId).length;
+      summary.refusedEmptyLocal = true;
+      return summary;
+    }
     const presentSelfTokens = new Set<string>();
     const tokenToCore = new Map<string, string>(); // token -> owning coreId (any core)
     for (const { username: token, coreId } of allMappings) {

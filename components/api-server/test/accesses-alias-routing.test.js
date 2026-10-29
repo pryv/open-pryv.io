@@ -144,4 +144,25 @@ describe('[ALRT] alias and renamed-name routing on a single core', function () {
       assert.ok(!again.healed.includes(platform.hashFor('username', name)), name + ': nothing left to heal');
     }
   });
+
+  it('[ALRT4] reconcile refuses to run on an empty users index facing rows of this core (dry run too), unless forced', async function () {
+    const { uname } = await freshUser('rf');
+    const usersIndex = usersRepository.usersIndex;
+    const original = usersIndex.getAllByUsername;
+    usersIndex.getAllByUsername = async () => ({}); // a lost index, or a wrong --config
+    try {
+      for (const dryRun of [true, false]) {
+        const s = await usersRepository.reconcileUserCoreMap(dryRun);
+        assert.strictEqual(s.refusedEmptyLocal, true, 'refused, dryRun ' + dryRun);
+        assert.deepStrictEqual(s.deleted, []);
+        assert.strictEqual(await platform.getUserCore(uname), platform.coreId, 'nothing deleted, dryRun ' + dryRun);
+      }
+      const forced = await usersRepository.reconcileUserCoreMap(true, { forceEmptyLocal: true });
+      assert.strictEqual(forced.refusedEmptyLocal, undefined);
+      assert.ok(forced.deleted.includes(platform.hashFor('username', uname)), 'forced: the row would be deleted');
+    } finally {
+      usersIndex.getAllByUsername = original;
+    }
+    assert.strictEqual(await platform.getUserCore(uname), platform.coreId);
+  });
 });
