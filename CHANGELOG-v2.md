@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.65 - 2026-10-29
 
 ### BREAKING and security
 
