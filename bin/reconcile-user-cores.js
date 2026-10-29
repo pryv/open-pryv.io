@@ -8,9 +8,9 @@
  */
 
 // Operator tool: reconcile THIS core's slice of the shared name->core
-// (`user-core/`) map with its local user index. Multi-core maintenance that
-// heals the two drift states the platform-wide username availability check is
-// sensitive to:
+// (`user-core/`) map with its local user index. Heals the two drift states
+// the platform-wide username availability check and the routing (the
+// embedded DNS included) are sensitive to:
 //
 //   - STALE self-row: a `user-core/` row points at THIS core but no local
 //     user or alias owns the name (every user ever deleted before the routing
@@ -23,9 +23,12 @@
 //     DIFFERENT core legitimately holds is never clobbered).
 //
 // Rows pointing at OTHER cores are NEVER touched: each core owns only its own
-// slice, so run this once PER CORE. Single-core deployments are a no-op (the
-// availability check ignores the map there). Idempotent; safe to re-run and to
-// run against a live core.
+// slice, so run this once PER CORE. It applies on a single core too, where the
+// embedded DNS (`dns.active`) answers every name through this map: aliases
+// (`randomAlias` accesses) and usernames taken by a username change on a single
+// core got no row before the release that writes them, so they answered
+// NXDOMAIN; run it once after upgrading such a core. Idempotent; safe to re-run
+// and to run against a live core.
 //
 // Usage:
 //   node bin/reconcile-user-cores.js            # delete stale + heal missing
@@ -137,12 +140,6 @@ require('@pryv/boiler').init({
           'hashed to cleartext mode, run again with --old-pepper <retired pepper>; otherwise restore the ' +
           'namespace row (with its salt) from a backup, or release those ids');
       }
-      process.exit(0);
-    }
-
-    if (platform.isSingleCore) {
-      console.log('reconcile-user-cores: single-core deployment — nothing to do ' +
-        '(the platform-wide username check ignores the user-core map).');
       process.exit(0);
     }
 

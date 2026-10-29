@@ -899,8 +899,8 @@ class UsersRepository {
 
   /**
    * Reconcile THIS core's slice of the shared name→core (`user-core/`) map with
-   * its local user index. Multi-core maintenance that heals the two drift
-   * states the platform-wide username check is sensitive to:
+   * its local user index. Heals the two drift states the platform-wide
+   * username check and the routing (the embedded DNS included) are sensitive to:
    *  - STALE self-row (points at THIS core but no local user/alias owns the
    *    name) → delete, so a deleted/never-created name reports free again and
    *    stops falsely reserving itself platform-wide;
@@ -908,7 +908,9 @@ class UsersRepository {
    *    (claim-or-confirm), so the live name cannot be hijacked by another core
    *    and stays routable.
    * Rows pointing at OTHER cores are NEVER touched — each core owns only its own
-   * slice. Single-core is a no-op (the platform-wide check ignores the map).
+   * slice. It applies on a single core too: the embedded DNS answers every
+   * name through these rows, and the aliases and changed usernames of a
+   * single core got none before a release that wrote them (one-time repair).
    * Works in both piiModes: local names are hashed to the storage-form token
    * via `platform.hashFor` for comparison, exactly as user-core keys are stored.
    * Idempotent; safe to run repeatedly and concurrently with live traffic
@@ -924,7 +926,6 @@ class UsersRepository {
    */
   async reconcileUserCoreMap (dryRun = false): Promise<{ deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number }> {
     const summary = { deleted: [] as string[], healed: [] as string[], conflicts: [] as Array<{ username: string; coreId: string }>, scanned: 0, skippedOtherCore: 0 };
-    if (this.platform.isSingleCore) return summary;
     const selfCoreId = this.platform.coreId;
 
     // Build this core's owned name tokens (canonical usernames + aliases) in the

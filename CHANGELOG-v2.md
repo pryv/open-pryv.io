@@ -61,7 +61,8 @@
   embedded DNS answers from was written for registered usernames only on a single core: a
   `randomAlias` endpoint (`https://r-xxxxxxxx.<domain>/`) and the new name after a username change
   answered `NXDOMAIN`. Both now get the row (released with the alias). Aliases minted and names
-  taken by a change on a single core before this release still lack it.
+  taken by a change on a single core before this release lack it until the operator runs
+  `node bin/reconcile-user-cores.js` once (it now applies on a single core too).
 - **A refused `accesses.create` keeps no alias.** With `randomAlias`, the alias was reserved before
   the request's checks (negative `expireAfter`, account-stream rules, a token already in use, ...):
   a refused request left an alias routing to the account until its erasure. The alias is now

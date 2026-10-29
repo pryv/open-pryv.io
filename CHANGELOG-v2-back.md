@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### One-time repairs after the alias and username-change fixes
+
+- `bin/reconcile-user-cores.js` (and `usersRepository.reconcileUserCoreMap`) now runs on a single
+  core too, where it was a no-op: the embedded DNS of a single core answers every name through the
+  name -> core rows, and the aliases and changed usernames of a single core got none before this
+  release. One run after the upgrade gives them back (`--dry-run` reports first); it also deletes
+  the rows of names no account of the core holds any more. Idempotent. Test `[ALRT3]`.
+
 ### Username resolution: no storage read of the canonical name per request
 
 - Every API request read the account's canonical username from the users index after resolving

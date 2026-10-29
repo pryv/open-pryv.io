@@ -114,4 +114,34 @@ describe('[ALRT] alias and renamed-name routing on a single core', function () {
     assert.deepStrictEqual(await resolves(newName), [CORE_IP], 'the new name answers');
     assert.deepStrictEqual(await resolves(uname), [CORE_IP], 'the former name still answers');
   });
+
+  it('[ALRT3] reconcile (single core) gives back the rows of aliases and changed names written without them, idempotently', async function () {
+    const { uname, userId, token } = await freshUser('rd');
+    const res = await coreRequest.post('/' + uname + '/accesses').set('Authorization', token)
+      .send({ name: 'aliased', type: 'shared', randomAlias: true, permissions: [{ streamId: '*', level: 'read' }] });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    const alias = res.body.access.alias;
+    const newName = freshName('re');
+    await usersRepository.changeUsername(userId, uname, newName, 'system');
+    // A single core of an earlier release: no row for the alias, the new name
+    // or the former name (now an alias).
+    for (const name of [alias, newName, uname]) await platform.deleteUserCore(name);
+    for (const name of [alias, newName, uname]) assert.strictEqual(await resolves(name), null, name + ' answers nothing');
+
+    const dry = await usersRepository.reconcileUserCoreMap(true);
+    for (const name of [alias, newName, uname]) {
+      assert.ok(dry.healed.includes(platform.hashFor('username', name)), name + ' reported by the dry run');
+      assert.strictEqual(await platform.getUserCore(name), null, 'the dry run writes nothing');
+    }
+
+    await usersRepository.reconcileUserCoreMap();
+    for (const name of [alias, newName, uname]) {
+      assert.strictEqual(await platform.getUserCore(name), platform.coreId, name + ' routes here again');
+      assert.deepStrictEqual(await resolves(name), [CORE_IP], name + ' answers');
+    }
+    const again = await usersRepository.reconcileUserCoreMap();
+    for (const name of [alias, newName, uname]) {
+      assert.ok(!again.healed.includes(platform.hashFor('username', name)), name + ': nothing left to heal');
+    }
+  });
 });
