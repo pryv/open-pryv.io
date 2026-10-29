@@ -42,5 +42,10 @@ describe('[SDTP] subdomainToPath middleware', function () {
     it('[IDDE] should accept dashes', function () {
       return ok('a---0.pryv.li', '/a---0');
     });
+    it('[SDAL] should route an access alias (r- + 8 letters or digits) like a username', async function () {
+      for (const alias of ['r-abcdefgh', 'r-23456789', 'r-zz2y3x4w']) {
+        await ok(alias + '.pryv.li', '/' + alias);
+      }
+    });
   });
 });

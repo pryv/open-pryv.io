@@ -93,8 +93,7 @@ describe('[UCHG] account.changeUsername (secondary username)', function () {
     assert.equal(fresh.body.user.username, newUsername);
   });
 
-  it('[UC02] rejects a username already taken (by a primary or an alias)', async function () {
-    // The previous (now-demoted) username is held as an alias -> taken.
+  it('[UC02] rejects the current username', async function () {
     const prior = await coreRequest
       .post('/' + username + '/account/change-username')
       .set('Authorization', personalToken)

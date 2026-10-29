@@ -1022,6 +1022,30 @@ describe('[RGMC] register: multi-core', function () {
       assert.notStrictEqual(res.status, 421);
     });
 
+    it('[MC09F] an alias of an account of this core routes here; one held for another core is refused', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      const uname = 'mc09f' + cuid.slug().toLowerCase();
+      const user = new User({ username: uname, email: charlatan.Internet.email(), password: 'testpassword', appId: 'test-app' });
+      await usersRepository.insertOne(user, true);
+      try {
+        await platform.setUserCore(uname, CORE_A);
+        const alias = await usersRepository.mintAlias(uname, user.id);
+        assert.strictEqual(await platform.getUserCore(alias), CORE_A, 'the alias name -> core row points here');
+        const res = await request.get('/' + alias + '/events');
+        assert.notStrictEqual(res.status, 421, JSON.stringify(res.body));
+        const elsewhere = 'mc09fb' + cuid.slug().toLowerCase();
+        await platform.setUserCore(elsewhere, CORE_B);
+        assert.strictEqual(await usersRepository.reserveSpecificAlias(uname, user.id, elsewhere), false);
+        assert.strictEqual(await platform.getUserCore(elsewhere), CORE_B, 'the other core keeps its row');
+        const other = await request.get('/' + elsewhere + '/events');
+        assert.strictEqual(other.status, 421, JSON.stringify(other.body));
+        await platform.deleteUserCore(elsewhere);
+      } finally {
+        await usersRepository.deleteOne(user.id, uname);
+      }
+    });
+
     it('[MC09E] single-core mode must be a no-op', async function () {
       restoreSingleCore();
       // Re-init the application against single-core config.

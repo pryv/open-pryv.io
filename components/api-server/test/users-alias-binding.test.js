@@ -79,6 +79,24 @@ describe('[BXAL] alias name -> core claim', function () {
     assert.deepStrictEqual(calls.filter(([op]) => op === 'index'), [['index', alias, 'owner-id']]);
   });
 
+  it('[BXAL4] releasing an alias gives back its reservation, its index entry and its name -> core row', async function () {
+    const calls = standIns(() => false);
+    calls.push(['seed']);
+    repository.platform.deleteUserCore = async (name) => { calls.push(['unroute', name]); };
+    repository.usersIndex.getAliasesForId = async () => ['r-owned234'];
+    repository.usersIndex.deleteAlias = async (alias, userId) => { calls.push(['unindex', alias, userId]); };
+    await repository.releaseAlias('r-owned234', 'owner-id');
+    assert.deepStrictEqual(calls.filter(([op]) => op !== 'seed'), [
+      ['release', 'alias', 'r-owned234'],
+      ['unindex', 'r-owned234', 'owner-id'],
+      ['unroute', 'r-owned234']
+    ]);
+    // Not an alias of the owner: nothing released.
+    calls.length = 0;
+    await repository.releaseAlias('r-other2345', 'owner-id');
+    assert.deepStrictEqual(calls, []);
+  });
+
   it('[BXAL3] a name already mapped to this core (a former username) is confirmed and bound', async function () {
     const calls = standIns(() => false);
     assert.strictEqual(await repository.reserveSpecificAlias('owner', 'owner-id', 'former-name'), true);
