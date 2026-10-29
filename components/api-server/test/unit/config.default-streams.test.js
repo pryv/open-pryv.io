@@ -175,6 +175,14 @@ describe('[SSDC] SystemStreams config', () => {
           (err) => err.message.includes(`Custom system stream id duplicate. Remove duplicate custom system stream with streamId: "${id}"`), id);
       }
     });
+    it('[SDB3] refuses the account fields the server keeps itself (username, change count)', () => {
+      for (const id of ['username', 'usernameChangeCount', ':system:username']) {
+        const store = new nconf.Provider();
+        store.use('memory');
+        store.set('custom:systemStreams:account', [{ id, type: 'string/pryv', isEditable: false }]);
+        assert.throws(() => systemStreamsConfig.load(store), (err) => err.message.includes('is reserved'), id);
+      }
+    });
     it('[SDB2] accepts custom ids named like object or map members', () => {
       const store = new nconf.Provider();
       store.use('memory');
