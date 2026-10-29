@@ -114,6 +114,24 @@
   code was `[XIDL]`, also used by the ExternalIdsLocalDB conformance suite: it is now `[XIDU]`.
   The other external-id test files were already self-contained.
 
+### Permissions: one merge rule for consent grants and refreshed OAuth sessions
+
+- `business/src/accesses/permissionSet.ts` gains `joinLevel` / `meetLevel` (the level whose
+  capability set is exactly the union / intersection of two levels' sets, or `null`; derived from
+  `capabilitiesForLevel`, no hand-written table), `mergeStreamPermissions(current, incoming,
+  'join' | 'meet')` (per canonical stream id, through `canonicalStreamId`; duplicates inside a set
+  collapse to the last entry; feature `forbidden` always wins; deterministic order) and
+  `PermissionMergeConflictError` (code `permission-level-conflict`).
+- The OAuth re-authorization of a consent grant joins the new consent into the grant (it
+  concatenated the entries not yet present, keyed by stream AND level). The refresh intersection
+  is now a per-stream meet of the chain's permissions and the grant's current ones (it kept the
+  chain's entries present verbatim on the grant, keyed by stream AND level, and dropped the grant's
+  feature restrictions). A meet holding no stream entry other than `none` counts as no reach
+  (`invalid_grant`, as before). The consent accept maps the conflict to `400 invalid_scope` and
+  audits it; the server log carries the stream and levels. `AccessLogic._loadStreamPermission` is
+  unchanged (the last entry for a stream wins), now documented. Tests `[PMRU1]`-`[PMRU16]` (unit,
+  incl. the 25-pair join and meet tables) and `[PMRG1]`-`[PMRG6]` (PostgreSQL and SQLite).
+
 ### Storage: event deletion listings hold head events only (defence in depth)
 
 - The deletion listings (`deleted > since`, used by `events.get` with `includeDeletions`) of both

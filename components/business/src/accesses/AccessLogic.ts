@@ -204,6 +204,11 @@ class AccessLogic {
 
   async _loadStreamPermission (perm: StreamPermission, streamByStorePermissionsMap: Record<string, Record<string, StorePermissionEntry>>) {
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(perm.streamId);
+    // One level per stream: keyed by (store, in-store id), so of two entries
+    // for one stream (in any spelling) the LAST one wins. The API refuses
+    // such requests, so only rows stored before that (or written
+    // storage-direct) can hold two; `mergeStreamPermissions` collapses them
+    // the same way (last wins) when the OAuth paths next write the row.
     if (streamByStorePermissionsMap[storeId] == null) streamByStorePermissionsMap[storeId] = keyedMap();
     streamByStorePermissionsMap[storeId][storeStreamId] = { streamId: storeStreamId, level: perm.level };
 

@@ -46,7 +46,8 @@ const storages = require('storages');
 // the old `cuid`, which is a devDependency and is pruned by `--omit=dev` builds.
 const { createId: cuid } = require('@paralleldrive/cuid2');
 // Permission-lexicon single point + composite access refs.
-const { permissionKey } = require('business/src/accesses/permissionSet.ts');
+const { permissionKey, mergeStreamPermissions, PermissionMergeConflictError } =
+  require('business/src/accesses/permissionSet.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
@@ -87,6 +88,17 @@ function withSessionSelfRevoke (permissions: Array<Record<string, unknown>>): Ar
   return permissions
     .filter((p) => p.feature !== 'selfRevoke')
     .concat([{ feature: 'selfRevoke', setting: 'allowed' }]);
+}
+
+/**
+ * Whether two permission sets hold the same entries (order and display names
+ * ignored). A set whose duplicate entries a merge collapsed compares as
+ * changed, so the merge result is written.
+ */
+function samePermissionKeys (a: Array<Record<string, unknown>>, b: Array<Record<string, unknown>>): boolean {
+  const ka: string[] = a.map(permissionKey);
+  const kb = new Set<string>(b.map(permissionKey));
+  return ka.length === kb.size && new Set(ka).size === kb.size && ka.every((k) => kb.has(k));
 }
 
 /**
@@ -364,15 +376,19 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         describe: 'acceptEventId=' + acceptEventId,
       });
     } else {
-      // Re-authorization: widen the data-grant if this consent grants
-      // entries the current grant lacks (never narrows — the user
-      // manages narrowing via consent scope-update / access update).
-      const currentKeys = new Set((dataGrant.permissions ?? []).map(permissionKey));
-      const missing = grantedPermissions.filter((g) => !currentKeys.has(permissionKey(g)));
-      if (missing.length > 0) {
+      // Re-authorization: join this consent into the data-grant, stream by
+      // stream (never narrows: the user manages narrowing via consent
+      // scope-update / access update). A stream granted at another level
+      // gets the level covering both; when no level covers exactly both
+      // (`read` and `create-only`), the consent is refused rather than
+      // granting a capability nobody consented to.
+      const currentPermissions = dataGrant.permissions ?? [];
+      const merged = mergeStreamPermissions(currentPermissions, grantedPermissions, 'join');
+      if (merged.conflicts.length > 0) throw new PermissionMergeConflictError(merged.conflicts);
+      if (!samePermissionKeys(currentPermissions, merged.permissions)) {
         const updated = await apiCall(context, 'accesses.update', {
           id: dataGrant.id,
-          update: { permissions: (dataGrant.permissions ?? []).concat(missing) },
+          update: { permissions: merged.permissions },
         });
         if (updated?.access != null) dataGrant = updated.access;
       }
@@ -562,11 +578,15 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       throw revoked;
     }
     const dataGrant = await readDataGrantHead(userId, username, dataGrantAccessId);
-    // Session grant ∩ data-grant's CURRENT permissions: consent
-    // narrowing propagates on refresh; widening needs a fresh consent.
-    const currentKeys = new Set((dataGrant.permissions ?? []).map(permissionKey));
-    const effective = permissions.filter((p) => currentKeys.has(permissionKey(p)));
-    if (effective.length === 0) {
+    // Session grant ∩ data-grant's CURRENT permissions, stream by stream:
+    // consent narrowing propagates on refresh (a stream narrowed from
+    // `contribute` to `read` is kept at `read`), widening needs a fresh
+    // consent, and the grant's forbidden features always reach the session.
+    const effective = mergeStreamPermissions(permissions, dataGrant.permissions ?? [], 'meet').permissions;
+    // A mask alone (`none`) is no reach.
+    const hasReach = effective.some((p: Record<string, unknown>) =>
+      typeof p.streamId === 'string' && p.level !== 'none');
+    if (!hasReach) {
       const revoked = new Error('consent no longer covers any of this grant\'s permissions') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
       throw revoked;

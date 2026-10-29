@@ -23,7 +23,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-function resolveLogger (): { error: (...args: unknown[]) => void } | null {
+function resolveLogger (): { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void } | null {
   try {
     const { getLogger } = require('@pryv/boiler');
     return getLogger('oauth2');
@@ -43,4 +43,17 @@ export function logServerError (message: string, err: unknown): void {
   }
   // eslint-disable-next-line no-console
   console.error('[oauth2] ' + message, err);
+}
+
+/**
+ * Record a refused request worth an operator's attention (not a server
+ * fault) on the server trail. Same fallback as `logServerError`.
+ */
+export function logServerWarning (message: string): void {
+  const logger = resolveLogger();
+  if (logger != null) {
+    try { logger.warn(message); return; } catch (_e) { /* fall through */ }
+  }
+  // eslint-disable-next-line no-console
+  console.warn('[oauth2] ' + message);
 }

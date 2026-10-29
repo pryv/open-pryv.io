@@ -420,5 +420,23 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
         'internal error text must not leak into error_description');
       assert.match(res.body.error_description, /failed to create access/);
     });
+
+    it('[OAC-CR2] a permission-level conflict → 400 invalid_scope naming the stream and both levels', async () => {
+      const { PermissionMergeConflictError } = require('business/src/accesses/permissionSet.ts');
+      const handler = require('../src/routes/accept.ts').handleAccept({
+        config: fakeConfig(),
+        platform: fakePlatform(),
+        resolveUser: resolveAlice,
+        createAccess: async () => {
+          throw new PermissionMergeConflictError([{ streamId: 'diary', current: 'read', incoming: 'create-only' }]);
+        },
+      });
+      const res = fakeRes();
+      await handler({ body: validBody() }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_scope');
+      assert.match(res.body.error_description, /^conflicting permission level on a requested resource/);
+      assert.match(res.body.error_description, /"diary".*"read".*"create-only"/);
+    });
   });
 });

@@ -51,7 +51,7 @@ const { verifyState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { audit } = require('../audit.ts');
-const { logServerError } = require('../serverLog.ts');
+const { logServerError, logServerWarning } = require('../serverLog.ts');
 // Permission-lexicon single point — the consent-grant rule (subset +
 // all-or-nothing default + mandatory locks) is shared with the cmc
 // accept path.
@@ -242,6 +242,23 @@ export function handleAccept (deps: AcceptDeps) {
           error: 'invalid_scope',
           error_description: 'grantedPermissions widen the offer under the stream hierarchy — the kept subset must not grant more access than the offer',
         });
+      }
+      // The consent asks for a stream at a level that cannot be joined with
+      // the level already granted on it (`read` and `create-only`): the only
+      // level covering both would grant a capability nobody consented to.
+      // A consent error, not a server fault: the description names the
+      // stream and both levels, for the consent screen; refused consents are
+      // audited.
+      if ((err as { code?: string } | null)?.code === 'permission-level-conflict') {
+        const description = 'conflicting permission level on a requested resource: ' +
+          String((err as Error).message ?? '');
+        logServerWarning('accept: consent refused, ' + description);
+        await audit('oauth.consent.refused', {
+          clientId: payload.clientId,
+          requestedScope: payload.scope,
+          reason: 'permission-level-conflict',
+        });
+        return sendJson(res, 400, { error: 'invalid_scope', error_description: description });
       }
       // The data holder (peer) refused the consent accept — e.g. the open-link
       // capability already recorded this accepter, or a consumed / invalidated
