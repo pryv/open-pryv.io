@@ -118,8 +118,9 @@ function get (dottedPath, from = config) {
 const configReader = { get: (key) => get(key.split(':').join('.')) };
 // Single or multi-core, decided as at boot: the core-identity plugin runs
 // before boot loads default-config.yml, so it sees the operator's layers only.
-const coreIdentity = require('../config/plugins/core-identity.js')
-  .deriveCoreIdentity((key) => get(key.split(':').join('.'), operatorConfig));
+const operatorGet = (key) => get(key.split(':').join('.'), operatorConfig);
+const coreIdentityPlugin = require('../config/plugins/core-identity.js');
+const coreIdentity = coreIdentityPlugin.deriveCoreIdentity(operatorGet);
 const baseLayerNote = baseLayer != null
   ? `Base layer: NODE_ENV=${nodeEnv}, so boot without --config adds ${baseLayerName} under this file (and default-config.yml under both).`
   : `Base layer: none (NODE_ENV=${nodeEnv || '<unset>'} has no config file); boot adds only default-config.yml under this file.`;
@@ -322,6 +323,14 @@ if (get('dns.active') === true && get('dnsLess.isActive') !== false) {
   problems.push('dns.active is true but dnsLess.isActive is not explicitly false — ' +
     'the API would route path-style and reserved subdomains (reg/access/mfa) plus ' +
     'per-user subdomains would misroute. Add `dnsLess:\n  isActive: false`');
+}
+
+// dns.domain set, dnsLess.isActive left out (mirrors
+// checkDnsLessExplicit in config/plugins/config-validation.js): read in the
+// operator's layers, as boot reads it.
+{
+  const message = coreIdentityPlugin.dnsLessUnsetProblem(operatorGet);
+  if (message != null) problems.push(message);
 }
 
 // storages.base.engine + matching engine config block. The engine and the

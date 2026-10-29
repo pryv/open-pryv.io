@@ -256,6 +256,47 @@ function checkDnsTopologyConsistency (config, problems) {
   }
 }
 
+// `dns.domain` set with no `dnsLess.isActive` (whatever `core.url` is): the
+// core-identity and public-url plugins, which run before default-config.yml is
+// loaded, read that as a multi-core core under the domain, while the shipped
+// default `dnsLess.isActive: true` makes it route path-style (see
+// dnsLessUnsetProblem in config/plugins/core-identity.js). Judged on the
+// operator's layers, as the plugin sees them.
+function checkDnsLessExplicit (config, problems) {
+  const { dnsLessUnsetProblem } = require('./core-identity.js');
+  const message = dnsLessUnsetProblem(operatorLayersGet(config));
+  if (message == null) return;
+  problems.push({
+    message,
+    path: ['dnsLess', 'isActive'],
+    payload: { 'dns.domain': config.get('dns:domain') }
+  });
+}
+
+// Scopes that are not the operator's: 'memory' holds what boot plugins
+// derived, 'default-file' and 'defaults' what ships. This is a deny-list:
+// every other scope counts as the operator's, the shipped extras included
+// ('serviceInfo', 'default-paths', 'default-audit-path'), so an extra must
+// never carry 'dns' or 'dnsLess' keys.
+const NON_OPERATOR_SCOPES = new Set(['memory', 'default-file', 'defaults']);
+
+/**
+ * A `get` over the operator's layers only, highest first (scalar keys).
+ * A config without scopes (unit-test fakes) is read as it is.
+ */
+function operatorLayersGet (config) {
+  const stores = config.store?.stores;
+  if (stores == null) return (key) => config.get(key);
+  return (key) => {
+    for (const [scope, store] of Object.entries(stores)) {
+      if (NON_OPERATOR_SCOPES.has(scope)) continue;
+      const value = store.get(key);
+      if (typeof value !== 'undefined') return value;
+    }
+    return undefined;
+  };
+}
+
 // Structural validation for the third-party sign-in (OIDC relying party)
 // block. Only runs when `sso.enabled` is true (the opt-in feature). Enforces:
 //   - v1 is single-core / dnsLess only: `sso.enabled` alongside the embedded
@@ -564,6 +605,7 @@ async function validate (config) {
   checkTrustedApps(config, problems);
   checkAuditOnUserDeleteMode(config, problems);
   checkDnsTopologyConsistency(config, problems);
+  checkDnsLessExplicit(config, problems);
   checkPlatformEngineTopology(config, problems);
   checkSeriesEngineDependency(config, problems);
   checkSsoConfig(config, problems);
@@ -761,6 +803,7 @@ module.exports = {
   checkTrustedApps,
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,
+  checkDnsLessExplicit,
   checkPlatformEngineTopology,
   checkSeriesEngineDependency,
   checkSsoConfig,

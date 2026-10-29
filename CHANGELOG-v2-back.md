@@ -69,6 +69,25 @@
   with `account.autoDeletion.transfer.identitySecretsKey` or a key derived from the admin key).
 - Account activity helper: a delegate's use counts as use of the account and is reported as such,
   with a per-access-type breakdown.
+
+### Boot: dns.domain with dnsLess.isActive unset is refused
+
+- `config/plugins/core-identity.js` and `config/plugins/public-url.js` are synchronous boiler
+  plugins: they run before `default-config.yml` loads and see `dnsLess.isActive` as undefined when
+  the operator left it out. With `dns.domain` set, core-identity derived a multi-core identity
+  (when `core.url` is absent) and public-url per-user subdomain service URLs (with or without
+  `core.url`), while the runtime readers (express routing, `usernameSubdomains`, the register
+  routes, hosted sites, ACME host names) read the merged default `true` and routed path-style.
+  That undefined view stays as it is, since a DNSless multi-core member (`core.url`, no
+  `dns.domain`, no `dnsLess` key) depends on it; only `dns.domain` with `dnsLess.isActive` unset
+  is now refused, whatever `core.url` is. `core-identity.js` exports `dnsLessUnsetProblem(get)`
+  (operator's layers in, message or null out); `config-validation.js` runs it as
+  `checkDnsLessExplicit` over the config's scopes minus `memory` (what boot plugins derived),
+  `default-file` and `defaults`; `bin/check-config.js` runs it over its operator layers. Tests
+  `[CVDU1-6]` (boiler config over the shipped defaults with the core-identity plugin, as at boot:
+  refusal with and without `core.url`, classification unchanged for every other topology, the
+  operator layers: override, bootstrap, environment and a `--config` host file) and `[CCDU1-2]`.
+  The layer filter is a deny-list: a shipped config extra must never carry `dns` or `dnsLess`.
 ### check-config: the shipped defaults are a layer; multi-core members without a DNS of their own
 
 - `bin/check-config.js` read the checked file (with the environment and `bootstrap-config.yml`)

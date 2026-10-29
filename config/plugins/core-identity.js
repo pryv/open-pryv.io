@@ -70,8 +70,34 @@ function deriveCoreIdentity (get) {
   return { coreUrl: publicUrl ? stripTrailingSlash(publicUrl) : null, isSingleCore: true };
 }
 
+/**
+ * The topology `deriveCoreIdentity` cannot settle: `dns.domain` set and no
+ * `dnsLess.isActive` in the operator's layers, whatever `core.url` is. This
+ * plugin then treats the core as multi-core (and the public-url plugin
+ * advertises per-user subdomain service URLs under the domain), while the
+ * shipped default `dnsLess.isActive: true` makes it route path-style: it would
+ * advertise names nothing serves. Boot refuses it (config-validation) and
+ * bin/check-config.js reports it. A DNSless multi-core member (`core.url`, no
+ * `dns.domain`, no `dnsLess` key) is not concerned.
+ *
+ * `get` reads the operator's layers only, as for `deriveCoreIdentity`.
+ *
+ * @param {(key: string) => any} get
+ * @returns {string|null} the problem, or null when the topology is settled
+ */
+function dnsLessUnsetProblem (get) {
+  const dnsDomain = get('dns:domain');
+  if (dnsDomain == null) return null;
+  if (typeof get('dnsLess:isActive') !== 'undefined') return null;
+  const shown = dnsDomain === '' ? 'is set to an empty string' : `is set (${dnsDomain})`;
+  return `'dns.domain' ${shown} but 'dnsLess.isActive' is not: set it explicitly, ` +
+    "'false' for a multi-core deployment with per-user subdomains under the domain, 'true' for a single core with path-style routing. " +
+    "A DNSless multi-core member (with 'core.url') must remove 'dns.domain' instead: either value would change how it routes. " +
+    'Left unset, the core would advertise per-user subdomain URLs while routing requests path-style.';
+}
+
 function stripTrailingSlash (url) {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
-module.exports = { load, deriveCoreIdentity };
+module.exports = { load, deriveCoreIdentity, dnsLessUnsetProblem };
