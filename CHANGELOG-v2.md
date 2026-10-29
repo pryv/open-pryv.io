@@ -1,5 +1,39 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Fixed
+
+- **Backup and restore keep the account aliases.** The aliases of an account (those of its
+  `randomAlias` accesses and its former usernames) were not backed up: after a restore the aliased
+  accesses and the endpoints under a former username answered `404 unknown-resource`, and a former
+  username was free for a new registration. The backup manifest now lists each account's aliases
+  and the restore reserves them again; an alias another account or core took meanwhile stays with
+  its holder and is reported (`Aliases: ... held by another account or core`). Backups written
+  before list none.
+- **`account.changeUsername` refuses a name taken while the change runs, and writes nothing.** The
+  availability check ran before the writes, which could not refuse: a name registered (or taken as
+  an alias) by another account of the same core in between was overwritten in the platform rows,
+  and the change then failed with `500`, leaving both accounts inconsistent. The change now holds
+  the current username as an alias first, and the local rename and the alias check refuse a taken
+  name (`409 item-already-exists`) before anything else is written. When the current username
+  cannot be kept as an alias the change is refused (`400 invalid-operation`) instead of going on
+  with the former name unprotected.
+- **Concurrent username changes of one account: one applies.** Two changes sent at once could both
+  pass the change limit and both apply (the counter then exceeded the limit). The second one now
+  answers `400 invalid-operation`, and the change is counted once.
+- **Deleting an access releases the alias of an access created through it during the deletion.**
+  The final pass that deletes such accesses left their alias reserved and routing to the account.
+- **The account-changed notification of a username change is sent under the new name too**, so
+  sockets opened after the change receive it (before: only under the former name).
+
+### Documentation
+
+- `auth.usernameChangeLimit` (default `2`, `0` disables the change) is declared in
+  `default-config.yml` and in the install wizard's optional settings. Signing in requires the
+  current username: `auth.login` with a former username answers `400 invalid-operation`, whatever
+  name the path carries (accesses issued under a former username keep working).
+
 ## 2.0.0-rc.65 - 2026-10-29
 
 ### BREAKING and security

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Username resolution: no storage read of the canonical name per request
+
+- Every API request read the account's canonical username from the users index after resolving
+  the addressed name (one PostgreSQL round trip or SQLite read per request). The name -> account
+  cache now records whether a name is the account's username, so the read happens only for a
+  request addressed by an alias. The flag lives in the same cache entry as the mapping (evicted
+  and busted with it); a username change busts the former name again once all its writes are done.
+- `UsersLocalIndexDB.renameUser` resolves `true` when a row was renamed and `false` when no user
+  holds the old name (both engines); the storage `usersLocalIndex` adds `resolveName` and
+  `getUserIdForAlias`. The users repository adds `resolveUsername` and `restoreAliases`.
+
 ### Storage: event deletion listings hold head events only (defence in depth)
 
 - The deletion listings (`deleted > since`, used by `events.get` with `includeDeletions`) of both
