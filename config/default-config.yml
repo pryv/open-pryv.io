@@ -933,6 +933,13 @@ audit:
 # RFC 7591 dynamic-registration HTTP endpoint is intentionally not
 # shipped; config validation rejects mode: open.
 oauth:
+  # URL of the consent page of your auth UI: GET /oauth2/authorize redirects the
+  # user there (with `state` and `pryvApi` query parameters) to sign in and
+  # approve the client. With app-web-user-account it is its /oauth2-authorize
+  # route, e.g. https://account.example.com/oauth2-authorize. Required for the
+  # OAuth authorization flow: while it is empty, /oauth2/authorize answers 500
+  # (server_error); the rest of the API is unaffected.
+  consentUrl: ''
   accessTokenTTL: 3600             # seconds (1 hour default)
   refreshTokenTTL: 2592000         # seconds (30 days sliding)
   refreshTokenAbsoluteTTL: 7776000 # seconds (90 days absolute cap)
