@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Integrity check: user ids unknown to the users index are reported
+
+- The users index part of the platform integrity check (`GET /system/check-platform-integrity`,
+  admin key, `system.checkPlatformIntegrity`; also the per-test hooks of the test suites) never
+  reported anything: it compared an unawaited promise to `null`, so a user id holding rows in
+  `events`, `streams`, `accesses`, `profile` or `webhooks` that no account of the index owns (rows an
+  account deletion left behind) passed. It now reads the index once and reports each such id
+  (`User id "<id>" in "<collection>" is unknown in the user index DB`). Test `[UIIX1]`. On the
+  SQLite engine the check lists the users of a collection from the index itself (per-user files),
+  so it cannot see such rows there.
+- `usersRepository.deleteOne` removes the account's accesses, profile and webhooks too (events and
+  streams already went with the mall). The account deletion flow (`auth.delete` and the other
+  erasure paths) removed them itself, so production deletions left nothing; any other caller of
+  `deleteOne` (the test fixtures and many test cleanups) left them as rows of a user id no account
+  owns, which the check above, once it worked, reported in about ninety places of the API server
+  suite. `usersRepository.deleteAll` (tests only) removes them as well. Both take
+  `{ keepUserCollections: true }` for the test data resets that recreate the same accounts and reset
+  those collections themselves (`data.ts` / `dynData.ts` `resetUsers`); `databaseFixture.cleanEverything`
+  also clears `profile`; a fixture of `root.test.js` wrote its rows under a user id it did not
+  have. Test `[UIIX2]`.
+
 ### Storage: event deletion listings hold head events only (defence in depth)
 
 - The deletion listings (`deleted > since`, used by `events.get` with `includeDeletions`) of both

@@ -270,7 +270,7 @@ describe('[SYER] system (ex-register)', function () {
       const usersRepository = await getUsersRepository();
       const userId = await usersRepository.getUserIdForUsername(newUserData.username);
       if (userId) {
-        await usersRepository.deleteOne(userId, newUserData.username, true);
+        await usersRepository.deleteOne(userId, newUserData.username);
       }
     });
 

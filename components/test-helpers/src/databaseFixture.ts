@@ -41,7 +41,7 @@ class Context {
 
   async cleanEverything () {
     if (this.storageLayer) {
-      for (const name of ['accesses', 'sessions', 'webhooks']) {
+      for (const name of ['accesses', 'sessions', 'webhooks', 'profile']) {
         await this.storageLayer.clearCollection(name);
       }
     }
@@ -303,7 +303,7 @@ class FixtureUser extends FixtureItem {
     // platform.deleteUser can properly clean up unique fields.
     // If dependents are removed first, getUserById returns null and unique
     // platform entries (e.g. email) are orphaned, causing integrity check failures.
-    await usersRepository.deleteOne(this.context.user.id, username, true);
+    await usersRepository.deleteOne(this.context.user.id, username);
     // Then remove remaining dependents (accesses, webhooks,
     // sessions). Events and streams are already gone via mall.deleteUser inside
     // deleteOne; their individual remove() methods handle "not found" gracefully.
