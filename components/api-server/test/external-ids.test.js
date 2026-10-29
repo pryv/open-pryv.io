@@ -40,6 +40,14 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     return coreRequest.post('/reg/ext-id/cores').send(body);
   }
 
+  // Creates the namespace, or updates it when it exists (201 or 200). The
+  // blocks below call it in their own `before`, so each one runs alone (with
+  // --grep) as well as after [XIDA].
+  async function ensureNamespace () {
+    const put = await coreRequest.put('/system/admin/ext-id-ns/' + ns).set('authorization', adminKey).send({ label: 'Practice EHR' });
+    assert.ok([200, 201].includes(put.status), JSON.stringify(put.body));
+  }
+
   before(async function () {
     await initTests();
     await initCore();
@@ -97,6 +105,8 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
   });
 
   describe('[XIDC] claims', function () {
+    before(ensureNamespace);
+
     it('[XIDC1] claim (201), idempotent claim (200), list without the value', async function () {
       const v = blinded();
       const res = await claim(users.a, { namespace: ns, blindedValue: v });
@@ -164,7 +174,6 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
       assert.deepStrictEqual(del.body.released, true);
       assert.strictEqual((await coreRequest.delete(`/${users.a.username}/account/external-ids/${ns}`).set('Authorization', users.a.token)).status, 200);
       assert.strictEqual((await claim(users.b, { namespace: ns, blindedValue: users.a.value })).status, 201);
-      users.b.value = users.a.value;
     });
 
     it('[XIDC7] malformed values and unknown namespaces are refused without echoing the value', async function () {
@@ -178,6 +187,8 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
   });
 
   describe('[XIDH] holder answer (core to core)', function () {
+    before(ensureNamespace);
+
     function holds (body, key = adminKey) {
       const req = coreRequest.post('/system/ext-id/holds');
       return (key != null ? req.set('authorization', key) : req).send(body);
@@ -220,6 +231,8 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     useNock();
     const MANDRILL = 'https://mandrillapp.local';
     const MANDRILL_PATH = '/api/1.0/messages/send-template.json';
+
+    before(ensureNamespace);
 
     function release (body, key = adminKey) {
       const req = coreRequest.post('/system/admin/ext-id/release');
@@ -349,8 +362,17 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
   });
 
   describe('[XIDL] lookup', function () {
+    // An id held by an account of this core, claimed here rather than by [XIDC].
+    let held;
+    before(async function () {
+      await ensureNamespace();
+      const holder = await makeUser();
+      held = blinded();
+      assert.strictEqual((await claim(holder, { namespace: ns, blindedValue: held })).status, 201);
+    });
+
     it('[XIDLU1] POST answers the core URL; unclaimed and unknown namespace are the same 404; GET is not a route', async function () {
-      const res = await lookup({ namespace: ns, blindedValue: users.b.value });
+      const res = await lookup({ namespace: ns, blindedValue: held });
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
       assert.strictEqual(typeof res.body.server, 'string');
       const unclaimed = await lookup({ namespace: ns, blindedValue: blinded() });
@@ -373,7 +395,7 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
 
     it('[XIDLU3] claim refusals count in the same budget, successful claims do not', async function () {
       for (let i = 0; i < 10; i++) {
-        assert.strictEqual((await claim(users.a, { namespace: ns, blindedValue: users.b.value })).status, 409);
+        assert.strictEqual((await claim(users.a, { namespace: ns, blindedValue: held })).status, 409);
       }
       assert.strictEqual((await claim(users.a, { namespace: ns, blindedValue: blinded() })).status, 429, 'over budget: refused before the claim');
       await extIdLookupBudget.clear();
@@ -385,6 +407,8 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
   });
 
   describe('[XIDG] the blinded value is never logged', function () {
+    before(ensureNamespace);
+
     // Every log line of every logger, while `fn` runs (same capture as the
     // credentials log test).
     async function captureLogs (fn) {
@@ -466,8 +490,7 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     // Self-contained: the namespace exists and holds one claimed id, whether
     // or not the tests above ran.
     before(async function () {
-      const put = await coreRequest.put('/system/admin/ext-id-ns/' + ns).set('authorization', adminKey).send({ label: 'Practice EHR' });
-      assert.ok([200, 201].includes(put.status), JSON.stringify(put.body));
+      await ensureNamespace();
       const holder = await makeUser();
       assert.strictEqual((await claim(holder, { namespace: ns, blindedValue: blinded() })).status, 201);
     });
