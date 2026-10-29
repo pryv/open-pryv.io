@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Storage: event deletion listings hold head events only (defence in depth)
+
+- The deletion listings (`deleted > since`, used by `events.get` with `includeDeletions`) of both
+  engines did not exclude history versions, where the single-event lookups do (`head_id IS NULL`
+  on PostgreSQL, `headId IS NULL` on SQLite). No API path stamps a version with a deletion time (a
+  version is a copy of the event before the change, deleted events cannot be changed), so this is
+  not reachable through the API; a restored or hand-edited store could hold such rows. Both
+  engines now filter them, in both SQLite query paths (default and paged). Test `[EGVI2]` stamps
+  a version directly in the store.
+
+### Config: an empty `oauth.consentUrl` is reported (boot warning and `check-config`)
+
+- `GET /oauth2/authorize` answers 500 (`oauth:consentUrl not configured`) while `oauth.consentUrl`
+  is empty, and nothing said so before the first authorization attempt. The master now logs a
+  boot warning (`[oauth] oauth.consentUrl is not set: …`) and `bin/check-config.js` lists the same
+  warning. A warning only, never a refusal: OAuth has no enable flag and a core that does not use
+  the authorization flow runs fine without the key. Nothing is reported when the OAuth routes do
+  not mount (no issuer can be derived). The rule lives in `components/oauth2/src/consentUrlCheck.ts`,
+  shared by both. Tests `[OCUW1]`-`[OCUW3]`, `[CKOC1]`.
+
 ### OAuth2 documentation brought in line with the code (no behaviour change)
 
 - `oauth.requireAppAccountMfa` and `oauth.audAllowList` are read by no code: `docs/oauth2.md` and

@@ -118,8 +118,10 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   // A range on `term` narrows the vocabulary scan; `LIKE 'prefix%'` read every term.
   this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term >= ? AND term < ?');
 
-  this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ?');
-  this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE deleted > ? ORDER BY deleted DESC');
+  // Head events only: a history version is a row of its own (headId set), never
+  // addressed by its own id (same as the PostgreSQL engine's `head_id IS NULL`).
+  this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ? AND headId IS NULL');
+  this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE headId IS NULL AND deleted > ? ORDER BY deleted DESC');
   this.eventQueries.getHistory = this.db.prepare('SELECT * from events WHERE headId = ? ORDER BY modified ASC');
 
   this.eventQueries.create = prepareCreateQuery(this.db, 'events', Object.keys(tableSchemas.events));
@@ -185,8 +187,9 @@ UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseI
   if (options?.sortAscending !== true && options?.limit == null && options?.skip == null) {
     return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
   }
-  // Same bound (strict), order, limit and skip as the PostgreSQL engine.
-  let sql = `SELECT * from events WHERE deleted > ? ORDER BY deleted ${options?.sortAscending === true ? 'ASC' : 'DESC'}`;
+  // Same bound (strict), order, limit and skip as the PostgreSQL engine; head
+  // events only (history versions are never deletion records).
+  let sql = `SELECT * from events WHERE headId IS NULL AND deleted > ? ORDER BY deleted ${options?.sortAscending === true ? 'ASC' : 'DESC'}`;
   const params: number[] = [deletedSince];
   if (options?.limit != null || options?.skip != null) { sql += ' LIMIT ?'; params.push(options?.limit ?? -1); }
   if (options?.skip != null) { sql += ' OFFSET ?'; params.push(options.skip); }

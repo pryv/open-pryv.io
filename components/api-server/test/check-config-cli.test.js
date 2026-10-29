@@ -410,3 +410,25 @@ describe('[CKBS] bin/check-config.js on a core joined with --bootstrap', functio
     }
   });
 });
+
+describe('[CKOC] bin/check-config.js oauth.consentUrl', function () {
+  this.timeout(60000);
+
+  it('[CKOC1] a config without oauth.consentUrl passes with a warning; setting it clears the warning', () => {
+    const without = runCheck(BASE);
+    assert.strictEqual(without.status, 0, without.stdout + without.stderr);
+    assert.match(without.stdout, /oauth\.consentUrl is not set: GET \/oauth2\/authorize answers 500/);
+    const empty = runCheck(BASE + `
+oauth:
+  consentUrl: ''
+`);
+    assert.strictEqual(empty.status, 0, empty.stdout + empty.stderr);
+    assert.match(empty.stdout, /oauth\.consentUrl is not set/);
+    const withUrl = runCheck(BASE + `
+oauth:
+  consentUrl: https://app.example.com/oauth2-authorize
+`);
+    assert.strictEqual(withUrl.status, 0, withUrl.stdout + withUrl.stderr);
+    assert.ok(!/oauth\.consentUrl/.test(withUrl.stdout), withUrl.stdout);
+  });
+});

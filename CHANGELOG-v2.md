@@ -19,6 +19,28 @@
   plugin-internal streams (for instance the per-link streams removed when a capability is cleaned
   up), whose ids name internal objects. Only the personal access gets those records now.
 
+- **OAuth: a token minted right after an operator revoke of its client is no longer refused as
+  revoked.** The revoke records its time in milliseconds and refuses every session access of the
+  client created before it, but the accesses minted by the `refresh_token` and
+  `client_credentials` grants carried a creation time rounded down to the second. A client
+  revoked, re-registered and issued a token within the same second got a token that was born
+  dead (`403 invalid-access-token`, "The application access has been revoked."). These accesses
+  now carry a millisecond creation time, like every other access. Tokens minted before the revoke
+  stay refused.
+
+- **OAuth: the refresh grant refuses a consent data-grant that expired less than a second ago.**
+  Its expiry was compared with the current time rounded down to the second, so a grant stayed
+  usable for refresh up to one second past its `expires`. It now answers `invalid_grant` as soon
+  as the grant has expired. The authorization-code exchange applies the same exact comparison to
+  the access it hands back.
+
+- **SQLite engine: `events.getOne` no longer serves a history version by its own storage id.**
+  With versioning on (`versioning.forceKeepHistory`), each earlier version of an event is stored
+  under an id of its own. The API never returns that id, but asking for it on the SQLite engine
+  answered with the stored version (its `headId` included), where the PostgreSQL engine answers
+  `404 unknown-resource`. The SQLite engine now answers `unknown-resource` too, for reads and
+  updates; history stays available through `includeHistory` on the head event.
+
 ## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the
