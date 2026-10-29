@@ -63,14 +63,27 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
   let username, personalToken, endUser, appUsername, appToken, clientId, fixtures, restoreConsentUrl, originalFetch;
   const offers = {}; // name -> capabilityUrl
 
-  const STREAMS = ['pm1', 'pm2', 'pm3', 'pm4a', 'pm4b', 'pm5a', 'pm5b', 'pm6'];
+  // [id, parentId]
+  const STREAMS = [
+    ['pm1'], ['pm2'], ['pm3'], ['pm4a'], ['pm4b'], ['pm5a'], ['pm5b'], ['pm6'],
+    ['pm7'], ['pm7c', 'pm7'], ['pm8'], ['pm8x', 'pm8'], ['pm9'], ['pm9c', 'pm9'], ['pm10'], ['pm10c', 'pm10'],
+    ['pm11'], ['pm11b'], ['pm12'], ['pm13a'], ['pm13b'], ['pm14']
+  ];
   const INITIAL_OFFERS = {
     p1: [{ streamId: 'pm1', level: 'read' }],
     p2: [{ streamId: 'pm2', level: 'read' }],
     p3: [{ streamId: 'pm3', level: 'contribute' }],
     p4: [{ streamId: 'pm4a', level: 'read' }, { streamId: 'pm4b', level: 'read' }],
     p5: [{ streamId: 'pm5a', level: 'contribute' }, { streamId: 'pm5b', level: 'read' }],
-    p6: [{ streamId: 'pm6', level: 'read' }]
+    p6: [{ streamId: 'pm6', level: 'read' }],
+    p7: [{ streamId: 'pm7', level: 'contribute' }],
+    p8: [{ streamId: 'pm8', level: 'read' }],
+    p9: [{ streamId: 'pm9', level: 'contribute' }, { streamId: 'pm9c', level: 'read' }],
+    p10: [{ streamId: 'pm10', level: 'contribute' }, { streamId: 'pm10c', level: 'read' }],
+    p11: [{ streamId: 'pm11', level: 'read' }, { feature: 'webhooks', setting: 'forbidden' }],
+    p12: [{ streamId: 'pm12', level: 'contribute' }],
+    p13: [{ streamId: 'pm13a', level: 'read' }, { streamId: 'pm13b', level: 'read' }],
+    p14: [{ streamId: 'pm14', level: 'read' }]
   };
 
   before(async function () {
@@ -86,9 +99,9 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     endUser = await fixtures.user(username);
     await endUser.access({ token: personalToken, type: 'personal' });
     await endUser.session(personalToken);
-    for (const id of STREAMS) {
+    for (const [id, parentId] of STREAMS) {
       const res = await coreRequest.post('/' + username + '/streams').set('Authorization', personalToken)
-        .send({ id, name: id });
+        .send({ id, name: id, ...(parentId != null ? { parentId } : {}) });
       assert.equal(res.status, 201, describeRes(res));
     }
 
@@ -226,6 +239,35 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     assert.equal(res.status, 200, describeRes(res));
   }
 
+  /** Write a grant's permissions storage-direct (shapes the API refuses), integrity kept. */
+  async function seedGrantPermissions (grant, permissions) {
+    const base = baseOf(grant.id);
+    const repo = require('storages').storageLayer.accesses;
+    const user = { id: endUser.attrs.id, username };
+    const stored = await new Promise((resolve, reject) => repo.findOne(user, { id: base }, null,
+      (err, found) => (err != null ? reject(err) : resolve(found))));
+    const seeded = { ...stored, permissions };
+    require('business').integrity.accesses.set(seeded);
+    await new Promise((resolve, reject) => repo.updateOne(user, { id: base },
+      { permissions, ...(seeded.integrity != null ? { integrity: seeded.integrity } : {}) },
+      (err) => (err != null ? reject(err) : resolve())));
+    require('cache').default.unsetAccessLogic(endUser.attrs.id, { id: base, token: grant.token });
+  }
+
+  async function historyLength (grant) {
+    return (await getAccess(baseOf(grant.id), { includeHistory: true })).history?.length ?? 0;
+  }
+
+  async function writeEvent (token, streamId) {
+    return await coreRequest.post('/' + username + '/events').set('Authorization', token)
+      .send({ streamIds: [streamId], type: 'note/txt', content: 'x' });
+  }
+
+  async function readEvents (token, streamId) {
+    return await coreRequest.get('/' + username + '/events').set('Authorization', token)
+      .query({ streams: [streamId] });
+  }
+
   const setLevel = (streamId, level) => (perms) =>
     perms.map((p) => (p.streamId === streamId ? { streamId, level } : p));
 
@@ -300,7 +342,7 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     assert.equal(write.status, 403, describeRes(write));
   });
 
-  it('[PMRG4] a refresh after narrowing a read stream to create-only drops it; a session left with no reach gets invalid_grant', async function () {
+  it('[PMRG4] a refresh after narrowing a read stream to create-only masks it (none); a session left with no reach gets invalid_grant', async function () {
     const both = await consent('p4', [{ streamId: 'pm4a', level: 'read' }, { streamId: 'pm4b', level: 'read' }]);
     assert.equal(both.acceptRes.status, 200, describeRes(both.acceptRes));
     const only = await consent('p4', [{ streamId: 'pm4a', level: 'read' }]);
@@ -311,7 +353,7 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     const refreshedBoth = await refresh(both.tokenRes.body.refresh_token);
     assert.equal(refreshedBoth.status, 200, describeRes(refreshedBoth));
     assert.deepEqual(userStreams((await accessInfo(refreshedBoth.body.access_token)).permissions),
-      [{ streamId: 'pm4b', level: 'read' }]);
+      [{ streamId: 'pm4a', level: 'none' }, { streamId: 'pm4b', level: 'read' }]);
 
     const refreshedOnly = await refresh(only.tokenRes.body.refresh_token);
     assert.equal(refreshedOnly.status, 400, describeRes(refreshedOnly));
@@ -327,16 +369,7 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
       ? [{ streamId: 'pm5a', level: 'read' }, { streamId: 'pm5a', level: 'contribute' }]
       : [p]));
     const base = baseOf(grant.id);
-    const repo = require('storages').storageLayer.accesses;
-    const user = { id: endUser.attrs.id, username };
-    const stored = await new Promise((resolve, reject) => repo.findOne(user, { id: base }, null,
-      (err, found) => (err != null ? reject(err) : resolve(found))));
-    const seeded = { ...stored, permissions: legacy };
-    require('business').integrity.accesses.set(seeded);
-    await new Promise((resolve, reject) => repo.updateOne(user, { id: base },
-      { permissions: legacy, ...(seeded.integrity != null ? { integrity: seeded.integrity } : {}) },
-      (err) => (err != null ? reject(err) : resolve())));
-    require('cache').default.unsetAccessLogic(endUser.attrs.id, { id: base, token: grant.token });
+    await seedGrantPermissions(grant, legacy);
 
     // Loads as contribute (the last entry): the grant's own token can write.
     const write = await coreRequest.post('/' + username + '/events').set('Authorization', grant.token)
@@ -364,5 +397,120 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     assert.ok(session.permissions.some((p) => p.feature === 'selfRevoke' && p.setting === 'allowed'),
       'the session keeps its selfRevoke override: ' + JSON.stringify(session.permissions));
     assert.deepEqual(userStreams(session.permissions), [{ streamId: 'pm6', level: 'read' }]);
+  });
+
+  it('[PMRG7] an exclusion mask the owner adds to the grant on a child stream reaches the refreshed session', async function () {
+    const r = await consent('p7', [{ streamId: 'pm7', level: 'contribute' }]);
+    assert.equal(r.acceptRes.status, 200, describeRes(r.acceptRes));
+    const grant = await dataGrantOf(r.tokenRes.body.access_token);
+    await ownerUpdateGrant(grant, (perms) => perms.concat([{ streamId: 'pm7c', level: 'none' }]));
+
+    const refreshed = await refresh(r.tokenRes.body.refresh_token);
+    assert.equal(refreshed.status, 200, describeRes(refreshed));
+    const token = refreshed.body.access_token;
+    assert.deepEqual(userStreams((await accessInfo(token)).permissions),
+      [{ streamId: 'pm7', level: 'contribute' }, { streamId: 'pm7c', level: 'none' }]);
+    assert.equal((await writeEvent(token, 'pm7c')).status, 403);
+    const parent = await writeEvent(token, 'pm7');
+    assert.equal(parent.status, 201, describeRes(parent));
+  });
+
+  it('[PMRG8] a create-only carve-out the owner adds to the grant below a readable stream masks it in the refreshed session', async function () {
+    const r = await consent('p8', [{ streamId: 'pm8', level: 'read' }]);
+    assert.equal(r.acceptRes.status, 200, describeRes(r.acceptRes));
+    const grant = await dataGrantOf(r.tokenRes.body.access_token);
+    await ownerUpdateGrant(grant, (perms) => perms.concat([{ streamId: 'pm8x', level: 'create-only' }]));
+
+    const refreshed = await refresh(r.tokenRes.body.refresh_token);
+    assert.equal(refreshed.status, 200, describeRes(refreshed));
+    const token = refreshed.body.access_token;
+    assert.deepEqual(userStreams((await accessInfo(token)).permissions),
+      [{ streamId: 'pm8', level: 'read' }, { streamId: 'pm8x', level: 'none' }]);
+    assert.equal((await readEvents(token, 'pm8x')).status, 403);
+    assert.equal((await readEvents(token, 'pm8')).status, 200);
+  });
+
+  it('[PMRG9] a child the session holds at a narrower level than its parent keeps that level when the owner drops it from the grant', async function () {
+    const r = await consent('p9', [{ streamId: 'pm9', level: 'contribute' }, { streamId: 'pm9c', level: 'read' }]);
+    assert.equal(r.acceptRes.status, 200, describeRes(r.acceptRes));
+    const grant = await dataGrantOf(r.tokenRes.body.access_token);
+    await ownerUpdateGrant(grant, (perms) => perms.filter((p) => p.streamId !== 'pm9c'));
+
+    const refreshed = await refresh(r.tokenRes.body.refresh_token);
+    assert.equal(refreshed.status, 200, describeRes(refreshed));
+    const token = refreshed.body.access_token;
+    assert.deepEqual(userStreams((await accessInfo(token)).permissions),
+      [{ streamId: 'pm9', level: 'contribute' }, { streamId: 'pm9c', level: 'read' }]);
+    assert.equal((await writeEvent(token, 'pm9c')).status, 403);
+    assert.equal((await readEvents(token, 'pm9c')).status, 200);
+  });
+
+  it('[PMRG10] a child the session reads and the owner sets to create-only on the grant is masked (no common level)', async function () {
+    const r = await consent('p10', [{ streamId: 'pm10', level: 'contribute' }, { streamId: 'pm10c', level: 'read' }]);
+    assert.equal(r.acceptRes.status, 200, describeRes(r.acceptRes));
+    const grant = await dataGrantOf(r.tokenRes.body.access_token);
+    await ownerUpdateGrant(grant, setLevel('pm10c', 'create-only'));
+
+    const refreshed = await refresh(r.tokenRes.body.refresh_token);
+    assert.equal(refreshed.status, 200, describeRes(refreshed));
+    const token = refreshed.body.access_token;
+    assert.deepEqual(userStreams((await accessInfo(token)).permissions),
+      [{ streamId: 'pm10', level: 'contribute' }, { streamId: 'pm10c', level: 'none' }]);
+    assert.equal((await readEvents(token, 'pm10c')).status, 403);
+    assert.equal((await writeEvent(token, 'pm10c')).status, 403);
+  });
+
+  it('[PMRG11] a refresh left with features only (no stream) gets invalid_grant', async function () {
+    const r = await consent('p11', [{ streamId: 'pm11', level: 'read' }, { feature: 'webhooks', setting: 'forbidden' }]);
+    assert.equal(r.acceptRes.status, 200, describeRes(r.acceptRes));
+    const grant = await dataGrantOf(r.tokenRes.body.access_token);
+    await ownerUpdateGrant(grant, (perms) => perms.map((p) => (p.streamId === 'pm11' ? { streamId: 'pm11b', level: 'read' } : p)));
+
+    const refreshed = await refresh(r.tokenRes.body.refresh_token);
+    assert.equal(refreshed.status, 400, describeRes(refreshed));
+    assert.equal(refreshed.body.error, 'invalid_grant');
+  });
+
+  it('[PMRG12] a re-consent whose only change is collapsing a stored duplicate writes one version with one entry', async function () {
+    const first = await consent('p12', [{ streamId: 'pm12', level: 'contribute' }]);
+    assert.equal(first.acceptRes.status, 200, describeRes(first.acceptRes));
+    const grant = await dataGrantOf(first.tokenRes.body.access_token);
+    await seedGrantPermissions(grant, grant.permissions.flatMap((p) => (p.streamId === 'pm12'
+      ? [{ streamId: 'pm12', level: 'read' }, { streamId: 'pm12', level: 'contribute' }]
+      : [p])));
+    const historyBefore = await historyLength(grant);
+
+    const second = await consent('p12', [{ streamId: 'pm12', level: 'contribute' }]);
+    assert.equal(second.acceptRes.status, 200, describeRes(second.acceptRes));
+    const after = await getAccess(baseOf(grant.id));
+    assert.deepEqual(userStreams(after.permissions), [{ streamId: 'pm12', level: 'contribute' }]);
+    assert.equal(await historyLength(grant), historyBefore + 1, 'one new version of the grant');
+  });
+
+  it('[PMRG13] a grant holding a stored entry with a null streamId still refreshes and re-consents', async function () {
+    const first = await consent('p13', [{ streamId: 'pm13a', level: 'read' }]);
+    assert.equal(first.acceptRes.status, 200, describeRes(first.acceptRes));
+    const grant = await dataGrantOf(first.tokenRes.body.access_token);
+    await seedGrantPermissions(grant, grant.permissions.concat([{ streamId: null, level: 'read' }]));
+
+    const refreshed = await refresh(first.tokenRes.body.refresh_token);
+    assert.equal(refreshed.status, 200, describeRes(refreshed));
+    assert.deepEqual(userStreams((await accessInfo(refreshed.body.access_token)).permissions),
+      [{ streamId: 'pm13a', level: 'read' }]);
+
+    const second = await consent('p13', [{ streamId: 'pm13b', level: 'read' }]);
+    assert.equal(second.acceptRes.status, 200, describeRes(second.acceptRes));
+    const after = await getAccess(baseOf(grant.id));
+    assert.deepEqual(userStreams(after.permissions),
+      [{ streamId: 'pm13a', level: 'read' }, { streamId: 'pm13b', level: 'read' }]);
+  });
+
+  it('[PMRG14] a stream granted twice at /accept is refused with 400 invalid_scope, not 500', async function () {
+    const sessionsBefore = await sessionCount();
+    const r = await consent('p14', [{ streamId: 'pm14', level: 'read' }, { streamId: 'pm14', level: 'read' }]);
+    assert.equal(r.acceptRes.status, 400, describeRes(r.acceptRes));
+    assert.equal(r.acceptRes.body.error, 'invalid_scope');
+    assert.match(r.acceptRes.body.error_description, /appears more than once/);
+    assert.equal(await sessionCount(), sessionsBefore, 'no session minted');
   });
 });

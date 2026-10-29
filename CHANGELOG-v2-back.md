@@ -126,11 +126,22 @@
   concatenated the entries not yet present, keyed by stream AND level). The refresh intersection
   is now a per-stream meet of the chain's permissions and the grant's current ones (it kept the
   chain's entries present verbatim on the grant, keyed by stream AND level, and dropped the grant's
-  feature restrictions). A meet holding no stream entry other than `none` counts as no reach
-  (`invalid_grant`, as before). The consent accept maps the conflict to `400 invalid_scope` and
-  audits it; the server log carries the stream and levels. `AccessLogic._loadStreamPermission` is
-  unchanged (the last entry for a stream wins), now documented. Tests `[PMRU1]`-`[PMRU16]` (unit,
-  incl. the 25-pair join and meet tables) and `[PMRG1]`-`[PMRG6]` (PostgreSQL and SQLite).
+  feature restrictions). In the meet, a stream with no common level (`read` / `create-only`) is
+  emitted as `none`, and a `none` entry on one side only is kept. A meet holding no stream entry
+  other than `none` counts as no reach (`invalid_grant`, as before). The meet is entry-wise; the
+  refresh mint then applies `AccessLogic.inheritCarveOuts` twice on the candidate, from the grant
+  row and from the chain's own permissions (an `app`-typed `AccessLogic`), as `accesses.create`
+  does for a child access: the storage-direct mint skipped it.
+- `mergeStreamPermissions` no longer throws on a stored entry that is neither a stream nor a
+  feature permission (the access schema admits a `null` `streamId`): `join` re-emits such an entry
+  of `current` as is, `meet` leaves it out. A throw there consumed the refresh token and failed the
+  refresh, killing the chain.
+- The consent accept maps the conflict to `400 invalid_scope` and audits it; the server log carries
+  the stream and levels. It refuses `grantedPermissions` naming one canonical stream twice (`400
+  invalid_scope`): the consent check compares entry sets, so the duplicate would reach the session
+  `accesses.create`, which refuses it, and surface as a `500`. `AccessLogic._loadStreamPermission` is unchanged (the last
+  entry for a stream wins), now documented. Tests `[PMRU1]`-`[PMRU19]` (unit, incl. the 25-pair
+  join and meet tables), `[OAC-CR2]`, `[OAC-SC7]`, and `[PMRG1]`-`[PMRG14]` (PostgreSQL and SQLite).
 
 ### Storage: event deletion listings hold head events only (defence in depth)
 

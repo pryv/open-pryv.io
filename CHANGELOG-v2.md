@@ -117,15 +117,17 @@
   consents again to an app that already holds a consent grant, the new consent is joined into the
   grant stream by stream: a stream granted at `read` and now consented at `contribute` holds
   `contribute` (one entry, one new version of the grant); a consent at the level already granted
-  changes nothing. Before, the grant received a second entry for the stream, which `accesses.update`
-  now refuses, so the consent failed with `500 server_error`. A consent asking `create-only` on a
-  stream granted `read`, or `read` on a stream granted `create-only`, is refused with `400
-  invalid_scope` at `POST /oauth2/authorize/accept` ("conflicting permission level on a requested
-  resource", naming the stream and both levels): no level grants exactly both, and `contribute`,
-  the level covering both, would add `update`, which neither consent gave. The grant is left
-  unchanged, no token is issued, and the refusal is audited (`oauth.consent.refused`, reason
-  `permission-level-conflict`). An app needing both should ask for `contribute`. A grant stored
-  with two entries for one stream is written back with one (the last) on its next re-authorization.
+  changes nothing. Before, the grant stored a second entry for the stream and applied only the last
+  one, so a re-consent at `create-only` on a stream granted `read` silently replaced `read`. A
+  consent asking `create-only` on a stream granted `read`, or `read` on a stream granted
+  `create-only`, is now refused with `400 invalid_scope` at `POST /oauth2/authorize/accept`
+  ("conflicting permission level on a requested resource", naming the stream and both levels): no
+  level grants exactly both, and `contribute`, the level covering both, would add `update`, which
+  neither consent gave. The grant is left unchanged, no token is issued, and the refusal is audited
+  (`oauth.consent.refused`, reason `permission-level-conflict`). An app needing both should ask for
+  `contribute`. A grant stored with two entries for one stream is written back with one (the last)
+  on its next re-authorization. `grantedPermissions` naming one stream twice (in any spelling) is
+  refused with `400 invalid_scope`.
 
 - **OAuth: a refreshed token keeps a stream the user narrowed, at the narrowed level, and carries
   the grant's restrictions.** A refresh mints the new token from what both the token's own consent
@@ -133,10 +135,14 @@
   grant (for example from `contribute` to `read`) is now kept at the narrowed level; before, it was
   dropped from the refreshed token, and a token left with no stream was refused (`invalid_grant`).
   A stream whose two levels share no level (`read` on the token, `create-only` on the grant) is
-  dropped; a token left with no stream (exclusion masks, level `none`, do not count) is still
-  refused with `invalid_grant`.
-  A restriction added to the grant after the token was issued (for example `{ feature: 'webhooks',
-  setting: 'forbidden' }`) now reaches the refreshed token; before, it never did.
+  held at `none` (an exclusion mask); a token left with no stream (exclusion masks do not count) is
+  still refused with `invalid_grant`. A restriction added to the grant after the token was issued
+  (for example `{ feature: 'webhooks', setting: 'forbidden' }`) now reaches the refreshed token;
+  before, it never did. A narrowing the user made on the grant below a stream the token holds (an
+  exclusion mask, or a `create-only` entry, on a child stream) now reaches the refreshed token, at
+  what the two levels leave (`none` for a `create-only` child under a `read` stream); and a child stream the token holds at a narrower level than its parent
+  keeps that level when the grant no longer lists it. Before, both were left out of the refreshed
+  token, which then reached the child through its parent.
 
 ## 2.0.0-rc.65 - 2026-10-29
 

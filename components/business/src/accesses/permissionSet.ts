@@ -310,7 +310,9 @@ type MergeSide = {
   /** Stream entries by canonical id, and feature settings by feature name. */
   streams: Map<string, StreamPermission>;
   features: Map<string, string>;
-  /** Entry keys (`s|<canonical id>` / `f|<feature>`) in first-seen order. */
+  /** Entries that are neither a stream nor a feature permission, by `x|<index>`. */
+  unclassified: Map<string, unknown>;
+  /** Entry keys (`s|<canonical id>` / `f|<feature>` / `x|<index>`) in first-seen order. */
   order: string[];
 };
 
@@ -319,11 +321,22 @@ type MergeSide = {
  * collapse to the LAST one, which is what an access applies when it loads
  * such a row; the collapsed entry keeps the position of the first. Two
  * entries for one feature collapse to `forbidden` if either is, which is how
- * a restriction is enforced (`isFeatureForbidden`).
+ * a restriction is enforced (`isFeatureForbidden`). An entry that is neither
+ * (a stored row may hold one the access schema admits, e.g. a `null`
+ * `streamId`, which grants nothing) is kept aside as is, never refused: the
+ * merge runs on stored rows, where a throw would fail a refresh or a consent.
  */
 function indexForMerge (perms: unknown): MergeSide {
-  const side: MergeSide = { streams: new Map(), features: new Map(), order: [] };
-  for (const p of normalizePermissions(perms)) {
+  if (!Array.isArray(perms)) throw new Error('permissions must be an array');
+  const side: MergeSide = { streams: new Map(), features: new Map(), unclassified: new Map(), order: [] };
+  for (const [index, raw] of perms.entries()) {
+    if (!isStreamPermission(raw) && !isFeaturePermission(raw)) {
+      const key = 'x|' + index;
+      side.order.push(key);
+      side.unclassified.set(key, raw);
+      continue;
+    }
+    const p = normalizePermissions([raw])[0];
     if (isStreamPermission(p)) {
       const key = 's|' + canonicalStreamId(p.streamId);
       if (!side.streams.has(key)) side.order.push(key);
@@ -348,17 +361,24 @@ function indexForMerge (perms: unknown): MergeSide {
  *   `forbidden` if either set forbids it (a restriction once consented is
  *   kept), else `allowed`.
  * - `meet` (what a session may still use under its grant): a stream in both
- *   sets gets `meetLevel`, and is left out when there is none; a stream in
- *   one set only is left out. A feature is `forbidden` if either set forbids
- *   it (the grant's restrictions always reach the session), `allowed` when
- *   both allow it, left out otherwise.
+ *   sets gets `meetLevel`; when there is none (`read` with `create-only`:
+ *   together they leave nothing) it gets `none`, so a broader ancestor cannot
+ *   flow into it. A stream in one set only is left out, except a `none`
+ *   entry, which is kept (a mask is a restriction, not a grant). A feature is
+ *   `forbidden` if either set forbids it (the grant's restrictions always
+ *   reach the session), `allowed` when both allow it, left out otherwise.
+ *   The meet is entry by entry: the stream tree (a narrower entry below a
+ *   stream the result holds) is the caller's to apply.
  *
  * Streams are identified by their canonical id (`a` and `:local:a` are one
- * stream). An emitted stream entry is the one of the side whose level is
- * kept (its `streamId` spelling, `defaultName`, `name`), `current`'s when the
- * levels are equal. Order: `current`'s entries first, in their order, then
- * the new ones in `incoming`'s order, so a merge that changes nothing returns
- * `current` as it was (consent annotations dropped, duplicates collapsed).
+ * stream). An emitted stream entry takes the spelling (`streamId`,
+ * `defaultName`, `name`) of the side whose level is kept, `current`'s when
+ * the levels are equal or neither is kept. An entry that is neither a stream
+ * nor a feature permission is re-emitted as is by `join` when `current` holds
+ * it (at its position) and left out otherwise. Order: `current`'s entries
+ * first, in their order, then the new ones in `incoming`'s order, so a merge
+ * that changes nothing returns `current` as it was (consent annotations
+ * dropped, duplicates collapsed).
  */
 function mergeStreamPermissions (current: unknown, incoming: unknown, mode: 'join' | 'meet'):
 { permissions: Permission[]; conflicts: PermissionMergeConflict[] } {
@@ -366,21 +386,26 @@ function mergeStreamPermissions (current: unknown, incoming: unknown, mode: 'joi
   const inc = indexForMerge(incoming);
   const conflicts: PermissionMergeConflict[] = [];
   const out: Permission[] = [];
-  const keys = cur.order.concat(inc.order.filter((k) => !cur.streams.has(k) && !cur.features.has(k)));
+  const keys = cur.order.concat(inc.order.filter((k) =>
+    !k.startsWith('x|') && !cur.streams.has(k) && !cur.features.has(k)));
   for (const key of keys) {
-    if (key.startsWith('s|')) {
+    if (key.startsWith('x|')) {
+      if (mode === 'join') out.push(cur.unclassified.get(key) as Permission);
+    } else if (key.startsWith('s|')) {
       const c = cur.streams.get(key);
       const i = inc.streams.get(key);
       if (c == null || i == null) {
-        if (mode === 'join') out.push((c ?? i) as StreamPermission);
+        const only = (c ?? i) as StreamPermission;
+        if (mode === 'join' || only.level === 'none') out.push(only);
         continue;
       }
       const level = mode === 'join' ? joinLevel(c.level, i.level) : meetLevel(c.level, i.level);
       if (level == null) {
         if (mode === 'join') conflicts.push({ streamId: key.slice(2), current: c.level, incoming: i.level });
+        else out.push({ ...c, level: 'none' });
         continue;
       }
-      out.push(level === c.level ? c : i);
+      out.push({ ...(level === i.level && level !== c.level ? i : c), level });
     } else {
       const c = cur.features.get(key);
       const i = inc.features.get(key);

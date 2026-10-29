@@ -103,7 +103,7 @@ describe('[PMRU] permission merge rule', () => {
       }
     });
 
-    it('[PMRU6] meet: a stream in both sets gets the met level, a stream in one set or with no common level is left out', () => {
+    it('[PMRU6] meet: a stream in both sets gets the met level (none when no level is common), a stream in one set is left out', () => {
       const r = ps.mergeStreamPermissions(
         [{ streamId: 'a', level: 'contribute' }, { streamId: 'b', level: 'read' },
           { streamId: 'c', level: 'manage' }, { streamId: 'd', level: 'read' }],
@@ -113,8 +113,34 @@ describe('[PMRU] permission merge rule', () => {
       assert.deepEqual(r.conflicts, []);
       assert.deepEqual(r.permissions, [
         { streamId: 'a', level: 'read' },
+        { streamId: 'b', level: 'none' },
         { streamId: 'c', level: 'manage' }
       ]);
+    });
+
+    it('[PMRU17] meet: no common level emits none with current\'s spelling, in both orders', () => {
+      for (const [cur, inc] of [['read', 'create-only'], ['create-only', 'read']]) {
+        const r = ps.mergeStreamPermissions(
+          [{ streamId: ':local:b', level: cur, name: 'B current' }],
+          [{ streamId: 'b', level: inc, name: 'B incoming' }],
+          'meet');
+        assert.deepEqual(r.conflicts, []);
+        assert.deepEqual(r.permissions, [{ streamId: ':local:b', level: 'none', name: 'B current' }]);
+      }
+    });
+
+    it('[PMRU18] meet: a none entry in one set only is kept, on either side; join keeps it too', () => {
+      const r = ps.mergeStreamPermissions(
+        [{ streamId: 'p', level: 'read' }, { streamId: 'p-c1', level: 'none' }],
+        [{ streamId: 'p', level: 'read' }, { streamId: 'p-c2', level: 'none' }, { streamId: 'q', level: 'read' }],
+        'meet');
+      assert.deepEqual(r.permissions, [
+        { streamId: 'p', level: 'read' },
+        { streamId: 'p-c1', level: 'none' },
+        { streamId: 'p-c2', level: 'none' }
+      ]);
+      assert.deepEqual(ps.mergeStreamPermissions([{ streamId: 'x', level: 'none' }], [], 'join').permissions,
+        [{ streamId: 'x', level: 'none' }]);
     });
 
     it('[PMRU7] streams are compared by canonical id', () => {
@@ -242,9 +268,28 @@ describe('[PMRU] permission merge rule', () => {
       assert.match(err.message, /contribute/);
     });
 
-    it('[PMRU16] invalid input is refused, not merged', () => {
+    it('[PMRU16] a non-array is refused; an entry that is neither a stream nor a feature permission is skipped, not refused', () => {
       assert.throws(() => ps.mergeStreamPermissions('nope', [], 'join'));
-      assert.throws(() => ps.mergeStreamPermissions([], [{ streamId: 'a', level: 'all' }], 'meet'));
+      assert.throws(() => ps.mergeStreamPermissions([], null, 'meet'));
+      assert.deepEqual(ps.mergeStreamPermissions([], [{ streamId: 'a', level: 'all' }], 'meet').permissions, []);
+      assert.deepEqual(ps.mergeStreamPermissions([], [{ streamId: null, level: 'read' }], 'join').permissions, []);
+    });
+
+    it('[PMRU19] join re-emits current\'s unclassifiable entries as is at their position; meet leaves them out', () => {
+      const stored = [
+        { streamId: 'a', level: 'read' },
+        { streamId: null, level: 'read' },
+        { feature: 'webhooks', setting: 'forbidden' }
+      ];
+      assert.deepEqual(ps.mergeStreamPermissions(stored, [], 'join').permissions, stored);
+      assert.deepEqual(ps.mergeStreamPermissions(stored, [{ streamId: 'b', level: 'read' }], 'join').permissions,
+        stored.concat([{ streamId: 'b', level: 'read' }]));
+      assert.deepEqual(ps.mergeStreamPermissions(stored, stored, 'meet').permissions, [
+        { streamId: 'a', level: 'read' },
+        { feature: 'webhooks', setting: 'forbidden' }
+      ]);
+      const keys = (perms) => new Set(perms.map(ps.permissionKey));
+      assert.deepEqual(keys(ps.mergeStreamPermissions(stored, [], 'join').permissions), keys(stored));
     });
   });
 });

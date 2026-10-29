@@ -57,6 +57,7 @@ const { logServerError, logServerWarning } = require('../serverLog.ts');
 // accept path.
 const { checkConsentGrant, normalizePermissions } =
   require('business/src/accesses/permissionSet.ts');
+const { canonicalStreamId } = require('mall/src/helpers/storeDataUtils.ts');
 
 /** Authenticated user-session handle, opaque to this module. */
 export type UserSession = {
@@ -169,6 +170,16 @@ export function handleAccept (deps: AcceptDeps) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
         error_description: 'grantedPermissions invalid: ' + ((e as Error)?.message ?? String(e)),
+      });
+    }
+    // One level per stream: the consent check compares entry SETS, so a
+    // repeated stream (in any spelling) would pass it and then be refused
+    // when the session access is created.
+    const duplicateStream = firstDuplicateStream(grantedPermissions);
+    if (duplicateStream != null) {
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: `stream "${duplicateStream}" appears more than once in grantedPermissions`,
       });
     }
     if (grantedPermissions.length === 0) {
@@ -316,6 +327,18 @@ export function handleAccept (deps: AcceptDeps) {
 
     return sendJson(res, 200, { redirectTo });
   };
+}
+
+/** The first stream named twice (compared by canonical id), or null. */
+function firstDuplicateStream (permissions: Array<Record<string, unknown>>): string | null {
+  const seen = new Set<string>();
+  for (const p of permissions) {
+    if (typeof p.streamId !== 'string') continue;
+    const id = canonicalStreamId(p.streamId);
+    if (seen.has(id)) return p.streamId;
+    seen.add(id);
+  }
+  return null;
 }
 
 function isNonEmptyString (v: unknown): boolean {

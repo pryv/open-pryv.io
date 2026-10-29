@@ -302,6 +302,26 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.equal(res.body.error, 'invalid_scope');
       assert.match(res.body.error_description, /invalid/);
     });
+    it('[OAC-SC7] a stream granted twice (exact repeat, or a and :local:a) → 400 invalid_scope, nothing created', async () => {
+      for (const grantedPermissions of [
+        [{ streamId: 'health', level: 'read' }, { streamId: 'health', level: 'read' }],
+        [{ streamId: 'health', level: 'read' }, { streamId: ':local:health', level: 'read' }],
+      ]) {
+        let created = 0;
+        const handler = require('../src/routes/accept.ts').handleAccept({
+          config: fakeConfig(),
+          platform: fakePlatform(),
+          resolveUser: resolveAlice,
+          createAccess: async () => { created++; throw new Error('must not be called'); },
+        });
+        const res = fakeRes();
+        await handler({ body: validBody({ grantedPermissions }) }, res);
+        assert.equal(res.statusCode, 400, JSON.stringify(grantedPermissions));
+        assert.equal(res.body.error, 'invalid_scope');
+        assert.match(res.body.error_description, /appears more than once/);
+        assert.equal(created, 0);
+      }
+    });
     it('[OAC-SC5] DEFAULT is all-or-nothing: partial grant without offer.allowUserChoice → 400; full grant → 200', async () => {
       const { allowUserChoice: _drop, ...offerNoChoice } = SAMPLE_PAYLOAD.offer;
       const payload = { ...SAMPLE_PAYLOAD, offer: offerNoChoice };

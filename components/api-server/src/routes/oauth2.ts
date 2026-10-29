@@ -49,6 +49,7 @@ const { createId: cuid } = require('@paralleldrive/cuid2');
 const { permissionKey, mergeStreamPermissions, PermissionMergeConflictError } =
   require('business/src/accesses/permissionSet.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
+const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
@@ -591,6 +592,17 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       revoked.code = 'data-grant-revoked';
       throw revoked;
     }
+    // The meet is entry by entry; complete it with the stream tree, as
+    // accesses.create does for a child access. A narrower entry of the grant
+    // (an exclusion mask or a create-only carve-out the owner added below a
+    // stream the session keeps) and a narrower entry of the chain's own
+    // consent (a child the grant no longer lists, under a broader parent) are
+    // appended at their narrower level. Both passes only narrow, and skip the
+    // streams the meet already holds, so their order does not matter. Never
+    // creates reach: an entry is appended only under one the session holds.
+    await new AccessLogic(userId, dataGrant as Record<string, unknown>).inheritCarveOuts({ permissions: effective });
+    await new AccessLogic(userId, { id: 'oauth-refresh-chain', type: 'app', permissions })
+      .inheritCarveOuts({ permissions: effective });
     // Session selfRevoke override AFTER the intersection — the intersection
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
