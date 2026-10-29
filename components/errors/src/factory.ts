@@ -46,6 +46,14 @@ interface ErrorFactory {
   InvalidInvitationToken: () => APIErrorT;
   externalIdAlreadyClaimed: (namespace: string, reason: 'value-taken' | 'namespace-taken') => APIErrorT;
   externalIdNamespaceInUse: (namespace: string) => APIErrorT;
+  autoDeletionDelegateRefused: () => APIErrorT;
+  autoDeletionPasswordRequired: () => APIErrorT;
+  autoDeletionWrongPassword: () => APIErrorT;
+  autoDeletionOutOfBounds: (message: string, data: Record<string, unknown>) => APIErrorT;
+  autoDeletionOptOutNotAllowed: () => APIErrorT;
+  autoDeletionOverrideNotAllowed: (reason: 'user-override-disabled' | 'inactivity-unavailable') => APIErrorT;
+  autoDeletionActionNotAllowed: (action: string, available: string[]) => APIErrorT;
+  autoDeletionNoEmail: (reason: 'no-email' | 'mail-not-configured') => APIErrorT;
 }
 
 /**
@@ -326,6 +334,54 @@ factory.externalIdNamespaceInUse = function (namespace: string) {
       httpStatus: 409,
       data: { namespace }
     });
+};
+
+factory.autoDeletionDelegateRefused = function () {
+  return new APIError(ErrorIds.AutoDeletionDelegateRefused,
+    'The auto-deletion of an account can only be set with its own login; a delegated session cannot set it.',
+    { httpStatus: 403 });
+};
+
+factory.autoDeletionPasswordRequired = function () {
+  return new APIError(ErrorIds.AutoDeletionPasswordRequired,
+    'This change schedules the deletion of the account or brings it nearer: send the account password in "password".',
+    { httpStatus: 403 });
+};
+
+factory.autoDeletionWrongPassword = function () {
+  return new APIError(ErrorIds.AutoDeletionWrongPassword,
+    'The given password does not match; the auto-deletion setting was not changed.',
+    { httpStatus: 403 });
+};
+
+factory.autoDeletionOutOfBounds = function (message: string, data: Record<string, unknown>) {
+  return new APIError(ErrorIds.AutoDeletionOutOfBounds, message, { httpStatus: 400, data });
+};
+
+factory.autoDeletionOptOutNotAllowed = function () {
+  return new APIError(ErrorIds.AutoDeletionOptOutNotAllowed,
+    'This platform deletes accounts unused for a while and does not allow opting out.',
+    { httpStatus: 403 });
+};
+
+factory.autoDeletionOverrideNotAllowed = function (reason: 'user-override-disabled' | 'inactivity-unavailable') {
+  const message = reason === 'inactivity-unavailable'
+    ? 'This platform does not record account use, so a deletion after a period without use cannot be set.'
+    : 'This platform does not allow choosing when an account is deleted.';
+  return new APIError(ErrorIds.AutoDeletionOverrideNotAllowed, message, { httpStatus: 403, data: { reason } });
+};
+
+factory.autoDeletionActionNotAllowed = function (action: string, available: string[]) {
+  return new APIError(ErrorIds.AutoDeletionActionNotAllowed,
+    `The auto-deletion action "${action}" is not available on this platform.`,
+    { httpStatus: 403, data: { action, available } });
+};
+
+factory.autoDeletionNoEmail = function (reason: 'no-email' | 'mail-not-configured') {
+  const why = reason === 'no-email' ? 'the account has no email address' : 'this platform cannot send mail';
+  return new APIError(ErrorIds.AutoDeletionNoEmail,
+    `No reminder can be sent before the deletion (${why}): send "acknowledgeNoReminders": true to set it anyway.`,
+    { httpStatus: 400, data: { reason } });
 };
 
 /**

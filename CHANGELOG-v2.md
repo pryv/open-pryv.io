@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- **Account auto-deletion setting: `account.getAutoDeletion` / `account.setAutoDeletion`
+  (`GET` / `PUT /{username}/account/auto-deletion`, personal token).** The holder of an account can
+  have it deleted at a date (`mode: 'date'`, `date`: an ISO-8601 instant with an offset or `Z`; a
+  date alone is refused) or after a period without use (`mode: 'inactivity'`, `inactivityDays`),
+  set `mode: 'never'`, or follow the platform's policy again (`mode: 'default'`). Use is the latest
+  use of the account's personal and app accesses, a delegate's included; shared accesses never
+  count. `getAutoDeletion` answers `{ autoDeletion: { effective, setting, lastActivity, deadline,
+  deleteAt, deadlineReason, nextReminderAt, remindersSent, blocked, mail, bounds, userOverride,
+  allowUserOptOut, actions } }` (times in seconds), `setAutoDeletion` the same after the change.
+  Arming a schedule or bringing the deletion nearer requires the account password (`password`,
+  counted like a sign-in); clearing it or moving it later does not. A delegated session can read the
+  setting but not change it. Refusals carry their own error ids: `auto-deletion-password-required`,
+  `auto-deletion-wrong-password`, `auto-deletion-out-of-bounds`, `auto-deletion-opt-out-not-allowed`,
+  `auto-deletion-override-not-allowed`, `auto-deletion-action-not-allowed`, `auto-deletion-no-email`
+  (an account that cannot receive reminders needs `acknowledgeNoReminders: true`) and
+  `auto-deletion-delegate-refused`. The `delete` action is offered only where the holder may delete
+  the account themselves (`user-account.delete` lists `personalToken`); `transfer` is not offered
+  yet. `service.info` advertises `features.autoDeletion` (`triggers`, `actions`, `reminderLeadDays`,
+  `bounds`, `userOverride`, `allowUserOptOut`, `mailAvailable`); it is absent, and both methods
+  answer `unavailable-method`, when `account.autoDeletion.enabled` is false. Operators set the
+  policy in the per-core `account.autoDeletion` block (an optional inactivity preset
+  `inactivity.defaultDays`, default none, the bounds a holder may choose, `userOverride`,
+  `allowUserOptOut`, `date.minLeadDays`, the reminder schedule). Every change is confirmed by the
+  new `account-deletion-scheduled` mail (switch `services.email.enabled.accountDeletionScheduled`,
+  template key `accountDeletionScheduledTemplate`; links to `service.account`); a failed send never
+  fails the change. Platforms whose mail templates were seeded before this release add the template
+  with `bin/mail.js templates set`. The sweep that sends reminders and deletes accounts is not part
+  of this release: nothing is deleted yet.
+
 - **`auth.login` sets `lastUsed` on the personal access it issues.** A login was not recorded as
   use of that access: `lastUsed` (and the `lastAccess` of `system.getUserInfo`) only moved with the
   next call made with the token. A completed login now sets it. When MFA is active the login is not

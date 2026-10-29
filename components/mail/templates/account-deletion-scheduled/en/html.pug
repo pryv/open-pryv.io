@@ -1,0 +1,22 @@
+p Hi #{USERNAME},
+if TRIGGER_DATE
+  p Your account is now set to be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
+else if TRIGGER_INACTIVITY
+  p Your account is now set to be deleted after #{INACTIVITY_DAYS} days without use. If nobody uses it until then, it will be deleted on #{DEADLINE}, in #{DAYS_LEFT} days; each use of the account (signing in, an app you connected) moves that date.
+else
+  p No deletion of your account is scheduled any more. Your account and your data stay as they are.
+if SCHEDULED
+  p All the data of the account will then be erased, and this cannot be undone. You will get reminders before that date.
+  if EXPORT_URL
+    p
+      | To keep a copy of your data, download it before that date:
+      |
+      a(href=EXPORT_URL target="_blank" rel="noopener") #{EXPORT_URL}
+if ACCOUNT_APP_URL
+  p
+    | To change or cancel this, sign in to your account page and change the auto-deletion setting:
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p To change or cancel this, sign in to your account page and change the auto-deletion setting.
+p If you did not make this change, sign in, change your password right away and contact the support of your platform.

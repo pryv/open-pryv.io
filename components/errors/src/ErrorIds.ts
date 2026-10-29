@@ -79,6 +79,42 @@ const ErrorIds = {
    */
   ExternalIdNamespaceInUse: 'external-id-namespace-in-use',
   /**
+   * Account auto-deletion: the setting can only be changed with the account's
+   * own login, not with an access obtained through account delegation.
+   */
+  AutoDeletionDelegateRefused: 'auto-deletion-delegate-refused',
+  /**
+   * Account auto-deletion: the change arms or brings the deletion nearer, so
+   * it needs the account password (`password`).
+   */
+  AutoDeletionPasswordRequired: 'auto-deletion-password-required',
+  /** Account auto-deletion: the given password does not match. */
+  AutoDeletionWrongPassword: 'auto-deletion-wrong-password',
+  /**
+   * Account auto-deletion: the period or date is outside what the platform
+   * allows (`data.param`, and the bound it broke).
+   */
+  AutoDeletionOutOfBounds: 'auto-deletion-out-of-bounds',
+  /** Account auto-deletion: the platform does not allow "never" while its preset applies. */
+  AutoDeletionOptOutNotAllowed: 'auto-deletion-opt-out-not-allowed',
+  /**
+   * Account auto-deletion: the platform does not let the holder choose a date
+   * or a period (`data.reason`: 'user-override-disabled', or
+   * 'inactivity-unavailable' when account use is not recorded).
+   */
+  AutoDeletionOverrideNotAllowed: 'auto-deletion-override-not-allowed',
+  /**
+   * Account auto-deletion: the action (`data.action`) is not offered on this
+   * platform; `data.available` lists those that are.
+   */
+  AutoDeletionActionNotAllowed: 'auto-deletion-action-not-allowed',
+  /**
+   * Account auto-deletion: no reminder can be sent to this account
+   * (`data.reason`: 'no-email' or 'mail-not-configured'); the setting needs
+   * `acknowledgeNoReminders: true`.
+   */
+  AutoDeletionNoEmail: 'auto-deletion-no-email',
+  /**
    * Used for removed API methods
    */
   Gone: 'removed-method',

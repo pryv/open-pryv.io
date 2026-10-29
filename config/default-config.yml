@@ -391,6 +391,11 @@ services:
       # external id it held (POST /system/admin/ext-id/release). Best-effort
       # like mfaChange: the release is never rolled back by a failed send.
       externalIdReleased: true
+      # Confirmation to the account's email each time its holder changes the
+      # account's auto-deletion setting (account.autoDeletion), clearing
+      # included. Best-effort: a failed send never fails the change. Off, the
+      # first reminder becomes the first notice of a schedule.
+      accountDeletionScheduled: true
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.
@@ -418,13 +423,20 @@ services:
     # enabled.externalIdReleased). The template gets USERNAME, NAMESPACE_LABEL
     # and REASON (as given by the administrator); never the id itself.
     externalIdReleasedTemplate: external-id-released
+    # Sent when the holder changes the account's auto-deletion setting (see
+    # enabled.accountDeletionScheduled). The template gets USERNAME, DEADLINE
+    # (date and time of the deletion, UTC, '' when none), DAYS_LEFT, TRIGGER
+    # (date | inactivity | none) with the flags SCHEDULED, TRIGGER_DATE and
+    # TRIGGER_INACTIVITY ('true' or ''), INACTIVITY_DAYS, ACTION,
+    # ACCOUNT_APP_URL (service.account) and EXPORT_URL (its data page).
+    accountDeletionScheduledTemplate: account-deletion-scheduled
     defaultLang: en
     # --- in-process mode only ---
     # Pug source directory seeded into PlatformDB on first boot, when PlatformDB
     # holds no templates yet. Leave empty to seed the template set bundled with
     # the mail component (components/mail/templates: welcome-email,
     # reset-password, verify-email, email-challenge, mfa-change,
-    # external-id-released; en + fr).
+    # external-id-released, account-deletion-scheduled; en + fr).
     # A deployment seeded before a template was added to that set does not get
     # it automatically: add it with `bin/mail.js templates set`. After the first
     # boot, edits go through `bin/mail.js templates set` or the admin API; a

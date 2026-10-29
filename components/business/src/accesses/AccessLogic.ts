@@ -332,6 +332,8 @@ class AccessLogic {
       case 'account.externalIds.list':
       case 'account.externalIds.release':
       case 'account.externalIds.replace':
+      case 'account.getAutoDeletion':
+      case 'account.setAutoDeletion':
         return this.isPersonal();
 
       // -- Accesses

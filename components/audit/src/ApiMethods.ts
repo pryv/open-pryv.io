@@ -106,6 +106,9 @@ const ALL_METHODS = [
   'account.externalIds.release',
   'account.externalIds.replace',
   'auth.extIdCores',
+  // Account auto-deletion setting (personal token).
+  'account.getAutoDeletion',
+  'account.setAutoDeletion',
   // OAuth 2.0 authorization-server events. Emitted directly via
   // audit.eventForUser() from the oauth2 component's grant/consent paths
   // (they are NOT api.register API methods, so they never pass through

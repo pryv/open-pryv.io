@@ -271,6 +271,7 @@ class Application {
     require('./routes/delegations.ts').default(this.expressApp, this);
     require('./routes/account.ts').default(this.expressApp, this);
     require('./routes/externalIds.ts').default(this.expressApp, this);
+    require('./routes/accountAutoDeletion.ts').default(this.expressApp, this);
     require('./routes/auth/login.ts').default(this.expressApp, this);
     require('./routes/mfa.ts').default(this.expressApp, this);
     await require('./routes/events.ts').default(this.expressApp, this);

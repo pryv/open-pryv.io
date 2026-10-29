@@ -7,7 +7,8 @@
 import { createRequire } from 'node:module';
 import type { MethodContext } from 'business/src/MethodContext.ts';
 import type { MethodNext } from './_types.ts';
-import { describeVerificationMail } from 'business/src/emails/mailCapability.ts';
+import { describeVerificationMail, describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { autoDeletionConfig, availableActions, availableTriggers } from './helpers/autoDeletionPolicy.ts';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { ready, getLogger } = require('@pryv/boiler');
@@ -90,6 +91,24 @@ export default function (api: { register: (...args: unknown[]) => void }) {
     // `service.features.delegation` wins.
     if (serviceInfo.features.delegation === undefined) {
       serviceInfo.features.delegation = config.get('delegation:active') !== false;
+    }
+    // Account auto-deletion: what a holder may set on this core (absent when
+    // the operator turned the feature off). `actions` lists `delete` only
+    // where self-deletion is allowed (`user-account.delete`), `triggers`
+    // leaves `inactivity` out when account use is not recorded.
+    if (serviceInfo.features.autoDeletion === undefined) {
+      const ad = autoDeletionConfig(config);
+      if (ad.enabled) {
+        serviceInfo.features.autoDeletion = {
+          triggers: availableTriggers(config),
+          actions: availableActions(config),
+          reminderLeadDays: ad.reminders.leadDays,
+          bounds: { minDays: ad.inactivity.minDays, maxDays: ad.inactivity.maxDays, minLeadDays: ad.date.minLeadDays },
+          userOverride: ad.userOverride,
+          allowUserOptOut: ad.allowUserOptOut,
+          mailAvailable: describeMailCapability(config).ok
+        };
+      }
     }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to
