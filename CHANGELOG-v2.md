@@ -38,6 +38,14 @@
   - `POST /oauth2/introspect` (RFC 7662) for confidential clients registered with
     `--can-introspect`; a token whose session lives on another core answers `421` with that
     core's URL.
+  - Whatever the extension's grammar answers, a registry client's offer (requested scope and
+    registered maximum set) never reaches an account or system stream (`:_system:` / `:system:`
+    fields, any core-reserved `:_<namespace>:` stream, the account store, in any store-prefixed
+    spelling such as `:local::system:email`), every stream (`*`, `:local:`), or the `manage`
+    level: `/authorize` answers `invalid_scope` naming the refused stream.
+  - DPoP is not available to registry clients yet: a `/oauth2/token` request from one carrying a
+    `DPoP` header answers `400 invalid_request` before the code or refresh token is consumed, and
+    a registry client row cannot set `dpopBoundAccessTokens`.
 
 - **`/oauth2/token` accepts a client identified by HTTP Basic alone.** A confidential client
   authenticating with `client_secret_basic` was refused (`400 invalid_request`, "client_id is

@@ -43,6 +43,9 @@ const toyExtension = {
       const permissions = [];
       for (const t of tokens) {
         if (t === 'ctx/user' || t === 'ctx/pseudo') continue;
+        // `write/<streamId>`: contribute on any stream the token names, account
+        // fields included (a careless grammar the core must not trust).
+        if (t.startsWith('write/')) { permissions.push({ streamId: t.slice('write/'.length), level: 'contribute' }); continue; }
         if (!t.startsWith('read/')) return { ok: false, description: 'unknown token ' + t };
         permissions.push({ streamId: t.slice('read/'.length), level: 'read' });
       }
@@ -65,7 +68,7 @@ function pkce () {
 describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)', function () {
   this.timeout(60000);
 
-  let username, personalToken, fixtures, restoreConfig, clientId, rsClientId, rsSecret;
+  let username, personalToken, fixtures, restoreConfig, clientId, rsClientId, rsSecret, wideClientId, writerClientId;
 
   before(async function () {
     await initTests();
@@ -114,22 +117,43 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       clientSecretHash: secret.hash,
       canIntrospect: true,
     });
+    // A client whose registered scope reaches account fields (a careless
+    // grammar or registration): the core must refuse it whatever the grammar says.
+    wideClientId = 'Wide.' + cuid().slice(-10);
+    await oauth2.persistClient(platformDB, {
+      clientId: wideClientId,
+      kind: 'registry',
+      redirectUris: [REDIRECT_URI],
+      scope: ['write/:_system:language', 'write/:system:email', 'write/diary'],
+      grantTypes: ['authorization_code'],
+      tokenEndpointAuthMethod: 'none',
+      allowedAudiences: [AUD],
+    });
+    writerClientId = 'Wr.' + cuid().slice(-10);
+    await oauth2.persistClient(platformDB, {
+      clientId: writerClientId,
+      kind: 'registry',
+      redirectUris: [REDIRECT_URI],
+      scope: ['write/diary'],
+      grantTypes: ['authorization_code'],
+      tokenEndpointAuthMethod: 'none',
+      allowedAudiences: [AUD],
+    });
   });
 
   after(async function () {
     oauth2.extension._resetForTests();
     if (restoreConfig != null) restoreConfig();
     const platformDB = require('storages').platformDB;
-    for (const id of [clientId, rsClientId]) {
+    for (const id of [clientId, rsClientId, wideClientId, writerClientId]) {
       if (id != null) { try { await storage.deleteClient(platformDB, id); } catch (_) { /* best-effort */ } }
     }
     if (fixtures != null) await fixtures.clean();
   });
 
-  async function runFlow (scope = 'openid read/health ctx/user ctx/pseudo') {
-    const { verifier, challenge } = pkce();
-    const authRes = await coreRequest.get('/oauth2/authorize').query({
-      client_id: clientId,
+  function authorize (scope, cid = clientId, challenge = 'x'.repeat(43)) {
+    return coreRequest.get('/oauth2/authorize').query({
+      client_id: cid,
       redirect_uri: REDIRECT_URI,
       response_type: 'code',
       state: 'csrf-' + cuid(),
@@ -139,6 +163,11 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       aud: AUD,
       nonce: 'nonce-1',
     });
+  }
+
+  async function runFlow (scope = 'openid read/health ctx/user ctx/pseudo', cid = clientId) {
+    const { verifier, challenge } = pkce();
+    const authRes = await authorize(scope, cid, challenge);
     assert.equal(authRes.status, 302, JSON.stringify(authRes.body) + authRes.text);
     const loc = authRes.headers.location;
     assert.ok(loc.startsWith(CONSENT_URL + '?state='), 'unexpected redirect: ' + loc);
@@ -154,7 +183,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const code = new URL(acceptRes.body.redirectTo).searchParams.get('code');
 
     const tokenRes = await coreRequest.post('/oauth2/token').type('form').send({
-      grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT_URI,
+      grant_type: 'authorization_code', code, code_verifier: verifier, client_id: cid, redirect_uri: REDIRECT_URI,
     });
     assert.equal(tokenRes.status, 200, JSON.stringify(tokenRes.body));
     return { offer: offerRes.body, token: tokenRes.body };
@@ -249,6 +278,29 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal(typeof list[0].alias, 'string');
     const read = await coreRequest.get('/' + username + '/events').set('Authorization', plain.token.access_token);
     assert.equal(read.status, 403);
+  });
+
+  it('[OREG7] a grammar offering account fields is refused at /authorize; no grant, the account is untouched', async () => {
+    const before = await coreRequest.get('/' + username + '/account').set('Authorization', personalToken);
+    for (const scope of ['write/:_system:language', 'write/:system:email', 'write/:local::system:email write/diary']) {
+      const res = await authorize(scope, wideClientId);
+      assert.equal(res.status, 302, res.text);
+      const loc = new URL(res.headers.location);
+      assert.equal(loc.origin + loc.pathname, REDIRECT_URI, scope + ': ' + res.headers.location);
+      assert.equal(loc.searchParams.get('error'), 'invalid_scope', scope);
+      assert.match(loc.searchParams.get('error_description'), /account or system stream/, scope);
+    }
+    const acc = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+    assert.equal(acc.body.accesses.some((a) => a.name === 'oauth-grant:' + wideClientId), false);
+    const after = await coreRequest.get('/' + username + '/account').set('Authorization', personalToken);
+    assert.deepEqual(after.body.account, before.body.account);
+  });
+
+  it('[OREG8] positive control: an ordinary stream at contribute still goes through', async () => {
+    const r = await runFlow('write/diary', writerClientId);
+    const ev = await coreRequest.post('/' + username + '/events').set('Authorization', r.token.access_token)
+      .send({ streamIds: ['diary'], type: 'note/txt', content: 'from the app' });
+    assert.equal(ev.status, 201, JSON.stringify(ev.body));
   });
 
   it('[OREG4] a public client cannot introspect', async () => {

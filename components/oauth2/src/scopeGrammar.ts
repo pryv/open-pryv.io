@@ -20,6 +20,10 @@
  * registered `scope`, parsed by the same grammar): every requested stream
  * entry needs a maximum entry on the same stream granting at least the same
  * capabilities; feature entries match by identity.
+ *
+ * Whatever the grammar answers, the core refuses (both in the requested offer
+ * and in the maximum set) account and system streams, every stream (`*`) and
+ * the `manage` level: see `refusedPermission`.
  */
 
 import crypto from 'node:crypto';
@@ -32,6 +36,8 @@ const { getExtension, toClientView } = require('./extension.ts');
 const { logServerError } = require('./serverLog.ts');
 const { normalizePermissions, isStreamPermission, levelCapabilityExcess, permissionKey } =
   require('business/src/accesses/permissionSet.ts');
+const { canonicalStreamId, parseStoreIdAndStoreItemId, AccountStoreId } =
+  require('mall/src/helpers/storeDataUtils.ts');
 
 /** Scope tokens the core owns (never handed to the grammar). */
 export const CORE_SCOPE_TOKENS = ['openid', 'offline_access'];
@@ -100,8 +106,8 @@ export function resolveRequestedScope (
   }
 
   const max = maxSet(ext, client);
-  if (max == null) return { ok: false, description: 'the client\'s registered scope cannot be parsed' };
-  const outside = offer.permissions.filter((p) => !coveredBy(p, max));
+  if (!max.ok) return { ok: false, description: 'the client\'s registered scope ' + max.description };
+  const outside = offer.permissions.filter((p) => !coveredBy(p, max.permissions));
   if (outside.length > 0) {
     return {
       ok: false,
@@ -145,23 +151,52 @@ function callParse (
     logServerError(`oauth extension ${ext.name}: scopeGrammar.parse produced invalid permissions`, err);
     return { ok: false, description: 'scope could not be parsed' };
   }
+  for (const p of permissions) {
+    const refused = refusedPermission(p);
+    if (refused != null) {
+      logServerError(`oauth extension ${ext.name}: scopeGrammar.parse offered a refused permission (${purpose})`, new Error(refused));
+      return { ok: false, description: refused };
+    }
+  }
   const offer: SynthOffer = { ...(r.offer as SynthOffer), permissions, randomAlias: (r.offer as SynthOffer).randomAlias === true };
   return { ok: true, tokens: r.tokens as string[], offer };
 }
 
-function maxSet (ext: OAuthExtension, client: OAuthClient): ExtPermission[] | null {
+/**
+ * Core guard on every synthesised permission, whatever the grammar answers:
+ * a registry client never gets an account or system stream (any core-reserved
+ * `:_<namespace>:` stream, `:system:` fields, the account store; judged on
+ * the canonical id, so `:local::system:email` or `:account::system:email` are
+ * caught), nor every stream (`*`, `:local:`), nor the `manage` level (it
+ * lets the holder create accesses and change streams). Feature permissions
+ * are not concerned. Returns the refusal description, null when acceptable.
+ */
+export function refusedPermission (p: ExtPermission): string | null {
+  if (!isStreamPermission(p)) return null;
+  const raw = String(p.streamId);
+  if (p.level === 'manage') return `level manage is not available to this client (stream ${raw})`;
+  const id: string = canonicalStreamId(raw);
+  if (id === '*') return 'a permission on every stream (' + raw + ') is not available to this client';
+  if (id.startsWith(':_') || id.startsWith(':system:') ||
+      parseStoreIdAndStoreItemId(id)[0] === AccountStoreId) {
+    return `stream ${raw} is an account or system stream, not available to this client`;
+  }
+  return null;
+}
+
+function maxSet (ext: OAuthExtension, client: OAuthClient): { ok: true; permissions: ExtPermission[] } | { ok: false; description: string } {
   const key = ext.name + '|' + client.clientId + '|' + String(client.updatedAt);
   const cached = maxSetCache.get(key);
-  if (cached != null) return cached;
+  if (cached != null) return { ok: true, permissions: cached };
   const scope = (client.scope ?? []).filter((t) => !CORE_SCOPE_TOKENS.includes(t));
   const parsed = callParse(ext, client, scope.join(' '), 'max');
   if (!parsed.ok) {
-    logServerError(`oauth client ${client.clientId}: registered scope rejected by the grammar`, new Error(parsed.description));
-    return null;
+    logServerError(`oauth client ${client.clientId}: registered scope rejected`, new Error(parsed.description));
+    return { ok: false, description: 'is refused: ' + parsed.description };
   }
   if (maxSetCache.size >= MAX_SET_CACHE_SIZE) maxSetCache.clear();
   maxSetCache.set(key, parsed.offer.permissions);
-  return parsed.offer.permissions;
+  return { ok: true, permissions: parsed.offer.permissions };
 }
 
 function coveredBy (p: ExtPermission, max: ExtPermission[]): boolean {

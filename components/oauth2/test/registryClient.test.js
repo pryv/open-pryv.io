@@ -51,6 +51,18 @@ const TABLE = {
   'data/*.read': [['a', 'read'], ['b', 'read']],
   'cat=http://x.example|lab.read': [['lab', 'read']],
   'data/a.write': [['a', 'contribute']],
+  // Shapes a careless grammar could produce; the core refuses them.
+  'acct/language.write': [[':_system:language', 'contribute']],
+  'acct/email.write': [[':system:email', 'contribute']],
+  'acct/email.read': [[':system:email', 'read']],
+  'acct/email.local': [[':local::system:email', 'contribute']],
+  'acct/email.store': [[':account::system:email', 'contribute']],
+  'acct/field.store': [[':account:email', 'read']],
+  'acct/root.read': [[':_system:account', 'read']],
+  'emails.read': [[':_emails:', 'read']],
+  'all.read': [['*', 'read']],
+  'local-root.read': [[':local:', 'read']],
+  'data/a.manage': [['a', 'manage']],
 };
 const CONTEXT = ['ctx/patient', 'who', 'pseudo'];
 const COVERS = { read: ['read', 'contribute', 'manage'], contribute: ['contribute', 'manage'] };
@@ -119,6 +131,7 @@ function fakePlatform () {
   const kv = new Map();
   return {
     async setAccessState (k, v, exp) { state.set(k, { value: v, expiresAt: exp }); },
+    async setAccessStateIfAbsent (k, v, exp) { if (state.has(k)) return false; state.set(k, { value: v, expiresAt: exp }); return true; },
     async getAccessState (k) { return state.get(k) ?? null; },
     async deleteAccessState (k) { state.delete(k); },
     async consumeAccessState (k) { const e = state.get(k); state.delete(k); return e ?? null; },
@@ -260,6 +273,17 @@ async function flow ({ platform, config, query = {}, keep = null, more = {} }) {
   return { authorize: a, offer: offerRes.body, calls, accept: acc, token: tok };
 }
 
+/** A valid ES256 DPoP proof for POST http://core.example.com/oauth2/token. */
+async function dpopProof () {
+  const subtle = crypto.webcrypto.subtle;
+  const pair = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const jwk = await subtle.exportKey('jwk', pair.publicKey);
+  const h = Buffer.from(JSON.stringify({ typ: 'dpop+jwt', alg: 'ES256', jwk: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y } })).toString('base64url');
+  const p = Buffer.from(JSON.stringify({ jti: crypto.randomUUID(), htm: 'POST', htu: 'http://core.example.com/oauth2/token', iat: Math.floor(Date.now() / 1000) })).toString('base64url');
+  const sig = await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, Buffer.from(h + '.' + p));
+  return h + '.' + p + '.' + Buffer.from(sig).toString('base64url');
+}
+
 function decodeJwt (jwt) {
   const [h, p, s] = jwt.split('.');
   return { header: JSON.parse(Buffer.from(h, 'base64url')), payload: JSON.parse(Buffer.from(p, 'base64url')), input: h + '.' + p, sig: s };
@@ -327,6 +351,48 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
     it('[OXS05] a grammar that throws is reported as an invalid scope, not a crash', () => {
       extension.setExtension({ ...toyExtension(), scopeGrammar: { ...toyExtension().scopeGrammar, parse () { throw new Error('x'); } } });
       assert.equal(scopeGrammar.resolveRequestedScope(client, 'data/a.read', { oidcEnabled: true }).ok, false);
+    });
+    it('[OXS06] account and system streams are refused whatever the grammar answers, in any spelling', () => {
+      for (const token of ['acct/language.write', 'acct/email.write', 'acct/email.read', 'acct/email.local',
+        'acct/email.store', 'acct/field.store', 'acct/root.read', 'emails.read']) {
+        const r = scopeGrammar.resolveRequestedScope(client, 'data/a.read ' + token, { oidcEnabled: true });
+        assert.equal(r.ok, false, token);
+        assert.match(r.description, /account or system stream/, token + ': ' + r.description);
+      }
+    });
+    it('[OXS07] a permission on every stream (*), in any spelling, is refused', () => {
+      for (const token of ['all.read', 'local-root.read']) {
+        const r = scopeGrammar.resolveRequestedScope(client, token, { oidcEnabled: true });
+        assert.equal(r.ok, false, token);
+        assert.match(r.description, /every stream/, token + ': ' + r.description);
+      }
+    });
+    it('[OXS08] level manage is refused', () => {
+      const r = scopeGrammar.resolveRequestedScope(client, 'data/a.manage', { oidcEnabled: true });
+      assert.equal(r.ok, false);
+      assert.match(r.description, /manage/);
+    });
+    it('[OXS09] the same rules hold on the registered maximum set; feature permissions pass', () => {
+      const wide = { ...client, clientId: 'wide-app', scope: [...client.scope, 'acct/email.write'] };
+      const r = scopeGrammar.resolveRequestedScope(wide, 'data/a.read', { oidcEnabled: true });
+      assert.equal(r.ok, false);
+      assert.match(r.description, /registered scope.*account or system stream/);
+      // Positive control: an ordinary stream plus a feature permission.
+      const toy = toyExtension();
+      extension.setExtension({
+        ...toy,
+        scopeGrammar: {
+          ...toy.scopeGrammar,
+          parse (s, ctx) {
+            const out = toy.scopeGrammar.parse(s, ctx);
+            if (out.ok) out.offer.permissions.push({ feature: 'selfRevoke', setting: 'forbidden' });
+            return out;
+          },
+        },
+      });
+      const ok = scopeGrammar.resolveRequestedScope(client, 'data/a.read', { oidcEnabled: true });
+      assert.equal(ok.ok, true, ok.description);
+      assert.deepEqual(ok.offer.permissions, [{ streamId: 'a', level: 'read' }, { feature: 'selfRevoke', setting: 'forbidden' }]);
     });
   });
 
@@ -514,6 +580,36 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       assert.equal(token.body.patient, 'alice');
       assert.equal(decodeJwt(token.body.id_token).payload.sub, 'alice');
     });
+    it('[OXT09] a registry client presenting a DPoP proof is refused before its code is consumed', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const config = fakeConfig();
+      const deps = { config, platform };
+      const a = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const offerRes = fakeRes();
+      await handleOffer(deps)({ body: { state: a.signed } }, offerRes);
+      const acc = await accept({ ...deps, resolveUser: async () => ({ userId: 'u-alice', username: 'alice' }), createAccess: fakeCreateAccess([]) },
+        a.signed, offerRes.body.offer.permissions);
+      const code = new URL(acc.body.redirectTo).searchParams.get('code');
+      const body = { grant_type: 'authorization_code', code, code_verifier: VERIFIER, client_id: 'reg-app', redirect_uri: REDIRECT };
+      // A VALID proof, and the binding wired: only the client kind refuses it.
+      const proof = await dpopProof();
+      const bound = [];
+      const deps2 = tokenDeps(platform, config, { bindAccessDpop: async (p) => { bound.push(p); } });
+      const refused = fakeRes();
+      await handleToken(deps2)({ headers: { host: 'core.example.com', dpop: proof }, originalUrl: '/oauth2/token', body }, refused);
+      assert.equal(refused.statusCode, 400, refused.raw);
+      assert.equal(refused.body.error, 'invalid_request');
+      assert.match(refused.body.error_description, /DPoP/);
+      assert.deepEqual(bound, []);
+      // The code is still there: the same exchange without a proof succeeds.
+      const ok = await exchange(tokenDeps(platform, config), code);
+      assert.equal(ok.statusCode, 200, ok.raw);
+      // The refresh grant is refused the same way, before the row is touched.
+      const rt = fakeRes();
+      await handleToken(deps2)({ headers: { host: 'core.example.com', dpop: await dpopProof() }, originalUrl: '/oauth2/token', body: { grant_type: 'refresh_token', refresh_token: 'RT-none', client_id: 'reg-app' } }, rt);
+      assert.equal(rt.statusCode, 400, rt.raw);
+      assert.equal(rt.body.error, 'invalid_request');
+    });
     it('[OXT06] refresh: the echo follows the effective (narrowed) permissions', async () => {
       const platform = fakePlatform(); await seed(platform);
       const now = Date.now();
@@ -652,6 +748,7 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, tokenEndpointAuthMethod: undefined }), /tokenEndpointAuthMethod/);
       await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, allowedAudiences: ['http://x.example/'] }), /https/);
       await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, grantTypes: ['client_credentials'] }), /client_credentials/);
+      await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, dpopBoundAccessTokens: true }), /DPoP/);
     });
   });
 });

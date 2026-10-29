@@ -199,6 +199,9 @@ function validateRegistryClient (client: OAuthClient): void {
   if (client.grantTypes.includes('client_credentials')) {
     throw new Error('registry client: client_credentials is not available (no app account)');
   }
+  if (client.dpopBoundAccessTokens === true) {
+    throw new Error('registry client: DPoP-bound tokens are not available for this kind of client');
+  }
   if (!Array.isArray(client.scope) || client.scope.length === 0) {
     throw new Error('registry client: scope (the maximum scope set) is required');
   }

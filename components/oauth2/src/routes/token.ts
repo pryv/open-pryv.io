@@ -29,6 +29,7 @@ import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
 import { externalRequestUri } from '../externalUri.ts';
 import { markDPoPJtiUsed, getDpopKeyRevokedAt, recordDpopKeySeen } from '../storage.ts';
 import { logServerError } from '../serverLog.ts';
+import { getClient, isRegistryClient } from '../clientRegistry.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -114,7 +115,15 @@ export function handleToken (deps: TokenDeps) {
     // exactly one proceeds.
     let dpopJkt: string | null = null;
     const dpopHeader = req.headers?.dpop;
-    if (dpopHeader != null) {
+    // Registry clients cannot bind their tokens to a key in this version:
+    // refused before the proof is verified (its jti is not burned) and before
+    // any grant runs (the code or refresh token is not consumed). The proof
+    // itself is not at fault, so this is invalid_request, as for
+    // client_credentials below, not invalid_dpop_proof.
+    if (dpopHeader != null && typeof body.client_id === 'string' && body.client_id !== '' &&
+        isRegistryClient(await getClient(deps.platform, body.client_id))) {
+      outcome = { ok: false as const, status: 400, error: 'invalid_request', description: 'DPoP is not available for this client' };
+    } else if (dpopHeader != null) {
       const clockSkewSeconds = Number(deps.config.get('oauth:dpop:clockSkewSeconds') ?? 120);
       try {
         const verified = await verifyDPoPProof(
