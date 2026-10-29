@@ -4,6 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import { isMintedAliasShape } from '../users/aliasShape.ts';
 
 // The series engines key a user's HF data by this namespace (the "database"
 // of the series connection), not by the user id. Every caller that reads,
@@ -31,12 +32,15 @@ type RenamingConnection = { renameDatabase (from: string, to: string): Promise<v
 
 /**
  * The account's former usernames: the names of its alias index that can hold
- * series. Minted aliases (`r-`) are never a username, so never a namespace.
+ * series. Minted access aliases (`r-` + 8 characters) are never a username,
+ * so never a namespace; a username that merely starts with `r-` is one.
+ * Residual: a username of the exact minted shape, registered before that
+ * shape was refused, is taken for an access alias once it is a former name.
  */
 async function formerUsernames (aliasIndex: AliasIndexLike, userId: string, username: string): Promise<string[]> {
   const names: string[] = [];
   for (const name of new Set(await aliasIndex.getAliasesForId(userId))) {
-    if (name === username || name.startsWith('r-')) continue;
+    if (name === username || isMintedAliasShape(name)) continue;
     names.push(name);
   }
   return names;

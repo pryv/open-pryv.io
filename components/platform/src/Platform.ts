@@ -34,10 +34,9 @@ const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 's
 // `lsc.` for cluster discovery): an account under one of them would not be
 // reachable at `<username>.<domain>`.
 const DNS_SERVICE_NAMES = new Set(['reg', 'access', 'mfa', 'lsc']);
-// The shape of a minted alias (`r-` + 8 characters, see the users
-// repository): refused as a new username, so no account can take a name an
-// alias may later be minted as.
-const ALIAS_SHAPE_RE = /^r-[a-z0-9]{8}$/;
+// The shape of a minted alias: refused as a new username, so no account can
+// take a name an alias may later be minted as.
+const { ALIAS_SHAPE_RE } = require('business/src/users/aliasShape.ts');
 // DNS labels with `--` in the 3rd and 4th positions are reserved by IDNA
 // (RFC 5891 §4.2.3.1); `xn--` labels are punycode for a Unicode name.
 const IDNA_RESERVED_LABEL_RE = /^..--/;
@@ -451,8 +450,10 @@ class Platform {
       if (entry.field == null || entry.field.startsWith('_')) continue;
       if (entry.isUnique === true) {
         if (entry.field === USERNAME_FIELD) {
-          await this.#db.deleteUserUniqueField(entry.field, entry.value);
+          // The new self-row first: a failure in between leaves both rows
+          // (the undo re-keys back and finds one), never none.
           await this.#db.setUserUniqueField(newToken, entry.field, this.hashFor(entry.field, newUsername));
+          await this.#db.deleteUserUniqueField(entry.field, entry.value);
         } else {
           // value unchanged — just re-own to the new username token.
           await this.#db.setUserUniqueField(newToken, entry.field, entry.value);

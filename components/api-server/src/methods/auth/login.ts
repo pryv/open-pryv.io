@@ -38,6 +38,7 @@ const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile:
 // distinct site from accesses.create), so index them too. Non-fatal.
 const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
+const { isMintedAliasShape } = require('business/src/users/aliasShape.ts');
 const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAttemptThrottle } = require('../helpers/accountAttemptThrottle.ts') as typeof import('../helpers/accountAttemptThrottle.ts');
 
@@ -141,14 +142,15 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   // The credentials name the account by its username or by a former one
   // (kept as an alias by a username change): both resolve to the account the
-  // path addressed. The `r-` alias of an access is not a sign-in name: it is
+  // path addressed. The alias minted for an access (`r-` + 8 characters, a
+  // shape registration refuses as a username) is not a sign-in name: it is
   // handed out with a token, and would otherwise let its holder try passwords
   // without knowing the username.
   async function applyPrerequisitesForLogin (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const fixedUsername = params.username.toLowerCase();
     if (context.user.username === fixedUsername) return next();
     try {
-      if (!fixedUsername.startsWith('r-')) {
+      if (!isMintedAliasShape(fixedUsername)) {
         const userId = await usersRepository.getUserIdForUsername(fixedUsername);
         if (userId != null && userId === context.user.id) return next();
       }

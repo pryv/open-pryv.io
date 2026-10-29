@@ -213,6 +213,17 @@ describe('[UCLG] sign-in after a username change', function () {
     assert.equal(await usersRepositoryOf().getUsernameForUserId(userId), newName);
   });
 
+  it('[UCLG3] a former username that starts with "r-" (not an access alias) signs in', async function () {
+    const uname = 'r-' + Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 6).padEnd(6, 'x');
+    await getNewFixture().user(uname, { password: PASSWORD });
+    const newName = freshName('le');
+    const res = await changeUsername(uname, newName, await login(uname));
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const former = await coreRequest.post('/' + newName + '/auth/login')
+      .send({ username: uname, password: PASSWORD, appId: APP_ID });
+    assert.equal(former.status, 200, JSON.stringify(former.body));
+  });
+
   it('[UCLG2] refuses a username of another account and the r- alias of an access', async function () {
     const { uname } = await freshUser('lc');
     const other = await freshUser('ld');

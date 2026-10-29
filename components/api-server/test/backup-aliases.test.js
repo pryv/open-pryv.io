@@ -98,19 +98,32 @@ describe('[BKAL] backup + restore carry the alias index', function () {
     assert.notStrictEqual(await platform.getUsersUniqueField('alias', alias), null, 'the alias is reserved on the platform');
   });
 
-  it('[BKAL3] the series under a former username are backed up and restored under the username, its own points kept on a clash', async function () {
+  // Series kept under a former username (an account renamed by an earlier
+  // release) and the username's own: backed up, then restored over the
+  // account while the former namespace holds a point written after the backup.
+  async function seriesRoundTrip (formerName, currentName, { pointsBeforeRename = false } = {}) {
     const series = require('storages').seriesConnection;
     assert.ok(series != null, 'series storage is initialised');
     const { seriesNamespace } = require('business/src/series/namespace.ts');
-    const formerName = freshName('bkap');
-    const currentName = freshName('bkaq');
+    const point = (value, seconds) => ({ fields: { value }, timestamp: seconds * 1e9 });
+    const contentOf = async (name) => {
+      const out = {};
+      for (const { measurement, points } of (await series.exportDatabase(seriesNamespace(name))).measurements) {
+        out[measurement] = [...points].sort((a, b) => Number(a.time) - Number(b.time)).map((p) => p.value);
+      }
+      return out;
+    };
     const fixtureUser = await getNewFixture().user(formerName);
     const userId = fixtureUser.attrs.id;
+    if (pointsBeforeRename) {
+      await series.writeMeasurement('event.z', [point(7, 1)], { database: seriesNamespace(formerName) });
+    }
     await usersRepository.changeUsername(userId, formerName, currentName, 'system');
     restored.push({ userId, username: currentName });
-    // Points left under the former username (an account renamed by an earlier
-    // release), and the username's own.
-    const point = (value, seconds) => ({ fields: { value }, timestamp: seconds * 1e9 });
+    if (pointsBeforeRename) {
+      assert.deepStrictEqual(await contentOf(currentName), { 'event.z': [7] }, 'the rename moved the series');
+      assert.deepStrictEqual(await contentOf(formerName), {}, 'nothing left under the former username');
+    }
     await series.writeMeasurement('event.a', [point(1, 1), point(2, 2)], { database: seriesNamespace(formerName) });
     await series.writeMeasurement('event.b', [point(3, 1)], { database: seriesNamespace(formerName) });
     await series.writeMeasurement('event.a', [point(20, 2), point(30, 3)], { database: seriesNamespace(currentName) });
@@ -120,7 +133,8 @@ describe('[BKAL] backup + restore carry the alias index', function () {
     const backup = new BackupOrchestrator();
     await backup.init();
     await backup.backupUser(userId, writer);
-    for (const name of [formerName, currentName]) await series.dropDatabase(seriesNamespace(name));
+    // After the backup: a point under the former username the restore must clear.
+    await series.writeMeasurement('event.c', [point(99, 1)], { database: seriesNamespace(formerName) });
 
     const reader = backupIO.createFilesystemBackupReader(dir, {});
     const restore = new RestoreOrchestrator();
@@ -128,16 +142,20 @@ describe('[BKAL] backup + restore carry the alias index', function () {
     await restore.restoreUser(userId, reader, { overwrite: true });
     await reader.close();
 
-    const contentOf = async (name) => {
-      const out = {};
-      for (const { measurement, points } of (await series.exportDatabase(seriesNamespace(name))).measurements) {
-        out[measurement] = [...points].sort((a, b) => Number(a.time) - Number(b.time)).map((p) => p.value);
-      }
-      return out;
-    };
-    assert.deepStrictEqual(await contentOf(currentName), { 'event.a': [1, 20, 30], 'event.b': [3] });
-    assert.deepStrictEqual(await contentOf(formerName), {}, 'nothing restored under the former username');
+    const expected = { 'event.a': [1, 20, 30], 'event.b': [3] };
+    if (pointsBeforeRename) expected['event.z'] = [7];
+    assert.deepStrictEqual(await contentOf(currentName), expected);
+    assert.deepStrictEqual(await contentOf(formerName), {}, 'the former namespace is cleared, nothing restored under it');
     for (const name of [formerName, currentName]) await series.dropDatabase(seriesNamespace(name));
+  }
+
+  it('[BKAL3] the series under a former username are backed up and restored under the username, its own points kept on a clash', async function () {
+    await seriesRoundTrip(freshName('bkap'), freshName('bkaq'));
+  });
+
+  it('[BKAL4] a username that starts with "r-" (not an access alias) is a former username like any other: its series are moved, backed up and restored', async function () {
+    const formerName = 'r-' + Math.random().toString(36).replace(/[^a-z0-9]/g, '').slice(0, 6).padEnd(6, 'x');
+    await seriesRoundTrip(formerName, freshName('bkar'), { pointsBeforeRename: true });
   });
 
   it('[BKAL2] an alias another account holds by the time of the restore stays with its holder and is reported', async function () {
