@@ -300,6 +300,21 @@ describe('[ACST] account auto-deletion setting', function () {
     });
   });
 
+  it('[ACST17] features.autoDeletion is absent when a holder could set nothing and no preset applies; the methods stay callable', async function () {
+    const u = await freshUser();
+    const advertised = async () => 'autoDeletion' in (await coreRequest.get(`/${u.username}/service/info`)).body.features;
+    for (const nothing of [{ 'user-account': { delete: ['adminToken'] } }, { account: { autoDeletion: { userOverride: false } } }]) {
+      await withInjectedConfig(nothing, async () => {
+        assert.equal(await advertised(), false, JSON.stringify(nothing));
+        assert.equal((await get(u)).status, 200);
+        assert.equal((await set(u, { mode: 'never' })).status, 200);
+      });
+      await withInjectedConfig({ ...nothing, account: { autoDeletion: { ...nothing.account?.autoDeletion, inactivity: { defaultDays: 365 } } } }, async () => {
+        assert.equal(await advertised(), true, 'a preset applies: ' + JSON.stringify(nothing));
+      });
+    }
+  });
+
   it('[ACST14] the operator preset covers plain accounts with email, not group accounts', async function () {
     const plain = await freshUser();
     const group = await freshUser();

@@ -166,6 +166,21 @@ describe('[ACXP] auto-deletion schedule engine', function () {
     assert.equal(pass(s, T0 + 400 * DAY).due, false);
   });
 
+  it('[ACXP16] an account due in this evaluation gets no reminder: its due leads are skipped', function () {
+    const policy = userDate(T0 + 14 * DAY);
+    const set = withNotice(evaluate({ policy, activity: noActivity, prev: null, now: T0, config, notifiable: true }).bookkeeping, T0);
+    // downtime: the 7- and 1-day reminders were never sent, the day has come
+    const r = evaluate({ policy, activity: noActivity, prev: set, now: T0 + 14 * DAY, config, notifiable: true });
+    assert.equal(r.due, true);
+    assert.equal(r.reminder, null);
+    assert.deepEqual(r.bookkeeping.reminders.sent.map((s) => [s.leadDays, s.skipped]), [[7, true], [1, true]]);
+    // not due yet (minimum notice): the most imminent reminder still goes out
+    const silent = evaluate({ policy, activity: noActivity, prev: null, now: T0, config, notifiable: true }).bookkeeping;
+    const unnoticed = evaluate({ policy, activity: noActivity, prev: silent, now: T0 + 14 * DAY, config, notifiable: true });
+    assert.equal(unnoticed.due, false);
+    assert.equal(unnoticed.reminder, 1);
+  });
+
   it('[ACXP15] next reminder instant for display', function () {
     const s = pass(null, T0).b;
     assert.equal(nextReminderAt(preset(), s, config, T0), T0 + 305 * DAY);

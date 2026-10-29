@@ -18,7 +18,7 @@ import type { Policy, Evaluation } from 'business/src/autoDeletion/deadline.ts';
 import { activityOf } from 'business/src/accesses/accountActivity.ts';
 import type { AccountActivity } from 'business/src/accesses/accountActivity.ts';
 import { buildMallForCmc } from './cmcMall.ts';
-import { sendmail, isLoggedMailFailure } from './mailing.ts';
+import { sendmail, isLoggedMailFailure, isRecipientRejected, isRecipientDeferred } from './mailing.ts';
 import { availableActions } from './autoDeletionPolicy.ts';
 
 /**
@@ -213,12 +213,13 @@ export const AUTO_DELETION_MAILS = Object.freeze({
   blocked: { flag: 'accountDeletionBlocked', templateKey: 'accountDeletionBlockedTemplate', template: 'account-deletion-blocked' }
 });
 export type AutoDeletionMail = keyof typeof AUTO_DELETION_MAILS;
-export type MailOutcome = 'sent' | 'off' | 'failed';
+export type MailOutcome = 'sent' | 'off' | 'rejected' | 'failed';
 
 /**
  * Send one auto-deletion mail to the account's address. `off`: the mail is
- * switched off, or the account cannot receive mail. Never throws: a failure
- * is logged and answered `failed`.
+ * switched off, or the account cannot receive mail. `rejected`: the mail
+ * server refused (or deferred) this recipient. `failed`: any other failure,
+ * the transport's. Never throws: a failure is logged.
  */
 export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeletionMail, user: UserRef, facts: AccountFacts,
   substitutionsFor: (lang: string) => Record<string, string>): Promise<MailOutcome> {
@@ -240,7 +241,7 @@ export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeleti
     if (!isLoggedMailFailure(err)) {
       logger.warn(`auto-deletion ${kind} mail for user "${user.username}" not sent: ${err instanceof Error ? err.message : String(err)}`);
     }
-    return 'failed';
+    return isRecipientRejected(err) || isRecipientDeferred(err) ? 'rejected' : 'failed';
   }
 }
 

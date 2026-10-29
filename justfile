@@ -300,6 +300,11 @@ clean-test-data:
     # SQLite user index + legacy platform-wide.db from before the rqlite platform engine (retained for safety)
     rm -f ./var-pryv/users/user-index.db ./var-pryv/users/user-index.db-wal ./var-pryv/users/user-index.db-shm
     rm -f ./var-pryv/users/platform-wide.db ./var-pryv/users/platform-wide.db-wal ./var-pryv/users/platform-wide.db-shm
+    # Core-level SQLite stores next to the user index: external ids, CMC
+    # deletion notices and unfinished account erasures.
+    rm -f ./var-pryv/users/external-ids.db ./var-pryv/users/external-ids.db-wal ./var-pryv/users/external-ids.db-shm
+    rm -f ./var-pryv/users/cmc-deletion-notices.db ./var-pryv/users/cmc-deletion-notices.db-wal ./var-pryv/users/cmc-deletion-notices.db-shm
+    rm -f ./var-pryv/users/account-erasures.db ./var-pryv/users/account-erasures.db-wal ./var-pryv/users/account-erasures.db-shm
     # Per-user directories (each holds the user's audit SQLite + the SQLite
     # baseStorage file when the SQLite engine is in use).
     find ./var-pryv/users -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true

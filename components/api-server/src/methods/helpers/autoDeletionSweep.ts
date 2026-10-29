@@ -11,6 +11,7 @@ import timestamp from 'unix-timestamp';
 import { getStorageLayer } from 'storage';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { runDeletionGuards } from 'business/src/auth/deletionTeardown.ts';
+import { getErasuresLocal } from 'business/src/auth/erasures.ts';
 import { getActivity } from 'business/src/accesses/accountActivity.ts';
 import type { ActivityAccessesRepo } from 'business/src/accesses/accountActivity.ts';
 import { createAutoDeletionSweep } from 'business/src/autoDeletion/sweep.ts';
@@ -80,6 +81,7 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
   return createAutoDeletionSweep<AccountFacts>({
     getConfig: () => autoDeletionConfig(config),
     listAccounts: async () => await (await getUsersRepository()).getAllUsersIdAndName() as SweepAccount[],
+    listPendingErasures: async () => await (await getErasuresLocal()).listAll(),
     state,
     loadFacts: (account) => loadAccountFacts(config, account),
     readActivity: (account) => getActivity(storageLayer.accesses as unknown as ActivityAccessesRepo, account),
@@ -109,14 +111,14 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
 /**
  * Start the sweep: first pass after a boot delay, then one pass every
  * `sweepIntervalMs` after the previous one ended (passes never overlap).
- * Null when the feature is off (`account.autoDeletion.enabled: false`).
+ * With the feature off (`account.autoDeletion.enabled: false`) a pass only
+ * completes the account erasures left unfinished (by `auth.delete` too).
  */
-export async function startAccountAutoDeletionSweep (config: ConfigLike, options: { firstPassDelayMs?: number } = {}): Promise<{ stop: () => void; sweep: AutoDeletionSweep } | null> {
+export async function startAccountAutoDeletionSweep (config: ConfigLike, options: { firstPassDelayMs?: number } = {}): Promise<{ stop: () => void; sweep: AutoDeletionSweep }> {
   const logger = getLogger('account-auto-deletion');
   const adConfig = autoDeletionConfig(config);
   if (!adConfig.enabled) {
-    logger.info('account auto-deletion is off (account.autoDeletion.enabled: false): the sweep is not started');
-    return null;
+    logger.info('account auto-deletion is off (account.autoDeletion.enabled: false): the sweep only completes unfinished account erasures');
   }
   const sweep = await createAccountAutoDeletionSweep(config);
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -131,7 +133,7 @@ export async function startAccountAutoDeletionSweep (config: ConfigLike, options
     timer.unref();
   };
   schedule(options.firstPassDelayMs ?? FIRST_PASS_DELAY_MS);
-  logger.info(`account auto-deletion sweep started: every ${adConfig.sweepIntervalMs} ms${adConfig.dryRun ? ', dry run (nothing is sent, erased or written)' : ''}`);
+  if (adConfig.enabled) logger.info(`account auto-deletion sweep started: every ${adConfig.sweepIntervalMs} ms${adConfig.dryRun ? ', dry run (nothing is sent, erased or written)' : ''}`);
   return {
     sweep,
     stop: () => {

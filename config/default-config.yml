@@ -570,7 +570,9 @@ account:
   # (account.setAutoDeletion). Per core: for a platform-wide preset set the
   # same values on every core.
   autoDeletion:
-    # false hides the feature and stops the sweep; nothing is deleted.
+    # false hides the feature; nothing is scheduled or deleted by it. The
+    # sweep then only completes account erasures left unfinished (a failed
+    # step, a crash), whatever started them.
     enabled: true
     # true: the sweep logs the reminders it would send and the accounts it
     # would delete, and does neither. Use it to see the numbers before
@@ -586,7 +588,8 @@ account:
       # Periods a user may choose.
       minDays: 90
       maxDays: 3650
-    # A user may change the period of the preset (or set one when none).
+    # A user may choose their own date or period (instead of the preset, or
+    # when there is none). false refuses both.
     userOverride: true
     # A user may set "never" while a preset applies. false enforces the
     # preset as a retention rule.

@@ -125,7 +125,6 @@ export function evaluate (input: EvaluateInput): Evaluation {
     }
   };
   if (firstNoticeAt != null) next.firstNoticeAt = firstNoticeAt;
-  if (prev?.deleting != null && !restart) next.deleting = prev.deleting;
   if (prev?.transfer != null && !restart) next.transfer = prev.transfer;
   if (prev?.blocked != null && prev.blocked.reason !== 'no-email' && !restart) next.blocked = prev.blocked;
 
@@ -145,6 +144,9 @@ export function evaluate (input: EvaluateInput): Evaluation {
     next.deadlineReason = 'minimum-notice';
   }
 
+  const due = firstNoticeAt != null && now >= (next.deleteAt ?? base) && next.blocked == null;
+
+  // A reminder is pointless once the account is due: its leads are skipped.
   let reminder: number | null = null;
   const sentLeads = new Set(next.reminders.sent.map((s) => s.leadDays));
   const dueLeads = leadsFor(policy, config)
@@ -154,13 +156,12 @@ export function evaluate (input: EvaluateInput): Evaluation {
       return fireAt <= now && fireAt > policyAppliedAt;
     });
   if (dueLeads.length > 0) {
-    reminder = Math.min(...dueLeads);
+    reminder = due ? null : Math.min(...dueLeads);
     for (const lead of dueLeads) {
       if (lead !== reminder) next.reminders.sent.push({ leadDays: lead, at: now, skipped: true });
     }
   }
 
-  const due = firstNoticeAt != null && now >= (next.deleteAt ?? base) && next.blocked == null;
   return { bookkeeping: next, reminder, due };
 }
 

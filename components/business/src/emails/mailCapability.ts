@@ -125,7 +125,11 @@ export const MAIL_KINDS = {
   welcome: 'welcome',
   resetPassword: 'password-reset',
   verifyEmail: 'email-verification',
-  mfaChange: 'MFA-change'
+  mfaChange: 'MFA-change',
+  externalIdReleased: 'external-id-release',
+  accountDeletionScheduled: 'auto-deletion confirmation',
+  accountDeletionReminder: 'auto-deletion reminder',
+  accountDeletionBlocked: 'auto-deletion on-hold'
 } as const;
 
 export function enabledMailKinds (config: ConfigReader): Array<keyof typeof MAIL_KINDS> {

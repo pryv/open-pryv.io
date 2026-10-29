@@ -56,7 +56,6 @@ export type Bookkeeping = {
   reminders: { deadlineDay: number | null; sent: Array<{ leadDays: number; at: number; skipped?: boolean }> };
   /** `notifiedAt`: the holder was mailed about this block (once). */
   blocked?: { reason: string; at: number; notifiedAt?: number };
-  deleting?: { startedAt: number };
   transfer?: Record<string, unknown>;
 };
 

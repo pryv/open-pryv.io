@@ -55,6 +55,15 @@ export function isRecipientRejected (err: unknown): boolean {
   return err != null && typeof err === 'object' && (err as { [RECIPIENT_REJECTED]?: boolean })[RECIPIENT_REJECTED] === true;
 }
 
+// Set on the error `sendmail` reports when the SMTP server deferred the
+// recipient (a temporary refusal of that address, not a transport failure).
+const RECIPIENT_DEFERRED = Symbol.for('pryv.mailing.recipientDeferred');
+
+/** True when `err` is a `sendmail` failure caused by the SMTP server deferring the recipient. */
+export function isRecipientDeferred (err: unknown): boolean {
+  return err != null && typeof err === 'object' && (err as { [RECIPIENT_DEFERRED]?: boolean })[RECIPIENT_DEFERRED] === true;
+}
+
 /**
  * The client-facing answer for a recipient address the SMTP server rejected,
  * on a request where the address is the caller's own input.
@@ -222,6 +231,9 @@ function _sendmailInProcess (emailSettings: EmailSettings, template: string, rec
         // A temporary refusal (greylisting, mailbox full): not a fault of
         // this server either, but the mail is lost, nothing re-sends it.
         logger.warn('Sending email failed (in-process): ' + template + ' mail, recipient deferred by the SMTP server (temporary), not sent and not retried: ' + detail);
+        const failure = markLogged(errors.unexpectedError(GENERIC_SENDMAIL_ERROR));
+        Object.defineProperty(failure, RECIPIENT_DEFERRED, { value: true, enumerable: false });
+        return callback(failure);
       } else {
         logger.error('Sending email failed (in-process): ' + template + ' mail: ' + detail);
       }

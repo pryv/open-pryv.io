@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { ConfigLike as Config, Logger } from '@pryv/boiler';
 import type { DeletionObjection } from './deletionTeardown.ts';
+import type { AccountErasureRow } from 'storages/interfaces/baseStorage/ErasuresLocalDB.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const fs = require('fs');
@@ -32,7 +33,32 @@ type MethodContext = {
   deletionByAdmin?: boolean;
   // What decided an erasure run outside auth.delete (eraseAccount).
   erasureTrigger?: string;
+  // The record of the erasure in progress (openErasureRecord).
+  erasure?: AccountErasureRow;
 };
+type StepFn = (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown;
+type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditData' | 'dropHFDataAgain';
+
+// Loaded on first use, like the other storages handles here.
+function erasuresStore (): ReturnType<typeof import('./erasures.ts').getErasuresLocal> {
+  return (require('./erasures.ts') as typeof import('./erasures.ts')).getErasuresLocal();
+}
+
+function errorText (err: unknown): string {
+  const inner = (err as { innerError?: unknown } | null)?.innerError;
+  const e = inner instanceof Error ? inner : err;
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** The refusal of per-user file storage to reopen an erased account's files, possibly wrapped. */
+function isErasedUserError (err: unknown): boolean {
+  for (let e = err, depth = 0; e != null && depth < 5; depth++) {
+    const x = e as { name?: unknown; message?: unknown; innerError?: unknown; cause?: unknown };
+    if (x.name === 'ErasedUserError' || (typeof x.message === 'string' && x.message.startsWith('user directory erased'))) return true;
+    e = x.innerError ?? x.cause;
+  }
+  return false;
+}
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;
 type StorageLayer = {
@@ -291,39 +317,120 @@ class Deletion {
    * (an account that never had relationships).
    */
   erasureSteps ({ teardown = true } = {}): Array<(context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown> {
-    return [
+    const steps: StepName[] = [
       // Before anything is erased: the plugins read this account's records to
       // reach the accounts it has relationships with.
-      ...(teardown ? [this.runTeardownSteps] : []),
-      this.deleteUserFiles,
-      this.deleteHFData,
-      this.deleteAttachments,
-      this.deleteAuditDataStorage,
+      ...(teardown ? ['runTeardownSteps' as const] : []),
+      'deleteUserFiles',
+      'deleteHFData',
+      'deleteAttachments',
+      'deleteAuditDataStorage',
       // deleteUser opens the user's per-user SQLite files to remove its rows:
       // after the directory wipe it would create them again, empty. Wipe last.
-      this.deleteUser,
-      this.deleteAuditData,
+      'deleteUser',
+      'deleteAuditData',
       // Last: points written while the steps above ran, through a series
       // credential still cached by a high-frequency worker.
-      this.dropHFDataAgain
-    ].map((step) => step.bind(this) as (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown);
+      'dropHFDataAgain'
+    ];
+    return [
+      this.openErasureRecord.bind(this),
+      ...steps.map((name) => this.#recordedStep(name, (this[name] as StepFn).bind(this))),
+      this.closeErasureRecord.bind(this)
+    ];
   }
 
   /**
    * Erase a whole account outside auth.delete, with the same steps. Throws on
-   * the first failing step. `trigger` names what decided the erasure (e.g. an
-   * auto-deletion's `date` or `inactivity`), kept on the context for the
-   * steps that record it.
+   * the first failing step. An erasure of the account left unfinished (its
+   * record is still there) is completed instead: the steps it recorded as done
+   * are skipped. `trigger` names what decided the erasure (e.g. an
+   * auto-deletion's `date` or `inactivity`), kept in its record.
    */
   async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean; trigger?: string } = {}): Promise<void> {
     const context: MethodContext = { user: { id: account.id, username: account.username } };
-    if (options.trigger != null) context.erasureTrigger = options.trigger;
+    context.erasureTrigger = options.trigger ?? 'system';
     const result: ResultBag = {};
     for (const step of this.erasureSteps(options)) {
       await new Promise<void>((resolve, reject) => {
         step(context, {}, result, (err?: unknown) => err != null ? reject(err) : resolve());
       });
     }
+  }
+
+  // The record of this erasure, in the core's storage the erasure does not
+  // wipe: written before the first step, kept up to date after each one,
+  // removed after the last. An unfinished record of the same account is
+  // taken up again (its done steps are skipped).
+  async openErasureRecord (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    try {
+      const store = await erasuresStore();
+      const now = Date.now();
+      const existing = await store.get(context.user.id);
+      let record: AccountErasureRow;
+      if (existing != null && existing.username === context.user.username) {
+        record = { ...existing, attempts: existing.attempts + 1, updatedAt: now };
+        if (existing.seriesNamespaces != null) context.seriesNamespaces = existing.seriesNamespaces;
+        this.logger.warn(`completing the erasure of account "${context.user.username}" (${context.user.id}) started at ${new Date(existing.startedAt).toISOString()}, attempt ${record.attempts}; steps done: ${existing.doneSteps.join(', ') || 'none'}`);
+      } else {
+        const trigger = context.erasureTrigger ?? (context.deletionByAdmin === true ? 'admin' : 'holder');
+        record = { userId: context.user.id, username: context.user.username, trigger, startedAt: now, updatedAt: now, doneSteps: [], seriesNamespaces: null, attempts: 1, lastError: null };
+      }
+      await store.put(record);
+      context.erasure = record;
+    } catch (err: unknown) {
+      // Nothing is erased without its record: an erasure that fails half-way
+      // must be found again.
+      this.logger.error(err, err);
+      return next(errors.unexpectedError(err));
+    }
+    next();
+  }
+
+  async closeErasureRecord (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    try {
+      await (await erasuresStore()).delete(context.user.id);
+    } catch (err: unknown) {
+      // The account is erased; a record left behind only runs the (done)
+      // steps again later.
+      this.logger.error('the erasure record of a fully erased account could not be removed', err);
+    }
+    next();
+  }
+
+  /** `step`, skipped when the record says it is done, recorded as done once it completed. */
+  #recordedStep (name: StepName, step: StepFn): StepFn {
+    return (context, params, result, next) => {
+      const record = context.erasure;
+      if (record != null && record.doneSteps.includes(name)) return next();
+      let answered = false;
+      const done = (err?: unknown): void => {
+        if (answered) return;
+        answered = true;
+        const resuming = record != null && record.attempts > 1;
+        // Per-user files of an account whose directory is already gone refuse
+        // to open again (by design): on a resumed erasure that means done.
+        if (err != null && !(resuming && isErasedUserError(err))) {
+          if (record == null) return next(err);
+          record.lastError = `${name}: ${errorText(err)}`;
+          record.updatedAt = Date.now();
+          erasuresStore().then((store) => store.put(record)).catch((e: unknown) => this.logger.warn('erasure record not updated: ' + errorText(e)))
+            .finally(() => next(err));
+          return;
+        }
+        if (record == null) return next();
+        record.doneSteps.push(name);
+        if (name === 'deleteHFData' && context.seriesNamespaces != null) record.seriesNamespaces = context.seriesNamespaces;
+        record.updatedAt = Date.now();
+        erasuresStore().then((store) => store.put(record))
+          // A step not recorded as done is run again on a resume, on data
+          // already gone: every step accepts that.
+          .catch((e: unknown) => this.logger.warn('erasure record not updated: ' + errorText(e)))
+          .finally(() => next());
+      };
+      // A step that rejects without answering fails like one that answers an error.
+      Promise.resolve(step(context, params, result, done)).catch(done);
+    };
   }
 
   async deleteUser (context: MethodContext, _params: unknown, result: ResultBag, next: Next) {

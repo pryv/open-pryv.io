@@ -17,9 +17,30 @@
   `PRYV_CMC_LOOP_WORKER`), started by `server.ts` after the server is listening. Passes are chained
   (the next one is scheduled when the previous one ends) and a pass asked for while one runs is
   skipped. Accounts are processed one at a time. Its bookkeeping row is written only on a material
-  change; accounts without a schedule are never written.
-- `Deletion.eraseAccount` takes an optional `trigger` (kept on the erasure context for a future
-  erasure record); the audit method list gains `account.autoDeletion.erase`.
+  change; accounts without a schedule are never written. The loop starts even with the feature off
+  (it then only completes unfinished erasures, see below).
+- `Deletion.eraseAccount` takes an optional `trigger`; the audit method list gains
+  `account.autoDeletion.erase`. Mail failures of the sweep: `helpers/mailing.ts` now also marks a
+  recipient deferred by the SMTP server (`isRecipientDeferred`, like `isRecipientRejected`), so
+  the sweep tells a refused recipient (this account only) from a transport failure (no more mail
+  this pass).
+
+### Account erasure: an erasure that fails half-way is completed later
+
+- An account erasure (`auth.delete`, the auto-deletion sweep, the rollback of a delegated account)
+  failing at or after the removal of the account left it half-erased for good: the account was no
+  longer listed (its index entry goes first), so nothing could find it again, and its user
+  directory (on SQLite, its data files) and late series could stay. Every erasure now keeps a
+  record in a new core-level store that the erasure does not wipe (`ErasuresLocalDB`, conformance
+  suite `[ERLD]`: PostgreSQL table `account_erasures`, created at boot; SQLite file
+  `account-erasures.db` in the engine path, next to the users index): written before the first
+  step, updated after each one (steps done, the account's series namespaces while its aliases are
+  still known, last error), removed after the last. A later erasure of the same account skips the
+  steps done; the auto-deletion sweep completes every record idle for 15 minutes at the start of
+  each pass, whatever started it. On SQLite, the refusal to reopen the files of an erased account
+  (by design) counts as a step done on such a resume. The sweep's own `deleting` bookkeeping marker
+  is gone (one source of truth). Tests `[ACSW14A-D]` (faults before, inside and after the removal
+  of the account, lost progress), `[ACSW19]` (`auth.delete`).
 
 ### Account auto-deletion: configuration and per-account state (feature not exposed yet)
 

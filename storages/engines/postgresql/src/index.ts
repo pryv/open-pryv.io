@@ -207,6 +207,10 @@ function getDeletionNoticesLocal (): unknown {
   return require('./deletionNoticesLocal.ts').DeletionNoticesLocalPG;
 }
 
+function getErasuresLocal (): unknown {
+  return require('./erasuresLocal.ts').ErasuresLocalPG;
+}
+
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule (): unknown {
@@ -298,6 +302,7 @@ export {
   getUsersLocalIndex,
   getExternalIdsLocal,
   getDeletionNoticesLocal,
+  getErasuresLocal,
   getDataStoreModule,
   createPlatformDB,
   createSeriesConnection,

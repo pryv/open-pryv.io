@@ -602,6 +602,21 @@ CREATE TABLE IF NOT EXISTS cmc_deletion_notices (
 CREATE INDEX IF NOT EXISTS idx_cmc_deletion_notices_due
   ON cmc_deletion_notices(status, next_attempt_after);
 
+-- Account erasures in progress (core-level, never replicated, outside the
+-- per-user backup): written before the first erasure step, removed after the
+-- last one; a row left behind is an erasure to complete. Times in ms.
+CREATE TABLE IF NOT EXISTS account_erasures (
+  user_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  trigger TEXT,
+  started_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  done_steps JSONB NOT NULL,
+  series_namespaces JSONB,
+  attempts INTEGER NOT NULL,
+  last_error TEXT
+);
+
 -- Series data (replaces InfluxDB)
 
 CREATE TABLE IF NOT EXISTS series_data (

@@ -252,6 +252,10 @@ function getDeletionNoticesLocal () {
   return require('./deletionNoticesLocal.ts').DeletionNoticesLocalSQLite;
 }
 
+function getErasuresLocal () {
+  return require('./erasuresLocal.ts').ErasuresLocalSQLite;
+}
+
 // -- DataStore ----------------------------------------------------------
 
 function getDataStoreModule () {
@@ -271,4 +275,4 @@ function createSeriesConnection (config: Record<string, unknown>): unknown {
   return require('./seriesStorage/index.ts').createSeriesConnection(config);
 }
 
-export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getExternalIdsLocal, getDeletionNoticesLocal, getDataStoreModule, createAuditStorage, createSeriesConnection };
+export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getExternalIdsLocal, getDeletionNoticesLocal, getErasuresLocal, getDataStoreModule, createAuditStorage, createSeriesConnection };

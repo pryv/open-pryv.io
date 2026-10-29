@@ -11,19 +11,24 @@
  * the erasure come in as dependencies, so the pass runs with a fake clock and
  * a fake mailer in tests.
  *
- * Per account:
+ * A pass first completes the account erasures left unfinished on this core
+ * (whatever started them: this sweep or `auth.delete`), from the core's record
+ * of erasures in progress; this runs even with the feature off. Then, per
+ * account:
  *  - nothing applies (no setting, no preset, no bookkeeping): skipped, nothing
  *    read beyond the setting and the bookkeeping, nothing written;
  *  - a reminder is due: the bookkeeping is saved first, then the mail is sent,
  *    then the notice is recorded. A crash between the send and the record
- *    sends that reminder again; none is ever skipped. A send that keeps
- *    failing is logged once per account and lead;
+ *    sends that reminder again; none is ever skipped. A recipient the mail
+ *    server refuses is logged once per account and lead; a transport failure
+ *    stops the mail of the rest of the pass (one summary line), the reminders
+ *    stay due for the next one;
  *  - the account is due: its activity is read again (a sign-in since the
  *    evaluation wins), the deletion guards are asked (a refusal is recorded as
  *    `blocked`, mailed to the holder once, and asked again on every later
- *    pass, silently), a `deleting` marker is written, then the account is
- *    erased between two WARN log lines. A marker found on a later pass (a
- *    crash, a failed step) runs the erasure again to its end.
+ *    pass, silently), then the account is erased between two WARN log lines.
+ *    The erasure keeps its own record: one that fails half-way is completed
+ *    by a later pass.
  *
  * `transfer` policies are left alone: their action is not deletion. A pass
  * still running when the next one is asked for makes that one a no-op.
@@ -58,12 +63,25 @@ export type Notice = {
   now: number;
 };
 
-/** `off`: this mail is switched off by the operator (not a failure). */
-export type SendOutcome = 'sent' | 'off' | 'failed';
+/**
+ * `off`: this mail is switched off by the operator (not a failure).
+ * `rejected`: the mail server refused this recipient (this account only).
+ * `failed`: the mail could not be handed over (the transport is down).
+ */
+export type SendOutcome = 'sent' | 'off' | 'rejected' | 'failed';
 
 export type Objection = { reason: string; message: string };
 
 export type Trigger = 'date' | 'inactivity';
+
+/** An erasure left unfinished, from the core's record of erasures in progress. */
+export type PendingErasure = {
+  userId: string;
+  username: string;
+  trigger: string | null;
+  /** Epoch ms of its last progress. */
+  updatedAt: number;
+};
 
 export type ErasureRecord = {
   username: string;
@@ -74,8 +92,6 @@ export type ErasureRecord = {
   deleteAt: number | null;
   /** Send times of the notices (the confirmation, when it was the first, and the reminders). */
   notices: number[];
-  /** A `deleting` marker of an earlier pass is being completed. */
-  resumed: boolean;
 };
 
 type Logger = {
@@ -94,6 +110,8 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   /** Read at every pass: a config change applies from the next one. */
   getConfig: () => AutoDeletionConfig;
   listAccounts: () => Promise<SweepAccount[]>;
+  /** The erasures in progress on this core. */
+  listPendingErasures: () => Promise<PendingErasure[]>;
   state: SweepState;
   loadFacts: (account: SweepAccount) => Promise<F>;
   /** Activity only, read again right before an erasure. */
@@ -102,7 +120,8 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   sendBlocked: (account: SweepAccount, facts: F, notice: Notice) => Promise<SendOutcome>;
   /** The deletion guards' objection, or null. Throws when the erasure cannot be attempted (an operator problem). */
   checkErasable: (account: SweepAccount) => Promise<Objection | null>;
-  erase: (account: SweepAccount, options: { trigger: Trigger }) => Promise<void>;
+  /** Erases the account, or completes its unfinished erasure. */
+  erase: (account: SweepAccount, options: { trigger?: Trigger }) => Promise<void>;
   /** Durable record of the erasure (an audit row that outlives the account), written before it starts. */
   recordErasure?: (account: SweepAccount, record: ErasureRecord) => Promise<void>;
   /** Pryv seconds. */
@@ -117,9 +136,14 @@ export type PassResult = {
   /** Accounts a policy or a bookkeeping row applies to. */
   accounts: number;
   reminders: number;
+  /** Reminders refused for their recipient. */
   reminderFailures: number;
   remindersOff: number;
+  /** Mails not attempted this pass after a transport failure (that one included). */
+  mailHeld: number;
   erased: number;
+  /** Unfinished erasures completed. */
+  completed: number;
   blocked: number;
   /** Due accounts left for the next pass by `maxDeletionsPerPass`. */
   deferred: number;
@@ -129,12 +153,18 @@ export type PassResult = {
   wouldErase: number;
 };
 
+/** An erasure record untouched for this long is no longer running: it is completed. */
+export const STALE_ERASURE_MS = 15 * 60 * 1000;
+
 function emptyResult (dryRun: boolean, skipped = false): PassResult {
-  return { skipped, dryRun, accounts: 0, reminders: 0, reminderFailures: 0, remindersOff: 0, erased: 0, blocked: 0, deferred: 0, failed: 0, wouldRemind: 0, wouldErase: 0 };
+  return { skipped, dryRun, accounts: 0, reminders: 0, reminderFailures: 0, remindersOff: 0, mailHeld: 0, erased: 0, completed: 0, blocked: 0, deferred: 0, failed: 0, wouldRemind: 0, wouldErase: 0 };
 }
 
+/** The message of `err`, or of the error an API error wraps (its own says only "Unexpected error"). */
 function errorText (err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  const inner = (err as { innerError?: unknown } | null)?.innerError;
+  const e = inner instanceof Error ? inner : err;
+  return e instanceof Error ? e.message : String(e);
 }
 
 function withoutBlocked (b: Bookkeeping): Bookkeeping {
@@ -147,12 +177,20 @@ const isGuardBlock = (blocked: Bookkeeping['blocked'] | undefined): boolean => b
 export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F>) {
   const { state, logger } = deps;
   let running = false;
-  // Log-once memories, per process: a send that keeps failing and a transfer
-  // policy are reported once, not at every pass.
-  const failedReminders = new Set<string>();
+  // Log-once memories, per process: a recipient refused at every pass and a
+  // transfer policy are reported once, not at every pass.
+  const refusedReminders = new Set<string>();
   const transfersSeen = new Set<string>();
 
-  type PassContext = { config: AutoDeletionConfig; result: PassResult; erasuresStarted: number };
+  type PassContext = {
+    config: AutoDeletionConfig;
+    result: PassResult;
+    erasuresStarted: number;
+    /** A send failed at the transport: no more mail this pass. */
+    mailDown: boolean;
+    /** Accounts with an erasure in progress: not scheduled again. */
+    erasing: Set<string>;
+  };
 
   async function runPass (): Promise<PassResult> {
     if (running) {
@@ -169,9 +207,11 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
 
   async function pass (): Promise<PassResult> {
     const config = deps.getConfig();
-    const ctx: PassContext = { config, result: emptyResult(config.dryRun), erasuresStarted: 0 };
+    const ctx: PassContext = { config, result: emptyResult(config.dryRun), erasuresStarted: 0, mailDown: false, erasing: new Set() };
+    await completeErasures(ctx);
     if (!config.enabled) return ctx.result;
     for (const account of await deps.listAccounts()) {
+      if (ctx.erasing.has(account.id)) continue;
       try {
         await processAccount(account, ctx);
       } catch (err) {
@@ -183,8 +223,11 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     if (r.dryRun && (r.wouldRemind > 0 || r.wouldErase > 0)) {
       logger.info(`auto-deletion sweep (dry run): ${r.wouldRemind} reminder(s) and ${r.wouldErase} erasure(s) would have been done; nothing was sent, erased or written`);
     }
-    if (r.reminders > 0 || r.erased > 0 || r.blocked > 0 || r.deferred > 0 || r.failed > 0 || r.reminderFailures > 0) {
-      logger.info(`auto-deletion sweep: ${r.accounts} account(s) with a schedule, ${r.reminders} reminder(s) sent, ${r.reminderFailures} not sent, ${r.erased} account(s) erased, ${r.blocked} newly blocked, ${r.deferred} left for the next pass (maxDeletionsPerPass), ${r.failed} failure(s)`);
+    if (ctx.mailDown) {
+      logger.warn(`auto-deletion sweep: the mail transport failed; ${r.mailHeld} mail(s) of this pass not sent, sent at the next pass (the deletions they announce wait for them)`);
+    }
+    if (r.reminders > 0 || r.erased > 0 || r.completed > 0 || r.blocked > 0 || r.deferred > 0 || r.failed > 0 || r.reminderFailures > 0) {
+      logger.info(`auto-deletion sweep: ${r.accounts} account(s) with a schedule, ${r.reminders} reminder(s) sent, ${r.reminderFailures} refused, ${r.erased} account(s) erased, ${r.completed} unfinished erasure(s) completed, ${r.blocked} newly blocked, ${r.deferred} left for the next pass (maxDeletionsPerPass), ${r.failed} failure(s)`);
     }
     if (r.remindersOff > 0) {
       logger.info(`auto-deletion sweep: ${r.remindersOff} reminder(s) due but services.email.enabled.accountDeletionReminder is false: without a first notice, those accounts are not deleted`);
@@ -192,15 +235,58 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     return r;
   }
 
+  /** Completes the erasures left unfinished (a failed step, a crash); not counted in the cap. */
+  async function completeErasures (ctx: PassContext): Promise<void> {
+    let pending: PendingErasure[];
+    try {
+      pending = await deps.listPendingErasures();
+    } catch (err) {
+      ctx.result.failed++;
+      logger.error(`auto-deletion sweep: the erasures in progress could not be read: ${errorText(err)}`);
+      return;
+    }
+    const nowMs = deps.now() * 1000;
+    for (const p of pending) {
+      ctx.erasing.add(p.userId);
+      // A fresh record is an erasure running right now, elsewhere.
+      if (nowMs - p.updatedAt < STALE_ERASURE_MS) continue;
+      const account = { id: p.userId, username: p.username };
+      if (ctx.config.dryRun) {
+        logger.info(`auto-deletion sweep (dry run): would complete the unfinished erasure of account "${p.username}" (${p.userId})`);
+        continue;
+      }
+      const record = { username: p.username, userId: p.userId, trigger: p.trigger };
+      logger.warn(`auto-deletion: completing the unfinished erasure of account "${p.username}" (${p.userId}), trigger ${p.trigger ?? 'unknown'}`, record);
+      try {
+        await deps.erase(account, {});
+      } catch (err) {
+        ctx.result.failed++;
+        logger.error(`auto-deletion: the erasure of account "${p.username}" (${p.userId}) failed again, completed on a later pass: ${errorText(err)}`);
+        continue;
+      }
+      ctx.result.completed++;
+      logger.warn(`auto-deletion: account "${p.username}" (${p.userId}) erased, trigger ${p.trigger ?? 'unknown'}`, record);
+    }
+  }
+
+  /** Sends one mail unless the transport already failed this pass. */
+  async function send (ctx: PassContext, mail: () => Promise<SendOutcome>): Promise<SendOutcome | 'held'> {
+    if (ctx.mailDown) {
+      ctx.result.mailHeld++;
+      return 'held';
+    }
+    const outcome = await mail();
+    if (outcome === 'failed') {
+      ctx.mailDown = true;
+      ctx.result.mailHeld++;
+    }
+    return outcome;
+  }
+
   async function processAccount (account: SweepAccount, ctx: PassContext): Promise<void> {
     const { config, result } = ctx;
     const setting = await state.getSetting(account.id);
     const prev = await state.getBookkeeping(account.id);
-    if (prev?.deleting != null) {
-      result.accounts++;
-      await resumeErasure(account, prev, ctx);
-      return;
-    }
     // Nothing applies and nothing to clean up: the common case, never written.
     const nothingSet = setting == null ? config.inactivity.defaultDays == null : setting.mode === 'never';
     if (prev == null && nothingSet) return;
@@ -242,23 +328,26 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       if (config.dryRun) {
         result.wouldRemind++;
         logger.info(`auto-deletion sweep (dry run): would send the ${leadDays}-day reminder to account "${account.username}" (${account.id})`);
+      } else if (ctx.mailDown) {
+        result.mailHeld++;
       } else {
         await save(b); // intent first: a crash after the send repeats it, never skips it
         const now = deps.now();
-        const outcome = await deps.sendReminder(account, facts, { policy, bookkeeping: b, leadDays, now });
+        const notice = { policy, bookkeeping: b, leadDays, now };
+        const outcome = await send(ctx, () => deps.sendReminder(account, facts, notice));
         const key = `${account.id}:${b.reminders.deadlineDay}:${leadDays}`;
         if (outcome === 'sent') {
-          failedReminders.delete(key);
+          refusedReminders.delete(key);
           b = withNotice(b, now, leadDays);
           await save(b);
           result.reminders++;
         } else if (outcome === 'off') {
           result.remindersOff++;
-        } else {
+        } else if (outcome === 'rejected') {
           result.reminderFailures++;
-          if (!failedReminders.has(key)) {
-            failedReminders.add(key);
-            logger.warn(`auto-deletion sweep: the ${leadDays}-day reminder to account "${account.username}" (${account.id}) could not be sent; retried at every pass, not logged again`);
+          if (!refusedReminders.has(key)) {
+            refusedReminders.add(key);
+            logger.warn(`auto-deletion sweep: the ${leadDays}-day reminder to account "${account.username}" (${account.id}) was refused by the mail server; retried at every pass, not logged again`);
           }
         }
       }
@@ -303,7 +392,8 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       b = { ...b, blocked };
       if (blocked.notifiedAt == null && facts.notifiable) {
         const now = deps.now();
-        if (await deps.sendBlocked(account, facts, { policy, bookkeeping: b, now }) === 'sent') {
+        const notice = { policy, bookkeeping: b, now };
+        if (await send(ctx, () => deps.sendBlocked(account, facts, notice)) === 'sent') {
           b = { ...b, blocked: { ...blocked, notifiedAt: now } };
         }
       }
@@ -317,27 +407,12 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       return;
     }
     ctx.erasuresStarted++;
-    b = { ...withoutBlocked(b), deleting: { startedAt: deps.now() } };
+    b = withoutBlocked(b);
     await save(b);
-    await erase(account, b, ctx, false);
+    await erase(account, b, ctx);
   }
 
-  async function resumeErasure (account: SweepAccount, prev: Bookkeeping, ctx: PassContext): Promise<void> {
-    const { config, result } = ctx;
-    if (config.dryRun) {
-      result.wouldErase++;
-      logger.info(`auto-deletion sweep (dry run): would complete the erasure of account "${account.username}" (${account.id}) started at ${prev.deleting!.startedAt}`);
-      return;
-    }
-    if (config.maxDeletionsPerPass > 0 && ctx.erasuresStarted >= config.maxDeletionsPerPass) {
-      result.deferred++;
-      return;
-    }
-    ctx.erasuresStarted++;
-    await erase(account, prev, ctx, true);
-  }
-
-  async function erase (account: SweepAccount, b: Bookkeeping, ctx: PassContext, resumed: boolean): Promise<void> {
+  async function erase (account: SweepAccount, b: Bookkeeping, ctx: PassContext): Promise<void> {
     const trigger: Trigger = b.appliedPolicy.mode === 'date' ? 'date' : 'inactivity';
     const sent = b.reminders.sent.filter((s) => s.skipped !== true).map((s) => s.at);
     const notices = b.firstNoticeAt != null && !sent.includes(b.firstNoticeAt) ? [b.firstNoticeAt, ...sent] : sent;
@@ -348,10 +423,9 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       source: b.appliedPolicy.source,
       deadline: b.deadline,
       deleteAt: b.deleteAt ?? b.deadline,
-      notices,
-      resumed
+      notices
     };
-    logger.warn(`auto-deletion: erasing account "${account.username}" (${account.id}), trigger ${trigger}${resumed ? ', completing an earlier attempt' : ''}`, record);
+    logger.warn(`auto-deletion: erasing account "${account.username}" (${account.id}), trigger ${trigger}`, record);
     if (deps.recordErasure != null) {
       try {
         await deps.recordErasure(account, record);
@@ -363,7 +437,7 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       await deps.erase(account, { trigger });
     } catch (err) {
       ctx.result.failed++;
-      logger.error(`auto-deletion: the erasure of account "${account.username}" (${account.id}) failed, completed on the next pass: ${errorText(err)}`);
+      logger.error(`auto-deletion: the erasure of account "${account.username}" (${account.id}) failed, completed on a later pass: ${errorText(err)}`);
       return;
     }
     ctx.result.erased++;

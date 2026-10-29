@@ -92,16 +92,20 @@ export default function (api: { register: (...args: unknown[]) => void }) {
     if (serviceInfo.features.delegation === undefined) {
       serviceInfo.features.delegation = config.get('delegation:active') !== false;
     }
-    // Account auto-deletion: what a holder may set on this core (absent when
-    // the operator turned the feature off). `actions` lists `delete` only
-    // where self-deletion is allowed (`user-account.delete`), `triggers`
-    // leaves `inactivity` out when account use is not recorded.
+    // Account auto-deletion: what a holder may set on this core. Absent when
+    // the operator turned the feature off, and when a holder could set
+    // nothing (no action offered, or no own date or period allowed) while no
+    // preset applies: "never" alone is not worth showing. `actions` lists
+    // `delete` only where self-deletion is allowed (`user-account.delete`),
+    // `triggers` leaves `inactivity` out when account use is not recorded.
     if (serviceInfo.features.autoDeletion === undefined) {
       const ad = autoDeletionConfig(config);
-      if (ad.enabled) {
+      const actions = availableActions(config);
+      const settable = actions.length > 0 && ad.userOverride;
+      if (ad.enabled && (settable || ad.inactivity.defaultDays != null)) {
         serviceInfo.features.autoDeletion = {
           triggers: availableTriggers(config),
-          actions: availableActions(config),
+          actions,
           reminderLeadDays: ad.reminders.leadDays,
           bounds: { minDays: ad.inactivity.minDays, maxDays: ad.inactivity.maxDays, minLeadDays: ad.date.minLeadDays },
           userOverride: ad.userOverride,

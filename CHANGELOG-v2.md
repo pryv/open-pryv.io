@@ -21,7 +21,9 @@
   the account themselves (`user-account.delete` lists `personalToken`); `transfer` is not offered
   yet. `service.info` advertises `features.autoDeletion` (`triggers`, `actions`, `reminderLeadDays`,
   `bounds`, `userOverride`, `allowUserOptOut`, `mailAvailable`); it is absent, and both methods
-  answer `unavailable-method`, when `account.autoDeletion.enabled` is false. Operators set the
+  answer `unavailable-method`, when `account.autoDeletion.enabled` is false. It is also absent when a
+  holder could set nothing (no action offered, or `userOverride: false`) and no preset applies; the
+  methods then stay callable. Operators set the
   policy in the per-core `account.autoDeletion` block (an optional inactivity preset
   `inactivity.defaultDays`, default none, the bounds a holder may choose, `userOverride`,
   `allowUserOptOut`, `date.minLeadDays`, the reminder schedule). Every change is confirmed by the
@@ -30,14 +32,18 @@
   fails the change, and a confirmation that went out counts as the schedule's first notice.
 - **Account auto-deletion sweep: reminders, then deletion.** Each core runs a sweep over its own
   accounts (first pass 10 minutes after boot, then every `account.autoDeletion.sweepIntervalMs`,
-  default 6 h; not started when `account.autoDeletion.enabled` is false). An account whose schedule
+  default 6 h). With `account.autoDeletion.enabled: false` it schedules nothing and only completes
+  account erasures left unfinished. An account whose schedule
   applies (its holder's setting, or the operator preset for a plain account with an email address)
   gets reminder mails before the deletion (`reminders.leadDays`, default 60, 30, 7 and 1 days; after
   downtime only the most imminent one) through the new `account-deletion-reminder` mail (switch
   `services.email.enabled.accountDeletionReminder`, template key `accountDeletionReminderTemplate`;
   links to `service.account` and its data export page). No account is deleted less than
   `reminders.minNoticeDays` (default 7) after its first notice: a reminder that cannot be sent is
-  retried at every pass and holds the deletion back; with reminders switched off, an account under
+  retried at every pass and holds the deletion back. When the mail transport fails, the pass sends no
+  more mail and logs one summary line (the mails go out at the next pass); a recipient the mail
+  server refuses is logged once per account and lead. A reminder whose time comes in the pass where
+  the account is due is not sent. With reminders switched off, an account under
   the preset is never deleted. When a preset is turned on or shortened, its clock starts that day
   for every account, so a dormant account always gets the whole reminder schedule. At the deadline
   the sweep checks the account's use once more, runs the deletion guards of `auth.delete` (an
@@ -47,8 +53,9 @@
   and the sweep tries again at every pass), then erases the account as `auth.delete` does,
   relationships torn down included. Each erasure is logged at WARN before and after (username, user
   id, trigger `date` or `inactivity`, never an email address); with `audit.onUserDelete: keep` an
-  audit row `account.autoDeletion.erase` is written in the account's trail first. An erasure
-  interrupted half-way is completed at the next pass. `account.autoDeletion.maxDeletionsPerPass`
+  audit row `account.autoDeletion.erase` is written in the account's trail first. An account
+  erasure interrupted half-way (a failed step, a crash), by the sweep or by `DELETE /users/{username}`,
+  is completed by a later pass once its record has been idle for 15 minutes. `account.autoDeletion.maxDeletionsPerPass`
   (default 20, 0 = no limit) caps the deletions of one pass, the rest wait for the next one;
   `account.autoDeletion.dryRun: true` logs the reminders and deletions a pass would make and sends,
   deletes and writes nothing. **Operators:** platforms whose mail templates were seeded before this
@@ -56,6 +63,11 @@
   `account-deletion-blocked`, en and fr) with `bin/mail.js templates set`: the seeder only fills an
   empty platform database. A preset (`inactivity.defaultDays`) is a retention rule of the platform:
   state it in your privacy notice.
+- **Boot warning on a core without SMTP names every mail class it stops.** In-process mail with no
+  `services.email.smtp.host` was reported as stopping the welcome, password-reset,
+  email-verification and MFA-change mails only; it now also names the external-id-release mail and
+  the three auto-deletion mails (confirmation, reminder, on-hold), each unless switched off under
+  `services.email.enabled`.
 
 - **`auth.login` sets `lastUsed` on the personal access it issues.** A login was not recorded as
   use of that access: `lastUsed` (and the `lastAccess` of `system.getUserInfo`) only moved with the

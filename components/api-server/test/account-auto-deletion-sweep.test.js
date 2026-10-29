@@ -18,6 +18,8 @@ const require = createRequire(import.meta.url);
  * Each sweep here lists only the test's own accounts.
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
 const timestamp = require('unix-timestamp');
 const { getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
@@ -26,6 +28,7 @@ const { getActivity } = require('business/src/accesses/accountActivity.ts');
 const { setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
 const { Deletion } = require('business/src/auth/deletion.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const { getErasuresLocal } = require('business/src/auth/erasures.ts');
 const { createAccountAutoDeletionSweep, startAccountAutoDeletionSweep, isDesignatedLoopWorker } = require('api-server/src/methods/helpers/autoDeletionSweep.ts');
 const { withInjectedConfig, injectTestConfigSnapshot } = require('test-helpers');
 
@@ -115,6 +118,12 @@ describe('[ACSW] account auto-deletion sweep', function () {
     return { lines, logger };
   }
 
+  /** The erasures in progress of these accounts (other suites may leave theirs). */
+  async function pendingOf (users) {
+    const ids = new Set(users.map((u) => u.id));
+    return (await (await getErasuresLocal()).listAll()).filter((r) => ids.has(r.userId));
+  }
+
   /** A sweep over `users`, with a fake clock, a fake mailer and a captured log. */
   async function sweepFor (users, overrides = {}) {
     const clock = { t: T0 };
@@ -123,6 +132,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     const mail = { outcome: 'sent' };
     const sweep = await createAccountAutoDeletionSweep(config, {
       listAccounts: async () => users.map((u) => ({ id: u.id, username: u.username })),
+      listPendingErasures: () => pendingOf(users),
       now: () => clock.t,
       logger,
       sendReminder: async (account, facts, notice) => { sent.reminder.push({ username: account.username, leadDays: notice.leadDays, at: notice.now }); return mail.outcome; },
@@ -210,6 +220,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.deepEqual(await goneOr(() => accessesOf(u), []), []);
     assert.equal(await goneOr(() => state.getBookkeeping(u.id), null), null);
     assert.equal(await goneOr(() => state.getSetting(u.id), null), null);
+    assert.equal(await (await getErasuresLocal()).get(u.id), null, 'the erasure record goes with the last step');
   });
 
   it('[ACSW4] use of the account moves the deadline and restarts the reminders; a pass moves no lastUsed', async function () {
@@ -338,7 +349,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.deepEqual(s.sent, { reminder: [], blocked: [] });
   });
 
-  it('[ACSW10] enabled: false makes the sweep inert and keeps it from starting', async function () {
+  it('[ACSW10] enabled: false schedules nothing; the loop still starts, to complete unfinished erasures', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     const s = await sweepFor([u]);
@@ -347,14 +358,12 @@ describe('[ACSW] account auto-deletion sweep', function () {
         const r = await s.run(T0 + d * DAY);
         assert.equal(r.accounts, 0);
       }
-      assert.equal(await startAccountAutoDeletionSweep(config), null);
+      const started = await startAccountAutoDeletionSweep(config, { firstPassDelayMs: 3600 * 1000 });
+      started.stop();
     });
     assert.equal(await state.getBookkeeping(u.id), null, 'nothing written');
     assert.ok(await exists(u));
     assert.deepEqual(s.sent.reminder, []);
-    const started = await startAccountAutoDeletionSweep(config, { firstPassDelayMs: 3600 * 1000 });
-    assert.ok(started != null);
-    started.stop();
   });
 
   it('[ACSW11] a pass still running makes the next one a no-op', async function () {
@@ -420,32 +429,158 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.ok(s.lines.some((l) => l.msg.includes('dry run') && l.msg.includes('would erase') && l.msg.includes(due.username)));
   });
 
-  it('[ACSW14] an erasure that fails half-way is completed on the next pass', async function () {
-    const u = await freshUser();
-    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
-    const s = await sweepFor([u]);
-    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
-    // Fault between two steps: files, series and attachments are gone, the
-    // audit erasure fails.
-    const stub = sinon.stub(Deletion.prototype, 'deleteAuditDataStorage').callsFake(function (context, params, result, next) {
-      next(new Error('injected fault'));
+  // Fault injection between erasure steps: before the account is removed,
+  // inside its removal (the index entry is already gone), after it (the
+  // directory wipe fails). `restore` undoes the fault.
+  async function injectFault (where) {
+    const fail = function (context, params, result, next) { next(new Error('injected fault')); };
+    if (where === 'before') return sinon.stub(Deletion.prototype, 'deleteAuditDataStorage').callsFake(fail);
+    if (where === 'after') return sinon.stub(Deletion.prototype, 'deleteAuditData').callsFake(fail);
+    const mall = await require('mall').getMall();
+    return sinon.stub(mall, 'deleteUser').rejects(new Error('injected fault'));
+  }
+
+  const seriesConnection = () => require('storages').seriesConnection;
+
+  async function writeSeries (username) {
+    const SeriesRepository = require('business/src/series/repository.ts').default;
+    const DataMatrix = require('business/src/series/data_matrix.ts').default;
+    const series = await new SeriesRepository(seriesConnection()).get(`user.${username}`, `event.${cuid()}`);
+    await series.append(new DataMatrix(['deltaTime', 'value'], [[0, 1], [1, 2]]));
+  }
+
+  async function hasSeries (username) {
+    const conn = seriesConnection();
+    if ((await conn.getDatabases()).includes(`user.${username}`)) return true;
+    return typeof conn.existingPathForUser === 'function' && fs.existsSync(path.dirname(conn.existingPathForUser(`user.${username}`)));
+  }
+
+  /** Nothing of the account is left: index, user directory, series, erasure record. */
+  async function assertFullyErased (u) {
+    assert.equal(await exists(u), false, 'index');
+    assert.equal(await usersRepository.usersIndex.getUsername(u.id), null);
+    assert.equal(fs.existsSync(require('storage').userLocalDirectory.getPathForUser(u.id)), false, 'user directory');
+    if (seriesConnection() != null) assert.equal(await hasSeries(u.username), false, 'series');
+    assert.equal(await (await getErasuresLocal()).get(u.id), null, 'erasure record');
+  }
+
+  for (const [code, where] of [['ACSW14A', 'before'], ['ACSW14B', 'inside'], ['ACSW14C', 'after']]) {
+    it(`[${code}] an erasure that fails ${where} the removal of the account is completed by the next pass`, async function () {
+      const u = await freshUser();
+      if (seriesConnection() != null) await writeSeries(u.username);
+      await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+      const s = await sweepFor([u]);
+      for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+      const fault = await injectFault(where);
+      let r;
+      try {
+        r = await s.run(T0 + 20 * DAY);
+      } finally {
+        fault.restore();
+      }
+      assert.equal(r.erased, 0);
+      assert.equal(r.failed, 1);
+      assert.ok(s.lines.some((l) => l.level === 'error' && l.msg.includes('failed') && l.msg.includes('injected fault')), JSON.stringify(s.lines.slice(-3)));
+      const record = await (await getErasuresLocal()).get(u.id);
+      assert.ok(record != null, 'the unfinished erasure is recorded');
+      assert.equal(record.trigger, 'date');
+      assert.equal(record.username, u.username);
+      assert.ok(record.lastError.includes('injected fault'), record.lastError);
+      assert.ok(record.doneSteps.includes('deleteHFData'));
+      assert.equal(record.doneSteps.includes('deleteUser'), where === 'after');
+      assert.equal(await exists(u), where === 'before', 'the index entry goes first in the removal');
+      // a sensor writes again through a cached series credential
+      if (seriesConnection() != null) await writeSeries(u.username);
+      const teardown = sinon.spy(Deletion.prototype, 'runTeardownSteps');
+      let again;
+      try {
+        again = await s.run(T0 + 20.25 * DAY);
+      } finally {
+        teardown.restore();
+      }
+      assert.equal(teardown.callCount, 0, 'steps done are not run again (no second notice to counterparties)');
+      assert.equal(again.completed, 1, JSON.stringify(s.lines.slice(-4)));
+      assert.equal(again.erased, 0, 'completed, not started again');
+      await assertFullyErased(u);
+      assert.ok(s.lines.some((l) => l.level === 'warn' && l.msg.includes('completing the unfinished erasure') && l.msg.includes(u.username)));
     });
-    let r;
+  }
+
+  it('[ACSW14D] a record whose last updates were lost (the directory already wiped) completes: steps on missing data succeed', async function () {
+    const u = await freshUser();
+    await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'date' });
+    const store = await getErasuresLocal();
+    assert.equal(await store.get(u.id), null);
+    // as if the process had died right after the wipe, its progress unrecorded
+    await store.put({
+      userId: u.id,
+      username: u.username,
+      trigger: 'date',
+      startedAt: 0,
+      updatedAt: 0,
+      doneSteps: ['runTeardownSteps', 'deleteUserFiles', 'deleteHFData', 'deleteAttachments', 'deleteAuditDataStorage'],
+      seriesNamespaces: [`user.${u.username}`],
+      attempts: 1,
+      lastError: null
+    });
+    const s = await sweepFor([u]);
+    const r = await s.run(T0);
+    assert.equal(r.completed, 1, JSON.stringify(s.lines));
+    await assertFullyErased(u);
+  });
+
+  it('[ACSW19] auth.delete records its erasure too: one that fails after the removal of the account is completed by the sweep, feature off included', async function () {
+    // auth.delete binds its steps when registered: registered with the fault
+    // in place, on the application coreRequest serves (initCore's)
+    const registerDelete = () => require('api-server/src/methods/auth/delete.ts').default(globalThis.app.api);
+    const u = await freshUser();
+    const fault = await injectFault('after');
+    let res;
     try {
-      r = await s.run(T0 + 20 * DAY);
+      await registerDelete();
+      res = await coreRequest.delete(`/users/${u.username}`).set('Authorization', config.get('auth:adminAccessKey'));
     } finally {
-      stub.restore();
+      fault.restore();
+      await registerDelete();
     }
-    assert.equal(r.erased, 0);
-    assert.equal(r.failed, 1);
-    assert.ok(await exists(u), 'half-erased');
-    const b = await state.getBookkeeping(u.id);
-    assert.equal(b.deleting.startedAt, T0 + 20 * DAY);
-    assert.ok(s.lines.some((l) => l.level === 'error' && l.msg.includes('failed') && l.msg.includes('injected fault')));
-    const again = await s.run(T0 + 20.25 * DAY);
-    assert.equal(again.erased, 1, JSON.stringify(s.lines.slice(-4)));
+    assert.equal(res.status, 500, JSON.stringify(res.body));
     assert.equal(await exists(u), false);
-    assert.ok(s.lines.some((l) => l.level === 'warn' && l.msg.includes('completing an earlier attempt')));
+    const record = await (await getErasuresLocal()).get(u.id);
+    assert.equal(record.trigger, 'admin');
+    assert.ok(record.doneSteps.includes('deleteUser'));
+    const s = await sweepFor([u]);
+    await withInjectedConfig({ account: { autoDeletion: { enabled: false } } }, async () => {
+      const fresh = await s.run(Date.now() / 1000);
+      assert.equal(fresh.completed, 0, 'a record touched less than 15 minutes ago may be an erasure still running');
+      const r = await s.run(Date.now() / 1000 + 16 * 60);
+      assert.equal(r.completed, 1, JSON.stringify(s.lines));
+    });
+    await assertFullyErased(u);
+  });
+
+  it('[ACSW20] a mail transport failure stops the mail of the pass (one summary line); a refused recipient does not', async function () {
+    const users = [await freshUser(), await freshUser(), await freshUser()];
+    for (const u of users) await state.setSetting(u.id, inactivity(100), 'test');
+    const outcomes = [];
+    const attempted = [];
+    const s = await sweepFor(users, {
+      sendReminder: async (account) => { attempted.push(account.username); return outcomes.shift() ?? 'sent'; }
+    });
+    await s.run(T0);
+    outcomes.push('failed');
+    let r = await s.run(T0 + 40 * DAY);
+    assert.deepEqual(attempted, [users[0].username], 'no mail after the transport failed');
+    assert.equal(r.mailHeld, 3);
+    assert.equal(r.reminders, 0);
+    assert.equal(s.lines.filter((l) => l.msg.includes('mail transport failed')).length, 1);
+    for (const u of users) assert.deepEqual((await state.getBookkeeping(u.id)).reminders.sent, [], 'still due');
+    attempted.length = 0;
+    outcomes.push('rejected');
+    r = await s.run(T0 + 40.25 * DAY);
+    assert.deepEqual(attempted, users.map((u) => u.username), 'a refused recipient stops nothing');
+    assert.equal(r.reminders, 2);
+    assert.equal(r.reminderFailures, 1);
+    assert.equal(s.lines.filter((l) => l.msg.includes('mail transport failed')).length, 1);
   });
 
   it('[ACSW15] a transfer is never erased by the sweep, reported once', async function () {
@@ -536,6 +671,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
       const { lines, logger } = captureLogger();
       const sweep = await createAccountAutoDeletionSweep(config, {
         listAccounts: async () => users.map((u) => ({ id: u.id, username: u.username })),
+        listPendingErasures: () => pendingOf(users),
         now: () => clock.t,
         logger
       });
@@ -607,21 +743,24 @@ describe('[ACSW] account auto-deletion sweep', function () {
       });
     });
 
-    it('[ACRM3] a failed reminder is not recorded, logged once, and sent at a later pass', async function () {
+    it('[ACRM3] a transport failure ends the mail of the pass: one attempt, one summary line, nothing recorded, all sent at a later pass', async function () {
       await withInjectedConfig(MAIL_ON, async () => {
-        const u = await freshUser();
-        await state.setSetting(u.id, inactivity(100), 'test');
-        const s = await realMailSweep([u]);
+        const users = [await freshUser(), await freshUser()];
+        for (const u of users) await state.setSetting(u.id, inactivity(100), 'test');
+        const s = await realMailSweep(users);
         await s.run(T0);
-        nock(MANDRILL).post(MANDRILL_PATH).times(2).reply(500, {});
-        await s.run(T0 + 40 * DAY);
-        await s.run(T0 + 40.25 * DAY);
-        assert.deepEqual((await state.getBookkeeping(u.id)).reminders.sent, []);
-        assert.equal(s.lines.filter((l) => l.level === 'warn' && l.msg.includes('60-day reminder')).length, 1, 'logged once');
+        let attempts = 0;
+        nock(MANDRILL).post(MANDRILL_PATH).times(5).reply(500, () => { attempts++; return {}; });
+        const r = await s.run(T0 + 40 * DAY);
+        assert.equal(attempts, 1, 'one attempt');
+        assert.equal(r.mailHeld, 2);
+        assert.equal(s.lines.filter((l) => l.msg.includes('mail transport failed')).length, 1);
+        for (const u of users) assert.deepEqual((await state.getBookkeeping(u.id)).reminders.sent, []);
+        nock.cleanAll();
         const captured = capture();
-        await s.run(T0 + 40.5 * DAY);
-        assert.equal(captured.length, 1);
-        assert.deepEqual((await state.getBookkeeping(u.id)).reminders.sent.map((x) => x.leadDays), [60]);
+        await s.run(T0 + 40.25 * DAY);
+        assert.equal(captured.length, 2);
+        for (const u of users) assert.deepEqual((await state.getBookkeeping(u.id)).reminders.sent.map((x) => x.leadDays), [60]);
       });
     });
 
