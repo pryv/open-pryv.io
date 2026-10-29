@@ -39,7 +39,6 @@ const { CmcErrorIds } = require('./errorIds.ts');
 // Permission-lexicon single point (pure module — covers the FULL
 // accesses.create grammar: stream AND feature permissions).
 const permissionSet = require('business/src/accesses/permissionSet.ts');
-const storeDataUtils = require('mall/src/helpers/storeDataUtils.ts');
 
 type PermissionLike = { streamId: string; level: string } | { feature: string; setting: string };
 type OfferContent = {
@@ -312,19 +311,6 @@ function buildDataGrantPayload (params: {
   } else {
     // No explicit grant → the whole offer, sans consent annotations.
     basePerms = permissionSet.stripConsentAnnotations(offeredPerms);
-  }
-  // Account fields are written by the account owner only: the grant may
-  // read them, never write them (same rule as accesses.create).
-  for (const p of basePerms) {
-    const streamId = (p as { streamId?: unknown }).streamId;
-    const level = (p as { level?: unknown }).level;
-    if (typeof streamId !== 'string' || level === 'read' || level === 'none') continue;
-    if (storeDataUtils.parseStoreIdAndStoreItemId(storeDataUtils.canonicalStreamId(streamId))[0] === storeDataUtils.AccountStoreId) {
-      const err: ApiError = new Error('cmc/accept: account stream ' + streamId +
-        " can only be granted at the 'read' level; got " + JSON.stringify(level));
-      err.id = CmcErrorIds.OFFER_INVALID_PERMISSIONS;
-      throw err;
-    }
   }
   const allPerms = Array.isArray(extraPermissions) && extraPermissions.length > 0
     ? basePerms.concat(extraPermissions)

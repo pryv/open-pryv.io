@@ -363,12 +363,6 @@ class AccessLogic {
 
   /** ----------- ACCESSES -------------- */
 
-  // Account fields are written by the account owner only (the personal
-  // access): any other access may be granted at most `read` on them.
-  canCreateAccessForAccountStream (permissionLevel: string) {
-    return isHigherOrEqualLevel('read', permissionLevel);
-  }
-
   // -- accesses.get
   canListAnyAccess () {
     return this.isPersonal();

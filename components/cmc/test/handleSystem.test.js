@@ -97,6 +97,13 @@ const ACK_TRIGGER = {
 };
 
 describe('[CMCHS] cmc/handleSystem', () => {
+  // The accept validates account-stream permissions, which needs the
+  // account-stream schema a live server loads at start.
+  before(async () => {
+    require('test-helpers/src/api-server-tests-config.ts');
+    await require('business/src/system-streams/index.ts').init();
+  });
+
   describe('[CMCHS-PS] parseCollectorStreamId', () => {
     it('[HS49] parses flat :_cmc:apps:<app>:collectors:<slug>', () => {
       const r = parseCollectorStreamId(':_cmc:apps:my-app:collectors:provider-a--provider-example-org');

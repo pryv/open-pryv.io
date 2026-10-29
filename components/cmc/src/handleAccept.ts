@@ -301,6 +301,25 @@ async function handleAccept (params: {
     }
   }
 
+  // 3a. Account-stream rules of accesses.create (hidden or unknown account
+  // streams, the account root or an account field above `read`): the offer
+  // comes from the requester, and mall.accesses.create applies none of them.
+  // Same live-context condition as the chain check above. Judged on copies,
+  // so the payload keeps the spelling the offer used.
+  if (triggerAccess != null) {
+    // Required here: the account-stream schema is loaded by a live server only.
+    const { validateAccountStreamPermissions } = require('business/src/accesses/accountStreamPermissions.ts');
+    const permissions = (dataGrantPayload!.permissions as Array<Record<string, unknown>> ?? []).map((p) => ({ ...p }));
+    const invalid = validateAccountStreamPermissions(permissions);
+    if (invalid != null) {
+      return {
+        ok: false,
+        reason: CmcErrorIds.OFFER_INVALID_PERMISSIONS,
+        detail: { message: invalid.message, data: invalid.data ?? null },
+      };
+    }
+  }
+
   // 3b. Effective-permission guard (hierarchical-masking class). The pure
   // entry-subset check in buildDataGrantPayload cannot see that dropping a
   // restrictive descendant re-inherits a broader ancestor and WIDENS the

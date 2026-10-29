@@ -104,6 +104,13 @@ const REFUSE_TRIGGER = {
 };
 
 describe('[CMCHA] cmc/handleAccept', () => {
+  // The accept validates account-stream permissions, which needs the
+  // account-stream schema a live server loads at start.
+  before(async () => {
+    require('test-helpers/src/api-server-tests-config.ts');
+    await require('business/src/system-streams/index.ts').init();
+  });
+
   describe('[CMCHA-OK] handleAccept happy path', () => {
     it('[HACVO] entries the chain check appends to the payload are the ones created', async () => {
       const mall = fakeMall();

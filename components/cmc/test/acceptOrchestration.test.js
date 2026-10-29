@@ -320,31 +320,6 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       }
     });
 
-    it('[AO09K] a grant above read on an account stream throws cmc-offer-invalid-permissions; read, or a grant dropping the entry, passes', () => {
-      const offerWith = (permissions, extraRequest) => ({
-        ...VALID_OFFER,
-        content: { ...VALID_OFFER.content, request: { ...VALID_OFFER.content.request, permissions, ...extraRequest } },
-      });
-      const counterparty = { username: 'provider-a', host: 'example.com' };
-      for (const streamId of [':_system:language', ':system:phoneNumber', ':account::_system:language', ':local::system:phoneNumber']) {
-        for (const level of ['contribute', 'manage', 'create-only']) {
-          assert.throws(
-            () => buildDataGrantPayload({ offerEvent: offerWith([{ streamId: 'fertility', level: 'read' }, { streamId, level }]), counterparty }),
-            (err) => err.id === 'cmc-offer-invalid-permissions' && err.message.includes(streamId),
-            streamId + ' at ' + level
-          );
-        }
-        const ok = buildDataGrantPayload({ offerEvent: offerWith([{ streamId, level: 'read' }]), counterparty });
-        assert.deepEqual(ok.permissions, [{ streamId, level: 'read' }]);
-      }
-      const narrowed = buildDataGrantPayload({
-        offerEvent: offerWith([{ streamId: 'fertility', level: 'read' }, { streamId: ':_system:language', level: 'contribute' }], { allowUserChoice: true }),
-        counterparty,
-        grantedPermissions: [{ streamId: 'fertility', level: 'read' }],
-      });
-      assert.deepEqual(narrowed.permissions, [{ streamId: 'fertility', level: 'read' }]);
-    });
-
     it('[AO09F] full permission lexicon: a feature permission (selfRevoke) travels offer → grant', () => {
       const offer = {
         id: 'evt-offer-fp',

@@ -13,9 +13,12 @@
     granted at the `read` or `none` level; `data.param` names the stream), whoever creates the
     access. An OAuth authorization or app access request asking for such a level fails the same
     way.
-  - Accepting a consent offer whose granted permissions hold such a level fails with
-    `cmc-offer-invalid-permissions`; when the offer allows choosing, granting that entry at `read`
-    or leaving it out still succeeds.
+  - Accepting a consent offer, or a collector's scope request, now applies the same account-stream
+    rules as `accesses.create`: a granted set holding such a level, a hidden account stream (for
+    example `:_system:invitationToken`, which an offer could previously have granted at `read`), an
+    unknown account stream, or the account root above `read` fails with
+    `cmc-offer-invalid-permissions` and nothing is granted. When the offer allows choosing, granting
+    that entry at `read` (a visible field) or leaving it out still succeeds.
   - An access already stored with such a level keeps reading the field, but its `events.create` /
     `events.update` / attachment writes on account streams are refused with `403 forbidden`.
 

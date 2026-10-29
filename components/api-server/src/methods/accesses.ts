@@ -18,7 +18,6 @@ const { fromCallback } = require('utils');
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const ErrorIds = require('errors').ErrorIds;
-const ErrorMessages = require('errors').ErrorMessages;
 
 const { ApiEndpoint } = require('utils');
 
@@ -26,9 +25,9 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const methodsSchema = require('../schema/accessesMethods.ts');
 const accessSchema = require('../schema/access.ts').default;
 const string = require('./helpers/string.ts');
-const accountStreams = require('business/src/system-streams/index.ts');
 const { peerFetch } = require('business/src/outbound/peerFetch.ts');
-const ACCOUNT_ROOT_LEVEL_MESSAGE = "The account root stream can only be granted at the 'read' or 'none' level; grant the account fields themselves to write them.";
+// Account/system-stream permission validation, shared with the consent accept.
+const { validateAccountStreamPermissions } = require('business/src/accesses/accountStreamPermissions.ts');
 const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
 
 const cache = require('cache').default;
@@ -259,9 +258,6 @@ export default async function produceAccessesApiMethods (api: { register (...arg
 
   // CREATION
 
-  const notVisibleAccountStreamsIds = accountStreams.hiddenStreamIds;
-  const visibleAccountStreamsIds = Object.keys(accountStreams.accountMap).filter(id => accountStreams.accountMap[id].isShown);
-
   const cmcAccessCreateForgePreventionHook = cmc.createAccessCreateForgePreventionHook({ errors });
   const cmcAccessUpdateForgePreventionHook = cmc.createAccessUpdateForgePreventionHook({ errors });
   // After the target is loaded: an access carrying `clientData.cmc` keeps it.
@@ -429,62 +425,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   }
 
   /**
-   * Shared account/system-stream permission validation used by both
-   * accesses.create and accesses.update. Returns the first violating permission
-   * as an APIError (identical shape on both paths) or null when the whole set is
-   * acceptable. `access` is the caller's access (for the account-field level cap).
-   */
-  function validateAccountStreamPermissions (access: MethodContext['access'], permissions: StreamPermission[]) {
-    for (const permission of permissions) {
-      if (isStreamBasedPermission(permission)) {
-        // Judge, and store, the canonical spelling: `:account::system:email`
-        // or `:local::system:email` name the same account field as
-        // `:system:email`, and the checks below compare exact ids. Already
-        // done first in both chains; kept here so this validation holds on
-        // its own.
-        permission.streamId = storeDataUtils.canonicalStreamId(permission.streamId);
-        if (isUnknownSystemStream(permission.streamId)) {
-          return errors.invalidOperation(ErrorMessages[ErrorIds.UnknownAccountStream], { param: permission.streamId });
-        }
-        // The account root grants its level on every account field below it,
-        // hidden ones included: it can be read or locked, never written.
-        if (permission.streamId === accountStreams.STREAM_ID_ACCOUNT &&
-            permission.level !== 'read' && permission.level !== 'none') {
-          return errors.invalidOperation(ACCOUNT_ROOT_LEVEL_MESSAGE, { param: permission.streamId, level: permission.level });
-        }
-        // don't allow user to give access to not visible stream
-        if (notVisibleAccountStreamsIds.includes(permission.streamId)) {
-          return errors.invalidOperation(ErrorMessages[ErrorIds.DeniedStreamAccess], { param: permission.streamId });
-        }
-        // a visible account field can be granted at 'read' (or 'none') only:
-        // the personal access is the one writer of account fields
-        if (visibleAccountStreamsIds.includes(permission.streamId) &&
-                    !access.canCreateAccessForAccountStream(permission.level)) {
-          return errors.invalidOperation(ErrorMessages[ErrorIds.TooHighAccessForSystemStreams], { param: permission.streamId });
-        }
-      }
-    }
-    return null;
-
-    function isStreamBasedPermission (permission: StreamPermission) {
-      return permission.streamId != null;
-    }
-
-    // An id that routes to the account store (any spelling) must be a known
-    // account stream id; a system-looking id is judged the same way.
-    function isUnknownSystemStream (streamId: string) {
-      const routesToAccount = storeDataUtils.parseStoreIdAndStoreItemId(streamId)[0] === storeDataUtils.AccountStoreId;
-      return (routesToAccount || streamId.startsWith(':_system:') || streamId.startsWith(':system:')) &&
-                accountStreams.toFieldName(streamId) === streamId;
-    }
-  }
-
-  /**
    * If user is creating an access for system streams, apply some validations.
    */
   function applyAccountStreamsValidation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     if (params.permissions == null) { return next(); }
-    const err = validateAccountStreamPermissions(context.access, params.permissions);
+    const err = validateAccountStreamPermissions(params.permissions);
     if (err != null) { return next(err); }
     return next();
   }
@@ -499,7 +444,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    */
   function applyAccountStreamsValidationForUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     if (!Array.isArray(params.update?.permissions)) { return next(); }
-    const err = validateAccountStreamPermissions(context.access, params.update.permissions);
+    const err = validateAccountStreamPermissions(params.update.permissions);
     if (err != null) { return next(err); }
     return next();
   }
