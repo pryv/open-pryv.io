@@ -496,7 +496,8 @@ const converters: Record<string, (content: unknown) => string | null> = {
   streamsQuery: (content: unknown) => {
     const str = toSQLiteQuery(content);
     if (str === null) return null;
-    return 'rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH \'' + str + '\')';
+    // The expression is an SQL string literal: a single quote inside it is doubled.
+    return 'rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH \'' + str.replace(/'/g, "''") + '\')';
   },
   jsonCondition: (content: unknown) => {
     return jsonConditionToSql(content as NormalizedCondition);

@@ -21,6 +21,19 @@
   check as the head event (forbidden, internal and hidden streams, forced streams, readable
   streams); a version that fails it is left out of `history`.
 
+### Fixed
+
+- **SQLite engine: `events.get` no longer fails when an excluded subtree holds more than about 250
+  streams.** An excluded stream is expanded to all its descendants, and each one became a separate
+  `NOT` term of the full-text query; past 255 terms SQLite refused the query ("fts5 expression tree
+  is too large") and the request ended with a dropped connection instead of events. This hit
+  queries naming such a subtree in `not`, and every read of an account whose plugin-internal
+  streams (excluded from every client read) had grown past that size, e.g. many CMC capabilities.
+  The excluded ids are now one `NOT (a OR b OR ...)` group. PostgreSQL was not affected.
+- **SQLite engine: stream ids are escaped in the full-text query.** A quote in a stream id was
+  pasted into the query as is. Ids reaching it are those of existing, accessible streams, and stream
+  creation does not produce quotes, so this is hardening.
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,

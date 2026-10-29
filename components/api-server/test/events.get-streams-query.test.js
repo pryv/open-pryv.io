@@ -10,7 +10,9 @@ const require = createRequire(import.meta.url);
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 const streamsQueryUtils = require('../src/methods/helpers/streamsQueryUtils.ts');
-const { storeDataUtils } = require('mall');
+const { storeDataUtils, getMall } = require('mall');
+const { getUsersRepository } = require('business/src/users/index.ts');
+const cmc = require('cmc');
 
 /**
  * Structures
@@ -600,6 +602,71 @@ describe('[EGSQ] events.get streams query', function () {
           .query({ streams: ['T'] });
         assert.strictEqual(res.body.events.length, 0);
       });
+    });
+  });
+
+  // An exclusion names a stream and every descendant of it. The query must
+  // keep working when a subtree holds hundreds of streams, whether the caller
+  // excluded it or the server did (the plugin-internal subtree is left out of
+  // every read, and grows with the account's activity).
+  describe('[FTSD] GET /events excluding large subtrees', function () {
+    this.timeout(120_000);
+    const SUBTREE_SIZE = 300;
+    let fixtures, mall, username, userId, tokenRead, keepId, bigChildId, internalId;
+
+    before(async function () {
+      await initTests();
+      await initCore();
+      fixtures = getNewFixture();
+      mall = await getMall();
+      username = 'ftsd' + cuid().toLowerCase().slice(-10);
+      tokenRead = cuid();
+      const user = await fixtures.user(username);
+      userId = await (await getUsersRepository()).getUserIdForUsername(username);
+      await cmc.provisionUserStreams({ mall, userId, logger: { info () {}, warn () {}, debug () {}, error () {} } });
+      await mall.streams.create(userId, { id: 'ftsd-keep', name: 'keep' });
+      await mall.streams.create(userId, { id: 'ftsd-big', name: 'big' });
+      for (let i = 0; i < SUBTREE_SIZE; i++) {
+        await mall.streams.create(userId, { id: 'ftsd-big-' + i, parentId: 'ftsd-big', name: 'big ' + i });
+        const internal = cmc.constants.responsesStreamIdFor('ftsdcap' + i);
+        await mall.streams.create(userId, { id: internal, parentId: cmc.constants.NS_INTERNAL, name: internal });
+      }
+      await user.access({ type: 'app', token: tokenRead, permissions: [{ streamId: '*', level: 'read' }] });
+      keepId = (await mall.events.create(userId, { streamIds: ['ftsd-keep'], type: 'note/txt', content: 'keep' })).id;
+      bigChildId = (await mall.events.create(userId, { streamIds: ['ftsd-big-7'], type: 'note/txt', content: 'big' })).id;
+      internalId = (await mall.events.create(userId, {
+        streamIds: [cmc.constants.responsesStreamIdFor('ftsdcap7')], type: 'note/txt', content: 'internal'
+      })).id;
+    });
+
+    after(async function () {
+      if (fixtures != null) {
+        try { await fixtures.clean(); } catch (_e) { /* best-effort */ }
+      }
+    });
+
+    it('[FTSD1] an app token reads its events when the plugin-internal subtree is large', async function () {
+      const res = await coreRequest
+        .get('/' + username + '/events')
+        .set('Authorization', tokenRead)
+        .query({ limit: 1000 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const ids = res.body.events.map((e) => e.id);
+      assert.ok(ids.includes(keepId), 'missing the regular event');
+      assert.ok(ids.includes(bigChildId), 'missing the event of a regular subtree');
+      assert.ok(!ids.includes(internalId), 'an internal event leaked');
+    });
+
+    it('[FTSD2] a query excluding a large subtree leaves out every stream of it', async function () {
+      const res = await coreRequest
+        .get('/' + username + '/events')
+        .set('Authorization', tokenRead)
+        .query({ streams: JSON.stringify({ any: ['*'], not: ['ftsd-big'] }), limit: 1000 });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const ids = res.body.events.map((e) => e.id);
+      assert.ok(ids.includes(keepId), 'missing the regular event');
+      assert.ok(!ids.includes(bigChildId), 'an event of the excluded subtree was returned');
+      assert.ok(!ids.includes(internalId), 'an internal event leaked');
     });
   });
 });
