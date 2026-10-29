@@ -26,6 +26,15 @@ const userStorage = require('test-helpers').dependencies.storage.user.events;
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 
 describe('[WHBK] Webhook', () => {
+  // Deleting a webhook leaves a tombstone row: remove every row of the
+  // accounts these tests make up, which the users index does not know (the
+  // integrity check of the next suites reports such rows).
+  after(async () => {
+    for (const id of ['doesnotmatter', 'wxb-user', 'wcad-fire-user']) {
+      await new Promise((resolve, reject) => storage.removeAll({ id, username: id }, (err) => err ? reject(err) : resolve()));
+    }
+  });
+
   describe('[WB01] send()', () => {
     const repository = new WebhooksRepository(storage, userStorage);
     let notificationsServer;
