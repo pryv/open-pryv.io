@@ -44,8 +44,11 @@ for (const key of ['set', 'get', 'unset', 'clear']) {
   };
 }
 /**
- * username -> userId
+ * name (username or alias) -> { id: userId, primary: the name is the
+ * account's canonical username }. One entry for both, so they are evicted and
+ * busted together.
  */
+type UserNameEntry = { id: string; primary: boolean };
 let userIdForUsername = newUsernameMap();
 function newUsernameMap () {
   return new LRU({ max: MAX_USERNAMES, ttl: maxAgeMs });
@@ -126,12 +129,21 @@ function getMaxAgeMs (): number {
 function getUserId (username: string) {
   if (!isActive || !isTrusted) { return; }
   debug.get('user-id', username);
-  return userIdForUsername.get(username);
+  return (userIdForUsername.get(username) as UserNameEntry | undefined)?.id;
 }
-function setUserId (username: string, userId: string) {
+/**
+ * @param primary - `username` is the account's canonical username (not an
+ *   alias): lets {@link isCanonicalUsername} answer without a storage read.
+ */
+function setUserId (username: string, userId: string, primary = false) {
   if (!isActive || !isTrusted) { return; }
   debug.set('user-id', username, userId);
-  userIdForUsername.set(username, userId);
+  userIdForUsername.set(username, { id: userId, primary });
+}
+/** True when `username` is cached as the canonical username of its account. */
+function isCanonicalUsername (username: string): boolean {
+  if (!isActive || !isTrusted) { return false; }
+  return (userIdForUsername.get(username) as UserNameEntry | undefined)?.primary === true;
 }
 /**
  * Busts a name (username or alias). The message is always sent, with the
@@ -141,7 +153,7 @@ function setUserId (username: string, userId: string) {
 function unsetUser (username: string, notifyOtherProcesses = true) {
   if (!isActive) { return; }
   debug.unset('user-id', username);
-  const userId = userIdForUsername.peek(username, { allowStale: true });
+  const userId = (userIdForUsername.peek(username, { allowStale: true }) as UserNameEntry | undefined)?.id;
   if (notifyOtherProcesses && isSynchroActive) { synchro!.unsetUser(username, userId); }
   userIdForUsername.delete(username);
   if (userId != null) { _unsetUserLocal(userId); }
@@ -158,8 +170,8 @@ function unsetUserById (userId: string, notifyOtherProcesses = true) {
 }
 function _unsetUserLocal (userId: string) {
   const names = [];
-  for (const [name, id] of userIdForUsername.entries()) {
-    if (id === userId) { names.push(name); }
+  for (const [name, entry] of userIdForUsername.entries() as Iterable<[string, UserNameEntry]>) {
+    if (entry.id === userId) { names.push(name); }
   }
   for (const name of names) { userIdForUsername.delete(name); }
   unsetUserData(userId, false);
@@ -320,6 +332,7 @@ const cache = {
   clear,
   getUserId,
   setUserId,
+  isCanonicalUsername,
   unsetUser,
   unsetUserById,
   unsetUserData,

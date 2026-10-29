@@ -100,21 +100,33 @@ class UsersLocalIndex {
   }
 
   async getUserId (username: string): Promise<string | undefined> {
+    return (await this.resolveName(username))?.userId;
+  }
+
+  /**
+   * Resolve a name (username or alias) to its account, telling whether the
+   * name is the account's canonical username.
+   */
+  async resolveName (username: string): Promise<{ userId: string; isCanonical: boolean } | undefined> {
     let userId = cache.getUserId(username);
-    if (userId == null) {
+    let isCanonical: boolean;
+    if (userId != null) {
+      isCanonical = cache.isCanonicalUsername(username);
+    } else {
       // Resolve a primary username first (common path), then fall back to the
       // alias index so de-identifying / superseded-username aliases route to
       // the same user. Both kinds share the name->userId cache.
       userId = await this.db.getIdForName(username);
+      isCanonical = userId != null;
       if (userId == null) {
         userId = await this.db.getIdForAlias(username);
       }
       if (userId != null) {
-        cache.setUserId(username, userId);
+        cache.setUserId(username, userId, isCanonical);
       }
     }
     logger.debug('idForName', username, userId);
-    return userId;
+    return userId == null ? undefined : { userId, isCanonical };
   }
 
   /** Returns the canonical (primary) username for a userId — never an alias. */

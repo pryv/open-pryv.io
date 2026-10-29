@@ -128,6 +128,18 @@ class UsersRepository {
     return await this.usersIndex.getUserId(username);
   }
 
+  /**
+   * Resolve a name (username or alias) to its account and canonical
+   * username, reading the canonical name only when `name` is not it.
+   */
+  async resolveUsername (name: string): Promise<{ userId: string; username: string } | null> {
+    const resolved = await this.usersIndex.resolveName(name);
+    if (resolved == null) return null;
+    if (resolved.isCanonical) return { userId: resolved.userId, username: name };
+    const username = await this.usersIndex.getUsername(resolved.userId);
+    return { userId: resolved.userId, username: username ?? name };
+  }
+
   /** Canonical (primary) username for a userId — never an alias. */
   async getUsernameForUserId (userId: string) {
     return await this.usersIndex.getUsername(userId);
