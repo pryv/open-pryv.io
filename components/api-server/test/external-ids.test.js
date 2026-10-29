@@ -361,7 +361,7 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     });
   });
 
-  describe('[XIDL] lookup', function () {
+  describe('[XIDU] lookup', function () {
     // An id held by an account of this core, claimed here rather than by [XIDC].
     let held;
     before(async function () {

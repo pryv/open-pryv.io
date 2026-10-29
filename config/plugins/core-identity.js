@@ -16,13 +16,20 @@
  *   1. Explicit `core.url` in YAML — DNSless multi-core deployments where DNS is
  *      managed externally and FQDNs cannot be derived from `{id}.{domain}`.
  *      Example: `core.url: https://api1.example.com`
- *   2. Multi-core derivation: `https://{core.id}.{dns.domain}` — when both
- *      `core.id` and `dns.domain` are set and dnsLess is off.
+ *   2. Multi-core derivation: `https://{core.id}.{dns.domain}`, when
+ *      `dns.domain` is set and dnsLess is not on.
  *   3. Single-core (dnsLess): `dnsLess.publicUrl`.
  *
  * `core:isSingleCore` is `false` when either an explicit `core.url` is set
- * (option 1) AND `dnsLess.isActive` is false, OR when multi-core derivation
+ * (option 1) AND `dnsLess.isActive` is not true, OR when multi-core derivation
  * (option 2) applies. Otherwise it is `true`.
+ *
+ * "Not true" is read in the operator's layers only: this plugin runs before
+ * `default-config.yml` is loaded, so a `dnsLess.isActive` the operator left
+ * out counts as not true, although the shipped default (true) applies at
+ * runtime. A DNSless multi-core member relies on it: `core.url` set and no
+ * `dnsLess` key is multi-core, with path-style routing; `core.url` with an
+ * explicit `dnsLess.isActive: true` is single-core.
  */
 async function load (config) {
   const { coreUrl, isSingleCore } = deriveCoreIdentity((key) => config.get(key));

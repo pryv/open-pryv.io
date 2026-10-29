@@ -12,32 +12,40 @@
   method). It now merges the layers as boot does, lowest first: default-config, base layer,
   environment, bootstrap, the file; every check reads the merged result. The special cases that
   read the defaults or the base layer by hand (series engine, PII pepper, trusted apps, consent
-  URL, custom system streams, MFA) are gone. Checks about what the operator set (whether
-  `services.email.enabled.verifyEmail` is explicit) read the layers above the defaults, as boot's
-  `getScopeAndValue` does. The registration email gate uses boot's `describeMailCapability`
+  URL, custom system streams, MFA) are gone. The email-verification page URL check now runs boot's
+  `describeVerificationMail`, with a `getScopeAndValue` that walks the layers highest first as
+  boot's does: a plain `services.email.enabled: true` holds no `verifyEmail`, so the key resolves
+  in the defaults and a missing page URL is a warning, as at boot (check-config reported a problem
+  before). Test `[CKCF7]`. The registration email gate uses boot's `describeMailCapability`
   (so `services.email.from` is no longer required there, as at boot), hosted sites boot's
   `hostedSitesInputFromConfig`. An empty `storages.engines.postgresql.password` is a warning (boot
   accepts it; trust or peer authentication needs none); a placeholder in it stays a problem.
 - Single or multi-core is decided as at boot: `config/plugins/core-identity.js` exports
-  `deriveCoreIdentity(get)`, the derivation its `load` runs (explicit `core.url` with
-  `dnsLess.isActive` off, or `dns.domain` with `dnsLess.isActive` off, is a multi-core member).
-  Boot runs that plugin before it loads default-config, so check-config feeds it the operator's
-  layers only. Boot's validator does not refuse a core that runs neither `dnsLess` nor the
+  `deriveCoreIdentity(get)`, the derivation its `load` runs: an explicit `core.url`, or
+  `dns.domain`, with `dnsLess.isActive` not true is a multi-core member. Boot runs that plugin
+  before it loads default-config, so "not true" is read in the operator's layers, where a
+  `dnsLess.isActive` left out counts as not true although the shipped default (true) applies at
+  runtime; check-config feeds it the operator's layers only. A DNSless multi-core member relies
+  on this (`core.url` and no `dnsLess` key, as `bootstrap new-core --url` writes it: multi-core,
+  path-style routing); with an explicit `dnsLess.isActive: true` the same `core.url` is a single
+  core. Such a member no longer needs `dnsLess.publicUrl` in check-config (boot does not require
+  it there). Boot's validator does not refuse a core that runs neither `dnsLess` nor the
   embedded DNS (`checkDnsTopologyConsistency` only refuses both on); on a multi-core member
   check-config now reports it as a warning (the per-user names are served by a peer core's DNS or
   an external one) and keeps it a problem on a single core. The multi-core peer URL check uses the
   derived core URL, as boot's `checkCoreIdentity` does.
-- Tests `[CCDL1]`-`[CCDL3]`, `[CCMC1]`, `[CCMC2]`. The check-config CLI tests run without
+- Tests `[CCDL1]`-`[CCDL3]`, `[CCMC1]`-`[CCMC3]`. The check-config CLI tests run without
   `NODE_ENV` by default, so `config/test-config.yml` is not merged under the checked file.
 
 ### Tests: external-id blocks run alone
 
 - In `components/api-server/test/external-ids.test.js` the claims, holder answer, admin release,
-  lookup and logging blocks (`[XIDC]`, `[XIDH]`, `[XIDAR]`, `[XIDL]`, `[XIDG]`) used the namespace
+  lookup and logging blocks (`[XIDC]`, `[XIDH]`, `[XIDAR]`, `[XIDU]`, `[XIDG]`) used the namespace
   created by `[XIDA1]`, and the lookup block an id claimed in `[XIDC6]`: selected alone with
   `--grep` they failed. Each block now creates the namespace in its own `before` (a PUT accepting
-  201 or 200, shared with `[XIDD]`), and the lookup block claims its own id. The other external-id
-  test files were already self-contained.
+  201 or 200, shared with `[XIDD]`), and the lookup block claims its own id. The lookup block's
+  code was `[XIDL]`, also used by the ExternalIdsLocalDB conformance suite: it is now `[XIDU]`.
+  The other external-id test files were already self-contained.
 
 ### Storage: event deletion listings hold head events only (defence in depth)
 

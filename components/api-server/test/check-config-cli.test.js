@@ -138,6 +138,17 @@ services:
     assert.match(legacyKey.stdout, /lockoutSeconds is no longer read/);
   });
 
+  it('[CKCF7] a plain services.email.enabled: true inherits verifyEmail: a missing page URL is a warning, as at boot', () => {
+    const res = runCheck(BASE + `
+services:
+  email:
+    enabled: true
+`);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /emailVerificationPageURL missing or unset: email verification is on by default/);
+    assert.doesNotMatch(res.stdout + res.stderr, /required when services\.email\.enabled\.verifyEmail is true/);
+  });
+
   it('[CKCF6] letsEncrypt.email is optional, but a placeholder in it is a problem', () => {
     const le = `
 letsEncrypt:
@@ -489,6 +500,19 @@ describe('[CCMC] bin/check-config.js on a multi-core member without a DNS of its
       assert.match(res.stdout, NEITHER);
       assert.match(res.stdout, /multi-core member runs no DNS of its own.*peer core's embedded DNS/);
     }
+  });
+
+  it('[CCMC3] a DNSless member (core.url, no dnsLess key, as written by bootstrap) is classified on the operator\'s layers', () => {
+    // dnsLess.isActive is left out, so boot's core identity (which runs before
+    // the defaults load) makes this core a multi-core member: no public URL is needed.
+    const https = runCheck(withTopology('core:\n  id: core-b\n  url: https://core-b.example.org\n'));
+    assert.strictEqual(https.status, 0, https.stdout + https.stderr);
+    assert.doesNotMatch(https.stdout, /dnsLess\.publicUrl/);
+    // As a member its URL is a peer URL, refused over http: the classification
+    // did not read the merged dnsLess.isActive (true by default).
+    const http = runCheck(withTopology('core:\n  id: core-b\n  url: http://core-b.example.org\n'));
+    assert.strictEqual(http.status, 1, http.stdout + http.stderr);
+    assert.match(http.stderr, /uses http: \(core-to-core calls carry the admin key\)/);
   });
 
   it('[CCMC2] a single core with neither dnsLess nor the embedded DNS is still a problem', () => {

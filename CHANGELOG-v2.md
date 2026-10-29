@@ -2,14 +2,19 @@
 
 ## Unreleased
 
-### Tooling
+### Operators
 
 - `bin/check-config.js` now reads the shipped defaults (`config/default-config.yml`) and the
   `NODE_ENV` base layer under the checked file, in boot's order: a key left to its default (for
   example `storages.base.engine`) is no longer reported missing. On a multi-core member that runs
   neither `dnsLess` nor the embedded DNS (user to core resolution served by a peer core's DNS or an
   external one), "Neither dnsLess.isActive nor dns.active is true" is now a warning; it stays a
-  problem on a single core. An empty PostgreSQL password is a warning (boot accepts it).
+  problem on a single core. A DNSless multi-core member (`core.url` set, as written by
+  `bootstrap new-core --url`) no longer needs `dnsLess.publicUrl`. An empty PostgreSQL password is
+  a warning (boot accepts it).
+- `bin/check-config.js`: with `services.email.enabled: true` (a plain boolean) and no
+  `auth.emailVerificationPageURL`, check-config now reports a warning, as boot does, instead of a
+  problem. Only an explicit `services.email.enabled.verifyEmail: true` makes the page URL required.
 
 ## 2.0.0-rc.65 - 2026-10-29
 

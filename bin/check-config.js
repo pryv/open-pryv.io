@@ -191,33 +191,37 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
-// auth.emailVerificationPageURL: a PROBLEM only when the operator's layers
-// EXPLICITLY enable the verify-email sub-feature. The shipped default is
-// `verifyEmail: true`, but a configuration that never mentions the key
-// inherits it, and a missing page URL is then a warning (see below) rather
-// than a refusal, as at boot. So this reads the operator's layers, not the
-// merged configuration.
-// The scalar case matters: `enabled: true` (not an object) enables every message
-// class at runtime, so it does require the URL.
+// auth.emailVerificationPageURL, with boot's own predicate
+// (describeVerificationMail): a PROBLEM only when the operator set
+// `services.email.enabled.verifyEmail` themselves (mirrors REQUIRED_WHEN in
+// config/plugins/config-validation.js). When the key is inherited from the
+// shipped default (true), a missing page URL turns the feature off with a
+// warning at every boot instead. Whether it is inherited is decided like
+// boot's getScopeAndValue: the first layer, highest first, where the key
+// resolves. A plain `services.email.enabled: true` holds no `verifyEmail`, so
+// the key resolves in the defaults and is inherited, as at boot.
 {
-  const emailEnabled = get('services.email.enabled', operatorConfig);
-  let verifyEmailNeeded = false;
-  if (emailEnabled === true) verifyEmailNeeded = true;
-  if (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail === true) verifyEmailNeeded = true;
-  if (verifyEmailNeeded && isMissingOrSentinel(get('auth.emailVerificationPageURL'))) {
-    problems.push('auth.emailVerificationPageURL missing or unset (required when services.email.enabled.verifyEmail is true)');
-  }
-}
-
-// Default-on email verification: when the operator's layers do not mention
-// verifyEmail, the shipped default (true) applies. A missing page URL then
-// degrades the feature to off with a boot warning rather than a refusal.
-{
-  const emailEnabled = get('services.email.enabled', operatorConfig);
-  const explicit = emailEnabled === true ||
-    (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail !== undefined);
-  if (emailEnabled !== false && !explicit && isMissingOrSentinel(get('auth.emailVerificationPageURL'))) {
-    warnings.push('auth.emailVerificationPageURL missing or unset: email verification is on by default and stays off (with a warning at every boot) until this URL is set. Set it to the /verify-email page of your auth UI, or set services.email.enabled.verifyEmail: false.');
+  const { describeVerificationMail } = require('../components/business/src/emails/mailCapability.ts');
+  const layers = [['override-file', fileConfig], ['bootstrap-file', bootstrapConfig], ['env', envConfig],
+    ['base', baseLayer], ['default-file', defaultConfig]];
+  const scopedReader = {
+    get: configReader.get,
+    getScopeAndValue: (key) => {
+      for (const [scope, layer] of layers) {
+        if (layer == null) continue;
+        const value = get(key.split(':').join('.'), layer);
+        if (value !== undefined) return { value, scope, info: '' };
+      }
+      return null;
+    }
+  };
+  const status = describeVerificationMail(scopedReader);
+  if (status.reason === 'missing-page-url') {
+    if (status.explicit) {
+      problems.push('auth.emailVerificationPageURL missing or unset (required when services.email.enabled.verifyEmail is true)');
+    } else {
+      warnings.push('auth.emailVerificationPageURL missing or unset: email verification is on by default and stays off (with a warning at every boot) until this URL is set. Set it to the /verify-email page of your auth UI, or set services.email.enabled.verifyEmail: false.');
+    }
   }
 }
 
@@ -394,7 +398,10 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
       problems.push('Neither dnsLess.isActive nor dns.active is true — server cannot resolve user → core');
     }
   }
-  if (dnsLessOn && isMissingOrSentinel(get('dnsLess.publicUrl'))) {
+  // A DNSless multi-core member (core.url set, dnsLess left to its default, the
+  // shape `bootstrap new-core --url` writes) routes path-style without a
+  // public URL of its own: boot derives its service URLs from core.url.
+  if (dnsLessOn && coreIdentity.isSingleCore !== false && isMissingOrSentinel(get('dnsLess.publicUrl'))) {
     problems.push('dnsLess.publicUrl missing or unset (required when dnsLess.isActive)');
   }
   if (dnsOn && isMissingOrSentinel(get('dns.domain'))) {
