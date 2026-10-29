@@ -219,7 +219,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       // it (it runs under a synthetic access id). Record it on the personal
       // access here. With MFA pending the token is not released yet: activity
       // then starts with the first call made with it, which the tracker records.
-      if ((context.mfaLogin as MfaLoginState | undefined)?.mfaToken == null) {
+      // With access tracking off, no usage is recorded at all.
+      if (config.get('accessTracking:isActive') && (context.mfaLogin as MfaLoginState | undefined)?.mfaToken == null) {
         accessData.lastUsed = timestamp.now();
       }
       if (access != null) {

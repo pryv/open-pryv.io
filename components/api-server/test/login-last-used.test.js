@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
 const timestamp = require('unix-timestamp');
 const { getStorageLayer } = require('storage');
 const { getLastActivity } = require('business/src/accesses/accountActivity.ts');
+const { withInjectedConfig } = require('test-helpers');
 
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
@@ -85,5 +86,15 @@ describe('[LGLU] login records lastUsed', function () {
     await login(username);
     const activity = await getLastActivity(storageLayer.accesses, user);
     assert.ok(activity != null && activity >= before - 1, 'activity recorded by the login');
+  });
+
+  it('[LGLU4] with access tracking off, a login records no lastUsed', async function () {
+    const { username, user } = await freshUser();
+    await withInjectedConfig({ accessTracking: { isActive: false } }, async () => {
+      await login(username);
+    });
+    const access = await personalAccess(user);
+    assert.ok(access != null, 'personal access created');
+    assert.ok(access.lastUsed == null, 'lastUsed not set: ' + access.lastUsed);
   });
 });
