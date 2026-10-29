@@ -17,7 +17,7 @@ const { ReadableDeletionsStream } = require('../src/methods/streams/ReadableDele
 // reads the whole store, and in the same order / limit / skip on both engines.
 describe('[DLSC] event and stream deletion records', function () {
   this.timeout(30000);
-  let fixtures, username, personalToken;
+  let fixtures, fixturesUser, username, personalToken;
   const deletedIds = [];
 
   async function app (permissions) {
@@ -43,7 +43,8 @@ describe('[DLSC] event and stream deletion records', function () {
     fixtures = getNewFixture();
     username = cuid();
     personalToken = cuid();
-    const user = await fixtures.user(username);
+    fixturesUser = await fixtures.user(username);
+    const user = fixturesUser;
     await user.stream({ id: 'dlsc-a', name: 'A' });
     await user.stream({ id: 'dlsc-b', name: 'B' });
     await user.stream({ id: 'dlsc-gone', name: 'Gone' });
@@ -105,10 +106,42 @@ describe('[DLSC] event and stream deletion records', function () {
   });
 
   it('[DLS4] with streams kept on the record, only the readable ones pass', async function () {
-    const access = { canGetEventsOnStream: async (streamId) => streamId === 'a' };
+    const access = {
+      isPersonal: () => false,
+      canGetEventsOnStream: async (streamId) => streamId === 'a',
+      isStreamForbiddenForReading: async () => false,
+      isStreamWithin: async () => false,
+      getForcedStreamsGetEventsStreamIds: () => null
+    };
     const records = [{ id: '1', streamIds: ['a'] }, { id: '2', streamIds: ['b'] }, { id: '3' }, { id: '4', streamIds: ['b', 'a'] }];
     const out = [];
     for await (const r of Readable.from(records).pipe(new ReadableDeletionsStream(access))) out.push(r.id);
     assert.deepStrictEqual(out, ['1', '4']);
+  });
+
+  // With streams kept on the record (keep-everything), a record is returned only
+  // when the live event would be: one of its streams readable and none of them
+  // withheld from the access.
+  it('[DLS5] a record that also sits in a stream withheld from the access is not returned', async function () {
+    const { injectTestConfigSnapshot } = require('test-helpers');
+    const deleted = timestamp.now();
+    const both = cuid();
+    const readableOnly = cuid();
+    const base = { type: 'note/txt', time: deleted, created: deleted, createdBy: 'dlsc', modified: deleted, modifiedBy: 'dlsc', deleted };
+    await fixturesUser.event(Object.assign({ id: both, streamIds: ['dlsc-a', 'dlsc-b'] }, base));
+    await fixturesUser.event(Object.assign({ id: readableOnly, streamIds: ['dlsc-a'] }, base));
+    const restore = injectTestConfigSnapshot({ versioning: { deletionMode: 'keep-everything' } });
+    try {
+      for (const level of ['none', 'create-only']) {
+        const token = await app([{ streamId: 'dlsc-a', level: 'read' }, { streamId: 'dlsc-b', level }]);
+        const res = await deletions(token);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        const ids = res.body.eventDeletions.map((d) => d.id);
+        assert.ok(ids.includes(readableOnly), level + ': ' + JSON.stringify(ids));
+        assert.ok(!ids.includes(both), level + ': ' + JSON.stringify(ids));
+      }
+    } finally {
+      restore();
+    }
   });
 });
