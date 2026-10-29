@@ -18,6 +18,18 @@
   advertised but unwired grant (not 501); the `authorize.ts` and INTERNALS text no longer claim
   cross-core forwarding at `/oauth2/token`; the README status is current.
 
+### Config: `oauth.consentUrl` is declared and set by the install wizard
+
+- `GET /oauth2/authorize` needs `oauth.consentUrl` (the consent page of the auth UI) and answers
+  500 `oauth:consentUrl not configured` without it, but no config file or template mentioned the
+  key. `config/default-config.yml` now declares it in the `oauth` section (empty by default, with
+  a comment saying what it is and that the authorization flow needs it), `bin/init.js` asks for
+  it like the other auth-UI pages (default `<auth UI>/oauth2-authorize`, the app-web-user-account
+  route, answer key `oauth.consenturl`) and writes it to the generated config, and INSTALL.md's
+  minimal production config shows it. Not added to the boot-time required keys: OAuth has no
+  enable flag (its routes mount whenever `service.api` is set), so requiring the key would stop
+  every deployment that does not use OAuth. Test `[INWZA]`.
+
 ## Lint: the TypeScript sources are style-checked
 
 - `eslint.config.js` enables neostandard's `ts` option, so `just lint` and CI's `npx eslint .` now

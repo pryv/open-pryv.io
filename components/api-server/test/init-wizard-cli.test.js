@@ -104,6 +104,15 @@ describe('[INWZ] bin/init.js generated files', function () {
       ['*@https://account.example.com', '*@https://core.example.com']);
   });
 
+  it('[INWZA] the OAuth consent page defaults to the auth UI\'s /oauth2-authorize route, a key default-config.yml also carries', () => {
+    const res = runWizard(configDir);
+    assert.strictEqual(res.status, 0, res.output);
+    const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
+    assert.strictEqual(config.oauth.consentUrl, 'https://account.example.com/oauth2-authorize');
+    const defaults = yaml.load(fs.readFileSync(path.join(REPO_ROOT, 'config/default-config.yml'), 'utf8'));
+    assert.ok(Object.hasOwn(defaults.oauth, 'consentUrl'), 'default-config.yml declares oauth.consentUrl');
+  });
+
   it('[INWZ7] dns-active: the default trustedApps include the register and access hosts', () => {
     const answers = ANSWERS.replace(/^dnsless:.*\n/m, 'dnsless: false\n')
       .replace(/^publicurl:.*\n/m, 'dnsdomain: example.invalid\npublicip: 192.0.2.10\n');
