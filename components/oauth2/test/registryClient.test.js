@@ -493,6 +493,15 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       assert.equal(offer.offer.randomAlias, true);
       assert.equal(calls[0].offer.randomAlias, true);
     });
+    it('[OXO06] a pairwise client always gets an aliased grant, pseudonym asked or not; public by default', async () => {
+      const platform = fakePlatform(); await seed(platform, { subjectType: 'pairwise' });
+      const { calls, offer } = await flow({ platform, config: fakeConfig(), query: { scope: 'data/a.read' } });
+      assert.equal(offer.offer.randomAlias, true);
+      assert.equal(calls[0].offer.randomAlias, true);
+      const client = { ...REGISTRY_CLIENT, updatedAt: 1 };
+      assert.equal(scopeGrammar.resolveRequestedScope(client, 'data/a.read', { oidcEnabled: true }).offer.randomAlias, false);
+      assert.equal(scopeGrammar.resolveRequestedScope({ ...client, subjectType: 'public' }, 'data/a.read', { oidcEnabled: true }).offer.randomAlias, false);
+    });
     it('[OXO04] a grant wider than the offer is refused (all or nothing by default)', async () => {
       const platform = fakePlatform(); await seed(platform);
       const deps = { config: fakeConfig(), platform };
@@ -572,13 +581,13 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       const { token } = await flow({ platform, config: fakeConfig(), more: { resolveGrantSubject: async () => null } });
       assert.equal(token.statusCode, 500);
     });
-    it('[OXT08] without a pseudonym the app sees the username, and gets apiEndpoint like any Pryv app', async () => {
+    it('[OXT08] without a pseudonym the subject is the user id, never the username, and apiEndpoint is sent', async () => {
       const platform = fakePlatform(); await seed(platform);
-      const { token } = await flow({ platform, config: fakeConfig(), more: { resolveGrantSubject: async () => ({ subject: 'alice', aliased: false }) } });
+      const { token } = await flow({ platform, config: fakeConfig(), more: { resolveGrantSubject: async ({ userId }) => ({ subject: userId, aliased: false }) } });
       assert.equal(token.statusCode, 200, token.raw);
       assert.equal(token.body.apiEndpoint, 'https://alice.example.com/');
-      assert.equal(token.body.patient, 'alice');
-      assert.equal(decodeJwt(token.body.id_token).payload.sub, 'alice');
+      assert.equal(token.body.patient, 'u-alice');
+      assert.equal(decodeJwt(token.body.id_token).payload.sub, 'u-alice');
     });
     it('[OXT09] a registry client presenting a DPoP proof is refused before its code is consumed', async () => {
       const platform = fakePlatform(); await seed(platform);
@@ -749,6 +758,8 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, allowedAudiences: ['http://x.example/'] }), /https/);
       await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, grantTypes: ['client_credentials'] }), /client_credentials/);
       await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, dpopBoundAccessTokens: true }), /DPoP/);
+      await assert.rejects(persistClient(platform, { ...REGISTRY_CLIENT, subjectType: 'per-user' }), /subjectType/);
+      await persistClient(platform, { ...REGISTRY_CLIENT, subjectType: 'pairwise' });
     });
   });
 });

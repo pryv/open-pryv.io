@@ -128,6 +128,13 @@ export interface OAuthClient {
   canIntrospect?: boolean;
   /** Leave `apiEndpoint` out of token responses (always the case for registry clients). */
   omitApiEndpoint?: boolean;
+  /**
+   * Registry clients: the subject the app sees for the user. `public` (the
+   * default when absent): the user's stable id, unless the app asks for a
+   * pseudonym (`randomAlias` in the offer), then the grant's alias.
+   * `pairwise`: always the grant's alias, one per user and client.
+   */
+  subjectType?: 'public' | 'pairwise';
   // Reserved, not read yet: per-client key reference, algorithms and lifetimes.
   jwksUri?: string;
   tokenEndpointAuthSigningAlgs?: string[];

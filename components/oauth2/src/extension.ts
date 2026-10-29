@@ -53,8 +53,8 @@ export type SynthOffer = {
   allowUserChoice?: boolean;
   /**
    * The app asked for a pseudonym: the grant gets a routable alias, which is
-   * the subject the app sees. Absent / false: the app sees the username, like
-   * any Pryv app.
+   * the subject the app sees. Absent / false: the subject is the user's stable
+   * id. The core forces it on for a `pairwise` client.
    */
   randomAlias?: boolean;
   title?: Record<string, string>;
@@ -69,7 +69,8 @@ export type ParseResult =
 
 /**
  * Context handed to the response hooks. `subject` is the grant's alias when the
- * app asked for a pseudonym, the username otherwise. `scopeTokens` are the GRANTED tokens:
+ * grant is aliased (pseudonym asked, or a pairwise client), the user's stable
+ * id otherwise (never the username). `scopeTokens` are the GRANTED tokens:
  * the core tokens granted plus the grammar's echo over the minted permissions
  * (never what was requested but not granted).
  */

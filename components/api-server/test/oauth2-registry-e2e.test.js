@@ -33,7 +33,7 @@ const RSA_PEM = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
   .privateKey.export({ type: 'pkcs8', format: 'pem' });
 
 // Toy grammar: `read/<streamId>` reads one stream; `ctx/user` is a context
-// token; `ctx/pseudo` asks for a pseudonym (the grant's alias) instead of the username.
+// token; `ctx/pseudo` asks for a pseudonym (the grant's alias) instead of the user id.
 const toyExtension = {
   apiVersion: 1,
   name: 'toy-e2e',
@@ -68,7 +68,7 @@ function pkce () {
 describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)', function () {
   this.timeout(60000);
 
-  let username, personalToken, fixtures, restoreConfig, clientId, rsClientId, rsSecret, wideClientId, writerClientId;
+  let username, personalToken, fixtures, restoreConfig, clientId, rsClientId, rsSecret, wideClientId, writerClientId, pairwiseClientId, userId;
 
   before(async function () {
     await initTests();
@@ -82,6 +82,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     username = cuid();
     personalToken = cuid();
     const user = await fixtures.user(username);
+    userId = user.attrs.id;
     await user.access({ token: personalToken, type: 'personal' });
     await user.session(personalToken);
     for (const id of ['health', 'diary']) {
@@ -139,13 +140,24 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       tokenEndpointAuthMethod: 'none',
       allowedAudiences: [AUD],
     });
+    pairwiseClientId = 'Pw.' + cuid().slice(-10);
+    await oauth2.persistClient(platformDB, {
+      clientId: pairwiseClientId,
+      kind: 'registry',
+      redirectUris: [REDIRECT_URI],
+      scope: ['read/health', 'ctx/user'],
+      grantTypes: ['authorization_code'],
+      tokenEndpointAuthMethod: 'none',
+      allowedAudiences: [AUD],
+      subjectType: 'pairwise',
+    });
   });
 
   after(async function () {
     oauth2.extension._resetForTests();
     if (restoreConfig != null) restoreConfig();
     const platformDB = require('storages').platformDB;
-    for (const id of [clientId, rsClientId, wideClientId, writerClientId]) {
+    for (const id of [clientId, rsClientId, wideClientId, writerClientId, pairwiseClientId]) {
       if (id != null) { try { await storage.deleteClient(platformDB, id); } catch (_) { /* best-effort */ } }
     }
     if (fixtures != null) await fixtures.clean();
@@ -165,7 +177,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     });
   }
 
-  async function runFlow (scope = 'openid read/health ctx/user ctx/pseudo', cid = clientId) {
+  async function runFlow (scope = 'openid read/health ctx/user ctx/pseudo', cid = clientId, who = { username, token: personalToken }) {
     const { verifier, challenge } = pkce();
     const authRes = await authorize(scope, cid, challenge);
     assert.equal(authRes.status, 302, JSON.stringify(authRes.body) + authRes.text);
@@ -177,7 +189,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal(offerRes.status, 200, JSON.stringify(offerRes.body));
 
     const acceptRes = await coreRequest.post('/oauth2/authorize/accept').send({
-      state: signedState, username, userToken: personalToken, grantedPermissions: offerRes.body.offer.permissions,
+      state: signedState, username: who.username, userToken: who.token, grantedPermissions: offerRes.body.offer.permissions,
     });
     assert.equal(acceptRes.status, 200, JSON.stringify(acceptRes.body));
     const code = new URL(acceptRes.body.redirectTo).searchParams.get('code');
@@ -257,16 +269,17 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
 
   let plain;
 
-  it('[OREG5] without a pseudonym the app sees the username, like any Pryv app', async () => {
+  it('[OREG5] without a pseudonym the subject is the user id (never the username); apiEndpoint is sent', async () => {
     plain = await runFlow('openid read/health ctx/user');
     const b = plain.token;
     const [grant] = await grants();
     assert.equal(grant.alias ?? null, null);
-    assert.equal(b.user, username);
-    assert.equal(JSON.parse(Buffer.from(b.id_token.split('.')[1], 'base64url')).sub, username);
+    // Fixture users have id === username; [OREG10] covers a registered account.
+    assert.equal(b.user, userId);
+    assert.equal(JSON.parse(Buffer.from(b.id_token.split('.')[1], 'base64url')).sub, userId);
     assert.ok(typeof b.apiEndpoint === 'string' && b.apiEndpoint.includes(username), 'apiEndpoint: ' + b.apiEndpoint);
     const intro = await introspect(b.access_token);
-    assert.equal(intro.body.sub, username);
+    assert.equal(intro.body.sub, userId);
   });
 
   it('[OREG6] switching to a pseudonym withdraws the old grant (its sessions die) and makes an aliased one', async () => {
@@ -301,6 +314,48 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const ev = await coreRequest.post('/' + username + '/events').set('Authorization', r.token.access_token)
       .send({ streamIds: ['diary'], type: 'note/txt', content: 'from the app' });
     assert.equal(ev.status, 201, JSON.stringify(ev.body));
+  });
+
+  it('[OREG9] a pairwise client gets an aliased grant without asking for a pseudonym', async () => {
+    const r = await runFlow('openid read/health ctx/user', pairwiseClientId);
+    const res = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+    const grant = res.body.accesses.find((a) => a.name === 'oauth-grant:' + pairwiseClientId);
+    assert.equal(typeof grant.alias, 'string');
+    assert.equal(r.offer.offer.randomAlias, true);
+    assert.equal(r.token.user, grant.alias);
+    assert.equal(JSON.parse(Buffer.from(r.token.id_token.split('.')[1], 'base64url')).sub, grant.alias);
+    assert.equal(r.token.apiEndpoint, undefined);
+  });
+
+  it('[OREG10] a registered account: the subject is its internal id, distinct from the username', async () => {
+    const name = 'oreg' + cuid().toLowerCase().slice(1, 12);
+    const reg = await coreRequest.post('/users').send({
+      appId: 'pryv-test',
+      username: name,
+      password: 'oreg-passw0rd',
+      email: name + '@oreg.example.com',
+      insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+      language: 'en',
+    });
+    assert.equal(reg.status, 201, JSON.stringify(reg.body));
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const usersRepository = await getUsersRepository();
+    const id = await usersRepository.getUserIdForUsername(name);
+    try {
+      assert.notEqual(id, name);
+      const login = await coreRequest.post('/' + name + '/auth/login').set('Origin', 'http://test.pryv.local')
+        .send({ username: name, password: 'oreg-passw0rd', appId: 'pryv-test' });
+      assert.equal(login.status, 200, JSON.stringify(login.body));
+      const st = await coreRequest.post('/' + name + '/streams').set('Authorization', login.body.token).send({ id: 'health', name: 'health' });
+      assert.equal(st.status, 201, JSON.stringify(st.body));
+      const r = await runFlow('openid read/health ctx/user', clientId, { username: name, token: login.body.token });
+      assert.equal(r.token.user, id);
+      assert.equal(JSON.parse(Buffer.from(r.token.id_token.split('.')[1], 'base64url')).sub, id);
+      assert.ok(r.token.apiEndpoint.includes(name), r.token.apiEndpoint);
+      assert.equal((await introspect(r.token.access_token)).body.sub, id);
+    } finally {
+      await usersRepository.deleteOne(id, name);
+    }
   });
 
   it('[OREG4] a public client cannot introspect', async () => {

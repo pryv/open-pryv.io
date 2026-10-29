@@ -199,6 +199,9 @@ function validateRegistryClient (client: OAuthClient): void {
   if (client.grantTypes.includes('client_credentials')) {
     throw new Error('registry client: client_credentials is not available (no app account)');
   }
+  if (client.subjectType != null && client.subjectType !== 'public' && client.subjectType !== 'pairwise') {
+    throw new Error('registry client: subjectType must be public or pairwise');
+  }
   if (client.dpopBoundAccessTokens === true) {
     throw new Error('registry client: DPoP-bound tokens are not available for this kind of client');
   }

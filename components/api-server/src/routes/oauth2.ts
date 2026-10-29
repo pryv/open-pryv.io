@@ -344,9 +344,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   // A registry client (no app account, no CMC): the durable consent record
   // is a data-grant named after the client, found again by that identity on
   // re-authorization, with no expiry: it lives until the user withdraws it.
-  // When the app asked for a pseudonym, the grant carries a routable alias,
-  // the id the app sees for the user; otherwise the app sees the username,
-  // like any Pryv app. Re-authorization widens the grant, never narrows it.
+  // When the app asked for a pseudonym (or the client is pairwise), the grant
+  // carries a routable alias, the id the app sees for the user; otherwise the
+  // app sees the user's stable id. Re-authorization widens the grant, never narrows it.
   // A re-authorization that switches between the two (the consent screen
   // shows which one) withdraws the old grant first: its sessions die and its
   // alias is released, then a new grant is made.
@@ -650,17 +650,18 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
     const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, ...(jkt != null ? { dpopJkt: jkt } : {}) });
-    return { ...minted, ...grantSubject(dataGrant, username), permissions: effective };
+    return { ...minted, ...grantSubject(dataGrant, userId), permissions: effective };
   }
 
   // ---------------------------------------------------------------------
   // resolveGrantSubject — the id a registry client sees for the user: the
-  // alias of the consent data-grant when the app asked for a pseudonym, the
-  // username otherwise (never the user id). Null when the grant is gone.
+  // alias of the consent data-grant when the grant is aliased (the app asked
+  // for a pseudonym, or the client is pairwise), the user's stable internal
+  // id otherwise (never the username). Null when the grant is gone.
   // ---------------------------------------------------------------------
-  function grantSubject (grant: DataGrant, username: string): { subject: string; aliased: boolean } {
+  function grantSubject (grant: DataGrant, userId: string): { subject: string; aliased: boolean } {
     const aliased = typeof grant.alias === 'string' && grant.alias.length > 0;
-    return { subject: aliased ? grant.alias as string : username, aliased };
+    return { subject: aliased ? grant.alias as string : userId, aliased };
   }
 
   async function resolveGrantSubject ({ userId, username, dataGrantAccessId }: {
@@ -668,7 +669,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }): Promise<{ subject: string; aliased: boolean } | null> {
     try {
       const head = await readDataGrantHead(userId, username, dataGrantAccessId);
-      return grantSubject(head, username);
+      return grantSubject(head, userId);
     } catch (err: unknown) {
       if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
       throw err;
@@ -692,7 +693,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (grantId != null) {
       try {
         const head = await readDataGrantHead(userId, username, grantId);
-        subject = grantSubject(head, username).subject;
+        subject = grantSubject(head, userId).subject;
       } catch (err: unknown) {
         if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
         throw err;

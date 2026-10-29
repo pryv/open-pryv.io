@@ -24,11 +24,13 @@
     Its consent offer is synthesised from the requested scope and travels by reference: the signed
     state carries a digest, the consent UI reads the offer from the new `POST
     /oauth2/authorize/offer`, and `/accept` re-derives it. The durable consent record is an access
-    `oauth-grant:<clientId>` with no expiry. When the extension's offer carries `randomAlias` (the
-    app asked for a pseudonym), the grant gets a routable alias, which is the id the app sees
-    (`sub`, hook `subject`) and `apiEndpoint` is not sent; otherwise the app sees the username and
-    gets `apiEndpoint`, like any Pryv app. A re-authorization that switches between the two
-    withdraws the old grant (its sessions die, its alias is released) and makes a new one.
+    `oauth-grant:<clientId>` with no expiry. The subject the app sees (`sub`, hook `subject`)
+    follows the client's `--subject-type`: `public` (default) is the user's stable internal id,
+    never the username, unless the extension's offer carries `randomAlias` (the app asked for a
+    pseudonym); `pairwise` always aliases. An aliased grant gets a routable alias, which is the
+    subject, and `apiEndpoint` is not sent; otherwise `apiEndpoint` is sent, like any Pryv app. A
+    re-authorization that switches between the two withdraws the old grant (its sessions die, its
+    alias is released) and makes a new one.
   - The `scope` of a registry client's token response is recomputed from the permissions actually
     granted. `openid` (with `oauth:signingKeys`, RS256) adds an `id_token`;
     `/.well-known/openid-configuration` and `/oauth2/jwks` are served when keys are configured.

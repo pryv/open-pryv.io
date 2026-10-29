@@ -296,6 +296,7 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     launchTypes: args.flags['launch-type'] ?? [],
     canIntrospect: args.flagsScalar['can-introspect'] === true,
     omitApiEndpoint: true,
+    subjectType: args.flagsScalar['subject-type'] ?? 'public',
     ...(secret != null ? { clientSecretHash: secret.hash } : {}),
     ...(jwks != null ? { jwks } : {}),
   });
@@ -401,6 +402,10 @@ async function runUpdate (platform, args, getClient, persistClient) {
       ? parseCmcOffers(args.flags['cmc-offer'])
       : existing.cmcOffers,
   };
+  if (args.flagsScalar['subject-type'] != null) {
+    if (existing.kind !== 'registry') throw new Error('update: --subject-type applies to registry clients only');
+    merged.subjectType = args.flagsScalar['subject-type'];
+  }
   // Replace the inline JWK Set only when --jwks-file/--jwks-json is given;
   // otherwise keep the existing set untouched.
   const jwks = resolveJwks(args);
@@ -671,7 +676,11 @@ function printUsage (stream) {
     '  --audience <url>          (multi) resource values the client may request (aud)\n' +
     '  --extra <key>=<value>     (multi) static extra field of every token response\n' +
     '  --launch-type <s>         (multi)   --contact <s> (multi)\n' +
-    '  --policy-uri <uri>  --tos-uri <uri>  --can-introspect (resource-server role)\n\n' +
+    '  --policy-uri <uri>  --tos-uri <uri>  --can-introspect (resource-server role)\n' +
+    '  --subject-type public|pairwise   (also on update) the subject the app sees:\n' +
+    '                            public (default) the user\'s stable id, or the grant\'s\n' +
+    '                            alias when the app asks for a pseudonym; pairwise\n' +
+    '                            always the grant\'s alias\n\n' +
     'Flags (create / update):\n' +
     '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
     '                            the account username. 4-64 chars of A-Z a-z 0-9 . _ ~ -\n' +

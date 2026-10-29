@@ -82,9 +82,9 @@ export type AuthCodeDeps = {
 };
 
 /**
- * The id a registry client sees for the user: the grant's alias when the app
- * asked for a pseudonym (`aliased`), the username otherwise. Null when the
- * grant is gone.
+ * The id a registry client sees for the user: the grant's alias when the grant
+ * is aliased (`aliased`), the user's stable id otherwise. Null when the grant
+ * is gone.
  */
 export type GrantSubjectResolver = (params: {
   userId: string; username: string; dataGrantAccessId: string;

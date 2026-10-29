@@ -14,7 +14,7 @@
  * narrower scope. The same token list is the `scopeTokens` every hook gets.
  * Static per-client extras and the extension's `tokenResponse` fields are
  * added under the core fields; `apiEndpoint` (it names the account) is sent
- * only when the app sees the username, never with a pseudonym; `id_token` is
+ * only when the grant is not aliased, never with a pseudonym; `id_token` is
  * added when `openid` was granted.
  *
  * App-account clients do not go through here: their response is unchanged.

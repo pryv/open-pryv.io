@@ -98,6 +98,9 @@ export function resolveRequestedScope (
   const parsed = callParse(ext, client, rest.join(' '), 'request');
   if (!parsed.ok) return parsed;
   const offer = parsed.offer;
+  // A pairwise client always gets the grant's alias as the subject; decided
+  // here so the consent shows it and the digest pins it.
+  if (client.subjectType === 'pairwise') offer.randomAlias = true;
   if (offer.permissions.length === 0) {
     return { ok: false, description: 'the requested scope grants no data access' };
   }
