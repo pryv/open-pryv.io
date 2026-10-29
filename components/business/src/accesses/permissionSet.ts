@@ -32,6 +32,7 @@
  */
 
 import type { Permission, StreamPermission, FeaturePermission, PermissionLevel } from '../types/public.ts';
+import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 
 /**
  * Permission levels ordered by ascending capability, for level
@@ -239,6 +240,185 @@ function levelCapabilityExcess (
   return (Object.keys(g) as Array<keyof StreamCapabilities>).filter((c) => g[c] && !o[c]);
 }
 
+/** The capability names, in a fixed order. */
+const CAPABILITY_NAMES: ReadonlyArray<keyof StreamCapabilities> =
+  Object.freeze(['read', 'create', 'update', 'manage', 'list']);
+
+/**
+ * The level whose capability set is EXACTLY `combine(cap(a), cap(b))`, or
+ * `null` when no level has that set. Derived from `capabilitiesForLevel`, so
+ * the merge rules can never drift from what an access grants. `none` is
+ * matched before the other levels (it is the only level with no capability).
+ */
+function levelForCapabilities (wanted: StreamCapabilities): PermissionLevel | null {
+  for (const level of PERMISSION_LEVEL_VALUES) {
+    const caps = capabilitiesForLevel(level);
+    if (CAPABILITY_NAMES.every((c) => caps[c] === wanted[c])) return level;
+  }
+  return null;
+}
+
+function combineLevels (
+  a: PermissionLevel, b: PermissionLevel, combine: (x: boolean, y: boolean) => boolean
+): PermissionLevel | null {
+  const ca = capabilitiesForLevel(a);
+  const cb = capabilitiesForLevel(b);
+  const wanted = {} as StreamCapabilities;
+  for (const c of CAPABILITY_NAMES) wanted[c] = combine(ca[c], cb[c]);
+  return levelForCapabilities(wanted);
+}
+
+/**
+ * The level granting exactly the union of what `a` and `b` grant, or `null`
+ * when no level does. There is no rounding up: `read` with `create-only` is
+ * {read, create, list}, which no level grants (`contribute` would add
+ * `update`, which neither side consented to).
+ */
+function joinLevel (a: PermissionLevel, b: PermissionLevel): PermissionLevel | null {
+  return combineLevels(a, b, (x, y) => x || y);
+}
+
+/**
+ * The level granting exactly what both `a` and `b` grant, or `null` when no
+ * level does: `read` with `create-only` share only {list}, which is no level
+ * (the stream then gets no entry at all).
+ */
+function meetLevel (a: PermissionLevel, b: PermissionLevel): PermissionLevel | null {
+  return combineLevels(a, b, (x, y) => x && y);
+}
+
+/** One stream on which two permission sets hold levels that cannot be joined. */
+type PermissionMergeConflict = { streamId: string; current: PermissionLevel; incoming: PermissionLevel };
+
+/**
+ * Thrown when two permission sets give one stream levels whose union is no
+ * level (`read` and `create-only`, in either order).
+ */
+class PermissionMergeConflictError extends Error {
+  code = 'permission-level-conflict';
+  conflicts: PermissionMergeConflict[];
+  constructor (conflicts: PermissionMergeConflict[]) {
+    super(conflicts.map((c) =>
+      `stream "${c.streamId}" is held at level "${c.current}" and requested at level "${c.incoming}": ` +
+      'no level grants exactly both; "contribute" is the level covering both').join('; '));
+    this.name = 'PermissionMergeConflictError';
+    this.conflicts = conflicts;
+  }
+}
+
+type MergeSide = {
+  /** Stream entries by canonical id, and feature settings by feature name. */
+  streams: Map<string, StreamPermission>;
+  features: Map<string, string>;
+  /** Entries that are neither a stream nor a feature permission, by `x|<index>`. */
+  unclassified: Map<string, unknown>;
+  /** Entry keys (`s|<canonical id>` / `f|<feature>` / `x|<index>`) in first-seen order. */
+  order: string[];
+};
+
+/**
+ * Index one side of a merge. Two entries for one stream (in any spelling)
+ * collapse to the LAST one, which is what an access applies when it loads
+ * such a row; the collapsed entry keeps the position of the first. Two
+ * entries for one feature collapse to `forbidden` if either is, which is how
+ * a restriction is enforced (`isFeatureForbidden`). An entry that is neither
+ * (a stored row may hold one the access schema admits, e.g. a `null`
+ * `streamId`, which grants nothing) is kept aside as is, never refused: the
+ * merge runs on stored rows, where a throw would fail a refresh or a consent.
+ */
+function indexForMerge (perms: unknown): MergeSide {
+  if (!Array.isArray(perms)) throw new Error('permissions must be an array');
+  const side: MergeSide = { streams: new Map(), features: new Map(), unclassified: new Map(), order: [] };
+  for (const [index, raw] of perms.entries()) {
+    if (!isStreamPermission(raw) && !isFeaturePermission(raw)) {
+      const key = 'x|' + index;
+      side.order.push(key);
+      side.unclassified.set(key, raw);
+      continue;
+    }
+    const p = normalizePermissions([raw])[0];
+    if (isStreamPermission(p)) {
+      const key = 's|' + canonicalStreamId(p.streamId);
+      if (!side.streams.has(key)) side.order.push(key);
+      side.streams.set(key, p);
+    } else {
+      const f = p as FeaturePermission;
+      const key = 'f|' + f.feature;
+      const known = side.features.get(key);
+      if (known == null) side.order.push(key);
+      side.features.set(key, known === 'forbidden' ? known : f.setting);
+    }
+  }
+  return side;
+}
+
+/**
+ * Merge two permission sets stream by stream.
+ *
+ * - `join` (a consent adding to what is already granted): a stream in both
+ *   sets gets `joinLevel`; when there is none, the stream is reported in
+ *   `conflicts` and left out; a stream in one set only is kept. A feature is
+ *   `forbidden` if either set forbids it (a restriction once consented is
+ *   kept), else `allowed`.
+ * - `meet` (what a session may still use under its grant): a stream in both
+ *   sets gets `meetLevel`; when there is none (`read` with `create-only`:
+ *   together they leave nothing) it gets `none`, so a broader ancestor cannot
+ *   flow into it. A stream in one set only is left out, except a `none`
+ *   entry, which is kept (a mask is a restriction, not a grant). A feature is
+ *   `forbidden` if either set forbids it (the grant's restrictions always
+ *   reach the session), `allowed` when both allow it, left out otherwise.
+ *   The meet is entry by entry: the stream tree (a narrower entry below a
+ *   stream the result holds) is the caller's to apply.
+ *
+ * Streams are identified by their canonical id (`a` and `:local:a` are one
+ * stream). An emitted stream entry takes the spelling (`streamId`,
+ * `defaultName`, `name`) of the side whose level is kept, `current`'s when
+ * the levels are equal or neither is kept. An entry that is neither a stream
+ * nor a feature permission is re-emitted as is by `join` when `current` holds
+ * it (at its position) and left out otherwise. Order: `current`'s entries
+ * first, in their order, then the new ones in `incoming`'s order, so a merge
+ * that changes nothing returns `current` as it was (consent annotations
+ * dropped, duplicates collapsed).
+ */
+function mergeStreamPermissions (current: unknown, incoming: unknown, mode: 'join' | 'meet'):
+{ permissions: Permission[]; conflicts: PermissionMergeConflict[] } {
+  const cur = indexForMerge(current);
+  const inc = indexForMerge(incoming);
+  const conflicts: PermissionMergeConflict[] = [];
+  const out: Permission[] = [];
+  const keys = cur.order.concat(inc.order.filter((k) =>
+    !k.startsWith('x|') && !cur.streams.has(k) && !cur.features.has(k)));
+  for (const key of keys) {
+    if (key.startsWith('x|')) {
+      if (mode === 'join') out.push(cur.unclassified.get(key) as Permission);
+    } else if (key.startsWith('s|')) {
+      const c = cur.streams.get(key);
+      const i = inc.streams.get(key);
+      if (c == null || i == null) {
+        const only = (c ?? i) as StreamPermission;
+        if (mode === 'join' || only.level === 'none') out.push(only);
+        continue;
+      }
+      const level = mode === 'join' ? joinLevel(c.level, i.level) : meetLevel(c.level, i.level);
+      if (level == null) {
+        if (mode === 'join') conflicts.push({ streamId: key.slice(2), current: c.level, incoming: i.level });
+        else out.push({ ...c, level: 'none' });
+        continue;
+      }
+      out.push({ ...(level === i.level && level !== c.level ? i : c), level });
+    } else {
+      const c = cur.features.get(key);
+      const i = inc.features.get(key);
+      let setting: string | null;
+      if (c === 'forbidden' || i === 'forbidden') setting = 'forbidden';
+      else if (mode === 'join') setting = 'allowed';
+      else setting = (c === 'allowed' && i === 'allowed') ? 'allowed' : null;
+      if (setting != null) out.push({ feature: key.slice(2), setting });
+    }
+  }
+  return { permissions: out, conflicts };
+}
+
 /** Drop consent-layer annotations (`mandatory`, `optIn`): call before
  * anything that mints or updates a real access row. */
 function stripConsentAnnotations (perms: ConsentPermission[]): Permission[] {
@@ -340,5 +520,10 @@ export {
   isPermissionSubset,
   checkConsentGrant,
   capabilitiesForLevel,
-  levelCapabilityExcess
+  levelCapabilityExcess,
+  joinLevel,
+  meetLevel,
+  mergeStreamPermissions,
+  PermissionMergeConflictError
 };
+export type { PermissionMergeConflict };

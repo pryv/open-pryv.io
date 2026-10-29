@@ -51,12 +51,13 @@ const { verifyState } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { audit } = require('../audit.ts');
-const { logServerError } = require('../serverLog.ts');
+const { logServerError, logServerWarning } = require('../serverLog.ts');
 // Permission-lexicon single point — the consent-grant rule (subset +
 // all-or-nothing default + mandatory locks) is shared with the cmc
 // accept path.
 const { checkConsentGrant, normalizePermissions } =
   require('business/src/accesses/permissionSet.ts');
+const { canonicalStreamId } = require('mall/src/helpers/storeDataUtils.ts');
 
 /** Authenticated user-session handle, opaque to this module. */
 export type UserSession = {
@@ -171,6 +172,16 @@ export function handleAccept (deps: AcceptDeps) {
         error_description: 'grantedPermissions invalid: ' + ((e as Error)?.message ?? String(e)),
       });
     }
+    // One level per stream: the consent check compares entry SETS, so a
+    // repeated stream (in any spelling) would pass it and then be refused
+    // when the session access is created.
+    const duplicateStream = firstDuplicateStream(grantedPermissions);
+    if (duplicateStream != null) {
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: `stream "${duplicateStream}" appears more than once in grantedPermissions`,
+      });
+    }
     if (grantedPermissions.length === 0) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
@@ -243,6 +254,23 @@ export function handleAccept (deps: AcceptDeps) {
           error_description: 'grantedPermissions widen the offer under the stream hierarchy — the kept subset must not grant more access than the offer',
         });
       }
+      // The consent asks for a stream at a level that cannot be joined with
+      // the level already granted on it (`read` and `create-only`): the only
+      // level covering both would grant a capability nobody consented to.
+      // A consent error, not a server fault: the description names the
+      // stream and both levels, for the consent screen; refused consents are
+      // audited.
+      if ((err as { code?: string } | null)?.code === 'permission-level-conflict') {
+        const description = 'conflicting permission level on a requested resource: ' +
+          String((err as Error).message ?? '');
+        logServerWarning('accept: consent refused, ' + description);
+        await audit('oauth.consent.refused', {
+          clientId: payload.clientId,
+          requestedScope: payload.scope,
+          reason: 'permission-level-conflict',
+        });
+        return sendJson(res, 400, { error: 'invalid_scope', error_description: description });
+      }
       // The data holder (peer) refused the consent accept — e.g. the open-link
       // capability already recorded this accepter, or a consumed / invalidated
       // link. Client-correctable, not a server fault → 400 carrying the peer's
@@ -299,6 +327,18 @@ export function handleAccept (deps: AcceptDeps) {
 
     return sendJson(res, 200, { redirectTo });
   };
+}
+
+/** The first stream named twice (compared by canonical id), or null. */
+function firstDuplicateStream (permissions: Array<Record<string, unknown>>): string | null {
+  const seen = new Set<string>();
+  for (const p of permissions) {
+    if (typeof p.streamId !== 'string') continue;
+    const id = canonicalStreamId(p.streamId);
+    if (seen.has(id)) return p.streamId;
+    seen.add(id);
+  }
+  return null;
 }
 
 function isNonEmptyString (v: unknown): boolean {
