@@ -69,6 +69,17 @@ describe('[UCGD] account.changeUsername: names refused, limits, trail', function
     assert.equal(await usersRepository.getUserIdForUsername(other.uname), other.userId, 'the former name stays with its account');
   });
 
+  it('[UCGD8] an account cannot take back its own former username (it stays an alias)', async function () {
+    const { uname, userId } = await freshUser('gs');
+    const newName = freshName('gt');
+    const renamed = await changeUsername(uname, newName, await login(uname));
+    assert.equal(renamed.status, 200, JSON.stringify(renamed.body));
+    const back = await changeUsername(newName, uname, await login(newName));
+    assert.equal(back.status, 409, JSON.stringify(back.body));
+    assert.equal(await usersRepository.getUsernameForUserId(userId), newName);
+    assert.equal(await usersRepository.getUserIdForUsername(uname), userId, 'the former name still routes to the account');
+  });
+
   it('[UCGD3] refuses a reserved name and the shape of a minted alias', async function () {
     const { uname } = await freshUser('gf');
     const token = await login(uname);
