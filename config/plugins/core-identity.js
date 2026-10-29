@@ -16,44 +16,62 @@
  *   1. Explicit `core.url` in YAML — DNSless multi-core deployments where DNS is
  *      managed externally and FQDNs cannot be derived from `{id}.{domain}`.
  *      Example: `core.url: https://api1.example.com`
- *   2. Multi-core derivation: `https://{core.id}.{dns.domain}` — when both
- *      `core.id` and `dns.domain` are set and dnsLess is off.
+ *   2. Multi-core derivation: `https://{core.id}.{dns.domain}`, when
+ *      `dns.domain` is set and dnsLess is not on.
  *   3. Single-core (dnsLess): `dnsLess.publicUrl`.
  *
  * `core:isSingleCore` is `false` when either an explicit `core.url` is set
- * (option 1) AND `dnsLess.isActive` is false, OR when multi-core derivation
+ * (option 1) AND `dnsLess.isActive` is not true, OR when multi-core derivation
  * (option 2) applies. Otherwise it is `true`.
+ *
+ * "Not true" is read in the operator's layers only: this plugin runs before
+ * `default-config.yml` is loaded, so a `dnsLess.isActive` the operator left
+ * out counts as not true, although the shipped default (true) applies at
+ * runtime. A DNSless multi-core member relies on it: `core.url` set and no
+ * `dnsLess` key is multi-core, with path-style routing; `core.url` with an
+ * explicit `dnsLess.isActive: true` is single-core.
  */
 async function load (config) {
-  const coreId = config.get('core:id') || 'single';
-  const explicitCoreUrl = config.get('core:url');
-  const dnsDomain = config.get('dns:domain');
-  const isDnsLess = config.get('dnsLess:isActive');
+  const { coreUrl, isSingleCore } = deriveCoreIdentity((key) => config.get(key));
+  config.set('core:isSingleCore', isSingleCore);
+  config.set('core:url', coreUrl);
+}
 
-  let coreUrl;
+/**
+ * The derivation behind `load`, without touching the config. `get` reads a
+ * colon-separated key. bin/check-config.js uses it too, so that it classifies
+ * a core (single or multi-core) exactly as boot does.
+ *
+ * Boot registers this plugin as a synchronous one, which runs before
+ * `default-config.yml` is loaded: `get` then sees the operator's layers
+ * (override, bootstrap, environment, base layer) but not the shipped defaults.
+ *
+ * @param {(key: string) => any} get
+ * @returns {{ coreUrl: string|null, isSingleCore: boolean }}
+ */
+function deriveCoreIdentity (get) {
+  const coreId = get('core:id') || 'single';
+  const explicitCoreUrl = get('core:url');
+  const dnsDomain = get('dns:domain');
+  const isDnsLess = get('dnsLess:isActive');
 
   if (explicitCoreUrl) {
     // Option 1: explicit override (DNSless multi-core)
-    coreUrl = stripTrailingSlash(explicitCoreUrl);
     // If dnsLess is also active, the deployment is single-core by definition.
     // Otherwise we treat the explicit URL as a multi-core node identifier.
-    config.set('core:isSingleCore', !!isDnsLess);
-  } else if (dnsDomain != null && !isDnsLess) {
-    // Option 2: multi-core derivation from id + domain
-    coreUrl = 'https://' + coreId + '.' + dnsDomain;
-    config.set('core:isSingleCore', false);
-  } else {
-    // Option 3: single-core (dnsLess) — use publicUrl
-    const publicUrl = config.get('dnsLess:publicUrl');
-    coreUrl = publicUrl ? stripTrailingSlash(publicUrl) : null;
-    config.set('core:isSingleCore', true);
+    return { coreUrl: stripTrailingSlash(explicitCoreUrl), isSingleCore: !!isDnsLess };
   }
-
-  config.set('core:url', coreUrl);
+  if (dnsDomain != null && !isDnsLess) {
+    // Option 2: multi-core derivation from id + domain
+    return { coreUrl: 'https://' + coreId + '.' + dnsDomain, isSingleCore: false };
+  }
+  // Option 3: single-core (dnsLess) — use publicUrl
+  const publicUrl = get('dnsLess:publicUrl');
+  return { coreUrl: publicUrl ? stripTrailingSlash(publicUrl) : null, isSingleCore: true };
 }
 
 function stripTrailingSlash (url) {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
-module.exports = { load };
+module.exports = { load, deriveCoreIdentity };

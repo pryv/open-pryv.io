@@ -21,7 +21,10 @@ const cuid = require('cuid');
 const CLI = path.resolve(__dirname, '../../../bin/check-config.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 
-function runCheck (yamlBody, nodeEnv = process.env.NODE_ENV, extraEnv = {}) {
+// No NODE_ENV by default: boot (and check-config) would otherwise merge the
+// matching config/<NODE_ENV>-config.yml (test-config.yml under mocha) under
+// the checked file.
+function runCheck (yamlBody, nodeEnv = null, extraEnv = {}) {
   const file = path.join(os.tmpdir(), 'check-config-' + cuid.slug() + '.yml');
   fs.writeFileSync(file, yamlBody);
   // The test runner itself sets `a__b` config variables: keep only the ones a test passes.
@@ -135,7 +138,7 @@ services:
     assert.match(legacyKey.stdout, /lockoutSeconds is no longer read/);
   });
 
-  it('[CKCF7] account.autoDeletion gets the boot check, merged over the shipped defaults', () => {
+  it('[CKCF8] account.autoDeletion gets the boot check, merged over the shipped defaults', () => {
     const bad = runCheck(BASE + `
 account:
   autoDeletion:
@@ -163,6 +166,17 @@ account:
 `);
     assert.strictEqual(noMail.status, 0, noMail.stdout + noMail.stderr);
     assert.match(noMail.stdout, /defaultDays' is set but mail is not configured/);
+  });
+
+  it('[CKCF7] a plain services.email.enabled: true inherits verifyEmail: a missing page URL is a warning, as at boot', () => {
+    const res = runCheck(BASE + `
+services:
+  email:
+    enabled: true
+`);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /emailVerificationPageURL missing or unset: email verification is on by default/);
+    assert.doesNotMatch(res.stdout + res.stderr, /required when services\.email\.enabled\.verifyEmail is true/);
   });
 
   it('[CKCF6] letsEncrypt.email is optional, but a placeholder in it is a problem', () => {
@@ -460,5 +474,80 @@ oauth:
 `);
     assert.strictEqual(withUrl.status, 0, withUrl.stdout + withUrl.stderr);
     assert.ok(!/oauth\.consentUrl/.test(withUrl.stdout), withUrl.stdout);
+  });
+});
+
+describe('[CCDL] bin/check-config.js reads the shipped defaults under the file', function () {
+  this.timeout(60000);
+
+  const PG_DEFAULTS = BASE.replace('storages:\n  base:\n    engine: sqlite\n  series:\n    engine: sqlite\n', '');
+
+  it('[CCDL1] storages left to the defaults (local PostgreSQL) are not reported missing; an empty password is a warning', () => {
+    assert.notStrictEqual(PG_DEFAULTS, BASE);
+    const res = runCheck(PG_DEFAULTS);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.doesNotMatch(res.stdout, /storages\.base\.engine/);
+    assert.match(res.stdout, /storages\.engines\.postgresql\.password is empty/);
+    const withPassword = runCheck(PG_DEFAULTS + 'storages:\n  engines:\n    postgresql:\n      password: a-db-password\n');
+    assert.strictEqual(withPassword.status, 0, withPassword.stdout + withPassword.stderr);
+    assert.doesNotMatch(withPassword.stdout, /postgresql\.password/);
+    const placeholder = runCheck(PG_DEFAULTS + "storages:\n  engines:\n    postgresql:\n      password: 'REPLACE ME'\n");
+    assert.strictEqual(placeholder.status, 1, placeholder.stdout + placeholder.stderr);
+    assert.match(placeholder.stderr, /storages\.engines\.postgresql\.password holds a placeholder/);
+  });
+
+  it('[CCDL2] the PostgreSQL platform engine accepts dnsLess.isActive left to its default (true)', () => {
+    const res = runCheck(PG_DEFAULTS.replace('  isActive: true\n', '') +
+      'storages:\n  platform:\n    engine: postgresql\n  engines:\n    postgresql:\n      password: a-db-password\n');
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.doesNotMatch(res.stdout, /requires dnsLess\.isActive/);
+  });
+
+  it('[CCDL3] the registration email gate judges the default mail method (in-process) when the file names none', () => {
+    const res = runCheck(BASE + 'account:\n  emailVerification:\n    requireAtRegistration: true\n');
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /services\.email\.smtp\.host missing or unset \(required by the registration email gate with method in-process\)/);
+  });
+});
+
+describe('[CCMC] bin/check-config.js on a multi-core member without a DNS of its own', function () {
+  this.timeout(60000);
+
+  const NEITHER = /Neither dnsLess\.isActive nor dns\.active is true/;
+  const withTopology = (block) => BASE.replace('dnsLess:\n  isActive: true\n  publicUrl: https://core.example.com/\n', block);
+
+  it('[CCMC1] a member served by a peer core\'s DNS passes with a warning (classified multi-core as at boot)', () => {
+    for (const block of [
+      // dns.domain set, dnsLess off: the core URL is derived from core.id
+      'dnsLess:\n  isActive: false\ndns:\n  active: false\n  domain: example.org\ncore:\n  id: core-b\n',
+      // an explicit core.url, dnsLess off
+      'dnsLess:\n  isActive: false\ncore:\n  url: https://core-b.example.org\n'
+    ]) {
+      const body = withTopology(block);
+      assert.notStrictEqual(body, BASE);
+      const res = runCheck(body);
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      assert.match(res.stdout, NEITHER);
+      assert.match(res.stdout, /multi-core member runs no DNS of its own.*peer core's embedded DNS/);
+    }
+  });
+
+  it('[CCMC3] a DNSless member (core.url, no dnsLess key, as written by bootstrap) is classified on the operator\'s layers', () => {
+    // dnsLess.isActive is left out, so boot's core identity (which runs before
+    // the defaults load) makes this core a multi-core member: no public URL is needed.
+    const https = runCheck(withTopology('core:\n  id: core-b\n  url: https://core-b.example.org\n'));
+    assert.strictEqual(https.status, 0, https.stdout + https.stderr);
+    assert.doesNotMatch(https.stdout, /dnsLess\.publicUrl/);
+    // As a member its URL is a peer URL, refused over http: the classification
+    // did not read the merged dnsLess.isActive (true by default).
+    const http = runCheck(withTopology('core:\n  id: core-b\n  url: http://core-b.example.org\n'));
+    assert.strictEqual(http.status, 1, http.stdout + http.stderr);
+    assert.match(http.stderr, /uses http: \(core-to-core calls carry the admin key\)/);
+  });
+
+  it('[CCMC2] a single core with neither dnsLess nor the embedded DNS is still a problem', () => {
+    const res = runCheck(withTopology('dnsLess:\n  isActive: false\n'));
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /Neither dnsLess\.isActive nor dns\.active is true — server cannot resolve user → core/);
   });
 });
