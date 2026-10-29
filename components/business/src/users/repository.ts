@@ -651,7 +651,7 @@ class UsersRepository {
     });
   }
 
-  async deleteOne (userId: string, username: string) {
+  async deleteOne (userId: string, username: string | null) {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
     // for unique field cleanup (e.g. email).
     const user = await this.getUserById(userId);

@@ -19,7 +19,7 @@ import { activityOf } from 'business/src/accesses/accountActivity.ts';
 import type { AccountActivity } from 'business/src/accesses/accountActivity.ts';
 import { buildMallForCmc } from './cmcMall.ts';
 import { sendmail, isLoggedMailFailure, isRecipientRejected, isRecipientDeferred } from './mailing.ts';
-import { availableActions } from './autoDeletionPolicy.ts';
+import { availableActions, availableTriggers } from './autoDeletionPolicy.ts';
 
 /**
  * What `account.getAutoDeletion` / `account.setAutoDeletion` need to know
@@ -56,6 +56,10 @@ export type AccountFacts = {
   isControlled: boolean;
   /** An operator preset covers this account (plain account that can receive mail). */
   presetApplies: boolean;
+  /** Account use is recorded (`accessTracking.isActive`): an inactivity schedule can run. */
+  inactivityMeasurable: boolean;
+  /** The holder may delete the account themselves (`user-account.delete` lists `personalToken`). */
+  selfDeletionAllowed: boolean;
 };
 
 export async function getState () {
@@ -99,7 +103,9 @@ export async function loadAccountFacts (config: ConfigLike, user: UserRef): Prom
     notifiable,
     isGroup,
     isControlled,
-    presetApplies: notifiable && !isGroup && !isControlled
+    presetApplies: notifiable && !isGroup && !isControlled,
+    inactivityMeasurable: availableTriggers(config).includes('inactivity'),
+    selfDeletionAllowed: availableActions(config).includes('delete')
   };
 }
 
@@ -114,7 +120,8 @@ export function computeSchedule (config: AutoDeletionConfig, setting: Setting | 
     now,
     config,
     notifiable: facts.notifiable,
-    acknowledgedNoReminders: setting?.acknowledgedNoReminders === true
+    acknowledgedNoReminders: setting?.acknowledgedNoReminders === true,
+    inactivityMeasurable: facts.inactivityMeasurable
   });
   return { policy, evaluation };
 }

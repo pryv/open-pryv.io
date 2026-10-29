@@ -1,6 +1,13 @@
 p Bonjour #{USERNAME},
-p Votre compte devait être supprimé le #{DEADLINE}, mais il n'a pas pu l'être : le supprimer maintenant laisserait un autre compte qu'il gère (en tant que délégué) sans aucun moyen de connexion.
-p La suppression est retentée régulièrement et aura lieu, sans autre message, dès que plus rien ne l'empêche. Pour qu'elle ait lieu, donnez au compte que vous gérez sa propre adresse e-mail, ou confiez sa gestion à quelqu'un d'autre.
+if BLOCKED_DELEGATION
+  p Votre compte devait être supprimé le #{DEADLINE}, mais il n'a pas pu l'être : le supprimer maintenant laisserait un autre compte qu'il gère (en tant que délégué) sans aucun moyen de connexion.
+  p La suppression est retentée régulièrement et aura lieu, sans autre message, dès que plus rien ne l'empêche. Pour qu'elle ait lieu, donnez au compte que vous gérez sa propre adresse e-mail, ou confiez sa gestion à quelqu'un d'autre.
+else if BLOCKED_SELF_DELETION
+  p Votre compte devait être supprimé le #{DEADLINE}, comme vous l'aviez prévu, mais cette plateforme ne permet plus aux titulaires de supprimer eux-mêmes leur compte : la suppression est suspendue et votre compte reste tel quel.
+  p Pour le supprimer malgré tout, contactez le support de votre plateforme ; pour annuler la suppression prévue, changez le réglage de suppression automatique sur la page de votre compte.
+else
+  p Votre compte devait être supprimé le #{DEADLINE}, mais une vérification nécessaire avant toute suppression de compte n'a pas pu être faite : la suppression est suspendue.
+  p Elle est retentée régulièrement et aura lieu, sans autre message, dès que la vérification aboutit.
 if TRIGGER_INACTIVITY
   p Pour garder votre compte, il suffit de l'utiliser : une connexion, ou une application que vous avez autorisée, annule cette suppression et repousse la date.
 if EXPORT_URL

@@ -402,9 +402,11 @@ services:
       # notice and is therefore never deleted.
       accountDeletionReminder: true
       # Notice, sent once, that an account due for auto-deletion could not be
-      # deleted (a deletion guard refused it, e.g. it manages a delegated
-      # account that would be left without any way in). The sweep tries
-      # again at every pass, silently.
+      # deleted: a deletion guard refused it (e.g. it manages a delegated
+      # account that would be left without any way in) or could not be
+      # checked, or the holder's own schedule needs self-deletion, which
+      # user-account.delete no longer allows. The sweep tries again at every
+      # pass, silently.
       accountDeletionBlocked: true
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
@@ -445,7 +447,10 @@ services:
     # Both get the variables of the confirmation (USERNAME, DEADLINE: the
     # date and time the account is due, DAYS_LEFT, TRIGGER and its flags,
     # INACTIVITY_DAYS, ACTION, ACCOUNT_APP_URL, EXPORT_URL) and
-    # POLICY_OPERATOR ('true' when the platform's preset set the schedule).
+    # POLICY_OPERATOR ('true' when the platform's preset set the schedule). The
+    # blocked mail also gets BLOCKED_REASON (deletion-guard, guard-unavailable,
+    # self-deletion-disabled) with the flags BLOCKED_DELEGATION and
+    # BLOCKED_SELF_DELETION ('true' or '').
     accountDeletionReminderTemplate: account-deletion-reminder
     accountDeletionBlockedTemplate: account-deletion-blocked
     defaultLang: en
@@ -576,7 +581,9 @@ account:
     enabled: true
     # true: the sweep logs the reminders it would send and the accounts it
     # would delete, and does neither. Use it to see the numbers before
-    # setting a preset on a platform with dormant accounts.
+    # setting a preset on a platform with dormant accounts. A schedule whose
+    # reminders were only logged gets one sent when the dry run ends, and
+    # waits reminders.minNoticeDays from it.
     dryRun: false
     inactivity:
       # Operator preset: delete plain accounts unused for this many days.
@@ -603,7 +610,10 @@ account:
       # No account is deleted less than this many days after its first
       # reminder was sent: the deletion waits.
       minNoticeDays: 7
-    # How often the sweep runs (milliseconds, default 6 h).
+    # How often the sweep runs (milliseconds, default 6 h). One sweep per
+    # core: bin/master.js runs it in one API worker. Running several API
+    # processes for one core without it, set PRYV_CMC_LOOP_WORKER=0 on all
+    # but one of them (the same variable designates the CMC loop's process).
     sweepIntervalMs: 21600000
     # At most this many deletions per sweep; the rest wait for the next one.
     # 0 = no limit.

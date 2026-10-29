@@ -61,6 +61,21 @@ class ErasuresLocalPG {
     );
   }
 
+  async insertIfAbsent (row: AccountErasureRow): Promise<boolean> {
+    const res = await this.db.query(
+      'INSERT INTO account_erasures (user_id, username, trigger, started_at, updated_at, done_steps, series_namespaces, attempts, last_error) ' +
+        'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (user_id) DO NOTHING',
+      [row.userId, row.username, row.trigger, row.startedAt, row.updatedAt, JSON.stringify(row.doneSteps),
+        row.seriesNamespaces == null ? null : JSON.stringify(row.seriesNamespaces), row.attempts, row.lastError]
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async claim (userId: string, expectedUpdatedAt: number, updatedAt: number): Promise<boolean> {
+    const res = await this.db.query('UPDATE account_erasures SET updated_at = $3 WHERE user_id = $1 AND updated_at = $2', [userId, expectedUpdatedAt, updatedAt]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async get (userId: string): Promise<AccountErasureRow | null> {
     const res = await this.db.query('SELECT * FROM account_erasures WHERE user_id = $1', [userId]);
     return res.rows.length > 0 ? toRow(res.rows[0]) : null;

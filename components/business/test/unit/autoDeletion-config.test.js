@@ -124,4 +124,12 @@ describe('[ACCF] account.autoDeletion config', function () {
     // without a preset, neither is worth a boot warning
     assert.deepEqual(describeAutoDeletionConfig({}, { accessTrackingActive: true, mailOk: false, accountAppSet: false }).warnings, []);
   });
+
+  it('[ACCF9] access tracking off: a warning that inactivity schedules set by users are suspended', function () {
+    const r = describeAutoDeletionConfig({}, { ...OK_ENV, accessTrackingActive: false });
+    assert.deepEqual(r.problems, []);
+    assert.equal(r.warnings.length, 1);
+    assert.match(r.warnings[0], /inactivity auto-deletion schedules set by users are suspended/);
+    assert.deepEqual(describeAutoDeletionConfig({ enabled: false }, { ...OK_ENV, accessTrackingActive: false }).warnings, [], 'feature off');
+  });
 });

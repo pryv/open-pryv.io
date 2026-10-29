@@ -45,9 +45,19 @@ function toRow (r: Row): AccountErasureRow {
   };
 }
 
+function toParams (row: AccountErasureRow): Record<string, unknown> {
+  return {
+    ...row,
+    doneSteps: JSON.stringify(row.doneSteps),
+    seriesNamespaces: row.seriesNamespaces == null ? null : JSON.stringify(row.seriesNamespaces)
+  };
+}
+
 class ErasuresLocalSQLite {
   db!: SqliteDb;
   qPut!: SqliteStmt;
+  qInsert!: SqliteStmt;
+  qClaim!: SqliteStmt;
   qGet!: SqliteStmt<Row>;
   qAll!: SqliteStmt<Row>;
   qDelete!: SqliteStmt;
@@ -74,6 +84,9 @@ class ErasuresLocalSQLite {
     });
     this.qPut = this.db.prepare('INSERT OR REPLACE INTO account_erasures (user_id, username, trigger, started_at, updated_at, done_steps, series_namespaces, attempts, last_error) ' +
       'VALUES (@userId, @username, @trigger, @startedAt, @updatedAt, @doneSteps, @seriesNamespaces, @attempts, @lastError)');
+    this.qInsert = this.db.prepare('INSERT OR IGNORE INTO account_erasures (user_id, username, trigger, started_at, updated_at, done_steps, series_namespaces, attempts, last_error) ' +
+      'VALUES (@userId, @username, @trigger, @startedAt, @updatedAt, @doneSteps, @seriesNamespaces, @attempts, @lastError)');
+    this.qClaim = this.db.prepare('UPDATE account_erasures SET updated_at = ? WHERE user_id = ? AND updated_at = ?');
     this.qGet = this.db.prepare<Row>('SELECT * FROM account_erasures WHERE user_id = ?');
     this.qAll = this.db.prepare<Row>('SELECT * FROM account_erasures ORDER BY started_at ASC');
     this.qDelete = this.db.prepare('DELETE FROM account_erasures WHERE user_id = ?');
@@ -81,12 +94,19 @@ class ErasuresLocalSQLite {
   }
 
   async put (row: AccountErasureRow): Promise<void> {
-    const params = {
-      ...row,
-      doneSteps: JSON.stringify(row.doneSteps),
-      seriesNamespaces: row.seriesNamespaces == null ? null : JSON.stringify(row.seriesNamespaces)
-    };
-    await execute(() => { this.qPut.run(params); });
+    await execute(() => { this.qPut.run(toParams(row)); });
+  }
+
+  async insertIfAbsent (row: AccountErasureRow): Promise<boolean> {
+    let changes = 0;
+    await execute(() => { changes = this.qInsert.run(toParams(row)).changes; });
+    return changes > 0;
+  }
+
+  async claim (userId: string, expectedUpdatedAt: number, updatedAt: number): Promise<boolean> {
+    let changes = 0;
+    await execute(() => { changes = this.qClaim.run(updatedAt, userId, expectedUpdatedAt).changes; });
+    return changes > 0;
   }
 
   async get (userId: string): Promise<AccountErasureRow | null> {

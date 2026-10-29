@@ -455,6 +455,13 @@ describe('[ACSW] account auto-deletion sweep', function () {
     return typeof conn.existingPathForUser === 'function' && fs.existsSync(path.dirname(conn.existingPathForUser(`user.${username}`)));
   }
 
+  /** As if the unfinished erasure had stopped long ago (a record must be idle for 15 minutes to be taken over). */
+  async function ageRecord (u) {
+    const store = await getErasuresLocal();
+    const record = await store.get(u.id);
+    await store.put({ ...record, updatedAt: record.updatedAt - 16 * 60 * 1000 });
+  }
+
   /** Nothing of the account is left: index, user directory, series, erasure record. */
   async function assertFullyErased (u) {
     assert.equal(await exists(u), false, 'index');
@@ -490,6 +497,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
       assert.equal(record.doneSteps.includes('deleteUser'), where === 'after');
       assert.equal(await exists(u), where === 'before', 'the index entry goes first in the removal');
       // a sensor writes again through a cached series credential
+      await ageRecord(u);
       if (seriesConnection() != null) await writeSeries(u.username);
       const teardown = sinon.spy(Deletion.prototype, 'runTeardownSteps');
       let again;
@@ -523,10 +531,15 @@ describe('[ACSW] account auto-deletion sweep', function () {
       attempts: 1,
       lastError: null
     });
+    // a session row left behind: removed even where the account's files refuse to reopen
+    const sessionData = { username: u.username, appId: 'acsw-app' };
+    await new Promise((resolve, reject) => storageLayer.sessions.generate(sessionData, null, (err) => (err ? reject(err) : resolve())));
     const s = await sweepFor([u]);
     const r = await s.run(T0);
     assert.equal(r.completed, 1, JSON.stringify(s.lines));
     await assertFullyErased(u);
+    const left = await new Promise((resolve, reject) => storageLayer.sessions.getMatching(sessionData, (err, id) => (err ? reject(err) : resolve(id))));
+    assert.equal(left ?? null, null, 'session removed');
   });
 
   it('[ACSW19] auth.delete records its erasure too: one that fails after the removal of the account is completed by the sweep, feature off included', async function () {
@@ -552,10 +565,184 @@ describe('[ACSW] account auto-deletion sweep', function () {
     await withInjectedConfig({ account: { autoDeletion: { enabled: false } } }, async () => {
       const fresh = await s.run(Date.now() / 1000);
       assert.equal(fresh.completed, 0, 'a record touched less than 15 minutes ago may be an erasure still running');
+      await ageRecord(u);
       const r = await s.run(Date.now() / 1000 + 16 * 60);
       assert.equal(r.completed, 1, JSON.stringify(s.lines));
     });
     await assertFullyErased(u);
+  });
+
+  it('[ACSW21] a reminder of a superseded deadline does not count: with no notice getting through for the new one, the account is kept', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, inactivity(100), 'test');
+    const s = await sweepFor([u]);
+    await s.run(T0);
+    await s.run(T0 + 40 * DAY);
+    assert.deepEqual(leadsTo(s, u.username), [60]);
+    // the holder signs in; from then on the mailbox refuses every mail
+    await setLastUsed(u, u.personalAccessId, T0 + 45 * DAY);
+    s.mail.outcome = 'rejected';
+    for (const d of [45, 85, 115, 138, 144, 145, 146, 160]) await s.run(T0 + d * DAY);
+    assert.ok(await exists(u), 'no notice for the current deadline: not erased');
+    const b = await state.getBookkeeping(u.id);
+    assert.equal(b.deadline, T0 + 145 * DAY);
+    assert.equal(b.firstNoticeAt, undefined);
+    assert.equal(b.deadlineReason, 'minimum-notice');
+  });
+
+  it('[ACSW21B] a confirmation counts for the deadline it named only: once use moves the deadline, a schedule with no reminder of its own is kept', async function () {
+    const u = await freshUser();
+    // a 45-day period, reminders 60 days ahead only: no reminder applies
+    await state.setSetting(u.id, inactivity(45), 'test');
+    await withInjectedConfig({ account: { autoDeletion: { reminders: { leadDays: [60] } } } }, async () => {
+      const s = await sweepFor([u]);
+      await s.run(T0);
+      const b0 = await state.getBookkeeping(u.id);
+      await state.saveBookkeeping(u.id, b0, { ...b0, firstNoticeAt: T0 }); // the confirmation
+      await setLastUsed(u, u.personalAccessId, T0 + 10 * DAY);
+      for (const d of [10, 55, 56, 70]) await s.run(T0 + d * DAY);
+      assert.ok(await exists(u), 'the confirmation named another deadline');
+      assert.deepEqual(s.sent.reminder, []);
+    });
+  });
+
+  it('[ACSW22] with access tracking off, an inactivity schedule past its deadline is suspended, not erased; date schedules still run', async function () {
+    const inact = await freshUser();
+    const dated = await freshUser();
+    await state.setSetting(inact.id, inactivity(100), 'test');
+    await state.setSetting(dated.id, onDate(T0 + 120 * DAY), 'test');
+    const s = await sweepFor([inact, dated]);
+    for (const d of [0, 40, 70, 93, 99]) await s.run(T0 + d * DAY);
+    await withInjectedConfig({ accessTracking: { isActive: false } }, async () => {
+      for (const d of [100, 113, 119, 120, 200]) await s.run(T0 + d * DAY);
+    });
+    assert.ok(await exists(inact), 'suspended');
+    assert.equal(await exists(dated), false, 'a date does not depend on use');
+    assert.equal((await state.getBookkeeping(inact.id)).blocked.reason, 'inactivity-unavailable');
+    assert.equal(s.lines.filter((l) => l.msg.includes('is suspended')).length, 1, 'logged once');
+    // tracking back: the clock starts again from that day
+    await s.run(T0 + 300 * DAY);
+    const b = await state.getBookkeeping(inact.id);
+    assert.equal(b.blocked, undefined);
+    assert.equal(b.policyAppliedAt, T0 + 300 * DAY);
+    assert.ok(await exists(inact));
+  });
+
+  it('[ACSW23] a deletion guard that cannot answer holds the erasure (guard-unavailable, mailed once), the next pass goes ahead', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    let broken = true;
+    setDeletionGuard('acsw-broken-guard', async (account) => {
+      if (broken && account.id === u.id) throw new Error('store unreachable');
+      return null;
+    });
+    try {
+      const s = await sweepFor([u]);
+      for (const d of [0, 13, 19, 20, 20.25]) await s.run(T0 + d * DAY);
+      assert.ok(await exists(u), 'fails closed');
+      const b = await state.getBookkeeping(u.id);
+      assert.equal(b.blocked.reason, 'guard-unavailable');
+      assert.equal(b.blocked.guard, 'acsw-broken-guard');
+      assert.equal(s.sent.blocked.length, 1);
+      broken = false;
+      assert.equal((await s.run(T0 + 20.5 * DAY)).erased, 1);
+    } finally {
+      broken = false;
+    }
+  });
+
+  for (const [code, where] of [['ACSW24A', 'inside'], ['ACSW24B', 'after']]) {
+    it(`[${code}] completing an erasure that failed ${where} the removal of the account leaves alone a new account that took the freed username`, async function () {
+      const u = await freshUser();
+      if (seriesConnection() != null) await writeSeries(u.username);
+      await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+      const s = await sweepFor([u]);
+      for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+      const fault = await injectFault(where);
+      try {
+        await s.run(T0 + 20 * DAY);
+      } finally {
+        fault.restore();
+      }
+      assert.equal(await exists(u), false, 'the name is free');
+      // someone registers the same name and writes series
+      const newcomerId = 'acswnew' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-12);
+      const newcomer = await getNewFixture().user(u.username, { id: newcomerId, password: PASSWORD, email: 'new-' + u.username + '@acsw.example.com' });
+      const newcomerToken = cuid();
+      await newcomer.session(newcomerToken);
+      if (seriesConnection() != null) await writeSeries(u.username);
+      await ageRecord(u);
+      const r = await s.run(T0 + 20.25 * DAY);
+      assert.equal(r.completed, 1, JSON.stringify(s.lines.slice(-3)));
+      assert.equal(await usersRepository.getUserIdForUsername(u.username), newcomer.attrs.id, 'the newcomer keeps the name');
+      assert.equal((await usersRepository.getUserById(newcomer.attrs.id))?.email, 'new-' + u.username + '@acsw.example.com');
+      if (seriesConnection() != null) assert.equal(await hasSeries(u.username), true, 'the newcomer\'s series survive');
+      assert.equal(await (await getErasuresLocal()).get(u.id), null);
+      assert.equal(fs.existsSync(require('storage').userLocalDirectory.getPathForUser(u.id)), false);
+      const session = await new Promise((resolve, reject) => storageLayer.sessions.get(newcomerToken, (err, data) => (err ? reject(err) : resolve(data))));
+      assert.ok(session != null, 'the newcomer\'s session survives');
+    });
+  }
+
+  it('[ACSW25] two completions of one unfinished erasure never run together; a fresh record is not taken over', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    const s = await sweepFor([u]);
+    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+    const fault = await injectFault('after');
+    try {
+      await s.run(T0 + 20 * DAY);
+    } finally {
+      fault.restore();
+    }
+    const erase = () => new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username });
+    const fresh = await erase().then(() => null, (err) => err);
+    assert.match(String(fresh?.message), /already in progress/, 'a record touched less than 15 minutes ago is running');
+    await ageRecord(u);
+    const outcomes = await Promise.allSettled([erase(), erase()]);
+    assert.equal(outcomes.filter((o) => o.status === 'fulfilled').length, 1, JSON.stringify(outcomes.map((o) => o.reason?.message)));
+    assert.match(String(outcomes.find((o) => o.status === 'rejected').reason.message), /already in progress/);
+    await assertFullyErased(u);
+  });
+
+  it('[ACSW26] a schedule armed during a dry run still gets its reminders before it is erased', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    const s = await sweepFor([u]);
+    await s.run(T0);
+    // the confirmation went out at T0 (first notice)
+    const b0 = await state.getBookkeeping(u.id);
+    await state.saveBookkeeping(u.id, b0, { ...b0, firstNoticeAt: T0 });
+    await withInjectedConfig({ account: { autoDeletion: { dryRun: true } } }, async () => {
+      for (const d of [13, 19]) await s.run(T0 + d * DAY);
+    });
+    assert.deepEqual(s.sent.reminder, [], 'logged only');
+    const first = await s.run(T0 + 20 * DAY);
+    assert.equal(first.erased, 0, 'not erased on the confirmation alone');
+    assert.deepEqual(leadsTo(s, u.username), [1], 'the most imminent reminder goes out');
+    assert.ok(await exists(u));
+    await s.run(T0 + 26 * DAY);
+    assert.ok(await exists(u), 'minimum notice runs from the reminder');
+    assert.equal((await s.run(T0 + 27 * DAY)).erased, 1);
+  });
+
+  it('[ACSW27] a deletion the holder chose waits when self-deletion was withdrawn since; the operator preset does not', async function () {
+    const chosen = await freshUser();
+    const preset = await freshUser();
+    await state.setSetting(chosen.id, inactivity(100), 'test');
+    const s = await sweepFor([chosen, preset]);
+    const presetOn = { account: { autoDeletion: { inactivity: { defaultDays: 100 } } } };
+    await withInjectedConfig(presetOn, async () => {
+      for (const d of [0, 40, 70, 93, 99]) await s.run(T0 + d * DAY);
+    });
+    await withInjectedConfig({ ...presetOn, 'user-account': { delete: ['adminToken'] } }, async () => {
+      await s.run(T0 + 100 * DAY);
+    });
+    assert.ok(await exists(chosen));
+    const b = await state.getBookkeeping(chosen.id);
+    assert.equal(b.blocked.reason, 'self-deletion-disabled');
+    assert.equal(s.sent.blocked.filter((m) => m.username === chosen.username).length, 1);
+    assert.equal(await exists(preset), false, 'the operator\'s preset is the operator\'s act');
   });
 
   it('[ACSW20] a mail transport failure stops the mail of the pass (one summary line); a refused recipient does not', async function () {
@@ -716,8 +903,9 @@ describe('[ACSW] account auto-deletion sweep', function () {
       });
     });
 
-    it('[ACRM2] the confirmation is the first notice: a date two weeks out is erased on the day', async function () {
-      await withInjectedConfig(MAIL_ON, async () => {
+    it('[ACRM2] a schedule with no reminder of its own: the confirmation is the first notice, a date two weeks out is erased on the day', async function () {
+      // reminders 60 and 30 days ahead only: none applies to a date 15 days out
+      await withInjectedConfig({ ...MAIL_ON, account: { autoDeletion: { reminders: { leadDays: [60, 30] } } } }, async () => {
         const confirmed = await freshUser();
         const unconfirmed = await freshUser();
         const date = new Date((T0 + 15 * DAY) * 1000).toISOString();
@@ -734,12 +922,10 @@ describe('[ACSW] account auto-deletion sweep', function () {
         const at = Date.parse(date) / 1000;
         await s.run(at);
         assert.equal(await exists(confirmed), false, 'erased on the day');
-        assert.ok(await exists(unconfirmed), 'its first notice is the reminder sent today');
-        const b = await state.getBookkeeping(unconfirmed.id);
-        assert.equal(b.deadlineReason, 'minimum-notice');
-        assert.equal(b.deleteAt, at + 7 * DAY);
-        await s.run(at + 7 * DAY);
-        assert.equal(await exists(unconfirmed), false);
+        assert.ok(await exists(unconfirmed), 'no notice at all: kept');
+        assert.equal((await state.getBookkeeping(unconfirmed.id)).deadlineReason, 'minimum-notice');
+        await s.run(at + 30 * DAY);
+        assert.ok(await exists(unconfirmed), 'never erased without a notice');
       });
     });
 

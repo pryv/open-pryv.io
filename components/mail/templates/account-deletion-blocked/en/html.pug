@@ -1,6 +1,13 @@
 p Hi #{USERNAME},
-p Your account was due to be deleted on #{DEADLINE}, but it could not be: deleting it now would leave another account it manages (as a delegate) without any way to sign in.
-p The deletion is tried again regularly and goes ahead, without another message, as soon as nothing prevents it. To let it go ahead, give the account you manage an email address of its own, or hand its management over to someone else.
+if BLOCKED_DELEGATION
+  p Your account was due to be deleted on #{DEADLINE}, but it could not be: deleting it now would leave another account it manages (as a delegate) without any way to sign in.
+  p The deletion is tried again regularly and goes ahead, without another message, as soon as nothing prevents it. To let it go ahead, give the account you manage an email address of its own, or hand its management over to someone else.
+else if BLOCKED_SELF_DELETION
+  p Your account was due to be deleted on #{DEADLINE}, as you scheduled, but this platform no longer lets account holders delete their account themselves: the deletion is on hold and your account stays as it is.
+  p To delete it anyway, contact the support of your platform; to cancel the schedule, change the auto-deletion setting on your account page.
+else
+  p Your account was due to be deleted on #{DEADLINE}, but a check that must pass before an account is deleted could not be completed: the deletion is on hold.
+  p It is tried again regularly and goes ahead, without another message, as soon as the check passes.
 if TRIGGER_INACTIVITY
   p To keep your account instead, simply use it: signing in, or an app you connected, cancels this deletion and moves the date.
 if EXPORT_URL

@@ -41,6 +41,21 @@
   (by design) counts as a step done on such a resume. The sweep's own `deleting` bookkeeping marker
   is gone (one source of truth). Tests `[ACSW14A-D]` (faults before, inside and after the removal
   of the account, lost progress), `[ACSW19]` (`auth.delete`).
+- One erasure of an account at a time: a new record is created with an insert that fails when one
+  exists, an unfinished one is taken over only once idle for 15 minutes and with a compare-and-set
+  on its last update (`ErasuresLocalDB.insertIfAbsent` / `claim`, conformance `[ERLD4]`
+  `[ERLD5]`); a running erasure refreshes its record every minute, a long step included. Test
+  `[ACSW25]`.
+- A resumed erasure leaves alone the names the account held that another account took after an
+  earlier attempt freed them: no series drop under them, no platform rows, routing rows or
+  sessions removed by them (`deleteOne` takes a null username for that). Tests `[ACSW24A]`
+  `[ACSW24B]`. Session rows are removed together with the other rows of the account, so a resumed
+  erasure meeting already-erased files no longer skips them (`[ACSW14D]`).
+- The auto-deletion boot check (`config-validation`, `bin/check-config.js`) reads access tracking as
+  on unless `accessTracking.isActive` is explicitly false, like the code that records use.
+- `runDeletionGuards` takes `{ failClosed }`: a guard that throws then objects
+  (`data.unavailable`), and every objection names its guard. The auto-deletion sweep uses it;
+  `auth.delete` keeps failing open.
 
 ### Account auto-deletion: configuration and per-account state (feature not exposed yet)
 

@@ -41,8 +41,9 @@
 import type { AutoDeletionConfig } from './config.ts';
 import type { Setting, Bookkeeping } from './state.ts';
 import type { AccountActivity } from '../accesses/accountActivity.ts';
-import { effectivePolicy, evaluate, withNotice } from './deadline.ts';
+import { effectivePolicy, evaluate, withNotice, ENGINE_BLOCKS } from './deadline.ts';
 import type { Policy, Evaluation } from './deadline.ts';
+import { STALE_ERASURE_MS } from '../auth/erasures.ts';
 
 export type SweepAccount = { id: string; username: string };
 
@@ -53,6 +54,10 @@ export type SweepFacts = {
   notifiable: boolean;
   /** An operator preset covers this account. */
   presetApplies: boolean;
+  /** Account use is recorded; false suspends inactivity schedules (default true). */
+  inactivityMeasurable?: boolean;
+  /** The holder may delete the account themselves; false holds their own deletion schedules (default true). */
+  selfDeletionAllowed?: boolean;
 };
 
 export type Notice = {
@@ -70,7 +75,8 @@ export type Notice = {
  */
 export type SendOutcome = 'sent' | 'off' | 'rejected' | 'failed';
 
-export type Objection = { reason: string; message: string };
+/** `guard`: the deletion guard that objected, when one did. */
+export type Objection = { reason: string; message: string; guard?: string };
 
 export type Trigger = 'date' | 'inactivity';
 
@@ -154,7 +160,7 @@ export type PassResult = {
 };
 
 /** An erasure record untouched for this long is no longer running: it is completed. */
-export const STALE_ERASURE_MS = 15 * 60 * 1000;
+export { STALE_ERASURE_MS };
 
 function emptyResult (dryRun: boolean, skipped = false): PassResult {
   return { skipped, dryRun, accounts: 0, reminders: 0, reminderFailures: 0, remindersOff: 0, mailHeld: 0, erased: 0, completed: 0, blocked: 0, deferred: 0, failed: 0, wouldRemind: 0, wouldErase: 0 };
@@ -172,7 +178,7 @@ function withoutBlocked (b: Bookkeeping): Bookkeeping {
   return rest as Bookkeeping;
 }
 
-const isGuardBlock = (blocked: Bookkeeping['blocked'] | undefined): boolean => blocked != null && blocked.reason !== 'no-email';
+const isGuardBlock = (blocked: Bookkeeping['blocked'] | undefined): boolean => blocked != null && !ENGINE_BLOCKS.includes(blocked.reason);
 
 export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F>) {
   const { state, logger } = deps;
@@ -312,10 +318,14 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       now: deps.now(),
       config,
       notifiable: facts.notifiable,
-      acknowledgedNoReminders: setting?.acknowledgedNoReminders === true
+      acknowledgedNoReminders: setting?.acknowledgedNoReminders === true,
+      inactivityMeasurable: facts.inactivityMeasurable
     });
     let evaluation = judge(facts.activity);
     let b = evaluation.bookkeeping;
+    if (b?.blocked?.reason === 'inactivity-unavailable' && prev?.blocked?.reason !== 'inactivity-unavailable') {
+      logger.warn(`auto-deletion sweep: the inactivity schedule of account "${account.username}" (${account.id}) is suspended: account use is not recorded (accessTracking.isActive is false)`);
+    }
     let stored = prev;
     const save = async (next: Bookkeeping | null): Promise<void> => {
       if (config.dryRun) return;
@@ -377,15 +387,20 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       }
     }
 
-    const objection = await deps.checkErasable(account);
+    // A deletion the holder chose needs self-deletion still allowed (the
+    // operator may have withdrawn it since); the operator's preset does not.
+    const objection: Objection | null = policy.source === 'user' && facts.selfDeletionAllowed === false
+      ? { reason: 'self-deletion-disabled', message: 'user-account.delete no longer lets the holder delete the account' }
+      : await deps.checkErasable(account);
     if (objection != null) {
       if (config.dryRun) {
         logger.info(`auto-deletion sweep (dry run): account "${account.username}" (${account.id}) is due, its deletion would be refused: ${objection.message}`);
         return;
       }
-      let blocked = guardBlock != null && guardBlock.reason === objection.reason ? guardBlock : null;
+      let blocked = guardBlock != null && guardBlock.reason === objection.reason && guardBlock.guard === objection.guard ? guardBlock : null;
       if (blocked == null) {
         blocked = { reason: objection.reason, at: deps.now() };
+        if (objection.guard != null) blocked.guard = objection.guard;
         result.blocked++;
         logger.warn(`auto-deletion sweep: account "${account.username}" (${account.id}) is due but its deletion is refused (${objection.message}); asked again at every pass`);
       }

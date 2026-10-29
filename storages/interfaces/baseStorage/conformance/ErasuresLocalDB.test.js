@@ -61,6 +61,23 @@ export default function conformanceTests (getDB) {
       assert.deepStrictEqual(await db.listAll(), [next]);
     });
 
+    it('[ERLD4] insertIfAbsent inserts once; the second insert of the account changes nothing', async () => {
+      const a = row();
+      assert.strictEqual(await db.insertIfAbsent(a), true);
+      assert.strictEqual(await db.insertIfAbsent({ ...a, username: 'other', attempts: 9 }), false);
+      assert.deepStrictEqual(await db.listAll(), [a]);
+    });
+
+    it('[ERLD5] claim is a compare-and-set of updatedAt: one of two claimers on the same value wins', async () => {
+      const a = row({ updatedAt: 1_500 });
+      await db.put(a);
+      const [first, second] = await Promise.all([db.claim(a.userId, 1_500, 2_000), db.claim(a.userId, 1_500, 2_001)]);
+      assert.deepStrictEqual([first, second].filter(Boolean).length, 1);
+      assert.ok([2_000, 2_001].includes((await db.get(a.userId)).updatedAt));
+      assert.strictEqual(await db.claim(a.userId, 1_500, 3_000), false, 'stale expectation');
+      assert.strictEqual(await db.claim(cuid(), 0, 1), false, 'no row');
+    });
+
     it('[ERLD3] delete removes one row and says whether it was there', async () => {
       const a = row();
       const b = row();

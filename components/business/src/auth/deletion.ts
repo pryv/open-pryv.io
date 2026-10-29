@@ -13,7 +13,7 @@ const { fromCallback } = require('utils');
 const fs = require('fs');
 const path = require('path');
 const { getUsersRepository } = require('business/src/users/index.ts');
-const { accountSeriesNamespaces } = require('business/src/series/namespace.ts');
+const { accountSeriesNamespaces, seriesNamespace } = require('business/src/series/namespace.ts');
 const { runDeletionTeardownSteps, runDeletionGuards } = require('business/src/auth/deletionTeardown.ts');
 const { storedWebhookIds, signalWebhooksStopped } = require('business/src/webhooks/accountSignals.ts') as typeof import('../webhooks/accountSignals.ts');
 const errors = require('errors').factory;
@@ -35,9 +35,22 @@ type MethodContext = {
   erasureTrigger?: string;
   // The record of the erasure in progress (openErasureRecord).
   erasure?: AccountErasureRow;
+  // Names of the account that another account holds since an earlier attempt
+  // freed them (a resumed erasure): their series and rows are not this one's.
+  foreignNames?: Set<string>;
+  erasureHeartbeat?: ReturnType<typeof setInterval>;
 };
 type StepFn = (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown;
 type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditData' | 'dropHFDataAgain';
+
+// The series namespaces of `namespaces` whose name is not held by another
+// account (see MethodContext.foreignNames).
+function ownNamespaces (context: MethodContext, namespaces: string[]): string[] {
+  const foreign = context.foreignNames;
+  if (foreign == null || foreign.size === 0) return namespaces;
+  return namespaces.filter((ns) => !foreign.has(ns.startsWith(NAMESPACE_PREFIX) ? ns.slice(NAMESPACE_PREFIX.length) : ns));
+}
+const NAMESPACE_PREFIX = seriesNamespace('');
 
 // Loaded on first use, like the other storages handles here.
 function erasuresStore (): ReturnType<typeof import('./erasures.ts').getErasuresLocal> {
@@ -189,7 +202,7 @@ class Deletion {
     const conn = require('storages').seriesConnection;
     if (conn) {
       const usersRepository = await getUsersRepository();
-      const namespaces = await accountSeriesNamespaces(usersRepository.usersIndex, context.user.id, context.user.username);
+      const namespaces = ownNamespaces(context, await accountSeriesNamespaces(usersRepository.usersIndex, context.user.id, context.user.username));
       context.seriesNamespaces = namespaces;
       for (const namespace of namespaces) {
         await conn.dropDatabase(namespace);
@@ -205,7 +218,7 @@ class Deletion {
   async dropHFDataAgain (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const conn = require('storages').seriesConnection;
     if (conn != null && context.seriesNamespaces != null) {
-      for (const namespace of context.seriesNamespaces) {
+      for (const namespace of ownNamespaces(context, context.seriesNamespaces)) {
         try {
           await conn.dropDatabase(namespace);
         } catch (err: unknown) {
@@ -362,22 +375,40 @@ class Deletion {
   // wipe: written before the first step, kept up to date after each one,
   // removed after the last. An unfinished record of the same account is
   // taken up again (its done steps are skipped).
+  // Only one erasure of an account runs at a time: a fresh record is taken
+  // with an insert that fails when one exists, an unfinished one with a
+  // compare-and-set on its last update, and only once it stopped moving
+  // (STALE_ERASURE_MS; a running erasure refreshes it, see #startHeartbeat).
   async openErasureRecord (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    const inProgress = () => errors.invalidOperation('An erasure of this account is already in progress.', { userId: context.user.id });
     try {
       const store = await erasuresStore();
+      const { STALE_ERASURE_MS } = require('./erasures.ts') as typeof import('./erasures.ts');
       const now = Date.now();
       const existing = await store.get(context.user.id);
       let record: AccountErasureRow;
       if (existing != null && existing.username === context.user.username) {
+        if (now - existing.updatedAt < STALE_ERASURE_MS || !(await store.claim(context.user.id, existing.updatedAt, now))) {
+          return next(inProgress());
+        }
         record = { ...existing, attempts: existing.attempts + 1, updatedAt: now };
+        await store.put(record);
         if (existing.seriesNamespaces != null) context.seriesNamespaces = existing.seriesNamespaces;
-        this.logger.warn(`completing the erasure of account "${context.user.username}" (${context.user.id}) started at ${new Date(existing.startedAt).toISOString()}, attempt ${record.attempts}; steps done: ${existing.doneSteps.join(', ') || 'none'}`);
+        context.foreignNames = await this.#foreignNames(context.user.id, [context.user.username, ...(existing.seriesNamespaces ?? []).map((ns) => ns.startsWith(NAMESPACE_PREFIX) ? ns.slice(NAMESPACE_PREFIX.length) : ns)]);
+        this.logger.warn(`completing the erasure of account "${context.user.username}" (${context.user.id}) started at ${new Date(existing.startedAt).toISOString()}, attempt ${record.attempts}; steps done: ${existing.doneSteps.join(', ') || 'none'}` +
+          (context.foreignNames.size > 0 ? `; now held by another account, left alone: ${[...context.foreignNames].join(', ')}` : ''));
       } else {
         const trigger = context.erasureTrigger ?? (context.deletionByAdmin === true ? 'admin' : 'holder');
         record = { userId: context.user.id, username: context.user.username, trigger, startedAt: now, updatedAt: now, doneSteps: [], seriesNamespaces: null, attempts: 1, lastError: null };
+        if (existing != null) {
+          // A record of the same id under another name: not this erasure.
+          await store.put(record);
+        } else if (!(await store.insertIfAbsent(record))) {
+          return next(inProgress());
+        }
       }
-      await store.put(record);
       context.erasure = record;
+      this.#startHeartbeat(context);
     } catch (err: unknown) {
       // Nothing is erased without its record: an erasure that fails half-way
       // must be found again.
@@ -387,7 +418,43 @@ class Deletion {
     next();
   }
 
+  /** Names among `names` that another account holds now (a resumed erasure freed them earlier). */
+  async #foreignNames (userId: string, names: string[]): Promise<Set<string>> {
+    const usersRepository = await getUsersRepository();
+    const foreign = new Set<string>();
+    for (const name of new Set(names)) {
+      const holder = await usersRepository.getUserIdForUsername(name);
+      if (holder != null && holder !== userId) foreign.add(name);
+    }
+    return foreign;
+  }
+
+  // Keeps the record's `updatedAt` fresh while the erasure runs, a long step
+  // included, so no one takes it over meanwhile.
+  #startHeartbeat (context: MethodContext): void {
+    const { ERASURE_HEARTBEAT_MS } = require('./erasures.ts') as typeof import('./erasures.ts');
+    const timer = setInterval(() => {
+      const record = context.erasure;
+      if (record == null) return;
+      const expected = record.updatedAt;
+      const at = Date.now();
+      // A compare-and-set, never a write: it cannot bring back a record the
+      // erasure removed meanwhile, nor undo a step's own update.
+      erasuresStore().then((store) => store.claim(record.userId, expected, at))
+        .then((refreshed) => { if (refreshed && record.updatedAt === expected) record.updatedAt = at; })
+        .catch((e: unknown) => this.logger.warn('erasure record not refreshed: ' + errorText(e)));
+    }, ERASURE_HEARTBEAT_MS);
+    timer.unref();
+    context.erasureHeartbeat = timer;
+  }
+
+  #stopHeartbeat (context: MethodContext): void {
+    if (context.erasureHeartbeat != null) clearInterval(context.erasureHeartbeat);
+    context.erasureHeartbeat = undefined;
+  }
+
   async closeErasureRecord (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    this.#stopHeartbeat(context);
     try {
       await (await erasuresStore()).delete(context.user.id);
     } catch (err: unknown) {
@@ -411,6 +478,7 @@ class Deletion {
         // Per-user files of an account whose directory is already gone refuse
         // to open again (by design): on a resumed erasure that means done.
         if (err != null && !(resuming && isErasedUserError(err))) {
+          this.#stopHeartbeat(context);
           if (record == null) return next(err);
           record.lastError = `${name}: ${errorText(err)}`;
           record.updatedAt = Date.now();
@@ -446,17 +514,22 @@ class Deletion {
         .map((coll) => fromCallback((cb: (err: Error | null) => void) => coll.removeAll(context.user, cb)));
       // Every removal is awaited whatever fails: a rejection left pending
       // would surface as an unhandled rejection, which ends the worker.
+      // A name another account took since an earlier attempt freed it is not
+      // this account's any more: nothing keyed by it is touched.
+      const nameIsOurs = !context.foreignNames?.has(context.user.username);
       const settled = await Promise.allSettled([
         (async () => {
           const usersRepository = await getUsersRepository();
-          await usersRepository.deleteOne(context.user.id, context.user.username);
+          await usersRepository.deleteOne(context.user.id, nameIsOurs ? context.user.username : null);
         })(),
-        ...removals
+        ...removals,
+        // With the rest: a removal that fails (a resumed erasure meeting files
+        // already gone) does not leave the sessions behind.
+        ...(nameIsOurs ? [fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ username: context.user.username }, cb))] : []),
+        fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ userId: context.user.id }, cb))
       ]);
       const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
       if (failed != null) throw failed.reason;
-      await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ username: context.user.username }, cb));
-      await fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ userId: context.user.id }, cb));
     } catch (error) {
       this.logger.error(error, error);
       return next(errors.unexpectedError(error));

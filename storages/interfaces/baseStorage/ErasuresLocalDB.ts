@@ -35,6 +35,14 @@ export interface ErasuresLocalDB {
   init (): Promise<void>;
   /** Insert or replace the row of `row.userId`. */
   put (row: AccountErasureRow): Promise<void>;
+  /** Insert `row` unless the account already has one; false when it had. */
+  insertIfAbsent (row: AccountErasureRow): Promise<boolean>;
+  /**
+   * Compare-and-set of `updatedAt`: true when the row still had
+   * `expectedUpdatedAt` and now has `updatedAt` (whoever wins takes the
+   * erasure over; the others see false).
+   */
+  claim (userId: string, expectedUpdatedAt: number, updatedAt: number): Promise<boolean>;
   get (userId: string): Promise<AccountErasureRow | null>;
   /** Every row, oldest first. */
   listAll (): Promise<AccountErasureRow[]>;
@@ -46,6 +54,8 @@ export interface ErasuresLocalDB {
 const ErasuresLocalDB: ErasuresLocalDB = {
   async init () { throw new Error('Not implemented'); },
   async put (row: AccountErasureRow): Promise<void> { throw new Error('Not implemented'); },
+  async insertIfAbsent (row: AccountErasureRow): Promise<boolean> { throw new Error('Not implemented'); },
+  async claim (userId: string, expectedUpdatedAt: number, updatedAt: number): Promise<boolean> { throw new Error('Not implemented'); },
   async get (userId: string): Promise<AccountErasureRow | null> { throw new Error('Not implemented'); },
   async listAll (): Promise<AccountErasureRow[]> { throw new Error('Not implemented'); },
   async delete (userId: string): Promise<boolean> { throw new Error('Not implemented'); },

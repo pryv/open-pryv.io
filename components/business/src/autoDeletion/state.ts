@@ -54,8 +54,8 @@ export type Bookkeeping = {
   firstNoticeAt?: number;
   /** `skipped`: past together with a more imminent lead (downtime), not sent. */
   reminders: { deadlineDay: number | null; sent: Array<{ leadDays: number; at: number; skipped?: boolean }> };
-  /** `notifiedAt`: the holder was mailed about this block (once). */
-  blocked?: { reason: string; at: number; notifiedAt?: number };
+  /** `notifiedAt`: the holder was mailed about this block (once); `guard`: the deletion guard that refused. */
+  blocked?: { reason: string; at: number; notifiedAt?: number; guard?: string };
   transfer?: Record<string, unknown>;
 };
 

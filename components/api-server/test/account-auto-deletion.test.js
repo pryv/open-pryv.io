@@ -300,6 +300,32 @@ describe('[ACST] account auto-deletion setting', function () {
     });
   });
 
+  it('[ACST18] the password step-up counts on the sign-in tally: wrong passwords delay it like a login, a success clears it', async function () {
+    const u = await freshUser();
+    const attempts = { auth: { passwordAttempts: { freeFailures: 1, baseSeconds: 1, maxSeconds: 1, windowSeconds: 3600 } } };
+    const arm = (password) => set(u, { mode: 'inactivity', inactivityDays: 365, password });
+    await withInjectedConfig(attempts, async () => {
+      assert.equal(errorId(await arm('wrong-1')), 'auto-deletion-wrong-password');
+      assert.equal(errorId(await arm('wrong-2')), 'auto-deletion-wrong-password');
+      const delayed = await arm(PASSWORD);
+      assert.equal(delayed.status, 429, JSON.stringify(delayed.body));
+      assert.equal(errorId(delayed), 'too-many-attempts', 'the right password is delayed too: no oracle');
+      assert.equal(await state.getSetting(u.id), null, 'nothing written');
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      assert.equal((await arm(PASSWORD)).status, 200);
+      // the success cleared the tally: the next failure is free again
+      assert.equal(errorId(await set(u, { mode: 'inactivity', inactivityDays: 200, password: 'wrong-3' })), 'auto-deletion-wrong-password');
+    });
+  });
+
+  it('[ACST19] a transfer object is refused unless the action is transfer', async function () {
+    const u = await freshUser();
+    const res = await set(u, { mode: 'inactivity', inactivityDays: 365, transfer: {}, password: PASSWORD });
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.equal(errorId(res), 'invalid-parameters-format');
+    assert.equal(res.body.error.data.param, 'transfer');
+  });
+
   it('[ACST17] features.autoDeletion is absent when a holder could set nothing and no preset applies; the methods stay callable', async function () {
     const u = await freshUser();
     const advertised = async () => 'autoDeletion' in (await coreRequest.get(`/${u.username}/service/info`)).body.features;

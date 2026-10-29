@@ -87,17 +87,27 @@ function setDeletionGuard (name: string, guard: DeletionGuard): void {
   guards.set(name, guard);
 }
 
-async function runDeletionGuards (account: DeletedAccount, logger: WarnLogger): Promise<DeletionObjection[]> {
+/**
+ * `failClosed`: a guard that fails objects (`data.unavailable: true`) instead
+ * of being skipped, and every objection names its guard (`data.guard`). For
+ * deletions nobody asked for at that moment (a sweep), which can simply try
+ * again later.
+ */
+async function runDeletionGuards (account: DeletedAccount, logger: WarnLogger, options: { failClosed?: boolean } = {}): Promise<DeletionObjection[]> {
   const objections: DeletionObjection[] = [];
   for (const [name, guard] of guards) {
     try {
       const objection = await guard(account);
-      if (objection != null) objections.push(objection);
+      if (objection != null) objections.push(options.failClosed === true ? { ...objection, data: { ...objection.data, guard: name } } : objection);
     } catch (err) {
-      logger.warn('account deletion: guard "' + name + '" failed (not objecting)', {
+      const error = String((err as Error)?.message ?? err);
+      logger.warn('account deletion: guard "' + name + '" failed (' + (options.failClosed === true ? 'objecting' : 'not objecting') + ')', {
         userId: account.id,
-        error: String((err as Error)?.message ?? err),
+        error,
       });
+      if (options.failClosed === true) {
+        objections.push({ message: 'the deletion check "' + name + '" could not be done: ' + error, data: { guard: name, unavailable: true } });
+      }
     }
   }
   return objections;

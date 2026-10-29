@@ -112,7 +112,7 @@ describe('[ACXP] auto-deletion schedule engine', function () {
     assert.equal(r.due, true);
   });
 
-  it('[ACXP9] the confirmation is the first notice: a date 14 days out is due on the day', function () {
+  it('[ACXP9] a date 14 days out is due on the day; with no reminder of its own the confirmation is the first notice', function () {
     const policy = userDate(T0 + 14 * DAY);
     const set = withNotice(evaluate({ policy, activity: noActivity, prev: null, now: T0, config, notifiable: true }).bookkeeping, T0);
     // leads already past at setup (60, 30) are covered by the confirmation
@@ -120,9 +120,14 @@ describe('[ACXP] auto-deletion schedule engine', function () {
     assert.equal(pass1.reminder, null);
     const pass2 = evaluate({ policy, activity: noActivity, prev: pass1.bookkeeping, now: T0 + 7 * DAY, config, notifiable: true });
     assert.equal(pass2.reminder, 7);
-    const last = evaluate({ policy, activity: noActivity, prev: pass2.bookkeeping, now: T0 + 14 * DAY, config, notifiable: true });
+    const sent7 = withNotice(pass2.bookkeeping, T0 + 7 * DAY, 7);
+    const last = evaluate({ policy, activity: noActivity, prev: sent7, now: T0 + 14 * DAY, config, notifiable: true });
     assert.equal(last.due, true);
     assert.equal(last.bookkeeping.deadlineReason, 'date');
+    // leads 60 and 30 only: no reminder can come, the confirmation counts
+    const longLeads = normalizeAutoDeletionConfig({ reminders: { leadDays: [60, 30] } });
+    const setLong = withNotice(evaluate({ policy, activity: noActivity, prev: null, now: T0, config: longLeads, notifiable: true }).bookkeeping, T0);
+    assert.equal(evaluate({ policy, activity: noActivity, prev: setLong, now: T0 + 14 * DAY, config: longLeads, notifiable: true }).due, true);
   });
 
   it('[ACXP10] a shrinking policy restarts the clock, a growing one keeps it', function () {
@@ -169,16 +174,69 @@ describe('[ACXP] auto-deletion schedule engine', function () {
   it('[ACXP16] an account due in this evaluation gets no reminder: its due leads are skipped', function () {
     const policy = userDate(T0 + 14 * DAY);
     const set = withNotice(evaluate({ policy, activity: noActivity, prev: null, now: T0, config, notifiable: true }).bookkeeping, T0);
-    // downtime: the 7- and 1-day reminders were never sent, the day has come
-    const r = evaluate({ policy, activity: noActivity, prev: set, now: T0 + 14 * DAY, config, notifiable: true });
+    const sent7 = withNotice(evaluate({ policy, activity: noActivity, prev: set, now: T0 + 7 * DAY, config, notifiable: true }).bookkeeping, T0 + 7 * DAY, 7);
+    // downtime: the 1-day reminder was never sent, the day has come
+    const r = evaluate({ policy, activity: noActivity, prev: sent7, now: T0 + 14 * DAY, config, notifiable: true });
     assert.equal(r.due, true);
     assert.equal(r.reminder, null);
-    assert.deepEqual(r.bookkeeping.reminders.sent.map((s) => [s.leadDays, s.skipped]), [[7, true], [1, true]]);
-    // not due yet (minimum notice): the most imminent reminder still goes out
-    const silent = evaluate({ policy, activity: noActivity, prev: null, now: T0, config, notifiable: true }).bookkeeping;
-    const unnoticed = evaluate({ policy, activity: noActivity, prev: silent, now: T0 + 14 * DAY, config, notifiable: true });
-    assert.equal(unnoticed.due, false);
-    assert.equal(unnoticed.reminder, 1);
+    assert.deepEqual(r.bookkeeping.reminders.sent.map((s) => [s.leadDays, s.skipped === true]), [[7, false], [1, true]]);
+  });
+
+  it('[ACXP17] a schedule whose reminders were never sent (a dry run) is held: the most imminent goes out, the minimum notice runs from it', function () {
+    const policy = userDate(T0 + 14 * DAY);
+    const set = withNotice(evaluate({ policy, activity: noActivity, prev: null, now: T0, config, notifiable: true }).bookkeeping, T0);
+    // the 7- and 1-day reminders were logged by a dry run, never sent
+    const r = evaluate({ policy, activity: noActivity, prev: set, now: T0 + 14 * DAY, config, notifiable: true });
+    assert.equal(r.due, false, 'the confirmation alone does not stand for the reminders');
+    assert.equal(r.reminder, 1);
+    assert.equal(r.bookkeeping.deleteAt, T0 + 21 * DAY);
+    assert.equal(r.bookkeeping.deadlineReason, 'minimum-notice');
+    const sent1 = withNotice(r.bookkeeping, T0 + 14 * DAY, 1);
+    assert.equal(evaluate({ policy, activity: noActivity, prev: sent1, now: T0 + 20 * DAY, config, notifiable: true }).due, false);
+    const at21 = evaluate({ policy, activity: noActivity, prev: sent1, now: T0 + 21 * DAY, config, notifiable: true });
+    assert.equal(at21.due, true);
+    assert.equal(at21.reminder, null);
+  });
+
+  it('[ACXP18] a notice counts for the deadline it named: once use moves the deadline to another day, an unsent reminder holds the deletion', function () {
+    const policy = { source: 'user', mode: 'inactivity', inactivityDays: 100, action: 'delete' };
+    let s = pass(null, T0, { policy }).b;
+    const r60 = pass(s, T0 + 40 * DAY, { policy });
+    assert.equal(r60.reminder, 60);
+    s = r60.b;
+    assert.equal(s.firstNoticeAt, T0 + 40 * DAY);
+    // used at T0+45d: the deadline moves to T0+145d, the notice no longer counts
+    const moved = evaluate({ policy, activity: used(T0 + 45 * DAY), prev: s, now: T0 + 45 * DAY, config, notifiable: true }).bookkeeping;
+    assert.equal(moved.deadline, T0 + 145 * DAY);
+    assert.equal(moved.firstNoticeAt, undefined);
+    assert.deepEqual(moved.reminders.sent, []);
+    // no reminder ever gets through for the new deadline: never due
+    const late = evaluate({ policy, activity: used(T0 + 45 * DAY), prev: moved, now: T0 + 146 * DAY, config, notifiable: true });
+    assert.equal(late.due, false);
+    assert.equal(late.reminder, 1, 'catch-up: the most imminent reminder is asked for');
+    // same-day jitter keeps the notice
+    const noticed = withNotice(moved, T0 + 46 * DAY);
+    const jitter = evaluate({ policy, activity: used(T0 + 45 * DAY + 60), prev: noticed, now: T0 + 46 * DAY, config, notifiable: true }).bookkeeping;
+    assert.equal(jitter.firstNoticeAt, T0 + 46 * DAY);
+  });
+
+  it('[ACXP19] without access tracking an inactivity schedule is suspended (no reminder, never due) and starts again when use is recorded', function () {
+    const policy = { source: 'user', mode: 'inactivity', inactivityDays: 100, action: 'delete' };
+    const s = withNotice(pass(null, T0, { policy }).b, T0 + 40 * DAY, 60);
+    const off = evaluate({ policy, activity: noActivity, prev: s, now: T0 + 200 * DAY, config, notifiable: true, inactivityMeasurable: false });
+    assert.equal(off.due, false);
+    assert.equal(off.reminder, null);
+    assert.deepEqual(off.bookkeeping.blocked, { reason: 'inactivity-unavailable', at: T0 + 200 * DAY });
+    const stillOff = evaluate({ policy, activity: noActivity, prev: off.bookkeeping, now: T0 + 201 * DAY, config, notifiable: true, inactivityMeasurable: false });
+    assert.deepEqual(stillOff.bookkeeping, off.bookkeeping, 'nothing to write while suspended');
+    const back = evaluate({ policy, activity: noActivity, prev: stillOff.bookkeeping, now: T0 + 300 * DAY, config, notifiable: true });
+    assert.equal(back.due, false);
+    assert.equal(back.bookkeeping.blocked, undefined);
+    assert.equal(back.bookkeeping.policyAppliedAt, T0 + 300 * DAY, 'the clock starts again');
+    assert.equal(back.bookkeeping.deadline, T0 + 400 * DAY);
+    // a date does not depend on use: not suspended
+    const date = evaluate({ policy: userDate(T0 + 30 * DAY), activity: noActivity, prev: null, now: T0, config, notifiable: true, inactivityMeasurable: false });
+    assert.equal(date.bookkeeping.blocked, undefined);
   });
 
   it('[ACXP15] next reminder instant for display', function () {

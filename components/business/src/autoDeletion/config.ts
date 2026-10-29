@@ -169,6 +169,9 @@ export function describeAutoDeletionConfig (rawBlock: unknown, env: AutoDeletion
   if (c.date.minLeadDays < c.reminders.minNoticeDays) {
     bad(['date', 'minLeadDays'], `(${c.date.minLeadDays}) is below reminders.minNoticeDays (${c.reminders.minNoticeDays}): a date that close could never be honoured.`);
   }
+  if (c.enabled && defaultDays == null && !env.accessTrackingActive) {
+    warnings.push("'accessTracking.isActive' is false: account use is not recorded, so inactivity auto-deletion schedules set by users are suspended (no reminder, no deletion) until it is turned on again; date schedules run as set.");
+  }
   if (c.enabled && defaultDays != null) {
     if (!env.accessTrackingActive) {
       bad(['inactivity', 'defaultDays'], 'is set while accessTracking.isActive is false: inactivity cannot be measured. Turn access tracking on or remove the preset.');

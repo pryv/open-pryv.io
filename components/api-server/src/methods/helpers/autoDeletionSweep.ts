@@ -42,7 +42,21 @@ function reminderSubstitutions (config: ConfigLike, user: SweepAccount, notice: 
   const schedule = { policy: notice.policy, evaluation: { bookkeeping: notice.bookkeeping, reminder: notice.leadDays ?? null, due: false } };
   return {
     ...confirmationSubstitutions(config, user, schedule, lang, notice.now),
-    POLICY_OPERATOR: notice.policy.source === 'operator' ? 'true' : ''
+    POLICY_OPERATOR: notice.policy.source === 'operator' ? 'true' : '',
+    ...blockedSubstitutions(notice.bookkeeping.blocked)
+  };
+}
+
+/**
+ * Why a deletion is on hold (the blocked mail): `BLOCKED_REASON` and one flag
+ * per known case; the template falls back to a neutral text for the others.
+ */
+function blockedSubstitutions (blocked: Notice['bookkeeping']['blocked']): Record<string, string> {
+  const reason = blocked?.reason ?? '';
+  return {
+    BLOCKED_REASON: reason,
+    BLOCKED_DELEGATION: reason === 'deletion-guard' && blocked?.guard === 'delegation' ? 'true' : '',
+    BLOCKED_SELF_DELETION: reason === 'self-deletion-disabled' ? 'true' : ''
   };
 }
 
@@ -96,9 +110,14 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
       await new Promise<void>((resolve, reject) => {
         deletion.validateUserFilepaths(context, {}, {}, (err?: unknown) => (err != null ? reject(err) : resolve()));
       });
-      const objections = await runDeletionGuards(account, logger);
+      // Fail closed: a guard that cannot answer holds the erasure, asked again next pass.
+      const objections = await runDeletionGuards(account, logger, { failClosed: true });
       if (objections.length === 0) return null;
-      return { reason: 'deletion-guard', message: objections.map((o) => o.message).join('; ') };
+      const message = objections.map((o) => o.message).join('; ');
+      const objected = objections.filter((o) => o.data?.unavailable !== true);
+      const first = objected[0] ?? objections[0];
+      const guard = typeof first.data?.guard === 'string' ? first.data.guard : undefined;
+      return { reason: objected.length > 0 ? 'deletion-guard' : 'guard-unavailable', message, guard };
     },
     erase: (account, { trigger }) => deletion.eraseAccount(account, { teardown: true, trigger }),
     recordErasure: (account, record) => auditErasure(config, account, record),

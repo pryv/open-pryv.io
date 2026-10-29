@@ -22,7 +22,12 @@
  *    past when the policy applied are covered by the confirmation; leads that
  *    became due together (downtime) send only the most imminent one.
  *  - No account that can receive mail is deleted less than `minNoticeDays`
- *    after its first notice (the confirmation or a reminder).
+ *    after its first notice for the current deadline: its first reminder
+ *    when the schedule has reminders of its own, else the confirmation. A
+ *    deadline moved to another day (use of the account) starts the notices
+ *    over.
+ *  - An inactivity schedule is suspended while account use is not recorded,
+ *    and starts again from the day it is.
  */
 
 import type { AutoDeletionConfig } from './config.ts';
@@ -67,7 +72,15 @@ export type EvaluateInput = {
   notifiable: boolean;
   /** The holder accepted a schedule without reminders (user setting only). */
   acknowledgedNoReminders?: boolean;
+  /**
+   * Account use is recorded (`accessTracking.isActive`). False: nothing can
+   * show the account is in use, so an inactivity schedule is suspended.
+   */
+  inactivityMeasurable?: boolean;
 };
+
+/** Blocks the engine sets and lifts by itself (the others come from the sweep). */
+export const ENGINE_BLOCKS: readonly string[] = Object.freeze(['no-email', 'inactivity-unavailable']);
 
 export type Evaluation = {
   /** Next bookkeeping; null when no schedule applies (the row goes). */
@@ -99,9 +112,12 @@ export function evaluate (input: EvaluateInput): Evaluation {
   const applied = { source: policy.source, mode: policy.mode } as Bookkeeping['appliedPolicy'];
   if (policy.mode === 'inactivity') applied.inactivityDays = policy.inactivityDays;
   if (policy.mode === 'date') applied.date = policy.date;
-  const restart = prev == null || isShrink(prev.appliedPolicy, policy);
+  // A suspended inactivity schedule (use was not recorded) starts again from
+  // the day use is recorded again: the time in between proves nothing.
+  const wasSuspended = prev?.blocked?.reason === 'inactivity-unavailable';
+  const resumed = wasSuspended && input.inactivityMeasurable !== false;
+  const restart = prev == null || isShrink(prev.appliedPolicy, policy) || resumed;
   const policyAppliedAt = restart ? now : prev.policyAppliedAt;
-  const firstNoticeAt = restart ? null : (prev.firstNoticeAt ?? null);
 
   const floor = prev?.lastActivity?.max ?? null;
   const max = activity.at == null ? floor : (floor == null ? activity.at : Math.max(floor, activity.at));
@@ -111,6 +127,10 @@ export function evaluate (input: EvaluateInput): Evaluation {
     ? policy.date as number
     : Math.max(max ?? policyAppliedAt, policyAppliedAt) + (policy.inactivityDays as number) * DAY_SECONDS;
   const deadlineDay = Math.floor(base / DAY_SECONDS);
+  // Notices count for the deadline they named: one that moved to another day
+  // (use of the account) starts the reminders and the notice over.
+  const sameDeadline = !restart && prev.reminders?.deadlineDay === deadlineDay;
+  const firstNoticeAt = sameDeadline ? (prev.firstNoticeAt ?? null) : null;
 
   const next: Bookkeeping = {
     appliedPolicy: applied,
@@ -121,12 +141,17 @@ export function evaluate (input: EvaluateInput): Evaluation {
     deadlineReason: policy.mode,
     reminders: {
       deadlineDay,
-      sent: (!restart && prev.reminders?.deadlineDay === deadlineDay) ? prev.reminders.sent.slice() : []
+      sent: sameDeadline ? prev.reminders.sent.slice() : []
     }
   };
   if (firstNoticeAt != null) next.firstNoticeAt = firstNoticeAt;
   if (prev?.transfer != null && !restart) next.transfer = prev.transfer;
-  if (prev?.blocked != null && prev.blocked.reason !== 'no-email' && !restart) next.blocked = prev.blocked;
+  if (prev?.blocked != null && !ENGINE_BLOCKS.includes(prev.blocked.reason) && !restart) next.blocked = prev.blocked;
+
+  if (policy.mode === 'inactivity' && input.inactivityMeasurable === false) {
+    next.blocked = wasSuspended && !restart ? prev.blocked : { reason: 'inactivity-unavailable', at: now };
+    return { bookkeeping: next, reminder: null, due: false };
+  }
 
   if (!notifiable) {
     if (policy.source === 'user' && input.acknowledgedNoReminders === true) {
@@ -137,24 +162,30 @@ export function evaluate (input: EvaluateInput): Evaluation {
   }
 
   // Minimum notice: never less than minNoticeDays after the first notice.
+  // When the schedule has reminders of its own (leads still ahead when the
+  // policy applied), it counts from the first reminder actually sent: a
+  // confirmation alone never stands for the reminders promised (e.g. reminders
+  // not sent during a dry run). Otherwise the first notice (the confirmation)
+  // counts.
+  const scheduled = leadsFor(policy, config).filter((lead) => base - lead * DAY_SECONDS > policyAppliedAt);
+  const reminderTimes = next.reminders.sent.filter((s) => s.skipped !== true).map((s) => s.at);
+  const firstReminderAt = reminderTimes.length > 0 ? Math.min(...reminderTimes) : null;
+  const noticeFrom = scheduled.length > 0 ? firstReminderAt : firstNoticeAt;
   const minNotice = config.reminders.minNoticeDays * DAY_SECONDS;
-  const noticeBound = (firstNoticeAt ?? now) + minNotice;
+  const noticeBound = (noticeFrom ?? now) + minNotice;
   if (noticeBound > base) {
     next.deleteAt = noticeBound;
     next.deadlineReason = 'minimum-notice';
   }
 
-  const due = firstNoticeAt != null && now >= (next.deleteAt ?? base) && next.blocked == null;
+  const due = noticeFrom != null && now >= (next.deleteAt ?? base) && next.blocked == null;
 
   // A reminder is pointless once the account is due: its leads are skipped.
   let reminder: number | null = null;
   const sentLeads = new Set(next.reminders.sent.map((s) => s.leadDays));
-  const dueLeads = leadsFor(policy, config)
+  const dueLeads = scheduled
     .filter((lead) => !sentLeads.has(lead))
-    .filter((lead) => {
-      const fireAt = base - lead * DAY_SECONDS;
-      return fireAt <= now && fireAt > policyAppliedAt;
-    });
+    .filter((lead) => base - lead * DAY_SECONDS <= now);
   if (dueLeads.length > 0) {
     reminder = due ? null : Math.min(...dueLeads);
     for (const lead of dueLeads) {

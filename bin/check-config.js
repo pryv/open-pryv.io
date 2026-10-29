@@ -463,7 +463,7 @@ if (get('account.autoDeletion') != null) {
     const { describeAutoDeletionConfig } = require('../components/business/src/autoDeletion/config.ts');
     const { describeMailCapability } = require('../components/business/src/emails/mailCapability.ts');
     const report = describeAutoDeletionConfig(get('account.autoDeletion'), {
-      accessTrackingActive: !!get('accessTracking.isActive', effective),
+      accessTrackingActive: get('accessTracking.isActive', effective) !== false,
       mailOk: describeMailCapability(reader).ok,
       accountAppSet: !isMissingOrSentinel(get('service.account', effective))
     });

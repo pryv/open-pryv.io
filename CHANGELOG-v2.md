@@ -19,7 +19,8 @@
   (an account that cannot receive reminders needs `acknowledgeNoReminders: true`) and
   `auto-deletion-delegate-refused`. The `delete` action is offered only where the holder may delete
   the account themselves (`user-account.delete` lists `personalToken`); `transfer` is not offered
-  yet. `service.info` advertises `features.autoDeletion` (`triggers`, `actions`, `reminderLeadDays`,
+  yet, and a `transfer` object is refused (`invalid-parameters-format`) unless `action` is
+  `transfer`. `service.info` advertises `features.autoDeletion` (`triggers`, `actions`, `reminderLeadDays`,
   `bounds`, `userOverride`, `allowUserOptOut`, `mailAvailable`); it is absent, and both methods
   answer `unavailable-method`, when `account.autoDeletion.enabled` is false. It is also absent when a
   holder could set nothing (no action offered, or `userOverride: false`) and no preset applies; the
@@ -39,23 +40,36 @@
   downtime only the most imminent one) through the new `account-deletion-reminder` mail (switch
   `services.email.enabled.accountDeletionReminder`, template key `accountDeletionReminderTemplate`;
   links to `service.account` and its data export page). No account is deleted less than
-  `reminders.minNoticeDays` (default 7) after its first notice: a reminder that cannot be sent is
-  retried at every pass and holds the deletion back. When the mail transport fails, the pass sends no
+  `reminders.minNoticeDays` (default 7) after its first notice for the current deadline: its first
+  reminder when the schedule has reminders of its own (the setup confirmation alone does not stand
+  for them, e.g. reminders only logged during a dry run: the most imminent one is sent first), else
+  the confirmation; a deadline moved to another day by use of the account starts the notices over.
+  A reminder that cannot be sent is retried at every pass and holds the deletion back. When the mail transport fails, the pass sends no
   more mail and logs one summary line (the mails go out at the next pass); a recipient the mail
   server refuses is logged once per account and lead. A reminder whose time comes in the pass where
   the account is due is not sent. With reminders switched off, an account under
   the preset is never deleted. When a preset is turned on or shortened, its clock starts that day
   for every account, so a dormant account always gets the whole reminder schedule. At the deadline
-  the sweep checks the account's use once more, runs the deletion guards of `auth.delete` (an
-  account managing a delegated account that would be left without any way in is not deleted: the
-  holder gets the new `account-deletion-blocked` mail once, switch
-  `services.email.enabled.accountDeletionBlocked`, template key `accountDeletionBlockedTemplate`,
-  and the sweep tries again at every pass), then erases the account as `auth.delete` does,
-  relationships torn down included. Each erasure is logged at WARN before and after (username, user
+  the sweep checks the account's use once more and runs the deletion guards of `auth.delete`; the
+  deletion is held, reported in `getAutoDeletion` as `blocked.reason`, when a guard refuses
+  (`deletion-guard`, with `blocked.guard`: e.g. an account managing a delegated account that would
+  be left without any way in), when a guard cannot answer (`guard-unavailable`: unlike
+  `auth.delete`, the sweep fails closed), or when a deletion the holder chose needs self-deletion
+  that `user-account.delete` no longer allows (`self-deletion-disabled`; the operator preset is
+  not affected). The holder then gets the new `account-deletion-blocked` mail once (switch
+  `services.email.enabled.accountDeletionBlocked`, template key `accountDeletionBlockedTemplate`;
+  variables `BLOCKED_REASON`, `BLOCKED_DELEGATION`, `BLOCKED_SELF_DELETION`) and the sweep tries
+  again at every pass. Otherwise it erases the account as `auth.delete` does, relationships torn
+  down included. With `accessTracking.isActive: false` account use is not recorded: inactivity
+  schedules are suspended (`blocked.reason: 'inactivity-unavailable'`, no reminder, no deletion,
+  a boot warning says so) and start again from the day use is recorded again; date schedules run as
+  set. Each erasure is logged at WARN before and after (username, user
   id, trigger `date` or `inactivity`, never an email address); with `audit.onUserDelete: keep` an
   audit row `account.autoDeletion.erase` is written in the account's trail first. An account
   erasure interrupted half-way (a failed step, a crash), by the sweep or by `DELETE /users/{username}`,
-  is completed by a later pass once its record has been idle for 15 minutes. `account.autoDeletion.maxDeletionsPerPass`
+  is completed by a later pass once its record has been idle for 15 minutes; one erasure of an
+  account runs at a time (`DELETE /users/{username}` answers `invalid-operation` while another is
+  in progress), and a name the account held that another account took meanwhile is left alone. `account.autoDeletion.maxDeletionsPerPass`
   (default 20, 0 = no limit) caps the deletions of one pass, the rest wait for the next one;
   `account.autoDeletion.dryRun: true` logs the reminders and deletions a pass would make and sends,
   deletes and writes nothing. **Operators:** platforms whose mail templates were seeded before this

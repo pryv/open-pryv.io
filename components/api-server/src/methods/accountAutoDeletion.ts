@@ -150,6 +150,7 @@ export default async function (api: Api) {
         const mode = params.mode;
         if (mode !== 'date' && params.date != null) return next(errors.invalidParametersFormat('"date" is only used with mode "date".', { param: 'date' }));
         if (mode !== 'inactivity' && params.inactivityDays != null) return next(errors.invalidParametersFormat('"inactivityDays" is only used with mode "inactivity".', { param: 'inactivityDays' }));
+        if (params.transfer != null && params.action !== 'transfer') return next(errors.invalidParametersFormat('"transfer" is only used with action "transfer".', { param: 'transfer' }));
         if (mode === 'never') {
           if (!adConfig.allowUserOptOut && adConfig.inactivity.defaultDays != null && facts.presetApplies) {
             return next(errors.autoDeletionOptOutNotAllowed());
