@@ -10,8 +10,10 @@ export interface UsersLocalIndexDB {
   // Result is engine-specific (e.g. a SQLite RunResult) and ignored by consumers.
   addUser (username: string, userId: string): Promise<unknown>;
   // Rename the canonical (primary) username for a user. Leaves the alias
-  // index untouched — used by the change-username flow.
-  renameUser (oldUsername: string, newUsername: string): Promise<unknown>;
+  // index untouched — used by the change-username flow. Resolves true when a
+  // row was renamed, false when no user holds `oldUsername`; rejects when
+  // another user holds `newUsername`.
+  renameUser (oldUsername: string, newUsername: string): Promise<boolean>;
   getIdForName (username: string): Promise<string | undefined>;
   getNameForId (userId: string): Promise<string | undefined>;
   getAllByUsername (): Promise<Record<string, string>>;
@@ -41,7 +43,7 @@ const UsersLocalIndexDB: UsersLocalIndexDB = {
 
   async addUser (username: string, userId: string): Promise<unknown> { throw new Error('Not implemented'); },
 
-  async renameUser (oldUsername: string, newUsername: string): Promise<unknown> { throw new Error('Not implemented'); },
+  async renameUser (oldUsername: string, newUsername: string): Promise<boolean> { throw new Error('Not implemented'); },
 
   async getIdForName (username: string): Promise<string | undefined> { throw new Error('Not implemented'); },
 

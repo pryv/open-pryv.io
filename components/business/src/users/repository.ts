@@ -236,62 +236,117 @@ class UsersRepository {
    * keeping every access issued under the old name working by demoting the old
    * name to a (non-`r-`) alias.
    *
-   * Atomic-ish, ordered to minimise harm on partial failure (mirrors the
-   * registration write order — cross-store transactions aren't available):
-   *  1. platform `username` unique-field swap (collision gate — throws if taken);
-   *  2. re-own the user's OTHER platform unique-field rows (email, existing
-   *     aliases) under the new username (their stored owner is the old-username
-   *     token, otherwise future self-updates would mis-detect collisions);
-   *  3. name→core map for the new name (multi-core);
-   *  4. local users index rename (aliases untouched), then the former name's
-   *     password reset requests destroyed;
-   *  5. System-Streams `username` account event;
-   *  6. demote the old username to a routable alias;
-   *  7. bump the change counter.
-   * Caller is responsible for limit + format + reserved-word validation.
+   * Cross-store transactions are not available, so the writes are ordered so
+   * that every one which can refuse runs before any that cannot, and a refusal
+   * undoes only what this call wrote:
+   *  1. name -> core claim of the new name (multi-core; atomic, never
+   *     overwrites another core's row);
+   *  2. platform `alias` reservation of the old name, owned by the new name:
+   *     the old name is held before anything releases it, and of two
+   *     concurrent changes of this account to different names only one gets
+   *     it (the owners differ);
+   *  3. the old name indexed locally as an alias of the account;
+   *  4. local users index rename: the atomic gate against another account of
+   *     this core holding the new name (primary key), and against a
+   *     concurrent change to the same name (only one finds the old row);
+   *  5. the new name must not be another account's alias on this core;
+   *  6. change counter, then the writes that cannot refuse: platform rows
+   *     re-keyed (`username` self-row, email and alias rows re-owned, indexed
+   *     fields moved), breach-scope index rows moved, the former name's
+   *     password reset requests destroyed, `username` account field.
+   * Caller is responsible for limit + format + reserved-word validation and
+   * gives the friendly "taken" answer first; the gates above are the backstop.
    */
   async changeUsername (userId: string, oldUsername: string, newUsername: string, accessId: string): Promise<void> {
     const coreId = await this.#aliasOwnerCoreId(oldUsername);
+    const taken = () => errors.itemAlreadyExists('user', { username: newUsername });
+    const undo: Array<() => Promise<unknown>> = [];
+    const refuse = async (err: Error): Promise<Error> => {
+      for (const step of undo.reverse()) {
+        try {
+          await step();
+        } catch (undoErr) {
+          logger.warn(`username change refused: rollback step failed for "${oldUsername}"`, undoErr);
+        }
+      }
+      return err;
+    };
 
-    // 1. Claim the new name for this core FIRST, atomically, as the real
-    //    cross-core collision gate: renameUser below OVERWRITES platform rows
-    //    and cannot reject, and the caller's availability check is not atomic,
-    //    so without this a rename to a name hosted on another core would
-    //    silently repoint the victim's routing (the change-username variant of
-    //    the registration hijack). Multi-core only — single-core has no
-    //    user-core rows to claim (`#aliasOwnerCoreId` returns null) and relies
-    //    on the local index + username unique-field for uniqueness. On a lost
-    //    claim nothing has been written yet, so simply reject.
+    // 1. Claim the new name for this core, atomically: renameUser below
+    //    OVERWRITES platform rows, so without this a rename to a name hosted
+    //    on another core would repoint the victim's routing. A row pointing
+    //    here already (the name of another account of this core) also
+    //    answers true: the local gates below refuse that case. Given back on
+    //    refusal unless an account of this core holds the name.
     if (coreId != null) {
-      const claimed = await this.platform.setUserCoreIfNotExists(newUsername, coreId);
-      if (!claimed) { throw errors.itemAlreadyExists('user', { username: newUsername }); }
+      if (!await this.platform.setUserCoreIfNotExists(newUsername, coreId)) { throw taken(); }
+      undo.push(async () => {
+        if (!(await this.usersIndex.usernameExists(newUsername))) await this.platform.deleteUserCore(newUsername);
+      });
     }
 
-    // 2. re-key ALL PlatformDB rows old→new (username self-row, email + alias
-    //    unique fields re-owned, indexed fields moved). Caller verified the
-    //    new name is free; the claim above made it atomic.
+    // 2. Hold the old name as an alias before its `username` row is released.
+    if (!await this.platform.setUserUniqueFieldIfNotExists(newUsername, 'alias', oldUsername)) {
+      throw await refuse(errors.invalidOperation('The current username cannot be kept as an alias: another username change of this account may be in progress, retry later.'));
+    }
+    undo.push(async () => await this.platform.deleteUserUniqueField('alias', oldUsername));
+
+    // 3. Index it locally. Already indexed for this account: a change to the
+    //    same name running concurrently (step 4 decides which one goes on).
+    const isIndexed = async () => (await this.usersIndex.getAliasesForId(userId)).includes(oldUsername);
+    if (!await isIndexed()) {
+      let added = true;
+      try {
+        await this.usersIndex.addAlias(oldUsername, userId);
+      } catch (err) {
+        // Indexed meanwhile by that same-name change: go on, step 4 decides.
+        if (!await isIndexed()) throw await refuse(errors.unexpectedError(err as Error));
+        added = false;
+      }
+      if (added) undo.push(async () => await this.usersIndex.deleteAlias(oldUsername, userId));
+    }
+
+    // 4. Local index rename.
+    let renamed: boolean;
+    try {
+      renamed = await this.usersIndex.renameUser(oldUsername, newUsername);
+    } catch (err) {
+      const holder = await this.usersIndex.getUserId(newUsername);
+      throw await refuse(holder != null && holder !== userId ? taken() : errors.unexpectedError(err as Error));
+    }
+    if (!renamed) {
+      // Another change of this account renamed it first: everything above is
+      // shared with it, so nothing is undone.
+      throw errors.invalidOperation('Another username change of this account was applied meanwhile.');
+    }
+    undo.push(async () => await this.usersIndex.renameUser(newUsername, oldUsername));
+
+    // 5. Another account of this core holding the new name as an alias (a
+    //    former username) keeps it.
+    const aliasHolder = await this.usersIndex.getUserIdForAlias(newUsername);
+    if (aliasHolder != null) { throw await refuse(taken()); }
+
+    // 6. Record the change (right after the gate: a change of this account
+    //    can only start from the new name now, and reads the count after it).
+    const count = await this.getUsernameChangeCount(userId);
+    await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count + 1, accessId);
+
     await this.platform.renameUser(oldUsername, newUsername);
     // The breach-scope index names the owner of each access: move its rows
     // too, or they would be resolved to a later holder of the former name.
     await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername);
 
-    // 3. local index rename (leaves the alias index intact)
-    await this.usersIndex.renameUser(oldUsername, newUsername);
-
     // Reset requests are keyed by username and the former name can no longer
     // consume them: drop them, so none survives to a later holder of the name.
     await this.#destroyResetRequests([oldUsername]);
 
-    // 4. System-Streams username account field (mirrors registration's write;
-    //    `username` is not in the editable-field map used by updateOne).
+    // System-Streams username account field (mirrors registration's write;
+    // `username` is not in the editable-field map used by updateOne).
     await this.userAccountStorage.setAccountField(userId, 'username', newUsername, accessId);
-
-    // 5. keep the old username routable as an alias (re-holds the freed name)
-    await this.reserveSpecificAlias(newUsername, userId, oldUsername);
-
-    // 6. record the change
-    const count = Number(await this.userAccountStorage.getAccountField(userId, USERNAME_CHANGE_COUNT_FIELD)) || 0;
-    await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count + 1, accessId);
+    // Bust the former name again: a resolution that read it as the canonical
+    // username before the rename and cached it after the first bust would
+    // otherwise keep reporting it until the entry ages out.
+    cache.unsetUser(oldUsername);
   }
 
   /** Number of username changes already performed (0 if never). */

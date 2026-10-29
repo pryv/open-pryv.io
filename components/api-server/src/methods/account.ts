@@ -352,7 +352,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       result.usernameChangesRemaining = Math.max(0, limit - (used + 1));
       next();
     } catch (err) {
-      if (err != null && (err as { id?: string }).id === ErrorIds.ItemAlreadyExists) {
+      const id = (err as { id?: string } | null)?.id;
+      if (id === ErrorIds.ItemAlreadyExists || id === ErrorIds.InvalidOperation) {
         return next(err);
       }
       return next(errors.unexpectedError(err));

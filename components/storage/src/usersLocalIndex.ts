@@ -78,14 +78,19 @@ class UsersLocalIndex {
     logger.debug('addUser', username, userId);
   }
 
-  /** Rename the canonical (primary) username; leaves aliases intact. */
-  async renameUser (oldUsername: string, newUsername: string): Promise<void> {
-    await this.db.renameUser(oldUsername, newUsername);
+  /**
+   * Rename the canonical (primary) username; leaves aliases intact.
+   * @returns false when no user holds `oldUsername` (nothing renamed); rejects
+   *   when another user holds `newUsername`.
+   */
+  async renameUser (oldUsername: string, newUsername: string): Promise<boolean> {
+    const renamed = await this.db.renameUser(oldUsername, newUsername);
     // Bust AFTER the write so a concurrent getUserId cannot re-cache the stale
     // name->userId mapping past the rename.
     cache.unsetUser(oldUsername);
     cache.unsetUser(newUsername);
-    logger.debug('renameUser', oldUsername, newUsername);
+    logger.debug('renameUser', oldUsername, newUsername, renamed);
+    return renamed;
   }
 
   async usernameExists (username: string): Promise<boolean> {
@@ -128,6 +133,11 @@ class UsersLocalIndex {
 
   async getAliasesForId (userId: string): Promise<string[]> {
     return await this.db.getAliasesForId(userId);
+  }
+
+  /** The user holding `alias` as an alias (not as a username), uncached. */
+  async getUserIdForAlias (alias: string): Promise<string | undefined> {
+    return await this.db.getIdForAlias(alias);
   }
 
   async deleteAlias (alias: string, userId: string): Promise<void> {

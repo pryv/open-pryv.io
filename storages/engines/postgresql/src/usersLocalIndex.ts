@@ -17,7 +17,7 @@ type UsersIndexRow = { username: string; user_id: string };
 type AliasIndexRow = { alias: string; user_id: string };
 type PgDbLike = {
   ensureConnect: () => Promise<void>;
-  query: (sql: string, params?: unknown[]) => Promise<{ rows: (UsersIndexRow & AliasIndexRow)[] }>;
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: (UsersIndexRow & AliasIndexRow)[]; rowCount?: number | null }>;
 };
 
 class UsersLocalIndexPG {
@@ -36,11 +36,12 @@ class UsersLocalIndexPG {
     );
   }
 
-  async renameUser (oldUsername: string, newUsername: string): Promise<void> {
-    await this.db.query(
+  async renameUser (oldUsername: string, newUsername: string): Promise<boolean> {
+    const res = await this.db.query(
       'UPDATE users_index SET username = $1 WHERE username = $2',
       [newUsername, oldUsername]
     );
+    return (res.rowCount ?? 0) > 0;
   }
 
   async getIdForName (username: string): Promise<string | undefined> {
