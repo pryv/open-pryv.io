@@ -193,6 +193,33 @@ describe('[ALIA] access aliases (randomAlias)', function () {
     }
   });
 
+  it('[AL10] a create refused before the insert (negative expireAfter, unknown account stream) reserves no alias', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const before = await usersIndex.getAliasesForId(userId);
+    for (const body of [
+      { name: 'al10 expiry', randomAlias: true, expireAfter: -1, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] },
+      { name: 'al10 stream', randomAlias: true, permissions: [{ streamId: ':_system:no-such-field', level: 'read' }] }
+    ]) {
+      const res = await createAccess(body);
+      assert.ok(res.status >= 400, JSON.stringify(res.body));
+    }
+    assert.deepStrictEqual((await usersIndex.getAliasesForId(userId)).sort(), before.sort(), 'no alias left behind');
+  });
+
+  it('[AL11] a create refused by the insert (token already used) gives its minted alias back', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const token = cuid();
+    const first = await createAccess({ name: 'al11 first', token, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const before = await usersIndex.getAliasesForId(userId);
+    const res = await createAccess({ name: 'al11 second', token, randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    const after = await usersIndex.getAliasesForId(userId);
+    assert.deepStrictEqual(after.sort(), before.sort(), 'the minted alias was given back');
+  });
+
   it('[AL07] deleting an access whose stored alias is another user\'s releases nothing of that user', async function () {
     // The other user owns a minted alias.
     const otherName = cuid();

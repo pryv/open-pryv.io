@@ -394,13 +394,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (params.alias != null) {
       return next(errors.forbidden('The alias of an access is set by the server; request one with "randomAlias".'));
     }
-    // Mint a routable, platform-unique alias when requested. Replaces the
-    // username in this access's apiEndpoint so the real username never leaks.
-    if (params.randomAlias === true) {
-      const usersRepository = await getUsersRepository();
-      params.alias = await usersRepository.mintAlias(context.user.username, context.user.id);
-    }
-    delete params.randomAlias;
+    // `randomAlias` is kept until createAccess: the alias is minted there,
+    // after every refusal, so a refused create reserves nothing.
     const expireAfter = params.expireAfter;
     delete params.expireAfter;
     if (expireAfter != null) {
@@ -541,10 +536,27 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
-  function createAccess (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
+  async function createAccess (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     if (params.type === 'shared') params.deviceName = null;
-    accessesRepository.insertOne(context.user, params, function (err: (Error & { isDuplicateIndex: (k: string) => boolean }) | null, newAccess: { id: string; [k: string]: unknown } | undefined) {
+    // Mint a routable, platform-unique alias when requested, as the last step
+    // before the insert (and give it back if the insert fails). It replaces
+    // the username in this access's apiEndpoint so the real username never
+    // leaks.
+    const wantsAlias = params.randomAlias === true;
+    delete params.randomAlias;
+    const usersRepository = wantsAlias ? await getUsersRepository() : null;
+    if (usersRepository != null) {
+      params.alias = await usersRepository.mintAlias(context.user.username, context.user.id);
+    }
+    accessesRepository.insertOne(context.user, params, async function (err: (Error & { isDuplicateIndex: (k: string) => boolean }) | null, newAccess: { id: string; [k: string]: unknown } | undefined) {
+      if (err != null && usersRepository != null && params.alias != null) {
+        try {
+          await usersRepository.releaseAlias(params.alias, context.user.id);
+        } catch (releaseErr) {
+          getLogger('accesses').warn('accesses.create: the alias of a refused access could not be given back', releaseErr);
+        }
+      }
       if (err != null) {
         // Duplicate errors
         if (err.isDuplicateIndex('token')) {
