@@ -470,7 +470,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (accessesRepository == null) {
       throw new Error('mintAccessDirect: storageLayer.accesses unavailable');
     }
-    const now = Math.floor(Date.now() / 1000);
+    // Millisecond precision, like every other access (timestamp.now()): the
+    // client-revoke check compares `created` with a revoke epoch in ms, so a
+    // time rounded down to the second would put a session minted just after a
+    // revoke (same second) before it, and refuse it as revoked.
+    const now = Date.now() / 1000;
     const newToken = accessesRepository.generateToken();
     const newAccessRow: Record<string, unknown> = {
       type: 'app',

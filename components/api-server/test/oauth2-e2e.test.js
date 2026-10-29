@@ -1060,6 +1060,29 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const eventsRes = await coreRequest.get('/' + username + '/events').set('Authorization', tokenRes.body.access_token);
       assert.equal(eventsRes.status, 200);
     });
+
+    it('[OE35] a client revoked and re-registered within the same second: a token minted right after works', async function () {
+      const platformDB = require('storages').platformDB;
+      const revokedCache = require('oauth2/src/revokedClientsCache.ts');
+      const existing = await storage.getClient(platformDB, ccClientId);
+      // Revoke at least 100 ms into a second, so a creation time rounded down to
+      // the second falls before the revoke epoch while the real one is after it.
+      while (Date.now() % 1000 < 100 || Date.now() % 1000 > 500) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await storage.deleteClient(platformDB, ccClientId);
+      await storage.setClient(platformDB, existing);
+      revokedCache._resetForTests();
+      const revokedAt = await storage.getRevokedAt(platformDB, ccClientId);
+
+      const basic = 'Basic ' + Buffer.from(ccClientId + ':' + ccSecret).toString('base64');
+      const tokenRes = await coreRequest.post('/oauth2/token').type('form').set('Authorization', basic)
+        .send({ grant_type: 'client_credentials' });
+      assert.equal(tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(tokenRes));
+      assert.ok(Date.now() - revokedAt < 1000 - (revokedAt % 1000), 'premise: minted within the second of the revoke');
+      const eventsRes = await coreRequest.get('/' + username + '/events').set('Authorization', tokenRes.body.access_token);
+      assert.equal(eventsRes.status, 200, 'the token minted after the revoke works: ' + describeRes(eventsRes));
+    });
   });
 
   describe('[OAUTH-E2E-DPOP] DPoP sender-constrained round-trip (RFC 9449)', function () {

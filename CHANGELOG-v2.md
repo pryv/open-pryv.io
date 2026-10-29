@@ -1,5 +1,18 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Fixed
+
+- **OAuth: a token minted right after an operator revoke of its client is no longer refused as
+  revoked.** The revoke records its time in milliseconds and refuses every session access of the
+  client created before it, but the accesses minted by the `refresh_token` and
+  `client_credentials` grants carried a creation time rounded down to the second. A client
+  revoked, re-registered and issued a token within the same second got a token that was born
+  dead (`403 invalid-access-token`, "The application access has been revoked."). These accesses
+  now carry a millisecond creation time, like every other access. Tokens minted before the revoke
+  stay refused.
+
 ## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the
