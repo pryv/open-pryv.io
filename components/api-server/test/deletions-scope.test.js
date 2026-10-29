@@ -144,4 +144,58 @@ describe('[DLSC] event and stream deletion records', function () {
       restore();
     }
   });
+
+  // Reading the whole store does not reach the plugin-internal subtrees: with
+  // streams kept on the record, only the personal access skips the filter.
+  it('[DLS6] a `*` read app does not get the records of plugin-internal streams', async function () {
+    const { injectTestConfigSnapshot } = require('test-helpers');
+    const deleted = timestamp.now();
+    const base = { type: 'note/txt', time: deleted, created: deleted, createdBy: 'dlsc', modified: deleted, modifiedBy: 'dlsc', deleted };
+    const readable = cuid();
+    const internal = [cuid(), cuid(), cuid()];
+    await fixturesUser.event(Object.assign({ id: readable, streamIds: ['dlsc-a'] }, base));
+    await fixturesUser.event(Object.assign({ id: internal[0], streamIds: [':_cmc:_internal'] }, base));
+    await fixturesUser.event(Object.assign({ id: internal[1], streamIds: [':_delegation:_internal'] }, base));
+    // a consumed shared secret of another access
+    await fixturesUser.event(Object.assign({ id: internal[2], streamIds: [':_shared-secrets:' + cuid()] }, base));
+    const restore = injectTestConfigSnapshot({ versioning: { deletionMode: 'keep-everything' } });
+    try {
+      const appRes = await deletions(await app([{ streamId: '*', level: 'read' }]));
+      assert.strictEqual(appRes.status, 200, JSON.stringify(appRes.body));
+      const appIds = appRes.body.eventDeletions.map((d) => d.id);
+      assert.ok(appIds.includes(readable), JSON.stringify(appIds));
+      for (const id of deletedIds) assert.ok(appIds.includes(id), 'record without streams: ' + id);
+      for (const id of internal) assert.ok(!appIds.includes(id), 'internal: ' + JSON.stringify(appIds));
+
+      const personalRes = await deletions(personalToken);
+      assert.strictEqual(personalRes.status, 200, JSON.stringify(personalRes.body));
+      const personalIds = personalRes.body.eventDeletions.map((d) => d.id);
+      for (const id of [readable, ...internal, ...deletedIds]) assert.ok(personalIds.includes(id), 'personal: ' + id);
+    } finally {
+      restore();
+    }
+    // records kept with streams under keep-everything, read in another mode
+    const later = (await deletions(await app([{ streamId: '*', level: 'read' }]))).body.eventDeletions.map((d) => d.id);
+    for (const id of [readable, ...deletedIds]) assert.ok(later.includes(id), 'other mode: ' + id);
+    for (const id of internal) assert.ok(!later.includes(id), 'other mode, internal: ' + JSON.stringify(later));
+  });
+
+  // Stream deletion records name only the stream: the ones of plugin-internal
+  // or emails streams are not returned to a non-personal access.
+  it('[DLS7] a `*` read app does not get the stream records of plugin-internal or emails streams', async function () {
+    const deleted = timestamp.now();
+    const internal = [':_cmc:_internal:offer:' + cuid(), ':_delegation:_internal:' + cuid(), ':_emails:' + cuid()];
+    for (const id of internal) await fixturesUser.stream({ id, name: id, deleted });
+
+    const appRes = await streamDeletions(await app([{ streamId: '*', level: 'read' }]));
+    assert.strictEqual(appRes.status, 200, JSON.stringify(appRes.body));
+    const appIds = appRes.body.streamDeletions.map((d) => d.id);
+    assert.ok(appIds.includes('dlsc-gone'), JSON.stringify(appIds));
+    for (const id of internal) assert.ok(!appIds.includes(id), 'internal: ' + JSON.stringify(appIds));
+
+    const personalRes = await streamDeletions(personalToken);
+    assert.strictEqual(personalRes.status, 200, JSON.stringify(personalRes.body));
+    const personalIds = personalRes.body.streamDeletions.map((d) => d.id);
+    for (const id of ['dlsc-gone', ...internal]) assert.ok(personalIds.includes(id), 'personal: ' + id);
+  });
 });

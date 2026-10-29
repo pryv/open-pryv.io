@@ -10,7 +10,6 @@ const require = createRequire(import.meta.url);
 const cuid = require('cuid');
 const path = require('path');
 const { promisify } = require('util');
-const nock = require('nock');
 const { useNock } = require('test-helpers/src/nockScope.ts');
 const assert = require('node:assert');
 const { listeningAgent } = require('test-helpers');
@@ -28,12 +27,9 @@ const accountStreams = require('business/src/system-streams/index.ts');
 const { databaseFixture } = require('test-helpers');
 const { produceStorageConnection } = require('api-server/test/test-helpers');
 
-const { getConfig } = require('@pryv/boiler');
-
 describe('[AD01] Accesses with account streams', function () {
   useNock();
 
-  let config;
   let app;
   let request;
   let res;
@@ -98,7 +94,6 @@ describe('[AD01] Accesses with account streams', function () {
     savedIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK;
     process.env.DISABLE_INTEGRITY_CHECK = '1';
     const helpers = require('api-server/test/helpers');
-    config = await getConfig();
     validation = helpers.validation;
     fixtures = databaseFixture(await produceStorageConnection());
 
@@ -198,6 +193,8 @@ describe('[AD01] Accesses with account streams', function () {
             });
           });
         });
+        // Account fields are written by the personal access only: any level
+        // above read is refused, for every other access.
         describe('[AD11] with a create-only-level permission', () => {
           let streamId;
           const permissionLevel = AccessLogic.PERMISSION_LEVEL_CREATE_ONLY;
@@ -205,48 +202,33 @@ describe('[AD01] Accesses with account streams', function () {
             streamId = addCustomerPrefixToStreamId('email');
             await createUserAndAccess(permissionLevel, streamId);
           });
-          it('[IWMQ] should return 201', async () => {
-            assert.strictEqual(createAccessResponse.status, 201);
+          it('[IWMQ] should return 400', async () => {
+            assert.strictEqual(createAccessResponse.status, 400);
           });
-          it('[APYN] should create access in the database', async () => {
-            assert.deepStrictEqual(accountAccessData.permissions, [{ streamId, level: permissionLevel }]);
+          it('[APYN] should return the correct error', async () => {
+            assert.deepStrictEqual(createAccessResponse.body.error, {
+              id: ErrorIds.InvalidOperation,
+              message: ErrorMessages[ErrorIds.TooHighAccessForSystemStreams],
+              data: { param: streamId }
+            });
           });
         });
         describe('[AD12] with a contribute-level permission', () => {
           let streamId;
           const permissionLevel = AccessLogic.PERMISSION_LEVEL_CONTRIBUTE;
           before(async function () {
-            // phoneNumber (visible, editable, not platform-coordinated): the
-            // email account field is no longer writable through the events API,
-            // so this "contribute lets you write the event" coverage uses a
-            // non-coordinated visible field.
             streamId = addCustomerPrefixToStreamId('phoneNumber');
             await createUserAndAccess(permissionLevel, streamId);
           });
-          it('[R0M1] should return 201', async () => {
-            assert.strictEqual(createAccessResponse.status, 201);
+          it('[R0M1] should return 400', async () => {
+            assert.strictEqual(createAccessResponse.status, 400);
           });
-          it('[Q8R8] should create access in the database', async () => {
-            assert.deepStrictEqual(accountAccessData.permissions, [{ streamId, level: permissionLevel }]);
-          });
-          it('[TI1X] should allow to create visible stream events', async () => {
-            const scope = nock(config.get('services:register:url'));
-            scope.put('/users',
-              (body) => {
-                return true;
-              }).reply(200, { errors: [] });
-
-            const response = await request.post(eventsBasePath)
-              .send({
-                streamIds: [streamId],
-                content: charlatan.Lorem.characters(7),
-                type: 'string/pryv'
-              })
-              .set('authorization', accountAccessData.token);
-
-            assert.strictEqual(response.status, 201);
-            assert.ok(response.body.event);
-            assert.strictEqual(response.body.event.streamIds[0], streamId);
+          it('[Q8R8] should return the correct error', async () => {
+            assert.deepStrictEqual(createAccessResponse.body.error, {
+              id: ErrorIds.InvalidOperation,
+              message: ErrorMessages[ErrorIds.TooHighAccessForSystemStreams],
+              data: { param: streamId }
+            });
           });
         });
 
@@ -405,25 +387,26 @@ describe('[AD01] Accesses with account streams', function () {
     });
 
     describe('[ASU4] accepts a within-cap account-stream permission via update', () => {
+      const phoneStreamId = () => addCustomerPrefixToStreamId('phoneNumber');
       let accessId, putRes;
       before(async function () {
         await createUserAndAccess('read', emailStreamId());
         accessId = accountAccessData.id;
-        putRes = await putPermissions(accessId, [{ streamId: emailStreamId(), level: 'contribute' }]);
+        putRes = await putPermissions(accessId, [{ streamId: phoneStreamId(), level: 'read' }]);
       });
       it('[AV4S] returns 200', () => {
         assert.strictEqual(putRes.status, 200);
       });
       it('[AV4D] stores the updated permission', async () => {
         const dbAccess = await getAccessInDb(accessId);
-        assert.deepStrictEqual(dbAccess.permissions, [{ streamId: emailStreamId(), level: 'contribute' }]);
+        assert.deepStrictEqual(dbAccess.permissions, [{ streamId: phoneStreamId(), level: 'read' }]);
       });
     });
 
     describe('[ASU5] leaves account-stream permissions untouched when update omits permissions', () => {
       let accessId, putRes;
       before(async function () {
-        await createUserAndAccess('contribute', emailStreamId());
+        await createUserAndAccess('read', emailStreamId());
         accessId = accountAccessData.id;
         putRes = await request.put(basePath + '/' + accessId)
           .send({ name: charlatan.Lorem.characters(8) })
@@ -434,7 +417,7 @@ describe('[AD01] Accesses with account streams', function () {
       });
       it('[AV5D] keeps the pre-existing account-stream permission', async () => {
         const dbAccess = await getAccessInDb(accessId);
-        assert.deepStrictEqual(dbAccess.permissions, [{ streamId: emailStreamId(), level: 'contribute' }]);
+        assert.deepStrictEqual(dbAccess.permissions, [{ streamId: emailStreamId(), level: 'read' }]);
       });
     });
 

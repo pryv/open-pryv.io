@@ -14,14 +14,18 @@ const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
  * Keeps the event deletion records the access can read: the ones whose kept
  * `streamIds` the access could read as a live event (one stream readable, none
  * withheld from it by a `none` / `create-only` grant, forced streams honoured).
- * A record without streams (every deletion mode but keep-everything) is dropped.
+ * A record without streams (every deletion mode but keep-everything) is dropped,
+ * unless `keepRecordsWithoutStreams` is set (an access reading the whole store,
+ * which gets those records in the other modes too).
  */
 class ReadableDeletionsStream extends Transform {
   access: CanReadEventAccess;
+  keepRecordsWithoutStreams: boolean;
 
-  constructor (access: CanReadEventAccess) {
+  constructor (access: CanReadEventAccess, options: { keepRecordsWithoutStreams?: boolean } = {}) {
     super({ objectMode: true });
     this.access = access;
+    this.keepRecordsWithoutStreams = options.keepRecordsWithoutStreams === true;
   }
 
   _transform (event: { streamIds?: string[] }, encoding: BufferEncoding, callback: (error?: Error | null) => void) {
@@ -32,6 +36,7 @@ class ReadableDeletionsStream extends Transform {
   }
 
   async isReadable (event: { streamIds?: string[] }): Promise<boolean> {
+    if (this.keepRecordsWithoutStreams && (!Array.isArray(event.streamIds) || event.streamIds.length === 0)) return true;
     return await canReadEvent(this.access, event);
   }
 }

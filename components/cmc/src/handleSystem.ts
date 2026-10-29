@@ -674,6 +674,20 @@ async function handleSystemScopeUpdate (params: ScopeUpdateParams): Promise<Syst
     }
   }
 
+  // Account-stream rules of accesses.update (hidden or unknown account
+  // streams, the account root or an account field above `read`): a collector's
+  // request supplies the set, and mall.accesses.update applies none of them.
+  // Runs on every dispatch, with or without triggerAccess: a retry replays
+  // the trigger without it, and must reach the same refusal.
+  const accountStreamsRefusal = await validators.accountStreamPermissionsError(mergedPerms);
+  if (accountStreamsRefusal != null) {
+    return {
+      ok: false,
+      reason: CmcErrorIds.OFFER_INVALID_PERMISSIONS,
+      detail: { accessId, message: accountStreamsRefusal.message, data: accountStreamsRefusal.data ?? null },
+    };
+  }
+
   // The update is wrapped in runWithSuppression so the accesses.update
   // post-hook does NOT also notify the peer: this handler is the
   // authoritative notifier for the change.

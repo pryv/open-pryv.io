@@ -73,5 +73,14 @@ async function canReadEvent (access: CanReadEventAccess, event: EventLike): Prom
   return false;
 }
 
-export { canReadEvent };
+/**
+ * Whether a stream sits where only the personal access reads: the emails
+ * container or a plugin-internal subtree. For records that name only the
+ * stream (stream deletion records).
+ */
+function isStreamOutOfNonPersonalReach (streamId: string): boolean {
+  return isEmailsStream(streamId) || isPluginInternalStream(streamId);
+}
+
+export { canReadEvent, isStreamOutOfNonPersonalReach };
 export default canReadEvent;

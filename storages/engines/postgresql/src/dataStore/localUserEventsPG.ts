@@ -213,7 +213,8 @@ const userEvents = ds.createUserEvents({
   },
 
   async getDeletionsStreamed (this: Store, userId: string, query: { deletedSince: number }, options: { sortAscending?: boolean; limit?: number; skip?: number } | null): Promise<ReadableType> {
-    const conditions: string[] = ['user_id = $1', 'deleted > $2'];
+    // Head events only: history versions are never deletion records.
+    const conditions: string[] = ['user_id = $1', 'head_id IS NULL', 'deleted > $2'];
     const params: unknown[] = [userId, query.deletedSince];
     let idx = 3;
     let sql = `SELECT * FROM events WHERE ${conditions.join(' AND ')}`;

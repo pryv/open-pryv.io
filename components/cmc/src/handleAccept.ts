@@ -301,6 +301,21 @@ async function handleAccept (params: {
     }
   }
 
+  // 3a. Account-stream rules of accesses.create (hidden or unknown account
+  // streams, the account root or an account field above `read`): the offer
+  // comes from the requester, and mall.accesses.create applies none of them.
+  // Runs on every dispatch, with or without triggerAccess: a retry replays
+  // the trigger without it, and must reach the same refusal. Judged on
+  // copies, so the payload keeps the spelling the offer used.
+  const accountStreamsRefusal = await validators.accountStreamPermissionsError(dataGrantPayload!.permissions);
+  if (accountStreamsRefusal != null) {
+    return {
+      ok: false,
+      reason: CmcErrorIds.OFFER_INVALID_PERMISSIONS,
+      detail: { message: accountStreamsRefusal.message, data: accountStreamsRefusal.data ?? null },
+    };
+  }
+
   // 3b. Effective-permission guard (hierarchical-masking class). The pure
   // entry-subset check in buildDataGrantPayload cannot see that dropping a
   // restrictive descendant re-inherits a broader ancestor and WIDENS the

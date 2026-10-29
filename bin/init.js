@@ -1322,8 +1322,8 @@ async function main () {
   console.log('  (consent / sign-in / register / password-reset pages). The default below is');
   console.log('  the canonical Pryv-hosted public build; fork app-web-user-account to rebrand.');
   console.log('  Sets `access.defaultAuthUrl` (auth URL emitted by /reg/access) +');
-  console.log('  `auth.passwordResetPageURL` + `service.account` (account pages) and adds the');
-  console.log('  host to `auth.trustedApps`.');
+  console.log('  `auth.passwordResetPageURL` + `oauth.consentUrl` (OAuth consent page) +');
+  console.log('  `service.account` (account pages) and adds the host to `auth.trustedApps`.');
   const authUiUrl = (await ask('  app-web-user-account base URL', 'https://account.pryv.me', 'authui.url')).replace(/\/+$/, '');
   console.log();
 
@@ -1376,6 +1376,11 @@ async function main () {
   // without it the feature stays off with a boot warning.
   const defaultEmailVerificationPageURL = `${authUiUrl}/verify-email`;
   const emailVerificationPageURL = await ask('  auth.emailVerificationPageURL (derived from auth UI)', defaultEmailVerificationPageURL, 'auth.emailverificationpageurl');
+
+  // oauth.consentUrl: the auth UI's OAuth consent page. GET /oauth2/authorize
+  // redirects there; without it the OAuth authorization flow answers 500.
+  const defaultConsentUrl = `${authUiUrl}/oauth2-authorize`;
+  const consentUrl = await ask('  oauth.consentUrl (derived from auth UI)', defaultConsentUrl, 'oauth.consenturl');
 
   // trustedApps: must whitelist BOTH the operator's own publicUrl AND the
   // auth UI origin (otherwise the /reg/access flow loaded from the auth app
@@ -1585,6 +1590,9 @@ async function main () {
       // The reset-password page is a sibling route under the same base.
       defaultAuthUrl: `${authUiUrl}/auth`
     },
+    oauth: {
+      consentUrl
+    },
     cluster: {
       apiWorkers: 2,
       hfsWorkers,
@@ -1781,6 +1789,11 @@ async function main () {
     ['URL of the React auth app that hosts consent + sign-in + password-reset pages.',
       'Defaults to the canonical Pryv-hosted public build; fork to rebrand.'],
     { access: config.access });
+
+  yamlBody += section(yaml, 'OAuth consent page',
+    ['Consent page of the auth UI: GET /oauth2/authorize redirects the user there',
+      'to sign in and approve the client. Without it that flow answers 500.'],
+    { oauth: config.oauth });
 
   yamlBody += section(yaml, 'Cluster sizing',
     ['apiWorkers + hfsWorkers + previewsWorker each fork a worker process.',

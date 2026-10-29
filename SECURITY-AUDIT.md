@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 7 (2026-10-29), covering releases 2.0.0-rc.40 to 2.0.0-rc.64.
+**Report revision:** 8 (2026-10-29), covering releases 2.0.0-rc.40 to 2.0.0-rc.65.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -38,8 +38,10 @@ accounts in consent, added the findings fixed in 2.0.0-rc.52 and rc.53, and a fu
 how stream ids are compared by the access guards, together with the server's calls to consent
 counterparties, added those fixed in 2.0.0-rc.56, and a review of the OAuth2 consent and session
 lifecycle and of event history reads, made in October 2026 alongside work on OAuth2 extensions,
-added those fixed in 2.0.0-rc.64; they were fixed under the same rules (tests that fail without the
-fix, independent review before merge).
+added those fixed in 2.0.0-rc.64, and a review of the permissions that consents and app accesses
+can carry on account fields, of the consent retry path and of deletion listings, made in October
+2026, added those fixed in 2.0.0-rc.65; they were fixed under the same rules (tests that fail
+without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -49,7 +51,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 54 findings, each rated and described individually in
+The review and its follow-ups recorded 57 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -57,9 +59,9 @@ items reported through the public issue tracker, are described but not counted:
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
-| Medium | 25 | 0 | 0 |
+| Medium | 28 | 0 | 0 |
 | Low | 1 | 0 | 0 |
-| **Total** | **54** | **0** | **0** |
+| **Total** | **57** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -98,6 +100,7 @@ its applicability is stated with it.
 | 2.0.0-rc.59 | 2026-10-26 | dependency update, not an audit finding: `nodemailer` 10.2.1 (GHSA-8c8m-p3m8-cjg8, GHSA-m943-m63m-w62w, GHSA-85x2-q946-cp5h, moderate: address-parser flaws that could turn display text into a recipient); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-26) |
 | 2.0.0-rc.63 | 2026-10-28 | dependency updates, not audit findings: `node-forge` 1.4.2 (GHSA-86w9-cpqp-85rv, high: RSA PKCS#1 v1.5 signature verification; no patched release existed before 1.4.2), `qs` 6.16.1 (GHSA-6pq8-jhm2-2vcw, moderate: denial of service in `qs.stringify` with `arrayFormat: 'comma'`, a function the server does not call at runtime); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-28) |
 | 2.0.0-rc.64 | 2026-10-29 | 2 Medium | yes (2026-10-29) |
+| 2.0.0-rc.65 | 2026-10-29 | 3 Medium, lower-severity fixes | yes (2026-10-29) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -245,7 +248,7 @@ These are the main checks that held, summarised:
   plugin streams and of hidden account fields apply whatever spelling is used; no read path
   around them was found.
 - **The `*` scope** never reaches the account or audit stores; non-personal tokens read only their
-  own audit stream.
+  own audit stream (for deletion records, only since 2.0.0-rc.65: see that release below).
 - **Access creation rules:** personal accesses cannot be created through the API; apps create shared
   accesses only; expiry is capped by the creator; tracking fields are set by the server.
 - **Token lookup** is scoped to the account named in the path; deleted and history rows are never
@@ -1246,6 +1249,98 @@ resolved the prefixed spelling to the protected stream.
   it is left out of `history`.
 - **Operator action:** none.
 
+### Fixed in 2.0.0-rc.65 (deployed)
+
+#### Apps and consents could be granted write access to account fields
+
+- **Severity:** Medium (an app or shared access granted `contribute`, `manage` or `create-only` on
+  an account field; the user agrees to such a grant when accepting an app access request, a
+  consent offer between accounts or an OAuth authorization, whose permissions the requesting
+  party writes). Rated below the account-field item of 2.0.0-rc.56 because the primary e-mail was
+  not reachable this way (its own guard already refused writes by app and shared accesses), so
+  the effect is an integrity gap on the other account fields and a bounded disclosure, not a path
+  to the account.
+- **What could happen:** a third party could ask for, and after the user's acceptance obtain, a
+  write level on a visible account field (the language, or a field the platform defines) and then
+  rewrite it with `events.create` or `events.update`. Accepting a consent offer, or a collector's
+  scope request, also applied none of the account-field rules of `accesses.create`: an offer could
+  grant a hidden account field at `read` (for example the invitation token used at registration),
+  an unknown account stream, or the account root above `read`.
+- **What changed:** every access other than the personal one is limited to `read` (or `none`) on
+  account streams. `accesses.create` and `accesses.update` refuse a higher level with
+  `400 invalid-operation`, whoever creates the access, so an app access request asking for one
+  fails the same way; a consent accept or a scope update applies the same rules as
+  `accesses.create` and refuses a non-conforming set with `cmc-offer-invalid-permissions`, granting
+  nothing (an OAuth authorization asking for a write level is refused there). An access already
+  stored with a write level keeps reading the field, but its writes on account streams (events and
+  attachments) are refused with `403 forbidden`; a write on the e-mail field by an app or shared
+  access now answers `403 forbidden` too, instead of `400`.
+- **Operator action:** upgrade. The change is BREAKING for apps that set account fields for the
+  user: they must ask for `read` only and let the user change those fields with a personal session
+  (the account app or `account.update`). Stored accesses need no migration.
+
+#### A consent refused for its permissions could complete on retry
+
+- **Severity:** Medium (consent integrity; the retry loop is on by default since 2.0.0-rc.53, and
+  applies to earlier releases only where the operator turned it on). Accepting a consent is open
+  to a personal token only, and that gate held: the checks skipped on retry are the ones behind
+  it, so the effect is a grant minted against the server's refusal, not a grant obtained by a
+  less privileged access.
+- **What could happen:** a consent accept or a collector's scope update refused for its
+  permission set (`cmc-granted-permissions-not-subset`, `cmc-insufficient-permissions`) was queued
+  for retry like a delivery failure. The retry replays the request outside its original context,
+  without the access that made it, so the checks that depend on that access did not run: about a
+  second after the consent was reported as failed, the grant could be minted, or the collector's
+  access widened. The effective-permission check skipped this way is the one that refuses a
+  narrowed grant which, by leaving out a restrictive entry of the offer, would reach further than
+  the offer.
+- **What changed:** these refusals, and `cmc-offer-invalid-permissions`, are final and never
+  retried, and the account-field rules of the accept and of the scope update (previous item) run
+  on every attempt, a retry included.
+- **Operator action:** upgrade. Until then, setting `cmc.retryLoop.enabled: false` stops new
+  refusals from being queued, with the side effects described under 2.0.0-rc.56 (failed consent
+  deliveries are not retried while it is off).
+
+#### Deletion records of internal streams were returned to accesses reading the whole store
+
+- **Severity:** Medium where `versioning.deletionMode: keep-everything` is set (not the default,
+  `keep-nothing`), as deletion records then keep the content of the deleted events; Low in the
+  other modes, where only stream ids were concerned. An app or shared access reading the whole
+  store (`*` at `read` or above) was needed.
+- **What could happen:** `events.get` with `includeDeletions` skipped the read check on deletion
+  records for an access reading the whole store, so such an access received the deleted events of
+  hidden account fields, of the e-mails area, of plugin-internal streams and of other accesses'
+  shared secrets, which a `*` grant does not reach for live events. `streams.get` with
+  `includeDeletionsSince` likewise returned the deletion records of e-mails, plugin-internal and
+  other accesses' shared-secret streams, whose ids name internal objects (for instance the
+  per-link streams removed when a consent capability is cleaned up).
+- **What changed:** every access but the personal one gets only the event deletion records it
+  could read as live events, and only the stream deletion records it could see as live streams;
+  records that keep no streams are still returned to an access reading the whole store, as
+  before.
+- **Operator action:** none. Client developers: the filter applies after `limit` and `skip`, so a
+  page of deletions can hold fewer records than `limit`, or none; a sync client must not treat a
+  short page as the end of the listing.
+
+#### Lower-severity fixes in 2.0.0-rc.65
+
+- **An expired OAuth2 consent grant stayed usable for refresh for up to one second** (Low): the
+  refresh grant compared the grant's expiry with the current time rounded down to the second. It
+  now answers `invalid_grant` as soon as the grant has expired, and the authorization-code exchange
+  applies the same exact comparison.
+- **SQLite engine: `events.getOne` served an earlier version of an event by its own storage id**
+  (Low, SQLite deployments with event history kept): the API never returns that id, but asking for
+  it answered with the stored version, where the PostgreSQL engine answers `404 unknown-resource`.
+  The SQLite engine now answers `unknown-resource` too, for reads and updates; history stays
+  available through `includeHistory` on the current event (filtered since 2.0.0-rc.64).
+- **Deletion listings hold current events only** (defence in depth): both engines now leave earlier
+  versions of an event out of deletion listings, as the single-event lookups already did. No API
+  path marks an earlier version as deleted; this covers a restored or hand-edited store.
+- Not a security fix, listed for operators: an OAuth2 token issued within the same second as an
+  operator revoke of its client (after the client was registered again) was refused as revoked;
+  the accesses minted by the `refresh_token` and `client_credentials` grants now carry a
+  millisecond creation time, like every other access.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1338,3 +1433,4 @@ This report is updated with every release that carries a security fix:
 | 5 | 2026-10-26 | 2.0.0-rc.40 to 2.0.0-rc.59 | Adds 2.0.0-rc.59 to the release table: `nodemailer` 10.2.1 (moderate dependency advisories), not an audit finding; counts unchanged. Deployed on the maintainers' platforms (2026-10-26). |
 | 6 | 2026-10-28 | 2.0.0-rc.40 to 2.0.0-rc.63 | Adds 2.0.0-rc.63 to the release table: `node-forge` 1.4.2 (high dependency advisory) and `qs` 6.16.1 (moderate), not audit findings; counts unchanged. rc.60 to rc.62 carried no security fix. Deployed on the maintainers' platforms (2026-10-28). |
 | 7 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.64 | Adds 2.0.0-rc.64 (follow-up review of the OAuth2 consent and session lifecycle and of event history reads): 2 Medium findings. Deployed on the maintainers' platforms (2026-10-29). |
+| 8 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.65 | Adds 2.0.0-rc.65 (follow-up review of account-field permissions carried by consents and app accesses, of the consent retry path and of deletion listings): 3 Medium findings and lower-severity fixes; section 4.1 notes the deletion-record exception to the `*` scope. Deployed on the maintainers' platforms (2026-10-29). |

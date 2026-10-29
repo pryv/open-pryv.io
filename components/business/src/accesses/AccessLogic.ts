@@ -365,10 +365,6 @@ class AccessLogic {
 
   /** ----------- ACCESSES -------------- */
 
-  canCreateAccessForAccountStream (permissionLevel: string) {
-    return isHigherOrEqualLevel('contribute', permissionLevel);
-  }
-
   // -- accesses.get
   canListAnyAccess () {
     return this.isPersonal();
@@ -627,6 +623,9 @@ class AccessLogic {
     // lets an access write into (and, via the delete-as-discard path, burn)
     // another access's shared secrets.
     if (isSharedSecretsStream(streamId)) return sharedSecretsAllows(streamId, this.id);
+    // Account fields are written by the personal access only, whatever level
+    // an access was granted on them (one stored before this rule included).
+    if (isAccountStream(streamId)) return false;
     const level = await this._getStreamPermissionLevel(streamId);
     return (level != null) && isHigherOrEqualLevel(level, 'contribute');
   }
@@ -793,6 +792,11 @@ AccessLogic.PERMISSION_LEVEL_CONTRIBUTE = 'contribute';
 AccessLogic.PERMISSION_LEVEL_MANAGE = 'manage';
 AccessLogic.PERMISSION_LEVEL_READ = 'read';
 AccessLogic.PERMISSION_LEVEL_CREATE_ONLY = 'create-only';
+
+/** Whether the stream id, in any spelling, routes to the account store. */
+function isAccountStream (streamId: string) {
+  return storeDataUtils.parseStoreIdAndStoreItemId(storeDataUtils.canonicalStreamId(streamId))[0] === storeDataUtils.AccountStoreId;
+}
 
 /**
  * return true is A >= B

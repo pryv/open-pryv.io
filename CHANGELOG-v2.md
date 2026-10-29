@@ -74,6 +74,82 @@
   next call made with the token. A completed login now sets it. When MFA is active the login is not
   complete until `mfa.verify`, so `lastUsed` then moves with the first call made with the released
   token, as before.
+## 2.0.0-rc.65 - 2026-10-29
+
+### BREAKING and security
+
+- **BREAKING (security): account fields are written by the personal access only.** An app or
+  shared access could be granted `contribute` on a visible account stream (`:_system:language`,
+  `:system:<field>`), and through a consent whose offer came from a third party (an app access
+  request, a consent offer between accounts, an OAuth authorization) it then rewrote that account
+  field with `events.create` / `events.update`. Every access other than the personal one is now
+  limited to `read` (or `none`) on account streams:
+  - `accesses.create` and `accesses.update` refuse `contribute`, `manage` and `create-only` on an
+    account stream with `400 invalid-operation` (error message: account streams can only be
+    granted at the `read` or `none` level; `data.param` names the stream), whoever creates the
+    access. An app access request asking for such a level fails the same way; an OAuth
+    authorization asking for it is refused at the consent accept (next point).
+  - Accepting a consent offer, or a collector's scope request, now applies the same account-stream
+    rules as `accesses.create`: a granted set holding such a level, a hidden account stream (for
+    example `:_system:invitationToken`, which an offer could previously have granted at `read`), an
+    unknown account stream, or the account root above `read` fails with
+    `cmc-offer-invalid-permissions` and nothing is granted. When the offer allows choosing, leaving
+    that entry out still succeeds (a consent grants an offered entry as offered: it cannot lower it
+    to `read`).
+  - An access already stored with such a level keeps reading the field, but its `events.create` /
+    `events.update` / attachment writes on account streams are refused with `403 forbidden`.
+  - For app and shared accesses, a write on the email field answered `400 invalid-operation` (with
+    an email-specific message); it now answers `403 forbidden`, like every other account field.
+
+  Apps that set account fields (the language, platform-defined fields) for the user must ask for
+  `read` only and let the user change those fields with a personal session (the account app or
+  `account.update`).
+
+- **Security: a consent refused for its permissions is final.** A consent accept or a collector's
+  scope update refused with `cmc-offer-invalid-permissions`, `cmc-granted-permissions-not-subset`
+  or `cmc-insufficient-permissions` was queued for retry like a delivery failure, and the retry ran
+  without the checks that depend on the accepting access: a consent reported as failed could
+  complete about a second later and mint the grant. These refusals are no longer retried, and the
+  account-stream rules of the accept and the scope update run on every attempt.
+
+### Fixed
+
+- **`events.get` with `includeDeletions` no longer returns the deletion records of internal
+  streams to a non-personal access reading the whole store.** With `versioning.deletionMode:
+  keep-everything`, an app access with `*` read skipped the read check applied to deletion records
+  and received the records of hidden account, emails and plugin-internal streams, which a `*` grant
+  does not reach for live events. Every access but the personal one now gets only the records it
+  could read as live events; records that keep no streams are still returned to an access reading
+  the whole store, as before. The filter applies after `limit` and `skip`, so a page can now hold
+  fewer records than `limit`, or none: a sync client must not treat a short page as the end of the
+  listing.
+
+- **`streams.get` with `includeDeletionsSince` no longer returns the deletion records of internal
+  streams to a non-personal access.** An app access with `*` read received the records of deleted
+  plugin-internal streams (for instance the per-link streams removed when a capability is cleaned
+  up), whose ids name internal objects. Only the personal access gets those records now.
+
+- **OAuth: a token minted right after an operator revoke of its client is no longer refused as
+  revoked.** The revoke records its time in milliseconds and refuses every session access of the
+  client created before it, but the accesses minted by the `refresh_token` and
+  `client_credentials` grants carried a creation time rounded down to the second. A client
+  revoked, re-registered and issued a token within the same second got a token that was born
+  dead (`403 invalid-access-token`, "The application access has been revoked."). These accesses
+  now carry a millisecond creation time, like every other access. Tokens minted before the revoke
+  stay refused.
+
+- **OAuth: the refresh grant refuses a consent data-grant that expired less than a second ago.**
+  Its expiry was compared with the current time rounded down to the second, so a grant stayed
+  usable for refresh up to one second past its `expires`. It now answers `invalid_grant` as soon
+  as the grant has expired. The authorization-code exchange applies the same exact comparison to
+  the access it hands back.
+
+- **SQLite engine: `events.getOne` no longer serves a history version by its own storage id.**
+  With versioning on (`versioning.forceKeepHistory`), each earlier version of an event is stored
+  under an id of its own. The API never returns that id, but asking for it on the SQLite engine
+  answered with the stored version (its `headId` included), where the PostgreSQL engine answers
+  `404 unknown-resource`. The SQLite engine now answers `unknown-resource` too, for reads and
+  updates; history stays available through `includeHistory` on the head event.
 
 ## 2.0.0-rc.64 - 2026-10-29
 

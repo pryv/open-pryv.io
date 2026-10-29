@@ -776,6 +776,20 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       await pollStreamFor(alice.eventsPath, alice.token, h.aliceCollectorStreamId, 'consent/scope-update-cmc',
         (e) => e.content?.scopeRequestEventId === remoteId && e.content?.accept === false);
     });
+
+    it('[CN105] accepting a request for an account-stream permission accesses.update refuses applies nothing', async function () {
+      for (const permission of [
+        { streamId: ':_system:invitationToken', level: 'read' },
+        { streamId: ':_system:cmcunknownfield', level: 'read' },
+        { streamId: ':_system:language', level: 'contribute' },
+      ]) {
+        const remoteId = await propose(h, [{ streamId: 'fertility', level: 'read' }, permission]);
+        const done = await answer(h.bobCollectorStreamId, { scopeRequestEventId: remoteId, accept: true });
+        assert.strictEqual(done.content.status, 'failed', JSON.stringify(done.content));
+        assert.strictEqual(done.content.failure?.reason, 'cmc-offer-invalid-permissions', JSON.stringify(done.content));
+        assert.ok(!(await grantStreamIds(bob, bobDataGrantId)).has(permission.streamId), permission.streamId + ' must not be granted');
+      }
+    });
   });
 
   describe('[CMCHS-AS] accept on an app scope the accepter never created', function () {

@@ -433,7 +433,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       accessesRepository.findOne({ id: userId, username }, { id: base }, null,
         (err: unknown, found: DataGrant | null) => (err != null ? reject(err) : resolve(found)));
     });
-    const nowSeconds = Math.floor(Date.now() / 1000);
+    // Not rounded: `expires` carries sub-second precision, and a "now" rounded
+    // down to the second would keep a just-expired grant alive up to 1 s.
+    const nowSeconds = Date.now() / 1000;
     if (head == null || head.deleted != null ||
         (typeof head.expires === 'number' && head.expires <= nowSeconds)) {
       const revoked = new Error('consent data-grant revoked or expired') as Error & { code: string };
@@ -470,7 +472,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (accessesRepository == null) {
       throw new Error('mintAccessDirect: storageLayer.accesses unavailable');
     }
-    const now = Math.floor(Date.now() / 1000);
+    // Millisecond precision, like every other access (timestamp.now()): the
+    // client-revoke check compares `created` with a revoke epoch in ms, so a
+    // time rounded down to the second would put a session minted just after a
+    // revoke (same second) before it, and refuse it as revoked.
+    const now = Date.now() / 1000;
     const newToken = accessesRepository.generateToken();
     const newAccessRow: Record<string, unknown> = {
       type: 'app',
@@ -596,7 +602,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // would have to replicate the storage layer's canonicalization.
     await fromCallback((cb: (e: unknown) => void) =>
       accessesRepository.updateOne(user, { id: accessId },
-        { clientData: { ...existingClientData, dpop: { jkt } }, modified: Math.floor(Date.now() / 1000) }, cb));
+        { clientData: { ...existingClientData, dpop: { jkt } }, modified: Date.now() / 1000 }, cb));
     cache.unsetUserData(userId);
     pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
   }
@@ -624,7 +630,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }): Promise<{ accessToken: string; apiEndpoint: string } | null> {
     const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
     if (access == null || access.deleted != null || typeof access.token !== 'string') return null;
-    if (typeof access.expires === 'number' && access.expires <= Math.floor(Date.now() / 1000)) return null;
+    if (typeof access.expires === 'number' && access.expires <= Date.now() / 1000) return null;
     // Same builder accesses.create uses, so the exchange returns what /accept minted.
     const ApiEndpoint = require('utils').ApiEndpoint;
     return { accessToken: access.token, apiEndpoint: ApiEndpoint.buildForAccess(access, username) };

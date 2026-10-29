@@ -1035,6 +1035,8 @@ async function runRetryLoop (params: {
  *   - cmc-handler-delivery-rejected (4xx), and the capability refusals
  *     reported in its place (consumed / invalidated / already accepted)
  *   - cmc-offer-empty-permissions
+ *   - cmc-offer-invalid-permissions / cmc-granted-permissions-not-subset /
+ *     cmc-insufficient-permissions (a refused permission set)
  *   - cmc-system-counterparty-access-not-found
  *   - cmc-system-no-remote-*
  *   - cmc-chat-counterparty-access-not-found
@@ -1070,6 +1072,12 @@ const NON_RETRYABLE_REASONS = new Set([
   ...CAPABILITY_REFUSAL_IDS,
   'cmc-offer-empty-permissions',
   'cmc-offer-stream-not-offerable',
+  // Refusals of the permission set itself. Their checks judge the offer, the
+  // granted set and the accepting access; a replay runs without that access,
+  // so it could only skip the access-dependent checks, never pass them.
+  'cmc-offer-invalid-permissions',
+  'cmc-granted-permissions-not-subset',
+  'cmc-insufficient-permissions',
   'cmc-system-counterparty-access-not-found',
   'cmc-system-no-remote-apiendpoint',
   'cmc-system-no-remote-collector-stream',

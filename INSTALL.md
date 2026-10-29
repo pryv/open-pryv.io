@@ -99,6 +99,11 @@ auth:
   passwordResetPageURL: https://your-account-app.example.com/reset-password
   emailVerificationPageURL: https://your-account-app.example.com/verify-email
 
+oauth:
+  # Consent page of your account app; GET /oauth2/authorize redirects there.
+  # Without it the OAuth authorization flow answers 500.
+  consentUrl: https://your-account-app.example.com/oauth2-authorize
+
 platform:
   # PlatformDB PII is hashed by default: the core refuses to start without the key.
   # node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"

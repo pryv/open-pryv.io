@@ -101,6 +101,13 @@ const MEMBERSHIP_OFFER_REQUEST = {
 };
 
 describe('[CMCMB] cmc group accounts: the member role and the membership offer', () => {
+  // The accept validates account-stream permissions, which needs the
+  // account-stream schema a live server loads at start.
+  before(async () => {
+    require('test-helpers/src/api-server-tests-config.ts');
+    await require('business/src/system-streams/index.ts').init();
+  });
+
   describe('[CMCMB-OFFER] what a membership offer may ask', () => {
     it('[MB01] request.membership is a boolean; the admissible offer validates', () => {
       assert.equal(V.validate('consent/request-cmc', { to: null, request: MEMBERSHIP_OFFER_REQUEST }).valid, true);

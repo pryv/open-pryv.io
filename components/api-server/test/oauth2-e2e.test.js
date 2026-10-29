@@ -814,6 +814,37 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(refreshRes.body.error, 'invalid_grant');
     });
 
+    it('[OE36] a consent data-grant expired a fraction of a second ago refuses the refresh (invalid_grant)', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const dataGrantId = (await accessInfo(r.tokenRes.body.access_token)).clientData?.oauth?.dataGrantId;
+      assert.equal(typeof dataGrantId, 'string', 'premise: the session names its data-grant');
+      // Expire the grant 200 ms ago but after the start of the current second,
+      // so a "now" rounded down to the second still falls before the expiry.
+      while (Date.now() % 1000 < 250 || Date.now() % 1000 > 450) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const expires = Date.now() / 1000 - 0.2;
+      const accessesRepository = require('storages').storageLayer.accesses;
+      const setExpires = (value) => new Promise((resolve, reject) => accessesRepository.updateOne(
+        { id: endUser.attrs.id, username }, { id: dataGrantId }, { expires: value, modified: Date.now() / 1000 },
+        (err) => (err != null ? reject(err) : resolve())));
+      await setExpires(expires);
+      try {
+        const refreshRes = await coreRequest.post('/oauth2/token').type('form')
+          .send({ grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId });
+        assert.ok(Math.floor(Date.now() / 1000) < expires, 'premise: refreshed within the second of the expiry');
+        assert.equal(refreshRes.status, 400, 'POST /oauth2/token (refresh): ' + describeRes(refreshRes));
+        assert.equal(refreshRes.body.error, 'invalid_grant');
+      } finally {
+        // Revoke the grant, or the offer stays accepted and the next consent is refused.
+        await setExpires(null);
+        const delRes = await coreRequest.delete('/' + username + '/accesses/' + encodeURIComponent(dataGrantId))
+          .set('Authorization', personalToken);
+        assert.ok(delRes.status === 200 || delRes.status === 204, JSON.stringify(delRes.body));
+      }
+    });
+
     it('[OE31] revoking the consent data-grant kills the live session accesses at once, refreshed ones and their sub-accesses included', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
@@ -1059,6 +1090,29 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(tokenRes));
       const eventsRes = await coreRequest.get('/' + username + '/events').set('Authorization', tokenRes.body.access_token);
       assert.equal(eventsRes.status, 200);
+    });
+
+    it('[OE35] a client revoked and re-registered within the same second: a token minted right after works', async function () {
+      const platformDB = require('storages').platformDB;
+      const revokedCache = require('oauth2/src/revokedClientsCache.ts');
+      const existing = await storage.getClient(platformDB, ccClientId);
+      // Revoke at least 100 ms into a second, so a creation time rounded down to
+      // the second falls before the revoke epoch while the real one is after it.
+      while (Date.now() % 1000 < 100 || Date.now() % 1000 > 500) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await storage.deleteClient(platformDB, ccClientId);
+      await storage.setClient(platformDB, existing);
+      revokedCache._resetForTests();
+      const revokedAt = await storage.getRevokedAt(platformDB, ccClientId);
+
+      const basic = 'Basic ' + Buffer.from(ccClientId + ':' + ccSecret).toString('base64');
+      const tokenRes = await coreRequest.post('/oauth2/token').type('form').set('Authorization', basic)
+        .send({ grant_type: 'client_credentials' });
+      assert.equal(tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(tokenRes));
+      assert.ok(Date.now() - revokedAt < 1000 - (revokedAt % 1000), 'premise: minted within the second of the revoke');
+      const eventsRes = await coreRequest.get('/' + username + '/events').set('Authorization', tokenRes.body.access_token);
+      assert.equal(eventsRes.status, 200, 'the token minted after the revoke works: ' + describeRes(eventsRes));
     });
   });
 

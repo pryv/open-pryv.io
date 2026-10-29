@@ -54,6 +54,39 @@
   with `account.autoDeletion.transfer.identitySecretsKey` or a key derived from the admin key).
 - Account activity helper: a delegate's use counts as use of the account and is reported as such,
   with a per-access-type breakdown.
+### Storage: event deletion listings hold head events only (defence in depth)
+
+- The deletion listings (`deleted > since`, used by `events.get` with `includeDeletions`) of both
+  engines did not exclude history versions, where the single-event lookups do (`head_id IS NULL`
+  on PostgreSQL, `headId IS NULL` on SQLite). No API path stamps a version with a deletion time (a
+  version is a copy of the event before the change, deleted events cannot be changed), so this is
+  not reachable through the API; a restored or hand-edited store could hold such rows. Both
+  engines now filter them, in both SQLite query paths (default and paged). Test `[EGVI2]` stamps
+  a version directly in the store.
+
+### Config: an empty `oauth.consentUrl` is reported (boot warning and `check-config`)
+
+- `GET /oauth2/authorize` answers 500 (`oauth:consentUrl not configured`) while `oauth.consentUrl`
+  is empty, and nothing said so before the first authorization attempt. The master now logs a
+  boot warning (`[oauth] oauth.consentUrl is not set: …`) and `bin/check-config.js` lists the same
+  warning. A warning only, never a refusal: OAuth has no enable flag and a core that does not use
+  the authorization flow runs fine without the key. Nothing is reported when the OAuth routes do
+  not mount (no issuer can be derived). The rule lives in `components/oauth2/src/consentUrlCheck.ts`,
+  shared by both. Tests `[OCUW1]`-`[OCUW3]`, `[CKOC1]`.
+
+### Account-stream permissions: one validator, use-time refusal, final consent refusals
+
+- `business/src/accesses/accountStreamPermissions.ts` holds the account-stream rules of a
+  permission set (hidden or unknown account streams, the account root, account fields above
+  `read`), shared by `accesses.create`, `accesses.update`, the CMC consent accept and the
+  collector scope update (through `cmc/src/validators.ts` `accountStreamPermissionsError`, which
+  initialises the account-stream state it reads). `AccessLogic.canCreateAccessForAccountStream`
+  is removed (its contribute cap is replaced by the stricter rule).
+- `AccessLogic.canCreateEventsOnStream` refuses any account-store stream for an access other than
+  the personal one; `canUpdateEventsOnStream` and the delete checks go through it.
+- `cmc/src/retryQueue.ts`: `cmc-offer-invalid-permissions`, `cmc-granted-permissions-not-subset`
+  and `cmc-insufficient-permissions` join `NON_RETRYABLE_REASONS`. The retry loop replays a
+  trigger without `triggerAccess`, so these checks could only be skipped on a replay.
 
 ### OAuth2 documentation brought in line with the code (no behaviour change)
 
@@ -70,6 +103,30 @@
   app-web-auth3; the `routes.ts` dependency comments give the 500 `server_error` answered for an
   advertised but unwired grant (not 501); the `authorize.ts` and INTERNALS text no longer claim
   cross-core forwarding at `/oauth2/token`; the README status is current.
+
+### Config: `oauth.consentUrl` is declared and set by the install wizard
+
+- `GET /oauth2/authorize` needs `oauth.consentUrl` (the consent page of the auth UI) and answers
+  500 `oauth:consentUrl not configured` without it, but no config file or template mentioned the
+  key. `config/default-config.yml` now declares it in the `oauth` section (empty by default, with
+  a comment saying what it is and that the authorization flow needs it), `bin/init.js` asks for
+  it like the other auth-UI pages (default `<auth UI>/oauth2-authorize`, the app-web-user-account
+  route, answer key `oauth.consenturl`) and writes it to the generated config, and INSTALL.md's
+  minimal production config shows it. Not added to the boot-time required keys: OAuth has no
+  enable flag (its routes mount whenever `service.api` is set), so requiring the key would stop
+  every deployment that does not use OAuth. Test `[INWZA]`.
+
+### npm: dependency install scripts approved in `package.json`
+
+- npm 11.19 checks dependency install scripts against an `allowScripts` list in `package.json`
+  and ends every `npm ci` / `npm install` with a warning naming the ones not on it (here
+  `bcrypt`, `better-sqlite3`, `fs-xattr`, `unix-dgram`, `unrs-resolver` and the `backloop.dev`
+  git dependency). The check is advisory in this npm release (the scripts still run and the
+  native modules are built), but npm announces that a later release will skip unapproved
+  scripts, which would leave the SQLite engine, the previews cache (extended attributes) and the
+  syslog socket without their native builds. `package.json` now approves these six by name (any version, so a
+  dependency bump keeps building), which also silences the warning. CI and the Dockerfile, which
+  install with `--ignore-scripts` then `npm rebuild`, are unchanged.
 
 ## Lint: the TypeScript sources are style-checked
 
