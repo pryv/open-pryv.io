@@ -521,3 +521,36 @@ describe('[CCMC] bin/check-config.js on a multi-core member without a DNS of its
     assert.match(res.stderr, /Neither dnsLess\.isActive nor dns\.active is true — server cannot resolve user → core/);
   });
 });
+
+describe('[CCDU] bin/check-config.js on dns.domain with dnsLess.isActive left unset', function () {
+  this.timeout(60000);
+
+  const PROBLEM = /'dns\.domain' is set \(example\.org\) but 'dnsLess\.isActive' is not: set it explicitly/;
+  const withTopology = (block) => BASE.replace('dnsLess:\n  isActive: true\n  publicUrl: https://core.example.com/\n', block);
+
+  it('[CCDU1] dns.domain without core.url and without dnsLess.isActive is a problem, as at boot', () => {
+    for (const block of [
+      'dns:\n  domain: example.org\n',
+      'dns:\n  domain: example.org\ndnsLess:\n  publicUrl: https://core.example.com/\n'
+    ]) {
+      const body = withTopology(block);
+      assert.notStrictEqual(body, BASE);
+      const res = runCheck(body);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assert.match(res.stderr, PROBLEM);
+    }
+  });
+
+  it('[CCDU2] dnsLess.isActive set in the file or the environment, or a core.url, is not that problem', () => {
+    for (const [block, env] of [
+      ['dns:\n  domain: example.org\ndnsLess:\n  isActive: true\n  publicUrl: https://core.example.com/\n', {}],
+      ['dns:\n  domain: example.org\ndnsLess:\n  isActive: false\n', {}],
+      ['dns:\n  domain: example.org\n', { dnsLess__isActive: 'false' }],
+      ['dns:\n  domain: example.org\ncore:\n  url: https://core-b.example.org\n', {}]
+    ]) {
+      const res = runCheck(withTopology(block), null, env);
+      assert.doesNotMatch(res.stdout + res.stderr, /dnsLess\.isActive' is not/, block);
+      assert.strictEqual(res.status, 0, block + res.stdout + res.stderr);
+    }
+  });
+});

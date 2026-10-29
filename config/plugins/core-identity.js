@@ -70,8 +70,29 @@ function deriveCoreIdentity (get) {
   return { coreUrl: publicUrl ? stripTrailingSlash(publicUrl) : null, isSingleCore: true };
 }
 
+/**
+ * The one topology `deriveCoreIdentity` cannot settle: `dns.domain` set, no
+ * `core.url`, and no `dnsLess.isActive` in the operator's layers. This plugin
+ * then derives a multi-core identity (and the public-url plugin per-user
+ * subdomain service URLs), while the shipped default `dnsLess.isActive: true`
+ * makes the core route path-style: it would advertise names nothing serves.
+ * Boot refuses it (config-validation) and bin/check-config.js reports it.
+ *
+ * `get` reads the operator's layers only, as for `deriveCoreIdentity`.
+ *
+ * @param {(key: string) => any} get
+ * @returns {string|null} the problem, or null when the topology is settled
+ */
+function dnsLessUnsetProblem (get) {
+  if (get('core:url') || get('dns:domain') == null) return null;
+  if (typeof get('dnsLess:isActive') !== 'undefined') return null;
+  return `'dns.domain' is set (${get('dns:domain')}) but 'dnsLess.isActive' is not: set it explicitly, ` +
+    "'false' for a DNS multi-core deployment with per-user subdomains, 'true' for a single core with path-style routing. " +
+    'Left unset, the core would advertise per-user subdomain URLs while routing requests path-style.';
+}
+
 function stripTrailingSlash (url) {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
-module.exports = { load, deriveCoreIdentity };
+module.exports = { load, deriveCoreIdentity, dnsLessUnsetProblem };

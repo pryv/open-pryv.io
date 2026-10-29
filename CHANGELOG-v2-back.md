@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Boot: dns.domain with dnsLess.isActive unset is refused
+
+- `config/plugins/core-identity.js` and `config/plugins/public-url.js` are synchronous boiler
+  plugins: they run before `default-config.yml` loads and see `dnsLess.isActive` as undefined when
+  the operator left it out. With `dns.domain` set and no `core.url` they derived a multi-core
+  identity and per-user subdomain service URLs, while the runtime readers (express routing,
+  `usernameSubdomains`, the register routes, hosted sites, ACME host names) read the merged
+  default `true` and routed path-style. That undefined view stays as it is, since a DNSless
+  multi-core member (`core.url`, no `dnsLess` key) depends on it; only the `dns.domain` case is
+  now refused. `core-identity.js` exports `dnsLessUnsetProblem(get)` (operator's layers in,
+  message or null out); `config-validation.js` runs it as `checkDnsLessExplicit` over the
+  config's scopes minus `memory` (what boot plugins derived, the plugin's own `core.url`
+  among them), `default-file` and `defaults`; `bin/check-config.js` runs it over its operator
+  layers. Tests `[CVDU1-4]` (boiler config over the shipped defaults with the core-identity
+  plugin, as at boot: refusal, and classification unchanged for every other topology) and
+  `[CCDU1-2]`.
+
 ### check-config: the shipped defaults are a layer; multi-core members without a DNS of their own
 
 - `bin/check-config.js` read the checked file (with the environment and `bootstrap-config.yml`)
