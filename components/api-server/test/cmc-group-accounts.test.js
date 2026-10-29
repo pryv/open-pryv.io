@@ -588,7 +588,14 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       });
       assert.strictEqual(rev.status, 201, JSON.stringify(rev.body));
       await pollTokenDead(patient, subToken, 'GA30 sub-access');
-      assert.strictEqual((await coreRequest.get('/' + alias + '/access-info').set('Authorization', subToken)).status, 404, 'the alias no longer resolves');
+      // The alias is released after the delete and the cache bust: poll it too
+      // (the token can already be dead, 403, while the alias still resolves).
+      let aliasStatus = null;
+      for (let i = 0; i < 50 && aliasStatus !== 404; i++) {
+        if (i > 0) await new Promise((resolve) => setTimeout(resolve, 100));
+        aliasStatus = (await coreRequest.get('/' + alias + '/access-info').set('Authorization', subToken)).status;
+      }
+      assert.strictEqual(aliasStatus, 404, 'the alias no longer resolves');
       const hooks = await coreRequest.get(patient.webhooksPath).set('Authorization', patient.token);
       assert.strictEqual(hooks.status, 200);
       assert.ok(!hooks.body.webhooks.some((h) => h.id === wh.body.webhook.id), 'the grant\'s webhook is deleted');

@@ -262,6 +262,39 @@ describe('[VERS] Versioning', function () {
             }
           );
         });
+
+      it('[HSRC] must not return the versions of an event the access cannot read (event moved from an unreadable stream)', async function () {
+        // Earlier sections restart the server with other versioning settings.
+        const settings = structuredClone(helpers.dependencies.settings);
+        settings.versioning.forceKeepHistory = true;
+        await new Promise((resolve, reject) => server.ensureStarted(settings, (err) => (err ? reject(err) : resolve())));
+        const hiddenStreamId = 'hsrc-hidden-' + cuid.slug();
+        const sharedStreamId = 'hsrc-shared-' + cuid.slug();
+        for (const id of [hiddenStreamId, sharedStreamId]) {
+          const res = await request.post(pathToStream()).send({ id, name: id });
+          assert.equal(res.status, 201, JSON.stringify(res.body));
+        }
+        const created = await request.post(pathToEvent())
+          .send({ streamIds: [hiddenStreamId], type: 'note/txt', content: 'hsrc-hidden-content' });
+        assert.equal(created.status, 201, JSON.stringify(created.body));
+        const eventId = created.body.event.id;
+        const moved = await request.put(pathToEvent(eventId))
+          .send({ streamIds: [sharedStreamId], content: 'hsrc-shared-content' });
+        assert.equal(moved.status, 200, JSON.stringify(moved.body));
+        const shared = await request.post('/' + user.username + '/accesses')
+          .send({ type: 'shared', name: 'hsrc-' + cuid.slug(), permissions: [{ streamId: sharedStreamId, level: 'read' }] });
+        assert.equal(shared.status, 201, JSON.stringify(shared.body));
+
+        const premise = await request.get(pathToEvent(eventId)).query({ includeHistory: true });
+        assert.ok(premise.body.history?.some((v) => v.streamIds?.includes(hiddenStreamId)),
+          'premise: the personal access sees the version in the hidden stream: ' + JSON.stringify(premise.body.history));
+
+        const res = await request.get(pathToEvent(eventId), shared.body.access.token).query({ includeHistory: true });
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+        assert.equal(res.body.event.content, 'hsrc-shared-content');
+        const leaked = (res.body.history ?? []).filter((v) => v.streamIds?.includes(hiddenStreamId) || v.content === 'hsrc-hidden-content');
+        assert.deepEqual(leaked, [], 'the shared access must not see the versions it cannot read');
+      });
     });
 
     describe('[VE04] forceKeepHistory is OFF', function () {

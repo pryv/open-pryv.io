@@ -14,6 +14,13 @@
   same teardown as `accesses.delete`, so aliases are released, credentials scrubbed from the
   deletion records and running webhooks stopped there too.
 
+- **Security: `events.getOne` with `includeHistory` no longer returns versions the access cannot
+  read.** Each earlier version was returned as stored, without the read check applied to the event
+  itself: an event moved out of a stream the access cannot read (or out of a `none` stream) still
+  showed its earlier content and stream ids in `history`. Every version now goes through the same
+  check as the head event (forbidden, internal and hidden streams, forced streams, readable
+  streams); a version that fails it is left out of `history`.
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,
