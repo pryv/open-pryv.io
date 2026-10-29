@@ -29,13 +29,23 @@ The discovery document advertises:
   "issuer": "https://<deployment-base>",
   "authorization_endpoint": "https://<deployment-base>/oauth2/authorize",
   "token_endpoint": "https://<deployment-base>/oauth2/token",
+  "scopes_supported": [ ... ],
   "response_types_supported": ["code"],
+  "response_modes_supported": ["query"],
   "grant_types_supported": ["authorization_code"],
-  "token_endpoint_auth_methods_supported": ["client_secret_basic", "none"],
+  "token_endpoint_auth_methods_supported": ["client_secret_basic", "private_key_jwt", "none"],
+  "token_endpoint_auth_signing_alg_values_supported": ["ES256"],
   "code_challenge_methods_supported": ["S256"],
-  "scopes_supported": [ ... ]
+  "authorization_response_iss_parameter_supported": true,
+  "dpop_signing_alg_values_supported": ["ES256"]
 }
 ```
+
+`grant_types_supported` reflects `oauth.grantTypesSupported`.
+`private_key_jwt` is RFC 7523 client authentication with an ES256 assertion
+(`aud` = the issuer or the token-endpoint URL). `dpop_signing_alg_values_supported`
+means a client that sends an RFC 9449 DPoP proof to `/oauth2/token` receives a
+sender-constrained `DPoP` token instead of a `Bearer` one.
 
 The token endpoint returns the RFC 6749 §5.1 JSON plus a Pryv extension
 field, `apiEndpoint`, that clients use to build a working connection:
@@ -117,17 +127,28 @@ All settings live under the `oauth:` block. Defaults:
 
 ```yaml
 oauth:
+  # consentUrl: https://account.example.com/oauth2-authorize  # REQUIRED for /oauth2/authorize (see below)
   # issuer: https://auth.example.com  # optional explicit issuer override (see below)
   accessTokenTTL: 3600             # access-token lifetime, seconds (1 hour)
   refreshTokenTTL: 2592000         # refresh-token sliding window, seconds (30 days)
   refreshTokenAbsoluteTTL: 7776000 # refresh-token absolute cap, seconds (90 days)
   clientRegistration:
     mode: curated                  # ONLY supported value (see below)
-  requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes
-  audAllowList: []                 # optional accepted `aud` values on /oauth2/authorize
+  requireAppAccountMfa: true       # NOT ENFORCED yet (see below)
+  audAllowList: []                 # NOT ENFORCED, superseded (see below)
   grantTypesSupported:             # advertised in the discovery document
     - authorization_code
 ```
+
+### `consentUrl` (required for the authorization-code flow)
+
+The URL of the consent UI that `/oauth2/authorize` redirects the user-agent to,
+with the signed `state` and the issuer (`pryvApi`) as query parameters. The
+consent UI calls back `POST /oauth2/authorize/accept` or
+`POST /oauth2/authorize/refuse`. It has no default: when it is unset,
+`/oauth2/authorize` answers `500 server_error` (`oauth:consentUrl not
+configured`). app-web-user-account is the reference consent UI (its
+`/oauth2-authorize` page).
 
 ### `issuer` (optional)
 
@@ -138,7 +159,11 @@ core's own URL for multi-core). If the OAuth surface fails to mount with
 `service:api not configured`, or your **public** URL differs from the
 internally configured one (a reverse proxy or TLS terminator in front of the
 core), set `oauth.issuer` explicitly to the public base URL — it overrides the
-automatic derivation. Use the same value on every core in a cluster.
+automatic derivation. On a multi-core deployment the issuer is **per core**:
+set each core's override to that core's own public URL, never one shared
+load-balancer URL. The code exchange at `/oauth2/token` must reach the core
+that issued the code (there is no cross-core forwarding; a code presented to
+another core answers `invalid_grant`).
 
 ### `clientRegistration.mode` is `curated`
 
@@ -147,11 +172,19 @@ rejected at boot. Application accounts are created out-of-band by an operator
 with the CLI (§3). This is deliberate: on a self-hosted deployment the operator
 is the trust anchor for which apps may request user consent.
 
-### `requireAppAccountMfa`
+### `requireAppAccountMfa` (not enforced yet)
 
-When `true` (default), an application account must have MFA enrolled before it
-can drive any `/oauth2/*` write. Keep it on in production — an app account is a
-high-value credential.
+Intended to require an application account to have MFA enrolled before it can
+drive any `/oauth2/*` write. **No code reads this key today**: whatever its
+value, an app account without MFA is not refused. A later release will either
+enforce it or remove it. Until then, protect app accounts by other means (MFA
+enrolled by the operator, strong credentials, curated registration).
+
+### `audAllowList` (not enforced, superseded)
+
+**No code reads this key**: `/oauth2/authorize` does not check an `aud` value
+against it, whatever it lists. It is superseded by a planned per-client
+audience check and will be removed then. Do not rely on it.
 
 ### Token lifetimes
 
@@ -161,12 +194,14 @@ high-value credential.
 
 ### ⚑ Per-deployment config agreement (multi-core)
 
-The discovery document is **per-deployment, not per-core**: its `issuer` and
-endpoints describe the whole deployment. **Every core in a cluster MUST carry
-the same `oauth:` block.** A drifting `oauth:` block on one core (different
-TTLs, different `audAllowList`, MFA on/off) produces inconsistent token
-behaviour depending on which core a request lands on. Treat the `oauth:` block
-as a deployment-wide invariant and roll it out to all cores together.
+On a multi-core deployment each core serves its own discovery document, whose
+`issuer` and endpoints name **that core** (see `issuer` above): the code and
+refresh exchanges must reach the issuing core, and no core forwards them.
+Apart from `issuer`, **every core in a cluster MUST carry the same `oauth:`
+block.** A drifting block on one core (different TTLs, grant types, DPoP or
+revoke settings) produces inconsistent token behaviour depending on which core
+served the user. Treat it as a deployment-wide invariant and roll it out to
+all cores together.
 
 ---
 
@@ -311,7 +346,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 | `/oauth2/authorize` → `invalid_request` / `redirect_uri` mismatch | the request's `redirect_uri` is not byte-for-byte one of the registered URIs |
 | `/oauth2/token` → `invalid_grant` (PKCE) | the `code_verifier` does not match the `code_challenge` sent at `/authorize`, or the code expired / was already used |
 | `/oauth2/token` → `invalid_client` | confidential client presented a wrong/rotated `client_secret` |
-| app account cannot complete `/oauth2/*` | `requireAppAccountMfa: true` but the app account has not enrolled MFA |
+| `/oauth2/token` → `invalid_grant` on a multi-core deployment, the core logs "presented to core" | the exchange reached a core other than the one that issued the code: an `oauth.issuer` shared by several cores (see §2) |
 | tokens behave differently between requests | `oauth:` block drift across cores (see §2) |
 
 ---
@@ -321,8 +356,9 @@ single-use, so a reuse means either a broken client or a stolen code.
 - **Rotate `client_secret`s** periodically and immediately on suspected
   compromise: `bin/oauth-client.js rotate-secret <clientId>`. The old secret
   stops working as soon as the new one is minted.
-- **Keep `requireAppAccountMfa: true`.** An app account can request consent from
-  any user on the deployment; protect it like an admin credential.
+- **Protect app accounts like admin credentials.** An app account can request
+  consent from any user on the deployment. Enrol MFA on it: the
+  `requireAppAccountMfa` key does not enforce that yet (§2).
 - **Rate-limit at the proxy** (§4) — the layer relies on the operator for this.
 - **Monitor the audit stream** (§5), especially `oauth.code.reused` and bursts
   of `oauth.consent.refused` / `invalid_client`.

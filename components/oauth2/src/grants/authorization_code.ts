@@ -328,7 +328,7 @@ export async function handleAuthorizationCode (
     }
     if (row.coreId !== coreId) {
       // The exchange must reach the core that ran /accept (the issuer
-      // resolves to the user's home core, see wellKnown.ts). Uniform answer
+      // resolves to the user's home core, see issuer.ts). Uniform answer
       // to the client; the routing fault is for the operator.
       logServerError('authorization_code: code issued by core "' + String(row.coreId) +
         '" was presented to core "' + coreId + '"; check issuer routing', null);

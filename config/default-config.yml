@@ -972,8 +972,12 @@ oauth:
   clientRevokeCheckSeconds: 30     # seconds
   clientRegistration:
     mode: curated                  # ONLY supported value; "open" is rejected
-  requireAppAccountMfa: true       # app accounts must enrol MFA before /oauth2/* writes
-  audAllowList: []                 # optional list of accepted aud values on /oauth2/authorize
+  # NOT ENFORCED: no code reads this key yet (app accounts are not required to
+  # enrol MFA); a later release will either enforce it or remove it.
+  requireAppAccountMfa: true
+  # NOT ENFORCED (superseded): no code reads this key; a per-client audience
+  # check is planned to replace it, after which the key will be removed.
+  audAllowList: []
   grantTypesSupported:             # advertised in the discovery doc
     - authorization_code
 

@@ -9,16 +9,16 @@ Open Pryv.io deployments can run multiple cores fronted by a load balancer. Each
 | Endpoint | Lands on | Why |
 |---|---|---|
 | `GET /oauth2/authorize` | Any core | Validates client via the PlatformDB cache (`oauth-client/<clientId>`); the user's home core is not yet known. |
-| Consent UI (`auth.pryv.me/oauth2-authorize`) | Any core (via app-web-auth3 then `GET /reg/<username>/server` → user's home core) | User authenticates against THEIR home core. |
+| Consent UI (`oauth:consentUrl`, e.g. app-web-user-account) | Any core (the consent UI then resolves `GET /reg/<username>/server` → user's home core) | User authenticates against THEIR home core. |
 | `POST /oauth2/authorize/accept` | **User's home core** | The granted access row lives in the user's per-user accesses table. The authorization-code row records this core's id (`coreId`) and the access id, never the access token. |
-| `POST /oauth2/token` (any grant) | **User's home core** (the issuer resolves there, see `wellKnown.ts`) | The code grant reads the access token back from this core's storage, and the refresh grant re-mints through it, so both must reach the issuing core. There is no cross-core forwarding: a code presented to another core answers `invalid_grant` and logs the routing fault. |
+| `POST /oauth2/token` (any grant) | **User's home core** (the issuer resolves there, see `issuer.ts`) | The code grant reads the access token back from this core's storage, and the refresh grant re-mints through it, so both must reach the issuing core. There is no cross-core forwarding: a code presented to another core answers `invalid_grant` and logs the routing fault. |
 | `GET /<username>/<api>` with Bearer | User's home core (via `checkUserCore.ts` 421 + `coreUrl`) | Existing Pryv resource-server routing; OAuth-issued tokens flow through unchanged. |
 
-### Why `iss` is per-deployment, not per-core
+### Why `iss` is per core on multi-core
 
-`.well-known/oauth-authorization-server` is served by every core, but the `iss` field (and `authorization_endpoint`, `token_endpoint`, etc.) advertises the **load-balancer-facing URL** (e.g. `https://reg.pryv.me`), not the per-core URL. Every core's discovery doc MUST agree. Per-core URLs are internal routing detail; clients use the canonical service URL.
+`.well-known/oauth-authorization-server` is served by every core, and its `iss` field (and `authorization_endpoint`, `token_endpoint`, the `pryvApi` handed to the consent UI) is derived by `issuerFromConfig` (`src/issuer.ts`): `oauth:issuer` when set, else `dnsLess:publicUrl` (single-URL deployments), else, on multi-core, **this core's own `core:url`**. Nothing is forwarded between cores: the authorization-code row records its issuing `coreId` and the refresh keyspace is per core, so `/oauth2/token` must reach the core that issued the code or refresh token, which is why the issuer names that core. An `oauth:issuer` override on multi-core must therefore name each core's own public URL, not a shared load-balancer URL.
 
-Operators MUST keep the `oauth.*` config block in sync across cores; the discovery doc cannot accommodate disagreement. An optional `bin/oauth-client.js doctor` subcommand may surface config drift in a later commit.
+Apart from `issuer`, operators MUST keep the `oauth.*` config block in sync across cores (TTLs, grant types, DPoP and revoke settings), or token behaviour depends on which core served the user.
 
 ### Why vanilla OAuth clients need the `apiEndpoint` extension
 

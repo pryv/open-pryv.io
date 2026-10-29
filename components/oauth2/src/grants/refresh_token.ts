@@ -9,7 +9,7 @@
  * OAuth2 — `grant_type=refresh_token` handler.
  *
  * Exchange flow:
- *   1. Load the refresh row (key: `oauth-refresh/<coreId>/<token>`).
+ *   1. Load the refresh row (key: `oauth-rt/<coreId>/<sha256(token)>`).
  *      `getAccessState` lazy-expires past `min(expiresAt, absoluteExpiresAt)`.
  *   2. Consume the row atomically (single-use; rotation always on). If the
  *      token no longer resolves, a consumed-marker lookup distinguishes genuine

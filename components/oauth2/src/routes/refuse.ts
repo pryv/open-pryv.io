@@ -8,7 +8,8 @@
 /**
  * OAuth2 — `POST /oauth2/authorize/refuse` handler.
  *
- * Called from app-web-auth3 when the user declines consent. Body:
+ * Called from the consent UI (e.g. app-web-user-account, the current
+ * reference UI) when the user declines consent. Body:
  *   { state: <signed-state> }
  *
  * Server verifies the signed state (so we never redirect to an

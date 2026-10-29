@@ -4,19 +4,21 @@ How to extend this component without re-litigating design decisions.
 
 ## Adding a new scope parser
 
-The scope parser registry (`src/scopeRegistry.ts`) is keyed by **namespace**. The default deployment registers only the `pryv:` namespace; other grammars (e.g. SMART on FHIR) layer on by registering an additional parser.
+The scope parser registry (`src/scopeRegistry.ts`) is keyed by **namespace**. The default deployment registers only the `cmc` namespace (`cmc:<offer-name>`, a consent-offer reference); other grammars (e.g. resource/action tokens) layer on by registering an additional parser.
 
 ```ts
-import { registerScopeParser } from './scopeRegistry.ts';
+import { registerScopeParser, ScopeParseError } from './scopeRegistry.ts';
 
-registerScopeParser('smart', (scopeToken) => {
-  // scopeToken is the raw text after `<namespace>/`, e.g. `patient/Observation.read`
-  // Return an array of internal permission objects (or throw if malformed).
-  return parseSmartScopeToken(scopeToken);
+registerScopeParser('ext', (body) => {
+  // body is the text after `<namespace>:`, e.g. `records/item.read` for `ext:records/item.read`
+  // Return one ParsedScope (or throw ScopeParseError if malformed).
+  const m = /^([a-z]+)\/([a-z]+)\.(read|write)$/.exec(body);
+  if (m == null) throw new ScopeParseError(`invalid ext scope "${body}"`);
+  return { namespace: 'ext', raw: `ext:${body}`, permission: m[3], resource: m[2] };
 });
 ```
 
-The registry is **process-global** — register at boot, before `registerRoutes(app, deps)` runs. The first whitespace-separated token in the OAuth `scope` parameter is matched against registered namespaces; tokens without a known namespace are rejected with `invalid_scope`.
+The registry is **process-global** — register at boot, before `registerRoutes(app, deps)` runs. Every whitespace-separated token in the OAuth `scope` parameter is split at its first `:` and handed to the parser of that namespace; a token without a namespace prefix, or with an unregistered one, is rejected with `invalid_scope`.
 
 ## Adding a new grant type
 

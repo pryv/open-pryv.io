@@ -16,7 +16,7 @@
  * Ships with the `cmc` namespace registered (granular consent-offer
  * references — every authorization-code grant goes through an explicit
  * granular permission set; there are no coarse wildcard scopes). Other
- * grammars — SMART on FHIR `patient/Observation.read` for instance —
+ * grammars (e.g. resource/action tokens such as `ext:records/item.read`)
  * layer on by registering a parser; no migration of persisted scope
  * data is needed. See IMPLEMENTERS-GUIDE.md.
  */
@@ -31,7 +31,7 @@ export type ParsedScope = {
   namespace: string;
   raw: string;
   permission: string; // 'granular' for cmc; other namespaces define their own
-  // Parsers may add additional fields (e.g. resource type for SMART).
+  // Parsers may add additional fields (e.g. a resource type).
   [key: string]: unknown;
 };
 
