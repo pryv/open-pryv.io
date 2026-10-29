@@ -668,7 +668,7 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
 
   describe('[OXINT] introspection', () => {
     const basic = (id, secret) => 'Basic ' + Buffer.from(id + ':' + secret).toString('base64');
-    const SESSION = { permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }, { feature: 'selfRevoke', setting: 'allowed' }], created: 1000, expires: 9999999999, subject: ALIAS };
+    const SESSION = { permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }, { feature: 'selfRevoke', setting: 'allowed' }], created: 1000, expires: 9999999999, subject: ALIAS, apiBase: 'https://' + ALIAS + '.example.com/' };
     async function introspect (platform, { auth = basic('resource-srv', RS_SECRET), token = 'session-token-1', session = SESSION, config = fakeConfig() } = {}) {
       const res = fakeRes();
       await handleIntrospect({
@@ -696,6 +696,10 @@ describe('[OXREG] OAuth2 — registry clients and the OAuth extension', () => {
       assert.equal(b.aud, AUD);
       assert.equal(b.iss, ISSUER);
       assert.equal(b.token_type, 'Bearer');
+      assert.equal(b.api_base, 'https://' + ALIAS + '.example.com/');
+      // The core owns api_base: an extension cannot set it.
+      extension.setExtension({ ...toyExtension(), introspectionClaims: () => ({ api_base: 'https://elsewhere.example.com/' }) });
+      await assert.rejects(extension.runHook('introspectionClaims', { scopeTokens: [] }), /reserved key.*api_base/);
     });
     it('[OXI02] unknown token, dead session, revoked client: inactive', async () => {
       const platform = await seeded();

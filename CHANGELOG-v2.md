@@ -39,7 +39,10 @@
     (form body) is accepted; a parameter given twice is refused on both methods.
   - `POST /oauth2/introspect` (RFC 7662) for confidential clients registered with
     `--can-introspect`; a token whose session lives on another core answers `421` with that
-    core's URL.
+    core's URL. An active answer carries `api_base`, the account's API base URL without any token
+    (on the grant's alias when the grant is aliased), so the resource server can reach the data
+    with the app's token; it appears only there, never in a token response or an id_token, and an
+    extension cannot set it.
   - Whatever the extension's grammar answers, a registry client's offer (requested scope and
     registered maximum set) never reaches an account or system stream (`:_system:` / `:system:`
     fields, any core-reserved `:_<namespace>:` stream, the account store, in any store-prefixed

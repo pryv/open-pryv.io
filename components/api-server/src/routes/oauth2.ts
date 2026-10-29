@@ -682,18 +682,23 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   // ---------------------------------------------------------------------
   async function introspectAccess ({ userId, accessId, clientId, dataGrantAccessId }: {
     userId: string; accessId: string; clientId: string; dataGrantAccessId?: string;
-  }): Promise<{ permissions: Array<Record<string, unknown>>; created: number; expires: number; subject: string | null; dpopJkt?: string } | null> {
+  }): Promise<{ permissions: Array<Record<string, unknown>>; created: number; expires: number; subject: string | null; apiBase: string; dpopJkt?: string } | null> {
     const username = await resolveUsername(userId);
     if (username == null) return null;
     const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
     const now = Math.floor(Date.now() / 1000);
     if (access == null || access.deleted != null || typeof access.expires !== 'number' || access.expires <= now) return null;
     let subject: string | null = null;
+    // The account's API base URL, without any credential: built on the
+    // grant's alias when it has one, so an aliased grant never names the user.
+    let apiBaseName = username;
     const grantId = dataGrantAccessId ?? access.clientData?.oauth?.dataGrantId;
     if (grantId != null) {
       try {
         const head = await readDataGrantHead(userId, username, grantId);
-        subject = grantSubject(head, userId).subject;
+        const s = grantSubject(head, userId);
+        subject = s.subject;
+        if (s.aliased) apiBaseName = s.subject;
       } catch (err: unknown) {
         if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
         throw err;
@@ -704,6 +709,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       created: typeof access.created === 'number' ? access.created : 0,
       expires: access.expires,
       subject,
+      apiBase: require('utils').ApiEndpoint.build(apiBaseName, undefined),
       ...(typeof access.clientData?.dpop?.jkt === 'string' ? { dpopJkt: access.clientData.dpop.jkt } : {}),
     };
   }

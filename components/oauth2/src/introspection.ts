@@ -41,6 +41,8 @@ export type IntrospectAccess = (params: {
   created: number; // seconds
   expires: number; // seconds
   subject: string | null;
+  /** The account's API base URL, no credential in it (alias-based when the grant is aliased). */
+  apiBase?: string;
   dpopJkt?: string;
 } | null>;
 
@@ -152,6 +154,9 @@ async function introspectToken (
       exp: session.expires,
       iat: session.created,
       ...(session.subject != null ? { sub: session.subject } : {}),
+      // Only here: the caller is a confidential resource server, which reaches
+      // the account with the app's own token. Never in token responses.
+      ...(typeof session.apiBase === 'string' ? { api_base: session.apiBase } : {}),
       iss: issuer,
       token_type: session.dpopJkt != null ? 'DPoP' : 'Bearer',
       ...(row.audience != null ? { aud: row.audience } : {}),

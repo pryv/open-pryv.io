@@ -25,6 +25,7 @@ const crypto = require('node:crypto');
 const oauth2 = require('oauth2');
 const storage = require('oauth2/src/storage.ts');
 const { mintSecret } = require('oauth2/src/clientSecret.ts');
+const { ApiEndpoint } = require('utils');
 
 const REDIRECT_URI = 'http://192.168.1.10:8080/app/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
@@ -258,6 +259,10 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const [grant] = await grants();
     assert.equal(active.body.sub, grant.alias);
     assert.equal(active.body.user, grant.alias);
+    // Aliased grant: the API base is built on the alias, never the username, and carries no token.
+    assert.equal(active.body.api_base, ApiEndpoint.build(grant.alias));
+    assert.ok(!active.body.api_base.includes(username) && !active.body.api_base.includes('@'), active.body.api_base);
+    assert.equal(first.token.api_base, undefined);
 
     const del = await coreRequest.delete('/' + username + '/accesses/' + grant.id).set('Authorization', personalToken);
     assert.equal(del.status, 200, JSON.stringify(del.body));
@@ -280,6 +285,10 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.ok(typeof b.apiEndpoint === 'string' && b.apiEndpoint.includes(username), 'apiEndpoint: ' + b.apiEndpoint);
     const intro = await introspect(b.access_token);
     assert.equal(intro.body.sub, userId);
+    // Not aliased: the API base is the apiEndpoint without its token.
+    assert.equal(intro.body.api_base, ApiEndpoint.build(username));
+    assert.equal(intro.body.api_base, b.apiEndpoint.replace(/\/\/[^@/]+@/, '//'));
+    assert.equal(b.api_base, undefined);
   });
 
   it('[OREG6] switching to a pseudonym withdraws the old grant (its sessions die) and makes an aliased one', async () => {
