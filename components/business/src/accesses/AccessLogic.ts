@@ -363,8 +363,10 @@ class AccessLogic {
 
   /** ----------- ACCESSES -------------- */
 
+  // Account fields are written by the account owner only (the personal
+  // access): any other access may be granted at most `read` on them.
   canCreateAccessForAccountStream (permissionLevel: string) {
-    return isHigherOrEqualLevel('contribute', permissionLevel);
+    return isHigherOrEqualLevel('read', permissionLevel);
   }
 
   // -- accesses.get
@@ -625,6 +627,9 @@ class AccessLogic {
     // lets an access write into (and, via the delete-as-discard path, burn)
     // another access's shared secrets.
     if (isSharedSecretsStream(streamId)) return sharedSecretsAllows(streamId, this.id);
+    // Account fields are written by the personal access only, whatever level
+    // an access was granted on them (one stored before this rule included).
+    if (isAccountStream(streamId)) return false;
     const level = await this._getStreamPermissionLevel(streamId);
     return (level != null) && isHigherOrEqualLevel(level, 'contribute');
   }
@@ -797,6 +802,11 @@ AccessLogic.PERMISSION_LEVEL_CREATE_ONLY = 'create-only';
  * @param permissionLevelA - level to challenge
  * @param permissionLevelB  - level
  */
+/** Whether the stream id, in any spelling, routes to the account store. */
+function isAccountStream (streamId: string) {
+  return storeDataUtils.parseStoreIdAndStoreItemId(storeDataUtils.canonicalStreamId(streamId))[0] === storeDataUtils.AccountStoreId;
+}
+
 function isHigherOrEqualLevel (permissionLevelA: string, permissionLevelB: string) {
   return (PermissionLevels as Record<string, number>)[permissionLevelA] >= (PermissionLevels as Record<string, number>)[permissionLevelB];
 }

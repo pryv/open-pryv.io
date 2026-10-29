@@ -21,7 +21,7 @@
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 describe('[ASA] account streams through store-prefixed ids', function () {
-  let fixtures, username, token, email, appToken;
+  let fixtures, username, token, email, appToken, user;
   const eventsPath = () => '/' + username + '/events';
   const accessesPath = () => '/' + username + '/accesses';
 
@@ -34,15 +34,15 @@ describe('[ASA] account streams through store-prefixed ids', function () {
     username = cuid();
     token = cuid();
     email = username + '@asa.example.com';
-    const user = await fixtures.user(username, { email });
+    user = await fixtures.user(username, { email });
     await user.access({ token, type: 'personal' });
     await user.session(token);
-    // A consented app grant on the email field, the level an owner would
-    // plausibly give (contribute).
+    // An app grant on the email field at the highest level an access other
+    // than the personal one could once hold (contribute). The API now grants
+    // read at most on account fields, so it is stored directly, as an access
+    // granted before that rule would be.
     appToken = cuid();
-    const acc = await coreRequest.post(accessesPath()).set('Authorization', token)
-      .send({ type: 'app', name: 'asa-app-' + cuid().slice(-6), token: appToken, permissions: [{ streamId: ':system:email', level: 'contribute' }] });
-    assert.strictEqual(acc.status, 201, JSON.stringify(acc.body));
+    await user.access({ type: 'app', name: 'asa-app-' + cuid().slice(-6), token: appToken, permissions: [{ streamId: ':system:email', level: 'contribute' }] });
   });
 
   after(async function () {
@@ -58,13 +58,13 @@ describe('[ASA] account streams through store-prefixed ids', function () {
   it('[ASA1] an app with contribute on the email field cannot change the primary email through any spelling of the stream id', async function () {
     const canonical = await coreRequest.post(eventsPath()).set('Authorization', appToken)
       .send({ streamIds: [':system:email'], type: 'email/string', content: 'attacker@asa.example.com' });
-    assert.strictEqual(canonical.status, 400, JSON.stringify(canonical.body));
-    assert.strictEqual(canonical.body?.error?.id, 'invalid-operation');
+    assert.strictEqual(canonical.status, 403, JSON.stringify(canonical.body));
+    assert.strictEqual(canonical.body?.error?.id, 'forbidden');
     for (const streamId of EMAIL_ALIASES) {
       const res = await coreRequest.post(eventsPath()).set('Authorization', appToken)
         .send({ streamIds: [streamId], type: 'email/string', content: 'attacker@asa.example.com' });
-      assert.strictEqual(res.status, 400, streamId + ': ' + JSON.stringify(res.body));
-      assert.strictEqual(res.body?.error?.id, 'invalid-operation', streamId);
+      assert.strictEqual(res.status, 403, streamId + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.id, 'forbidden', streamId);
       assert.strictEqual(res.body?.error?.message, canonical.body.error.message, streamId + ': same refusal as the canonical id');
     }
     // The owner's personal token is refused the same way (account.update is the one writer).
@@ -161,19 +161,22 @@ describe('[ASA] account streams through store-prefixed ids', function () {
     assert.strictEqual(await currentEmail(), email);
   });
 
-  it('[ASA7] an app holding contribute on the email field creates a child through a store-prefixed id, stored under the canonical id', async function () {
+  it('[ASA7] an app holding contribute on the email field creates a read child through a store-prefixed id, stored under the canonical id', async function () {
     const namePrefix = 'asa7-' + cuid().slice(-6) + '-';
     let n = 0;
     for (const streamId of [':account::system:email', ':local::system:email']) {
-      for (const level of ['contribute', 'read']) {
-        n++;
-        const res = await coreRequest.post(accessesPath()).set('Authorization', appToken)
-          .send({ type: 'shared', name: namePrefix + n, token: cuid(), permissions: [{ streamId, level }] });
-        const label = streamId + ' at ' + level + ': ' + JSON.stringify(res.body);
-        assert.strictEqual(res.status, 201, label);
-        assert.deepStrictEqual(res.body.access.permissions.filter((p) => p.streamId != null).map((p) => p.streamId), [':system:email'], label);
-        assert.strictEqual(res.body.access.permissions[0].level, level, label);
-      }
+      n++;
+      const res = await coreRequest.post(accessesPath()).set('Authorization', appToken)
+        .send({ type: 'shared', name: namePrefix + n, token: cuid(), permissions: [{ streamId, level: 'read' }] });
+      const label = streamId + ' at read: ' + JSON.stringify(res.body);
+      assert.strictEqual(res.status, 201, label);
+      assert.deepStrictEqual(res.body.access.permissions.filter((p) => p.streamId != null).map((p) => p.streamId), [':system:email'], label);
+      assert.strictEqual(res.body.access.permissions[0].level, 'read', label);
+      // Above read on an account field: refused, whatever the spelling.
+      const write = await coreRequest.post(accessesPath()).set('Authorization', appToken)
+        .send({ type: 'shared', name: namePrefix + 'w' + n, token: cuid(), permissions: [{ streamId, level: 'contribute' }] });
+      assert.strictEqual(write.status, 400, streamId + ' at contribute: ' + JSON.stringify(write.body));
+      assert.strictEqual(write.body?.error?.id, 'invalid-operation', streamId);
     }
     // Above its own level: refused, whatever the spelling.
     const tooHigh = await coreRequest.post(accessesPath()).set('Authorization', appToken)
@@ -182,7 +185,7 @@ describe('[ASA] account streams through store-prefixed ids', function () {
     const list = await coreRequest.get(accessesPath()).set('Authorization', token);
     assert.strictEqual(list.status, 200, JSON.stringify(list.body));
     const stored = (list.body.accesses || []).filter((a) => a.name.startsWith(namePrefix));
-    assert.strictEqual(stored.length, n, 'the four created children are stored, the refused one is not');
+    assert.strictEqual(stored.length, n, 'the read children are stored, the refused ones are not');
     for (const a of stored) {
       assert.deepStrictEqual(a.permissions.filter((p) => p.streamId != null).map((p) => p.streamId), [':system:email'], a.name + ': stored canonical');
     }

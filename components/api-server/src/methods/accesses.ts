@@ -432,7 +432,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * Shared account/system-stream permission validation used by both
    * accesses.create and accesses.update. Returns the first violating permission
    * as an APIError (identical shape on both paths) or null when the whole set is
-   * acceptable. `access` is the caller's access (for the contribute-level cap).
+   * acceptable. `access` is the caller's access (for the account-field level cap).
    */
   function validateAccountStreamPermissions (access: MethodContext['access'], permissions: StreamPermission[]) {
     for (const permission of permissions) {
@@ -456,8 +456,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         if (notVisibleAccountStreamsIds.includes(permission.streamId)) {
           return errors.invalidOperation(ErrorMessages[ErrorIds.DeniedStreamAccess], { param: permission.streamId });
         }
-        // don't allow user to give anything higher than contribute or read access
-        // to visible stream
+        // a visible account field can be granted at 'read' (or 'none') only:
+        // the personal access is the one writer of account fields
         if (visibleAccountStreamsIds.includes(permission.streamId) &&
                     !access.canCreateAccessForAccountStream(permission.level)) {
           return errors.invalidOperation(ErrorMessages[ErrorIds.TooHighAccessForSystemStreams], { param: permission.streamId });

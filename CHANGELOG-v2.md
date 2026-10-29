@@ -1,5 +1,28 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **BREAKING (security): account fields are written by the personal access only.** An app or
+  shared access could be granted `contribute` on a visible account stream (`:_system:language`,
+  `:system:<field>`), and through a consent whose offer came from a third party (an app access
+  request, a consent offer between accounts, an OAuth authorization) it then rewrote that account
+  field with `events.create` / `events.update`. Every access other than the personal one is now
+  limited to `read` (or `none`) on account streams:
+  - `accesses.create` and `accesses.update` refuse `contribute`, `manage` and `create-only` on an
+    account stream with `400 invalid-operation` (error message: account streams can only be
+    granted at the `read` or `none` level; `data.param` names the stream), whoever creates the
+    access. An OAuth authorization or app access request asking for such a level fails the same
+    way.
+  - Accepting a consent offer whose granted permissions hold such a level fails with
+    `cmc-offer-invalid-permissions`; when the offer allows choosing, granting that entry at `read`
+    or leaving it out still succeeds.
+  - An access already stored with such a level keeps reading the field, but its `events.create` /
+    `events.update` / attachment writes on account streams are refused with `403 forbidden`.
+
+  Apps that set account fields (the language, platform-defined fields) for the user must ask for
+  `read` only and let the user change those fields with a personal session (the account app or
+  `account.update`).
+
 ## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the

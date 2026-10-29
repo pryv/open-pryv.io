@@ -98,7 +98,8 @@ const CmcErrorIds = {
   // The offer carries no `request.permissions` array (or it's empty).
   OFFER_EMPTY_PERMISSIONS: 'cmc-offer-empty-permissions',
   // The offer's `request.permissions` entries don't match the
-  // accesses.create permission lexicon (stream or feature permission).
+  // accesses.create permission lexicon (stream or feature permission), or
+  // the granted set holds more than `read` on an account stream.
   OFFER_INVALID_PERMISSIONS: 'cmc-offer-invalid-permissions',
   // The offer's `request.accessType` is neither "shared" (default) nor "app".
   OFFER_INVALID_ACCESS_TYPE: 'cmc-offer-invalid-access-type',
