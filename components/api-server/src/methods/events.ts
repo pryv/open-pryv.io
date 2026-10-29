@@ -320,6 +320,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // Deletion records keep no streams (unless the deletion mode keeps
     // everything): an access that does not read the whole store sees only the
     // records whose kept streams it can read, so none in the other modes.
+    // A record with streams is filtered like a live event read for every
+    // access but the personal one: reading the whole store does not reach
+    // hidden, emails or plugin-internal streams.
     const wholeStore = await context.access.canReadWholeStore('local');
     if (!wholeStore && config.get('versioning:deletionMode') !== 'keep-everything') {
       result.addStream('eventDeletions', Readable.from([]));
@@ -327,7 +330,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
     const deletedEvents = await mall.events.getDeletionsStreamed('local', context.user.id, { deletedSince: params.modifiedSince },
       { limit: params.limit, skip: params.skip, sortAscending: params.sortAscending });
-    const readable = wholeStore ? deletedEvents : utils.pipeThrough(deletedEvents, new ReadableDeletionsStream(context.access));
+    const readable = context.access.isPersonal()
+      ? deletedEvents
+      : utils.pipeThrough(deletedEvents, new ReadableDeletionsStream(context.access, { keepRecordsWithoutStreams: wholeStore }));
     // remove properties of events that shouldn't be exposed
     result.addStream('eventDeletions', utils.pipeThrough(readable, new CleanDeletedEventsStream()));
     next();

@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Fixed
+
+- **`events.get` with `includeDeletions` no longer returns the deletion records of internal
+  streams to a non-personal access reading the whole store.** With `versioning.deletionMode:
+  keep-everything`, an app access with `*` read skipped the read check applied to deletion records
+  and received the records of hidden account, emails and plugin-internal streams, which a `*` grant
+  does not reach for live events. Every access but the personal one now gets only the records it
+  could read as live events; records that keep no streams are still returned to an access reading
+  the whole store, as before.
+
 ## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the
