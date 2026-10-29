@@ -121,5 +121,13 @@
     "socket.io-parser": "^4.2.7",
     "uuid": "^11.1.1",
     "ws": "^8.20.1"
+  },
+  "allowScripts": {
+    "github:perki/backloop.dev-node": true,
+    "bcrypt": true,
+    "better-sqlite3": true,
+    "fs-xattr": true,
+    "unrs-resolver": true,
+    "unix-dgram": true
   }
 }
