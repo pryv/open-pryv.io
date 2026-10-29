@@ -22,6 +22,7 @@ const testData = helpers.dynData({ prefix: 'vers' });
 const { addCustomerPrefixToStreamId } = require('test-helpers/src/systemStreamFilters.ts');
 const { integrity } = require('business');
 const { getMall } = require('mall');
+const encryption = require('utils').encryption;
 
 require('date-utils');
 
@@ -294,6 +295,71 @@ describe('[VERS] Versioning', function () {
         assert.equal(res.body.event.content, 'hsrc-shared-content');
         const leaked = (res.body.history ?? []).filter((v) => v.streamIds?.includes(hiddenStreamId) || v.content === 'hsrc-hidden-content');
         assert.deepEqual(leaked, [], 'the shared access must not see the versions it cannot read');
+      });
+
+      it('[HSAT] must not serve the attachment of an earlier version, by header or readToken (event moved from an unreadable stream)', async function () {
+        const settings = structuredClone(helpers.dependencies.settings);
+        settings.versioning.forceKeepHistory = true;
+        await new Promise((resolve, reject) => server.ensureStarted(settings, (err) => (err ? reject(err) : resolve())));
+        const hiddenStreamId = 'hsat-hidden-' + cuid.slug();
+        const sharedStreamId = 'hsat-shared-' + cuid.slug();
+        for (const id of [hiddenStreamId, sharedStreamId]) {
+          const res = await request.post(pathToStream()).send({ id, name: id });
+          assert.equal(res.status, 201, JSON.stringify(res.body));
+        }
+        // Created with one attachment in the hidden stream; a second one is
+        // added then removed there, so it lives on in history only.
+        const created = await request.post(pathToEvent())
+          .field('event', JSON.stringify({ streamIds: [hiddenStreamId], type: 'note/txt', content: 'hsat' }))
+          .attach('file', Buffer.from('hsat-kept-bytes'), 'kept.txt');
+        assert.equal(created.status, 201, JSON.stringify(created.body));
+        const eventId = created.body.event.id;
+        const keptFileId = created.body.event.attachments[0].id;
+        const added = await request.post(pathToEvent(eventId))
+          .attach('file', Buffer.from('hsat-removed-bytes'), 'removed.txt');
+        assert.equal(added.status, 200, JSON.stringify(added.body));
+        const removedFileId = added.body.event.attachments.find((a) => a.id !== keptFileId).id;
+        const removed = await request.del(pathToEvent(eventId) + '/' + removedFileId);
+        assert.equal(removed.status, 200, JSON.stringify(removed.body));
+        const moved = await request.put(pathToEvent(eventId)).send({ streamIds: [sharedStreamId] });
+        assert.equal(moved.status, 200, JSON.stringify(moved.body));
+        const shared = await request.post('/' + user.username + '/accesses')
+          .send({ type: 'shared', name: 'hsat-' + cuid.slug(), permissions: [{ streamId: sharedStreamId, level: 'read' }] });
+        assert.equal(shared.status, 201, JSON.stringify(shared.body));
+        const sharedToken = shared.body.access.token;
+
+        // Premise: an earlier version, in the hidden stream, still lists the
+        // removed attachment.
+        const premise = await request.get(pathToEvent(eventId)).query({ includeHistory: true });
+        assert.ok(premise.body.history?.some((v) => v.streamIds?.includes(hiddenStreamId) &&
+          v.attachments?.some((a) => a.id === removedFileId)),
+        'premise: a hidden-stream version lists the removed attachment: ' + JSON.stringify(premise.body.history));
+
+        // The head's own attachment is the head reader's to fetch.
+        const kept = await request.get(pathToEvent(eventId) + '/' + keptFileId, sharedToken).buffer(true);
+        assert.equal(kept.status, 200);
+
+        // The removed one is served to nobody, by header or by readToken.
+        const secret = helpers.dependencies.settings.auth.filesReadTokenSecret;
+        assert.equal(typeof secret, 'string', 'premise: the files read token secret is known');
+        // No Authorization header: the readToken alone authenticates.
+        const byReadToken = (fileId, token) => require('superagent')
+          .get(new URL(pathToEvent(eventId) + '/' + fileId, server.url).href)
+          .query({ readToken: token }).ok(() => true).buffer(true);
+        const readToken = encryption.fileReadToken(removedFileId, shared.body.access.id, sharedToken, secret);
+        const attempts = [
+          await request.get(pathToEvent(eventId) + '/' + removedFileId, sharedToken),
+          await byReadToken(removedFileId, readToken),
+          await request.get(pathToEvent(eventId) + '/' + removedFileId)
+        ];
+        for (const res of attempts) {
+          assert.equal(res.status, 404, JSON.stringify(res.body));
+          assert.equal(res.body.error?.id, 'unknown-resource', JSON.stringify(res.body));
+        }
+        // The readToken route itself works for this access (control).
+        const keptToken = encryption.fileReadToken(keptFileId, shared.body.access.id, sharedToken, secret);
+        const keptByToken = await byReadToken(keptFileId, keptToken);
+        assert.equal(keptByToken.status, 200);
       });
     });
 
