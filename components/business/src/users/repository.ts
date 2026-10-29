@@ -362,21 +362,40 @@ class UsersRepository {
 
     // 6. Record the change (right after the gate: a change of this account
     //    can only start from the new name now, and reads the count after it).
-    const count = await this.getUsernameChangeCount(userId);
-    await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count + 1, accessId);
+    //    These writes refuse nothing, but a storage failure can still stop
+    //    them: the step reached is undone, then every step above, so the
+    //    account is left whole under its former name.
+    let step = 'change counter';
+    try {
+      const count = await this.getUsernameChangeCount(userId);
+      await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count + 1, accessId);
+      undo.push(async () => await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count, accessId));
 
-    await this.platform.renameUser(oldUsername, newUsername);
-    // The breach-scope index names the owner of each access: move its rows
-    // too, or they would be resolved to a later holder of the former name.
-    await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername);
+      step = 'platform rows';
+      // Re-keying back moves whatever was re-keyed (a partial pass included).
+      undo.push(async () => await this.platform.renameUser(newUsername, oldUsername));
+      await this.platform.renameUser(oldUsername, newUsername);
+      // The breach-scope index names the owner of each access: move its rows
+      // too, or they would be resolved to a later holder of the former name.
+      await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername);
+      undo.push(async () => await renameAccessIndexOwnerNonFatal(this.platform, newUsername, oldUsername));
 
-    // Reset requests are keyed by username and the former name can no longer
-    // consume them: drop them, so none survives to a later holder of the name.
-    await this.#destroyResetRequests([oldUsername]);
+      // Reset requests are keyed by username and the former name can no longer
+      // consume them: drop them, so none survives to a later holder of the name.
+      step = 'password reset requests';
+      await this.#destroyResetRequests([oldUsername]);
 
-    // System-Streams username account field (mirrors registration's write;
-    // `username` is not in the editable-field map used by updateOne).
-    await this.userAccountStorage.setAccountField(userId, 'username', newUsername, accessId);
+      // System-Streams username account field (mirrors registration's write;
+      // `username` is not in the editable-field map used by updateOne).
+      step = 'username account field';
+      await this.userAccountStorage.setAccountField(userId, 'username', newUsername, accessId);
+    } catch (err) {
+      logger.error(`username change of "${oldUsername}" failed at the ${step} step, undoing it`, err);
+      const failure = await refuse(errors.unexpectedError(err as Error));
+      cache.unsetUser(newUsername);
+      cache.unsetUser(oldUsername);
+      throw failure;
+    }
     // Bust the former name again: a resolution that read it as the canonical
     // username before the rename and cached it after the first bust would
     // otherwise keep reporting it until the entry ages out.
@@ -793,9 +812,9 @@ class UsersRepository {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
     // for unique field cleanup (e.g. email).
     const user = await this.getUserById(userId);
-    if (username == null) {
-      username = user?.username;
-    }
+    // The account's current username wins over the one given: a caller may
+    // hold a former name, under which the platform rows are no longer kept.
+    username = (await this.usersIndex.getUsername(userId)) ?? username ?? user?.username;
     // Delete index FIRST so that getAll() never lists a user whose data is
     // being deleted.  The reverse race (index gone but events still exist)
     // is handled by getUserById() returning null when username is null.

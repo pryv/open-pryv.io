@@ -113,6 +113,63 @@ describe('[UCRC] changeUsername gates (the availability check passed, the name t
     assert.strictEqual(await usersRepository.getUsernameChangeCount(userId), 1);
   });
 
+  it('[UCRC6] a storage failure after the gates is undone: the account stays whole under its name, the new name stays free, a retry applies', async function () {
+    const failures = [
+      ['platform rows, failing before any write', () => {
+        const original = platform.renameUser;
+        platform.renameUser = async function (from, to) {
+          if (platform.renameUser.failNext) { platform.renameUser.failNext = false; throw new Error('injected'); }
+          return await original.call(this, from, to);
+        };
+        platform.renameUser.failNext = true;
+        return () => { platform.renameUser = original; };
+      }],
+      ['platform rows, failing after every write', () => {
+        const original = platform.renameUser;
+        platform.renameUser = async function (from, to) {
+          await original.call(this, from, to);
+          if (platform.renameUser.failNext) { platform.renameUser.failNext = false; throw new Error('injected'); }
+        };
+        platform.renameUser.failNext = true;
+        return () => { platform.renameUser = original; };
+      }],
+      ['username account field', () => {
+        const storage = usersRepository.userAccountStorage;
+        const original = storage.setAccountField;
+        storage.setAccountField = async function (userId, field, ...rest) {
+          if (field === 'username') throw new Error('injected');
+          return await original.call(this, userId, field, ...rest);
+        };
+        return () => { storage.setAccountField = original; };
+      }]
+    ];
+    for (const [where, inject] of failures) {
+      const renamer = await freshUser('rm');
+      const target = freshName('rn');
+      const restore = inject();
+      try {
+        await assert.rejects(usersRepository.changeUsername(renamer.userId, renamer.uname, target, 'system'),
+          (err) => err.id === 'unexpected-error', where);
+      } finally {
+        restore();
+      }
+      await assertUnchanged(renamer);
+      assert.strictEqual(await usersRepository.getUserIdForUsername(target), undefined, where + ': the new name is free');
+      assert.strictEqual(await platform.getUsersUniqueField('username', target), null, where + ': no platform row for the new name');
+      await usersRepository.changeUsername(renamer.userId, renamer.uname, target, 'system');
+      assert.strictEqual(await usersRepository.getUsernameForUserId(renamer.userId), target, where + ': a retry applies');
+      assert.strictEqual(await usersRepository.getUsernameChangeCount(renamer.userId), 1, where);
+    }
+  });
+
+  it('[UCRC7] deleting the account by a former name removes its platform rows', async function () {
+    const { uname, userId, email } = await freshUser('ro');
+    await usersRepository.changeUsername(userId, uname, freshName('rp'), 'system');
+    await usersRepository.deleteOne(userId, uname);
+    assert.strictEqual(await platform.getUsersUniqueField('email', email), null, 'the email row is released');
+    assert.strictEqual(await usersRepository.getUserIdForUsername(uname), undefined, 'the former name is free');
+  });
+
   it('[UCRC5] of two concurrent changes of one account to the same name, one applies and the account stays whole', async function () {
     const { uname, userId, email } = await freshUser('rk');
     const target = freshName('rl');
