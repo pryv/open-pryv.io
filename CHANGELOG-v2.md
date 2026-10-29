@@ -55,6 +55,15 @@
   `mass/lb`, not `massive/kg`); other entries still match exactly. `accesses` scopes, where
   `types` lists access types, are unchanged.
 
+- **A streamed answer (`events.get`, `streams.delete` with its updated events) whose storage fails before
+  the first item answers a JSON error instead of dropping the connection.** A storage query can
+  fail only when its first row is read (the SQLite engine raises query errors there), which is
+  after the method has handed its result to the response: the client got a `socket hang up` with
+  no error id, and only the server log had the cause. Such a failure now answers `500
+  unexpected-error` (or the API error raised), and is logged and audited as a failed call. A failure
+  after part of the answer was sent still cuts the connection, the only signal left once the `200`
+  is on the wire; it is now audited as a failed call instead of a successful one.
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,
