@@ -199,7 +199,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const deletedStreams = await mall.streams.getDeletions(context.user.id, params.includeDeletionsSince, [storeId]);
       result.streamDeletions = context.access.isPersonal()
         ? deletedStreams
-        : deletedStreams.filter((s: { id: string }) => !isStreamOutOfNonPersonalReach(s.id));
+        : sharedSecrets.filterVisibleStreams(deletedStreams, context.access)
+          .filter((s: { id: string }) => !isStreamOutOfNonPersonalReach(s.id));
     } catch (err) {
       return next(errors.unexpectedError(err));
     }

@@ -152,10 +152,12 @@ describe('[DLSC] event and stream deletion records', function () {
     const deleted = timestamp.now();
     const base = { type: 'note/txt', time: deleted, created: deleted, createdBy: 'dlsc', modified: deleted, modifiedBy: 'dlsc', deleted };
     const readable = cuid();
-    const internal = [cuid(), cuid()];
+    const internal = [cuid(), cuid(), cuid()];
     await fixturesUser.event(Object.assign({ id: readable, streamIds: ['dlsc-a'] }, base));
     await fixturesUser.event(Object.assign({ id: internal[0], streamIds: [':_cmc:_internal'] }, base));
     await fixturesUser.event(Object.assign({ id: internal[1], streamIds: [':_delegation:_internal'] }, base));
+    // a consumed shared secret of another access
+    await fixturesUser.event(Object.assign({ id: internal[2], streamIds: [':_shared-secrets:' + cuid()] }, base));
     const restore = injectTestConfigSnapshot({ versioning: { deletionMode: 'keep-everything' } });
     try {
       const appRes = await deletions(await app([{ streamId: '*', level: 'read' }]));

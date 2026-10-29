@@ -10,13 +10,14 @@
   and received the records of hidden account, emails and plugin-internal streams, which a `*` grant
   does not reach for live events. Every access but the personal one now gets only the records it
   could read as live events; records that keep no streams are still returned to an access reading
-  the whole store, as before.
+  the whole store, as before. The filter applies after `limit` and `skip`, so a page can now hold
+  fewer records than `limit`, or none: a sync client must not treat a short page as the end of the
+  listing.
 
 - **`streams.get` with `includeDeletionsSince` no longer returns the deletion records of internal
   streams to a non-personal access.** An app access with `*` read received the records of deleted
-  emails and plugin-internal streams (for instance the per-link streams removed when a capability
-  is cleaned up), whose ids name internal objects. Only the personal access gets those records
-  now.
+  plugin-internal streams (for instance the per-link streams removed when a capability is cleaned
+  up), whose ids name internal objects. Only the personal access gets those records now.
 
 ## 2.0.0-rc.64 - 2026-10-29
 
