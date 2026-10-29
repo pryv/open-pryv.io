@@ -45,9 +45,15 @@ export type Bookkeeping = {
   appliedPolicy: { source: 'user' | 'operator'; mode: Mode; inactivityDays?: number; date?: number };
   policyAppliedAt: number;
   lastActivity: { personal: number | null; app: number | null; delegate: number | null; max: number | null; by: 'owner' | 'delegate' | null };
+  /** What the policy says (reminders count down to it). */
   deadline: number | null;
+  /** When the account is actually due: the deadline, or later for the minimum notice. */
+  deleteAt?: number | null;
   deadlineReason?: 'date' | 'inactivity' | 'minimum-notice';
-  reminders: { deadlineDay: number | null; sent: Array<{ leadDays: number; at: number }> };
+  /** First notice sent under the current policy (confirmation or reminder). */
+  firstNoticeAt?: number;
+  /** `skipped`: past together with a more imminent lead (downtime), not sent. */
+  reminders: { deadlineDay: number | null; sent: Array<{ leadDays: number; at: number; skipped?: boolean }> };
   blocked?: { reason: string; at: number };
   deleting?: { startedAt: number };
   transfer?: Record<string, unknown>;
@@ -88,8 +94,8 @@ export function resolveIdentityKey (secretsKey: string | null | undefined, admin
 
 /**
  * Whether going from `prev` to `next` is worth a write. The activity times
- * and the exact deadline move with every use of the account; they are only
- * worth writing with something else, or when the deadline moves to another
+ * and the exact deadlines move with every use of the account; they are only
+ * worth writing with something else, or when a deadline moves to another
  * day. The stored activity is a floor (it survives the deletion of an
  * access), so a stale value is safe.
  */
@@ -99,8 +105,9 @@ export function isMaterialChange (prev: Bookkeeping | null, next: Bookkeeping | 
 }
 
 function materialKey (b: Bookkeeping): string {
-  const { lastActivity, deadline, ...rest } = b;
-  return stableJson({ ...rest, deadlineDay: deadline == null ? null : Math.floor(deadline / DAY_SECONDS) });
+  const { lastActivity, deadline, deleteAt, ...rest } = b;
+  const day = (t: number | null | undefined) => t == null ? null : Math.floor(t / DAY_SECONDS);
+  return stableJson({ ...rest, deadlineDay: day(deadline), deleteAtDay: day(deleteAt) });
 }
 
 function stableJson (value: unknown): string {
