@@ -286,7 +286,16 @@ class BackupOrchestrator {
       }
     }
 
-    return await userWriter.close();
+    // Routable aliases (minted access aliases and former usernames): not in
+    // any collection above, but the restored accesses and the apps holding
+    // endpoints under a former name need them to route again. Always the full
+    // set, on an incremental run too (restore takes the newest entry).
+    const aliases = typeof this.usersLocalIndex?.getAliasesForId === 'function'
+      ? await this.usersLocalIndex.getAliasesForId(userId)
+      : [];
+
+    const userManifest = await userWriter.close();
+    return { ...userManifest, aliases };
   }
 
   /**
@@ -467,6 +476,7 @@ type StorageLayerLike = {
 type UsersLocalIndexLike = {
   getAllByUsername (): Promise<Record<string, string>>;
   getUsername (userId: string): Promise<string | undefined>;
+  getAliasesForId? (userId: string): Promise<string[]>;
 };
 type UserAccountStorageLike = {
   _exportAll (userId: string): Promise<unknown>;

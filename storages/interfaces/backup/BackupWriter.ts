@@ -17,6 +17,11 @@ export type UserManifest = {
   stats: Record<string, number>;
   /** Chunk-file inventory per collection. */
   chunks: Record<string, string[]>;
+  /**
+   * The account's routable aliases (minted access aliases and former
+   * usernames), re-reserved on restore. Absent in backups written before.
+   */
+  aliases?: string[];
 };
 
 /**

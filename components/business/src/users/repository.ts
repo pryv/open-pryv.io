@@ -169,6 +169,33 @@ class UsersRepository {
     return await this.#bindAlias(aliasValue, ownerUserId, coreId);
   }
 
+  /**
+   * Reserve again the aliases of a restored account (its minted access
+   * aliases and former usernames), which live on this core. Each alias is
+   * reserved like {@link reserveSpecificAlias}, the name -> core claim made
+   * for this core (the owner's own row may not be restored yet). An alias
+   * already indexed for the account is confirmed, not added twice. An alias
+   * another account holds meanwhile (as its username or alias, here or on
+   * another core) stays with its holder.
+   * @returns the aliases not restored.
+   */
+  async restoreAliases (ownerUsername: string, ownerUserId: string, aliases: string[]): Promise<string[]> {
+    const coreId = this.platform.isSingleCore ? null : this.platform.coreId;
+    const indexed = new Set(await this.usersIndex.getAliasesForId(ownerUserId));
+    const refused: string[] = [];
+    for (const alias of new Set(aliases)) {
+      const holder = await this.usersIndex.getUserId(alias);
+      if (holder != null && holder !== ownerUserId) { refused.push(alias); continue; }
+      if (!await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', alias)) { refused.push(alias); continue; }
+      if (!indexed.has(alias)) {
+        if (!await this.#bindAlias(alias, ownerUserId, coreId)) refused.push(alias);
+      } else if (coreId != null && !await this.platform.setUserCoreIfNotExists(alias, coreId)) {
+        refused.push(alias);
+      }
+    }
+    return refused;
+  }
+
   async #aliasOwnerCoreId (ownerUsername: string): Promise<string | null> {
     if (this.platform.isSingleCore) { return null; }
     return await this.platform.getUserCore(ownerUsername);

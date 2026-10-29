@@ -391,6 +391,13 @@ async function runRestore (args) {
     console.log(`  External ids: ${xid.restored} restored, ${xid.lost} lost (held by another account or core), ` +
       `${xid.namespaceMissing + xid.invalid} skipped (${xid.namespaceMissing} of a namespace unknown here, ${xid.invalid} malformed)`);
   }
+  const aliases = report.aliases;
+  if (aliases != null && aliases.restored + aliases.refused.length > 0) {
+    console.log(`  Aliases: ${aliases.restored} restored, ${aliases.refused.length} held by another account or core (not restored)`);
+    for (const r of aliases.refused) {
+      console.log(`    - ${r.alias} (of ${r.username})`);
+    }
+  }
   if (report.rolledBack && report.rolledBack.length > 0) {
     console.log(`  Rolled back (integrity failure): ${report.rolledBack.length} users`);
     for (const u of report.rolledBack) {

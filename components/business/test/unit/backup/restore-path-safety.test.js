@@ -192,6 +192,31 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       assert.deepStrictEqual(writes, []);
     });
 
+    it('[BKRL1] an alias this platform reserves, or one that is not a name, refuses the restore before anything is written', async function () {
+      for (const aliases of [['r-abcdefgh', 'access'], ['r-abcdefgh', '../x'], [42]]) {
+        const { o, writes } = makeOrchestrator();
+        const users = [{ userId: CUID1_ID, username: 'firstuser', aliases }];
+        await assert.rejects(() => o.restoreAllUsers(makeReader(users), { skipPlatform: true }), /alias\(es\) of the backup manifest/);
+        await assert.rejects(() => o.restoreUser(CUID1_ID, makeReader(users)), /alias\(es\) of the backup manifest/);
+        assert.deepStrictEqual(writes, []);
+      }
+    });
+
+    it('[BKRL2] the aliases of each restored account are reserved again, after its data', async function () {
+      const { o, writes } = makeOrchestrator();
+      o.usersRepository = {
+        async restoreAliases (username, userId, aliases) {
+          writes.push('aliases:' + username + ':' + aliases.join(','));
+          return aliases.filter((a) => a === 'held-elsewhere');
+        }
+      };
+      const users = [{ userId: CUID1_ID, username: 'firstuser', aliases: ['r-abcdefgh', 'held-elsewhere'] }, { userId: CUID2_ID, username: 'seconduser' }];
+      const report = await o.restoreAllUsers(makeReader(users), { skipPlatform: true });
+      assert.deepStrictEqual(report.aliases, { restored: 1, refused: [{ userId: CUID1_ID, username: 'firstuser', alias: 'held-elsewhere' }] });
+      assert.strictEqual(writes[writes.length - 1], 'aliases:firstuser:r-abcdefgh,held-elsewhere', 'reserved last: ' + JSON.stringify(writes));
+      assert.strictEqual(writes.filter((w) => w.startsWith('aliases:')).length, 1, 'an entry without aliases reserves nothing');
+    });
+
     it('[BKRN2] a username that is only a word of the registration list is restored, with a warning', async function () {
       const { o, writes } = makeOrchestrator();
       const warnings = [];
