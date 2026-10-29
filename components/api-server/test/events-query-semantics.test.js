@@ -93,6 +93,33 @@ describe('[QSEM] events.get query semantics', function () {
     });
   });
 
+  describe('[QTYP] a `class/*` type filter', function () {
+    it('[QTYP1] a notification scope matches the events events.get returns for it', async function () {
+      const { MethodContext } = require('business');
+      const storageLayer = await require('storage').getStorageLayer();
+      const { prepareScopeQuery } = require('../src/methods/helpers/scopeQueryUtils.ts');
+      const { eventMatchesQuery } = require('utils/src/eventMatchQuery.ts');
+      await user.stream({ id: 'qt', name: 'qt' });
+      const now = timestamp.now();
+      const kg = { id: cuid(), streamIds: ['qt'], type: 'mass/kg', content: 70, time: now - 5 };
+      const lb = { id: cuid(), streamIds: ['qt'], type: 'mass/lb', content: 150, time: now - 4 };
+      const other = { id: cuid(), streamIds: ['qt'], type: 'massive/kg', content: 1, time: now - 3 };
+      for (const e of [kg, lb, other]) await user.event(e);
+
+      const res = await get({ streams: ['qt'], types: ['mass/*'] });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.deepStrictEqual(res.body.events.map((e) => e.id).sort(), [kg.id, lb.id].sort());
+
+      const context = new MethodContext({ name: 'test', ip: '127.0.0.1' }, username, token, null, {}, {}, null);
+      await context.init();
+      await context.retrieveExpandedAccess(storageLayer);
+      const scope = await prepareScopeQuery(context, { streams: ['qt'], types: ['mass/*'] });
+      assert.strictEqual(eventMatchesQuery(kg, scope), true, 'mass/kg');
+      assert.strictEqual(eventMatchesQuery(lb, scope), true, 'mass/lb');
+      assert.strictEqual(eventMatchesQuery(other, scope), false, 'massive/kg');
+    });
+  });
+
   describe('[QNUM] time bounds and paging', function () {
     it('[QFIN1] a time bound or modifiedSince that is not a finite number is refused', async function () {
       for (const query of [{ fromTime: '1e999' }, { toTime: '-1e999' }, { modifiedSince: 'Infinity' }]) {

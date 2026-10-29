@@ -184,7 +184,7 @@ function eventMatchesQuery (event: EventToMatch, query: EventMatchQuery): boolea
     if (!matchesStreamQuery(event.streamIds, query.streams)) return false;
   }
   if (query.types && query.types.length > 0) {
-    if (!query.types.includes(event.type)) return false;
+    if (!query.types.some((type) => matchesType(event.type, type))) return false;
   }
   if ((query.content != null && query.content.length > 0) ||
       (query.clientData != null && query.clientData.length > 0)) {
@@ -192,6 +192,19 @@ function eventMatchesQuery (event: EventToMatch, query: EventMatchQuery): boolea
     if (!matchesConditions({ content: event.content, clientData: event.clientData }, conditions)) return false;
   }
   return true;
+}
+
+/**
+ * One `events.get` type filter against an event type: `class/*` matches every
+ * type starting with `class/` (the storage engines' `LIKE 'class/%'`), any
+ * other filter matches exactly.
+ */
+function matchesType (eventType: string, filter: string): boolean {
+  const wildcardIndex = filter.indexOf('/*');
+  if (wildcardIndex > 0) {
+    return typeof eventType === 'string' && eventType.startsWith(filter.substring(0, wildcardIndex + 1));
+  }
+  return eventType === filter;
 }
 
 /**

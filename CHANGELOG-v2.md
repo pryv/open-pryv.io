@@ -48,6 +48,13 @@
   `create-only` for it. A record is now returned only when its event would have been readable while
   live (the same rule as `events.getOne`: no stream withheld, forced streams honoured).
 
+- **Notification scopes match `class/*` event types as `events.get` does.** A socket.io
+  subscription or webhook scope with `types: ['mass/*']` was accepted but compared the types
+  exactly, so it never matched a `mass/kg` event while `events.get` with the same filter returns
+  it. A `class/*` entry in an events scope now matches every type of that class (`mass/kg`,
+  `mass/lb`, not `massive/kg`); other entries still match exactly. `accesses` scopes, where
+  `types` lists access types, are unchanged.
+
 ## 2.0.0-rc.63 - 2026-10-28
 
 - **`streams.create` keeps a valid predefined id as given.** An id made only of lowercase letters,
