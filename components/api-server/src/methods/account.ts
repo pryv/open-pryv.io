@@ -340,7 +340,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
       // Keep the context coherent for the downstream result builders.
       context.user.username = newUsername;
+      // Sockets opened before the change listen under the former name, those
+      // opened since under the new one.
       pubsub.notifications.emit(oldUsername, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
+      pubsub.notifications.emit(newUsername, pubsub.USERNAME_BASED_ACCOUNT_CHANGED);
       // The webhooks service listens under the username: move them.
       try {
         // Invariant: the access check resolved the account, so userId is set.
