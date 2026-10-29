@@ -4,16 +4,17 @@
 
 ### Operators
 
-- **A configuration that sets `dns.domain` but leaves `dnsLess.isActive` out (with no `core.url`)
-  now refuses to boot**, and `bin/check-config.js` reports it as a problem. Such a core was
-  silently broken: it took a multi-core identity (`core.url` `https://<core.id>.<dns.domain>`,
-  `/service/info` advertising `https://{username}.<domain>/`, `reg.<domain>` and
-  `access.<domain>`, which replaced the operator's own `service.*` URLs) while routing requests
-  path-style under the shipped default `dnsLess.isActive: true`. Set `dnsLess.isActive`
-  explicitly: `false` for a DNS multi-core deployment with per-user subdomains, `true` for a
-  single core with path-style routing (`dnsLess.publicUrl` then sets its URLs). Configurations
-  written by `bin/init.js` or `bootstrap` already set it; a DNSless multi-core member (`core.url`
-  set, no `dnsLess` key) and a core without `dns.domain` are not affected.
+- **A configuration that sets `dns.domain` but leaves `dnsLess.isActive` out now refuses to boot**
+  (with or without `core.url`), and `bin/check-config.js` reports it as a problem. Such a core was
+  silently broken: it was treated as multi-core under the domain (without `core.url`, its own URL
+  became `https://<core.id>.<dns.domain>`) and `/service/info` advertised
+  `https://{username}.<domain>/`, `reg.<domain>` and `access.<domain>`, replacing the operator's
+  own `service.*` URLs, while requests were routed path-style under the shipped default
+  `dnsLess.isActive: true`. Set `dnsLess.isActive` explicitly: `false` for a multi-core deployment
+  with per-user subdomains under the domain, `true` for a single core with path-style routing
+  (`dnsLess.publicUrl` then sets its URLs). Configurations written by `bin/init.js` or `bootstrap`
+  already set it. A DNSless multi-core member (`core.url` set, no `dns.domain`, no `dnsLess` key)
+  and a core without `dns.domain` are not affected.
 - `bin/check-config.js` now reads the shipped defaults (`config/default-config.yml`) and the
   `NODE_ENV` base layer under the checked file, in boot's order: a key left to its default (for
   example `storages.base.engine`) is no longer reported missing. On a multi-core member that runs

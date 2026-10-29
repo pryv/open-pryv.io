@@ -257,10 +257,10 @@ function checkDnsTopologyConsistency (config, problems) {
   }
 }
 
-// `dns.domain` set with no `core.url` and no `dnsLess.isActive`: the
-// core-identity plugin, which runs before default-config.yml is loaded, reads
-// that as a multi-core core under the domain, while the shipped default
-// `dnsLess.isActive: true` makes it route path-style (see
+// `dns.domain` set with no `dnsLess.isActive` (whatever `core.url` is): the
+// core-identity and public-url plugins, which run before default-config.yml is
+// loaded, read that as a multi-core core under the domain, while the shipped
+// default `dnsLess.isActive: true` makes it route path-style (see
 // dnsLessUnsetProblem in config/plugins/core-identity.js). Judged on the
 // operator's layers, as the plugin sees them.
 function checkDnsLessExplicit (config, problems) {
@@ -275,7 +275,7 @@ function checkDnsLessExplicit (config, problems) {
 }
 
 // Scopes that are not the operator's: 'memory' holds what boot plugins
-// derived (core.url among them), 'default-file' and 'defaults' what ships.
+// derived, 'default-file' and 'defaults' what ships.
 const NON_OPERATOR_SCOPES = new Set(['memory', 'default-file', 'defaults']);
 
 /**

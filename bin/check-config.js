@@ -325,7 +325,7 @@ if (get('dns.active') === true && get('dnsLess.isActive') !== false) {
     'per-user subdomains would misroute. Add `dnsLess:\n  isActive: false`');
 }
 
-// dns.domain set, no core.url, dnsLess.isActive left out (mirrors
+// dns.domain set, dnsLess.isActive left out (mirrors
 // checkDnsLessExplicit in config/plugins/config-validation.js): read in the
 // operator's layers, as boot reads it.
 {

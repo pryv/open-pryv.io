@@ -71,12 +71,14 @@ function deriveCoreIdentity (get) {
 }
 
 /**
- * The one topology `deriveCoreIdentity` cannot settle: `dns.domain` set, no
- * `core.url`, and no `dnsLess.isActive` in the operator's layers. This plugin
- * then derives a multi-core identity (and the public-url plugin per-user
- * subdomain service URLs), while the shipped default `dnsLess.isActive: true`
- * makes the core route path-style: it would advertise names nothing serves.
- * Boot refuses it (config-validation) and bin/check-config.js reports it.
+ * The topology `deriveCoreIdentity` cannot settle: `dns.domain` set and no
+ * `dnsLess.isActive` in the operator's layers, whatever `core.url` is. This
+ * plugin then treats the core as multi-core (and the public-url plugin
+ * advertises per-user subdomain service URLs under the domain), while the
+ * shipped default `dnsLess.isActive: true` makes it route path-style: it would
+ * advertise names nothing serves. Boot refuses it (config-validation) and
+ * bin/check-config.js reports it. A DNSless multi-core member (`core.url`, no
+ * `dns.domain`, no `dnsLess` key) is not concerned.
  *
  * `get` reads the operator's layers only, as for `deriveCoreIdentity`.
  *
@@ -84,10 +86,11 @@ function deriveCoreIdentity (get) {
  * @returns {string|null} the problem, or null when the topology is settled
  */
 function dnsLessUnsetProblem (get) {
-  if (get('core:url') || get('dns:domain') == null) return null;
+  if (get('dns:domain') == null) return null;
   if (typeof get('dnsLess:isActive') !== 'undefined') return null;
   return `'dns.domain' is set (${get('dns:domain')}) but 'dnsLess.isActive' is not: set it explicitly, ` +
-    "'false' for a DNS multi-core deployment with per-user subdomains, 'true' for a single core with path-style routing. " +
+    "'false' for a multi-core deployment with per-user subdomains under the domain, 'true' for a single core with path-style routing " +
+    "(a DNSless multi-core member sets 'core.url' and no 'dns.domain'). " +
     'Left unset, the core would advertise per-user subdomain URLs while routing requests path-style.';
 }
 
