@@ -1,0 +1,23 @@
+p Bonjour #{USERNAME},
+if TRIGGER_INACTIVITY
+  if POLICY_OPERATOR
+    p Selon la politique de cette plateforme, les comptes sont supprimés après #{INACTIVITY_DAYS} jours sans utilisation. Votre compte n'a pas été utilisé depuis un moment : s'il n'est pas utilisé d'ici là, il sera supprimé le #{DEADLINE}, dans #{DAYS_LEFT} jours.
+  else
+    p Votre compte est réglé pour être supprimé après #{INACTIVITY_DAYS} jours sans utilisation. Il n'a pas été utilisé depuis un moment : s'il n'est pas utilisé d'ici là, il sera supprimé le #{DEADLINE}, dans #{DAYS_LEFT} jours.
+else
+  p Votre compte sera supprimé le #{DEADLINE}, dans #{DAYS_LEFT} jours.
+p Toutes les données du compte seront alors effacées, et cela ne peut pas être annulé.
+if EXPORT_URL
+  p
+    | Pour garder une copie de vos données, téléchargez-les avant cette date :
+    |
+    a(href=EXPORT_URL target="_blank" rel="noopener") #{EXPORT_URL}
+if TRIGGER_INACTIVITY
+  p Pour garder votre compte, il suffit de l'utiliser : une connexion, ou une application que vous avez autorisée, repousse la date.
+if ACCOUNT_APP_URL
+  p
+    | Pour modifier ou annuler la suppression, connectez-vous à la page de votre compte :
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p Pour modifier ou annuler la suppression, connectez-vous à la page de votre compte.

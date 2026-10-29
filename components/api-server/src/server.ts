@@ -163,6 +163,17 @@ class Server {
     if (config.get('webhooks:inProcess') !== false && process.env.PRYV_WEBHOOKS_WORKER !== '0') {
       await this.startWebhooksService();
     }
+    // Account auto-deletion sweep: one per core, in the worker that runs the
+    // core's background loops.
+    const { isDesignatedLoopWorker, startAccountAutoDeletionSweep } = require('./methods/helpers/autoDeletionSweep.ts');
+    if (isDesignatedLoopWorker()) {
+      try {
+        await startAccountAutoDeletionSweep(config);
+      } catch (err: unknown) {
+        // The API serves without it; nothing is deleted while it is down.
+        this.logger.error('account auto-deletion sweep not started: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    }
     this.logger.debug('start completed');
   }
 

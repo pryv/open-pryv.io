@@ -27,9 +27,35 @@
   `allowUserOptOut`, `date.minLeadDays`, the reminder schedule). Every change is confirmed by the
   new `account-deletion-scheduled` mail (switch `services.email.enabled.accountDeletionScheduled`,
   template key `accountDeletionScheduledTemplate`; links to `service.account`); a failed send never
-  fails the change. Platforms whose mail templates were seeded before this release add the template
-  with `bin/mail.js templates set`. The sweep that sends reminders and deletes accounts is not part
-  of this release: nothing is deleted yet.
+  fails the change, and a confirmation that went out counts as the schedule's first notice.
+- **Account auto-deletion sweep: reminders, then deletion.** Each core runs a sweep over its own
+  accounts (first pass 10 minutes after boot, then every `account.autoDeletion.sweepIntervalMs`,
+  default 6 h; not started when `account.autoDeletion.enabled` is false). An account whose schedule
+  applies (its holder's setting, or the operator preset for a plain account with an email address)
+  gets reminder mails before the deletion (`reminders.leadDays`, default 60, 30, 7 and 1 days; after
+  downtime only the most imminent one) through the new `account-deletion-reminder` mail (switch
+  `services.email.enabled.accountDeletionReminder`, template key `accountDeletionReminderTemplate`;
+  links to `service.account` and its data export page). No account is deleted less than
+  `reminders.minNoticeDays` (default 7) after its first notice: a reminder that cannot be sent is
+  retried at every pass and holds the deletion back; with reminders switched off, an account under
+  the preset is never deleted. When a preset is turned on or shortened, its clock starts that day
+  for every account, so a dormant account always gets the whole reminder schedule. At the deadline
+  the sweep checks the account's use once more, runs the deletion guards of `auth.delete` (an
+  account managing a delegated account that would be left without any way in is not deleted: the
+  holder gets the new `account-deletion-blocked` mail once, switch
+  `services.email.enabled.accountDeletionBlocked`, template key `accountDeletionBlockedTemplate`,
+  and the sweep tries again at every pass), then erases the account as `auth.delete` does,
+  relationships torn down included. Each erasure is logged at WARN before and after (username, user
+  id, trigger `date` or `inactivity`, never an email address); with `audit.onUserDelete: keep` an
+  audit row `account.autoDeletion.erase` is written in the account's trail first. An erasure
+  interrupted half-way is completed at the next pass. `account.autoDeletion.maxDeletionsPerPass`
+  (default 20, 0 = no limit) caps the deletions of one pass, the rest wait for the next one;
+  `account.autoDeletion.dryRun: true` logs the reminders and deletions a pass would make and sends,
+  deletes and writes nothing. **Operators:** platforms whose mail templates were seeded before this
+  release add the three new templates (`account-deletion-scheduled`, `account-deletion-reminder`,
+  `account-deletion-blocked`, en and fr) with `bin/mail.js templates set`: the seeder only fills an
+  empty platform database. A preset (`inactivity.defaultDays`) is a retention rule of the platform:
+  state it in your privacy notice.
 
 - **`auth.login` sets `lastUsed` on the personal access it issues.** A login was not recorded as
   use of that access: `lastUsed` (and the `lastAccess` of `system.getUserInfo`) only moved with the

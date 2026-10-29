@@ -39,7 +39,6 @@ type AccessRow = {
 type EmailSettings = Parameters<typeof sendmail>[0] & {
   enabled?: unknown;
   defaultLang?: string;
-  accountDeletionScheduledTemplate?: string;
 };
 
 export type MailState = 'available' | 'no-email' | 'not-configured';
@@ -205,27 +204,51 @@ export function confirmationSubstitutions (config: ConfigLike, user: UserRef, sc
 }
 
 /**
+ * The auto-deletion mails: the switch under `services.email.enabled`, the
+ * template key under `services.email` and the default template name.
+ */
+export const AUTO_DELETION_MAILS = Object.freeze({
+  scheduled: { flag: 'accountDeletionScheduled', templateKey: 'accountDeletionScheduledTemplate', template: 'account-deletion-scheduled' },
+  reminder: { flag: 'accountDeletionReminder', templateKey: 'accountDeletionReminderTemplate', template: 'account-deletion-reminder' },
+  blocked: { flag: 'accountDeletionBlocked', templateKey: 'accountDeletionBlockedTemplate', template: 'account-deletion-blocked' }
+});
+export type AutoDeletionMail = keyof typeof AUTO_DELETION_MAILS;
+export type MailOutcome = 'sent' | 'off' | 'failed';
+
+/**
+ * Send one auto-deletion mail to the account's address. `off`: the mail is
+ * switched off, or the account cannot receive mail. Never throws: a failure
+ * is logged and answered `failed`.
+ */
+export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeletionMail, user: UserRef, facts: AccountFacts,
+  substitutionsFor: (lang: string) => Record<string, string>): Promise<MailOutcome> {
+  const mail = AUTO_DELETION_MAILS[kind];
+  try {
+    const emailSettings = config.get('services:email') as EmailSettings | null | undefined;
+    if (emailSettings == null || !facts.notifiable || facts.email == null) return 'off';
+    const enabled = emailSettings.enabled;
+    if (enabled != null && typeof enabled === 'object' && (enabled as Record<string, unknown>)[mail.flag] === false) return 'off';
+    const lang = facts.language || emailSettings.defaultLang || 'en';
+    const configured = (emailSettings as Record<string, unknown>)[mail.templateKey];
+    const template = typeof configured === 'string' && configured !== '' ? configured : mail.template;
+    await new Promise<void>((resolve, reject) => {
+      sendmail(emailSettings, template, { email: facts.email as string, name: user.username, type: 'to' }, substitutionsFor(lang), lang,
+        (err?: Error | null) => (err != null ? reject(err) : resolve()));
+    });
+    return 'sent';
+  } catch (err: unknown) {
+    if (!isLoggedMailFailure(err)) {
+      logger.warn(`auto-deletion ${kind} mail for user "${user.username}" not sent: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return 'failed';
+  }
+}
+
+/**
  * Send the confirmation of a setting change; true when it went out. Never
  * throws: a failure is logged and the change stands.
  */
 export async function sendConfirmation (config: ConfigLike, user: UserRef, facts: AccountFacts, schedule: Schedule, now: number): Promise<boolean> {
-  try {
-    const emailSettings = config.get('services:email') as EmailSettings | null | undefined;
-    if (emailSettings == null || !facts.notifiable || facts.email == null) return false;
-    const enabled = emailSettings.enabled;
-    if (enabled != null && typeof enabled === 'object' && (enabled as { accountDeletionScheduled?: unknown }).accountDeletionScheduled === false) return false;
-    const lang = facts.language || emailSettings.defaultLang || 'en';
-    const substitutions = confirmationSubstitutions(config, user, schedule, lang, now);
-    await new Promise<void>((resolve, reject) => {
-      sendmail(emailSettings, emailSettings.accountDeletionScheduledTemplate || 'account-deletion-scheduled',
-        { email: facts.email as string, name: user.username, type: 'to' }, substitutions, lang,
-        (err?: Error | null) => (err != null ? reject(err) : resolve()));
-    });
-    return true;
-  } catch (err: unknown) {
-    if (!isLoggedMailFailure(err)) {
-      logger.warn(`auto-deletion confirmation for user "${user.username}" not sent: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    return false;
-  }
+  return await sendAutoDeletionMail(config, 'scheduled', user, facts,
+    (lang) => confirmationSubstitutions(config, user, schedule, lang, now)) === 'sent';
 }

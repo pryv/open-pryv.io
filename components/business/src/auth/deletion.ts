@@ -30,6 +30,8 @@ type MethodContext = {
   // lists them is gone by then).
   seriesNamespaces?: string[];
   deletionByAdmin?: boolean;
+  // What decided an erasure run outside auth.delete (eraseAccount).
+  erasureTrigger?: string;
 };
 type ResultBag = Record<string, unknown>;
 type Next = (err?: unknown) => void;
@@ -307,9 +309,15 @@ class Deletion {
     ].map((step) => step.bind(this) as (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown);
   }
 
-  /** Erase a whole account outside auth.delete, with the same steps. Throws on the first failing step. */
-  async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean } = {}): Promise<void> {
+  /**
+   * Erase a whole account outside auth.delete, with the same steps. Throws on
+   * the first failing step. `trigger` names what decided the erasure (e.g. an
+   * auto-deletion's `date` or `inactivity`), kept on the context for the
+   * steps that record it.
+   */
+  async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean; trigger?: string } = {}): Promise<void> {
     const context: MethodContext = { user: { id: account.id, username: account.username } };
+    if (options.trigger != null) context.erasureTrigger = options.trigger;
     const result: ResultBag = {};
     for (const step of this.erasureSteps(options)) {
       await new Promise<void>((resolve, reject) => {

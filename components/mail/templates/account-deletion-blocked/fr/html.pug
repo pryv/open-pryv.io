@@ -1,0 +1,17 @@
+p Bonjour #{USERNAME},
+p Votre compte devait être supprimé le #{DEADLINE}, mais il n'a pas pu l'être : le supprimer maintenant laisserait un autre compte qu'il gère (en tant que délégué) sans aucun moyen de connexion.
+p La suppression est retentée régulièrement et aura lieu, sans autre message, dès que plus rien ne l'empêche. Pour qu'elle ait lieu, donnez au compte que vous gérez sa propre adresse e-mail, ou confiez sa gestion à quelqu'un d'autre.
+if TRIGGER_INACTIVITY
+  p Pour garder votre compte, il suffit de l'utiliser : une connexion, ou une application que vous avez autorisée, annule cette suppression et repousse la date.
+if EXPORT_URL
+  p
+    | Pour garder une copie de vos données, téléchargez-les dès maintenant :
+    |
+    a(href=EXPORT_URL target="_blank" rel="noopener") #{EXPORT_URL}
+if ACCOUNT_APP_URL
+  p
+    | Pour modifier ou annuler la suppression, connectez-vous à la page de votre compte :
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p Pour modifier ou annuler la suppression, connectez-vous à la page de votre compte.

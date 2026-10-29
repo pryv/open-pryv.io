@@ -9,6 +9,18 @@
   `account.update` calls, for instance) failed on the key and the request answered `500`. It is
   now stored 1 ms after the other version. Conformance tests `[ATM08]` `[ATM09]`.
 
+### Account auto-deletion sweep loop
+
+- The sweep (`business/src/autoDeletion/sweep.ts`, wired in
+  `api-server/src/methods/helpers/autoDeletionSweep.ts`) runs in the API worker the master
+  designates for the core's background loops (the one running the CMC retry loop,
+  `PRYV_CMC_LOOP_WORKER`), started by `server.ts` after the server is listening. Passes are chained
+  (the next one is scheduled when the previous one ends) and a pass asked for while one runs is
+  skipped. Accounts are processed one at a time. Its bookkeeping row is written only on a material
+  change; accounts without a schedule are never written.
+- `Deletion.eraseAccount` takes an optional `trigger` (kept on the erasure context for a future
+  erasure record); the audit method list gains `account.autoDeletion.erase`.
+
 ### Account auto-deletion: configuration and per-account state (feature not exposed yet)
 
 - New per-core block `account.autoDeletion` in `default-config.yml` (off by default in effect:

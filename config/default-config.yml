@@ -396,6 +396,16 @@ services:
       # included. Best-effort: a failed send never fails the change. Off, the
       # first reminder becomes the first notice of a schedule.
       accountDeletionScheduled: true
+      # Reminders before an auto-deletion (account.autoDeletion.reminders).
+      # An account is never deleted less than reminders.minNoticeDays after
+      # its first notice: off, an account under the operator preset gets no
+      # notice and is therefore never deleted.
+      accountDeletionReminder: true
+      # Notice, sent once, that an account due for auto-deletion could not be
+      # deleted (a deletion guard refused it, e.g. it manages a delegated
+      # account that would be left without any way in). The sweep tries
+      # again at every pass, silently.
+      accountDeletionBlocked: true
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.
@@ -430,13 +440,22 @@ services:
     # TRIGGER_INACTIVITY ('true' or ''), INACTIVITY_DAYS, ACTION,
     # ACCOUNT_APP_URL (service.account) and EXPORT_URL (its data page).
     accountDeletionScheduledTemplate: account-deletion-scheduled
+    # Sent before an auto-deletion (see enabled.accountDeletionReminder), and
+    # when one is refused by a deletion guard (enabled.accountDeletionBlocked).
+    # Both get the variables of the confirmation (USERNAME, DEADLINE: the
+    # date and time the account is due, DAYS_LEFT, TRIGGER and its flags,
+    # INACTIVITY_DAYS, ACTION, ACCOUNT_APP_URL, EXPORT_URL) and
+    # POLICY_OPERATOR ('true' when the platform's preset set the schedule).
+    accountDeletionReminderTemplate: account-deletion-reminder
+    accountDeletionBlockedTemplate: account-deletion-blocked
     defaultLang: en
     # --- in-process mode only ---
     # Pug source directory seeded into PlatformDB on first boot, when PlatformDB
     # holds no templates yet. Leave empty to seed the template set bundled with
     # the mail component (components/mail/templates: welcome-email,
     # reset-password, verify-email, email-challenge, mfa-change,
-    # external-id-released, account-deletion-scheduled; en + fr).
+    # external-id-released, account-deletion-scheduled,
+    # account-deletion-reminder, account-deletion-blocked; en + fr).
     # A deployment seeded before a template was added to that set does not get
     # it automatically: add it with `bin/mail.js templates set`. After the first
     # boot, edits go through `bin/mail.js templates set` or the admin API; a

@@ -1,0 +1,17 @@
+p Hi #{USERNAME},
+p Your account was due to be deleted on #{DEADLINE}, but it could not be: deleting it now would leave another account it manages (as a delegate) without any way to sign in.
+p The deletion is tried again regularly and goes ahead, without another message, as soon as nothing prevents it. To let it go ahead, give the account you manage an email address of its own, or hand its management over to someone else.
+if TRIGGER_INACTIVITY
+  p To keep your account instead, simply use it: signing in, or an app you connected, cancels this deletion and moves the date.
+if EXPORT_URL
+  p
+    | To keep a copy of your data, download it now:
+    |
+    a(href=EXPORT_URL target="_blank" rel="noopener") #{EXPORT_URL}
+if ACCOUNT_APP_URL
+  p
+    | To change or cancel the deletion, sign in to your account page:
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p To change or cancel the deletion, sign in to your account page.

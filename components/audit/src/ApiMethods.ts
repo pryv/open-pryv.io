@@ -139,7 +139,11 @@ const ALL_METHODS = [
   'mfa.deactivatedByAdmin',
   // An external id released by an administrator (system.extIdRelease, audited
   // without a user): recorded in the trail of the account that held it.
-  'account.externalIds.adminRelease'
+  'account.externalIds.adminRelease',
+  // An account erased by the auto-deletion sweep (no API call): recorded in
+  // its own trail before the erasure, where the trail outlives the account
+  // (`audit.onUserDelete: keep`).
+  'account.autoDeletion.erase'
 ];
 
 const NOT_AUDITED_METHODS = [
