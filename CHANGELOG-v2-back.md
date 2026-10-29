@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Storage: event deletion listings hold head events only (defence in depth)
+
+- The deletion listings (`deleted > since`, used by `events.get` with `includeDeletions`) of both
+  engines did not exclude history versions, where the single-event lookups do (`head_id IS NULL`
+  on PostgreSQL, `headId IS NULL` on SQLite). No API path stamps a version with a deletion time (a
+  version is a copy of the event before the change, deleted events cannot be changed), so this is
+  not reachable through the API; a restored or hand-edited store could hold such rows. Both
+  engines now filter them, in both SQLite query paths (default and paged). Test `[EGVI2]` stamps
+  a version directly in the store.
+
 ### Config: an empty `oauth.consentUrl` is reported (boot warning and `check-config`)
 
 - `GET /oauth2/authorize` answers 500 (`oauth:consentUrl not configured`) while `oauth.consentUrl`
