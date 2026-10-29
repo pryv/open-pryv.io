@@ -123,6 +123,16 @@ class DBpostgresql {
     return rows.map(parseEntry);
   }
 
+  async getAllForUser (username: string): Promise<PlatformEntry[]> {
+    // Unique rows hold their owner as value; indexed rows end their key with it.
+    const res = await this.db.query(
+      "SELECT key, value FROM platform_kv WHERE (key LIKE 'user-unique/%' AND value = $1) " +
+      "OR (key LIKE 'user-indexed/%' AND right(key, length($1) + 1) = '/' || $1)",
+      [username]
+    );
+    return (res.rows as Row[]).map(parseEntry);
+  }
+
   async deleteAll (): Promise<void> {
     await this.db.query('DELETE FROM platform_kv');
   }

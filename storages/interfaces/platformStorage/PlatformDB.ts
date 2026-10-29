@@ -132,6 +132,8 @@ export interface PlatformDB {
   getUserIndexedField (username: string, field: string): Promise<string | null>;
   getUsersUniqueField (field: string, value: string): Promise<string | null>;
   getAllWithPrefix (prefix: string): Promise<PlatformEntry[]>;
+  /** The unique and indexed field rows owned by `username` (storage form), read without listing the others. */
+  getAllForUser (username: string): Promise<PlatformEntry[]>;
   deleteAll (): Promise<void>;
   close (): Promise<void>;
   isClosed (): boolean;
@@ -318,6 +320,8 @@ const PlatformDB: PlatformDB = {
   async getUsersUniqueField (field: string, value: string): Promise<string | null> { throw new Error('Not implemented'); },
 
   async getAllWithPrefix (prefix: string): Promise<PlatformEntry[]> { throw new Error('Not implemented'); },
+
+  async getAllForUser (username: string): Promise<PlatformEntry[]> { throw new Error('Not implemented'); },
 
   async deleteAll (): Promise<void> { throw new Error('Not implemented'); },
 

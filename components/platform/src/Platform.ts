@@ -404,7 +404,7 @@ class Platform {
    * backwards compatibility with existing callers.
    */
   async deleteUser (username: string, _user: unknown) {
-    // `getAllWithPrefix('user')` returns entries whose `username` and (for
+    // `getAllForUser` returns entries whose `username` and (for
     // unique fields) `value` are stored in PlatformDB exactly as written.
     // In hashed mode those are HMAC tokens — comparing or deleting them
     // through `#applyOperations` (which assumes plaintext inputs and would
@@ -412,7 +412,7 @@ class Platform {
     // delete directly against the engine here, using the token form of
     // `username` for the row-match.
     const usernameToken = this.hashFor(USERNAME_FIELD, username);
-    const entries = await this.#db.getAllWithPrefix('user');
+    const entries = await this.#db.getAllForUser(usernameToken);
     for (const entry of entries) {
       if (entry.username !== usernameToken) continue;
       if (entry.field == null || entry.field.startsWith('_')) continue;
@@ -445,7 +445,7 @@ class Platform {
   async renameUser (oldUsername: string, newUsername: string) {
     const oldToken = this.hashFor(USERNAME_FIELD, oldUsername);
     const newToken = this.hashFor(USERNAME_FIELD, newUsername);
-    const entries = await this.#db.getAllWithPrefix('user');
+    const entries = await this.#db.getAllForUser(oldToken);
     for (const entry of entries) {
       if (entry.username !== oldToken) continue;
       if (entry.field == null || entry.field.startsWith('_')) continue;
@@ -906,7 +906,7 @@ class Platform {
    */
   async listUserUniqueValues (username: string, field: string): Promise<string[]> {
     const usernameToken = this.hashFor(USERNAME_FIELD, username);
-    const entries = await this.#db.getAllWithPrefix('user');
+    const entries = await this.#db.getAllForUser(usernameToken);
     const values: string[] = [];
     for (const entry of entries) {
       if (entry.isUnique !== true) continue;

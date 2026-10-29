@@ -50,7 +50,8 @@ function makeFakePlatformDB () {
     async reassignInvitationConsumer (from, to) {
       for (const info of invitations.values()) if (info.consumedBy === from) info.consumedBy = to;
     },
-    async getAllWithPrefix () { return []; }
+    async getAllWithPrefix () { return []; },
+    async getAllForUser () { return []; }
   };
 }
 
