@@ -77,12 +77,6 @@ if (bootstrapPath !== absPath && fs.existsSync(bootstrapPath)) {
     process.exit(1);
   }
 }
-const config = merge(merge(envConfig, bootstrapConfig ?? undefined), fileConfig);
-
-function get (dottedPath, from = config) {
-  return dottedPath.split('.').reduce((obj, key) => (obj == null ? obj : obj[key]), from);
-}
-
 // The base layer boot adds under this file when it runs as
 // config/override-config.yml without `--config` (Docker image default):
 // config/<NODE_ENV>-config.yml. With `--config <file>` no such layer is added.
@@ -97,6 +91,35 @@ if (baseLayerPath != null && fs.existsSync(baseLayerPath)) {
     baseLayer = null;
   }
 }
+
+// The shipped defaults, the lowest layer at boot.
+let defaultConfig;
+try {
+  defaultConfig = yaml.load(fs.readFileSync(path.join(__dirname, '../config/default-config.yml'), 'utf8'));
+} catch (e) {
+  console.error(`check-config: failed to read config/default-config.yml: ${e.message}`);
+  process.exit(1);
+}
+
+// The layers in boot's order, lowest first: default-config.yml, the base
+// layer, the environment, bootstrap-config.yml, then this file.
+// `operatorConfig` is everything above the shipped defaults: the checks that
+// depend on whether the operator set a key (rather than inheriting its
+// default) read it, as boot does. Every other check reads `config`, the
+// merged configuration boot runs with.
+const operatorConfig = merge(merge(merge(baseLayer ?? undefined, envConfig), bootstrapConfig ?? undefined), fileConfig ?? undefined);
+const config = merge(defaultConfig, operatorConfig);
+
+function get (dottedPath, from = config) {
+  return dottedPath.split('.').reduce((obj, key) => (obj == null ? obj : obj[key]), from);
+}
+
+// The boot-side helpers read keys through a config object (`a:b:c` keys).
+const configReader = { get: (key) => get(key.split(':').join('.')) };
+// Single or multi-core, decided as at boot: the core-identity plugin runs
+// before boot loads default-config.yml, so it sees the operator's layers only.
+const coreIdentity = require('../config/plugins/core-identity.js')
+  .deriveCoreIdentity((key) => get(key.split(':').join('.'), operatorConfig));
 const baseLayerNote = baseLayer != null
   ? `Base layer: NODE_ENV=${nodeEnv}, so boot without --config adds ${baseLayerName} under this file (and default-config.yml under both).`
   : `Base layer: none (NODE_ENV=${nodeEnv || '<unset>'} has no config file); boot adds only default-config.yml under this file.`;
@@ -146,11 +169,10 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
 }
 
 // auth.trustedApps — required at boot, every entry must parse (same parser as
-// the server). The base layer may supply it.
+// the server).
 {
   const { parseTrustedApps } = require('../components/business/src/auth/trustedApps.ts');
-  const own = get('auth.trustedApps');
-  const value = own != null ? own : get('auth.trustedApps', baseLayer);
+  const value = get('auth.trustedApps');
   if (typeof value !== 'string' || value.trim() === '') {
     problems.push("auth.trustedApps missing or empty (list your auth UI and app origins, e.g. '*@https://account.example.com')");
   } else {
@@ -169,15 +191,16 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
-// auth.emailVerificationPageURL — a PROBLEM only when the checked file
-// EXPLICITLY enables the verify-email sub-feature. The shipped default is now
-// `verifyEmail: true`, but this script reads the override standalone, without
-// the default merge: a file that never mentions the key inherits the default,
-// where a missing page URL is a warning (see below) rather than a refusal.
+// auth.emailVerificationPageURL: a PROBLEM only when the operator's layers
+// EXPLICITLY enable the verify-email sub-feature. The shipped default is
+// `verifyEmail: true`, but a configuration that never mentions the key
+// inherits it, and a missing page URL is then a warning (see below) rather
+// than a refusal, as at boot. So this reads the operator's layers, not the
+// merged configuration.
 // The scalar case matters: `enabled: true` (not an object) enables every message
 // class at runtime, so it does require the URL.
 {
-  const emailEnabled = get('services.email.enabled');
+  const emailEnabled = get('services.email.enabled', operatorConfig);
   let verifyEmailNeeded = false;
   if (emailEnabled === true) verifyEmailNeeded = true;
   if (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail === true) verifyEmailNeeded = true;
@@ -186,11 +209,11 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
-// Default-on email verification: when the checked file does not mention
+// Default-on email verification: when the operator's layers do not mention
 // verifyEmail, the shipped default (true) applies. A missing page URL then
 // degrades the feature to off with a boot warning rather than a refusal.
 {
-  const emailEnabled = get('services.email.enabled');
+  const emailEnabled = get('services.email.enabled', operatorConfig);
   const explicit = emailEnabled === true ||
     (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.verifyEmail !== undefined);
   if (emailEnabled !== false && !explicit && isMissingOrSentinel(get('auth.emailVerificationPageURL'))) {
@@ -199,43 +222,25 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
 }
 
 // account.emailVerification.requireAtRegistration: the registration email
-// gate mails a code on every sign-up, so it needs a complete mail config.
-// This script reads the override standalone, without the default merge, so a
-// missing `services.email.method` means "inherits the default (in-process)"
-// and cannot be checked further here; the boot-time validator sees the merged
-// config and catches that case.
+// gate mails a code on every sign-up, so it needs a complete mail config
+// (mirrors checkEmailVerificationGate in config/plugins/config-validation.js,
+// with the same predicate).
 if (get('account.emailVerification.requireAtRegistration') === true) {
-  const method = get('services.email.method');
-  if (get('services.email.enabled') === false) {
-    problems.push('account.emailVerification.requireAtRegistration is true but services.email.enabled is false');
-  }
-  if (method === 'in-process') {
-    for (const key of ['smtp.host', 'from.address']) {
-      if (isMissingOrSentinel(get(`services.email.${key}`))) {
-        problems.push(`services.email.${key} missing or unset (required by the registration email gate with method in-process)`);
-      }
-    }
-  } else if (method === 'microservice' || method === 'mandrill') {
-    for (const key of ['url', 'key']) {
-      if (isMissingOrSentinel(get(`services.email.${key}`))) {
-        problems.push(`services.email.${key} missing or unset (required by the registration email gate with method ${method})`);
-      }
-    }
-  } else if (method != null) {
-    problems.push(`services.email.method="${method}" but only in-process, microservice or mandrill are supported`);
+  const { describeMailCapability } = require('../components/business/src/emails/mailCapability.ts');
+  const capability = describeMailCapability(configReader);
+  for (const p of capability.problems) {
+    problems.push(p.endsWith('missing or unset')
+      ? `${p} (required by the registration email gate with method ${capability.method})`
+      : `account.emailVerification.requireAtRegistration is true but ${p}`);
   }
 }
 
-// platform.piiHmacKey — required when PlatformDB PII is hashed, which is the
+// platform.piiHmacKey: required when PlatformDB PII is hashed, the
 // default-config value of platform.piiMode (mirrors REQUIRED_WHEN in
-// config/plugins/config-validation.js; this tool does not read default-config)
+// config/plugins/config-validation.js)
 {
-  const own = (key) => {
-    const value = get(`platform.${key}`);
-    return value != null ? value : get(`platform.${key}`, baseLayer);
-  };
-  const piiMode = own('piiMode') != null ? own('piiMode') : 'hashed';
-  const key = own('piiHmacKey');
+  const piiMode = get('platform.piiMode');
+  const key = get('platform.piiHmacKey');
   if (piiMode === 'hashed' && (typeof key !== 'string' || isMissingOrSentinel(key))) {
     problems.push('platform.piiHmacKey missing or unset (required when platform.piiMode is hashed, the default): ' +
       'base64 of 32 random bytes, the same value on every core');
@@ -307,40 +312,42 @@ if (get('sso.enabled') === true) {
 
 // DNS topology consistency (mirrors checkDnsTopologyConsistency in
 // config/plugins/config-validation.js). dnsLess.isActive DEFAULTS to true
-// at runtime, so for a dns-active config it must be explicitly false in
-// the file — absent is just as broken as true.
+// (default-config.yml), so a dns-active config must set it to false: absent
+// is just as broken as true.
 if (get('dns.active') === true && get('dnsLess.isActive') !== false) {
   problems.push('dns.active is true but dnsLess.isActive is not explicitly false — ' +
     'the API would route path-style and reserved subdomains (reg/access/mfa) plus ' +
     'per-user subdomains would misroute. Add `dnsLess:\n  isActive: false`');
 }
 
-// storages.base.engine + matching engine config block
+// storages.base.engine + matching engine config block. The engine and the
+// connection settings default to a local PostgreSQL (default-config.yml). An
+// empty password is accepted at boot (a server with trust or peer
+// authentication needs none), so it is only a warning here; a placeholder left
+// in it stops the boot.
 if (isMissingOrSentinel(get('storages.base.engine'))) {
   problems.push('storages.base.engine missing or unset');
 } else if (get('storages.base.engine') === 'postgresql') {
-  for (const key of ['host', 'port', 'database', 'user', 'password']) {
+  for (const key of ['host', 'port', 'database', 'user']) {
     if (isMissingOrSentinel(get(`storages.engines.postgresql.${key}`))) {
       problems.push(`storages.engines.postgresql.${key} missing or unset`);
     }
+  }
+  const password = get('storages.engines.postgresql.password');
+  if (password == null || password === '') {
+    warnings.push('storages.engines.postgresql.password is empty: the core connects without a password, which only works when the PostgreSQL server trusts it (trust or peer authentication).');
+  } else if (isMissingOrSentinel(password)) {
+    problems.push('storages.engines.postgresql.password holds a placeholder: set the real password');
   }
 }
 
 // storages.series.engine: postgresql needs a PostgreSQL base engine (mirrors
 // checkSeriesEngineDependency in config/plugins/config-validation.js). The
 // series engine defaults to postgresql, so a file that only switches the base
-// engine to SQLite is refused too: resolve it like boot does.
+// engine to SQLite is refused too.
 {
   const baseEngine = get('storages.base.engine');
-  let seriesEngine = get('storages.series.engine') ?? get('storages.series.engine', baseLayer);
-  if (seriesEngine == null) {
-    try {
-      const defaults = yaml.load(fs.readFileSync(path.join(__dirname, '../config/default-config.yml'), 'utf8'));
-      seriesEngine = get('storages.series.engine', defaults);
-    } catch (err) {
-      warnings.push(`storages.series.engine could not be resolved here (${err.message}); master.js still checks it at boot.`);
-    }
-  }
+  const seriesEngine = get('storages.series.engine');
   if (!isMissingOrSentinel(baseEngine) && baseEngine !== 'postgresql' && seriesEngine === 'postgresql') {
     problems.push(`storages.series.engine=postgresql requires storages.base.engine: postgresql (got "${baseEngine}"); with a SQLite base set storages.series.engine: sqlite or influxdb (the series engine defaults to postgresql)`);
   }
@@ -370,12 +377,22 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
   }
 }
 
-// dnsLess.isActive XOR dns.active — server cannot route without at least one
+// dnsLess.isActive or dns.active: a single core cannot route without at
+// least one. A multi-core member (classified as boot does, see
+// config/plugins/core-identity.js) may run neither: its per-user names are
+// resolved by the embedded DNS of a peer core, or by an external DNS. Boot
+// accepts that topology, so it is a warning there.
 {
   const dnsLessOn = get('dnsLess.isActive') === true;
   const dnsOn = get('dns.active') === true;
   if (!dnsLessOn && !dnsOn) {
-    problems.push('Neither dnsLess.isActive nor dns.active is true — server cannot resolve user → core');
+    if (coreIdentity.isSingleCore === false) {
+      warnings.push('Neither dnsLess.isActive nor dns.active is true: this multi-core member runs no DNS of its own, ' +
+        `so user → core resolution (per-user names under ${get('dns.domain') || 'the platform domain'}) must be served by a peer core's ` +
+        'embedded DNS (dns.active: true there) or by an external DNS.');
+    } else {
+      problems.push('Neither dnsLess.isActive nor dns.active is true — server cannot resolve user → core');
+    }
   }
   if (dnsLessOn && isMissingOrSentinel(get('dnsLess.publicUrl'))) {
     problems.push('dnsLess.publicUrl missing or unset (required when dnsLess.isActive)');
@@ -387,24 +404,13 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
 
 // hostedSites: shape only (this script has no database and does not read the
 // site folders; master.js checks the folders and the usernames at boot).
-if (get('hostedSites') != null) {
-  try {
-    const { describeHostedSites } = require('../components/business/src/hostedSites.ts');
-    const staticEntries = get('dns.staticEntries');
-    const report = describeHostedSites({
-      hostedSites: get('hostedSites'),
-      domain: get('dns.domain') || null,
-      // dnsLess.isActive defaults to true at runtime (see the topology check above)
-      dnsLessActive: get('dnsLess.isActive') !== false,
-      publicUrl: get('dnsLess.publicUrl') || null,
-      coreId: get('core.id') || null,
-      staticEntryNames: (staticEntries && typeof staticEntries === 'object') ? Object.keys(staticEntries) : []
-    });
-    for (const p of report.problems) problems.push(p);
-    for (const w of report.warnings) warnings.push(w);
-  } catch (err) {
-    warnings.push(`hostedSites could not be checked here (${err.message}); master.js still checks it at boot.`);
-  }
+try {
+  const { describeHostedSites, hostedSitesInputFromConfig } = require('../components/business/src/hostedSites.ts');
+  const report = describeHostedSites(hostedSitesInputFromConfig(configReader));
+  for (const p of report.problems) problems.push(p);
+  for (const w of report.warnings) warnings.push(w);
+} catch (err) {
+  warnings.push(`hostedSites could not be checked here (${err.message}); master.js still checks it at boot.`);
 }
 
 // access.defaultAuthUrl — not required at boot (master.js starts fine
@@ -432,53 +438,47 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   const { CONSENT_URL_WARNING, isConsentUrlSet } = require('../components/oauth2/src/consentUrlCheck.ts');
   const oauthMounted = ['oauth.issuer', 'dnsLess.publicUrl', 'service.api', 'dns.domain']
     .some((key) => !isMissingOrSentinel(get(key)));
-  const consentUrl = get('oauth.consentUrl') ?? get('oauth.consentUrl', baseLayer);
+  const consentUrl = get('oauth.consentUrl');
   if (oauthMounted && (!isConsentUrlSet(consentUrl) || isMissingOrSentinel(consentUrl))) {
     warnings.push(CONSENT_URL_WARNING);
   }
 }
 
-// services.mfa — the same check master.js runs at boot. The override is merged
-// over the shipped defaults first, as at boot, so a partial block is judged by
-// the configuration it actually produces.
-if (get('services.mfa') != null) {
-  try {
-    const defaults = yaml.load(fs.readFileSync(path.join(__dirname, '../config/default-config.yml'), 'utf8'));
-    const { describeMfaConfig } = require('../components/business/src/mfa/configCheck.ts');
-    const mfa = describeMfaConfig(merge(defaults.services && defaults.services.mfa, get('services.mfa')));
-    for (const p of mfa.problems) problems.push(`${p.path.join('.')}: ${p.message}`);
-    for (const w of mfa.warnings) warnings.push(w);
-  } catch (err) {
-    warnings.push(`services.mfa could not be checked here (${err.message}); master.js still checks it at boot.`);
-  }
+// services.mfa: the same check master.js runs at boot, on the merged
+// configuration: a partial block is judged by the configuration it produces.
+try {
+  const { describeMfaConfig } = require('../components/business/src/mfa/configCheck.ts');
+  const mfa = describeMfaConfig(get('services.mfa'));
+  for (const p of mfa.problems) problems.push(`${p.path.join('.')}: ${p.message}`);
+  for (const w of mfa.warnings) warnings.push(w);
+} catch (err) {
+  warnings.push(`services.mfa could not be checked here (${err.message}); master.js still checks it at boot.`);
 }
 
 // http.trustedProxies: the same check master.js runs at boot (every entry an
 // IP, a CIDR or a proxy-addr name; loopback needed while HFS workers run).
-if (get('http.trustedProxies') != null) {
-  try {
-    const { checkTrustedProxiesConfig } = require('../components/middleware/src/clientIp.ts');
-    const hfsWorkers = get('cluster.hfsWorkers') ?? 1; // shipped default
-    const report = checkTrustedProxiesConfig(get('http.trustedProxies'), hfsWorkers);
-    for (const p of report.problems) problems.push(p.message);
-    for (const w of report.warnings) warnings.push(w);
-  } catch (err) {
-    warnings.push(`http.trustedProxies could not be checked here (${err.message}); master.js still checks it at boot.`);
-  }
+try {
+  const { checkTrustedProxiesConfig } = require('../components/middleware/src/clientIp.ts');
+  const report = checkTrustedProxiesConfig(get('http.trustedProxies'), get('cluster.hfsWorkers'));
+  for (const p of report.problems) problems.push(p.message);
+  for (const w of report.warnings) warnings.push(w);
+} catch (err) {
+  warnings.push(`http.trustedProxies could not be checked here (${err.message}); master.js still checks it at boot.`);
 }
 
-// core.id grammar and, on a multi-core config (dnsLess off), core.url as a
-// peer URL (mirrors checkCoreIdentity in config/plugins/config-validation.js).
+// core.id grammar and, on a multi-core member, its core URL (explicit or
+// derived) as a peer URL (mirrors checkCoreIdentity in
+// config/plugins/config-validation.js).
 // A multi-core node (core.ip set) that spawns its own rqlited without Raft TLS
 // is a problem: the node refuses to start (same rule as the boot validation).
 {
-  const { coreIdProblem, peerUrlProblem } = require('../components/platform/src/coreIdentity.ts');
+  const { coreIdProblem, peerUrlProblem, insecurePeerUrlAllowed } = require('../components/platform/src/coreIdentity.ts');
   if (get('core.id') != null) {
     const p = coreIdProblem(get('core.id'));
     if (p != null) problems.push(p);
   }
-  if (get('core.url') && get('dnsLess.isActive') === false) {
-    const p = peerUrlProblem(get('core.url'), { allowInsecure: get('cluster.allowInsecurePeerUrl') === true });
+  if (coreIdentity.isSingleCore === false && coreIdentity.coreUrl) {
+    const p = peerUrlProblem(coreIdentity.coreUrl, { allowInsecure: insecurePeerUrlAllowed(configReader) });
     if (p != null) problems.push(p);
   }
   const { raftTlsProblem } = require('../storages/engines/rqlite/src/rqliteProcess.ts');
@@ -493,21 +493,18 @@ if (get('http.trustedProxies') != null) {
 
 // integrity.algorithm: the checksums of events, accesses and attachments;
 // md5 and sha1 are refused (mirrors checkIntegrityAlgorithm in
-// config/plugins/config-validation.js). Absent: the shipped default applies.
+// config/plugins/config-validation.js).
 {
   const algorithm = get('integrity.algorithm');
-  if (algorithm != null) {
-    const { integrityAlgorithmProblem } = require('../components/business/src/integrity/algorithms.ts');
-    const p = integrityAlgorithmProblem(algorithm);
-    if (p != null) problems.push(p);
-  }
+  const { integrityAlgorithmProblem } = require('../components/business/src/integrity/algorithms.ts');
+  const p = integrityAlgorithmProblem(algorithm);
+  if (p != null) problems.push(p);
 }
 
 // custom.systemStreams: the same loader boot runs (config/plugins/systemStreams),
-// which refuses an invalid custom stream and any "other" stream. The base layer
-// may supply part of it.
+// which refuses an invalid custom stream and any "other" stream.
 {
-  const value = merge(get('custom.systemStreams', baseLayer) ?? undefined, get('custom.systemStreams'));
+  const value = get('custom.systemStreams');
   if (value != null) {
     const store = new (require('nconf').Provider)();
     store.use('memory');
