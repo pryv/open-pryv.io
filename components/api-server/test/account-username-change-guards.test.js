@@ -105,7 +105,7 @@ describe('[UCGD] account.changeUsername: names refused, limits, trail', function
 
   it('[UCGD6] the change is in the account\'s audit trail, the new name in the account history', async function () {
     const auditStorage = require('storages').auditStorage;
-    if (auditStorage == null) { this.skip(); return; }
+    assert.ok(auditStorage != null, 'audit storage is initialised: this audit test must not pass without it');
     const { uname, userId } = await freshUser('gk');
     const newName = freshName('gl');
     const res = await changeUsername(uname, newName, await login(uname));
