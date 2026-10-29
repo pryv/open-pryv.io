@@ -771,18 +771,27 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * the update touches clientData, the binding (present or absent) must
    * come through unchanged. Defense-in-depth: with uniform enforcement
    * a stolen bound token cannot reach this method in the first place.
-   * Same for `clientData.oauth`, the link of an OAuth session to its consent
-   * data-grant: removing it would let the session outlive a withdrawn grant.
+   * The link of an OAuth session to its consent data-grant
+   * (`clientData.oauth.dataGrantId`) is protected too, on a session that has
+   * one: removing or changing it would let the session outlive a withdrawn
+   * grant. Only that sub-key, and only when the update touches `oauth`:
+   * `clientData` is the app's own free-form data otherwise.
    */
   function dpopBindingUpdateGuard (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     const updatedClientData = params.update?.clientData as Record<string, unknown> | null | undefined;
     if (updatedClientData === undefined) return next(); // clientData untouched
     const currentClientData = (params.targetAccess as { clientData?: Record<string, unknown> })?.clientData;
-    for (const key of ['dpop', 'oauth']) {
-      const current = currentClientData?.[key];
-      const updated = updatedClientData == null ? undefined : updatedClientData[key];
-      if (JSON.stringify(current ?? null) !== JSON.stringify(updated ?? null)) {
-        return next(errors.forbidden('The clientData.' + key + ' key cannot be created, changed or removed through accesses.update.'));
+    const current = currentClientData?.dpop;
+    const updated = updatedClientData == null ? undefined : updatedClientData.dpop;
+    if (JSON.stringify(current ?? null) !== JSON.stringify(updated ?? null)) {
+      return next(errors.forbidden('The clientData.dpop key cannot be created, changed or removed through accesses.update.'));
+    }
+    const sessionLink = (currentClientData?.oauth as { dataGrantId?: unknown } | undefined)?.dataGrantId;
+    const touchesOauth = updatedClientData === null || Object.prototype.hasOwnProperty.call(updatedClientData, 'oauth');
+    if (sessionLink != null && touchesOauth) {
+      const updatedLink = (updatedClientData?.oauth as { dataGrantId?: unknown } | null | undefined)?.dataGrantId;
+      if (updatedLink !== sessionLink) {
+        return next(errors.forbidden('The clientData.oauth.dataGrantId link of an OAuth session cannot be changed or removed through accesses.update.'));
       }
     }
     next();

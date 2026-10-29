@@ -143,6 +143,21 @@ function sessionsOfGrant (all: AccessRow[], grantBaseId: string, now: number, kn
   return sessions.concat(created);
 }
 
+/**
+ * The ids `deleteAccessChain` would delete for `id` (the access, what it
+ * manages, the sessions of the grant and what they created), read only. A
+ * caller whose teardown failed soft-deletes them bare, so the chain still
+ * dies whole.
+ */
+async function accessChainIds (user: DeletionUser, id: string): Promise<string[]> {
+  const storageLayer = await getStorageLayer();
+  const all = await fromCallback((cb: NodeCallback) => storageLayer.accesses.find(user, {}, dbFindOptions, cb)) as AccessRow[];
+  const now = timestamp.now();
+  const related = managedAccessesOf(all, id, now);
+  const sessions = sessionsOfGrant(all, parseAccessRef(id).base, now, related);
+  return [id].concat(related.map((a) => a.id), sessions.map((a) => a.id));
+}
+
 type DeletionOutcome = {
   // False when no such live access exists (nothing was done).
   deleted: boolean;
@@ -280,5 +295,5 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
   };
 }
 
-export { deleteAccessChain, notifyScopedAccessChange };
+export { deleteAccessChain, accessChainIds, notifyScopedAccessChange };
 export type { DeletionOutcome, DeletionUser };

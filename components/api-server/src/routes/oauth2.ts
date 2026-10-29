@@ -56,7 +56,7 @@ const cache = require('cache').default;
 const { pubsub } = require('messages');
 const { fromCallback } = require('utils');
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
-const { deleteAccessChain } = require('../methods/helpers/accessDeletion.ts');
+const { deleteAccessChain, accessChainIds } = require('../methods/helpers/accessDeletion.ts');
 // CMC back-channel revoke notify — pure DI HTTP sender, no MethodContext needed.
 const { outbound: cmcOutbound } = require('cmc');
 const cmcRelationshipKey = require('cmc/src/relationshipKey.ts');
@@ -707,13 +707,20 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       return sessions.map((s) => s.id).filter((id): id is string => typeof id === 'string');
     }
     // A failing side effect (a webhook store error) must not leave the chain
-    // alive: fall back to the bare soft-delete, as this teardown did before.
+    // alive: fall back to the bare soft-delete of the whole chain (the access,
+    // what it manages, the grant's sessions and what they created).
     async function deleteOrForce (id: string): Promise<void> {
       try {
         await deleteAccessChain(user, { id });
       } catch (err: unknown) {
-        logger.warn('oauth2.revokeChain: teardown of ' + id + ' failed, soft-deleting it bare', err);
-        await fromCallback((cb: (e: unknown) => void) => accessesRepository!.delete(user, { id }, cb));
+        logger.warn('oauth2.revokeChain: teardown of ' + id + ' failed, soft-deleting its chain bare', err);
+        let ids = [id];
+        try { ids = await accessChainIds(user, id); } catch (readErr: unknown) {
+          logger.warn('oauth2.revokeChain: could not read the chain of ' + id + ', soft-deleting it alone', readErr);
+        }
+        for (const chainId of ids) {
+          await fromCallback((cb: (e: unknown) => void) => accessesRepository!.delete(user, { id: chainId }, cb));
+        }
       }
     }
 

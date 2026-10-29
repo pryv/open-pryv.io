@@ -865,6 +865,54 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         assert.equal(res.status, 403, 'clientData ' + JSON.stringify(clientData) + ': ' + describeRes(res));
       }
     });
+
+    it('[OE33] clientData stays free-form: an update not touching the link passes, and other accesses keep their own oauth key', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const session = await accessInfo(r.tokenRes.body.access_token);
+      const noteRes = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(session.id))
+        .set('Authorization', personalToken)
+        .send({ clientData: { note: 'x' } });
+      assert.equal(noteRes.status, 200, describeRes(noteRes));
+      assert.equal(noteRes.body.access.clientData?.oauth?.dataGrantId, session.clientData.oauth.dataGrantId, 'the link is kept');
+      const created = await coreRequest.post('/' + username + '/accesses').set('Authorization', personalToken)
+        .send({ name: 'oe33-' + cuid(), type: 'app', permissions: [{ streamId: 'health', level: 'read' }], clientData: { oauth: { mine: 1 } } });
+      assert.equal(created.status, 201, describeRes(created));
+      // Each update bumps the access serial: address the head id it answers.
+      let headId = created.body.access.id;
+      for (const clientData of [{ oauth: { mine: 2 } }, { oauth: null }]) {
+        const res = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(headId))
+          .set('Authorization', personalToken)
+          .send({ clientData });
+        assert.equal(res.status, 200, 'clientData ' + JSON.stringify(clientData) + ': ' + describeRes(res));
+        headId = res.body.access.id;
+      }
+    });
+
+    it('[OE34] when the teardown fails, the reuse revoke still deletes the whole chain (sub-accesses included)', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const createRes = await coreRequest.post('/' + username + '/accesses')
+        .set('Authorization', r.tokenRes.body.access_token)
+        .send({ name: 'oe34-sub-' + cuid(), type: 'shared', permissions: [{ streamId: 'health', level: 'read' }] });
+      assert.equal(createRes.status, 201, JSON.stringify(createRes.body));
+      const sub = createRes.body.access;
+      const params = { grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId };
+      assert.equal((await coreRequest.post('/oauth2/token').type('form').send(params)).status, 200);
+      const WebhooksRepository = require('business/src/webhooks/repository.ts').default;
+      const originalGet = WebhooksRepository.prototype.get;
+      WebhooksRepository.prototype.get = async function () { throw new Error('webhook store down'); };
+      try {
+        const { withInjectedConfig } = require('test-helpers');
+        await withInjectedConfig({ oauth: { refreshReuseGraceSeconds: 0 } }, async () => {
+          assert.equal((await coreRequest.post('/oauth2/token').type('form').send(params)).status, 400);
+        });
+      } finally {
+        WebhooksRepository.prototype.get = originalGet;
+      }
+      const after = await coreRequest.get('/' + username + '/access-info').set('Authorization', sub.token);
+      assert.notEqual(after.status, 200, 'the sub-access must be revoked with the chain: ' + describeRes(after));
+    });
   });
 
   describe('[OAUTH-E2E-REFUSE] refuse path', function () {
