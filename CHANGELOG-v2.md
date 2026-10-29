@@ -26,6 +26,32 @@
   The final pass that deletes such accesses left their alias reserved and routing to the account.
 - **The account-changed notification of a username change is sent under the new name too**, so
   sockets opened after the change receive it (before: only under the former name).
+- **HF series survive a username change.** Series are kept under a namespace named after the
+  username, which the change did not move: points stored before it were no longer returned under
+  either name, and new points started a second namespace. The change now moves the account's
+  series under the new name (PostgreSQL, SQLite and InfluxDB series storage), merging any left
+  under a former name by an earlier change, and HF workers forget the series credentials they
+  cached for the former name. Accounts renamed before this release get their earlier series back
+  at their next username change (they are still erased with the account).
+- **Sockets opened before a username change are disconnected** (`io server disconnect`) instead of
+  staying open and silent: they listened under the former name while notifications are sent under
+  the new one. The client reconnects, by either name, and is notified again.
+- **Single core with its own DNS: aliases and changed usernames resolve.** The name -> core row the
+  embedded DNS answers from was written for registered usernames only on a single core: a
+  `randomAlias` endpoint (`https://r-xxxxxxxx.<domain>/`) and the new name after a username change
+  answered `NXDOMAIN`. Both now get the row (released with the alias). Aliases minted and names
+  taken by a change on a single core before this release still lack it.
+- **A refused `accesses.create` keeps no alias.** With `randomAlias`, the alias was reserved before
+  the request's checks (negative `expireAfter`, account-stream rules, a token already in use, ...):
+  a refused request left an alias routing to the account until its erasure. The alias is now
+  reserved after every check and given back when the access cannot be stored.
+- **A username change that fails part way is undone.** A storage failure after the availability
+  gates (platform rows, account field) left the account split between its former and new name;
+  the change now undoes each step it made and answers `500 unexpected-error`, the account whole
+  under its former name and the new name free.
+- **Config: custom account streams may not be named `username` or `usernameChangeCount`.** The
+  server keeps account fields of these names itself; a custom stream of that name would expose
+  them as events (to an aliased access too). Such a config is refused at boot.
 
 ### Documentation
 

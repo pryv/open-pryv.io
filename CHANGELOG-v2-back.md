@@ -13,6 +13,23 @@
   holds the old name (both engines); the storage `usersLocalIndex` adds `resolveName` and
   `getUserIdForAlias`. The users repository adds `resolveUsername` and `restoreAliases`.
 
+### Username change and aliases: storage seams
+
+- `SeriesConnection.renameDatabase(from, to)` (required): moves every point of a series namespace
+  into another, merged, then removes the source; no-op when the source holds nothing. PostgreSQL
+  re-keys the rows in one statement and SQLite merges the files through `ATTACH` (both keep the
+  target's point on a clash); InfluxDB copies on the server (`SELECT ... INTO ... GROUP BY *`) and
+  drops the source. `business/src/series/namespace.ts` adds `gatherAccountSeries`.
+- New `pubsub.series` message `SERIES_USERNAME_CHANGED` (`{ username, newUsername }`): the HF
+  metadata cache drops the entries of the former name.
+- `PlatformDB.getAllForUser(usernameToken)` (rqlite, PostgreSQL): the unique and indexed field rows
+  of one owner. `Platform.renameUser`, `deleteUser` and `listUserUniqueValues` use it instead of
+  reading every account's rows (`getAllWithPrefix('user')`).
+- `usersRepository.deleteOne` uses the account's current username for the platform cleanup when the
+  caller passes a former one (the test fixtures did).
+- The users repository writes the name -> core row of an alias or a changed username on a single
+  core too (registration already did).
+
 ### Storage: event deletion listings hold head events only (defence in depth)
 
 - The deletion listings (`deleted > since`, used by `events.get` with `includeDeletions`) of both
