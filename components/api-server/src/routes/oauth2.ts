@@ -433,7 +433,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       accessesRepository.findOne({ id: userId, username }, { id: base }, null,
         (err: unknown, found: DataGrant | null) => (err != null ? reject(err) : resolve(found)));
     });
-    const nowSeconds = Math.floor(Date.now() / 1000);
+    // Not rounded: `expires` carries sub-second precision, and a "now" rounded
+    // down to the second would keep a just-expired grant alive up to 1 s.
+    const nowSeconds = Date.now() / 1000;
     if (head == null || head.deleted != null ||
         (typeof head.expires === 'number' && head.expires <= nowSeconds)) {
       const revoked = new Error('consent data-grant revoked or expired') as Error & { code: string };

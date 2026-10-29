@@ -814,6 +814,37 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(refreshRes.body.error, 'invalid_grant');
     });
 
+    it('[OE36] a consent data-grant expired a fraction of a second ago refuses the refresh (invalid_grant)', async function () {
+      const r = await runFullFlow();
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const dataGrantId = (await accessInfo(r.tokenRes.body.access_token)).clientData?.oauth?.dataGrantId;
+      assert.equal(typeof dataGrantId, 'string', 'premise: the session names its data-grant');
+      // Expire the grant 200 ms ago but after the start of the current second,
+      // so a "now" rounded down to the second still falls before the expiry.
+      while (Date.now() % 1000 < 250 || Date.now() % 1000 > 450) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const expires = Date.now() / 1000 - 0.2;
+      const accessesRepository = require('storages').storageLayer.accesses;
+      const setExpires = (value) => new Promise((resolve, reject) => accessesRepository.updateOne(
+        { id: endUser.attrs.id, username }, { id: dataGrantId }, { expires: value, modified: Date.now() / 1000 },
+        (err) => (err != null ? reject(err) : resolve())));
+      await setExpires(expires);
+      try {
+        const refreshRes = await coreRequest.post('/oauth2/token').type('form')
+          .send({ grant_type: 'refresh_token', refresh_token: r.tokenRes.body.refresh_token, client_id: clientId });
+        assert.ok(Math.floor(Date.now() / 1000) < expires, 'premise: refreshed within the second of the expiry');
+        assert.equal(refreshRes.status, 400, 'POST /oauth2/token (refresh): ' + describeRes(refreshRes));
+        assert.equal(refreshRes.body.error, 'invalid_grant');
+      } finally {
+        // Revoke the grant, or the offer stays accepted and the next consent is refused.
+        await setExpires(null);
+        const delRes = await coreRequest.delete('/' + username + '/accesses/' + encodeURIComponent(dataGrantId))
+          .set('Authorization', personalToken);
+        assert.ok(delRes.status === 200 || delRes.status === 204, JSON.stringify(delRes.body));
+      }
+    });
+
     it('[OE31] revoking the consent data-grant kills the live session accesses at once, refreshed ones and their sub-accesses included', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
