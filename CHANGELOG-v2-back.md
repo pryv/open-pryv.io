@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### `audit.onUserDelete: pseudonymise`: stated as not implemented
+
+- The boot refusal of `audit.onUserDelete: pseudonymise` (config-validation), the runtime fallback
+  log of the deletion flow and the `default-config.yml` comment said the mode waited for the alias
+  primitive, which has shipped. They now say the pseudonymisation of the audit is not implemented;
+  the mode is refused at boot as before (no behaviour change). The refusal's payload carries
+  `implemented: false` instead of `dependsOn`. Test `[CV-AOUD-03]`.
+
 ### One-time repairs after the alias and username-change fixes
 
 - `bin/reconcile-user-cores.js` (and `usersRepository.reconcileUserCoreMap`) now runs on a single
