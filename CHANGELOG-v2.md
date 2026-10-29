@@ -12,6 +12,12 @@
   could read as live events; records that keep no streams are still returned to an access reading
   the whole store, as before.
 
+- **`streams.get` with `includeDeletionsSince` no longer returns the deletion records of internal
+  streams to a non-personal access.** An app access with `*` read received the records of deleted
+  emails and plugin-internal streams (for instance the per-link streams removed when a capability
+  is cleaned up), whose ids name internal objects. Only the personal access gets those records
+  now.
+
 ## 2.0.0-rc.64 - 2026-10-29
 
 - **Security: withdrawing an OAuth consent revokes the app's live tokens at once.** Deleting the

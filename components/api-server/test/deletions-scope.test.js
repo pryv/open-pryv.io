@@ -177,4 +177,23 @@ describe('[DLSC] event and stream deletion records', function () {
     for (const id of [readable, ...deletedIds]) assert.ok(later.includes(id), 'other mode: ' + id);
     for (const id of internal) assert.ok(!later.includes(id), 'other mode, internal: ' + JSON.stringify(later));
   });
+
+  // Stream deletion records name only the stream: the ones of plugin-internal
+  // or emails streams are not returned to a non-personal access.
+  it('[DLS7] a `*` read app does not get the stream records of plugin-internal or emails streams', async function () {
+    const deleted = timestamp.now();
+    const internal = [':_cmc:_internal:offer:' + cuid(), ':_delegation:_internal:' + cuid(), ':_emails:' + cuid()];
+    for (const id of internal) await fixturesUser.stream({ id, name: id, deleted });
+
+    const appRes = await streamDeletions(await app([{ streamId: '*', level: 'read' }]));
+    assert.strictEqual(appRes.status, 200, JSON.stringify(appRes.body));
+    const appIds = appRes.body.streamDeletions.map((d) => d.id);
+    assert.ok(appIds.includes('dlsc-gone'), JSON.stringify(appIds));
+    for (const id of internal) assert.ok(!appIds.includes(id), 'internal: ' + JSON.stringify(appIds));
+
+    const personalRes = await streamDeletions(personalToken);
+    assert.strictEqual(personalRes.status, 200, JSON.stringify(personalRes.body));
+    const personalIds = personalRes.body.streamDeletions.map((d) => d.id);
+    for (const id of ['dlsc-gone', ...internal]) assert.ok(personalIds.includes(id), 'personal: ' + id);
+  });
 });

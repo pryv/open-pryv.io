@@ -14,6 +14,7 @@ const cmc = require('cmc');
 const delegation = require('delegation');
 const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
+const { isStreamOutOfNonPersonalReach } = require('business/src/accesses/canReadEvent.ts');
 const commonFns = require('./helpers/commonFunctions.ts');
 const { buildMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
@@ -188,14 +189,17 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     }
     const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(params.parentId || '*');
     // Stream deletion records keep no parent: only an access reading the
-    // whole store may see them (an empty list otherwise).
+    // whole store may see them (an empty list otherwise), and only the
+    // personal access sees the records of emails or plugin-internal streams.
     if (!(await context.access.canReadWholeStore(storeId))) {
       result.streamDeletions = [];
       return next();
     }
     try {
       const deletedStreams = await mall.streams.getDeletions(context.user.id, params.includeDeletionsSince, [storeId]);
-      result.streamDeletions = deletedStreams;
+      result.streamDeletions = context.access.isPersonal()
+        ? deletedStreams
+        : deletedStreams.filter((s: { id: string }) => !isStreamOutOfNonPersonalReach(s.id));
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
