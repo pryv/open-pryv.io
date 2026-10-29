@@ -83,6 +83,7 @@ describe('[CVDU] boot refuses dns.domain with dnsLess.isActive left unset', func
     assert.equal(problems.length, 1);
     assert.match(problems[0].message, DNSLESS_PROBLEM);
     assert.match(problems[0].message, /'false' for a multi-core deployment.*'true' for a single core with path-style routing/);
+    assert.match(problems[0].message, /DNSless multi-core member \(with 'core\.url'\) must remove 'dns\.domain'/);
     assert.deepEqual(problems[0].path, ['dnsLess', 'isActive']);
     // validate() runs it, so the boot (config-validation's load) exits on it.
     const all = await validation.validate(config);
@@ -129,7 +130,36 @@ describe('[CVDU] boot refuses dns.domain with dnsLess.isActive left unset', func
     }
   });
 
-  it('[CVDU4] dnsLess.isActive set in another operator layer (bootstrap file, environment) counts as set', function () {
+  it('[CVDU4] settings in a --config file (the base layer, a host config) are the operator\'s', function () {
+    const hostConfig = path.join(dir, 'host-config.yml');
+    setEnv('config', hostConfig);
+    // dns.domain and dnsLess.isActive: false both in the host config
+    fs.writeFileSync(hostConfig, 'dns:\n  domain: example.org\ndnsLess:\n  isActive: false\ncore:\n  id: core-a\n');
+    const both = bootConfig('http:\n  port: 3000\n');
+    assert.equal(both.getScopeAndValue('dns:domain').scope, 'base');
+    assert.equal(both.get('core:isSingleCore'), false);
+    assert.equal(both.get('core:url'), 'https://core-a.example.org');
+    assert.deepEqual(dnsLessProblems(both), []);
+    // dns.domain in the host config, dnsLess.isActive: false in bootstrap-config.yml
+    fs.writeFileSync(hostConfig, 'dns:\n  domain: example.org\ncore:\n  id: core-a\n');
+    const split = bootConfig('http:\n  port: 3000\n', 'dnsLess:\n  isActive: false\n');
+    assert.equal(split.get('core:isSingleCore'), false);
+    assert.deepEqual(dnsLessProblems(split), []);
+    // dns.domain alone in the host config
+    fs.rmSync(path.join(dir, 'bootstrap-config.yml'));
+    const alone = bootConfig('http:\n  port: 3000\n');
+    const problems = dnsLessProblems(alone);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0].message, DNSLESS_PROBLEM);
+  });
+
+  it('[CVDU5] an empty dns.domain is refused with a readable message', function () {
+    const problems = dnsLessProblems(bootConfig("dns:\n  domain: ''\n"));
+    assert.equal(problems.length, 1);
+    assert.match(problems[0].message, /'dns\.domain' is set to an empty string but 'dnsLess\.isActive' is not/);
+  });
+
+  it('[CVDU6] dnsLess.isActive set in another operator layer (bootstrap file, environment) counts as set', function () {
     const fromBootstrap = bootConfig('dns:\n  domain: example.org\n', 'dnsLess:\n  isActive: false\n');
     assert.equal(fromBootstrap.get('core:isSingleCore'), false);
     assert.deepEqual(dnsLessProblems(fromBootstrap), []);

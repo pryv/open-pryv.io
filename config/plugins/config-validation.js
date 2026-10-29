@@ -275,7 +275,10 @@ function checkDnsLessExplicit (config, problems) {
 }
 
 // Scopes that are not the operator's: 'memory' holds what boot plugins
-// derived, 'default-file' and 'defaults' what ships.
+// derived, 'default-file' and 'defaults' what ships. This is a deny-list:
+// every other scope counts as the operator's, the shipped extras included
+// ('serviceInfo', 'default-paths', 'default-audit-path'), so an extra must
+// never carry 'dns' or 'dnsLess' keys.
 const NON_OPERATOR_SCOPES = new Set(['memory', 'default-file', 'defaults']);
 
 /**

@@ -16,9 +16,10 @@
   (operator's layers in, message or null out); `config-validation.js` runs it as
   `checkDnsLessExplicit` over the config's scopes minus `memory` (what boot plugins derived),
   `default-file` and `defaults`; `bin/check-config.js` runs it over its operator layers. Tests
-  `[CVDU1-4]` (boiler config over the shipped defaults with the core-identity plugin, as at boot:
-  refusal with and without `core.url`, and classification unchanged for every other topology)
-  and `[CCDU1-2]`.
+  `[CVDU1-6]` (boiler config over the shipped defaults with the core-identity plugin, as at boot:
+  refusal with and without `core.url`, classification unchanged for every other topology, the
+  operator layers: override, bootstrap, environment and a `--config` host file) and `[CCDU1-2]`.
+  The layer filter is a deny-list: a shipped config extra must never carry `dns` or `dnsLess`.
 
 ### check-config: the shipped defaults are a layer; multi-core members without a DNS of their own
 

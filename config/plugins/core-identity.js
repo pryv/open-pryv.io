@@ -86,11 +86,13 @@ function deriveCoreIdentity (get) {
  * @returns {string|null} the problem, or null when the topology is settled
  */
 function dnsLessUnsetProblem (get) {
-  if (get('dns:domain') == null) return null;
+  const dnsDomain = get('dns:domain');
+  if (dnsDomain == null) return null;
   if (typeof get('dnsLess:isActive') !== 'undefined') return null;
-  return `'dns.domain' is set (${get('dns:domain')}) but 'dnsLess.isActive' is not: set it explicitly, ` +
-    "'false' for a multi-core deployment with per-user subdomains under the domain, 'true' for a single core with path-style routing " +
-    "(a DNSless multi-core member sets 'core.url' and no 'dns.domain'). " +
+  const shown = dnsDomain === '' ? 'is set to an empty string' : `is set (${dnsDomain})`;
+  return `'dns.domain' ${shown} but 'dnsLess.isActive' is not: set it explicitly, ` +
+    "'false' for a multi-core deployment with per-user subdomains under the domain, 'true' for a single core with path-style routing. " +
+    "A DNSless multi-core member (with 'core.url') must remove 'dns.domain' instead: either value would change how it routes. " +
     'Left unset, the core would advertise per-user subdomain URLs while routing requests path-style.';
 }
 
