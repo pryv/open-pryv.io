@@ -139,13 +139,24 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     next();
   }
 
-  function applyPrerequisitesForLogin (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
+  // The credentials name the account by its username or by a former one
+  // (kept as an alias by a username change): both resolve to the account the
+  // path addressed. The `r-` alias of an access is not a sign-in name: it is
+  // handed out with a token, and would otherwise let its holder try passwords
+  // without knowing the username.
+  async function applyPrerequisitesForLogin (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
     const fixedUsername = params.username.toLowerCase();
-    if (context.user.username !== fixedUsername) {
-      return next(errors.invalidOperation('The username in the path does not match that of ' +
-          'the credentials.'));
+    if (context.user.username === fixedUsername) return next();
+    try {
+      if (!fixedUsername.startsWith('r-')) {
+        const userId = await usersRepository.getUserIdForUsername(fixedUsername);
+        if (userId != null && userId === context.user.id) return next();
+      }
+    } catch (err) {
+      return next(errors.unexpectedError(err as Error));
     }
-    next();
+    next(errors.invalidOperation('The username in the path does not match that of ' +
+        'the credentials.'));
   }
 
   async function checkPassword (context: MethodContext, params: { password: string }, result: ResultBag, next: Next) {

@@ -155,22 +155,48 @@ describe('[UCGD] account.changeUsername: names refused, limits, trail', function
 });
 
 describe('[UCLG] sign-in after a username change', function () {
+  let usersRepository;
+  const usersRepositoryOf = () => usersRepository;
   before(async function () {
     await initTests();
     await initCore();
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    usersRepository = await getUsersRepository();
   });
 
-  it('[UCLG1] needs the current username: the former one is refused, under either path', async function () {
-    const { uname } = await freshUser('la');
+  it('[UCLG1] signs in with the former username too, under either path', async function () {
+    const { uname, userId } = await freshUser('la');
     const newName = freshName('lb');
     const res = await changeUsername(uname, newName, await login(uname));
     assert.equal(res.status, 200, JSON.stringify(res.body));
     for (const path of [uname, newName]) {
       const former = await coreRequest.post('/' + path + '/auth/login')
         .send({ username: uname, password: PASSWORD, appId: APP_ID });
-      assert.equal(former.status, 400, path + ': ' + JSON.stringify(former.body));
-      assert.equal(former.body.error.id, 'invalid-operation');
+      assert.equal(former.status, 200, path + ': ' + JSON.stringify(former.body));
+      assert.ok(former.body.token, 'a session token');
+      assert.ok(former.body.apiEndpoint.includes(newName), 'the endpoint carries the current username: ' + former.body.apiEndpoint);
     }
     await login(newName);
+    assert.equal(await usersRepositoryOf().getUsernameForUserId(userId), newName);
+  });
+
+  it('[UCLG2] refuses a username of another account and the r- alias of an access', async function () {
+    const { uname } = await freshUser('lc');
+    const other = await freshUser('ld');
+    const mismatch = await coreRequest.post('/' + uname + '/auth/login')
+      .send({ username: other.uname, password: PASSWORD, appId: APP_ID });
+    assert.equal(mismatch.status, 400, JSON.stringify(mismatch.body));
+    assert.equal(mismatch.body.error.id, 'invalid-operation');
+    const token = await login(uname);
+    const created = await coreRequest.post('/' + uname + '/accesses').set('Authorization', token)
+      .send({ name: 'uclg2 aliased', type: 'app', randomAlias: true, permissions: [{ streamId: '*', level: 'read' }] });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const alias = created.body.access.alias;
+    for (const path of [uname, alias]) {
+      const viaAlias = await coreRequest.post('/' + path + '/auth/login')
+        .send({ username: alias, password: PASSWORD, appId: APP_ID });
+      assert.equal(viaAlias.status, 400, path + ': ' + JSON.stringify(viaAlias.body));
+      assert.equal(viaAlias.body.error.id, 'invalid-operation');
+    }
   });
 });

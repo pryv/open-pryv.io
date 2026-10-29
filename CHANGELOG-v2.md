@@ -10,6 +10,12 @@
   many aliases (its `r-` access aliases plus its former usernames), `accesses.create` with
   `randomAlias` answers `400 invalid-operation` (the message names the setting); a create without
   `randomAlias` is not affected. Deleting accesses the account no longer uses frees their aliases.
+- **Sign-in with a former username.** After a username change, `auth.login` with the former
+  username in the credentials answered `400 invalid-operation` ("The username in the path does not
+  match that of the credentials"), under either path. A name the account holds as a former
+  username now signs in like the current one (the session and `apiEndpoint` carry the current
+  username). The `r-` alias of an access is not a sign-in name, and a username of another account
+  still answers `400 invalid-operation`.
 
 ### Fixed
 
@@ -65,9 +71,7 @@
 ### Documentation
 
 - `auth.usernameChangeLimit` (default `2`, `0` disables the change) is declared in
-  `default-config.yml` and in the install wizard's optional settings. Signing in requires the
-  current username: `auth.login` with a former username answers `400 invalid-operation`, whatever
-  name the path carries (accesses issued under a former username keep working).
+  `default-config.yml` and in the install wizard's optional settings.
 
 ## 2.0.0-rc.65 - 2026-10-29
 

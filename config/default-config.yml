@@ -197,7 +197,7 @@ auth:
   # How many times an account may change its username (account.changeUsername,
   # personal token). Every former username stays held by the account as an
   # alias: accesses issued under it keep working, and nobody else can take it.
-  # Sign-in needs the current username. 0 disables the change.
+  # Sign-in accepts a former username too. 0 disables the change.
   usernameChangeLimit: 2
 
 # === Third-party sign-in (Pryv as an OpenID Connect relying party) ===
