@@ -8,9 +8,9 @@
  */
 
 // Operator tool: reconcile THIS core's slice of the shared name->core
-// (`user-core/`) map with its local user index. Multi-core maintenance that
-// heals the two drift states the platform-wide username availability check is
-// sensitive to:
+// (`user-core/`) map with its local user index. Heals the two drift states
+// the platform-wide username availability check and the routing (the
+// embedded DNS included) are sensitive to:
 //
 //   - STALE self-row: a `user-core/` row points at THIS core but no local
 //     user or alias owns the name (every user ever deleted before the routing
@@ -23,9 +23,17 @@
 //     DIFFERENT core legitimately holds is never clobbered).
 //
 // Rows pointing at OTHER cores are NEVER touched: each core owns only its own
-// slice, so run this once PER CORE. Single-core deployments are a no-op (the
-// availability check ignores the map there). Idempotent; safe to re-run and to
-// run against a live core.
+// slice, so run this once PER CORE. It applies on a single core too, where the
+// embedded DNS (`dns.active`) answers every name through this map: aliases
+// (`randomAlias` accesses) and usernames taken by a username change on a single
+// core got no row before the release that writes them, so they answered
+// NXDOMAIN; run it once after upgrading such a core. Idempotent and safe to
+// re-run. Stale rows are deleted from one snapshot of the local index: a
+// registration in flight during the run can lose its row, so run it with this
+// core's API stopped, or run it again afterwards. An empty local index facing
+// rows of this core is refused (exit 3, nothing written, dry run included)
+// unless --force-empty-local: it usually means a lost index or a wrong
+// --config, and deleting would unroute every name of the core.
 //
 // Usage:
 //   node bin/reconcile-user-cores.js            # delete stale + heal missing
@@ -140,13 +148,7 @@ require('@pryv/boiler').init({
       process.exit(0);
     }
 
-    if (platform.isSingleCore) {
-      console.log('reconcile-user-cores: single-core deployment — nothing to do ' +
-        '(the platform-wide username check ignores the user-core map).');
-      process.exit(0);
-    }
-
-    const summary = await usersRepository.reconcileUserCoreMap(args.dryRun);
+    const summary = await usersRepository.reconcileUserCoreMap(args.dryRun, { forceEmptyLocal: args.forceEmptyLocal });
 
     console.log('reconcile-user-cores: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
       ' on core "' + platform.coreId + '"');
@@ -159,6 +161,14 @@ require('@pryv/boiler').init({
     for (const c of summary.conflicts) {
       console.log('    ! "' + c.username + '" is owned locally but routed to ' + c.coreId +
         ' — resolve by hand (this tool never overwrites another core\'s claim)');
+    }
+    if (summary.refusedEmptyLocal === true) {
+      console.log('    ! REFUSED: this core\'s users index is empty while the platform routes names to ' +
+        'this core. That is more likely a lost index (a partial restore, a wrong --config) than a core ' +
+        'with no account left, and deleting the rows would unroute every name of this core. Nothing was ' +
+        'deleted. Check the core\'s storage; if the index is really meant to be empty, run again with ' +
+        '--force-empty-local.');
+      process.exit(3);
     }
     process.exit(0);
   } catch (err) {
@@ -193,6 +203,9 @@ function printUsage (stream) {
     'Usage:',
     '  node bin/reconcile-user-cores.js            # delete stale + heal missing self-rows',
     '  node bin/reconcile-user-cores.js --dry-run  # report counts; do not write',
+    '  node bin/reconcile-user-cores.js --force-empty-local',
+    '                                              # allow deleting this core\'s rows when its',
+    '                                              # users index is empty (refused, exit 3, otherwise)',
     '  node bin/reconcile-user-cores.js --ext-ids [--old-pepper <BASE64>] [--dry-run]',
     '                                              # reconcile this core\'s external ids',
     '                                              # (--old-pepper: the retired pepper, after',
@@ -206,7 +219,8 @@ function printUsage (stream) {
     '  node bin/reconcile-user-cores.js --config config/host-config.yml',
     '',
     'Run once PER CORE (touches only rows that point at the core it runs on).',
-    'Single-core deployments are a no-op. Safe to re-run and to run live.',
+    'Applies on a single core too. Safe to re-run; run it with the core\'s API',
+    'stopped, or run it again afterwards (a registration in flight can lose its row).',
     ''
   ].join('\n'));
 }

@@ -168,9 +168,14 @@ const __ex_changeUsername = {
   }),
   result: helpers.object({
     account: accountDetails,
-    usernameChangesRemaining: helpers.number()
+    usernameChangesRemaining: helpers.number(),
+    // Steps that did not complete; the change stands. Empty when none.
+    warnings: helpers.array(helpers.object({
+      step: helpers.string({ enum: ['access-index', 'hf-series', 'webhooks'] }),
+      message: helpers.string()
+    }, { required: ['step', 'message'], additionalProperties: false }))
   }, {
-    required: ['account', 'usernameChangesRemaining']
+    required: ['account', 'usernameChangesRemaining', 'warnings']
   })
 };
 export { __ex_changeUsername as changeUsername };

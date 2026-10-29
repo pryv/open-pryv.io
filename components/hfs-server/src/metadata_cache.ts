@@ -106,10 +106,22 @@ class MetadataCache {
     }
   }
 
+  // A username change moves the account's series under the new name: forget
+  // every entry addressed by, or holding the namespace of, the former name,
+  // or the next write through it would land under that name again.
+  forgetUsername (change: { username: string }) {
+    const prefix = change.username + '/';
+    for (const [key, value] of this.cache.entries()) {
+      const holdsName = value instanceof SeriesMetadataImpl && value.userName === change.username;
+      if (holdsName || String(key).startsWith(prefix)) this.cache.delete(key);
+    }
+  }
+
   subscribeToNotifications () {
     this.unsubscribers.push(
       pubsub.series.onAndGetRemovable(pubsub.SERIES_UPDATE_EVENTID_USERNAME, this.invalidateEvent.bind(this)),
-      pubsub.series.onAndGetRemovable(pubsub.SERIES_DELETE_EVENTID_USERNAME, this.dropSeries.bind(this))
+      pubsub.series.onAndGetRemovable(pubsub.SERIES_DELETE_EVENTID_USERNAME, this.dropSeries.bind(this)),
+      pubsub.series.onAndGetRemovable(pubsub.SERIES_USERNAME_CHANGED, this.forgetUsername.bind(this))
     );
   }
 

@@ -18,7 +18,7 @@ const timestamp = require('unix-timestamp');
 const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
 const { sinceByUser } = require('storages/interfaces/backup/chain.ts');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
-const { seriesNamespace } = require('business/src/series/namespace.ts');
+const { seriesNamespace, formerUsernames } = require('business/src/series/namespace.ts');
 
 /**
  * Orchestrates full backup using existing storage layer methods.
@@ -271,22 +271,41 @@ class BackupOrchestrator {
       await userWriter.writeAudit(auditPipeline);
     }
 
+    // Routable aliases (minted access aliases and former usernames): not in
+    // any collection above, but the restored accesses and the apps holding
+    // endpoints under a former name need them to route again. Always the full
+    // set, on an incremental run too (restore takes the newest entry).
+    const aliases = typeof this.usersLocalIndex?.getAliasesForId === 'function'
+      ? await this.usersLocalIndex.getAliasesForId(userId)
+      : [];
+
     // Series (optional — skip if no series engine configured). Written whenever
     // the export returns, an empty list included: series are a
     // whole-collection file, and restore takes the newest run that has it, so
     // a run without the file would bring back the series of an earlier run.
     // A failed export writes nothing (it is not an empty one): the earlier
     // run's series then stand.
+    // Every namespace of the account: its username's and those of its former
+    // usernames (points a change could not move, or written before changes
+    // moved them). Restore writes them all under the username, in this order:
+    // the username's own points last, so they win on a clash at restore (on
+    // InfluxDB the move does the opposite: it keeps the moved point).
     if (this.seriesConnection) {
       try {
-        const seriesData = await this.seriesConnection.exportDatabase(seriesNamespace(username));
-        await userWriter.writeSeries(seriesData.measurements ?? []);
+        const names = [...await formerUsernames({ getAliasesForId: async () => aliases }, userId, username), username];
+        const measurements: unknown[] = [];
+        for (const name of names) {
+          const seriesData = await this.seriesConnection.exportDatabase(seriesNamespace(name));
+          measurements.push(...(seriesData.measurements ?? []));
+        }
+        await userWriter.writeSeries(measurements);
       } catch (e: unknown) {
         this.logger.warn(`Series export failed for user ${userId}: ${(e as Error).message}`);
       }
     }
 
-    return await userWriter.close();
+    const userManifest = await userWriter.close();
+    return { ...userManifest, aliases };
   }
 
   /**
@@ -467,6 +486,7 @@ type StorageLayerLike = {
 type UsersLocalIndexLike = {
   getAllByUsername (): Promise<Record<string, string>>;
   getUsername (userId: string): Promise<string | undefined>;
+  getAliasesForId? (userId: string): Promise<string[]>;
 };
 type UserAccountStorageLike = {
   _exportAll (userId: string): Promise<unknown>;

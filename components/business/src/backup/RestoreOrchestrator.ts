@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const timestamp = require('unix-timestamp');
-const { seriesNamespace } = require('../series/namespace.ts');
+const { seriesNamespace, formerUsernames } = require('../series/namespace.ts');
 const { deletedUserMessage } = require('storages/interfaces/backup/chain.ts');
 
 // A backup can come from storage the operator does not control: its user ids
@@ -78,6 +78,8 @@ class RestoreOrchestrator {
   isReservedUsername: ((name: string) => boolean) | null = null;
   /** Replaces the platform's word-list check when set (tests). */
   isListedUsername: ((name: string) => boolean) | null = null;
+  /** Replaces the users repository that reserves the restored aliases when set (tests). */
+  usersRepository: { restoreAliases (username: string, userId: string, aliases: string[]): Promise<string[]> } | null = null;
   /** How long a restore waits for an attachment it does not restore to close (default 10 s; tests). */
   discardTimeoutMs: number | null = null;
 
@@ -120,6 +122,7 @@ class RestoreOrchestrator {
     assertRestorableUsers(manifest.users);
     const isReserved = await this._reservedUsernameCheck();
     assertRestorableUsernames(manifest.users.map((u: UserManifest) => u.username), isReserved, 'user entry(ies) of the backup manifest');
+    assertRestorableUsernames(manifest.users.flatMap(aliasesOf), isReserved, 'alias(es) of the backup manifest');
     await this._warnListedUsernames(manifest.users.map((u: UserManifest) => u.username));
     // Platform rows are read and checked before any user is restored, and
     // written after them.
@@ -133,9 +136,10 @@ class RestoreOrchestrator {
 
     // Detect conflicts
     const conflicts = await this._detectConflicts(manifest.users);
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], externalIds: ExternalIdRestoreSummary } =
-      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], externalIds: emptyExtIdSummary() };
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary } =
+      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary() };
     const pendingExternalIds: PendingExternalIds[] = [];
+    const pendingAliases: PendingAliases[] = [];
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
       const conflictDesc = conflicts.map(c => `${c.username} (${c.reason})`).join(', ');
@@ -154,6 +158,7 @@ class RestoreOrchestrator {
       }
 
       pendingExternalIds.push(await this._restoreSingleUser(reader, userId, username, opts));
+      pendingAliases.push({ userId, username, aliases: aliasesOf(userManifest) });
       report.restored.push({ userId, username });
     }
 
@@ -162,6 +167,8 @@ class RestoreOrchestrator {
     }
     // After the platform rows: the namespaces they restore are known.
     report.externalIds = await this._restoreExternalIds(pendingExternalIds);
+    // After the platform rows too: their alias rows are confirmed, not refused.
+    report.aliases = await this._restoreAliases(pendingAliases);
 
     this.logger.info(`Restore complete: ${report.restored.length} restored, ${report.skipped.length} skipped`);
     return report;
@@ -190,6 +197,7 @@ class RestoreOrchestrator {
     assertRestorableUsers([userManifest, { userId: targetUserId, username }]);
     const isReserved = await this._reservedUsernameCheck();
     assertRestorableUsernames([username], isReserved, 'user entry(ies) of the backup manifest');
+    assertRestorableUsernames(aliasesOf(userManifest), isReserved, 'alias(es) of the backup manifest');
     await this._warnListedUsernames([username]);
 
     // Check conflicts
@@ -212,9 +220,10 @@ class RestoreOrchestrator {
       await this._writePlatform(platformRead);
     }
     const externalIds = await this._restoreExternalIds([pendingExternalIds]);
+    const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
 
     this.logger.info(`Single-user restore complete: ${username}`);
-    return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts, externalIds };
+    return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts, externalIds, aliases };
   }
 
   /**
@@ -450,6 +459,30 @@ class RestoreOrchestrator {
     return total;
   }
 
+  /**
+   * Reserve again the routable aliases of the restored accounts (their
+   * access aliases and former usernames): without them the restored aliased
+   * accesses and the endpoints under a former name stop routing, and a former
+   * name is free for anyone to register. An alias held meanwhile by another
+   * account or core stays with its holder (reported).
+   */
+  async _restoreAliases (pending: PendingAliases[]): Promise<AliasRestoreSummary> {
+    const summary = emptyAliasSummary();
+    const withAliases = pending.filter((p) => p.aliases.length > 0);
+    if (withAliases.length === 0) return summary;
+    const repository = this.usersRepository ?? await require('business/src/users/index.ts').getUsersRepository();
+    for (const { userId, username, aliases } of withAliases) {
+      const refused = await repository.restoreAliases(username, userId, aliases);
+      summary.restored += new Set(aliases).size - refused.length;
+      for (const alias of refused) {
+        summary.refused.push({ userId, username, alias });
+        this.logger.warn(`Alias "${alias}" of user ${username} (${userId}) is held by another account or core: not restored`);
+      }
+    }
+    this.logger.info(`Aliases: ${summary.restored} restored, ${summary.refused.length} held elsewhere (not restored)`);
+    return summary;
+  }
+
   async _importEvents (user: UserRef, events: unknown[]) {
     // Use BaseStorage importAll via callback (same path as existing migration)
     // The storageLayer doesn't expose events directly, but the engine's
@@ -511,10 +544,17 @@ class RestoreOrchestrator {
       }
     }
 
-    // Clear series
+    // Clear series: under the username and each former username the account
+    // holds here (the restore writes them all under the username; a namespace
+    // left under a former name would be merged in at the next username change).
     if (this.seriesConnection) {
       try {
-        await this.seriesConnection.dropDatabase(seriesNamespace(username));
+        const formers = typeof this.usersLocalIndex.getAliasesForId === 'function'
+          ? await formerUsernames(this.usersLocalIndex as { getAliasesForId (userId: string): Promise<string[]> }, userId, username)
+          : [];
+        for (const name of [username, ...formers]) {
+          await this.seriesConnection.dropDatabase(seriesNamespace(name));
+        }
       } catch (e: unknown) {
         this.logger.warn(`Series clear failed for user ${userId}: ${(e as Error).message}`);
       }
@@ -693,6 +733,18 @@ function parseRawPlatformEntry (entry: { key: string; value: string }) {
   return null;
 }
 
+/** The aliases a backup manifest entry lists (an entry written before aliases were backed up has none). */
+function aliasesOf (entry: { aliases?: unknown } | null | undefined): string[] {
+  const aliases = entry?.aliases;
+  if (aliases == null) return [];
+  // Anything else than a list of names is refused by the username check.
+  return Array.isArray(aliases) ? aliases : [aliases as string];
+}
+
+function emptyAliasSummary (): AliasRestoreSummary {
+  return { restored: 0, refused: [] };
+}
+
 function emptyExtIdSummary (): ExternalIdRestoreSummary {
   return { restored: 0, lost: 0, namespaceMissing: 0, invalid: 0 };
 }
@@ -756,6 +808,7 @@ type UsersLocalIndexLike = {
   addUser (username: string, userId: string): Promise<unknown>;
   getUserId (username: string): Promise<string>;
   getUsername (userId: string): Promise<string>;
+  getAliasesForId? (userId: string): Promise<string[]>;
 };
 type UserAccountStorageLike = {
   _importAll (userId: string, data: unknown): Promise<unknown>;
@@ -774,7 +827,10 @@ type SeriesConnectionLike = {
   importDatabase (namespace: string, data: { measurements: unknown[] }): Promise<unknown>;
   dropDatabase (namespace: string): Promise<unknown>;
 };
-type UserManifest = { userId: string; username: string };
+type UserManifest = { userId: string; username: string; aliases?: unknown };
+/** The aliases of a restored account, reserved after the platform rows. */
+type PendingAliases = { userId: string; username: string; aliases: string[] };
+type AliasRestoreSummary = { restored: number; refused: Array<{ userId: string; username: string; alias: string }> };
 /** An account deleted along a backup chain: not restored. */
 type DeletedUserRef = { userId: string; username: string | null; lastRunId: string; deletedBeforeRunId: string };
 /**

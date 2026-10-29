@@ -41,6 +41,25 @@ class PGSeriesConnection {
     );
   }
 
+  /**
+   * Re-key the namespace's rows in one statement. A point the target already
+   * holds (same measurement and time) is kept: it was written later.
+   */
+  async renameDatabase (from: string, to: string): Promise<void> {
+    if (from === to) return;
+    this.logger.debug(`renameDatabase: ${from} -> ${to}`);
+    await this.db.query(
+      `WITH moved AS (
+         DELETE FROM series_data WHERE user_id = $1
+         RETURNING event_id, point_time, delta_time, fields
+       )
+       INSERT INTO series_data (user_id, event_id, point_time, delta_time, fields)
+       SELECT $2, event_id, point_time, delta_time, fields FROM moved
+       ON CONFLICT (user_id, event_id, point_time) DO NOTHING`,
+      [from, to]
+    );
+  }
+
   async writeMeasurement (name: string, points: Array<{ fields: FieldsObj, timestamp: number }>, options: { database: string }): Promise<void> {
     const namespace = options.database;
     this.logger.debug(`writeMeasurement: ${name} (${points.length} points)`);

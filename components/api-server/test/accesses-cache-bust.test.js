@@ -187,6 +187,34 @@ describe('[ACBU] access writes bust the cache when a later step fails', function
     assert.ok(!JSON.stringify(warning.args).includes(peerToken), 'never the peer token');
   });
 
+  it('[ACBU6] the alias of an access the final pass deletes is released', async function () {
+    const { deleteAccessChain } = require('api-server/src/methods/helpers/accessDeletion.ts');
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const usersRepository = await getUsersRepository();
+    const app = await fixtureUser.access({
+      id: 'app_' + cuid(),
+      type: 'app',
+      name: 'app ' + cuid(),
+      token: cuid(),
+      permissions: [{ streamId: '*', level: 'manage' }]
+    });
+    const appId = app.attrs.id;
+    const alias = await usersRepository.mintAlias(username, userId);
+    // An aliased access created through the app between the first read and the delete.
+    let injected = false;
+    replace(accessStorage, 'delete', (original) => function (...args) {
+      if (injected) return original.apply(this, args);
+      injected = true;
+      const self = this;
+      fixtureUser.access({ id: 'late_' + cuid(), type: 'shared', name: 'late ' + cuid(), token: cuid(), alias, createdBy: appId, permissions: [{ streamId: '*', level: 'read' }] })
+        .then(() => original.apply(self, args), args[args.length - 1]);
+    });
+    const outcome = await deleteAccessChain({ id: userId, username }, { id: appId });
+    assert.strictEqual(outcome.deleted, true);
+    assert.strictEqual(await usersRepository.getUserIdForUsername(alias), undefined, 'the alias no longer routes');
+    assert.strictEqual(await usersRepository.platform.getUsersUniqueField('alias', alias), null, 'its reservation is released');
+  });
+
   it('[ACBU4] with the token known, the CMC bust stays on the one access', async function () {
     const { buildMallForCmc } = require('api-server/src/methods/helpers/cmcMall.ts');
     const mall = await buildMallForCmc();

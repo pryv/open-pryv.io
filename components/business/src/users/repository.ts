@@ -30,6 +30,8 @@ const { getPlatform } = require('platform');
 // and a user's index rows are cleaned up (Art.17) when the account is erased.
 const { reindexAccessNonFatal, cleanupUserAccessIndexNonFatal, renameAccessIndexOwnerNonFatal } = require('platform/src/accessIndex.ts');
 const cache = require('cache').default;
+const { pubsub } = require('messages');
+const { gatherAccountSeries } = require('business/src/series/namespace.ts');
 const cmc = require('cmc');
 const emailsContainer = require('business/src/emails/container.ts');
 const emailsConstants = require('business/src/emails/constants.ts');
@@ -60,6 +62,8 @@ function generateRandomAlias (): string {
  * Repository of the users
  */
 type UserData = { id: string; username: string; password?: string; [k: string]: unknown };
+/** A step of a username change that did not complete; the change itself stands. */
+export type UsernameChangeWarning = { step: string; message: string };
 type Operation = import('platform/src/Platform.ts').PlatformOperation;
 
 class UsersRepository {
@@ -128,18 +132,35 @@ class UsersRepository {
     return await this.usersIndex.getUserId(username);
   }
 
+  /**
+   * Resolve a name (username or alias) to its account and canonical
+   * username, reading the canonical name only when `name` is not it.
+   */
+  async resolveUsername (name: string): Promise<{ userId: string; username: string } | null> {
+    const resolved = await this.usersIndex.resolveName(name);
+    if (resolved == null) return null;
+    if (resolved.isCanonical) return { userId: resolved.userId, username: name };
+    const username = await this.usersIndex.getUsername(resolved.userId);
+    return { userId: resolved.userId, username: username ?? name };
+  }
+
   /** Canonical (primary) username for a userId — never an alias. */
   async getUsernameForUserId (userId: string) {
     return await this.usersIndex.getUsername(userId);
+  }
+
+  /** Every alias the account holds: minted access aliases and former usernames. */
+  async getAliasesForUserId (userId: string): Promise<string[]> {
+    return await this.usersIndex.getAliasesForId(userId);
   }
 
   /**
    * Reserve a routable alias for a user. Three coordinated writes:
    *  1. platform unique-field `alias` — atomic cross-core uniqueness claim;
    *  2. local alias index — on-core alias→userId resolution (`getUserId`);
-   *  3. name→core mapping (multi-core only) — so `alias.domain` routes to the
-   *     owning core exactly like the username does; claimed, never
-   *     overwritten (see `#bindAlias`).
+   *  3. name→core mapping, so `alias.domain` routes to the owning core
+   *     exactly like the username does (and the embedded DNS of a single
+   *     core answers it); claimed, never overwritten (see `#bindAlias`).
    * Generates an `r-` prefixed alias and retries on collision.
    * @returns the reserved alias string.
    */
@@ -169,25 +190,72 @@ class UsersRepository {
     return await this.#bindAlias(aliasValue, ownerUserId, coreId);
   }
 
+  /**
+   * Reserve again the aliases of a restored account (its minted access
+   * aliases and former usernames), which live on this core. Each alias is
+   * reserved like {@link reserveSpecificAlias}, the name -> core claim made
+   * for this core (the owner's own row may not be restored yet). An alias
+   * already indexed for the account is confirmed, not added twice. An alias
+   * another account holds meanwhile (as its username or alias, here or on
+   * another core) stays with its holder.
+   * @returns the aliases not restored.
+   */
+  async restoreAliases (ownerUsername: string, ownerUserId: string, aliases: string[]): Promise<string[]> {
+    const coreId = this.platform.coreId;
+    const indexed = new Set(await this.usersIndex.getAliasesForId(ownerUserId));
+    const refused: string[] = [];
+    for (const alias of new Set(aliases)) {
+      const holder = await this.usersIndex.getUserId(alias);
+      if (holder != null && holder !== ownerUserId) { refused.push(alias); continue; }
+      if (!await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', alias)) { refused.push(alias); continue; }
+      if (!indexed.has(alias)) {
+        if (!await this.#bindAlias(alias, ownerUserId, coreId)) refused.push(alias);
+      } else if (!await this.#claimNameForCore(alias, coreId)) {
+        refused.push(alias);
+      }
+    }
+    return refused;
+  }
+
+  /**
+   * The core an alias of `ownerUsername` routes to: the owner's core. On a
+   * single core it is this core: registration writes the name -> core row
+   * there too, and the embedded DNS answers every name through it.
+   */
   async #aliasOwnerCoreId (ownerUsername: string): Promise<string | null> {
-    if (this.platform.isSingleCore) { return null; }
+    if (this.platform.isSingleCore) { return this.platform.coreId; }
     return await this.platform.getUserCore(ownerUsername);
   }
 
   /**
-   * Bind a reserved alias: claim its name -> core mapping (multi-core), then
+   * Bind a reserved alias: claim its name -> core mapping, then
    * index it locally. The claim never overwrites a mapping held for another
    * core (a username or alias there): the alias reservation is then given
    * back and false answered, with nothing bound. A mapping already pointing
    * here (a former username of this account) is confirmed.
    */
   async #bindAlias (alias: string, ownerUserId: string, coreId: string | null): Promise<boolean> {
-    if (coreId != null && !await this.platform.setUserCoreIfNotExists(alias, coreId)) {
+    if (!await this.#claimNameForCore(alias, coreId)) {
       await this.platform.deleteUserUniqueField('alias', alias);
       return false;
     }
     await this.usersIndex.addAlias(alias, ownerUserId);
     return true;
+  }
+
+  /**
+   * Point `name` at `coreId`. Multi-core: an atomic claim that never
+   * overwrites a row held for another core (false then). Single core: written
+   * like registration writes its row (no other core can hold it). A null
+   * `coreId` (owner without a core row) claims nothing and answers true.
+   */
+  async #claimNameForCore (name: string, coreId: string | null): Promise<boolean> {
+    if (coreId == null) return true;
+    if (this.platform.isSingleCore) {
+      await this.platform.setUserCore(name, coreId);
+      return true;
+    }
+    return await this.platform.setUserCoreIfNotExists(name, coreId);
   }
 
   /**
@@ -201,7 +269,7 @@ class UsersRepository {
     if (!aliases.includes(alias)) return;
     await this.platform.deleteUserUniqueField('alias', alias);
     await this.usersIndex.deleteAlias(alias, ownerUserId);
-    if (!this.platform.isSingleCore) { await this.platform.deleteUserCore(alias); }
+    await this.platform.deleteUserCore(alias);
   }
 
   /**
@@ -209,62 +277,166 @@ class UsersRepository {
    * keeping every access issued under the old name working by demoting the old
    * name to a (non-`r-`) alias.
    *
-   * Atomic-ish, ordered to minimise harm on partial failure (mirrors the
-   * registration write order — cross-store transactions aren't available):
-   *  1. platform `username` unique-field swap (collision gate — throws if taken);
-   *  2. re-own the user's OTHER platform unique-field rows (email, existing
-   *     aliases) under the new username (their stored owner is the old-username
-   *     token, otherwise future self-updates would mis-detect collisions);
-   *  3. name→core map for the new name (multi-core);
-   *  4. local users index rename (aliases untouched), then the former name's
-   *     password reset requests destroyed;
-   *  5. System-Streams `username` account event;
-   *  6. demote the old username to a routable alias;
-   *  7. bump the change counter.
-   * Caller is responsible for limit + format + reserved-word validation.
+   * Cross-store transactions are not available, so the writes are ordered so
+   * that every one which can refuse runs before any that cannot, and a refusal
+   * undoes only what this call wrote:
+   *  1. name -> core claim of the new name (multi-core: atomic, never
+   *     overwrites another core's row);
+   *  2. platform `alias` reservation of the old name, owned by the new name:
+   *     the old name is held before anything releases it, and of two
+   *     concurrent changes of this account to different names only one gets
+   *     it (the owners differ);
+   *  3. the old name indexed locally as an alias of the account;
+   *  4. local users index rename: the atomic gate against another account of
+   *     this core holding the new name (primary key), and against a
+   *     concurrent change to the same name (only one finds the old row);
+   *  5. the new name must not be another account's alias on this core;
+   *  6. change counter, then the writes that cannot refuse: platform rows
+   *     re-keyed (`username` self-row, email and alias rows re-owned, indexed
+   *     fields moved), breach-scope index rows moved, the former name's
+   *     password reset requests destroyed, `username` account field.
+   * Caller is responsible for limit + format + reserved-word validation and
+   * gives the friendly "taken" answer first; the gates above are the backstop.
    */
-  async changeUsername (userId: string, oldUsername: string, newUsername: string, accessId: string): Promise<void> {
+  async changeUsername (userId: string, oldUsername: string, newUsername: string, accessId: string): Promise<UsernameChangeWarning[]> {
+    const warnings: UsernameChangeWarning[] = [];
     const coreId = await this.#aliasOwnerCoreId(oldUsername);
+    const taken = () => errors.itemAlreadyExists('user', { username: newUsername });
+    const undo: Array<() => Promise<unknown>> = [];
+    const refuse = async (err: Error): Promise<Error> => {
+      for (const step of undo.reverse()) {
+        try {
+          await step();
+        } catch (undoErr) {
+          logger.warn(`username change refused: rollback step failed for "${oldUsername}"`, undoErr);
+        }
+      }
+      return err;
+    };
 
-    // 1. Claim the new name for this core FIRST, atomically, as the real
-    //    cross-core collision gate: renameUser below OVERWRITES platform rows
-    //    and cannot reject, and the caller's availability check is not atomic,
-    //    so without this a rename to a name hosted on another core would
-    //    silently repoint the victim's routing (the change-username variant of
-    //    the registration hijack). Multi-core only — single-core has no
-    //    user-core rows to claim (`#aliasOwnerCoreId` returns null) and relies
-    //    on the local index + username unique-field for uniqueness. On a lost
-    //    claim nothing has been written yet, so simply reject.
+    // 1. Claim the new name for this core, atomically: renameUser below
+    //    OVERWRITES platform rows, so without this a rename to a name hosted
+    //    on another core would repoint the victim's routing. A row pointing
+    //    here already (the name of another account of this core) also
+    //    answers true: the local gates below refuse that case. Given back on
+    //    refusal unless an account of this core holds the name.
     if (coreId != null) {
-      const claimed = await this.platform.setUserCoreIfNotExists(newUsername, coreId);
-      if (!claimed) { throw errors.itemAlreadyExists('user', { username: newUsername }); }
+      if (!await this.#claimNameForCore(newUsername, coreId)) { throw taken(); }
+      undo.push(async () => {
+        if (!(await this.usersIndex.usernameExists(newUsername))) await this.platform.deleteUserCore(newUsername);
+      });
     }
 
-    // 2. re-key ALL PlatformDB rows old→new (username self-row, email + alias
-    //    unique fields re-owned, indexed fields moved). Caller verified the
-    //    new name is free; the claim above made it atomic.
-    await this.platform.renameUser(oldUsername, newUsername);
-    // The breach-scope index names the owner of each access: move its rows
-    // too, or they would be resolved to a later holder of the former name.
-    await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername);
+    // 2. Hold the old name as an alias before its `username` row is released.
+    if (!await this.platform.setUserUniqueFieldIfNotExists(newUsername, 'alias', oldUsername)) {
+      throw await refuse(errors.invalidOperation('The current username cannot be kept as an alias: another username change of this account may be in progress, retry later.'));
+    }
+    undo.push(async () => await this.platform.deleteUserUniqueField('alias', oldUsername));
 
-    // 3. local index rename (leaves the alias index intact)
-    await this.usersIndex.renameUser(oldUsername, newUsername);
+    // 3. Index it locally. Already indexed for this account: a change to the
+    //    same name running concurrently (step 4 decides which one goes on).
+    const isIndexed = async () => (await this.usersIndex.getAliasesForId(userId)).includes(oldUsername);
+    if (!await isIndexed()) {
+      let added = true;
+      try {
+        await this.usersIndex.addAlias(oldUsername, userId);
+      } catch (err) {
+        // Indexed meanwhile by that same-name change: go on, step 4 decides.
+        if (!await isIndexed()) throw await refuse(errors.unexpectedError(err as Error));
+        added = false;
+      }
+      if (added) undo.push(async () => await this.usersIndex.deleteAlias(oldUsername, userId));
+    }
 
-    // Reset requests are keyed by username and the former name can no longer
-    // consume them: drop them, so none survives to a later holder of the name.
-    await this.#destroyResetRequests([oldUsername]);
+    // 4. Local index rename.
+    let renamed: boolean;
+    try {
+      renamed = await this.usersIndex.renameUser(oldUsername, newUsername);
+    } catch (err) {
+      const holder = await this.usersIndex.getUserId(newUsername);
+      throw await refuse(holder != null && holder !== userId ? taken() : errors.unexpectedError(err as Error));
+    }
+    if (!renamed) {
+      // Another change of this account renamed it first: everything above is
+      // shared with it, so nothing is undone.
+      throw errors.invalidOperation('Another username change of this account was applied meanwhile.');
+    }
+    undo.push(async () => await this.usersIndex.renameUser(newUsername, oldUsername));
 
-    // 4. System-Streams username account field (mirrors registration's write;
-    //    `username` is not in the editable-field map used by updateOne).
-    await this.userAccountStorage.setAccountField(userId, 'username', newUsername, accessId);
+    // 5. Another account of this core holding the new name as an alias (a
+    //    former username) keeps it.
+    const aliasHolder = await this.usersIndex.getUserIdForAlias(newUsername);
+    if (aliasHolder != null) { throw await refuse(taken()); }
 
-    // 5. keep the old username routable as an alias (re-holds the freed name)
-    await this.reserveSpecificAlias(newUsername, userId, oldUsername);
+    // 6. Record the change (right after the gate: a change of this account
+    //    can only start from the new name now, and reads the count after it).
+    //    These writes refuse nothing, but a storage failure can still stop
+    //    them: the step reached is undone, then every step above, so the
+    //    account is left whole under its former name.
+    let step = 'change counter';
+    try {
+      const count = await this.getUsernameChangeCount(userId);
+      await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count + 1, accessId);
+      undo.push(async () => await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count, accessId));
 
-    // 6. record the change
-    const count = Number(await this.userAccountStorage.getAccountField(userId, USERNAME_CHANGE_COUNT_FIELD)) || 0;
-    await this.userAccountStorage.setAccountField(userId, USERNAME_CHANGE_COUNT_FIELD, count + 1, accessId);
+      step = 'platform rows';
+      // Re-keying back moves whatever was re-keyed (a partial pass included).
+      undo.push(async () => await this.platform.renameUser(newUsername, oldUsername));
+      await this.platform.renameUser(oldUsername, newUsername);
+      // The breach-scope index names the owner of each access: move its rows
+      // too, or they would be resolved to a later holder of the former name.
+      if (!await renameAccessIndexOwnerNonFatal(this.platform, oldUsername, newUsername)) {
+        warnings.push({ step: 'access-index', message: 'The breach-scope index rows of the accesses still name the former username (repaired by the access-index resync).' });
+      }
+      undo.push(async () => await renameAccessIndexOwnerNonFatal(this.platform, newUsername, oldUsername));
+
+      // Reset requests are keyed by username and the former name can no longer
+      // consume them: drop them, so none survives to a later holder of the name.
+      step = 'password reset requests';
+      await this.#destroyResetRequests([oldUsername]);
+
+      // System-Streams username account field (mirrors registration's write;
+      // `username` is not in the editable-field map used by updateOne).
+      step = 'username account field';
+      await this.userAccountStorage.setAccountField(userId, 'username', newUsername, accessId);
+    } catch (err) {
+      logger.error(`username change of "${oldUsername}" failed at the ${step} step, undoing it`, err);
+      const failure = await refuse(errors.unexpectedError(err as Error));
+      cache.unsetUser(newUsername);
+      cache.unsetUser(oldUsername);
+      throw failure;
+    }
+    // Bust the former name again: a resolution that read it as the canonical
+    // username before the rename and cached it after the first bust would
+    // otherwise keep reporting it until the entry ages out.
+    cache.unsetUser(oldUsername);
+
+    // HF series are keyed by the username: bring them under the new one. The
+    // HF workers first forget the series credentials they cached for the
+    // former name, which would write under it again.
+    pubsub.series.emit(pubsub.SERIES_USERNAME_CHANGED, { username: oldUsername, newUsername });
+    if (!await this.#gatherSeriesNonFatal(userId, newUsername)) {
+      warnings.push({ step: 'hf-series', message: 'The HF series stored under a former username could not be moved under the new one (they are moved at the next username change, or by the operator with bin/gather-former-series.js).' });
+    }
+    return warnings;
+  }
+
+  /**
+   * {@link gatherAccountSeries} on the configured series storage. A failure
+   * is logged, not raised: the account is renamed already, and the points
+   * left under a former name are still erased with the account and gathered
+   * again at its next username change.
+   */
+  async #gatherSeriesNonFatal (userId: string, username: string): Promise<boolean> {
+    const conn = require('storages').seriesConnection;
+    if (conn == null) return true;
+    try {
+      await gatherAccountSeries(conn, this.usersIndex, userId, username);
+      return true;
+    } catch (err) {
+      logger.error(`username change: the HF series of the former names could not be moved under "${username}"`, err);
+      return false;
+    }
   }
 
   /** Number of username changes already performed (0 if never). */
@@ -655,9 +827,9 @@ class UsersRepository {
     // Fetch user object BEFORE any deletions — platform.deleteUser needs it
     // for unique field cleanup (e.g. email).
     const user = await this.getUserById(userId);
-    if (username == null) {
-      username = user?.username;
-    }
+    // The account's current username wins over the one given: a caller may
+    // hold a former name, under which the platform rows are no longer kept.
+    username = (await this.usersIndex.getUsername(userId)) ?? username ?? user?.username;
     // Delete index FIRST so that getAll() never lists a user whose data is
     // being deleted.  The reverse race (index gone but events still exist)
     // is handled by getUserById() returning null when username is null.
@@ -727,8 +899,8 @@ class UsersRepository {
 
   /**
    * Reconcile THIS core's slice of the shared name→core (`user-core/`) map with
-   * its local user index. Multi-core maintenance that heals the two drift
-   * states the platform-wide username check is sensitive to:
+   * its local user index. Heals the two drift states the platform-wide
+   * username check and the routing (the embedded DNS included) are sensitive to:
    *  - STALE self-row (points at THIS core but no local user/alias owns the
    *    name) → delete, so a deleted/never-created name reports free again and
    *    stops falsely reserving itself platform-wide;
@@ -736,23 +908,32 @@ class UsersRepository {
    *    (claim-or-confirm), so the live name cannot be hijacked by another core
    *    and stays routable.
    * Rows pointing at OTHER cores are NEVER touched — each core owns only its own
-   * slice. Single-core is a no-op (the platform-wide check ignores the map).
+   * slice. It applies on a single core too: the embedded DNS answers every
+   * name through these rows, and the aliases and changed usernames of a
+   * single core got none before a release that wrote them (one-time repair).
    * Works in both piiModes: local names are hashed to the storage-form token
    * via `platform.hashFor` for comparison, exactly as user-core keys are stored.
-   * Idempotent; safe to run repeatedly and concurrently with live traffic
-   * (healing uses the atomic claim; stale deletion is guarded on ownership).
+   * Idempotent. Healing uses the atomic claim, but stale deletion works from
+   * one snapshot of the local index: a registration in flight (its row
+   * claimed, its index entry not yet written) can lose its row. Run it with
+   * this core's API stopped, or run it again afterwards (a second run heals
+   * what the first deleted).
+   * An empty local index facing self-rows is refused (`refusedEmptyLocal`,
+   * nothing written, dry run included) unless `forceEmptyLocal`: it is more
+   * likely a lost or wrong index (a partial restore, a wrong --config) than
+   * a core whose every account is gone, and deleting would unroute them all.
    *
    * @param dryRun when true, computes the summary without writing.
-   * @returns { deleted, healed, conflicts, scanned, skippedOtherCore } —
+   * @returns { deleted, healed, conflicts, scanned, skippedOtherCore, refusedEmptyLocal? } —
    *   `deleted`/`healed` are the affected name TOKENS (storage form; opaque HMAC
    *   in hashed mode). `conflicts` names each local user/alias whose routing row
    *   points at ANOTHER core (owned locally but claimed elsewhere): the tool will
    *   NOT clobber it, so the operator must resolve it by hand. Reported in both
    *   dry-run and apply so the two agree (a conflict is never counted as a heal).
    */
-  async reconcileUserCoreMap (dryRun = false): Promise<{ deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number }> {
-    const summary = { deleted: [] as string[], healed: [] as string[], conflicts: [] as Array<{ username: string; coreId: string }>, scanned: 0, skippedOtherCore: 0 };
-    if (this.platform.isSingleCore) return summary;
+  async reconcileUserCoreMap (dryRun = false, options: { forceEmptyLocal?: boolean } = {}): Promise<{ deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number; refusedEmptyLocal?: boolean }> {
+    const summary: { deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number; refusedEmptyLocal?: boolean } =
+      { deleted: [], healed: [], conflicts: [], scanned: 0, skippedOtherCore: 0 };
     const selfCoreId = this.platform.coreId;
 
     // Build this core's owned name tokens (canonical usernames + aliases) in the
@@ -770,6 +951,13 @@ class UsersRepository {
 
     // (i) delete stale self-rows; heal missing self-rows in one pass over the map.
     const allMappings = await this.platform.getAllUserCores(); // { username: token, coreId }
+    if (Object.keys(byUsername).length === 0 && options.forceEmptyLocal !== true &&
+        allMappings.some(({ coreId }) => coreId === selfCoreId)) {
+      summary.scanned = allMappings.length;
+      summary.skippedOtherCore = allMappings.filter(({ coreId }) => coreId !== selfCoreId).length;
+      summary.refusedEmptyLocal = true;
+      return summary;
+    }
     const presentSelfTokens = new Set<string>();
     const tokenToCore = new Map<string, string>(); // token -> owning coreId (any core)
     for (const { username: token, coreId } of allMappings) {

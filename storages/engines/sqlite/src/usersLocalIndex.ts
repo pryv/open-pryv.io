@@ -95,10 +95,12 @@ class DBIndex {
     });
   }
 
-  async renameUser (oldUsername: string, newUsername: string): Promise<void> {
+  async renameUser (oldUsername: string, newUsername: string): Promise<boolean> {
+    let result: RunResult | null = null;
     await concurrentSafeWrite.execute(() => {
-      return this.queryRename.run({ oldUsername, newUsername });
+      result = this.queryRename.run({ oldUsername, newUsername });
     });
+    return ((result as RunResult | null)?.changes ?? 0) > 0;
   }
 
   /**

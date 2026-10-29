@@ -13,6 +13,7 @@ const WEBHOOKS_DELETE = 'wh.deletes'; // {username, webhook}
 
 const SERIES_UPDATE_EVENTID_USERNAME = 'events.update'; // {username, event: { id }}
 const SERIES_DELETE_EVENTID_USERNAME = 'events.delete'; // {username, event: { id }}
+const SERIES_USERNAME_CHANGED = 'username.change'; // {username, newUsername}
 
 // usernamed-based events
 const USERNAME_BASED_EVENTS_CHANGED = 'events-changed';
@@ -38,6 +39,7 @@ export {
   WEBHOOKS_DELETE,
   SERIES_UPDATE_EVENTID_USERNAME,
   SERIES_DELETE_EVENTID_USERNAME,
+  SERIES_USERNAME_CHANGED,
   USERNAME_BASED_EVENTS_CHANGED,
   USERNAME_BASED_STREAMS_CHANGED,
   USERNAME_BASED_ACCESSES_CHANGED,

@@ -167,9 +167,8 @@ function checkTrustedApps (config, problems) {
 }
 
 // Enum-style validation for `audit:onUserDelete` mode + gate for
-// `pseudonymise` which depends on the not-yet-shipped ALIASES
-// primitive. Lives alongside REQUIRED_WHEN so future enum-style gates
-// land in the same shape.
+// `pseudonymise`, which is not implemented. Lives alongside REQUIRED_WHEN
+// so future enum-style gates land in the same shape.
 const AUDIT_ON_USER_DELETE_MODES = ['erase', 'keep', 'pseudonymise'];
 
 function checkAuditOnUserDeleteMode (config, problems) {
@@ -185,9 +184,9 @@ function checkAuditOnUserDeleteMode (config, problems) {
   }
   if (value === 'pseudonymise') {
     problems.push({
-      message: "'audit:onUserDelete: pseudonymise' is not yet available — it requires the auth.randomAlias primitive (open-pryv.io#38, backlog slug ALIASES). Use 'erase' (default) or 'keep' until ALIASES ships, then re-enable.",
+      message: "'audit:onUserDelete: pseudonymise' is not implemented: the audit of a deleted account cannot be pseudonymised yet. Use 'erase' (default) or 'keep'.",
       path: ['audit', 'onUserDelete'],
-      payload: { value: 'pseudonymise', dependsOn: 'ALIASES (open-pryv.io#38)' }
+      payload: { value: 'pseudonymise', implemented: false }
     });
   }
 }

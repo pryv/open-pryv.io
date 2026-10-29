@@ -43,6 +43,7 @@ function makeRecordingDb () {
     if (method === 'getUserCore') return null;
     if (method === 'setUserUniqueFieldIfNotExists') return true;
     if (method === 'getAllWithPrefix') return [];
+    if (method === 'getAllForUser') return [];
     return undefined;
   };
   const db = {
@@ -58,6 +59,7 @@ function makeRecordingDb () {
     getDnsRecord: record('getDnsRecord'),
     deleteDnsRecord: record('deleteDnsRecord'),
     getAllWithPrefix: record('getAllWithPrefix'),
+    getAllForUser: record('getAllForUser'),
     reassignInvitationConsumer: record('reassignInvitationConsumer')
   };
   return { db, calls };

@@ -205,13 +205,14 @@ class MethodContext {
     // userId, then pin `username` to the CANONICAL primary username — never the
     // alias. Keeps username-keyed concerns (pubsub, cache, apiEndpoint for
     // non-aliased accesses) correct when a request is addressed by alias.
+    // The canonical name is read from storage only for a name that is not it
+    // (an alias): the common path stays one cache hit.
     const addressedName = this.user.username;
-    const userId = await usersRepository.getUserIdForUsername(addressedName);
-    if (!userId) { throw errors.unknownResource('user', addressedName); }
-    const canonicalUsername = await usersRepository.getUsernameForUserId(userId);
+    const resolved = await usersRepository.resolveUsername(addressedName);
+    if (resolved == null) { throw errors.unknownResource('user', addressedName); }
     this.user = {
-      id: userId,
-      username: canonicalUsername ?? addressedName
+      id: resolved.userId,
+      username: resolved.username
     };
   }
 

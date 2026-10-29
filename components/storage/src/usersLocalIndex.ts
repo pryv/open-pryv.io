@@ -78,14 +78,19 @@ class UsersLocalIndex {
     logger.debug('addUser', username, userId);
   }
 
-  /** Rename the canonical (primary) username; leaves aliases intact. */
-  async renameUser (oldUsername: string, newUsername: string): Promise<void> {
-    await this.db.renameUser(oldUsername, newUsername);
+  /**
+   * Rename the canonical (primary) username; leaves aliases intact.
+   * @returns false when no user holds `oldUsername` (nothing renamed); rejects
+   *   when another user holds `newUsername`.
+   */
+  async renameUser (oldUsername: string, newUsername: string): Promise<boolean> {
+    const renamed = await this.db.renameUser(oldUsername, newUsername);
     // Bust AFTER the write so a concurrent getUserId cannot re-cache the stale
     // name->userId mapping past the rename.
     cache.unsetUser(oldUsername);
     cache.unsetUser(newUsername);
-    logger.debug('renameUser', oldUsername, newUsername);
+    logger.debug('renameUser', oldUsername, newUsername, renamed);
+    return renamed;
   }
 
   async usernameExists (username: string): Promise<boolean> {
@@ -95,21 +100,33 @@ class UsersLocalIndex {
   }
 
   async getUserId (username: string): Promise<string | undefined> {
+    return (await this.resolveName(username))?.userId;
+  }
+
+  /**
+   * Resolve a name (username or alias) to its account, telling whether the
+   * name is the account's canonical username.
+   */
+  async resolveName (username: string): Promise<{ userId: string; isCanonical: boolean } | undefined> {
     let userId = cache.getUserId(username);
-    if (userId == null) {
+    let isCanonical: boolean;
+    if (userId != null) {
+      isCanonical = cache.isCanonicalUsername(username);
+    } else {
       // Resolve a primary username first (common path), then fall back to the
       // alias index so de-identifying / superseded-username aliases route to
       // the same user. Both kinds share the name->userId cache.
       userId = await this.db.getIdForName(username);
+      isCanonical = userId != null;
       if (userId == null) {
         userId = await this.db.getIdForAlias(username);
       }
       if (userId != null) {
-        cache.setUserId(username, userId);
+        cache.setUserId(username, userId, isCanonical);
       }
     }
     logger.debug('idForName', username, userId);
-    return userId;
+    return userId == null ? undefined : { userId, isCanonical };
   }
 
   /** Returns the canonical (primary) username for a userId — never an alias. */
@@ -128,6 +145,11 @@ class UsersLocalIndex {
 
   async getAliasesForId (userId: string): Promise<string[]> {
     return await this.db.getAliasesForId(userId);
+  }
+
+  /** The user holding `alias` as an alias (not as a username), uncached. */
+  async getUserIdForAlias (alias: string): Promise<string | undefined> {
+    return await this.db.getIdForAlias(alias);
   }
 
   async deleteAlias (alias: string, userId: string): Promise<void> {

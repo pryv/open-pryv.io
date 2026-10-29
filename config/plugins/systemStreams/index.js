@@ -112,6 +112,7 @@ function load (config) {
 
   let customAccountStreams = config.get('custom:systemStreams:account');
   if (customAccountStreams == null) { customAccountStreams = []; }
+  throwIfServerManagedField(customAccountStreams);
   customAccountStreams =
         extendSystemStreamsWithDefaultValues(customAccountStreams);
   customAccountStreams = ensurePrefixForStreamIds(customAccountStreams, CUSTOMER_PREFIX);
@@ -236,6 +237,27 @@ function throwIfOtherStreams (otherStreams) {
     'is listed among the system streams but has no storage (no event can be written in it, and it is ' +
     'not returned by streams.get). Remove the "other" section; account fields go under ' +
     'custom.systemStreams.account.');
+}
+
+// Account fields the server writes itself, outside the system-streams tree
+// (the username, kept by a username change, and the count of changes). A
+// custom account stream of that name would expose the stored values as
+// events to any access granted read on it, an aliased one included.
+const SERVER_MANAGED_ACCOUNT_FIELDS = ['username', 'usernameChangeCount'];
+
+/**
+ * @param {unknown} customAccountStreams
+ * @returns {void}
+ */
+function throwIfServerManagedField (customAccountStreams) {
+  if (!Array.isArray(customAccountStreams)) return;
+  treeUtils.cloneAndApply(customAccountStreams, (s) => {
+    const id = typeof s?.id === 'string' ? s.id.replace(/^:_?system:/, '') : null;
+    if (id != null && SERVER_MANAGED_ACCOUNT_FIELDS.includes(id)) {
+      throw new Error(`Config error: custom system stream id "${id}" is reserved: the server keeps an account field of that name itself.`);
+    }
+    return s;
+  });
 }
 
 /**

@@ -88,6 +88,25 @@ class SeriesDatabase {
     });
   }
 
+  /**
+   * Copy into this database every point of the series file at `dbPath` that
+   * this one does not hold (same event and time): the points here were
+   * written later and are kept.
+   */
+  async importAbsentFrom (dbPath: string): Promise<void> {
+    await concurrentSafeWrite.execute(() => {
+      this.db.prepare('ATTACH DATABASE ? AS source').run(dbPath);
+      try {
+        this.db.prepare(`
+          INSERT OR IGNORE INTO main.series_data (event_id, point_time, delta_time, fields)
+          SELECT event_id, point_time, delta_time, fields FROM source.series_data
+        `).run();
+      } finally {
+        this.db.prepare('DETACH DATABASE source').run();
+      }
+    });
+  }
+
   async dropEvent (eventId: string): Promise<void> {
     await concurrentSafeWrite.execute(() => {
       this.deleteByEventStmt.run(eventId);

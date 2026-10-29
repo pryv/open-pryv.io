@@ -86,4 +86,21 @@ describe('[PGSR] PostgreSQL series', function () {
     );
     assert.strictEqual(parseInt(result.rows[0].count), 0);
   });
+
+  it('[SRMV1] renameDatabase moves every point to the target, keeping the target\'s on a clash', async function () {
+    const from = 'user.srmvfrom' + Date.now();
+    const to = 'user.srmvto' + Date.now();
+    const point = (value, timestamp) => ({ fields: { value }, timestamp });
+    await conn.writeMeasurement('event.a', [point(1, 1000), point(2, 2000)], { database: from });
+    await conn.writeMeasurement('event.b', [point(3, 1000)], { database: from });
+    await conn.writeMeasurement('event.a', [point(20, 2000), point(30, 3000)], { database: to });
+    await conn.renameDatabase(from, to);
+    const left = await conn.db.query('SELECT count(*) FROM series_data WHERE user_id = $1', [from]);
+    assert.strictEqual(parseInt(left.rows[0].count), 0, 'nothing left under the former namespace');
+    const rows = await conn.db.query('SELECT event_id, point_time, fields FROM series_data WHERE user_id = $1 ORDER BY event_id, point_time', [to]);
+    assert.deepStrictEqual(rows.rows.map((r) => [r.event_id, Number(r.point_time), r.fields.value]),
+      [['event.a', 1000, 1], ['event.a', 2000, 20], ['event.a', 3000, 30], ['event.b', 1000, 3]]);
+    await conn.renameDatabase('user.srmvnone' + Date.now(), to); // nothing to move
+    await conn.dropDatabase(to);
+  });
 });

@@ -5,7 +5,9 @@
  * Refer to LICENSE file
  */
 
-/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, withInjectedConfig */
 
 describe('[ALIA] access aliases (randomAlias)', function () {
   let username;
@@ -138,6 +140,101 @@ describe('[ALIA] access aliases (randomAlias)', function () {
       permissions: [{ streamId: stream0.attrs.id, level: 'read' }]
     });
     assert.equal(res.status, 403, JSON.stringify(res.body));
+  });
+
+  it('[AL08] an aliased access allowed to read the account streams does not learn the username from them', async function () {
+    const personalToken = cuid();
+    await fixtureUser.access({ type: 'personal', token: personalToken });
+    await fixtureUser.session(personalToken);
+    const created = await createAccess({
+      name: 'aliased account reader',
+      type: 'shared',
+      randomAlias: true,
+      permissions: [{ streamId: ':_system:account', level: 'read' }]
+    }, personalToken);
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const { alias, token } = created.body.access;
+    // (`/streams` is not checked: fixture streams name the user id, which
+    // fixtures set to the username, as their author.)
+    for (const path of ['/events?streams[]=:_system:account&limit=1000&state=all', '/access-info']) {
+      const res = await coreRequest.get('/' + alias + path).set('Authorization', token);
+      assert.equal(res.status, 200, path + ': ' + JSON.stringify(res.body));
+      assert.ok(!JSON.stringify(res.body).includes(username), path + ' must not carry the username: ' + JSON.stringify(res.body));
+    }
+    // The username is no account stream: nothing to grant.
+    const direct = await createAccess({
+      name: 'aliased username reader',
+      type: 'shared',
+      randomAlias: true,
+      permissions: [{ streamId: ':_system:username', level: 'read' }]
+    }, personalToken);
+    assert.notEqual(direct.status, 201, JSON.stringify(direct.body));
+  });
+
+  it('[AL09] a request addressed by the username reads no canonical name from storage, one addressed by an alias still reports the username', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const aliased = await createAccess({ name: 'al09', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(aliased.status, 201, JSON.stringify(aliased.body));
+    const original = usersIndex.db.getNameForId;
+    let reads = 0;
+    usersIndex.db.getNameForId = async function (...args) { reads++; return await original.apply(this, args); };
+    try {
+      for (let i = 0; i < 3; i++) {
+        const res = await coreRequest.get('/' + username + '/access-info').set('Authorization', masterToken);
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+        assert.equal(res.body.user.username, username);
+      }
+      assert.strictEqual(reads, 0, 'no canonical-name read when addressed by the username');
+      const viaAlias = await coreRequest.get('/' + aliased.body.access.alias + '/access-info').set('Authorization', masterToken);
+      assert.equal(viaAlias.status, 200, JSON.stringify(viaAlias.body));
+      assert.equal(viaAlias.body.user.username, username, 'the canonical name, read for an alias');
+    } finally {
+      usersIndex.db.getNameForId = original;
+    }
+  });
+
+  it('[AL10] a create refused before the insert (negative expireAfter, unknown account stream) reserves no alias', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const before = await usersIndex.getAliasesForId(userId);
+    for (const body of [
+      { name: 'al10 expiry', randomAlias: true, expireAfter: -1, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] },
+      { name: 'al10 stream', randomAlias: true, permissions: [{ streamId: ':_system:no-such-field', level: 'read' }] }
+    ]) {
+      const res = await createAccess(body);
+      assert.ok(res.status >= 400, JSON.stringify(res.body));
+    }
+    assert.deepStrictEqual((await usersIndex.getAliasesForId(userId)).sort(), before.sort(), 'no alias left behind');
+  });
+
+  it('[AL11] a create refused by the insert (token already used) gives its minted alias back', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const token = cuid();
+    const first = await createAccess({ name: 'al11 first', token, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const before = await usersIndex.getAliasesForId(userId);
+    const res = await createAccess({ name: 'al11 second', token, randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    const after = await usersIndex.getAliasesForId(userId);
+    assert.deepStrictEqual(after.sort(), before.sort(), 'the minted alias was given back');
+  });
+
+  it('[AL12] a create with randomAlias past accesses.maxAliasesPerAccount is refused and mints nothing', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const held = (await usersIndex.getAliasesForId(userId)).length;
+    await withInjectedConfig({ accesses: { maxAliasesPerAccount: held + 1 } }, async () => {
+      const first = await createAccess({ name: 'al12 under the cap', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      assert.equal(first.status, 201, JSON.stringify(first.body));
+      const refused = await createAccess({ name: 'al12 past the cap', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      assert.equal(refused.status, 400, JSON.stringify(refused.body));
+      assert.equal(refused.body.error.id, 'invalid-operation');
+      assert.match(refused.body.error.message, /maxAliasesPerAccount/);
+      assert.equal((await usersIndex.getAliasesForId(userId)).length, held + 1, 'no alias minted past the cap');
+      const plain = await createAccess({ name: 'al12 without alias', permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      assert.equal(plain.status, 201, 'a create without randomAlias is not capped: ' + JSON.stringify(plain.body));
+    });
   });
 
   it('[AL07] deleting an access whose stored alias is another user\'s releases nothing of that user', async function () {

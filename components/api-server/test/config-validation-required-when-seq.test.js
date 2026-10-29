@@ -459,15 +459,15 @@ describe('[CV-AOUD] config-validation audit.onUserDelete', () => {
     assert.strictEqual(problems.length, 0);
   });
 
-  it('[CV-AOUD-03] pseudonymise refused at boot (depends on ALIASES, #38)', () => {
+  it('[CV-AOUD-03] pseudonymise refused at boot (not implemented)', () => {
     const problems = [];
     checkAuditOnUserDeleteMode(fakeConfig('pseudonymise'), problems);
     assert.strictEqual(problems.length, 1);
-    assert.ok(problems[0].message.includes('ALIASES'),
-      'expected message to mention ALIASES dependency');
-    assert.ok(problems[0].message.includes('#38'),
-      'expected message to mention the open-pryv.io issue number');
-    assert.strictEqual(problems[0].payload.dependsOn, 'ALIASES (open-pryv.io#38)');
+    assert.ok(problems[0].message.includes('not implemented'),
+      'expected message to say pseudonymisation is not implemented');
+    assert.ok(!/not yet available|ALIASES|#38/.test(problems[0].message),
+      'the message no longer names a missing primitive (aliases exist)');
+    assert.strictEqual(problems[0].payload.implemented, false);
   });
 
   it('[CV-AOUD-04] unknown mode rejected with allowed list', () => {

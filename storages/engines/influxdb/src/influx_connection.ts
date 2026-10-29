@@ -68,6 +68,23 @@ class InfluxConnection {
     return this.conn.dropDatabase(name);
   }
 
+  /**
+   * Copy every measurement of `from` into `to` on the server (tags kept by
+   * `GROUP BY *`), then drop `from`. InfluxDB has no database rename. A point
+   * both hold (same series and time) takes the copied fields.
+   */
+  async renameDatabase (from: string, to: string): Promise<void> {
+    if (from === to) return;
+    if (!(await this.conn.getDatabaseNames()).includes(from)) return;
+    this.logger.debug(`Moving database ${from} to ${to}.`);
+    await this.conn.createDatabase(to);
+    const quote = (name: string) => '"' + name.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    // An empty retention policy (`db..measurement`) is the database's default
+    // one, which every write and read of this engine uses.
+    await this.conn.query(`SELECT * INTO ${quote(to)}..:MEASUREMENT FROM ${quote(from)}../.*/ GROUP BY *`, { database: from });
+    await this.conn.dropDatabase(from);
+  }
+
   writeMeasurement (name: string, points: InfluxPoint[], options?: InfluxWriteOptions): Promise<void> {
     this.logger.debug(`Write -> ${name}: ${points.length} points.`);
     return this.conn.writeMeasurement(name, points, options);

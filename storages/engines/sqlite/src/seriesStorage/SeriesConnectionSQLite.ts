@@ -45,6 +45,7 @@ type SeriesDb = {
   close (): void;
   writePoints (rows: InsertRow[]): Promise<unknown>;
   dropEvent (id: string): Promise<unknown>;
+  importAbsentFrom (dbPath: string): Promise<void>;
   listEventIds (): string[];
   selectRows (sql: string, params: unknown[]): SeriesRow[];
   fileId?: string | null;
@@ -100,6 +101,23 @@ class SeriesConnectionSQLite {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== 'ENOENT' && code !== 'ENOTEMPTY' && code !== 'EEXIST') throw err;
     }
+  }
+
+  /**
+   * Merge the namespace's series file into the target's (points the target
+   * already holds are kept), then remove it like {@link dropDatabase}.
+   */
+  async renameDatabase (from: string, to: string): Promise<void> {
+    if (from === to) return;
+    this.logger.debug(`renameDatabase: ${from} -> ${to}`);
+    const fromPath = this.existingPathForUser(from);
+    if (await fileIdentity(fromPath) == null) return;
+    // The source's own handle: its schema, and its WAL folded in on close.
+    await this.forUser(from);
+    this.cache.delete(from);
+    const target = await this.forUser(to);
+    await target.importAbsentFrom(fromPath);
+    await this.dropDatabase(from);
   }
 
   /**
@@ -201,7 +219,9 @@ class SeriesConnectionSQLite {
 
   // ----- Backup / restore -------------------------------------------------
 
+  /** A namespace that never had series exports nothing, and creates nothing. */
   async exportDatabase (name: string): Promise<{ measurements: Array<{ measurement: string, points: SeriesPoint[] }> }> {
+    if (await fileIdentity(this.existingPathForUser(name)) == null) return { measurements: [] };
     const db = await this.forUser(name);
     const eventIds = db.listEventIds();
     const measurements: Array<{ measurement: string, points: SeriesPoint[] }> = [];

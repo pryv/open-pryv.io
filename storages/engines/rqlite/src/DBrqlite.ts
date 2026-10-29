@@ -174,6 +174,16 @@ class DBrqlite {
     return rows.map(parseEntry);
   }
 
+  async getAllForUser (username: string) {
+    // Unique rows hold their owner as value; indexed rows end their key with it.
+    const rows = await this.query(
+      "SELECT key, value FROM keyValue WHERE (key LIKE 'user-unique/%' AND value = ?) " +
+      "OR (key LIKE 'user-indexed/%' AND substr(key, -(length(?) + 1)) = '/' || ?)",
+      [username, username, username]
+    );
+    return rows.map(parseEntry);
+  }
+
   async deleteAll () {
     await this.execute('DELETE FROM keyValue');
   }

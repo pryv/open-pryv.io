@@ -102,6 +102,87 @@
   `auth.emailVerificationPageURL`, check-config now reports a warning, as boot does, instead of a
   problem. Only an explicit `services.email.enabled.verifyEmail: true` makes the page URL required.
 
+### Added
+
+- **Per-account cap on aliases: `accesses.maxAliasesPerAccount` (default `1000`).** An account
+  could mint an unbounded number of `randomAlias` aliases, each one a platform-wide routing name
+  held until its access is deleted (an expired access keeps its alias). Once the account holds that
+  many aliases (its `r-` access aliases plus its former usernames), `accesses.create` with
+  `randomAlias` answers `400 invalid-operation` (the message names the setting); a create without
+  `randomAlias` is not affected. Deleting accesses the account no longer uses frees their aliases.
+- **Sign-in with a former username.** After a username change, `auth.login` with the former
+  username in the credentials answered `400 invalid-operation` ("The username in the path does not
+  match that of the credentials"), under either path. A name the account holds as a former
+  username now signs in like the current one (the session and `apiEndpoint` carry the current
+  username). The alias minted for an access (`r-` + 8 characters) is not a sign-in name (a
+  username that merely starts with `r-` is one like any other), and a username of another account
+  still answers `400 invalid-operation`.
+- **`account.changeUsername` result: `warnings`.** A few steps of a username change do not undo it
+  when they fail, and were only logged: the move of the breach-scope index rows of the accesses,
+  the move of the HF series kept under a former username, the move of the webhooks. The result now
+  carries `warnings`, an array of `{ step, message }` (`step`: `access-index`, `hf-series`,
+  `webhooks`), always present and empty when every step completed (like the other fields of this
+  result, a client can read it without testing for its presence). The change itself stands.
+
+### Fixed
+
+- **Backup and restore keep the account aliases.** The aliases of an account (those of its
+  `randomAlias` accesses and its former usernames) were not backed up: after a restore the aliased
+  accesses and the endpoints under a former username answered `404 unknown-resource`, and a former
+  username was free for a new registration. The backup manifest now lists each account's aliases
+  and the restore reserves them again; an alias another account or core took meanwhile stays with
+  its holder and is reported (`Aliases: ... held by another account or core`). Backups written
+  before list none.
+- **`account.changeUsername` refuses a name taken while the change runs, and writes nothing.** The
+  availability check ran before the writes, which could not refuse: a name registered (or taken as
+  an alias) by another account of the same core in between was overwritten in the platform rows,
+  and the change then failed with `500`, leaving both accounts inconsistent. The change now holds
+  the current username as an alias first, and the local rename and the alias check refuse a taken
+  name (`409 item-already-exists`) before anything else is written. When the current username
+  cannot be kept as an alias the change is refused (`400 invalid-operation`) instead of going on
+  with the former name unprotected.
+- **Concurrent username changes of one account: one applies.** Two changes sent at once could both
+  pass the change limit and both apply (the counter then exceeded the limit). The second one now
+  answers `400 invalid-operation`, and the change is counted once.
+- **Deleting an access releases the alias of an access created through it during the deletion.**
+  The final pass that deletes such accesses left their alias reserved and routing to the account.
+- **The account-changed notification of a username change is sent under the new name too**, so
+  sockets opened after the change receive it (before: only under the former name).
+- **HF series survive a username change.** Series are kept under a namespace named after the
+  username, which the change did not move: points stored before it were no longer returned under
+  either name, and new points started a second namespace. The change now moves the account's
+  series under the new name (PostgreSQL, SQLite and InfluxDB series storage), merging any left
+  under a former name by an earlier change, and HF workers forget the series credentials they
+  cached for the former name. Accounts renamed before this release get their earlier series back
+  when the operator runs `node bin/gather-former-series.js` once (or at their next username
+  change); they are still erased with the account. The backup now exports the series under every
+  former username too, and the restore writes them under the username.
+- **Sockets opened before a username change are disconnected** (`io server disconnect`) instead of
+  staying open and silent: they listened under the former name while notifications are sent under
+  the new one. The client reconnects, by either name, and is notified again.
+- **Single core with its own DNS: aliases and changed usernames resolve.** The name -> core row the
+  embedded DNS answers from was written for registered usernames only on a single core: a
+  `randomAlias` endpoint (`https://r-xxxxxxxx.<domain>/`) and the new name after a username change
+  answered `NXDOMAIN`. Both now get the row (released with the alias). Aliases minted and names
+  taken by a change on a single core before this release lack it until the operator runs
+  `node bin/reconcile-user-cores.js` once (it now applies on a single core too).
+- **A refused `accesses.create` keeps no alias.** With `randomAlias`, the alias was reserved before
+  the request's checks (negative `expireAfter`, account-stream rules, a token already in use, ...):
+  a refused request left an alias routing to the account until its erasure. The alias is now
+  reserved after every check and given back when the access cannot be stored.
+- **A username change that fails part way is undone.** A storage failure after the availability
+  gates (platform rows, account field) left the account split between its former and new name;
+  the change now undoes each step it made and answers `500 unexpected-error`, the account whole
+  under its former name and the new name free.
+- **Config: custom account streams may not be named `username` or `usernameChangeCount`.** The
+  server keeps account fields of these names itself; a custom stream of that name would expose
+  them as events (to an aliased access too). Such a config is refused at boot.
+
+### Documentation
+
+- `auth.usernameChangeLimit` (default `2`, `0` disables the change) is declared in
+  `default-config.yml` and in the install wizard's optional settings.
+
 ## 2.0.0-rc.65 - 2026-10-29
 
 ### BREAKING and security

@@ -238,12 +238,17 @@ export async function renameAccessIndexOwner (platform: PlatformIndexHandle, old
   return owned.length;
 }
 
-/** Non-fatal {@link renameAccessIndexOwner}: a failure leaves rows `--resync` repairs. Never rejects. */
-export async function renameAccessIndexOwnerNonFatal (platform: PlatformIndexHandle, oldUsername: string, newUsername: string): Promise<void> {
+/**
+ * Non-fatal {@link renameAccessIndexOwner}: a failure leaves rows `--resync` repairs. Never rejects.
+ * @returns false when the move failed.
+ */
+export async function renameAccessIndexOwnerNonFatal (platform: PlatformIndexHandle, oldUsername: string, newUsername: string): Promise<boolean> {
   try {
     await renameAccessIndexOwner(platform, oldUsername, newUsername);
+    return true;
   } catch (err) {
     logger.warn(`[access-index] failed to move index rows to the new name of user ${platform.hashFor(USERNAME_FIELD, newUsername)}: ${(err as Error).message}`);
+    return false;
   }
 }
 

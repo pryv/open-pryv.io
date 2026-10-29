@@ -31,6 +31,7 @@ const SUBSCRIPTION_OPS = new Set(['subscribe', 'unsubscribe', 'getSubscriptions'
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { initRootSpan } = require('tracing');
 const { getConfig } = require('@pryv/boiler');
+const { getUsersRepository } = require('business/src/users/index.ts');
 
 // Socket.io calls were historically NOT audited (only the HTTP result.onEnd
 // path fires audit). That leaves a compromised access's websocket activity out
@@ -279,6 +280,10 @@ class NamespaceContext {
       }
       return;
     }
+    if (payload === pubsub.USERNAME_BASED_ACCOUNT_CHANGED) {
+      this.disconnectIfRenamed().catch((err: unknown) => this.logger.warn('socket.io: username change check failed', err));
+      return;
+    }
     const message = pubsubMessageToSocket(payload);
     if (message != null) {
       this.emitCoarse(message);
@@ -289,6 +294,28 @@ class NamespaceContext {
     } else {
       this.logger.debug('Unknown payload', payload);
     }
+  }
+
+  // The account changed (the notification is sent under the former and the
+  // new name on a username change). Every connection of this context holds a
+  // method context, and this context a subscription, made under the username
+  // of the handshake: once the account has another username they would act
+  // and listen under a name that is no longer its own, and stay silent.
+  // Disconnect them (the client reconnects, by either name) and forget the
+  // context.
+  async disconnectIfRenamed (): Promise<void> {
+    const first = this.connections.values().next().value;
+    const userId = first?.methodContext.user?.id;
+    if (userId == null) return;
+    const usersRepository = await getUsersRepository();
+    const current = await usersRepository.getUsernameForUserId(userId);
+    if (current === this.username) return;
+    this.logger.info(`Namespace ${this.socketNs.name}: the account's username changed, disconnecting ${this.connections.size} socket(s)`);
+    for (const conn of [...this.connections.values()]) {
+      try { conn.socket.disconnect(); } catch { /* already gone */ }
+    }
+    this.manager?.dropContext(this);
+    await this.close();
   }
 
   // `accessUpdated` names an access and its new serial: only the connections

@@ -133,6 +133,24 @@ export default function conformanceTests (getDB) {
           assert.ok(mine.includes(email), 'enumeration missing ' + email);
         }
       });
+
+      it('[MUV05] getAllForUser answers exactly the unique and indexed rows of one user', async () => {
+        const username = 'own' + cuid().toLowerCase();
+        const longer = 'x' + username; // ends with the same characters
+        await db.setUserUniqueField(username, 'email', username + '@example.com');
+        await db.setUserUniqueField(username, 'alias', 'r-' + username);
+        await db.setUserIndexedField(username, 'language', 'fr');
+        await db.setUserUniqueField(longer, 'email', longer + '@example.com');
+        await db.setUserIndexedField(longer, 'language', 'de');
+        const key = (e) => [e.isUnique, e.field, e.username, e.value].join('|');
+        const mine = (await db.getAllForUser(username)).map(key).sort();
+        assert.deepStrictEqual(mine, [
+          [false, 'language', username, 'fr'].join('|'),
+          [true, 'alias', username, 'r-' + username].join('|'),
+          [true, 'email', username, username + '@example.com'].join('|')
+        ].sort());
+        assert.deepStrictEqual(await db.getAllForUser('nobody' + cuid().toLowerCase()), []);
+      });
     });
 
     describe('setUserIndexedField() / getUserIndexedField()', () => {

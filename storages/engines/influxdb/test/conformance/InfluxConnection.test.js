@@ -106,6 +106,39 @@ export default function conformanceTests (getConnection) {
       assert.strictEqual(results[0].value, 42);
     });
 
+    it('[IC11] renameDatabase() moves every measurement to the target and removes the source', async () => {
+      const from = 'user.icmv' + Date.now();
+      const to = 'user.icmvto' + Date.now();
+      try {
+        await conn.createDatabase(from);
+        await conn.writeMeasurement('event.a', [
+          { fields: { value: 1 }, timestamp: '1000000000000000000' },
+          { fields: { value: 2 }, timestamp: '2000000000000000000' }
+        ], { database: from });
+        await conn.writeMeasurement('event.b', [{ fields: { value: 3 }, timestamp: '1000000000000000000' }], { database: from });
+        await conn.createDatabase(to);
+        await conn.writeMeasurement('event.a', [{ fields: { value: 30 }, timestamp: '3000000000000000000' }], { database: to });
+        await conn.renameDatabase(from, to);
+        const dbs = await conn.getDatabases();
+        assert.ok(!dbs.includes(from), 'the source is removed');
+        const a = await conn.query('SELECT * FROM "event.a"', { database: to });
+        assert.deepStrictEqual(a.map((r) => r.value), [1, 2, 30]);
+        const b = await conn.query('SELECT * FROM "event.b"', { database: to });
+        assert.deepStrictEqual(b.map((r) => r.value), [3]);
+        await conn.renameDatabase(from + '_never', to);
+        assert.ok(!(await conn.getDatabases()).includes(from + '_never'), 'nothing is created');
+      } finally {
+        await conn.dropDatabase(from);
+        await conn.dropDatabase(to);
+      }
+    });
+
+    it('[IC12] exportDatabase() of a database that does not exist is empty and creates nothing', async () => {
+      const never = 'user.icexnever' + Date.now();
+      assert.deepStrictEqual(await conn.exportDatabase(never), { measurements: [] });
+      assert.ok(!(await conn.getDatabases()).includes(never), 'nothing is created');
+    });
+
     it('[IC09] dropDatabase() must remove a database', async () => {
       await conn.dropDatabase(testDbName);
       const dbs = await conn.getDatabases();

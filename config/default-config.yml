@@ -194,6 +194,11 @@ auth:
     perIp:
       maxFailures: 30
       windowSeconds: 900
+  # How many times an account may change its username (account.changeUsername,
+  # personal token). Every former username stays held by the account as an
+  # alias: accesses issued under it keep working, and nobody else can take it.
+  # Sign-in accepts a former username too. 0 disables the change.
+  usernameChangeLimit: 2
 
 # === Third-party sign-in (Pryv as an OpenID Connect relying party) ===
 # Inert unless a provider is configured: no routes mount and no network calls
@@ -734,6 +739,11 @@ access:
 accesses:
   deletionRecords:
     retentionDays: 0
+  # Most aliases one account may hold: the `r-` names minted for accesses
+  # created with `randomAlias`, plus its former usernames. Past it, a create
+  # with `randomAlias` is refused (invalid-operation). An alias is held until
+  # its access is deleted: an expired access keeps it.
+  maxAliasesPerAccount: 1000
 
 # === PER-CORE: local tracing toggle ===
 trace:
@@ -985,10 +995,9 @@ audit:
   #                      lawful basis (GDPR Art.17(3)(b)). Operator must
   #                      document the retention in their DPIA.
   #   pseudonymise     — null/hash personal identifiers, keep the access
-  #                      pattern + timestamps. Requires the auth.randomAlias
-  #                      primitive (open-pryv.io#38). REFUSED AT BOOT until
-  #                      ALIASES ships — operators selecting this mode get
-  #                      a clear failure rather than a silent fallback.
+  #                      pattern + timestamps. NOT IMPLEMENTED: refused at
+  #                      boot, so an operator selecting this mode gets a
+  #                      clear failure rather than a silent fallback.
   onUserDelete: erase
   storage:
     filter:
