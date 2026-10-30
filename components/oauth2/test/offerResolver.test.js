@@ -76,6 +76,20 @@ describe('[OAUTH-OFR] offer resolution', () => {
     });
   });
 
+  describe('[OAUTH-OFR-DUP] one level per stream', () => {
+    it('[OFR-D1] an offer naming one stream twice (any spelling) is refused with a generic description', async () => {
+      for (const permissions of [
+        [{ streamId: 'health', level: 'read' }, { streamId: 'health', level: 'contribute' }],
+        [{ streamId: 'health', level: 'read' }, { streamId: ':local:health', level: 'read' }],
+      ]) {
+        clearOfferCache();
+        await assert.rejects(
+          resolveOffer({ offerName: 'study-D', capabilityUrl: CAP_URL, deps: { fetch: offerFetch(baseOffer({ request: { permissions } })) } }),
+          (err) => err instanceof OfferResolveError && /conflicting permissions on a requested resource/.test(err.message) && !err.message.includes('health'));
+      }
+    });
+  });
+
   describe('[OAUTH-OFR-BOUND] embed bounds', () => {
     it('[OFR-B1] too many permission entries → OfferResolveError (invalid_scope at edge)', async () => {
       const perms = [];

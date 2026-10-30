@@ -22,8 +22,11 @@ import * as routes from './routes.ts';
 import * as wwwAuthenticate from './wwwAuthenticate.ts';
 import * as storage from './storage.ts';
 import * as jwks from './jwks.ts';
+import * as extension from './extension.ts';
+import * as scopeGrammar from './scopeGrammar.ts';
 
 export {
+  scopeGrammar,
   scopeRegistry,
   errorMap,
   clientRegistry,
@@ -33,6 +36,7 @@ export {
   wwwAuthenticate,
   storage,
   jwks,
+  extension,
 };
 
 // Convenience top-level re-exports — the most-frequently-used surface.
@@ -77,6 +81,10 @@ export const {
   validatePublicJwkSet,
   computeThumbprint,
 } = jwks;
+
+// Whether pseudonymous subjects (pairwise clients, pseudonym offers) are
+// served on this core; the operator CLI reads it too.
+export const { PSEUDONYM_SUBJECTS_AVAILABLE } = scopeGrammar;
 
 export const { audit: emitAudit } = audit;
 

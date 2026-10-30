@@ -266,6 +266,19 @@ describe('[CMCVAL] cmc/validators', () => {
       assert.deepEqual(V.offerPermissionViolations([{ feature: 'selfRevoke', setting: 'forbidden' }, { streamId: 'x', level: 'read' }]), []);
     });
 
+    it('[VC10] an offer may not name one stream twice, in any spelling', () => {
+      const withPerms = (permissions) => ({ ...VALID_REQUEST, request: { ...VALID_REQUEST.request, permissions } });
+      for (const twice of [
+        [{ streamId: 'sleep', level: 'read' }, { streamId: 'sleep', level: 'contribute' }],
+        [{ streamId: 'sleep', level: 'read' }, { streamId: ':local:sleep', level: 'read' }],
+      ]) {
+        const r = V.validate('consent/request-cmc', withPerms(twice));
+        assert.equal(r.valid, false, JSON.stringify(twice));
+        assert.ok(r.errors.some((e) => e.includes('appears more than once')), r.errors.join('; '));
+      }
+      assert.equal(V.validate('consent/request-cmc', withPerms([{ streamId: 'sleep', level: 'read' }, { streamId: 'diary', level: 'read' }])).valid, true);
+    });
+
     it('[VC08] rejects scope-update with neither request-ref nor newPermissions', () => {
       expectInvalid('consent/scope-update-cmc', { accept: true }, 'scopeRequestEventId');
     });

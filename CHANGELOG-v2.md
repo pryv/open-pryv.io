@@ -1,5 +1,129 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### OAuth registry clients and the OAuth extension (new, opt-in)
+
+- **Registry clients: OAuth clients registered by the operator, with no app account.**
+  `bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --audience <url>
+  [flags]` registers one on any core (`--auth-method none|client_secret_basic|private_key_jwt`, the
+  secret printed once; `--extra key=value` static token-response fields; `--name`, `--logo-uri`,
+  `--client-uri`, `--policy-uri`, `--tos-uri`, `--contact`, `--launch-type`). `suspend` / `resume
+  <clientId>` refuse or restore the client everywhere (`/oauth2/authorize`, `/offer`, `/accept` (for every
+  client kind), `/token`, refresh; a refused refresh consumes nothing, so the app's refresh token works
+  again after `resume`; access tokens already issued keep working until they expire); `update` takes the
+  registry flags; `show` prints the row. Registration rules: at least one `--audience`, or
+  `--any-audience` to register the client explicitly for any audience; plain-http redirect URIs only on
+  a loopback host unless `--allow-insecure-redirect` is given (`--allow-insecure-redirect false`
+  withdraws it; these boolean flags take no value, `true` or `false`, anything else is refused).
+- **`create-registry` requires `--subject-type public|pairwise` (no default) and echoes it.** `update
+  --subject-type` needs `--yes` when it changes the value (existing grants switch at each user's next
+  consent, with acknowledgement, see below); `list` shows `<clientId>  <kind>  <status>
+  <subjectType|->` per client; a registry row stored without a subject type reads as `public`, is
+  reported at boot and by `show`, and `update` on it asks for `--subject-type`. `pairwise` is accepted
+  with a warning (it is refused at `/oauth2/authorize` on this core for now).
+  `client_credentials` and DPoP-bound tokens are not available to registry clients (a DPoP proof at
+  `/oauth2/token` is refused with `invalid_request` before the code or refresh token is used).
+- **OAuth extension entry point (`customExtensions:oauthExtension`, options in
+  `oauth:extensionOptions`).** A module exporting a factory that returns `{ apiVersion: 1, name,
+  scopeGrammar: { parse, echo, supported? }, tokenResponse? }` maps a registry client's whole scope
+  string to a consent offer of Pryv permissions and may add fields to its token response. Loaded at
+  boot: a module that cannot be loaded, or breaks the contract, fails the boot. A registry client's
+  registered `scope` is its maximum scope set in the grammar; a request beyond it is `invalid_scope`.
+  Whatever the grammar answers, the core refuses account and system streams, every stream (`*`), the
+  `manage` level, two permissions on one stream in an offer and a token the client did not send
+  (`invalid_scope`), and removes `defaultName` / `name` from the offer and from the consent UI's
+  `grantedPermissions` (a registry consent never creates a stream). The token response `scope` is the grammar's
+  echo over the permissions actually minted (and must stay within the requested tokens), so it
+  narrows when the user unticked part of the offer or the grant was narrowed. The subject handed to
+  the extension (and the hook fields built on it) is the user's internal id, not the username and not
+  routable; `apiEndpoint` is sent. `offline_access` asks for a refresh token; `openid` is refused on
+  this core. Without the extension every registry client's `/oauth2/authorize` answers `invalid_scope`.
+- **Pseudonymous subjects are refused for now**: an offer asking for a pseudonym and any request of a
+  `pairwise` client answer `invalid_scope` "pseudonymous subjects are not available on this core".
+- **Offer by reference: `POST /oauth2/authorize/offer`** `{ state }` answers `{ client: { clientId,
+  clientName, logoUri, clientUri, policyUri, tosUri }, offer, scope }` for a registry client (`Cache-Control:
+  no-store`, unauthenticated like `/oauth2/authorize`). The signed state carries the offer's digest only;
+  `/offer` and `/oauth2/authorize/accept` re-derive the offer and refuse a state whose client or grammar
+  changed since (`invalid_request`, restart the flow). `offer.entryLabels` (display labels keyed
+  `s|<streamId>|<level>` / `f|<feature>|<setting>`, values `{ [lang]: text }`) and the texts are passed
+  through unchanged. App-account clients keep the offer inside the state, unchanged.
+- **`POST /oauth2/authorize`** with a form body works like `GET`; a JSON body or a parameter given twice
+  is refused (HTML 400). A client registered with audiences must name one in `aud` (trailing slash
+  ignored), else `invalid_request`.
+- Registry grants: the durable consent record is an app access `oauth-grant:<clientId>` (no expiry;
+  one the owner let expire is replaced at the next consent). A grant withdrawn between consent and
+  code exchange answers `invalid_grant` at `/oauth2/token`.
+- **Composed re-consent of registry clients.** `POST /oauth2/authorize/offer` takes an optional
+  `username` + `userToken` (the owner's personal token): it then answers the consent screen composed
+  of the user's current grant and the request, one entry per stream at the level covering both
+  (entries already granted flagged `currentlyGranted: true`, a stream entry also with `currentLevel`,
+  the level held now; a new `optIn` entry stays unticked; the grant's forbidden features shown,
+  locked), plus `shownDigest` (opaque), `currentGrant: { subjectMode: 'account' | 'pseudonym' } |
+  null`, `subjectChange` and `authenticated: true`; not cached. Another token answers the request
+  alone plus `authenticated: false` (`authenticated` is absent when no sign-in was attempted). `read`
+  held and `create-only` requested on one stream is `invalid_scope`. `POST /oauth2/authorize/accept`
+  takes `shownDigest` (and
+  `acknowledgeSubjectChange`): with it, the grant becomes exactly what the user ticked (unticking
+  narrows), the grant's forbidden features and exclusion masks kept; a `shownDigest` that no longer
+  matches answers 400 `invalid_request` with `reason: 'consent-out-of-date'` (restart the flow).
+  Without `shownDigest` the consent is joined into the grant per stream and never narrows: per-stream
+  narrowing on re-consent needs the consent UI release that posts `shownDigest`. Both fields are
+  ignored for app-account clients.
+- **`reason` on `/oauth2/authorize/*` errors.** An error body may carry an optional machine-readable
+  `reason` beside the OAuth `error`: `consent-out-of-date`, `subject-change-unacknowledged`,
+  `permission-level-conflict` (a level conflict with the grant, at `/offer` and `/accept`),
+  `keep-one-stream` (a registry consent keeping no stream), `consent-widens-offer` (the kept subset
+  would widen the offer through the stream hierarchy).
+- **A change of subject mode must be acknowledged.** When the request's subject mode (account id or
+  pseudonym) differs from the current grant's, `/offer` reports `subjectChange: { from, to }` and
+  `/accept` requires `shownDigest` and `acknowledgeSubjectChange: true`, else 400 `invalid_request`
+  with `reason: 'subject-change-unacknowledged'`. Then the old grant is withdrawn (its sessions and
+  refresh chains end, its alias is released) and a new one is made; `oauth.consent.granted` carries
+  `subjectChange`.
+- **Registry grants forbid `webhooks` and `secretSharing` by default**, unless the client row allows
+  the feature (`create-registry` / `update --allow-feature webhooks|secretSharing`, repeatable, `none`
+  clears; printed by `show`). Applied by the core at every consent, never shown on the consent screen,
+  and carried by the sessions. Allowing a feature later does not lift its forbid on grants that already
+  carry it: a forbid on a grant is kept by every re-consent (only the owner can remove it).
+  `bin/oauth-client.js update` writes nothing when nothing changed.
+- **In a consent offer, a forbidden feature is always mandatory** (it cannot be unticked, whatever the
+  offer says: OAuth and CMC offers, and the `consent` sidecar of an auth request on `/reg/access`), and
+  one marked `optIn` is refused. A forbidden feature never exceeds
+  a registry client's maximum scope set.
+- **A change to a consent grant reaches its live sessions at once.** When a grant's permissions change
+  (a re-consent, the owner's `accesses.update` on a registry or CMC grant, a CMC consent scope update),
+  each live OAuth session of the grant is brought to what its next refresh would mint: its chain's
+  consent under the grant as it now stands (narrowed, or widened back, never beyond either). A session
+  left with no reach is deleted; its chain's next refresh is then refused (`invalid_grant`) unless the
+  owner has widened the grant again before it. A session records its chain's consent in the
+  server-owned `clientData.oauth.chain`.
+- `/oauth2/authorize/accept` accepts only the account owner's personal token (another token of the
+  user: 403 `access_denied`); the signed-in `/offer` answers such a token with the request alone and
+  `authenticated: false`.
+- A refresh that fails on the server side (the extension's hook failing or timing out, a storage error)
+  no longer uses up the refresh token: the app's retry is a plain refresh, not a reuse that would end
+  the grant.
+
+### Changed
+
+- **BREAKING (for a client that wrote it; none known): `clientData.oauth` is server-owned.**
+  `accesses.create` refuses an access carrying `clientData.oauth` (403 `forbidden`), and
+  `accesses.update` refuses any change to the whole `clientData.oauth` sub-object (403); an update
+  sending it back unchanged, or not touching it, passes. The OAuth flow writes it itself (a session's
+  link to its consent grant, a registry grant's client).
+- The OAuth session minted at `/oauth2/authorize/accept` is now written by the server like refreshed
+  sessions: its `createdBy` is `system` (it was the personal access that consented), and it no longer
+  produces an `accesses.create` row in the user's audit log (the consent is recorded by
+  `oauth.consent.granted` and by the grant's own create / update rows). It starts under the grant's
+  restrictions as it stands (an exclusion mask or a forbidden feature the owner set on the grant, a
+  registry client's default forbids), as its refreshes will; CMC grants included.
+- One more replicated platform write per OAuth session mint (code exchange and refresh, every client):
+  a session index row `oauth-at/<sha256(token)>` (user id, client, core; no token, no username).
+- A `consent/request-cmc` offer naming one stream twice (in any spelling, `a` and `:local:a`) is refused
+  at write; an already stored one is refused at `/oauth2/authorize` (`invalid_scope`, generic
+  description).
+
 ## 2.0.0-rc.67 - 2026-10-30
 
 - Same server behaviour as 2.0.0-rc.66, which shipped without a Docker image (its CI run failed on a type name and on

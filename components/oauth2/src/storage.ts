@@ -27,6 +27,8 @@
  *   - oauth-rt/<coreId>/<sha256(token)>   — sliding 30d, cap 90d absolute (per-core:
  *                                           refresh re-mints via home-core storage)
  *   - oauth-rt-used/<coreId>/<sha256(token)> — reuse-detection marker
+ *   - oauth-at/<sha256(accessToken)>      — session index for introspection, TTL =
+ *                                           the session's expiry
  *
  * PlatformDB is replicated to every core, so no credential is stored in it:
  * codes and refresh tokens appear only as SHA-256 digests in the key, rows
@@ -102,6 +104,59 @@ export interface OAuthClient {
    * (the standard registered-scope subset check applies).
    */
   cmcOffers?: Record<string, { capabilityUrl: string }>;
+  /**
+   * `registry`: a client registered by the operator with no app account
+   * behind it; its `scope` is the MAXIMUM scope set, in the grammar of the
+   * installed OAuth extension, and consent offers are synthesised from the
+   * requested scope. Absent means `app-account` (rows written before this).
+   */
+  kind?: 'app-account' | 'registry';
+  policyUri?: string;
+  tosUri?: string;
+  contacts?: string[];
+  registeredBy?: string;
+  registeredAt?: number;
+  /** `suspended` refuses /authorize and /token for this client, cluster-wide. */
+  status?: 'active' | 'suspended';
+  tokenEndpointAuthMethod?: 'none' | 'client_secret_basic' | 'private_key_jwt';
+  /** Resource (`aud`) values the client may request; non-empty means `aud` is required. */
+  allowedAudiences?: string[];
+  /**
+   * Registry clients: registered explicitly without an audience list (any
+   * `aud`, or none, accepted). A registry row needs one or the other.
+   */
+  anyAudience?: boolean;
+  /**
+   * Registry clients: plain-http redirect URIs on a non-loopback host were
+   * accepted explicitly by the operator (refused otherwise).
+   */
+  allowInsecureRedirect?: boolean;
+  /** Static extra fields of every token response for this client. */
+  tokenResponseExtras?: Record<string, string | boolean | number>;
+  launchTypes?: string[];
+  /**
+   * Registry clients: the subject the app sees for the user. `public` (the
+   * default when absent): the user's stable internal id. `pairwise` (a
+   * per-client pseudonym) is not available on this core yet: such a client
+   * is refused at /oauth2/authorize.
+   */
+  subjectType?: 'public' | 'pairwise';
+  /**
+   * Registry clients: features the operator lets this client's grants use.
+   * A registry grant forbids `webhooks` and `secretSharing` unless listed
+   * here (applied by the core at every consent, never shown).
+   */
+  allowFeatures?: string[];
+  // Reserved, not read yet: resource-server role, per-client key reference,
+  // algorithms and lifetimes.
+  canIntrospect?: boolean;
+  jwksUri?: string;
+  tokenEndpointAuthSigningAlgs?: string[];
+  accessTokenTTL?: number;
+  refreshTokenTTL?: number;
+  refreshTokenAbsoluteTTL?: number;
+  offlineAccessAllowed?: boolean;
+  dpopBoundAccessTokens?: boolean;
   updatedAt: number;
 }
 
@@ -132,6 +187,12 @@ export interface OAuthCode {
    */
   dataGrantAccessId?: string;
   permissions?: GrantPermission[];
+  /** Registry clients: the client kind, the core tokens and grammar tokens requested. */
+  kind?: 'registry';
+  coreTokens?: string[];
+  grammarTokens?: string[];
+  /** The `aud` value the request named (checked against the client's list). */
+  audience?: string;
 }
 
 /**
@@ -173,6 +234,11 @@ export interface OAuthRefresh {
    * on Bearer chains — a chain never changes kind after issuance.
    */
   jkt?: string;
+  /** Registry clients: see OAuthCode. */
+  kind?: 'registry';
+  coreTokens?: string[];
+  grammarTokens?: string[];
+  audience?: string;
 }
 
 /**
@@ -195,6 +261,7 @@ const PREFIX_CLIENT_REVOKED = 'oauth-client-revoked/';
 const PREFIX_CODE = 'oauth-ac/';
 const PREFIX_REFRESH = 'oauth-rt/';
 const PREFIX_REFRESH_USED = 'oauth-rt-used/';
+const PREFIX_SESSION = 'oauth-at/';
 // Pre-hash keyspaces (raw secret in the key). Read for migration only.
 const LEGACY_PREFIX_CODE = 'oauth-code/';
 const LEGACY_PREFIX_REFRESH = 'oauth-refresh/';
@@ -433,6 +500,37 @@ export async function consumeCode (platform: PlatformDB, code: string): Promise<
   return legacy == null ? null : { ...(legacy.value as OAuthCode), legacy: true };
 }
 
+// --- Session index (cluster-wide, TTL = session expiry) --- //
+
+/**
+ * Where an OAuth session token lives, keyed by its SHA-256, written at every
+ * session mint: lets any core tell which user, client and core a token
+ * belongs to (token introspection reads it). No token, no username, no alias
+ * in the row.
+ */
+export interface OAuthSessionIndex {
+  userId: string;
+  accessId: string;
+  clientId: string;
+  coreId: string;
+  dataGrantAccessId?: string;
+  coreTokens?: string[];
+  grammarTokens?: string[];
+  audience?: string;
+  expiresAt: number;
+}
+
+export async function setSessionIndex (
+  platform: PlatformDB, accessToken: string, payload: OAuthSessionIndex
+): Promise<void> {
+  await platform.setAccessState(PREFIX_SESSION + hashSecret(accessToken), payload, payload.expiresAt);
+}
+
+export async function getSessionIndex (platform: PlatformDB, accessToken: string): Promise<OAuthSessionIndex | null> {
+  const entry = await platform.getAccessState(PREFIX_SESSION + hashSecret(accessToken));
+  return entry == null ? null : (entry.value as OAuthSessionIndex);
+}
+
 // --- Refresh tokens (per-core, sliding TTL with absolute cap) --- //
 
 export async function setRefresh (
@@ -479,6 +577,18 @@ export async function markRefreshConsumed (
   platform: PlatformDB, coreId: string, token: string, payload: OAuthRefreshUsed, expiresAt: number
 ): Promise<void> {
   await platform.setAccessState(refreshUsedKey(coreId, token), payload, expiresAt);
+}
+
+/**
+ * Undo a consume whose rotation did not happen (a server-side failure after
+ * the consume): the row is put back and the consumed marker removed, so the
+ * client's retry is a plain refresh, not a reuse.
+ */
+export async function restoreConsumedRefresh (
+  platform: PlatformDB, coreId: string, token: string, row: OAuthRefresh
+): Promise<void> {
+  await setRefresh(platform, coreId, token, row);
+  await platform.deleteAccessState(refreshUsedKey(coreId, token));
 }
 
 /** Non-consuming read of the consumed marker (repeat replays must each re-detect). */

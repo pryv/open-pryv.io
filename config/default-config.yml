@@ -223,6 +223,9 @@ sso:
 customExtensions:
   defaultFolder: 'REPLACE ME'
   customAuthStepFn: ''
+  # Module path of an OAuth extension (scope grammar for registry clients +
+  # token-response hooks). Loaded at boot: a broken module fails the boot.
+  oauthExtension: ''
 
 # === PER-CORE: external service integrations ===
 # SMS provider URLs and email provider credentials may legitimately vary per region/deployment.
@@ -1091,6 +1094,12 @@ oauth:
   audAllowList: []
   grantTypesSupported:             # advertised in the discovery doc
     - authorization_code
+  # Options handed as-is to the OAuth extension (customExtensions:oauthExtension).
+  extensionOptions: {}
+  # Bound on each asynchronous OAuth extension hook (e.g. the token-response
+  # hook). A hook that does not answer in time fails the request (500,
+  # server_error) before any refresh token is stored.
+  extensionHookTimeoutMs: 5000     # milliseconds
 
 # Shared secrets — hand a secret to a third party by one-time key instead of
 # by URL query parameter. Inert unless a client calls it: no listener, no

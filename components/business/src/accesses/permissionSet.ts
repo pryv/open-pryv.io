@@ -149,7 +149,8 @@ function copyConsentAnnotations (from: ConsentPermission, to: ConsentPermission,
  *
  * With `opts.consent`, the consent-layer annotations (`mandatory: true`,
  * `optIn: true`) are preserved on entries (offer/request context);
- * without it they are dropped (mint/grant context).
+ * without it they are dropped (mint/grant context). In consent context a
+ * forbidden feature entry is always `mandatory` (and refused with `optIn`).
  */
 function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): ConsentPermission[] {
   if (!Array.isArray(perms)) {
@@ -179,6 +180,20 @@ function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): Co
     }
     if (isFeaturePermission(p)) {
       const out: ConsentPermission = { feature: p.feature, setting: p.setting };
+      if (keepAnnotations && p.setting === 'forbidden') {
+        // A restriction in a consent offer: unticking it would WIDEN what the
+        // access may do (the same inversion as a `none` mask), so it is always
+        // mandatory, whatever the offer says. Offered unselected (`optIn`), it
+        // would open the screen on a state the grant rule refuses.
+        if ((p as ConsentPermission).optIn === true) {
+          throw new Error(
+            `invalid consent permission at index ${i}: a forbidden feature cannot be 'optIn' ` +
+            '(a restriction is always applied)'
+          );
+        }
+        out.mandatory = true;
+        return out;
+      }
       if (keepAnnotations) copyConsentAnnotations(p as ConsentPermission, out, i);
       return out;
     }

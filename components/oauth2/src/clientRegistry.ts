@@ -115,7 +115,11 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
   if (!Array.isArray(client.grantTypes) || client.grantTypes.length === 0) {
     throw new Error('grantTypes required (at least one)');
   }
-  validateCmcOffers(client);
+  if (client.kind === 'registry') {
+    validateRegistryClient(client);
+  } else {
+    validateCmcOffers(client);
+  }
   const validated = { ...client, updatedAt: Date.now() };
   // Inline public JWK Set (private_key_jwt): validate on write — EC P-256
   // public keys ONLY; any key carrying a private `d` is rejected outright,
@@ -169,6 +173,108 @@ function validateCmcOffers (client: OAuthClient): void {
       }
     }
   }
+}
+
+const AUTH_METHODS = ['none', 'client_secret_basic', 'private_key_jwt'];
+
+/**
+ * Rules for a registry client (operator-registered, no app account). Its
+ * `scope` is a maximum scope set in the installed extension's grammar, which
+ * the CLI process does not load: it is checked at /authorize.
+ */
+function validateRegistryClient (client: OAuthClient): void {
+  if (client.accountUserId != null) throw new Error('registry client: accountUserId is not allowed (no app account)');
+  if (client.cmcOffers != null && Object.keys(client.cmcOffers).length > 0) {
+    throw new Error('registry client: cmcOffers are not allowed (offers are synthesised from the scope)');
+  }
+  if (!AUTH_METHODS.includes(client.tokenEndpointAuthMethod as string)) {
+    throw new Error('registry client: tokenEndpointAuthMethod must be one of ' + AUTH_METHODS.join(', '));
+  }
+  if (client.tokenEndpointAuthMethod === 'client_secret_basic' && client.clientSecretHash == null) {
+    throw new Error('registry client: client_secret_basic needs a client secret');
+  }
+  if (client.tokenEndpointAuthMethod === 'private_key_jwt' && client.jwks == null) {
+    throw new Error('registry client: private_key_jwt needs a jwks');
+  }
+  if (client.grantTypes.includes('client_credentials')) {
+    throw new Error('registry client: client_credentials is not available (no app account)');
+  }
+  if (client.subjectType != null && client.subjectType !== 'public' && client.subjectType !== 'pairwise') {
+    throw new Error('registry client: subjectType must be public or pairwise');
+  }
+  if (client.dpopBoundAccessTokens === true) {
+    throw new Error('registry client: DPoP-bound tokens are not available for this kind of client');
+  }
+  if (!Array.isArray(client.scope) || client.scope.length === 0) {
+    throw new Error('registry client: scope (the maximum scope set) is required');
+  }
+  const audiences = client.allowedAudiences ?? [];
+  if (!Array.isArray(audiences)) throw new Error('allowedAudiences must be an array');
+  if (audiences.length === 0 && client.anyAudience !== true) {
+    throw new Error('registry client: at least one audience is required (or register it explicitly for any audience)');
+  }
+  if (audiences.length > 0 && client.anyAudience === true) {
+    throw new Error('registry client: an audience list and "any audience" exclude each other');
+  }
+  for (const a of audiences) {
+    let u: URL;
+    try { u = new URL(a); } catch { throw new Error(`allowedAudiences: "${a}" is not a valid URL`); }
+    if (u.protocol !== 'https:' || u.hash !== '') throw new Error(`allowedAudiences: "${a}" must be an absolute https URL without fragment`);
+  }
+  const insecure = insecureRedirectUris(client.redirectUris);
+  if (insecure.length > 0 && client.allowInsecureRedirect !== true) {
+    throw new Error('registry client: plain http redirect URIs are allowed on loopback hosts only (' + insecure.join(', ') +
+      '); register the client explicitly for insecure redirects to keep them');
+  }
+  for (const [k, v] of Object.entries(client.tokenResponseExtras ?? {})) {
+    if (!['string', 'boolean', 'number'].includes(typeof v)) throw new Error(`tokenResponseExtras["${k}"] must be a string, boolean or number`);
+  }
+  if (client.status != null && client.status !== 'active' && client.status !== 'suspended') {
+    throw new Error('status must be active or suspended');
+  }
+  if (client.allowFeatures != null) {
+    if (!Array.isArray(client.allowFeatures) ||
+        client.allowFeatures.some((f) => !REGISTRY_DEFAULT_FORBIDDEN_FEATURES.includes(f))) {
+      throw new Error('registry client: allowFeatures may only list ' + REGISTRY_DEFAULT_FORBIDDEN_FEATURES.join(', '));
+    }
+  }
+}
+
+/**
+ * Features a registry client's grant forbids unless the client row lists them
+ * in `allowFeatures`: the core applies them after every consent (never shown
+ * on the consent screen; a forbid always wins over an allow).
+ */
+export const REGISTRY_DEFAULT_FORBIDDEN_FEATURES: readonly string[] = Object.freeze(['webhooks', 'secretSharing']);
+
+/** The default forbids that apply to this registry client. */
+export function defaultForbiddenFeatures (client: OAuthClient): string[] {
+  const allowed = Array.isArray(client.allowFeatures) ? client.allowFeatures : [];
+  return REGISTRY_DEFAULT_FORBIDDEN_FEATURES.filter((f) => !allowed.includes(f));
+}
+
+// `localhost` counts here (RFC 6761 reserves it for loopback): this list only
+// decides which plain-http redirect URIs need an explicit registration. The
+// port carve-out of `validateRedirectUri` is stricter (RFC 8252 § 8.3 does not
+// recommend `localhost`) and is unchanged.
+const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost'];
+
+/**
+ * The plain-http redirect URIs of a list that do not point at the loopback
+ * host (anything an on-path attacker could read the code from). Other
+ * schemes (https, a native app's private scheme) are not concerned.
+ */
+export function insecureRedirectUris (uris: string[] | undefined): string[] {
+  return (uris ?? []).filter((uri) => {
+    let u: URL;
+    try { u = new URL(uri); } catch { return false; }
+    return u.protocol === 'http:' && !LOOPBACK_HOSTS.includes(u.hostname);
+  });
+}
+
+/** Whether a client is registered without an app account. */
+export function isRegistryClient (client: OAuthClient | null | undefined): boolean {
+  return client?.kind === 'registry';
 }
 
 /**

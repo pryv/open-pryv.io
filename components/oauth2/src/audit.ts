@@ -91,6 +91,7 @@ export type OAuthAuditPayload = {
   reason?: string;
   source?: 'user' | 'operator';
   scope?: string[]; // for oauth.token.revoked
+  subjectChange?: { from: string; to: string }; // oauth.consent.granted: an acknowledged change of subject mode
 };
 
 /** The subset of AuditEventLike (components/audit/) we build here. */
