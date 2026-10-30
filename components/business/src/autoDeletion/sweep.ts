@@ -100,7 +100,8 @@ export type ErasureRecord = {
   notices: number[];
 };
 
-type Logger = {
+/** The three levels the sweep writes to (a narrower view than the boiler Logger, so a test can pass a capture). */
+type LoggerLike = {
   info: (msg: string, ctx?: Record<string, unknown>) => void;
   warn: (msg: string, ctx?: Record<string, unknown>) => void;
   error: (msg: string, ctx?: Record<string, unknown>) => void;
@@ -132,7 +133,7 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   recordErasure?: (account: SweepAccount, record: ErasureRecord) => Promise<void>;
   /** Pryv seconds. */
   now: () => number;
-  logger: Logger;
+  logger: LoggerLike;
 };
 
 export type PassResult = {
