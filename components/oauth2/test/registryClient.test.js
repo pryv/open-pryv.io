@@ -569,6 +569,9 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const cases = [
         [['offline_access', 'data/a.read'], /token the core owns: offline_access/],
         [['openid'], /token the core owns: openid/],
+        // Tokens, not array elements: a core token inside one element is still found.
+        [['data/a.read offline_access'], /token the core owns: offline_access/],
+        [['x openid'], /token the core owns: openid/],
         [['data/a.read', 'nope'], /parse refuses: unknown token nope/],
         [['all.read'], /parse refuses: .*every stream/],
         [['acct/email.read'], /parse refuses: .*account or system stream/],
@@ -607,9 +610,17 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       extension.setExtension(withEcho(() => Array.from({ length: 1001 }, (_v, i) => 'who' + i)));
       assert.throws(() => granted([], [A_READ]), /more than 1000 tokens/);
       assert.equal(parseCalls, 0);
-      // Duplicates count once.
+      // One element carrying 1001 tokens counts as 1001 tokens.
+      extension.setExtension(withEcho(() => [Array.from({ length: 1001 }, (_v, i) => 'who' + i).join(' ')]));
+      assert.throws(() => granted([], [A_READ]), /more than 1000 tokens/);
+      assert.equal(parseCalls, 0);
+      // Duplicates count once; empty elements yield no token.
       extension.setExtension(withEcho(() => Array.from({ length: 1001 }, () => 'data/a.read')));
       assert.deepEqual(granted([], [A_READ]), ['data/a.read']);
+      extension.setExtension(withEcho(() => ['data/a.read', '', '  ']));
+      assert.deepEqual(granted(['data/a.read'], [A_READ], ['offline_access']), ['offline_access', 'data/a.read']);
+      extension.setExtension(withEcho(() => ['']));
+      assert.deepEqual(granted([], [A_READ]), []);
     });
     it('[OXC9] the echo parse is memoised per extension, client row and echoed string', () => {
       extension.setExtension(withEcho(() => ['data/a.read']));
@@ -632,6 +643,8 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const held = [A_READ, { feature: 'selfRevoke', setting: 'allowed' }];
       extension.setExtension(withFeatureTokens(() => ['data/a.read', 'feat/webhooks.allowed']));
       assert.throws(() => granted([], held), /feature webhooks allowed \(held: none\)/);
+      // The default restriction of a registry session: a held forbid never covers an allowed claim.
+      assert.throws(() => granted([], [A_READ, { feature: 'webhooks', setting: 'forbidden' }]), /feature webhooks allowed \(held: forbidden\)/);
       extension.setExtension(withFeatureTokens(() => ['data/a.read', 'feat/webhooks.forbidden']));
       assert.deepEqual(granted([], held), ['data/a.read', 'feat/webhooks.forbidden']);
       extension.setExtension(withFeatureTokens(() => ['data/a.read', 'feat/selfRevoke.allowed']));

@@ -326,7 +326,10 @@ export function grantedScopeTokens (
   if (!Array.isArray(answer) || answer.some((t) => typeof t !== 'string')) {
     throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo must return an array of strings`);
   }
-  const echoed = [...new Set(answer as string[])];
+  // Scope tokens, not array elements: an element may carry several tokens
+  // (or none). De-duplicated, empties dropped, order kept; every check below
+  // and the answered `scope` see this one list.
+  const echoed = splitScope((answer as string[]).join(' '));
   if (echoed.length > MAX_SYNTH_ENTRIES) {
     throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo answered more than ${MAX_SYNTH_ENTRIES} tokens`);
   }
