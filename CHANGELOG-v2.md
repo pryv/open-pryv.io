@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.68 - 2026-10-30
 
 ### OAuth registry clients and the OAuth extension (new, opt-in)
 
