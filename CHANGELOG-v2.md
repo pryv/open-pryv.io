@@ -20,8 +20,7 @@
   --subject-type` needs `--yes` when it changes the value (existing grants switch at each user's next
   consent, with acknowledgement, see below); `list` shows `<clientId>  <kind>  <status>
   <subjectType|->` per client; a registry row stored without a subject type reads as `public`, is
-  reported at boot and by `show`, and `update` on it asks for `--subject-type`. `pairwise` is accepted
-  with a warning (it is refused at `/oauth2/authorize` on this core for now).
+  reported at boot and by `show`, and `update` on it asks for `--subject-type`.
   `client_credentials` and DPoP-bound tokens are not available to registry clients (a DPoP proof at
   `/oauth2/token` is refused with `invalid_request` before the code or refresh token is used).
 - **OAuth extension entry point (`customExtensions:oauthExtension`, options in
@@ -37,10 +36,23 @@
   echo over the permissions actually minted (and must stay within the requested tokens), so it
   narrows when the user unticked part of the offer or the grant was narrowed. The subject handed to
   the extension (and the hook fields built on it) is the user's internal id, not the username and not
-  routable; `apiEndpoint` is sent. `offline_access` asks for a refresh token; `openid` is refused on
+  routable, and `apiEndpoint` is sent; for a pseudonymous grant (below) it is the grant's alias, and no
+  `apiEndpoint` is sent. `offline_access` asks for a refresh token; `openid` is refused on
   this core. Without the extension every registry client's `/oauth2/authorize` answers `invalid_scope`.
-- **Pseudonymous subjects are refused for now**: an offer asking for a pseudonym and any request of a
-  `pairwise` client answer `invalid_scope` "pseudonymous subjects are not available on this core".
+- **Pseudonymous subjects.** An offer asking for a pseudonym (`randomAlias: true` from the grammar),
+  and every request of a `pairwise` client, make an aliased grant: the grant carries a routable alias
+  (`r-` + 8 characters), one per user and client, kept across refreshes and re-consents, and every
+  session minted under it (at the consent and at each refresh) carries the same alias. The app knows
+  the account by that alias only: the subject of its token responses and extension hooks is the alias,
+  the token responses carry no `apiEndpoint`, and the session's `access-info`, own `apiEndpoint`
+  (`accesses.getOne`) and every access it creates (they carry the alias too) name the alias; the
+  account's username reaches the app in no answer. A session is used at its alias only (see the
+  alias-bound addressing entry below). The alias is released when its last holder is deleted:
+  deleting one session keeps it (the grant and the other sessions hold it); deleting the grant (its
+  sessions, expired ones included, and what they created go with it), a change of subject mode,
+  refresh-token reuse or the account's deletion releases it, and a later consent gets a new one. A
+  grant made before the operator revoked its client id (then registered again under the same id) is
+  withdrawn at the next consent and a fresh one made, a new alias with it.
 - **Offer by reference: `POST /oauth2/authorize/offer`** `{ state }` answers `{ client: { clientId,
   clientName, logoUri, clientUri, policyUri, tosUri }, offer, scope }` for a registry client (`Cache-Control:
   no-store`, unauthenticated like `/oauth2/authorize`). The signed state carries the offer's digest only;
@@ -107,6 +119,26 @@
 
 ### Changed
 
+- **BREAKING: an aliased access is used at its alias only (alias-bound addressing).** An access
+  carrying an alias (created with `randomAlias`, an OAuth session of a pseudonymous grant, or an
+  access created by such an access) is accepted only on requests addressed by that alias
+  (`https://<alias>.<domain>/…` or `/<alias>/…`); at the username, a former username or another
+  access's alias it is refused. An access without an alias is accepted at the account's username and
+  former usernames, and refused at an access's alias. The owner's personal (sign-in) token is accepted
+  at any of them. A refusal is exactly the answer to an unknown token (403 `invalid-access-token`
+  "Cannot find access from token.", no `Pryv-Access-Id` header), also for an expired access and for
+  an attachment `readToken`, so a token tells nothing about the account behind another name. Until now
+  any token of an account worked at any of its names, so the holders of two aliased accesses could
+  learn whether their aliases were one person. Clients that address an aliased access by its
+  `apiEndpoint` are unaffected; a client that called the username (or another alias) with an aliased
+  token, or an alias with a non-aliased token, must use the access's own `apiEndpoint`.
+- **An access created by an aliased access carries the creator's alias** (unless it asks for its own
+  with `randomAlias`), so its `apiEndpoint` names the alias, not the username, and it is used at that
+  alias. Deleting such an access keeps the alias while another access still carries it; an alias is
+  released when its last holder is deleted (an expired access still holds it until then; one left
+  expired under a deleted access that shared its alias is deleted with it).
+- Deleting a consent grant (registry or CMC) deletes its expired OAuth sessions too, not only the live
+  ones (they could no longer authenticate; they are no longer left in the access list).
 - **BREAKING (for a client that wrote it; none known): `clientData.oauth` is server-owned.**
   `accesses.create` refuses an access carrying `clientData.oauth` (403 `forbidden`), and
   `accesses.update` refuses any change to the whole `clientData.oauth` sub-object (403); an update

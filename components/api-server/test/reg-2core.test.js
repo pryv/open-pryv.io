@@ -84,6 +84,11 @@ const CORE_DATA_NAMES = [CORE_A_DATA, CORE_B_DATA, CORE_C_DATA];
 const SITE_DIR = '/tmp/rg2c-hosted-site' + TMP_SUFFIX;
 const SITE_BOTH = 'sitehome';
 const SITE_A_ONLY = 'siteonly';
+// Registry OAuth clients on Core A
+const OAUTH_EXTENSION_PATH = path.resolve(__dirname, 'helpers/oauth-toy-extension.cjs');
+const OAUTH_CONSENT_URL = 'https://consent.2core.test/authorize';
+const OAUTH_REDIRECT = 'https://app.2core.test/redirect';
+const OAUTH_AUD = 'https://resource.2core.test/';
 
 // Helper: HTTP request (no external deps)
 async function httpRequest (port, method, path, body, headers = {}) {
@@ -331,7 +336,10 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_IP: CORE_A_IP,
       CORE_HOSTING: CORE_A_HOSTING,
       CORE_DATA_NAME: CORE_A_DATA,
-      HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } })
+      HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } }),
+      // Core A serves registry OAuth clients (the aliases across cores below)
+      OAUTH_EXTENSION: OAUTH_EXTENSION_PATH,
+      OAUTH_CONSENT_URL
     };
     coreA = await startCore(coreAEnv);
 
@@ -648,6 +656,120 @@ describe('[RG2C] Two-core integration tests', function () {
       // In multi-core, hostings should have available cores
       assert.ok(res.body.regions || res.body.hostings || typeof res.body === 'object',
         'Expected hostings response');
+    });
+  });
+
+  describe('Aliases across cores', () => {
+    const owner = 'tcal' + Date.now().toString(36);
+    let ownerToken, clientId, session, alias, staticAlias;
+
+    // An OAuth session of a pairwise registry client on Core A: its grant's
+    // alias, minted on Core A, is what the app addresses the account by.
+    before(async () => {
+      const reg = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username: owner,
+        password: 'testpassw0rd',
+        email: owner + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_A_HOSTING
+      });
+      assert.strictEqual(reg.status, 201, JSON.stringify(reg.body));
+      ownerToken = new URL(reg.body.apiEndpoint).username;
+      const st = await httpRequest(CORE_A_PORT, 'POST', '/' + owner + '/streams', { id: 'health', name: 'health' }, { Authorization: ownerToken });
+      assert.strictEqual(st.status, 201, JSON.stringify(st.body));
+
+      clientId = 'Mc.' + Date.now().toString(36);
+      const oauth2 = require('oauth2');
+      await oauth2.persistClient(platformDB, {
+        clientId,
+        kind: 'registry',
+        redirectUris: [OAUTH_REDIRECT],
+        grantTypes: ['authorization_code'],
+        tokenEndpointAuthMethod: 'none',
+        allowedAudiences: [OAUTH_AUD],
+        subjectType: 'pairwise',
+        scope: ['read/health', 'ctx/user']
+      });
+      const crypto = require('node:crypto');
+      const verifier = crypto.randomBytes(32).toString('base64url');
+      const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+      const query = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: OAUTH_REDIRECT,
+        response_type: 'code',
+        state: 'csrf-2c',
+        scope: 'read/health ctx/user',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        aud: OAUTH_AUD
+      });
+      const auth = await fetch(`http://127.0.0.1:${CORE_A_PORT}/oauth2/authorize?${query}`, { redirect: 'manual' });
+      assert.strictEqual(auth.status, 302, await auth.text());
+      const loc = auth.headers.get('location');
+      assert.ok(loc.startsWith(OAUTH_CONSENT_URL + '?state='), loc);
+      const state = new URL(loc).searchParams.get('state');
+      const offer = await httpRequest(CORE_A_PORT, 'POST', '/oauth2/authorize/offer', { state });
+      assert.strictEqual(offer.status, 200, JSON.stringify(offer.body));
+      const accept = await httpRequest(CORE_A_PORT, 'POST', '/oauth2/authorize/accept', {
+        state, username: owner, userToken: ownerToken, grantedPermissions: offer.body.offer.permissions
+      });
+      assert.strictEqual(accept.status, 200, JSON.stringify(accept.body));
+      const code = new URL(accept.body.redirectTo).searchParams.get('code');
+      const tok = await fetch(`http://127.0.0.1:${CORE_A_PORT}/oauth2/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: OAUTH_REDIRECT }).toString()
+      });
+      const token = await tok.json();
+      assert.strictEqual(tok.status, 200, JSON.stringify(token));
+      session = token.access_token;
+      alias = token.user;
+      assert.match(alias, /^r-[a-z0-9]{8}$/);
+      // And an alias a plain access asked for (randomAlias), minted the same way.
+      const plain = await httpRequest(CORE_A_PORT, 'POST', '/' + owner + '/accesses',
+        { name: 'tcal-shared', randomAlias: true, permissions: [{ streamId: 'health', level: 'read' }] }, { Authorization: ownerToken });
+      assert.strictEqual(plain.status, 201, JSON.stringify(plain.body));
+      staticAlias = plain.body.access.alias;
+    });
+
+    after(async () => {
+      try { await require('oauth2/src/storage.ts').deleteClient(platformDB, clientId); } catch (_) { /* best-effort */ }
+    });
+
+    it('[2C70] an OAuth session is served at its alias on its home core, and refused at the username there', async () => {
+      const onA = await httpRequest(CORE_A_PORT, 'GET', '/' + alias + '/access-info', null, { Authorization: session });
+      assert.strictEqual(onA.status, 200, JSON.stringify(onA.body));
+      assert.strictEqual(onA.body.user.username, alias);
+      assert.ok(!JSON.stringify(onA.body).includes(owner), JSON.stringify(onA.body));
+      const atName = await httpRequest(CORE_A_PORT, 'GET', '/' + owner + '/access-info', null, { Authorization: session });
+      assert.strictEqual(atName.status, 403, JSON.stringify(atName.body));
+      assert.strictEqual(atName.body.error.id, 'invalid-access-token');
+    });
+
+    it('[2C71] the other core answers 421 with the home core for an alias, path and host style; the body names only the alias', async () => {
+      for (const a of [alias, staticAlias]) {
+        const onB = await httpRequest(CORE_B_PORT, 'GET', '/' + a + '/access-info', null, { Authorization: session });
+        assert.strictEqual(onB.status, 421, JSON.stringify(onB.body));
+        assert.strictEqual(onB.body.error.id, 'wrong-core');
+        assert.strictEqual(onB.body.error.coreUrl, CORE_A_URL);
+        assert.ok(!JSON.stringify(onB.body).includes(owner), JSON.stringify(onB.body));
+        const byHost = await getWithHost(CORE_B_PORT, '/access-info', `${a}.${DOMAIN}`);
+        assert.strictEqual(byHost.status, 421, byHost.body);
+        assert.ok(!byHost.body.includes(owner), byHost.body);
+      }
+    });
+
+    it('[2C72] DNS and /reg answer an alias with its home core', async () => {
+      for (const a of [alias, staticAlias]) {
+        const addresses = await resolver.resolve4(`${a}.${DOMAIN}`);
+        assert.deepStrictEqual(addresses, [CORE_A_IP]);
+        const reg = await httpRequest(CORE_B_PORT, 'POST', '/reg/' + a + '/server');
+        assert.strictEqual(reg.status, 200, JSON.stringify(reg.body));
+        assert.strictEqual(reg.body.server, CORE_A_URL);
+        assert.strictEqual(reg.body.alias, `${a}.${DOMAIN}`);
+      }
     });
   });
 

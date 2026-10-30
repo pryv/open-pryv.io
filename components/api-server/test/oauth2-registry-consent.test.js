@@ -511,8 +511,8 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
 
   it('[OCMP11] a change of subject mode needs the acknowledgement; then the old grant goes and a new one is made', async () => {
     const who = await newUser();
-    // A grant the app sees through a pseudonym (made here through the API:
-    // this core does not issue pseudonymous grants yet).
+    // A grant the app sees through a pseudonym (made here through the API,
+    // with a version serial; the consent path is in [OPSE14]).
     const seeded = await coreRequest.post('/' + who.username + '/accesses').set('Authorization', who.token).send({
       type: 'app', name: 'oauth-grant:' + clientId, deviceName: 'oauth-grant', permissions: [{ streamId: 'a', level: 'read' }], randomAlias: true,
     });

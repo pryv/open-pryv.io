@@ -130,10 +130,12 @@ function isSessionOfGrant (access: AccessRow, grantBaseId: string): boolean {
   return access?.type === 'app' && oauth?.dataGrantId === grantBaseId;
 }
 
+// Every session of the grant, expired ones included (as `revokeChain` does):
+// an expired session can no longer authenticate, but it still holds the
+// grant's alias, which is released only once no row carries it.
 function sessionsOfGrant (all: AccessRow[], grantBaseId: string, now: number, known: AccessRow[]): AccessRow[] {
   const seen = new Set<string>(known.map((a) => a.id).concat(grantBaseId));
-  const live = (a: AccessRow) => !seen.has(a.id) && !(a.expires != null && now > a.expires);
-  const sessions = all.filter((a) => live(a) && isSessionOfGrant(a, grantBaseId));
+  const sessions = all.filter((a) => !seen.has(a.id) && isSessionOfGrant(a, grantBaseId));
   for (const s of sessions) seen.add(s.id);
   const created = sessions.flatMap((s) => managedAccessesOf(all, s.id, now)).filter((a) => {
     if (seen.has(a.id)) return false;
@@ -141,6 +143,20 @@ function sessionsOfGrant (all: AccessRow[], grantBaseId: string, now: number, kn
     return true;
   });
   return sessions.concat(created);
+}
+
+/**
+ * An expired access that an access being deleted manages is left in place
+ * (it can no longer authenticate), except when it carries an alias of the
+ * chain (an access created by an aliased one inherits its alias): it would
+ * then hold that alias for ever, and the alias would never be released.
+ */
+function expiredAliasHolders (all: AccessRow[], deleting: AccessRow[], now: number): AccessRow[] {
+  const ids = new Set(deleting.map((a) => a.id));
+  const aliases = new Set(deleting.map((a) => a.alias).filter((a): a is string => typeof a === 'string'));
+  if (aliases.size === 0) return [];
+  return all.filter((a) => !ids.has(a.id) && a.expires != null && now > a.expires &&
+    typeof a.alias === 'string' && aliases.has(a.alias) && [...ids].some((id) => isManagedBy(a, id)));
 }
 
 /**
@@ -156,6 +172,29 @@ async function accessChainIds (user: DeletionUser, id: string): Promise<string[]
   const related = managedAccessesOf(all, id, now);
   const sessions = sessionsOfGrant(all, parseAccessRef(id).base, now, related);
   return [id].concat(related.map((a) => a.id), sessions.map((a) => a.id));
+}
+
+/**
+ * Release each of `aliases` that no live access of `user` still carries.
+ * An alias may be held by several rows: a pseudonymous OAuth grant and every
+ * session minted under it carry the same one. It routes to the account until
+ * its LAST holder is gone: deleting one session keeps it (the grant and the
+ * other sessions still use it), deleting the grant with its sessions releases
+ * it, exactly once. Live = not deleted (head rows only); an expired access
+ * still holds its alias until it is deleted. Generic: an alias minted for a
+ * single access is released with it, as before.
+ */
+async function releaseAliasesIfUnused (user: DeletionUser, aliases: string[]): Promise<void> {
+  const candidates = [...new Set(aliases.filter((a) => typeof a === 'string' && a.length > 0))];
+  if (candidates.length === 0) return;
+  const storageLayer = await getStorageLayer();
+  const live = await fromCallback((cb: NodeCallback) => storageLayer.accesses.find(user, {}, dbFindOptions, cb)) as AccessRow[];
+  const held = new Set((live ?? []).map((a) => a.alias).filter((a): a is string => typeof a === 'string'));
+  const usersRepository = await getUsersRepository();
+  for (const alias of candidates) {
+    if (held.has(alias)) continue;
+    await usersRepository.releaseAlias(alias, user.id);
+  }
 }
 
 type DeletionOutcome = {
@@ -198,6 +237,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     const sessions = sessionsOfGrant(all, grantBaseId, timestamp.now(), related);
     sessionIds = sessions.filter((a) => isSessionOfGrant(a, grantBaseId)).map((a) => a.id);
     related = related.concat(sessions);
+    related = related.concat(expiredAliasHolders(all, [{ ...accessToDelete, id: grantBaseId }].concat(related), timestamp.now()));
   }
   let idsToDelete: Array<{ id: string }> = [{ id: params.id }].concat(related.map((a) => ({ id: a.id })));
 
@@ -276,12 +316,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
       idsToDelete = idsToDelete.concat(late.map((a) => ({ id: a.id })));
     }
   }
-  if (aliasesToRelease.length > 0) {
-    const usersRepository = await getUsersRepository();
-    for (const alias of aliasesToRelease) {
-      await usersRepository.releaseAlias(alias, user.id);
-    }
-  }
+  await releaseAliasesIfUnused(user, aliasesToRelease);
   // Tombstone every deleted (base + cascaded) access in the breach-scope
   // reverse-index: the row is retained with a `deleted` timestamp so a breach
   // scoped after revocation still resolves the accessId. Non-fatal.
@@ -296,5 +331,5 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
   };
 }
 
-export { deleteAccessChain, accessChainIds, notifyScopedAccessChange };
+export { deleteAccessChain, accessChainIds, notifyScopedAccessChange, releaseAliasesIfUnused };
 export type { DeletionOutcome, DeletionUser };

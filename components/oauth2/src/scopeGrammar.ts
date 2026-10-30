@@ -44,17 +44,6 @@ export const CORE_SCOPE_TOKENS = ['openid', 'offline_access'];
 /** Upper bound on the entries of a synthesised offer. */
 export const MAX_SYNTH_ENTRIES = 1000;
 
-/**
- * Whether this core can serve pseudonymous subjects (a `pairwise` client, or
- * an offer asking for a pseudonym). Not yet: such requests are refused at
- * /oauth2/authorize (and wherever the offer is re-derived). The single switch
- * every reader keys off.
- */
-export const PSEUDONYM_SUBJECTS_AVAILABLE: boolean = false;
-
-/** Refusal of every pseudonymous subject while they are not available. */
-export const PSEUDONYM_REFUSED = 'pseudonymous subjects are not available on this core';
-
 export type ResolvedScope = {
   ok: true;
   /** The request's tokens, de-duplicated, as presented (the signed state carries these). */
@@ -88,12 +77,6 @@ export function resolveRequestedScope (client: OAuthClient, scopeString: string)
   const ext: OAuthExtension | null = getExtension();
   if (ext == null) return { ok: false, description: 'no scope grammar registered on this core' };
 
-  // Pseudonymous subjects (a pairwise client, or an offer asking for one)
-  // are refused until a session can carry the grant's alias everywhere.
-  if (!PSEUDONYM_SUBJECTS_AVAILABLE && client.subjectType === 'pairwise') {
-    return { ok: false, description: PSEUDONYM_REFUSED };
-  }
-
   const requested = splitScope(scopeString);
   const coreTokens: string[] = [];
   for (const t of CORE_SCOPE_TOKENS) {
@@ -108,11 +91,10 @@ export function resolveRequestedScope (client: OAuthClient, scopeString: string)
   const parsed = callParse(ext, client, rest.join(' '), 'request');
   if (!parsed.ok) return parsed;
   const offer = parsed.offer;
-  if (!PSEUDONYM_SUBJECTS_AVAILABLE && offer.randomAlias === true) {
-    return { ok: false, description: PSEUDONYM_REFUSED };
-  }
-  // A pairwise client always gets the grant's alias as the subject; decided
-  // here so the consent shows it and the digest pins it.
+  // A pseudonymous subject (an offer asking for one, a pairwise client) is the
+  // grant's alias: the grant and every session of it carry the alias, are used
+  // at it only, and never show the username. A pairwise client always gets
+  // one; decided here so the consent shows it and the digest pins it.
   if (client.subjectType === 'pairwise') offer.randomAlias = true;
   if (offer.permissions.length === 0) {
     return { ok: false, description: 'the requested scope grants no data access' };

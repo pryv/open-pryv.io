@@ -91,8 +91,6 @@ describe('[OCMPU] composed consent of registry clients', () => {
   it('[OCMPU5] the subject change is flagged in both directions and bound by the digest', () => {
     const pseudoToAccount = composeShownOffer(requested([{ streamId: 'a', level: 'read' }]), { aliased: true, permissions: [] }, CLIENT);
     assert.deepEqual(pseudoToAccount.subjectChange, { from: 'pseudonym', to: 'account' });
-    // The other direction is only reachable once pseudonymous subjects are
-    // available; the composition flags it already.
     const accountToPseudo = composeShownOffer(requested([{ streamId: 'a', level: 'read' }], { randomAlias: true }), { aliased: false, permissions: [] }, CLIENT);
     assert.deepEqual(accountToPseudo.subjectChange, { from: 'account', to: 'pseudonym' });
     const same = composeShownOffer(requested([{ streamId: 'a', level: 'read' }]), { aliased: false, permissions: [] }, CLIENT);

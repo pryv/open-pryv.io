@@ -31,7 +31,6 @@ const { persistClient } = require('../src/clientRegistry.ts');
 const { hashSecret, setRefresh, setClient } = require('../src/storage.ts');
 const { checkRegistryClients } = require('../src/registryBootCheck.ts');
 const { decodeBasicAuth } = require('../src/clientAuth.ts');
-const oauth2 = require('../src/index.ts');
 
 const ADMIN_KEY = 'admin-key-for-tests';
 const ISSUER = 'https://core.example.com';
@@ -376,10 +375,6 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       hookOverride = () => new Promise((resolve) => setTimeout(() => resolve({ late: 1 }), 50));
       assert.deepEqual(await extension.runHook('tokenResponse', { scopeTokens: [] }), { late: 1 });
     });
-    it('[OXE05] the pseudonym switch is one exported constant, off', () => {
-      assert.equal(scopeGrammar.PSEUDONYM_SUBJECTS_AVAILABLE, false);
-      assert.equal(oauth2.PSEUDONYM_SUBJECTS_AVAILABLE, false);
-    });
     it('[OXE06] Basic client credentials are decoded by the shared helper', () => {
       const b = (s) => 'Basic ' + Buffer.from(s).toString('base64');
       assert.deepEqual(decodeBasicAuth(b('id:se%3Acret')), { client_id: 'id', client_secret: 'se:cret' });
@@ -489,11 +484,16 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(r.ok, false);
       assert.equal(r.description, 'scope could not be parsed');
     });
-    it('[OXS13] pseudonymous subjects are refused: an offer asking for one, a pairwise client', () => {
+    it('[OXS13] pseudonymous subjects: an offer asking for one, and every offer of a pairwise client, carry randomAlias', () => {
       const pseudo = scopeGrammar.resolveRequestedScope({ ...client, scope: [...client.scope, 'pseudo'] }, 'data/a.read pseudo');
-      assert.deepEqual(pseudo, { ok: false, description: 'pseudonymous subjects are not available on this core' });
+      assert.equal(pseudo.ok, true, pseudo.description);
+      assert.equal(pseudo.offer.randomAlias, true);
       const pairwise = scopeGrammar.resolveRequestedScope({ ...client, subjectType: 'pairwise' }, 'data/a.read');
-      assert.deepEqual(pairwise, { ok: false, description: 'pseudonymous subjects are not available on this core' });
+      assert.equal(pairwise.ok, true, pairwise.description);
+      assert.equal(pairwise.offer.randomAlias, true);
+      // The pseudonym is part of what the digest pins.
+      const plain = scopeGrammar.resolveRequestedScope(client, 'data/a.read');
+      assert.notEqual(pairwise.digest, plain.digest);
       // A public client without a pseudonym: the offer carries none.
       assert.equal(scopeGrammar.resolveRequestedScope(client, 'data/a.read').offer.randomAlias, false);
     });
@@ -571,8 +571,8 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
         if (seen.has(id)) mustRefuse = true;
         seen.add(id);
       }
+      // A pseudonym request is no rule broken: it is carried by the offer.
       const randomAlias = rnd() < 0.1;
-      if (randomAlias) mustRefuse = true;
       return { kind: 'list', permissions, randomAlias, mustRefuse };
     }
 
@@ -591,7 +591,7 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
         accepted++;
         const ids = new Set();
         assert.ok(r.offer.permissions.length <= scopeGrammar.MAX_SYNTH_ENTRIES);
-        assert.notEqual(r.offer.randomAlias, true);
+        assert.equal(r.offer.randomAlias, current.randomAlias === true, 'case ' + i);
         for (const p of r.offer.permissions) {
           assert.equal(p.defaultName, undefined, 'case ' + i);
           assert.equal(p.name, undefined, 'case ' + i);
@@ -670,14 +670,13 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const { res } = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ client_id: 'cmc-app', aud: undefined, scope: 'data/a.read' }));
       assert.match(res.headers.location, /error=invalid_scope/);
     });
-    it('[OXA07] a pseudonym request, or a pairwise client, is refused with invalid_scope', async () => {
+    it('[OXA07] a pseudonym request, and a pairwise client, go to the consent screen like any other', async () => {
       const platform = fakePlatform(); await seed(platform, { scope: [...REGISTRY_CLIENT.scope, 'pseudo'] });
-      const { res, signed } = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'data/a.read pseudo' }));
-      assert.equal(signed, null);
-      assert.deepEqual(redirectError(res), { error: 'invalid_scope', description: 'pseudonymous subjects are not available on this core' });
+      const { signed } = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'data/a.read pseudo' }));
+      assert.equal(verifyState(ADMIN_KEY, signed).ok, true);
       const pw = fakePlatform(); await seed(pw, { subjectType: 'pairwise' });
       const r2 = await authorize({ config: fakeConfig(), platform: pw }, authorizeQuery({ scope: 'data/a.read' }));
-      assert.deepEqual(redirectError(r2.res), { error: 'invalid_scope', description: 'pseudonymous subjects are not available on this core' });
+      assert.equal(verifyState(ADMIN_KEY, r2.signed).ok, true);
     });
     it('[OXA08] a grammar duplicate reaches the app as a generic description', async () => {
       const platform = fakePlatform(); await seed(platform, { scope: [...REGISTRY_CLIENT.scope, 'dup.local'] });

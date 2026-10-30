@@ -176,14 +176,16 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
   }
 
   /**
-   * A namespace of the same user not opened yet: `/<alias>` for a fresh alias
+   * A namespace of the same user not opened yet: `/<name>` for a fresh name
    * of the account (a namespace names one account, by its username or an
-   * alias).
+   * alias). A name kept like a former username: the tokens here carry no
+   * alias, and such a token is refused at the alias of an access.
    */
   async function freshNamespace () {
-    const alias = await usersRepository.mintAlias(username, userId);
-    aliases.push(alias);
-    return '/' + alias;
+    const name = 'apbs-ns-' + cuid().toLowerCase();
+    assert.ok(await usersRepository.reserveSpecificAlias(username, userId, name));
+    aliases.push(name);
+    return '/' + name;
   }
 
   /** The handshake packet of the namespace `namespace`. */

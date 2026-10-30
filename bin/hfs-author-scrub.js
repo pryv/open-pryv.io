@@ -123,7 +123,12 @@ require('@pryv/boiler').init({
       await webhooksRepository.deleteByAccess(user, accessId);
       await fromCallback((cb) => storageLayer.accesses.delete(user, { id: accessId }, cb));
       await fromCallback((cb) => storageLayer.sessions.destroy(token, cb));
-      if (typeof row.alias === 'string') await (await getUsersRepository()).releaseAlias(row.alias);
+      // Its alias, once no live access of the account still carries it (an
+      // alias may have several holders: a grant and its sessions).
+      if (typeof row.alias === 'string') {
+        const live = await fromCallback((cb) => storageLayer.accesses.find(user, {}, null, cb));
+        if (!(live ?? []).some((a) => a.alias === row.alias)) await (await getUsersRepository()).releaseAlias(row.alias, user.id);
+      }
       try {
         await markAccessDeletedInIndex(await getPlatform(), user.username, row, timestamp.now());
       } catch (err) {

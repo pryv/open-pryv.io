@@ -37,6 +37,26 @@ describe('[ALIA] access aliases (randomAlias)', function () {
 
   function fixtures () { return getNewFixture(); }
 
+  let personal = null;
+  /** A personal (owner) token of the user, made once. */
+  async function ownerToken () {
+    if (personal == null) {
+      personal = cuid();
+      await fixtureUser.access({ type: 'personal', token: personal });
+      await fixtureUser.session(personal);
+    }
+    return personal;
+  }
+
+  /** `res` answers exactly like an unknown token at `path`, with no access id. */
+  async function assertLikeUnknownToken (res, path) {
+    const unknown = await coreRequest.get(path).set('Authorization', 'no-such-token-' + cuid());
+    assert.equal(unknown.status, 403, JSON.stringify(unknown.body));
+    assert.equal(res.status, unknown.status, path + ': ' + JSON.stringify(res.body));
+    assert.deepEqual(res.body.error, unknown.body.error);
+    assert.equal(res.headers['pryv-access-id'], undefined, path + ': no access id on a refusal');
+  }
+
   function createAccess (body, token = masterToken) {
     return coreRequest
       .post('/' + username + '/accesses')
@@ -80,7 +100,7 @@ describe('[ALIA] access aliases (randomAlias)', function () {
     assert.equal(res.body.alias, alias);
   });
 
-  it('[AL03] a non-aliased access reports the real (canonical) username even when addressed via an alias', async function () {
+  it('[AL03] a non-aliased access addressed via another access\'s alias answers like an unknown token', async function () {
     // Mint an alias on one access, then call access-info with a DIFFERENT,
     // non-aliased token while addressing the user by the alias path.
     const aliased = await createAccess({
@@ -92,8 +112,73 @@ describe('[ALIA] access aliases (randomAlias)', function () {
     const res = await coreRequest
       .get('/' + alias + '/access-info')
       .set('Authorization', masterToken);
-    assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.user.username, username, 'non-aliased access -> canonical username');
+    await assertLikeUnknownToken(res, '/' + alias + '/access-info');
+    // At the account's own name it works.
+    const atName = await coreRequest.get('/' + username + '/access-info').set('Authorization', masterToken);
+    assert.equal(atName.status, 200, JSON.stringify(atName.body));
+    assert.equal(atName.body.user.username, username);
+  });
+
+  it('[AL13] an aliased access is used at its own alias only; the owner\'s personal token at any name', async function () {
+    const personalToken = await ownerToken();
+    const one = await createAccess({ name: 'al13 one', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    const two = await createAccess({ name: 'al13 two', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(one.status, 201, JSON.stringify(one.body));
+    assert.equal(two.status, 201, JSON.stringify(two.body));
+    const { alias, token } = one.body.access;
+    for (const name of [username, two.body.access.alias]) {
+      for (const path of ['/access-info', '/events', '/streams']) {
+        const res = await coreRequest.get('/' + name + path).set('Authorization', token);
+        await assertLikeUnknownToken(res, '/' + name + path);
+      }
+    }
+    // An expired aliased access at the wrong name: unknown, not "expired".
+    const expiring = await createAccess({ name: 'al13 expiring', randomAlias: true, expireAfter: 0, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(expiring.status, 201, JSON.stringify(expiring.body));
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await assertLikeUnknownToken(await coreRequest.get('/' + username + '/access-info').set('Authorization', expiring.body.access.token), '/' + username + '/access-info');
+    // At its alias: works; the owner's session works at every name.
+    assert.equal((await coreRequest.get('/' + alias + '/access-info').set('Authorization', token)).status, 200);
+    for (const name of [username, alias]) {
+      const res = await coreRequest.get('/' + name + '/access-info').set('Authorization', personalToken);
+      assert.equal(res.status, 200, name + ': ' + JSON.stringify(res.body));
+    }
+  });
+
+  it('[AL14] an access created by an aliased app carries its alias, unless it asks for its own', async function () {
+    const app = await createAccess({ name: 'al14 app', type: 'app', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'contribute' }] }, await ownerToken());
+    assert.equal(app.status, 201, JSON.stringify(app.body));
+    const { alias, token } = app.body.access;
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const held = (await usersIndex.getAliasesForId(fixtureUser.attrs.id)).length;
+    const child = await coreRequest.post('/' + alias + '/accesses').set('Authorization', token)
+      .send({ name: 'al14 child', permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(child.status, 201, JSON.stringify(child.body));
+    assert.equal(child.body.access.alias, alias);
+    assert.ok(child.body.access.apiEndpoint.includes(alias) && !child.body.access.apiEndpoint.includes(username), child.body.access.apiEndpoint);
+    assert.equal((await usersIndex.getAliasesForId(fixtureUser.attrs.id)).length, held, 'nothing minted');
+    const own = await coreRequest.post('/' + alias + '/accesses').set('Authorization', token)
+      .send({ name: 'al14 own', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(own.status, 201, JSON.stringify(own.body));
+    assert.notEqual(own.body.access.alias, alias);
+    // Deleting the child keeps the alias (the app holds it); deleting the app
+    // takes the children and releases it.
+    assert.equal((await coreRequest.delete('/' + alias + '/accesses/' + child.body.access.id).set('Authorization', token)).status, 200);
+    assert.ok((await usersIndex.getAliasesForId(fixtureUser.attrs.id)).includes(alias));
+    assert.equal((await coreRequest.delete('/' + username + '/accesses/' + app.body.access.id).set('Authorization', await ownerToken())).status, 200);
+    assert.equal((await usersIndex.getAliasesForId(fixtureUser.attrs.id)).includes(alias), false);
+  });
+
+  it('[AL15] a create refused by the insert (type, name and device name taken) gives its minted alias back', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const body = { name: 'al15 app', type: 'app', deviceName: 'al15-device', permissions: [{ streamId: stream0.attrs.id, level: 'read' }] };
+    const first = await createAccess(body, await ownerToken());
+    assert.equal(first.status, 201, JSON.stringify(first.body));
+    const before = await usersIndex.getAliasesForId(userId);
+    const res = await createAccess({ ...body, randomAlias: true }, await ownerToken());
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.deepStrictEqual((await usersIndex.getAliasesForId(userId)).sort(), before.sort(), 'the minted alias was given back');
   });
 
   it('[AL04] mints unique aliases across many accesses (no collision)', async function () {
@@ -185,7 +270,8 @@ describe('[ALIA] access aliases (randomAlias)', function () {
         assert.equal(res.body.user.username, username);
       }
       assert.strictEqual(reads, 0, 'no canonical-name read when addressed by the username');
-      const viaAlias = await coreRequest.get('/' + aliased.body.access.alias + '/access-info').set('Authorization', masterToken);
+      // (The owner's session: the only non-aliased access used at an alias.)
+      const viaAlias = await coreRequest.get('/' + aliased.body.access.alias + '/access-info').set('Authorization', await ownerToken());
       assert.equal(viaAlias.status, 200, JSON.stringify(viaAlias.body));
       assert.equal(viaAlias.body.user.username, username, 'the canonical name, read for an alias');
     } finally {

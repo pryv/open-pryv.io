@@ -34,7 +34,7 @@ import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
 import { withSessionSelfRevoke, accessesRepo } from './types.ts';
-import { notifyScopedAccessChange } from '../../methods/helpers/accessDeletion.ts';
+import { notifyScopedAccessChange, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 
@@ -88,7 +88,7 @@ export function createSessions (env: GlueEnv) {
     return out;
   }
 
-  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt, dataGrantAccessId, chainPermissions }: {
+  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt, dataGrantAccessId, chainPermissions, alias }: {
     userId: string;
     username: string;
     clientId: string;
@@ -98,6 +98,13 @@ export function createSessions (env: GlueEnv) {
     dataGrantAccessId?: string;
     /** Required with `dataGrantAccessId`: the chain's consent (see sessionClientData). */
     chainPermissions?: Array<Record<string, unknown>>;
+    /**
+     * The grant's alias, when the grant is aliased: the session carries it
+     * (its apiEndpoint, access-info and the only name it may be used at are
+     * the alias, never the username). Held by the grant: deleting a session
+     * releases nothing while the grant or another session still holds it.
+     */
+    alias?: string | null;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
       throw new Error('mintAccessDirect: username required');
@@ -123,6 +130,7 @@ export function createSessions (env: GlueEnv) {
       modified: now,
       modifiedBy: 'system',
       expires: Math.floor(expiresAt / 1000),
+      ...(typeof alias === 'string' && alias.length > 0 ? { alias } : {}),
       // Sender-constrained sessions carry the key thumbprint the
       // resource layer checks the per-request proof against.
       ...(dataGrantAccessId != null
@@ -139,7 +147,8 @@ export function createSessions (env: GlueEnv) {
           resolve({
             accessId: newAccess.id,
             accessToken: newAccess.token,
-            apiEndpoint: ApiEndpoint.build(username, newAccess.token),
+            // Same builder accesses.create uses: the alias when the row has one.
+            apiEndpoint: ApiEndpoint.buildForAccess({ alias: newAccessRow.alias as string | undefined, token: newAccess.token }, username),
           });
         });
     });
@@ -233,7 +242,7 @@ export function createSessions (env: GlueEnv) {
     // Session selfRevoke override AFTER the intersection: the intersection
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
-    const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, chainPermissions: permissions, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+    const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, chainPermissions: permissions, alias: dataGrant.alias, ...(jkt != null ? { dpopJkt: jkt } : {}) });
     return { ...minted, ...grantSubject(dataGrant, userId), permissions: effective };
   }
 
@@ -327,6 +336,9 @@ export function createSessions (env: GlueEnv) {
     cache.unsetUserData(userId);
     // The mint indexed it: the breach-scope index keeps it as deleted.
     await tombstoneAccessesNonFatal(username, [access as Parameters<typeof tombstoneAccessesNonFatal>[1][number]], Date.now() / 1000);
+    // Its alias is the grant's: kept while the grant (or another session)
+    // still carries it, released if this session was its last holder.
+    if (typeof access.alias === 'string') await releaseAliasesIfUnused(user, [access.alias]);
     pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
   }
 

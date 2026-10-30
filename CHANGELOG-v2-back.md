@@ -9,8 +9,7 @@
   `routes/oauth2/grants.ts`, the storage-direct session paths of `/token` in `routes/oauth2/sessions.ts`,
   the refresh-chain collapse on reuse in `routes/oauth2/revoke.ts`.
 - New oauth2 modules: `extension.ts` (contract, hook runner), `scopeGrammar.ts` (whole-scope dispatch,
-  core guards, digest, echo bound; `PSEUDONYM_SUBJECTS_AVAILABLE` switch, also exported by the
-  component), `responseHooks.ts`, `routes/offer.ts`, `registryBootCheck.ts`, `sessionIndex.ts`,
+  core guards, digest, echo bound), `responseHooks.ts`, `routes/offer.ts`, `registryBootCheck.ts`, `sessionIndex.ts`,
   `clientAuth.ts` (`decodeBasicAuth`, moved from the token route).
 - New config key `oauth:extensionHookTimeoutMs` (default 5000): bound on each asynchronous extension
   hook; a hook that does not answer in time fails the token request (500, before any new refresh row).
@@ -38,6 +37,29 @@
   Refreshed and client-credentials sessions were previously missing from that index.
 - `suspend` / `resume` of the operator CLI write the status only, without the registration rules, so a
   row registered before a newer rule stays suspendable.
+
+### Aliases: shared by a grant and its sessions, bound addressing
+
+- `business/src/accesses/aliasAddressing.ts`: `accessMayBeAddressedAs(access, { name, isCanonical })`,
+  the one predicate of alias-bound addressing. `MethodContext.init` records the addressed name
+  (`addressedName`; `usersRepository.resolveUsername` now tells whether the name is the username,
+  `isCanonical`), and `checkAddressedName` runs right after the access is loaded by token or by id
+  (before the expiry check), dropping it from the context before refusing. A server-side load on
+  behalf of no request sets `skipAddressBinding` (the webhook scope re-preparation).
+- `accessDeletion.ts` `releaseAliasesIfUnused(user, aliases)`: an alias is released only once no live
+  (not deleted) access of the account carries it; used by `deleteAccessChain`, `revokeChain` (also
+  after its bare-delete fallback) and the removal of a session after a failed code exchange.
+  `sessionsOfGrant` takes expired sessions too; an expired access managed by a deleted one and sharing
+  its alias is deleted with it.
+- OAuth glue: `mintAccessDirect` takes the grant's `alias` (consent and refresh mints) and builds the
+  session's `apiEndpoint` with `buildForAccess`; `findRegistryGrant` treats a grant created before its
+  client's revoke epoch (read from the platform store at each consent) like an expired one. The
+  temporary pseudonym refusal (`scopeGrammar.PSEUDONYM_SUBJECTS_AVAILABLE`, its CLI warning) is
+  removed.
+- `bin/hfs-author-scrub.js` released the alias of a revoked access without naming its account, so the
+  release never happened; it now releases it (once no other access of the account carries it).
+- Tests: the two-core suite boots core A with an OAuth extension (`OAUTH_EXTENSION` /
+  `OAUTH_CONSENT_URL` of `test/helpers/core-process.js`, toy module `helpers/oauth-toy-extension.cjs`).
 
 ### Account fields: two writes of one field in the same millisecond both land
 

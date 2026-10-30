@@ -137,11 +137,11 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal(r.error, null, r.error?.message);
     assert.equal((await getClient(platform, 'Cli.three')).subjectType, 'public');
     assert.match(r.out, /subject type: {2}public \(stable user id\)/);
-    assert.doesNotMatch(r.out, /WARN pseudonymous/);
+    assert.doesNotMatch(r.out, /WARN/);
     assert.match(r.out, /features forbidden on its grants: webhooks, secretSharing/);
   });
 
-  it('[OCLI4] pairwise: stored, with the WARN; /authorize still refuses it', async () => {
+  it('[OCLI4] pairwise: stored with no warning; /authorize serves it', async () => {
     const platform = fakePlatform();
     const r = await run(cli.runCreateRegistry, platform, createArgs('Cli.four', ['--subject-type', 'pairwise', '--allow-feature', 'webhooks']));
     assert.equal(r.error, null, r.error?.message);
@@ -149,11 +149,10 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal(row.subjectType, 'pairwise');
     assert.deepEqual(row.allowFeatures, ['webhooks']);
     assert.match(r.out, /subject type: {2}pairwise \(always an alias\)/);
-    assert.match(r.out, /WARN pseudonymous subjects are not available on this core yet: \/authorize refuses this client until a release that supports them/);
+    assert.doesNotMatch(r.out, /WARN/);
     assert.match(r.out, /features forbidden on its grants: secretSharing \(allowed: webhooks\)/);
     const loc = await authorizeAs(platform, 'Cli.four');
-    assert.equal(loc.searchParams.get('error'), 'invalid_scope');
-    assert.equal(loc.searchParams.get('error_description'), 'pseudonymous subjects are not available on this core');
+    assert.equal(loc.origin + loc.pathname, CONSENT_URL, loc.href);
     // An unknown feature is refused at registration.
     const bad = await run(cli.runCreateRegistry, platform, createArgs('Cli.four2', ['--subject-type', 'public', '--allow-feature', 'accessCreation']));
     assert.match(bad.error?.message ?? '', /allowFeatures may only list webhooks, secretSharing/);

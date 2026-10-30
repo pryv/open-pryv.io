@@ -21,7 +21,7 @@ import cache from 'cache';
 import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback } from 'utils';
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
-import { deleteAccessChain, accessChainIds } from '../../methods/helpers/accessDeletion.ts';
+import { deleteAccessChain, accessChainIds, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
 // CMC back-channel revoke notify: pure DI HTTP sender, no MethodContext needed.
 import * as cmc from 'cmc';
 import * as cmcRelationshipKey from 'cmc/src/relationshipKey.ts';
@@ -57,13 +57,26 @@ export function createRevoke (env: GlueEnv) {
     //    incomplete revoke); then any live session of this client still left
     //    (minted under another grant of the client, or before sessions named
     //    their grant), with its own sub-accesses.
+    // The aliases the chain holds (a pseudonymous grant and its sessions carry
+    // one), released once their last holder is gone: the teardown does it,
+    // and so does the end of this function, for a chain the bare fallback
+    // below soft-deleted.
+    const aliases: string[] = typeof dataGrant?.alias === 'string' ? [dataGrant.alias] : [];
     if (dataGrant != null && typeof dataGrant.id === 'string' && dataGrant.deleted == null) await deleteOrForce(dataGrant.id);
-    for (const id of await liveSessionIds()) await deleteOrForce(id);
+    for (const session of await liveSessions()) {
+      if (typeof session.alias === 'string') aliases.push(session.alias);
+      await deleteOrForce(session.id);
+    }
+    try {
+      await releaseAliasesIfUnused(user, aliases);
+    } catch (err: unknown) {
+      logger.warn('oauth2.revokeChain: the chain\'s aliases could not be released', err);
+    }
 
-    async function liveSessionIds (): Promise<string[]> {
+    async function liveSessions (): Promise<DataGrant[]> {
       const sessions: DataGrant[] = (await fromCallback((cb: (e: unknown, r: DataGrant[] | null) => void) =>
         accessesRepository.find(user, { type: 'app', name: 'oauth:' + clientId, deleted: null }, null, cb))) ?? [];
-      return sessions.map((s) => s.id).filter((id): id is string => typeof id === 'string');
+      return sessions.filter((s) => typeof s.id === 'string');
     }
     // A failing side effect (a webhook store error) must not leave the chain
     // alive: fall back to the bare soft-delete of the whole chain (the access,

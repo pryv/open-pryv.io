@@ -82,10 +82,6 @@ export const {
   computeThumbprint,
 } = jwks;
 
-// Whether pseudonymous subjects (pairwise clients, pseudonym offers) are
-// served on this core; the operator CLI reads it too.
-export const { PSEUDONYM_SUBJECTS_AVAILABLE } = scopeGrammar;
-
 export const { audit: emitAudit } = audit;
 
 export const { registerRoutes } = routes;

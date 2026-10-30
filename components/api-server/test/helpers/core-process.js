@@ -30,6 +30,9 @@
  *   storages__<kind>__engine: the test run's storage engines; pass
  *                     `childStorageEngineEnv()` (test-helpers) so the core uses
  *                     the same engines as the test process.
+ *   OAUTH_EXTENSION: optional path of an OAuth extension module (with
+ *                     OAUTH_CONSENT_URL, the consent page): the core serves
+ *                     registry OAuth clients.
  *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
  *                     runs the DNS topology (dnsLess off, sites matched by Host),
  *                     applies the same boot checks as the api-server (exit 1 on
@@ -154,6 +157,11 @@ const http = require('node:http');
       }
       return await fetch(rawUrl, init);
     });
+  }
+  // OAuth registry flows: the extension module and the consent page.
+  if (process.env.OAUTH_EXTENSION) {
+    config.set('customExtensions:oauthExtension', process.env.OAUTH_EXTENSION);
+    config.set('oauth:consentUrl', process.env.OAUTH_CONSENT_URL || 'https://consent.test/authorize');
   }
   config.set('audit:active', false);
   config.set('webhooks:inProcess', false);

@@ -35,6 +35,8 @@ import { parseAccessRef } from 'business/src/accesses/refs.ts';
 import { awaitConsentOutcome } from '../consentPoll.ts';
 import { withSessionSelfRevoke, samePermissionKeys } from './types.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
+import * as storages from 'storages';
+import { getRevokedAt } from 'oauth2/src/storage.ts';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -53,6 +55,7 @@ type SessionHelpers = {
     expiresAt: number;
     dataGrantAccessId?: string;
     chainPermissions?: Array<Record<string, unknown>>;
+    alias?: string | null;
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
 };
@@ -173,8 +176,9 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // A registry client (no app account, no CMC): the durable consent record
   // is a data-grant named after the client, found again by that identity on
   // re-authorization, with no expiry: it lives until the user withdraws it.
-  // The app sees the user's stable internal id as the subject (an aliased
-  // grant, a pseudonym, is refused before this point on this core).
+  // The app sees the user's stable internal id as the subject, or, for a
+  // pseudonymous grant (`randomAlias`), the grant's alias, which every
+  // session of the grant carries too.
   // /accept decides the grant's permissions after the consent (`next`: the
   // composed consent, see the oauth2 component); without them (a direct
   // call), the consent is joined into the grant, never narrowing. A
@@ -263,12 +267,19 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // (type, name, deviceName) slot: on a consent (`repair`) it is withdrawn
   // (its sessions and chains go with it) so a fresh one can be made; a
   // read-only lookup treats it as absent.
+  // A grant made before the operator revoked the client id (a client revoked,
+  // then registered again under the same id) belongs to the revoked
+  // registration: its sessions are refused already (the revoke epoch), and it
+  // is treated like an expired one, so the new registration never inherits
+  // its permissions nor its alias.
   async function findRegistryGrant (context: Ctx, clientId: string, opts: { repair?: boolean } = {}): Promise<DataGrant | null> {
     const result = await apiCall(context, 'accesses.get', { includeExpired: true });
     let grant = (result?.accesses ?? []).find((a) =>
       a?.type === 'app' && a?.name === REGISTRY_GRANT_PREFIX + clientId &&
       a?.deviceName === REGISTRY_GRANT_DEVICE) ?? null;
-    if (grant != null && typeof grant.expires === 'number' && grant.expires <= Date.now() / 1000) {
+    if (grant != null && (
+      (typeof grant.expires === 'number' && grant.expires <= Date.now() / 1000) ||
+      await madeBeforeClientRevoke(grant, clientId))) {
       if (opts.repair !== false) {
         await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(grant.id).base });
       }
@@ -278,6 +289,19 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       await sessions.setGrantOf(context.user.id, context.user.username, grant.id, clientId);
     }
     return grant;
+  }
+
+  // The revoke epoch (ms) is read from the platform store at every consent
+  // (not the per-core cache the resource checks use: a consent is rare, and
+  // must see a revoke made a moment ago on another core).
+  async function madeBeforeClientRevoke (grant: DataGrant, clientId: string): Promise<boolean> {
+    const platform = storages.platformDB as Parameters<typeof getRevokedAt>[0] | null | undefined;
+    if (platform == null) return false;
+    const revokedAt = await getRevokedAt(platform, clientId);
+    if (revokedAt == null) return false;
+    // `created` is in seconds; a grant without it is treated as old.
+    const createdMs = typeof grant.created === 'number' ? grant.created * 1000 : 0;
+    return createdMs < revokedAt;
   }
 
   // ---------------------------------------------------------------------
@@ -363,6 +387,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       chainPermissions: permissions,
       expiresAt,
       dataGrantAccessId: dataGrant.id,
+      // An aliased (pseudonymous) grant: the session carries the same alias.
+      alias: dataGrant.alias,
     });
     return {
       ...minted,

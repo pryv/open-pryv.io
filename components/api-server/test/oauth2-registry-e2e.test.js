@@ -27,7 +27,6 @@ const storage = require('oauth2/src/storage.ts');
 const REDIRECT_URI = 'https://app.registry.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
 const AUD = 'https://resource.test/base';
-const PSEUDONYM_REFUSED = 'pseudonymous subjects are not available on this core';
 
 // Toy grammar: `read/<s>` reads one stream, `write/<s>` contributes to it,
 // `add/<s>` may only create in it; `ctx/user` is a context token;
@@ -328,18 +327,16 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     }
   });
 
-  it('[OREG9] pseudonymous subjects are refused at /authorize: a pseudonym request, a pairwise client', async () => {
-    const before = await grants();
-    for (const [scope, cid] of [['read/health ctx/pseudo', clientId], ['read/health ctx/user', pairwiseClientId]]) {
-      const res = await authorize(scope, cid);
-      assert.equal(res.status, 302, res.text);
-      const loc = new URL(res.headers.location);
-      assert.equal(loc.origin + loc.pathname, REDIRECT_URI);
-      assert.equal(loc.searchParams.get('error'), 'invalid_scope');
-      assert.equal(loc.searchParams.get('error_description'), PSEUDONYM_REFUSED);
-    }
-    assert.deepEqual(await grants(), before);
-    assert.equal((await grants(pairwiseClientId)).length, 0);
+  it('[OREG9] a pairwise client gets an aliased grant without asking for a pseudonym; the subject is the alias', async () => {
+    const r = await runFlow('read/health ctx/user', pairwiseClientId);
+    const [grant] = await grants(pairwiseClientId);
+    assert.match(grant.alias, /^r-[a-z0-9]{8}$/);
+    assert.equal(r.offer.offer.randomAlias, true);
+    assert.equal(r.token.user, grant.alias);
+    assert.equal(r.token.apiEndpoint, undefined);
+    const info = await coreRequest.get('/' + grant.alias + '/access-info').set('Authorization', r.token.access_token);
+    assert.equal(info.status, 200, JSON.stringify(info.body));
+    assert.equal(info.body.user.username, grant.alias);
   });
 
   it('[OREG10] a registered account: the subject is its internal id, distinct from the username', async () => {
