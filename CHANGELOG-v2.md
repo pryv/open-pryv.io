@@ -1,5 +1,21 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Fixes
+
+- **Operator CLI: `bin/oauth-client.js update` applies every registry flag.** On a registry client,
+  `--policy-uri`, `--tos-uri`, `--contact`, `--extra` and `--launch-type` were accepted and silently
+  ignored; they are now applied, parsed as `create-registry` parses them (a repeatable flag replaces the
+  stored list; `none` clears the field). `--auth-method` is applied too: the credentials on file follow
+  the method (a change to `client_secret_basic` mints a secret, printed once, and drops the key set; a
+  change to `private_key_jwt` needs `--jwks-file` / `--jwks-json` and drops the secret; a change to
+  `none` drops both and needs `--yes`); on a registry client `--jwks-file` / `--jwks-json` go with
+  `private_key_jwt` only. These flags are refused on app-account clients. `--scope` splits
+  space-separated tokens on `update` and `create` as on `create-registry`. `update` and
+  `create-registry` refuse an unknown flag, and a flag that needs a value given without one, instead of
+  ignoring it.
+
 ## 2.0.0-rc.68 - 2026-10-30
 
 ### OAuth registry clients and the OAuth extension (new, opt-in)
