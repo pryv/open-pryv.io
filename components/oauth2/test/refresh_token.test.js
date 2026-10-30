@@ -504,14 +504,14 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
     const params = (token) => ({ grant_type: 'refresh_token', refresh_token: token, client_id: 'myapp' });
     const oauthRows = (platform) => Array.from(platform._state.entries()).filter(([k]) => k.startsWith('oauth-'));
 
-    it('[OPI1] a rotation writes the new refresh row and the consumed marker without a username', async () => {
+    it('[OPI1] a rotation writes the new refresh row, the consumed marker and the session index without a username', async () => {
       const platform = fakePlatform();
       await seedRefresh(platform, 'RT-PI1');
       const res = fakeRes();
       await handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE })({ body: params('RT-PI1') }, res);
       assert.equal(res.statusCode, 200, JSON.stringify(res.body));
       const rows = oauthRows(platform);
-      assert.deepEqual(rows.map(([k]) => k.split('/')[0]).sort(), ['oauth-rt', 'oauth-rt-used']);
+      assert.deepEqual(rows.map(([k]) => k.split('/')[0]).sort(), ['oauth-at', 'oauth-rt', 'oauth-rt-used']);
       for (const [key, entry] of rows) {
         assert.ok(!('username' in entry.value), key + ' carries a username');
         assert.ok(!JSON.stringify(entry.value).includes('"alice"'), key + ' carries the username');

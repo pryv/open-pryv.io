@@ -21,11 +21,15 @@
 import { createRequire } from 'node:module';
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from './grants/authorization_code.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver, GrantSubjectResolver } from './grants/authorization_code.ts';
+import type { OAuthExtension } from './extension.ts';
 import type { NextFunction, Request, Response } from 'express';
 const require = createRequire(import.meta.url);
 
 const { handleWellKnown } = require('./wellKnown.ts');
+const { setExtension, getExtension } = require('./extension.ts');
+const { handleOffer } = require('./routes/offer.ts');
+const { checkRegistryClients } = require('./registryBootCheck.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
 const { handleAuthorize } = require('./routes/authorize.ts');
 const { handleAccept } = require('./routes/accept.ts');
@@ -149,6 +153,10 @@ export type Deps = {
    * PlatformDB is replicated to every core and must not hold usernames.
    */
   resolveUsername?: UsernameResolver;
+  /** Operator-installed extension (scope grammar + response hooks), or null. */
+  extension?: OAuthExtension | null;
+  /** Registry clients: the id the app sees for the user (see GrantSubjectResolver). */
+  resolveGrantSubject?: GrantSubjectResolver;
 };
 
 /**
@@ -168,6 +176,11 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     console.warn('[oauth2] service:api not configured — OAuth routes not mounted');
     return;
   }
+
+  // The operator's extension (if any) is installed before anything reads it.
+  setExtension(deps.extension ?? null, {
+    hookTimeoutMs: Number(deps.config.get('oauth:extensionHookTimeoutMs')),
+  });
 
   const scopesSupported = buildScopesSupported();
 
@@ -190,8 +203,12 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   }
 
   // Every async handler goes through `guardRoute` (see there).
-  app.get!('/oauth2/authorize',
-    guardRoute(handleAuthorize({ config: deps.config, platform: deps.platform })));
+  const authorize = guardRoute(handleAuthorize({ config: deps.config, platform: deps.platform }));
+  app.get!('/oauth2/authorize', authorize);
+  app.post!('/oauth2/authorize', authorize);
+
+  app.post!('/oauth2/authorize/offer',
+    guardRoute(handleOffer({ config: deps.config, platform: deps.platform })));
 
   app.post!('/oauth2/authorize/accept',
     guardRoute(handleAccept({
@@ -219,7 +236,14 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       resolveAccess: deps.resolveAccess,
       revokeAccessLocal: deps.revokeAccessLocal,
       resolveUsername: deps.resolveUsername,
+      ...(deps.resolveGrantSubject != null ? { resolveGrantSubject: deps.resolveGrantSubject } : {}),
     })));
+
+  // Registry rows are written by the operator CLI, which does not load the
+  // extension: check their maximum scope sets now, in the background. A bad
+  // row is reported, never fatal (one client must not take the core down).
+  checkRegistryClients(deps.platform).catch((err: unknown) =>
+    logServerError('oauth2: registry client check at boot failed', err));
 }
 
 /**
@@ -227,8 +251,21 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
  * advertisement. No namespace ships a closed enum — scope tokens
  * reference per-client consent offers (`cmc:<offer-name>`) or other
  * parser-owned grammars — so each namespace advertises a wildcard
- * hint per RFC 8414 conventions.
+ * hint per RFC 8414 conventions. An installed extension adds what its
+ * grammar advertises, and the core token it serves (`offline_access`).
  */
 function buildScopesSupported (): string[] {
-  return listNamespaces().map((ns: string) => `${ns}:*`);
+  const out: string[] = listNamespaces().map((ns: string) => `${ns}:*`);
+  const ext = getExtension();
+  if (ext != null) {
+    let advertised: unknown = [];
+    try {
+      advertised = ext.scopeGrammar.supported?.() ?? [];
+    } catch (err: unknown) {
+      logServerError(`oauth extension ${ext.name}: scopeGrammar.supported threw`, err);
+    }
+    if (Array.isArray(advertised)) out.push(...advertised.filter((s): s is string => typeof s === 'string'));
+    out.push('offline_access');
+  }
+  return [...new Set(out)];
 }
