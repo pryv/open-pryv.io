@@ -1,0 +1,16 @@
+p Hi #{USERNAME},
+if REASON_DECLINED
+  p #{BENEFICIARY} declined the transfer of your account.
+else if WINDOW_END
+  p Nobody accepted the transfer of your account to #{BENEFICIARY} before #{WINDOW_END}.
+else
+  p Nobody accepted the transfer of your account to #{BENEFICIARY} in time.
+p Your account stays as it is.
+p If you gave a name or a date of birth to identify #{BENEFICIARY}, this information has been deleted.
+if ACCOUNT_APP_URL
+  p
+    | To set up a new choice, sign in to your account page:
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p To set up a new choice, sign in to your account page.

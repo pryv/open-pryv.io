@@ -23,6 +23,8 @@ const AuditAccessIds = {
   PASSWORD_RESET_REQUEST: 'password-reset-request',
   PASSWORD_RESET_TOKEN: 'password-reset-token',
   EMAIL_VERIFICATION_TOKEN: 'email-verification-token',
+  TRANSFER_CLAIM_LINK: 'transfer-claim-link',
+  TRANSFER_DECLINE_LINK: 'transfer-decline-link',
   ADMIN_TOKEN: 'admin',
   PUBLIC: 'public',
   INVALID: 'invalid'

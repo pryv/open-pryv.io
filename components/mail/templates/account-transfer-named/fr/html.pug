@@ -1,0 +1,20 @@
+if BENEFICIARY_NAME
+  p Bonjour #{BENEFICIARY_NAME},
+else
+  p Bonjour,
+p
+  | Le titulaire du compte #{USERNAME}
+  if OPERATOR_NAME
+    |  sur #{OPERATOR_NAME}
+  |  a indiqué votre adresse e-mail pour reprendre ce compte.
+p Cela signifie que si le compte n'est pas utilisé pendant un certain temps, ou à une date choisie par son titulaire, vous recevrez un e-mail vous invitant à reprendre sa gestion. Vous n'avez rien à faire pour l'instant.
+if IDENTITY_GIVEN
+  p Le titulaire du compte a aussi indiqué votre nom, votre date de naissance, ou les deux. Ces informations sont conservées chiffrées et servent uniquement à l'opérateur de la plateforme pour vous identifier si cet e-mail ne peut pas vous joindre. L'opérateur ne peut les lire qu'une fois le transfert commencé ; chaque lecture est enregistrée et signalée au titulaire du compte. Elles sont supprimées à la fin du transfert, qu'il aboutisse ou non.
+if DECLINE_LINK
+  p
+    | Si vous ne souhaitez pas reprendre ce compte, vous pouvez refuser avec ce lien ; le titulaire du compte en sera informé :
+    |
+    a(href=DECLINE_LINK target="_blank" rel="noopener") #{DECLINE_LINK}
+  p Si vous ne connaissez pas cette personne, vous pouvez ignorer ce message ou refuser.
+else
+  p Si vous ne connaissez pas cette personne, vous pouvez ignorer ce message.

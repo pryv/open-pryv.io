@@ -1,0 +1,35 @@
+if TO_BENEFICIARY
+  if BENEFICIARY_NAME
+    p Hi #{BENEFICIARY_NAME},
+  else
+    p Hi,
+  if REASON_OWNER_ACTIVITY
+    p The transfer of the account #{USERNAME} to you is cancelled: the account is in use again.
+  else if REASON_DELEGATE_ACTIVITY
+    p The transfer of the account #{USERNAME} to you is cancelled: the account is in use again.
+  else if REASON_OWNER_CHANGE
+    p The transfer of the account #{USERNAME} to you is cancelled: its holder changed their choice.
+  else
+    p The transfer of the account #{USERNAME} to you is cancelled.
+  p You have nothing to do. Any link you received for this transfer no longer works.
+else
+  p Hi #{USERNAME},
+  if REASON_DECLINED
+    p #{BENEFICIARY} declined the transfer of your account.
+    if FALLBACK_DELETE
+      p Your account will now be deleted, as you chose for that case: on the planned date, or right away if that date has passed. All the data of the account will then be erased, and this cannot be undone.
+    else
+      p Your account stays as it is.
+  else if REASON_OWNER_ACTIVITY
+    p Your account was used, so its transfer to #{BENEFICIARY} was cancelled. The schedule starts again from now.
+  else if REASON_DELEGATE_ACTIVITY
+    p Your account was used by someone who manages it, so its transfer to #{BENEFICIARY} was cancelled. The schedule starts again from now.
+  else
+    p The transfer of your account to #{BENEFICIARY} is cancelled. Your account stays as it is.
+  if ACCOUNT_APP_URL
+    p
+      | To change this, sign in to your account page and change the auto-deletion setting:
+      |
+      a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+  else
+    p To change this, sign in to your account page and change the auto-deletion setting.

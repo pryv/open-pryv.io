@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Account transfer: the sweep, the record, the links
+
+- The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim
+  window instead of erasing (not counted in `maxDeletionsPerPass`); while a window is open a pass
+  completes the transfer once the claimant controls the account, cancels it on account use before a
+  claim (`inactivity`), lifts the failed-claim lock, re-sends the claim mail at +30 / +60 days, and
+  applies the fallback at its end (erasure trigger `transfer-fallback`). The life of a transfer is a
+  second key-value row next to the schedule (`TransferRecord`, key `transfer`), so a change of
+  schedule never loses it; a closed record is kept as the record.
+- The claim and decline links are derived (HMAC-SHA256 of kind, account id and a per-transfer salt
+  under a key derived from `account.autoDeletion.transfer.identitySecretsKey`, else from
+  `auth.adminAccessKey`, purpose `account-transfer-link-v1`); only the salt is stored, so a re-sent
+  link is the same and a database dump holds none. Rotating the source key invalidates the links in
+  flight.
+- The delegation methods register the owner's side of the handshake for the transfer
+  (`api-server/src/methods/helpers/transferDelegation.ts`: invite, state, withdraw); without
+  delegation on the core, transfers are not offered.
+- The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
+  `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
+
 ### Account fields: two writes of one field in the same millisecond both land
 
 - Account-field versions are keyed by their time (milliseconds) on PostgreSQL and SQLite. A second

@@ -30,8 +30,17 @@
  *    The erasure keeps its own record: one that fails half-way is completed
  *    by a later pass.
  *
- * `transfer` policies are left alone: their action is not deletion. A pass
- * still running when the next one is asked for makes that one a no-op.
+ * A `transfer` policy runs the same schedule and reminders; when it is due the
+ * sweep opens the claim window instead of erasing (`transfer.claimWindowDays`):
+ * the beneficiary gets the claim link (sent again 30 and 60 days later), the
+ * owner is told. While the window is open, a pass completes the transfer once
+ * the claimant controls the account, cancels it when the account was used
+ * before a claim (inactivity schedules; the clock restarts), lifts the
+ * failed-claim lock, and at the window end applies the owner's fallback:
+ * `keep` lapses the transfer (the account stays), `delete` erases the account
+ * as a direct deletion would (guards, self-deletion, the cap).
+ *
+ * A pass still running when the next one is asked for makes that one a no-op.
  * `maxDeletionsPerPass` caps the erasures a pass starts (0: no cap); the rest
  * wait for the next pass. `dryRun` logs what would be sent and erased, sends,
  * erases and writes nothing (a written bookkeeping would start the clocks the
@@ -39,11 +48,14 @@
  */
 
 import type { AutoDeletionConfig } from './config.ts';
-import type { Setting, Bookkeeping } from './state.ts';
+import type { Setting, Bookkeeping, TransferRecord } from './state.ts';
 import type { AccountActivity } from '../accesses/accountActivity.ts';
-import { effectivePolicy, evaluate, withNotice, ENGINE_BLOCKS } from './deadline.ts';
+import { effectivePolicy, evaluate, withNotice, ENGINE_BLOCKS, DAY_SECONDS } from './deadline.ts';
 import type { Policy, Evaluation } from './deadline.ts';
 import { STALE_ERASURE_MS } from '../auth/erasures.ts';
+import { newSalt, claimMailDue, windowEnded } from './transfer.ts';
+import { completeTransfer, lapseTransfer, cancelTransfer } from './transferFlow.ts';
+import type { TransferFlowState, TransferNotice, TransferFlowDeps } from './transferFlow.ts';
 
 export type SweepAccount = { id: string; username: string };
 
@@ -66,6 +78,8 @@ export type Notice = {
   /** The reminder's lead in days (reminders only). */
   leadDays?: number;
   now: number;
+  /** The holder's setting (a transfer's beneficiary and fallback). */
+  setting?: Setting | null;
 };
 
 /**
@@ -78,7 +92,10 @@ export type SendOutcome = 'sent' | 'off' | 'rejected' | 'failed';
 /** `guard`: the deletion guard that objected, when one did. */
 export type Objection = { reason: string; message: string; guard?: string };
 
-export type Trigger = 'date' | 'inactivity';
+export type Trigger = 'date' | 'inactivity' | 'transfer-fallback';
+
+/** The account a transfer was claimed for. */
+export type ClaimedBy = NonNullable<TransferRecord['claimedBy']>;
 
 /** An erasure left unfinished, from the core's record of erasures in progress. */
 export type PendingErasure = {
@@ -107,11 +124,7 @@ type LoggerLike = {
   error: (msg: string, ctx?: Record<string, unknown>) => void;
 };
 
-export type SweepState = {
-  getSetting (userId: string): Promise<Setting | null>;
-  getBookkeeping (userId: string): Promise<Bookkeeping | null>;
-  saveBookkeeping (userId: string, prev: Bookkeeping | null, next: Bookkeeping | null): Promise<boolean>;
-};
+export type SweepState = TransferFlowState;
 
 export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   /** Read at every pass: a config change applies from the next one. */
@@ -125,6 +138,12 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   readActivity: (account: SweepAccount) => Promise<AccountActivity>;
   sendReminder: (account: SweepAccount, facts: F, notice: Notice) => Promise<SendOutcome>;
   sendBlocked: (account: SweepAccount, facts: F, notice: Notice) => Promise<SendOutcome>;
+  /** The transfer mails, to the owner or the beneficiary. */
+  sendTransferMail: (account: SweepAccount, facts: F, notice: TransferNotice) => Promise<SendOutcome>;
+  /** The delegation of the account to the claimant: `active` completes the transfer. Throws when it cannot be read. */
+  delegationOf: (account: SweepAccount, claimedBy: ClaimedBy) => Promise<'active' | 'invite' | 'none'>;
+  /** Withdraws the claimant's pending invite (window ended). Best effort. */
+  withdrawInvite: (account: SweepAccount, claimedBy: ClaimedBy) => Promise<void>;
   /** The deletion guards' objection, or null. Throws when the erasure cannot be attempted (an operator problem). */
   checkErasable: (account: SweepAccount) => Promise<Objection | null>;
   /** Erases the account, or completes its unfinished erasure. */
@@ -158,13 +177,39 @@ export type PassResult = {
   failed: number;
   wouldRemind: number;
   wouldErase: number;
+  /** Claim windows opened, transfers completed, lapsed (`keep`) and cancelled by account use. */
+  transfersOpened: number;
+  transfersCompleted: number;
+  transfersLapsed: number;
+  transfersCancelled: number;
+  wouldOpen: number;
 };
 
 /** An erasure record untouched for this long is no longer running: it is completed. */
 export { STALE_ERASURE_MS };
 
 function emptyResult (dryRun: boolean, skipped = false): PassResult {
-  return { skipped, dryRun, accounts: 0, reminders: 0, reminderFailures: 0, remindersOff: 0, mailHeld: 0, erased: 0, completed: 0, blocked: 0, deferred: 0, failed: 0, wouldRemind: 0, wouldErase: 0 };
+  return {
+    skipped,
+    dryRun,
+    accounts: 0,
+    reminders: 0,
+    reminderFailures: 0,
+    remindersOff: 0,
+    mailHeld: 0,
+    erased: 0,
+    completed: 0,
+    blocked: 0,
+    deferred: 0,
+    failed: 0,
+    wouldRemind: 0,
+    wouldErase: 0,
+    transfersOpened: 0,
+    transfersCompleted: 0,
+    transfersLapsed: 0,
+    transfersCancelled: 0,
+    wouldOpen: 0
+  };
 }
 
 /** The message of `err`, or of the error an API error wraps (its own says only "Unexpected error"). */
@@ -184,10 +229,9 @@ const isGuardBlock = (blocked: Bookkeeping['blocked'] | undefined): boolean => b
 export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F>) {
   const { state, logger } = deps;
   let running = false;
-  // Log-once memories, per process: a recipient refused at every pass and a
-  // transfer policy are reported once, not at every pass.
+  // Log-once memory, per process: a recipient refused at every pass is
+  // reported once, not at every pass.
   const refusedReminders = new Set<string>();
-  const transfersSeen = new Set<string>();
 
   type PassContext = {
     config: AutoDeletionConfig;
@@ -227,8 +271,11 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       }
     }
     const r = ctx.result;
-    if (r.dryRun && (r.wouldRemind > 0 || r.wouldErase > 0)) {
-      logger.info(`auto-deletion sweep (dry run): ${r.wouldRemind} reminder(s) and ${r.wouldErase} erasure(s) would have been done; nothing was sent, erased or written`);
+    if (r.dryRun && (r.wouldRemind > 0 || r.wouldErase > 0 || r.wouldOpen > 0)) {
+      logger.info(`auto-deletion sweep (dry run): ${r.wouldRemind} reminder(s), ${r.wouldErase} erasure(s) and ${r.wouldOpen} transfer(s) would have been done; nothing was sent, erased or written`);
+    }
+    if (r.transfersOpened > 0 || r.transfersCompleted > 0 || r.transfersLapsed > 0 || r.transfersCancelled > 0) {
+      logger.info(`auto-deletion sweep: transfers: ${r.transfersOpened} claim window(s) opened, ${r.transfersCompleted} completed, ${r.transfersLapsed} lapsed, ${r.transfersCancelled} cancelled by account use`);
     }
     if (ctx.mailDown) {
       logger.warn(`auto-deletion sweep: the mail transport failed; ${r.mailHeld} mail(s) of this pass not sent, sent at the next pass (the deletions they announce wait for them)`);
@@ -300,14 +347,8 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
 
     const facts = await deps.loadFacts(account);
     const policy = effectivePolicy(setting, config, facts.presetApplies);
-    if (policy?.action === 'transfer') {
-      if (!transfersSeen.has(account.id)) {
-        transfersSeen.add(account.id);
-        logger.info(`auto-deletion sweep: account "${account.username}" (${account.id}) is set to be transferred, not deleted: left to the transfer process`);
-      }
-      return;
-    }
     if (policy != null && policy.mode !== 'never') result.accounts++;
+    const transfer = policy?.action === 'transfer' ? await state.getTransfer(account.id) : null;
 
     // A guard refusal holds the engine's `due`: judge the schedule without it,
     // then ask the guards again.
@@ -334,6 +375,19 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       stored = next;
     };
 
+    if (policy != null && setting != null && transfer != null && (transfer.status === 'open' || transfer.status === 'claimed')) {
+      await runWindow({ account, ctx, facts, setting, policy, prev, guardBlock, evaluation, save }, transfer);
+      return;
+    }
+    if (policy != null && setting?.transfer != null && transfer?.status === 'named' && transfer.namedAt == null &&
+        transfer.email === setting.transfer.email && !config.dryRun) {
+      // The beneficiary's notice at setup did not go out: tried again.
+      const now = deps.now();
+      if (await send(ctx, () => deps.sendTransferMail(account, facts, { kind: 'named', to: 'beneficiary', record: transfer, setting, now })) === 'sent') {
+        await state.saveTransfer(account.id, { ...transfer, namedAt: now });
+      }
+    }
+
     if (evaluation.reminder != null && b != null && policy != null) {
       const leadDays = evaluation.reminder;
       if (config.dryRun) {
@@ -344,7 +398,7 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       } else {
         await save(b); // intent first: a crash after the send repeats it, never skips it
         const now = deps.now();
-        const notice = { policy, bookkeeping: b, leadDays, now };
+        const notice = { policy, bookkeeping: b, leadDays, now, setting };
         const outcome = await send(ctx, () => deps.sendReminder(account, facts, notice));
         const key = `${account.id}:${b.reminders.deadlineDay}:${leadDays}`;
         if (outcome === 'sent') {
@@ -369,8 +423,9 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       return;
     }
 
-    // Due.
-    if (config.maxDeletionsPerPass > 0 && ctx.erasuresStarted >= config.maxDeletionsPerPass) {
+    // Due. A transfer opens its claim window instead (not an erasure: no cap).
+    const isTransfer = policy.action === 'transfer';
+    if (!isTransfer && config.maxDeletionsPerPass > 0 && ctx.erasuresStarted >= config.maxDeletionsPerPass) {
       result.deferred++;
       if (guardBlock != null) b = { ...b, blocked: guardBlock };
       await save(b);
@@ -382,38 +437,22 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       evaluation = judge(fresh);
       b = evaluation.bookkeeping;
       if (!evaluation.due || b == null) {
-        logger.info(`auto-deletion sweep: account "${account.username}" (${account.id}) was used while being checked: not erased`);
+        logger.info(`auto-deletion sweep: account "${account.username}" (${account.id}) was used while being checked: not ${isTransfer ? 'transferred' : 'erased'}`);
         await save(b);
         return;
       }
     }
+    const p: AccountPass = { account, ctx, facts, setting, policy, prev, guardBlock, evaluation, save };
+    if (isTransfer) {
+      await openWindow(p, b, transfer);
+      return;
+    }
 
     // A deletion the holder chose needs self-deletion still allowed (the
     // operator may have withdrawn it since); the operator's preset does not.
-    const objection: Objection | null = policy.source === 'user' && facts.selfDeletionAllowed === false
-      ? { reason: 'self-deletion-disabled', message: 'user-account.delete no longer lets the holder delete the account' }
-      : await deps.checkErasable(account);
+    const objection = await erasureObjection(p);
     if (objection != null) {
-      if (config.dryRun) {
-        logger.info(`auto-deletion sweep (dry run): account "${account.username}" (${account.id}) is due, its deletion would be refused: ${objection.message}`);
-        return;
-      }
-      let blocked = guardBlock != null && guardBlock.reason === objection.reason && guardBlock.guard === objection.guard ? guardBlock : null;
-      if (blocked == null) {
-        blocked = { reason: objection.reason, at: deps.now() };
-        if (objection.guard != null) blocked.guard = objection.guard;
-        result.blocked++;
-        logger.warn(`auto-deletion sweep: account "${account.username}" (${account.id}) is due but its deletion is refused (${objection.message}); asked again at every pass`);
-      }
-      b = { ...b, blocked };
-      if (blocked.notifiedAt == null && facts.notifiable) {
-        const now = deps.now();
-        const notice = { policy, bookkeeping: b, now };
-        if (await send(ctx, () => deps.sendBlocked(account, facts, notice)) === 'sent') {
-          b = { ...b, blocked: { ...blocked, notifiedAt: now } };
-        }
-      }
-      await save(b);
+      await hold(p, b, objection);
       return;
     }
 
@@ -428,8 +467,182 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     await erase(account, b, ctx);
   }
 
-  async function erase (account: SweepAccount, b: Bookkeeping, ctx: PassContext): Promise<void> {
-    const trigger: Trigger = b.appliedPolicy.mode === 'date' ? 'date' : 'inactivity';
+  /** What one account's pass holds, for the steps below. */
+  type AccountPass = {
+    account: SweepAccount;
+    ctx: PassContext;
+    facts: F;
+    setting: Setting | null;
+    policy: Policy;
+    prev: Bookkeeping | null;
+    guardBlock: Bookkeeping['blocked'] | null;
+    evaluation: Evaluation;
+    save: (next: Bookkeeping | null) => Promise<void>;
+  };
+
+  async function erasureObjection (p: AccountPass): Promise<Objection | null> {
+    if (p.policy.source === 'user' && p.facts.selfDeletionAllowed === false) {
+      return { reason: 'self-deletion-disabled', message: 'user-account.delete no longer lets the holder delete the account' };
+    }
+    return await deps.checkErasable(p.account);
+  }
+
+  /** The erasure is refused: recorded as `blocked`, mailed once, asked again at every pass. */
+  async function hold (p: AccountPass, b: Bookkeeping, objection: Objection): Promise<void> {
+    const { account, ctx, facts, policy, guardBlock } = p;
+    if (ctx.config.dryRun) {
+      logger.info(`auto-deletion sweep (dry run): account "${account.username}" (${account.id}) is due, its deletion would be refused: ${objection.message}`);
+      return;
+    }
+    let blocked = guardBlock != null && guardBlock.reason === objection.reason && guardBlock.guard === objection.guard ? guardBlock : null;
+    if (blocked == null) {
+      blocked = { reason: objection.reason, at: deps.now() };
+      if (objection.guard != null) blocked.guard = objection.guard;
+      ctx.result.blocked++;
+      logger.warn(`auto-deletion sweep: account "${account.username}" (${account.id}) is due but its deletion is refused (${objection.message}); asked again at every pass`);
+    }
+    let next: Bookkeeping = { ...b, blocked };
+    if (blocked.notifiedAt == null && facts.notifiable) {
+      const now = deps.now();
+      const notice = { policy, bookkeeping: next, now, setting: p.setting };
+      if (await send(ctx, () => deps.sendBlocked(account, facts, notice)) === 'sent') {
+        next = { ...next, blocked: { ...blocked, notifiedAt: now } };
+      }
+    }
+    await p.save(next);
+  }
+
+  function flowDeps (ctx: PassContext): TransferFlowDeps<F> {
+    return {
+      state,
+      config: ctx.config,
+      now: deps.now,
+      // The flow's mails respect the pass's transport state like the others.
+      sendTransferMail: async (account, facts, notice) => {
+        const outcome = await send(ctx, () => deps.sendTransferMail(account, facts, notice));
+        return outcome === 'held' ? 'failed' : outcome;
+      }
+    };
+  }
+
+  /** The schedule of a transfer is due: open the claim window and tell both. */
+  async function openWindow (p: AccountPass, b: Bookkeeping, previous: TransferRecord | null): Promise<void> {
+    const { account, ctx, facts, setting } = p;
+    const transferSetting = setting?.transfer;
+    if (transferSetting == null) throw new Error('a transfer policy without its transfer setting');
+    if (ctx.config.dryRun) {
+      ctx.result.wouldOpen++;
+      logger.info(`auto-deletion sweep (dry run): would open the transfer claim window of account "${account.username}" (${account.id})`);
+      return;
+    }
+    const now = deps.now();
+    const named = previous?.status === 'named' && previous.email === transferSetting.email ? previous : null;
+    let record: TransferRecord = {
+      email: transferSetting.email,
+      status: 'open',
+      createdAt: named?.createdAt ?? now,
+      declineSalt: named?.declineSalt ?? newSalt(),
+      openedAt: now,
+      endsAt: now + ctx.config.transfer.claimWindowDays * DAY_SECONDS,
+      claimSalt: newSalt(),
+      claimMailsSent: []
+    };
+    if (named?.namedAt != null) record.namedAt = named.namedAt;
+    await p.save(withoutBlocked(b));
+    await state.saveTransfer(account.id, record);
+    ctx.result.transfersOpened++;
+    logger.warn(`auto-deletion: transfer of account "${account.username}" (${account.id}) started, claim window until ${new Date(record.endsAt! * 1000).toISOString()}`);
+    record = await sendClaimMail(p, record);
+    await send(ctx, () => deps.sendTransferMail(account, facts, { kind: 'started', to: 'owner', record, setting, now }));
+  }
+
+  async function sendClaimMail (p: AccountPass, record: TransferRecord): Promise<TransferRecord> {
+    const now = deps.now();
+    const outcome = await send(p.ctx, () => deps.sendTransferMail(p.account, p.facts, { kind: 'claim', to: 'beneficiary', record, setting: p.setting, now }));
+    if (outcome !== 'sent') return record;
+    const next = { ...record, claimMailsSent: [...(record.claimMailsSent ?? []), now] };
+    await state.saveTransfer(p.account.id, next);
+    return next;
+  }
+
+  /** A claim window is open (or claimed, invite out). */
+  async function runWindow (p: AccountPass, record: TransferRecord): Promise<void> {
+    const { account, ctx, facts } = p;
+    if (ctx.config.dryRun) {
+      logger.info(`auto-deletion sweep (dry run): account "${account.username}" (${account.id}) has a transfer claim window open; left as it is`);
+      return;
+    }
+    const flow = flowDeps(ctx);
+    const now = deps.now();
+    if (record.status === 'claimed' && record.claimedBy != null) {
+      if (await deps.delegationOf(account, record.claimedBy) === 'active') {
+        await completeTransfer(flow, account, facts, record);
+        ctx.result.transfersCompleted++;
+        logger.warn(`auto-deletion: transfer of account "${account.username}" (${account.id}) completed: "${record.claimedBy.username}" controls it`);
+        return;
+      }
+    }
+    if (windowEnded(record, now)) {
+      await endWindow(p, record);
+      return;
+    }
+    // Used before anyone claimed it: the transfer is moot, the clock restarts.
+    const used = facts.activity.at != null && record.openedAt != null && facts.activity.at > record.openedAt;
+    if (record.status === 'open' && p.policy.mode === 'inactivity' && used) {
+      const reason = facts.activity.by === 'delegate' ? 'delegate-activity' : 'owner-activity';
+      await cancelTransfer(flow, account, facts, record, { reason, mailOwner: true, keepIdentity: true });
+      await p.save(p.evaluation.bookkeeping);
+      ctx.result.transfersCancelled++;
+      logger.info(`auto-deletion sweep: transfer of account "${account.username}" (${account.id}) cancelled: the account was used (${reason})`);
+      return;
+    }
+    let current = record;
+    if (current.lockedAt != null || (current.failedAttempts ?? 0) > 0) {
+      const { lockedAt: _l, failedAttempts: _f, ...rest } = current;
+      current = rest;
+      await state.saveTransfer(account.id, current);
+    }
+    if (claimMailDue(current, now) != null) await sendClaimMail(p, current);
+  }
+
+  /** The claim window is over: the owner's fallback. */
+  async function endWindow (p: AccountPass, record: TransferRecord): Promise<void> {
+    const { account, ctx, facts, setting } = p;
+    const flow = flowDeps(ctx);
+    if (record.status === 'claimed' && record.claimedBy != null) {
+      try {
+        await deps.withdrawInvite(account, record.claimedBy);
+      } catch (err) {
+        logger.warn(`auto-deletion sweep: the pending invite of account "${account.username}" (${account.id}) to "${record.claimedBy.username}" was not withdrawn: ${errorText(err)}`);
+      }
+    }
+    if (setting?.transfer?.fallback !== 'delete') {
+      await lapseTransfer(flow, account, facts, record);
+      ctx.result.transfersLapsed++;
+      logger.warn(`auto-deletion: transfer of account "${account.username}" (${account.id}) lapsed without a claim: the account is kept`);
+      return;
+    }
+    // Fallback `delete`: as a direct deletion (cap, self-deletion, guards).
+    if (ctx.config.maxDeletionsPerPass > 0 && ctx.erasuresStarted >= ctx.config.maxDeletionsPerPass) {
+      ctx.result.deferred++;
+      return;
+    }
+    const b = p.evaluation.bookkeeping ?? p.prev;
+    if (b == null) throw new Error('a transfer window without a schedule');
+    const objection = await erasureObjection(p);
+    if (objection != null) {
+      await hold(p, b, objection);
+      return;
+    }
+    ctx.erasuresStarted++;
+    const cleared = withoutBlocked(b);
+    await p.save(cleared);
+    await state.saveTransfer(account.id, { ...record, status: 'fallback-delete', closedAt: deps.now() });
+    await erase(account, cleared, ctx, 'transfer-fallback');
+  }
+
+  async function erase (account: SweepAccount, b: Bookkeeping, ctx: PassContext, triggerOverride?: Trigger): Promise<void> {
+    const trigger: Trigger = triggerOverride ?? (b.appliedPolicy.mode === 'date' ? 'date' : 'inactivity');
     const sent = b.reminders.sent.filter((s) => s.skipped !== true).map((s) => s.at);
     const notices = b.firstNoticeAt != null && !sent.includes(b.firstNoticeAt) ? [b.firstNoticeAt, ...sent] : sent;
     const record: ErasureRecord = {

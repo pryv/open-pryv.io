@@ -1,12 +1,23 @@
 p Hi #{USERNAME},
-if TRIGGER_INACTIVITY
-  if POLICY_OPERATOR
-    p Under the policy of this platform, accounts are deleted after #{INACTIVITY_DAYS} days without use. Your account has not been used for a while: unless it is used before, it will be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
+if ACTION_TRANSFER
+  if TRIGGER_INACTIVITY
+    p Your account is set to be transferred to #{BENEFICIARY} after #{INACTIVITY_DAYS} days without use. It has not been used for a while: unless it is used before, it will be transferred to #{BENEFICIARY} on #{DEADLINE}, in #{DAYS_LEFT} days.
   else
-    p Your account is set to be deleted after #{INACTIVITY_DAYS} days without use. It has not been used for a while: unless it is used before, it will be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
+    p Your account is set to be transferred to #{BENEFICIARY} on #{DEADLINE}, in #{DAYS_LEFT} days.
+  p #{BENEFICIARY} will then get an email inviting them to accept it and take over the management of your account.
+  if FALLBACK_DELETE
+    p If #{BENEFICIARY} does not accept it in time, your account and all its data will be deleted, and this cannot be undone.
+  else if FALLBACK_KEEP
+    p If #{BENEFICIARY} does not accept it in time, your account stays as it is.
 else
-  p Your account is set to be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
-p All the data of the account will then be erased, and this cannot be undone.
+  if TRIGGER_INACTIVITY
+    if POLICY_OPERATOR
+      p Under the policy of this platform, accounts are deleted after #{INACTIVITY_DAYS} days without use. Your account has not been used for a while: unless it is used before, it will be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
+    else
+      p Your account is set to be deleted after #{INACTIVITY_DAYS} days without use. It has not been used for a while: unless it is used before, it will be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
+  else
+    p Your account is set to be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
+  p All the data of the account will then be erased, and this cannot be undone.
 if EXPORT_URL
   p
     | To keep a copy of your data, download it before that date:
@@ -14,7 +25,15 @@ if EXPORT_URL
     a(href=EXPORT_URL target="_blank" rel="noopener") #{EXPORT_URL}
 if TRIGGER_INACTIVITY
   p To keep your account, simply use it: signing in, or an app you connected, moves the date.
-if ACCOUNT_APP_URL
+if ACTION_TRANSFER
+  if ACCOUNT_APP_URL
+    p
+      | To change or cancel the transfer, sign in to your account page:
+      |
+      a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+  else
+    p To change or cancel the transfer, sign in to your account page.
+else if ACCOUNT_APP_URL
   p
     | To change or cancel the deletion, sign in to your account page:
     |

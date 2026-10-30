@@ -1,0 +1,16 @@
+p Bonjour #{USERNAME},
+if REASON_DECLINED
+  p #{BENEFICIARY} a refusé le transfert de votre compte.
+else if WINDOW_END
+  p Personne n'a accepté le transfert de votre compte à #{BENEFICIARY} avant le #{WINDOW_END}.
+else
+  p Personne n'a accepté à temps le transfert de votre compte à #{BENEFICIARY}.
+p Votre compte reste tel quel.
+p Si vous aviez indiqué un nom ou une date de naissance pour identifier #{BENEFICIARY}, ces informations ont été supprimées.
+if ACCOUNT_APP_URL
+  p
+    | Pour faire un nouveau choix, connectez-vous à la page de votre compte :
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p Pour faire un nouveau choix, connectez-vous à la page de votre compte.

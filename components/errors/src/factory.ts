@@ -54,6 +54,11 @@ interface ErrorFactory {
   autoDeletionOverrideNotAllowed: (reason: 'user-override-disabled' | 'inactivity-unavailable') => APIErrorT;
   autoDeletionActionNotAllowed: (action: string, available: string[]) => APIErrorT;
   autoDeletionNoEmail: (reason: 'no-email' | 'mail-not-configured') => APIErrorT;
+  autoDeletionTransferInvalidLink: () => APIErrorT;
+  autoDeletionTransferExpired: () => APIErrorT;
+  autoDeletionTransferClaimed: () => APIErrorT;
+  autoDeletionTransferLocked: (retryAfterSeconds: number) => APIErrorT;
+  autoDeletionTransferInvalid: (message: string, data: Record<string, unknown>) => APIErrorT;
 }
 
 /**
@@ -382,6 +387,34 @@ factory.autoDeletionNoEmail = function (reason: 'no-email' | 'mail-not-configure
   return new APIError(ErrorIds.AutoDeletionNoEmail,
     `No reminder can be sent before the deletion (${why}): send "acknowledgeNoReminders": true to set it anyway.`,
     { httpStatus: 400, data: { reason } });
+};
+
+factory.autoDeletionTransferInvalidLink = function () {
+  return new APIError(ErrorIds.AutoDeletionTransferInvalidLink,
+    'This link is not valid: it may have been replaced by a newer one, or the transfer was cancelled.',
+    { httpStatus: 403 });
+};
+
+factory.autoDeletionTransferExpired = function () {
+  return new APIError(ErrorIds.AutoDeletionTransferExpired,
+    'The period to claim this account has ended.',
+    { httpStatus: 410 });
+};
+
+factory.autoDeletionTransferClaimed = function () {
+  return new APIError(ErrorIds.AutoDeletionTransferClaimed,
+    'This account was already claimed by another account.',
+    { httpStatus: 409 });
+};
+
+factory.autoDeletionTransferLocked = function (retryAfterSeconds: number) {
+  return new APIError(ErrorIds.AutoDeletionTransferLocked,
+    'Too many failed attempts to claim this account: claims are refused for now.',
+    { httpStatus: 429, data: { retryAfterSeconds } });
+};
+
+factory.autoDeletionTransferInvalid = function (message: string, data: Record<string, unknown>) {
+  return new APIError(ErrorIds.AutoDeletionTransferInvalid, message, { httpStatus: 400, data });
 };
 
 /**

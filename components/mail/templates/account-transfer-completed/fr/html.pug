@@ -1,0 +1,25 @@
+if TO_BENEFICIARY
+  if BENEFICIARY_NAME
+    p Bonjour #{BENEFICIARY_NAME},
+  else
+    p Bonjour,
+  if CLAIMANT
+    p Vous gérez désormais le compte #{USERNAME}, avec votre propre compte #{CLAIMANT}.
+  else
+    p Vous gérez désormais le compte #{USERNAME}.
+  if ACCOUNT_APP_URL
+    p
+      | Pour y accéder, connectez-vous à votre propre compte :
+      |
+      a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+  else
+    p Pour y accéder, connectez-vous à votre propre compte sur cette plateforme.
+else
+  p Bonjour #{USERNAME},
+  if CLAIMANT
+    p #{CLAIMANT} (#{BENEFICIARY}) gère désormais votre compte, comme vous l'avez choisi.
+  else
+    p #{BENEFICIARY} gère désormais votre compte, comme vous l'avez choisi.
+  p Vous pouvez toujours vous connecter avec votre mot de passe.
+  p Si vous aviez indiqué un nom ou une date de naissance pour identifier #{BENEFICIARY}, ces informations ont été supprimées.
+  p Si ce n'est pas ce que vous attendiez, connectez-vous et contactez le support de votre plateforme.

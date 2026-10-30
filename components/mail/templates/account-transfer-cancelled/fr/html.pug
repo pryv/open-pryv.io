@@ -1,0 +1,35 @@
+if TO_BENEFICIARY
+  if BENEFICIARY_NAME
+    p Bonjour #{BENEFICIARY_NAME},
+  else
+    p Bonjour,
+  if REASON_OWNER_ACTIVITY
+    p Le transfert du compte #{USERNAME} vers vous est annulé : le compte est de nouveau utilisé.
+  else if REASON_DELEGATE_ACTIVITY
+    p Le transfert du compte #{USERNAME} vers vous est annulé : le compte est de nouveau utilisé.
+  else if REASON_OWNER_CHANGE
+    p Le transfert du compte #{USERNAME} vers vous est annulé : son titulaire a modifié son choix.
+  else
+    p Le transfert du compte #{USERNAME} vers vous est annulé.
+  p Vous n'avez rien à faire. Les liens que vous avez reçus pour ce transfert ne fonctionnent plus.
+else
+  p Bonjour #{USERNAME},
+  if REASON_DECLINED
+    p #{BENEFICIARY} a refusé le transfert de votre compte.
+    if FALLBACK_DELETE
+      p Votre compte sera donc supprimé, comme vous l'avez choisi pour ce cas : à la date prévue, ou dès maintenant si cette date est passée. Toutes les données du compte seront alors effacées, et cela ne peut pas être annulé.
+    else
+      p Votre compte reste tel quel.
+  else if REASON_OWNER_ACTIVITY
+    p Votre compte a été utilisé : son transfert à #{BENEFICIARY} a donc été annulé. Le délai repart de maintenant.
+  else if REASON_DELEGATE_ACTIVITY
+    p Votre compte a été utilisé par une personne qui le gère : son transfert à #{BENEFICIARY} a donc été annulé. Le délai repart de maintenant.
+  else
+    p Le transfert de votre compte à #{BENEFICIARY} est annulé. Votre compte reste tel quel.
+  if ACCOUNT_APP_URL
+    p
+      | Pour modifier ce réglage, connectez-vous à la page de votre compte et changez le réglage de suppression automatique :
+      |
+      a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+  else
+    p Pour modifier ce réglage, connectez-vous à la page de votre compte et changez le réglage de suppression automatique.

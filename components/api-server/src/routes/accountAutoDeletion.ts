@@ -27,4 +27,16 @@ export default function (expressApp: ExpressApp, app: AppLike): void {
   expressApp.put(path, setMethodId('account.setAutoDeletion'), loadAccessMiddleware, function (req: PryvRequest, res: Response, next: NextFunction) {
     api.call(req.context, req.body, methodCallback(res, next, 200));
   });
+  // Public: the token in the body (from the link mailed to the beneficiary)
+  // is the credential. No access-token middleware, as for verify-email.
+  expressApp.post(path + '/transfer-claim', setMethodId('account.transferClaim'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    const params = req.body;
+    params.origin = req.headers.origin;
+    api.call(req.context, params, methodCallback(res, next, 200));
+  });
+  expressApp.post(path + '/transfer-decline', setMethodId('account.transferDecline'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    const params = req.body;
+    params.origin = req.headers.origin;
+    api.call(req.context, params, methodCallback(res, next, 200));
+  });
 }

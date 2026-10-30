@@ -662,6 +662,12 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #       # Notice to the account's address when its MFA is enrolled, replaced,
 #       # turned off or recovered.
 #       mfaChange: true
+#       # The account auto-deletion mails (accountDeletionScheduled,
+#       # accountDeletionReminder, accountDeletionBlocked) and the account
+#       # transfer mails (accountTransferNamed, accountTransferClaim,
+#       # accountTransferStarted, accountTransferCancelled,
+#       # accountTransferLapsed, accountTransferCompleted) are on by default;
+#       # a transfer needs the named and claim mails to reach its beneficiary.
 #     method: in-process
 #     from:
 #       name: 'My Pryv'

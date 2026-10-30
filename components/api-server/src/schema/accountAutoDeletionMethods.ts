@@ -23,9 +23,15 @@ const set = {
     date: helpers.string({ maxLength: 40 }),
     inactivityDays: helpers.getBaseSchema('integer', { minimum: 1 }),
     action: helpers.string({ enum: ['delete', 'transfer'] }),
-    // Transfer settings (`action: 'transfer'`), refused while that action is
-    // not offered: accepted here so the answer says why.
-    transfer: helpers.object({}),
+    // Transfer settings (`action: 'transfer'`). None is required here: a
+    // transfer refused for its action first says why.
+    transfer: helpers.object({
+      email: helpers.string({ maxLength: 300 }),
+      name: helpers.string({ maxLength: 200 }),
+      dateOfBirth: helpers.string({ maxLength: 10 }),
+      notifyBeneficiary: helpers.string({ enum: ['atSetup', 'atTrigger'] }),
+      fallback: helpers.string({ enum: ['delete', 'keep'] })
+    }, { additionalProperties: false }),
     acknowledgeNoReminders: helpers.boolean(),
     password: helpers.string({ maxLength: 1000 })
   }, {
@@ -34,3 +40,31 @@ const set = {
   })
 };
 export { set };
+
+// Public: the token of the mailed link is the credential.
+const transferClaim = {
+  params: helpers.object({
+    appId: helpers.string(),
+    origin: helpers.string(),
+    token: helpers.string({ maxLength: 200 }),
+    // The account claiming (signed in to on its own core, which completes the
+    // handshake with `delegations.acceptAttach`).
+    claimant: helpers.string({ maxLength: 100 })
+  }, {
+    required: ['appId', 'token', 'claimant'],
+    additionalProperties: false
+  })
+};
+export { transferClaim };
+
+const transferDecline = {
+  params: helpers.object({
+    appId: helpers.string(),
+    origin: helpers.string(),
+    token: helpers.string({ maxLength: 200 })
+  }, {
+    required: ['appId', 'token'],
+    additionalProperties: false
+  })
+};
+export { transferDecline };

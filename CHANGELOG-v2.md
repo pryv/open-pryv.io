@@ -1,5 +1,61 @@
 # Changelog - API Changes
 
+## Unreleased
+
+- **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
+  of being deleted at its date or after its period without use, an account can be handed over to a
+  beneficiary, who then becomes its controller (account delegation). The setting takes `transfer: {
+  email, name?, dateOfBirth?, notifyBeneficiary: 'atSetup' | 'atTrigger', fallback: 'delete' |
+  'keep' }` with `mode: 'date'` or `'inactivity'`; `fallback: 'delete'` is offered only where the
+  holder may delete the account themselves. Setting or changing a transfer (beneficiary, fallback,
+  notice, name or date of birth) needs the account password, like arming a schedule; moving from
+  `transfer` to `delete` counts as bringing the deletion nearer. Name and date of birth are optional,
+  stored encrypted in their own account field (never answered by the API: the setting shows
+  `identityGiven: true`), kept for the same beneficiary, and erased with every version when the
+  beneficiary changes, the action changes, the transfer completes, lapses or is declined, and with
+  the account. `getAutoDeletion` adds `transfer` (the state of the current or last transfer:
+  `status` `named | open | claimed | completed | declined | cancelled | lapsed | fallback-delete`,
+  `email`, `openedAt`, `endsAt`, `claimedBy`, `locked`, `closedAt`, `closedReason`) and
+  `claimWindowDays`. With `notifyBeneficiary: 'atSetup'` the beneficiary is mailed at once, with a
+  decline link. When the schedule is due the account is not erased: a claim window opens
+  (`account.autoDeletion.transfer.claimWindowDays`, default 90), the beneficiary is mailed a claim
+  link (again 30 and 60 days later, the same link) and the holder is told. Use of the account before
+  a claim cancels the transfer in `inactivity` mode (the clock restarts); the holder can change or
+  cancel it in the account app at any time. At the window end without a claim the holder's
+  `fallback` applies: `keep` lapses the transfer and leaves the setting at `never` (or the
+  platform's preset, with its full schedule, where opting out is not allowed); `delete` erases the
+  account as a direct deletion would (deletion guards, self-deletion, `maxDeletionsPerPass`).
+  `transfer` appears in `actions` and `features.autoDeletion.actions` where account delegation is
+  on, mail can be sent and `service.account` is set (the claim and decline pages are pages of the
+  account app). The feature is now advertised when `transfer` alone is offered.
+- **New public methods `account.transferClaim` (`POST /{username}/account/auto-deletion/transfer-claim`,
+  `{ appId, token, claimant }`) and `account.transferDecline` (`POST
+  /{username}/account/auto-deletion/transfer-decline`, `{ appId, token }`).** The token of the mailed
+  link is the credential (trusted apps only, never inside a batch call). A claim binds the transfer to
+  the first account that claims it (`claimant`, on any core of the platform), sends that account a
+  delegation invite on the holder's behalf and answers `{ transfer: { status: 'invited', username }
+  }`; the claimant accepts it with `delegations.acceptAttach` on its own core, and the next claim
+  (or the sweep) completes the transfer: `{ status: 'completed' }`, the holder's setting cleared, the
+  identity erased, both parties mailed. A repeat by the same account answers the same; an invite that
+  lapsed inside the window is issued again; a claimant that already controls the account completes it
+  at once. Refusals: `auto-deletion-transfer-invalid-link` (unknown, replaced or closed: one answer),
+  `auto-deletion-transfer-expired` (window ended), `auto-deletion-transfer-claimed` (another account
+  claimed it), `auto-deletion-transfer-locked` (429: ten failed claims of one transfer, until the
+  next sweep pass; the holder sees `transfer.locked`). Failed links also count on the caller's
+  address budget of failed secrets (`auth.passwordAttempts.perIp`, `too-many-attempts`). A decline
+  before the deadline turns the setting into the holder's fallback (`delete` on the same schedule, or
+  `never`); during the window it applies the fallback at once (`keep`) or at the next pass
+  (`delete`). The setting rejects an invalid transfer with `auto-deletion-transfer-invalid`
+  (`data.param`).
+- **Six new mails:** `account-transfer-named`, `-claim`, `-started`, `-cancelled`, `-lapsed`,
+  `-completed` (en, fr), switches `services.email.enabled.accountTransfer{Named,Claim,Started,
+  Cancelled,Lapsed,Completed}` and template keys `accountTransfer…Template` (variables in
+  `default-config.yml`). The confirmation and reminder mails say "transferred to" for a transfer
+  (new variables `ACTION_TRANSFER`, `BENEFICIARY`, `FALLBACK_DELETE`, `FALLBACK_KEEP`, ...).
+  **Existing platforms:** the seeder fills an empty template store only: add the six templates (and
+  the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
+  templates set`.
+
 ## 2.0.0-rc.67 - 2026-10-30
 
 - Same server behaviour as 2.0.0-rc.66, which shipped without a Docker image (its CI run failed on a type name and on

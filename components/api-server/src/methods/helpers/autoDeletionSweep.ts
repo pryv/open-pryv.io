@@ -16,7 +16,8 @@ import { getActivity } from 'business/src/accesses/accountActivity.ts';
 import type { ActivityAccessesRepo } from 'business/src/accesses/accountActivity.ts';
 import { createAutoDeletionSweep } from 'business/src/autoDeletion/sweep.ts';
 import type { SweepDeps, AutoDeletionSweep, Notice, SweepAccount, ErasureRecord } from 'business/src/autoDeletion/sweep.ts';
-import { getState, loadAccountFacts, confirmationSubstitutions, sendAutoDeletionMail } from './autoDeletion.ts';
+import { getState, loadAccountFacts, confirmationSubstitutions, sendAutoDeletionMail, sendTransferMail, transferVars } from './autoDeletion.ts';
+import { getTransferDelegation } from './transferDelegation.ts';
 import type { AccountFacts } from './autoDeletion.ts';
 import { autoDeletionConfig } from './autoDeletionPolicy.ts';
 import { Deletion } from 'business/src/auth/deletion.ts';
@@ -38,13 +39,20 @@ export function isDesignatedLoopWorker (env: Record<string, string | undefined> 
   return defaultIsLoopWorker(env) as boolean;
 }
 
-function reminderSubstitutions (config: ConfigLike, user: SweepAccount, notice: Notice, lang: string): Record<string, string> {
+function reminderSubstitutions (config: ConfigLike, user: SweepAccount, notice: Notice, lang: string, transfer: Record<string, string>): Record<string, string> {
   const schedule = { policy: notice.policy, evaluation: { bookkeeping: notice.bookkeeping, reminder: notice.leadDays ?? null, due: false } };
   return {
     ...confirmationSubstitutions(config, user, schedule, lang, notice.now),
     POLICY_OPERATOR: notice.policy.source === 'operator' ? 'true' : '',
-    ...blockedSubstitutions(notice.bookkeeping.blocked)
+    ...blockedSubstitutions(notice.bookkeeping.blocked),
+    ...transfer
   };
+}
+
+/** A reminder or blocked mail: a transfer's beneficiary and fallback read first (the name is decrypted). */
+async function sendScheduleMail (config: ConfigLike, kind: 'reminder' | 'blocked', account: SweepAccount, facts: AccountFacts, notice: Notice) {
+  const transfer = await transferVars(config, account, notice.policy.action === 'transfer' ? notice.setting ?? null : null);
+  return await sendAutoDeletionMail(config, kind, account, facts, (lang) => reminderSubstitutions(config, account, notice, lang, transfer));
 }
 
 /**
@@ -99,10 +107,18 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
     state,
     loadFacts: (account) => loadAccountFacts(config, account),
     readActivity: (account) => getActivity(storageLayer.accesses as unknown as ActivityAccessesRepo, account),
-    sendReminder: (account, facts, notice) => sendAutoDeletionMail(config, 'reminder', account, facts,
-      (lang) => reminderSubstitutions(config, account, notice, lang)),
-    sendBlocked: (account, facts, notice) => sendAutoDeletionMail(config, 'blocked', account, facts,
-      (lang) => reminderSubstitutions(config, account, notice, lang)),
+    sendReminder: (account, facts, notice) => sendScheduleMail(config, 'reminder', account, facts, notice),
+    sendBlocked: (account, facts, notice) => sendScheduleMail(config, 'blocked', account, facts, notice),
+    sendTransferMail: (account, facts, notice) => sendTransferMail(config, account, facts, notice),
+    delegationOf: async (account, claimedBy) => {
+      const delegation = getTransferDelegation();
+      if (delegation == null) return 'none';
+      const rel = await delegation.stateOf(account, claimedBy.username);
+      return rel.status === 'active' ? 'active' : rel.status === 'invite' ? 'invite' : 'none';
+    },
+    withdrawInvite: async (account, claimedBy) => {
+      await getTransferDelegation()?.withdraw(account, claimedBy.username);
+    },
     checkErasable: async (account) => {
       // The checks auth.delete runs before erasing. An inaccessible user
       // directory is the operator's to fix: it throws (logged, retried).

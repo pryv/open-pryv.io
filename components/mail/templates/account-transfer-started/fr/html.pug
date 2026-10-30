@@ -1,0 +1,23 @@
+p Bonjour #{USERNAME},
+p Le transfert de votre compte à #{BENEFICIARY} a commencé.
+if WINDOW_END
+  p Une invitation à l'accepter a été envoyée à #{BENEFICIARY}, qui a jusqu'au #{WINDOW_END} pour le faire.
+else
+  p Une invitation à l'accepter a été envoyée à #{BENEFICIARY}.
+if FALLBACK_DELETE
+  p Si #{BENEFICIARY} ne l'accepte pas à temps, votre compte et toutes ses données seront supprimés, et cela ne pourra pas être annulé.
+else if FALLBACK_KEEP
+  p Si #{BENEFICIARY} ne l'accepte pas à temps, votre compte restera tel quel.
+if ACCOUNT_APP_URL
+  p
+    | Si vous utilisez encore ce compte et souhaitez le garder, vous pouvez annuler le transfert sur la page de votre compte :
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p Si vous utilisez encore ce compte et souhaitez le garder, vous pouvez annuler le transfert sur la page de votre compte.
+if EXPORT_URL
+  p
+    | Pour garder une copie de vos données, téléchargez-les :
+    |
+    a(href=EXPORT_URL target="_blank" rel="noopener") #{EXPORT_URL}
+p Si vous n'êtes pas à l'origine de ce réglage, connectez-vous, changez votre mot de passe sans attendre et contactez le support de votre plateforme.
