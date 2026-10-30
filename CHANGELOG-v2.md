@@ -33,9 +33,13 @@
   Whatever the grammar answers, the core refuses account and system streams, every stream (`*`), the
   `manage` level, two permissions on one stream in an offer and a token the client did not send
   (`invalid_scope`), and removes `defaultName` / `name` from the offer and from the consent UI's
-  `grantedPermissions` (a registry consent never creates a stream). The token response `scope` is the grammar's
-  echo over the permissions actually minted (and must stay within the requested tokens), so it
-  narrows when the user unticked part of the offer or the grant was narrowed. The subject handed to
+  `grantedPermissions` (a registry consent never creates a stream). The token response `scope` of a
+  registry client is the grammar's echo over the permissions actually minted, checked by parsing it
+  again with the same grammar: it may name tokens the client did not request (a narrowed token after
+  a partial consent, a per-stream token, a marker), it is refused (`server_error`, logged) when it
+  claims a stream or a level the session does not hold, and the server logs an echo that leaves held
+  reach unnamed. It narrows when the user unticked part of the offer or the grant was narrowed; a
+  refresh refused this way leaves the refresh token usable. The subject handed to
   the extension (and the hook fields built on it) is the user's internal id, not the username and not
   routable; `apiEndpoint` is sent. `offline_access` asks for a refresh token; `openid` is refused on
   this core. Without the extension every registry client's `/oauth2/authorize` answers `invalid_scope`.

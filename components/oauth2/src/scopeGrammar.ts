@@ -27,6 +27,10 @@
  * and in the maximum set) account and system streams, every stream (`*`) and
  * the `manage` level, and two entries on one stream in a requested offer:
  * see `callParse`.
+ *
+ * The token response's `scope` is the grammar's echo over the minted
+ * permissions, parsed again by the same grammar and checked against them:
+ * see `grantedScopeTokens`.
  */
 
 import crypto from 'node:crypto';
@@ -34,7 +38,7 @@ import type { OAuthClient } from './storage.ts';
 import type { ExtPermission, SynthOffer, OAuthExtension } from './extension.ts';
 import type { Permission } from 'business/src/types/public.ts';
 import { getExtension, toClientView, extensionGeneration } from './extension.ts';
-import { logServerError } from './serverLog.ts';
+import { logServerError, logServerWarning } from './serverLog.ts';
 import { normalizePermissions, isStreamPermission, levelCapabilityExcess, permissionKey } from 'business/src/accesses/permissionSet.ts';
 import { canonicalStreamId, parseStoreIdAndStoreItemId, AccountStoreId } from 'mall/src/helpers/storeDataUtils.ts';
 
@@ -71,6 +75,8 @@ export type ResolvedScope = {
 export type ResolveScopeResult = ResolvedScope | { ok: false; description: string };
 
 const maxSetCache = new Map<string, ExtPermission[]>();
+// The echo's own parse, same scheme (cleared whole at the bound).
+const echoParseCache = new Map<string, ExtPermission[]>();
 const MAX_SET_CACHE_SIZE = 500;
 
 /** Split a scope string into de-duplicated tokens, order kept. */
@@ -171,8 +177,8 @@ function callParse (
     return { ok: false, description: 'scope could not be parsed' };
   }
   // The tokens a request's grammar reports must be tokens the client sent:
-  // the echo is checked against them, so an added token could be reported as
-  // granted without ever being requested.
+  // they are kept as what was requested (and handed back to the echo as
+  // `requestedTokens`). For an echoed string, the same rule holds.
   if (purpose === 'request') {
     const sent = new Set(splitScope(scopeString));
     const added = (r.tokens as string[]).filter((t) => !sent.has(t));
@@ -294,10 +300,19 @@ export function canonicalJson (v: unknown): string {
 /**
  * The tokens a grant honestly covers: core tokens granted plus the grammar's
  * echo over the permissions actually minted. This is the RFC `scope` answer
- * and the `scopeTokens` of every response hook. The echo may only answer
- * tokens the client requested: anything else is an extension error (thrown,
- * the caller answers `server_error`), so a scope the user never saw is never
- * reported as granted.
+ * and the `scopeTokens` of every response hook.
+ *
+ * The echo may name tokens the client did not request (a narrowed token after
+ * a partial consent, a per-stream token, a marker), but it may never claim
+ * reach the session does not hold. The echoed string is parsed WHOLE by the
+ * same grammar, as a request (every request rule applies to it), and every
+ * entry it yields must be held by `permissions`: a stream entry by an entry
+ * on the same canonical stream whose level has no capability the claimed one
+ * lacks (`none` held is not held; no inheritance through the stream tree), a
+ * feature entry by the same entry (a `forbidden` one always passes). A token
+ * that yields no entry claims nothing and passes. A violation is an extension
+ * error (thrown, the caller answers `server_error`). Held reach the echo
+ * leaves unnamed is logged, not refused.
  */
 export function grantedScopeTokens (
   client: OAuthClient,
@@ -307,19 +322,67 @@ export function grantedScopeTokens (
 ): string[] {
   const ext: OAuthExtension | null = getExtension();
   if (ext == null) throw new Error('no scope grammar registered on this core');
-  const echoed = ext.scopeGrammar.echo({ permissions, requestedTokens: grammarTokens, client: toClientView(client) });
-  if (!Array.isArray(echoed) || echoed.some((t) => typeof t !== 'string')) {
+  const answer = ext.scopeGrammar.echo({ permissions, requestedTokens: grammarTokens, client: toClientView(client) });
+  if (!Array.isArray(answer) || answer.some((t) => typeof t !== 'string')) {
     throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo must return an array of strings`);
   }
-  const requested = new Set(grammarTokens);
-  const outside = echoed.filter((t) => !requested.has(t));
-  if (outside.length > 0) {
-    throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo answered token(s) the client did not request: ${outside.slice(0, 5).join(' ')}`);
+  const echoed = [...new Set(answer as string[])];
+  if (echoed.length > MAX_SYNTH_ENTRIES) {
+    throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo answered more than ${MAX_SYNTH_ENTRIES} tokens`);
+  }
+  const core = echoed.filter((t) => CORE_SCOPE_TOKENS.includes(t));
+  if (core.length > 0) {
+    throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo answered a token the core owns: ${core.join(' ')}`);
+  }
+
+  const claimed: ExtPermission[] = echoed.length === 0 ? [] : echoClaims(ext, client, echoed.join(' '));
+  for (const p of claimed) {
+    if (coveredBy(p, permissions)) continue;
+    throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo claims reach the session does not have: ${describeClaim(p, permissions)}`);
+  }
+
+  // Held reach the echo does not name: a conformance defect of the grammar
+  // (the app is told less than it holds), reported, not refused.
+  const unnamed = permissions.find((p) => isStreamPermission(p) && p.level !== 'none' && !coveredBy(p, claimed));
+  if (unnamed != null) {
+    logServerWarning(`oauth extension ${ext.name}: scopeGrammar.echo for client ${client.clientId} leaves held reach unnamed: ` +
+      `stream ${String(unnamed.streamId)} ${String(unnamed.level)}`);
   }
   return [...new Set([...coreTokens, ...echoed])];
 }
 
-/** Test-only: drop memoised maximum scope sets. */
+/**
+ * The permissions an echoed scope string claims: the grammar's own parse of
+ * it as a request, memoised per (extension, client row, string). `parse` is
+ * pure in (scope string, client) by contract. Throws on any parse refusal or
+ * contract failure.
+ */
+function echoClaims (ext: OAuthExtension, client: OAuthClient, echoedString: string): ExtPermission[] {
+  const key = String(extensionGeneration()) + '|' + client.clientId + '|' + String(client.updatedAt) + '|' + echoedString;
+  const cached = echoParseCache.get(key);
+  if (cached != null) return cached;
+  const parsed = callParse(ext, client, echoedString, 'request');
+  if (!parsed.ok) {
+    throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo answered a scope its parse refuses: ${parsed.description}`);
+  }
+  if (echoParseCache.size >= MAX_SET_CACHE_SIZE) echoParseCache.clear();
+  echoParseCache.set(key, parsed.offer.permissions);
+  return parsed.offer.permissions;
+}
+
+/** A refused echo claim and what the session holds, for the server trail. */
+function describeClaim (p: ExtPermission, held: ExtPermission[]): string {
+  if (isStreamPermission(p)) {
+    const id: string = canonicalStreamId(String(p.streamId));
+    const h = held.find((m) => isStreamPermission(m) && canonicalStreamId(String(m.streamId)) === id);
+    return `stream ${String(p.streamId)} ${String(p.level)} (held: ${h != null ? String(h.level) : 'none'})`;
+  }
+  const h = held.find((m) => !isStreamPermission(m) && m.feature === p.feature);
+  return `feature ${String(p.feature)} ${String(p.setting)} (held: ${h != null ? String(h.setting) : 'none'})`;
+}
+
+/** Test-only: drop memoised maximum scope sets and echo parses. */
 export function _resetForTests (): void {
   maxSetCache.clear();
+  echoParseCache.clear();
 }
