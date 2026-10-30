@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 8 (2026-10-29), covering releases 2.0.0-rc.40 to 2.0.0-rc.65.
+**Report revision:** 9 (2026-10-30), covering releases 2.0.0-rc.40 to 2.0.0-rc.66.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -40,8 +40,10 @@ counterparties, added those fixed in 2.0.0-rc.56, and a review of the OAuth2 con
 lifecycle and of event history reads, made in October 2026 alongside work on OAuth2 extensions,
 added those fixed in 2.0.0-rc.64, and a review of the permissions that consents and app accesses
 can carry on account fields, of the consent retry path and of deletion listings, made in October
-2026, added those fixed in 2.0.0-rc.65; they were fixed under the same rules (tests that fail
-without the fix, independent review before merge).
+2026, added those fixed in 2.0.0-rc.65, and a review of access aliases and username changes, and
+of how consent grants and refreshed OAuth2 sessions combine permissions, made in October 2026,
+added those fixed in 2.0.0-rc.66; they were fixed under the same rules (tests that fail without the
+fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -51,7 +53,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 57 findings, each rated and described individually in
+The review and its follow-ups recorded 60 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -59,9 +61,9 @@ items reported through the public issue tracker, are described but not counted:
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
-| Medium | 28 | 0 | 0 |
+| Medium | 31 | 0 | 0 |
 | Low | 1 | 0 | 0 |
-| **Total** | **57** | **0** | **0** |
+| **Total** | **60** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -101,6 +103,7 @@ its applicability is stated with it.
 | 2.0.0-rc.63 | 2026-10-28 | dependency updates, not audit findings: `node-forge` 1.4.2 (GHSA-86w9-cpqp-85rv, high: RSA PKCS#1 v1.5 signature verification; no patched release existed before 1.4.2), `qs` 6.16.1 (GHSA-6pq8-jhm2-2vcw, moderate: denial of service in `qs.stringify` with `arrayFormat: 'comma'`, a function the server does not call at runtime); operator action: pull the new image, or `npm install` on a native install | yes (2026-10-28) |
 | 2.0.0-rc.64 | 2026-10-29 | 2 Medium | yes (2026-10-29) |
 | 2.0.0-rc.65 | 2026-10-29 | 3 Medium, lower-severity fixes | yes (2026-10-29) |
+| 2.0.0-rc.66 | 2026-10-30 | 3 Medium, lower-severity fixes, completion step of an earlier finding | yes (2026-10-30) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -249,6 +252,10 @@ These are the main checks that held, summarised:
   around them was found.
 - **The `*` scope** never reaches the account or audit stores; non-personal tokens read only their
   own audit stream (for deletion records, only since 2.0.0-rc.65: see that release below).
+- **Access aliases** (checked in the 2.0.0-rc.66 follow-up): an access created with `randomAlias`
+  cannot obtain the account's username or former usernames through any account stream of the
+  shipped configuration (for a custom account stream named after a server-managed field, only
+  since 2.0.0-rc.66: see that release below).
 - **Access creation rules:** personal accesses cannot be created through the API; apps create shared
   accesses only; expiry is capped by the creator; tracking fields are set by the server.
 - **Token lookup** is scoped to the account named in the path; deleted and history rows are never
@@ -1341,6 +1348,114 @@ resolved the prefixed spelling to the protected stream.
   the accesses minted by the `refresh_token` and `client_credentials` grants now carry a
   millisecond creation time, like every other access.
 
+### Fixed in 2.0.0-rc.66 (deployed)
+
+This release also refuses to boot a configuration that sets `dns.domain` but leaves
+`dnsLess.isActive` out (BREAKING for such configurations, not a security fix: run
+`node bin/check-config.js` on the configuration before restarting on it; `CHANGELOG-v2.md` has the
+details).
+
+#### A narrowed OAuth2 consent grant did not reach refreshed sessions
+
+- **Severity:** Medium (deployments that serve OAuth2 clients). The app keeps only what the user
+  consented to at some point, and the user can still withdraw the whole consent (2.0.0-rc.64); what
+  failed is a partial withdrawal, which every refresh ignored for as long as the refresh chain
+  lived (`oauth.refreshTokenAbsoluteTTL`, 90 days by default).
+- **What could happen:** a refresh mints the new session from what both the session's own consent
+  and the app's consent grant allow, but compared them entry by entry, ignoring the stream tree and
+  the grant's feature restrictions. An exclusion the user added to the grant below a stream the
+  session holds (`none`, or `create-only` under a readable stream) did not reach refreshed sessions,
+  which kept reaching the excluded stream through its parent; a restriction added to the grant (for
+  example `webhooks: forbidden`) never reached them; and when a session held a child stream at a
+  narrower level than its parent and the grant stopped listing the child, the refreshed session
+  got the parent's level on it, above its own consent.
+- **What changed:** the refresh meets the two permission sets stream by stream and then applies
+  the exclusions of the grant and of the session's own consent below every stream it keeps, as
+  `accesses.create` does for a child access; a stream the two sides grant at levels sharing no
+  capability (`read` and `create-only`) is held at `none`; the grant's restrictions reach the
+  refreshed session. A re-authorization at another level now merges into the grant stream by
+  stream (one entry per stream); a level that would combine `read` and `create-only` is refused
+  with `400 invalid_scope`, since the only level covering both adds `update`, which neither consent
+  gave.
+- **Operator action:** none. A narrowing reaches a session already issued at its next refresh, one
+  session lifetime at most (`oauth.accessTokenTTL`, one hour by default).
+
+#### Backup and restore did not keep the account aliases
+
+- **Severity:** Medium (platforms that restore accounts from a backup into a platform where the
+  names are free, for example a disaster recovery or a migration; aliases and username changes are
+  on by default).
+- **What could happen:** the aliases of an account (those of its `randomAlias` accesses and its
+  former usernames) were not part of the backup. After a restore, the aliased accesses and the
+  endpoints under a former username answered `404`, and a former username was free for anyone to
+  register: links and endpoints the account had handed out under that name then led to another
+  person's account.
+- **What changed:** the backup manifest lists each account's aliases and the restore reserves them
+  again; an alias another account or core took meanwhile stays with its holder and is reported.
+- **Operator action:** take a new backup after upgrading. Backups written by earlier releases list
+  no aliases, and a restore from one still leaves them free.
+
+#### A username change could overwrite a name taken while it ran, or stop half-way
+
+- **Severity:** Medium (integrity of another account's name; it needs a registration, or another
+  change, of the same name on the same core within the short window of the change).
+- **What could happen:** `account.changeUsername` checked that the new name was free, then wrote
+  the platform rows, the users index and the account in turn, without a step able to refuse a
+  taken name and without undo. A name registered or taken as an alias by another account in
+  between was overwritten in the platform rows and the change then failed with `500`, leaving both
+  accounts inconsistent; a storage failure after the checks left the account split between its
+  former and new name; two concurrent changes of one account could both apply, exceeding the
+  change limit.
+- **What changed:** the change holds the current name as an alias first, and the local rename and
+  the alias check refuse a taken name (`409 item-already-exists`) before anything else is written;
+  a failure after the checks undoes every step made (`500`, the account whole under its former
+  name, the new name free); concurrent changes of one account apply once, the others answer
+  `400 invalid-operation`.
+- **Operator action:** none.
+
+#### Lower-severity fixes in 2.0.0-rc.66
+
+- **Access aliases could outlive refused requests and were minted without bound** (Low-Medium):
+  with `randomAlias`, the alias was reserved before the request's checks, so a refused
+  `accesses.create` left a routing name to the account until its erasure, and an access created
+  during the deletion of its parent kept its alias. Any access able to create accesses could thus
+  add platform rows without limit (replicated to every core on a multi-core platform). The alias
+  is now reserved after every check and released when the access cannot be stored, the late
+  deletion releases it, and an account holds at most `accesses.maxAliasesPerAccount` aliases
+  (default `1000`, access aliases and former usernames together).
+- **Duplicate stream entries in a permission list** (Low): an access holds one level per stream,
+  but `accesses.create` and `accesses.update` accepted two entries for the same stream (in any
+  spelling, `a` and `:local:a`), stored and listed both and applied only the last one, so a
+  listing could show a level that was not in force. Such a request now answers
+  `400 invalid-request-structure`; stored accesses keep their behaviour (the last entry applies).
+  At an OAuth2 consent, `grantedPermissions` naming one stream twice is refused with
+  `400 invalid_scope`.
+- **Custom account streams could expose server-managed account fields** (Low, configuration
+  dependent): a custom account stream named `username` or `usernameChangeCount` would have exposed
+  the values the server keeps under those names, to an aliased access too, defeating the purpose
+  of the alias. Such a configuration is refused at boot. The shipped configuration defines no such
+  stream.
+- **The platform integrity check missed rows of unknown accounts** (Low): the users-index part of
+  `system.checkPlatformIntegrity` never reported anything, so rows that a deleted account left
+  behind passed it. It now reports each user id unknown to the users index (PostgreSQL engine; on
+  SQLite the check lists the accounts from the users index itself, so it cannot see such rows).
+- **An account erasure that failed half-way was never completed** (Low-Medium, erasure): a failure
+  or a crash at or after the removal of the account from the users index left its remaining data
+  (user directory, SQLite files, series) in place with nothing able to find it again. Every erasure
+  now keeps a progress record, and an interrupted one is completed by a later pass of the
+  background sweep, which runs on every core whatever the auto-deletion setting.
+- **HF series follow a username change** (completion of the 2.0.0-rc.47 item on HF series and
+  aliases): points written before a username change stayed under the former name, out of the
+  owner's reach under the new one (they were erased with the account). The change now moves them,
+  and the backup exports, and the restore re-imports, the series kept under former names. Operator
+  action: run `node bin/gather-former-series.js` once per core after upgrading, every API and HF
+  worker on this release, to gather the series of accounts renamed before it.
+- Not security fixes, listed for operators: on a single core serving its own DNS, aliases and
+  changed usernames now resolve (run `node bin/reconcile-user-cores.js` once per core to add the
+  names minted before this release); sign-in works with a former username; sockets opened before a
+  username change are disconnected instead of staying silent; `account.changeUsername` reports the
+  steps that did not complete in `warnings`.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1374,9 +1489,9 @@ library. `npm` / `npx` were removed from the image in rc.50. The rqlite ports li
   before rc.43 (today `bin/access-scope-audit.js` reports them).
 - Feature permission names as a closed list (an unknown name is accepted today and restricts
   nothing).
-- HF series keyed by account id instead of username; until then, series written before a username
-  change stay under the former name (erased with the account, not reachable by the owner under the
-  new name).
+- HF series keyed by account id instead of username. Until then, a username change moves the
+  account's series under the new name (since 2.0.0-rc.66; `bin/gather-former-series.js` gathers
+  those that changes made with earlier releases left under a former name).
 - Encrypted backups: a signed manifest and authenticated frames (hybrid encryption gives
   confidentiality, not authenticity). Until then: the backup chain index and the per-run manifests
   introduced in rc.51 are checked for consistency but not signed, and an encrypted backup file that
@@ -1434,3 +1549,4 @@ This report is updated with every release that carries a security fix:
 | 6 | 2026-10-28 | 2.0.0-rc.40 to 2.0.0-rc.63 | Adds 2.0.0-rc.63 to the release table: `node-forge` 1.4.2 (high dependency advisory) and `qs` 6.16.1 (moderate), not audit findings; counts unchanged. rc.60 to rc.62 carried no security fix. Deployed on the maintainers' platforms (2026-10-28). |
 | 7 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.64 | Adds 2.0.0-rc.64 (follow-up review of the OAuth2 consent and session lifecycle and of event history reads): 2 Medium findings. Deployed on the maintainers' platforms (2026-10-29). |
 | 8 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.65 | Adds 2.0.0-rc.65 (follow-up review of account-field permissions carried by consents and app accesses, of the consent retry path and of deletion listings): 3 Medium findings and lower-severity fixes; section 4.1 notes the deletion-record exception to the `*` scope. Deployed on the maintainers' platforms (2026-10-29). |
+| 9 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.66 | Adds 2.0.0-rc.66 (follow-up review of access aliases and username changes, and of how consent grants and refreshed OAuth2 sessions combine permissions): 3 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.47 HF series item; section 4.1 adds the alias check, section 5 updates the HF series item. Deployed on the maintainers' platforms (2026-10-30). |
