@@ -799,6 +799,13 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
   }
   const existing = await getClient(platform, clientId);
   if (!existing) throw new Error('rotate-secret: client "' + clientId + '" not found');
+  // A secret on such a client would make it confidential by a method it is
+  // not registered for (authentication at /token keys on the credentials on file).
+  const method = existing.tokenEndpointAuthMethod;
+  if (method === 'none' || method === 'private_key_jwt') {
+    throw new Error('rotate-secret: client "' + clientId + '" authenticates with ' + method + ', which uses no secret; ' +
+      'to switch it to a secret, run update ' + clientId + ' --auth-method client_secret_basic');
+  }
 
   const { mintSecret } = require('oauth2/src/clientSecret.ts');
   const { plaintext, hash } = await mintSecret();
@@ -1029,6 +1036,7 @@ module.exports = {
   runShow,
   runList,
   runSetStatus,
+  runRotateSecret,
   cliEnv,
 };
 

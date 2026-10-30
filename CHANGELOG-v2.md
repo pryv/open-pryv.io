@@ -14,7 +14,8 @@
   `private_key_jwt` only. These flags are refused on app-account clients. `--scope` splits
   space-separated tokens on `update` and `create` as on `create-registry`. `update` and
   `create-registry` refuse an unknown flag, and a flag that needs a value given without one, instead of
-  ignoring it.
+  ignoring it. `rotate-secret` refuses a client whose auth method uses no secret (`none`,
+  `private_key_jwt`) instead of writing a secret hash next to it.
 
 ## 2.0.0-rc.68 - 2026-10-30
 
