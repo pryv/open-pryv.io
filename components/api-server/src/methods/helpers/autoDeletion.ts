@@ -368,7 +368,8 @@ export function transferView (record: TransferRecord | null): Record<string, unk
   if (record.openedAt != null) view.openedAt = record.openedAt;
   if (record.endsAt != null) view.endsAt = record.endsAt;
   if (record.claimedBy != null) view.claimedBy = { username: record.claimedBy.username, at: record.claimedBy.at };
-  if (record.lockedAt != null) view.locked = { at: record.lockedAt };
+  if (record.failedClaims != null) view.failedClaims = record.failedClaims;
+  if (record.ownerToldAt != null) view.ownerNotifiedAt = record.ownerToldAt;
   if (record.closedAt != null) view.closedAt = record.closedAt;
   if (record.closedReason != null) view.closedReason = record.closedReason;
   return view;

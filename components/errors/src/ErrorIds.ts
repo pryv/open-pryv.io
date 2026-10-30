@@ -124,11 +124,6 @@ const ErrorIds = {
   /** Account transfer: the transfer was claimed by another account. */
   AutoDeletionTransferClaimed: 'auto-deletion-transfer-claimed',
   /**
-   * Account transfer: too many failed claims of this transfer; claims wait
-   * until the platform's next pass.
-   */
-  AutoDeletionTransferLocked: 'auto-deletion-transfer-locked',
-  /**
    * Account transfer: the transfer settings are not valid (`data.param`), or
    * transfers cannot work on this platform (`data.reason`).
    */

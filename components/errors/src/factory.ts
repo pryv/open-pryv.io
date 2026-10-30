@@ -57,7 +57,6 @@ interface ErrorFactory {
   autoDeletionTransferInvalidLink: () => APIErrorT;
   autoDeletionTransferExpired: () => APIErrorT;
   autoDeletionTransferClaimed: () => APIErrorT;
-  autoDeletionTransferLocked: (retryAfterSeconds: number) => APIErrorT;
   autoDeletionTransferInvalid: (message: string, data: Record<string, unknown>) => APIErrorT;
 }
 
@@ -405,12 +404,6 @@ factory.autoDeletionTransferClaimed = function () {
   return new APIError(ErrorIds.AutoDeletionTransferClaimed,
     'This account was already claimed by another account.',
     { httpStatus: 409 });
-};
-
-factory.autoDeletionTransferLocked = function (retryAfterSeconds: number) {
-  return new APIError(ErrorIds.AutoDeletionTransferLocked,
-    'Too many failed attempts to claim this account: claims are refused for now.',
-    { httpStatus: 429, data: { retryAfterSeconds } });
 };
 
 factory.autoDeletionTransferInvalid = function (message: string, data: Record<string, unknown>) {

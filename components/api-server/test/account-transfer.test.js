@@ -24,7 +24,7 @@ const timestamp = require('unix-timestamp');
 const { getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 const { createAutoDeletionState, IDENTITY_FIELD } = require('business/src/autoDeletion/state.ts');
-const { deriveLinkToken, MAX_FAILED_CLAIMS } = require('business/src/autoDeletion/transfer.ts');
+const { deriveLinkToken } = require('business/src/autoDeletion/transfer.ts');
 const { setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getErasuresLocal } = require('business/src/auth/erasures.ts');
@@ -44,12 +44,13 @@ const ACCOUNT_APP = 'https://account.actr.example.com/';
 const ADDRESSES = ['198.51.100.31', '198.51.100.32', '198.51.100.33', '198.51.100.34'];
 const DEFAULT_PER_IP = { maxFailures: 30, windowSeconds: 900 };
 const WIDE = 100000000;
-const MAILS_OFF = {
+// Only the two mails a transfer cannot do without (it is not offered without them).
+const BASE_MAILS = {
   accountDeletionScheduled: false,
   accountDeletionReminder: false,
   accountDeletionBlocked: false,
-  accountTransferNamed: false,
-  accountTransferClaim: false,
+  accountTransferNamed: true,
+  accountTransferClaim: true,
   accountTransferStarted: false,
   accountTransferCancelled: false,
   accountTransferLapsed: false,
@@ -58,7 +59,7 @@ const MAILS_OFF = {
 const BASE_CONFIG = {
   'user-account': { delete: ['adminToken', 'personalToken'] },
   service: { account: ACCOUNT_APP },
-  services: { email: { enabled: MAILS_OFF } }
+  services: { email: { enabled: BASE_MAILS } }
 };
 
 const guarded = new Set();
@@ -208,6 +209,17 @@ describe('[ACTR] account transfer', function () {
       await withInjectedConfig({ delegation: { active: false } }, async () => {
         assert.deepEqual((await get(u)).body.autoDeletion.actions, ['delete']);
       });
+      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountTransferClaim: false } } } }, async () => {
+        assert.deepEqual((await get(u)).body.autoDeletion.actions, ['delete'], 'without the claim mail no transfer can reach its beneficiary');
+      });
+      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountTransferNamed: false } } } }, async () => {
+        const res = await set(u, { mode: 'date', date: inDays(30), action: 'transfer', transfer: transferTo('b@actr.example.com', { notifyBeneficiary: 'atSetup' }), password: PASSWORD });
+        assert.equal(errorId(res), 'auto-deletion-transfer-invalid');
+        assert.equal(res.body.error.data.reason, 'named-mail-off');
+      });
+      await withInjectedConfig({ service: { account: '' }, 'user-account': { delete: ['adminToken'] } }, async () => {
+        assert.ok(!('autoDeletion' in (await coreRequest.get(`/${u.username}/service/info`)).body.features), 'nothing settable, no preset: hidden');
+      });
     });
 
     it('[ACTR1B] transfer alone keeps the feature advertised where self-deletion is off', async function () {
@@ -330,7 +342,7 @@ describe('[ACTR] account transfer', function () {
     const varsOf = (mail) => Object.fromEntries(mail.message.global_merge_vars.map((x) => [x.name, x.content]));
 
     it('[ACTR3A] atSetup mails the beneficiary a decline link; declining falls back (delete) and tells the owner', async function () {
-      await withInjectedConfig({ services: { email: { enabled: { ...MAILS_OFF, accountTransferNamed: true, accountTransferCancelled: true } } } }, async () => {
+      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountTransferNamed: true, accountTransferCancelled: true } } } }, async () => {
         const u = await freshUser();
         const captured = capture();
         const res = await set(u, { mode: 'date', date: inDays(30), action: 'transfer', transfer: transferTo('b@actr.example.com', { notifyBeneficiary: 'atSetup', fallback: 'delete', name: 'Bea' }), password: PASSWORD });
@@ -369,7 +381,7 @@ describe('[ACTR] account transfer', function () {
     });
 
     it('[ACTR3C] the real mailer: the claim mail carries both links, the owner\'s says it started; reminders say "transferred"', async function () {
-      await withInjectedConfig({ services: { email: { enabled: { ...MAILS_OFF, accountDeletionReminder: true, accountTransferClaim: true, accountTransferStarted: true } } } }, async () => {
+      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountDeletionReminder: true, accountTransferClaim: true, accountTransferStarted: true } } } }, async () => {
         const u = await freshUser();
         await armTransfer(u, transferTo('b@actr.example.com', { fallback: 'delete', identityGiven: true }));
         await state.setIdentity(u.id, { name: 'Beatrice Example' }, transferIdentityKey(config), 'test');
@@ -613,17 +625,16 @@ describe('[ACTR] account transfer', function () {
       assert.equal(errorId(await claim(owner, token, claimant)), 'auto-deletion-transfer-expired');
     });
 
-    it('[ACTR5G] failed claims are capped per transfer until the next sweep, and count on the address budget', async function () {
-      const { owner, claimant, s, token } = await openFor();
-      for (let i = 0; i < MAX_FAILED_CLAIMS; i++) {
-        assert.equal(errorId(await claim(owner, 'wrong-' + i, claimant, ADDRESSES[1 + (i % 2)])), 'auto-deletion-transfer-invalid-link');
+    it('[ACTR5G] failed claims are counted for the owner and never lock the valid link out; they count on the address budget', async function () {
+      const { owner, claimant, token } = await openFor();
+      for (let i = 0; i < 12; i++) {
+        assert.equal(errorId(await claim(owner, 'wrong-' + i, claimant, ADDRESSES[1 + (i % 2)])), 'auto-deletion-transfer-invalid-link', 'the same answer past any count');
       }
-      const locked = await claim(owner, token, claimant, ADDRESSES[3]);
-      assert.equal(locked.status, 429, JSON.stringify(locked.body));
-      assert.equal(errorId(locked), 'auto-deletion-transfer-locked', 'refused even with the right link');
-      assert.equal((await get(owner)).body.autoDeletion.transfer.locked != null, true, 'the owner sees it');
-      await s.run(T0 + 22 * DAY);
-      assert.equal((await claim(owner, token, claimant, ADDRESSES[3])).status, 200, 'the next sweep lifts it');
+      const noTransfer = await freshUser();
+      for (let i = 0; i < 12; i++) await claim(noTransfer, 'wrong-' + i, claimant, ADDRESSES[1 + (i % 2)]);
+      assert.equal(errorId(await claim(noTransfer, 'wrong', claimant, ADDRESSES[1])), 'auto-deletion-transfer-invalid-link', 'no oracle: as for an open transfer');
+      assert.equal((await get(owner)).body.autoDeletion.transfer.failedClaims.count, 12, 'the owner sees them');
+      assert.equal((await claim(owner, token, claimant, ADDRESSES[3])).status, 200, 'the valid link still proceeds');
 
       await withInjectedConfig({ auth: { passwordAttempts: { perIp: { maxFailures: 2, windowSeconds: WIDE } } } }, async () => {
         const other = await openFor();
@@ -723,6 +734,153 @@ describe('[ACTR] account transfer', function () {
       assert.equal((await decline(del, linkOf(del, 'decline', d.declineSalt))).status, 200);
       await s.run(T0 + 22 * DAY);
       assert.equal(await exists(del), false, 'erased by the next pass');
+    });
+  });
+
+  describe('[ACTR7] edge cases', function () {
+    async function useAt (u, t) {
+      await new Promise((resolve, reject) => storageLayer.accesses.updateOne({ id: u.id, username: u.username }, { id: u.personalAccessId }, { lastUsed: t },
+        (err) => (err ? reject(err) : resolve())));
+    }
+
+    it('[ACTR7A] inactivity: a use just before the window end wins over the fallback (delete)', async function () {
+      const u = await freshUser();
+      await armTransfer(u, transferTo('b@actr.example.com', { fallback: 'delete' }), 100, 'inactivity');
+      const s = await sweepFor([u]);
+      for (const d of [0, 40, 70, 93, 99]) await s.run(T0 + d * DAY);
+      assert.equal((await s.run(T0 + 101 * DAY)).transfersOpened, 1);
+      const endsAt = (await state.getTransfer(u.id)).endsAt;
+      await useAt(u, endsAt - 3600);
+      const r = await s.run(endsAt + 3600);
+      assert.equal(r.erased, 0);
+      assert.equal(r.transfersCancelled, 1);
+      assert.ok(await exists(u));
+      assert.equal((await state.getTransfer(u.id)).closedReason, 'owner-activity');
+    });
+
+    it('[ACTR7B] a completion left half-done is finished by the next pass, never reopened', async function () {
+      const u = await freshUser();
+      await openWindow(u, transferTo('b@actr.example.com'));
+      const record = await state.getTransfer(u.id);
+      await state.saveTransfer(u.id, { ...record, status: 'completed', claimedBy: { username: 'someone', at: T0 }, closedAt: timestamp.now() + 1 });
+      const s = await sweepFor([u]);
+      const r = await s.run(T0 + 30 * DAY);
+      assert.equal(r.transfersOpened, 0);
+      assert.equal(mailsOf(s, 'claim').length, 0);
+      assert.equal(await state.getSetting(u.id), null, 'the setting is cleared');
+      assert.equal((await state.getTransfer(u.id)).status, 'completed');
+    });
+
+    it('[ACTR7C] two first claims at once: one is bound, the other refused', async function () {
+      const owner = await freshUser();
+      const a = await freshUser('acta');
+      const b = await freshUser('actb');
+      await openWindow(owner, transferTo('b@actr.example.com'));
+      const token = linkOf(owner, 'claim', (await state.getTransfer(owner.id)).claimSalt);
+      const [ra, rb] = await Promise.all([claim(owner, token, a), claim(owner, token, b, ADDRESSES[1])]);
+      const ids = [ra, rb].map((r) => r.body.transfer?.status ?? errorId(r)).sort();
+      assert.deepEqual(ids, ['auto-deletion-transfer-claimed', 'invited'], JSON.stringify([ra.body, rb.body]));
+      const bound = (await state.getTransfer(owner.id)).claimedBy.username;
+      const loser = bound === a.username ? b : a;
+      assert.notEqual((await accept(loser, owner)).status, 200, 'the other claimant has no invite to accept');
+    });
+
+    it('[ACTR7D] moving the date later, same beneficiary, closes the open window', async function () {
+      const u = await freshUser();
+      await openWindow(u, transferTo('b@actr.example.com'));
+      const res = await set(u, { mode: 'date', date: inDays(60), action: 'transfer', transfer: transferTo('b@actr.example.com') });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      const record = await state.getTransfer(u.id);
+      assert.equal(record.status, 'cancelled');
+      assert.equal(record.closedReason, 'owner-change');
+    });
+
+    it('[ACTR7E] a decline during the window (delete) erases the identity at once, even when a guard then holds the erasure', async function () {
+      const u = await freshUser();
+      const { s } = await openWindow(u, transferTo('b@actr.example.com', { fallback: 'delete' }));
+      await state.setIdentity(u.id, { name: 'Bea' }, transferIdentityKey(config), 'test');
+      guarded.add(u.id);
+      try {
+        const record = await state.getTransfer(u.id);
+        assert.equal((await decline(u, linkOf(u, 'decline', record.declineSalt))).status, 200);
+        assert.deepEqual(await accountStorage.getAccountFieldHistory(u.id, IDENTITY_FIELD), []);
+        await s.run(T0 + 22 * DAY);
+        assert.ok(await exists(u), 'held by the guard');
+      } finally {
+        guarded.delete(u.id);
+      }
+    });
+
+    it('[ACTR7F] the claimant may still decline (invite withdrawn), and refusing the invite counts as declining', async function () {
+      const owner = await freshUser();
+      const claimant = await freshUser('actb');
+      await openWindow(owner, transferTo('b@actr.example.com'));
+      let record = await state.getTransfer(owner.id);
+      assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
+      assert.equal((await decline(owner, linkOf(owner, 'decline', record.declineSalt))).status, 200);
+      assert.equal((await state.getTransfer(owner.id)).status, 'declined');
+      assert.equal((await state.getSetting(owner.id)).mode, 'never', 'fallback keep');
+      assert.notEqual((await accept(claimant, owner)).status, 200, 'the invite is withdrawn');
+
+      const other = await freshUser();
+      const c2 = await freshUser('actc');
+      const { s } = await openWindow(other, transferTo('b@actr.example.com'));
+      record = await state.getTransfer(other.id);
+      assert.equal((await claim(other, linkOf(other, 'claim', record.claimSalt), c2)).status, 200);
+      const refused = await coreRequest.post(`/${c2.username}/delegations/controlled/${other.username}/refuse`).set('Authorization', c2.token).send({});
+      assert.equal(refused.status, 200, JSON.stringify(refused.body));
+      const r = await s.run(T0 + 25 * DAY);
+      assert.equal(r.transfersLapsed, 1);
+      const closed = await state.getTransfer(other.id);
+      assert.equal(closed.status, 'lapsed');
+      assert.equal(closed.closedReason, 'declined');
+    });
+
+    it('[ACTR7G] the owner\'s "started" mail is retried until it goes out; a failed claim mail is sent once later', async function () {
+      const u = await freshUser();
+      await armTransfer(u, transferTo('b@actr.example.com'));
+      const outcome = { value: 'failed' };
+      const s = await sweepFor([u]);
+      const sent = [];
+      const flaky = await sweepFor([u], { sendTransferMail: async (account, facts, notice) => { sent.push(notice.kind); return outcome.value; } });
+      for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+      await flaky.run(T0 + 21 * DAY);
+      const opened = await state.getTransfer(u.id);
+      assert.equal(opened.status, 'open');
+      assert.equal(opened.ownerToldAt, undefined);
+      assert.deepEqual(opened.claimMailsSent, []);
+      outcome.value = 'sent';
+      await flaky.run(T0 + 22 * DAY);
+      await flaky.run(T0 + 23 * DAY);
+      const after = await state.getTransfer(u.id);
+      assert.equal(typeof after.ownerToldAt, 'number');
+      assert.equal(after.claimMailsSent.length, 1, 'the claim mail once');
+      assert.equal(sent.filter((k) => k === 'started').length, 1, 'held while the transport was down, then sent once');
+      assert.equal(sent.filter((k) => k === 'claim').length, 2, 'one failed, one sent');
+    });
+
+    it('[ACTR7H] a claim for the account itself is refused, nothing bound; account.get never shows the transfer fields', async function () {
+      const owner = await freshUser();
+      await openWindow(owner, transferTo('b@actr.example.com', { name: 'Bea' }));
+      await state.setIdentity(owner.id, { name: 'Bea' }, transferIdentityKey(config), 'test');
+      const record = await state.getTransfer(owner.id);
+      const self = await claim(owner, linkOf(owner, 'claim', record.claimSalt), owner);
+      assert.equal(self.status, 400, JSON.stringify(self.body));
+      assert.equal((await state.getTransfer(owner.id)).claimedBy, undefined);
+      const account = (await coreRequest.get(`/${owner.username}/account`).set('Authorization', owner.token)).body.account;
+      assert.ok(account != null);
+      assert.ok(!('autoDeletionTransferIdentity' in account) && !('autoDeletion' in account), JSON.stringify(Object.keys(account)));
+    });
+
+    it('[ACTR7I] a beneficiary notice at setup that did not go out is sent by the next pass, once', async function () {
+      const u = await freshUser();
+      await armTransfer(u, transferTo('b@actr.example.com', { notifyBeneficiary: 'atSetup' }), 60);
+      await state.saveTransfer(u.id, { email: 'b@actr.example.com', status: 'named', createdAt: T0, declineSalt: 'salt' });
+      const s = await sweepFor([u]);
+      await s.run(T0 + DAY);
+      await s.run(T0 + 2 * DAY);
+      assert.equal(mailsOf(s, 'named', 'beneficiary').length, 1);
+      assert.equal(typeof (await state.getTransfer(u.id)).namedAt, 'number');
     });
   });
 });

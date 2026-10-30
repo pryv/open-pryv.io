@@ -25,9 +25,6 @@ export type LinkKind = 'claim' | 'decline';
 /** Days after the window opened when the claim mail is sent again. */
 export const CLAIM_RESEND_DAYS: readonly number[] = Object.freeze([30, 60]);
 
-/** Failed claims of one transfer before claims wait for the next sweep. */
-export const MAX_FAILED_CLAIMS = 10;
-
 export function newSalt (): string {
   return randomBytes(16).toString('base64url');
 }

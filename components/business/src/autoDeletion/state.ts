@@ -70,9 +70,14 @@ export type TransferRecord = {
   claimSalt?: string;
   /** Send times of the claim mail (the first, then the re-sends). */
   claimMailsSent?: number[];
-  /** Failed claims since the last sweep; at the cap, claims wait for the next sweep. */
-  failedAttempts?: number;
-  lockedAt?: number;
+  /** The owner was told the window opened. */
+  ownerToldAt?: number;
+  /**
+   * Claims with a wrong link, for the owner's view and the logs. They refuse
+   * nothing: a valid link always proceeds (a cap would let anyone who knows the
+   * username lock the beneficiary out).
+   */
+  failedClaims?: { count: number; lastAt: number };
   claimedBy?: { username: string; hostSlug?: string; relId?: string; at: number };
   closedAt?: number;
   /** Why it closed, when not obvious from the status (e.g. `owner-activity`). */
@@ -108,7 +113,6 @@ export type Bookkeeping = {
   reminders: { deadlineDay: number | null; sent: Array<{ leadDays: number; at: number; skipped?: boolean }> };
   /** `notifiedAt`: the holder was mailed about this block (once); `guard`: the deletion guard that refused. */
   blocked?: { reason: string; at: number; notifiedAt?: number; guard?: string };
-  transfer?: Record<string, unknown>;
 };
 
 export type Identity = { name?: string; dateOfBirth?: string };

@@ -69,7 +69,7 @@ describe('[ACTX] account transfer claimed from another core', function () {
     restoreTransfer = injectTestConfigSnapshot({
       'user-account': { delete: ['adminToken', 'personalToken'] },
       service: { account: 'https://account.actx.example.com/' },
-      services: { email: { enabled: { accountDeletionReminder: false, accountTransferClaim: false, accountTransferStarted: false, accountTransferCompleted: false } } }
+      services: { email: { enabled: { accountDeletionReminder: false, accountTransferStarted: false, accountTransferCompleted: false } } }
     });
     await platform.registerSelf();
     await platformDB().setCoreInfo(CORE_B, { id: CORE_B, ip: null, ipv6: null, cname: null, hosting: null, available: true });

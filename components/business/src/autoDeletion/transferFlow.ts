@@ -57,8 +57,6 @@ export type TransferFlowDeps<F> = {
 function closed (record: TransferRecord, status: TransferStatus, now: number, reason?: string): TransferRecord {
   const next: TransferRecord = { ...record, status, closedAt: now };
   if (reason != null) next.closedReason = reason;
-  delete next.failedAttempts;
-  delete next.lockedAt;
   return next;
 }
 
@@ -79,13 +77,29 @@ export async function completeTransfer<F> (deps: TransferFlowDeps<F>, account: T
   const setting = await deps.state.getSetting(account.id);
   const done = closed(record, 'completed', now);
   await deps.state.saveTransfer(account.id, done);
-  await deps.state.eraseIdentity(account.id);
-  if (setting != null) await deps.state.setSetting(account.id, null, 'system');
-  const prev = await deps.state.getBookkeeping(account.id);
-  if (prev != null) await deps.state.saveBookkeeping(account.id, prev, null);
+  // Mailed before the identity goes: the owner's copy names the beneficiary as they did.
   await tell(deps, account, facts, { kind: 'completed', to: 'owner', record: done, setting, now });
   await tell(deps, account, facts, { kind: 'completed', to: 'beneficiary', record: done, setting, now });
+  await finishTransfer(deps, account, done);
   return done;
+}
+
+/**
+ * The state changes that follow a closed `completed` or `lapsed` record, no
+ * mail: the identity goes, then the setting (cleared, or kept as "never").
+ * Run right after the record is closed, and again by the sweep when a
+ * process stopped in between (the record is closed first, so a half-done end
+ * is never taken for a transfer still to open).
+ */
+export async function finishTransfer<F> (deps: TransferFlowDeps<F>, account: TransferAccount, record: TransferRecord): Promise<void> {
+  await deps.state.eraseIdentity(account.id);
+  if (record.status === 'lapsed') {
+    await keepAccount(deps, account);
+    return;
+  }
+  if (await deps.state.getSetting(account.id) != null) await deps.state.setSetting(account.id, null, 'system');
+  const prev = await deps.state.getBookkeeping(account.id);
+  if (prev != null) await deps.state.saveBookkeeping(account.id, prev, null);
 }
 
 /**
@@ -107,9 +121,8 @@ export async function lapseTransfer<F> (deps: TransferFlowDeps<F>, account: Tran
   const setting = await deps.state.getSetting(account.id);
   const done = closed(record, 'lapsed', now, reason);
   await deps.state.saveTransfer(account.id, done);
-  await deps.state.eraseIdentity(account.id);
-  await keepAccount(deps, account);
   await tell(deps, account, facts, { kind: 'lapsed', to: 'owner', record: done, setting, now, reason });
+  await finishTransfer(deps, account, done);
   return done;
 }
 
