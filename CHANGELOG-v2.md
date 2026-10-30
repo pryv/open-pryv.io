@@ -1,5 +1,11 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.67 - 2026-10-30
+
+- Same server behaviour as 2.0.0-rc.66, which shipped without a Docker image (its CI run failed on a type name and on
+  a timing-sensitive audit test). This release carries the image. Fixes: a type renamed, the audit test made robust to
+  late audit writes; no API, configuration or data change. Cores running 2.0.0-rc.66 from source need no upgrade.
+
 ## 2.0.0-rc.66 - 2026-10-30
 
 - **Account auto-deletion setting: `account.getAutoDeletion` / `account.setAutoDeletion`
