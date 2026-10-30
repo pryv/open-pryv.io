@@ -82,6 +82,11 @@ function streamsOf (permissions) {
   return permissions.filter((p) => p.streamId != null).map((p) => p.streamId + ':' + p.level).sort();
 }
 
+/** The same, without the account / system entries a session's access-info adds. */
+function userStreamsOf (permissions) {
+  return streamsOf(permissions).filter((s) => !s.startsWith(':'));
+}
+
 function pkce () {
   const verifier = crypto.randomBytes(32).toString('base64url');
   return { verifier, challenge: crypto.createHash('sha256').update(verifier).digest('base64url') };
@@ -375,10 +380,11 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     ]);
   });
 
-  it('[OCMP9] the owner narrows the grant: its sessions are re-cut at once; one left with no reach is deleted, its chain dead', async () => {
+  it('[OCMP9] the owner narrows the grant: its sessions are re-cut at once; one left with no reach is deleted, its chain refused at refresh, unless the grant is widened back first (until deleting a session ends its chain)', async () => {
     const who = await newUser();
     const s1 = await consentAndToken(who, 'offline_access read/a read/b');
     const s2 = await consentAndToken(who, 'offline_access read/b', { composed: false });
+    const s3 = await consentAndToken(who, 'offline_access read/b', { composed: false });
     const grant = await grantOf(who);
     const upd = await ownerUpdate(who, grant, { permissions: [{ streamId: 'a', level: 'read' }] });
     assert.equal(upd.status, 200, JSON.stringify(upd.body));
@@ -395,6 +401,88 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const alive = await refresh(s1.refresh_token);
     assert.equal(alive.status, 200, JSON.stringify(alive.body));
     assert.deepEqual(alive.body.scope.split(' ').sort(), ['offline_access', 'read/a']);
+    // The owner widens the grant back before s3's chain refreshes: its deleted
+    // session removed no consent, the chain mints again.
+    assert.equal((await ownerUpdate(who, await grantOf(who), { permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }] })).status, 200);
+    const back = await refresh(s3.refresh_token);
+    assert.equal(back.status, 200, JSON.stringify(back.body));
+    assert.deepEqual(back.body.scope.split(' ').sort(), ['offline_access', 'read/b']);
+    assert.equal((await readStream(who, back.body.access_token, 'b')).status, 200);
+  });
+
+  /** The permissions a session token holds now (its row). */
+  async function holds (who, token) {
+    const res = await coreRequest.get('/' + who.username + '/access-info').set('Authorization', token);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body;
+  }
+
+  function writeStream (who, token, streamId) {
+    return coreRequest.post('/' + who.username + '/events').set('Authorization', token)
+      .send({ streamIds: [streamId], type: 'note/txt', content: 'x' });
+  }
+
+  it('[OCMP17] the re-cut follows the chain\'s consent, not the grant\'s history: write, owner sets read, then create-only: the session is at create-only, not deleted', async () => {
+    const who = await newUser();
+    const t = await consentAndToken(who, 'offline_access write/a');
+    const grant = await grantOf(who);
+    assert.equal((await ownerUpdate(who, grant, { permissions: [{ streamId: 'a', level: 'read' }] })).status, 200);
+    assert.equal((await writeStream(who, t.access_token, 'a')).status, 403);
+    assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
+    assert.equal((await ownerUpdate(who, await grantOf(who), { permissions: [{ streamId: 'a', level: 'create-only' }] })).status, 200);
+    const sessions = (await accesses(who)).filter((a) => a.name === 'oauth:' + clientId);
+    assert.equal(sessions.length, 1, 'not deleted');
+    assert.deepEqual(streamsOf(sessions[0].permissions), ['a:create-only']);
+    assert.equal((await writeStream(who, t.access_token, 'a')).status, 201);
+    assert.equal((await readStream(who, t.access_token, 'a')).status, 403);
+    const r = await refresh(t.refresh_token);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.scope.split(' ').sort(), ['offline_access']);
+    assert.deepEqual(userStreamsOf((await holds(who, r.body.access_token)).permissions), ['a:create-only']);
+  });
+
+  it('[OCMP18] a grant widened back reaches the live sessions again, never above their own consent', async () => {
+    const who = await newUser();
+    const tA = await consentAndToken(who, 'offline_access write/a read/b');
+    const tB = await consentAndToken(who, 'offline_access read/a', { composed: false });
+    assert.equal((await ownerUpdate(who, await grantOf(who), { permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }] })).status, 200);
+    assert.equal((await writeStream(who, tA.access_token, 'a')).status, 403);
+    assert.equal((await ownerUpdate(who, await grantOf(who), { permissions: [{ streamId: 'a', level: 'contribute' }, { streamId: 'b', level: 'read' }] })).status, 200);
+    // No refresh: A writes again; B stays at its own consent.
+    assert.equal((await writeStream(who, tA.access_token, 'a')).status, 201);
+    assert.deepEqual(userStreamsOf((await holds(who, tA.access_token)).permissions), ['a:contribute', 'b:read']);
+    assert.deepEqual(userStreamsOf((await holds(who, tB.access_token)).permissions), ['a:read']);
+  });
+
+  it('[OCMP19] a session row without its chain\'s consent is re-cut from the row, and its refresh records the chain', async () => {
+    const who = await newUser();
+    const t = await consentAndToken(who, 'offline_access read/a read/b');
+    const info = await holds(who, t.access_token);
+    assert.deepEqual(info.clientData.oauth.chain, [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }]);
+    // A row as minted before the chain was recorded.
+    const repo = require('storages').storageLayer.accesses;
+    const userId = (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(who.username);
+    const user = { id: await userId, username: who.username };
+    await new Promise((resolve, reject) => repo.updateOne(user, { id: info.id.split(':')[0] },
+      { clientData: { oauth: { dataGrantId: info.clientData.oauth.dataGrantId } }, modified: Date.now() / 1000 },
+      (err) => (err != null ? reject(err) : resolve())));
+    require('cache').default.unsetUserData(user.id);
+    assert.equal((await holds(who, t.access_token)).clientData.oauth.chain, undefined);
+    assert.equal((await ownerUpdate(who, await grantOf(who), { permissions: [{ streamId: 'a', level: 'read' }] })).status, 200);
+    assert.equal((await readStream(who, t.access_token, 'b')).status, 403);
+    assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
+    const r = await refresh(t.refresh_token);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual((await holds(who, r.body.access_token)).clientData.oauth.chain,
+      [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }]);
+  });
+
+  it('[OCMP20] a composed re-consent keeping streams the request did not name: the session holds them, the scope lists the requested tokens only', async () => {
+    const who = await newUser();
+    await consentAndToken(who, 'offline_access read/a read/b');
+    const t = await consentAndToken(who, 'offline_access read/c');
+    assert.deepEqual(t.scope.split(' ').sort(), ['offline_access', 'read/c']);
+    for (const s of ['a', 'b', 'c']) assert.equal((await readStream(who, t.access_token, s)).status, 200, s);
   });
 
   it('[OCMP10] write narrowed to read by the owner: the refreshed scope echoes read, not write', async () => {

@@ -950,6 +950,18 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(full.status, 200, describeRes(full));
       assert.equal(full.body.access.createdBy, 'system');
       assert.equal(typeof full.body.access.clientData?.oauth?.dataGrantId, 'string');
+      // The chain's consent, recorded by the server: lexicon entries only, no
+      // consent annotation, no selfRevoke override; the owner cannot change it.
+      const chain = full.body.access.clientData?.oauth?.chain;
+      assert.ok(Array.isArray(chain) && chain.length > 0, JSON.stringify(full.body.access.clientData));
+      for (const p of chain) {
+        assert.deepEqual(Object.keys(p).sort(), p.streamId != null ? ['level', 'streamId'] : ['feature', 'setting']);
+        assert.ok(!(p.feature === 'selfRevoke' && p.setting === 'allowed'), 'no session override in the chain');
+      }
+      const widened = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(full.body.access.id))
+        .set('Authorization', personalToken)
+        .send({ clientData: { oauth: { ...full.body.access.clientData.oauth, chain: [{ streamId: '*', level: 'manage' }] } } });
+      assert.equal(widened.status, 403, describeRes(widened));
       const base = (id) => String(id).split(':')[0];
       assert.ok(seen.some((n) => n?.kind === 'accesses' && n.changeType === 'create' && base(n.access?.id) === base(session.id)),
         'scoped create notification for the session: ' + JSON.stringify(seen));

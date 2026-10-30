@@ -167,6 +167,9 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal(same.error, null, same.error?.message);
     assert.equal((await getClient(platform, 'Cli.five')).subjectType, 'public');
     assert.doesNotMatch(same.out, /NOTE/);
+    // Nothing changed: no write, the row's version (and the consents in flight) kept.
+    assert.equal((await getClient(platform, 'Cli.five')).updatedAt, before.updatedAt);
+    assert.match(same.out, /client unchanged/);
     const refused = await run(cli.runUpdate, platform, ['update', 'Cli.five', '--subject-type', 'pairwise']);
     assert.equal(refused.error?.message, 'update: changing the subject type of "Cli.five" from public to pairwise affects every future consent; re-run with --yes');
     assert.equal((await getClient(platform, 'Cli.five')).subjectType, 'public');

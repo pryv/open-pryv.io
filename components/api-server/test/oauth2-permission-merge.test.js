@@ -67,7 +67,7 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
   const STREAMS = [
     ['pm1'], ['pm2'], ['pm3'], ['pm4a'], ['pm4b'], ['pm5a'], ['pm5b'], ['pm6'],
     ['pm7'], ['pm7c', 'pm7'], ['pm8'], ['pm8x', 'pm8'], ['pm9'], ['pm9c', 'pm9'], ['pm10'], ['pm10c', 'pm10'],
-    ['pm11'], ['pm11b'], ['pm12'], ['pm13a'], ['pm13b'], ['pm14'], ['pm15'], ['pm15c', 'pm15']
+    ['pm11'], ['pm11b'], ['pm12'], ['pm13a'], ['pm13b'], ['pm14'], ['pm15'], ['pm15c', 'pm15'], ['pm16a'], ['pm16b'], ['pm17a'], ['pm17b']
   ];
   const INITIAL_OFFERS = {
     p1: [{ streamId: 'pm1', level: 'read' }],
@@ -84,7 +84,9 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     p12: [{ streamId: 'pm12', level: 'contribute' }],
     p13: [{ streamId: 'pm13a', level: 'read' }, { streamId: 'pm13b', level: 'read' }],
     p14: [{ streamId: 'pm14', level: 'read' }],
-    p15: [{ streamId: 'pm15', level: 'read' }]
+    p15: [{ streamId: 'pm15', level: 'read' }],
+    p16: [{ streamId: 'pm16a', level: 'read' }, { streamId: 'pm16b', level: 'read' }],
+    p17: [{ streamId: 'pm17a', level: 'read' }, { streamId: 'pm17b', level: 'read' }]
   };
 
   before(async function () {
@@ -534,5 +536,35 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     const hook = await coreRequest.post('/' + username + '/webhooks').set('Authorization', token)
       .send({ url: 'https://hooks.test/notify' });
     assert.equal(hook.status, 403, describeRes(hook));
+  });
+
+  it('[PMRG16] the owner narrows a CMC grant through accesses.update: its live session is re-cut at once', async function () {
+    const r = await consent('p16', [{ streamId: 'pm16a', level: 'read' }, { streamId: 'pm16b', level: 'read' }]);
+    assert.equal(r.acceptRes.status, 200, describeRes(r.acceptRes));
+    const token = r.tokenRes.body.access_token;
+    assert.equal((await readEvents(token, 'pm16b')).status, 200);
+    const grant = await dataGrantOf(token);
+    await ownerUpdateGrant(grant, (perms) => perms.filter((p) => p.streamId !== 'pm16b'));
+    // No refresh: the same token lost the stream.
+    assert.equal((await readEvents(token, 'pm16b')).status, 403);
+    const kept = await readEvents(token, 'pm16a');
+    assert.equal(kept.status, 200, describeRes(kept));
+  });
+
+  it('[PMRG17] a CMC grant narrowed through the plugin\'s accesses adapter (the consent scope update path) re-cuts its live session at once', async function () {
+    const r = await consent('p17', [{ streamId: 'pm17a', level: 'read' }, { streamId: 'pm17b', level: 'read' }]);
+    assert.equal(r.acceptRes.status, 200, describeRes(r.acceptRes));
+    const token = r.tokenRes.body.access_token;
+    assert.equal((await readEvents(token, 'pm17b')).status, 200);
+    const grant = await dataGrantOf(token);
+    const { buildMallForCmc } = require('../src/methods/helpers/cmcMall.ts');
+    const mall = await buildMallForCmc();
+    await mall.accesses.update(endUser.attrs.id, {
+      id: baseOf(grant.id),
+      update: { permissions: grant.permissions.filter((p) => p.streamId !== 'pm17b') },
+    });
+    assert.equal((await readEvents(token, 'pm17b')).status, 403);
+    const kept = await readEvents(token, 'pm17a');
+    assert.equal(kept.status, 200, describeRes(kept));
   });
 });

@@ -13,6 +13,7 @@ import { getStorageLayer } from 'storage';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { getLogger } from '@pryv/boiler';
 import { deleteAccessChain } from './accessDeletion.ts';
+import { reconcileSessionsOfGrant } from './oauthSessionReconcile.ts';
 
 import type { MallLike } from 'cmc/src/_types.ts';
 
@@ -82,6 +83,26 @@ async function buildMallForCmc (): Promise<MallLike> {
       return { id: accessId, relatedDeletions: outcome.relatedDeletions };
     },
   });
+
+  // A CMC data-grant narrowed by the plugin (a consent scope update) re-cuts
+  // its live OAuth sessions at once, as `accesses.update` does for the
+  // owner's own edits. Non-fatal: the update stands; a session not re-cut
+  // here is at its next refresh.
+  type AdapterUpdate = (userId: string, params: { id: string; update: Record<string, unknown> }) => Promise<unknown>;
+  const updatable = cmcMallAccessesAdapter as unknown as { update: AdapterUpdate };
+  const adapterUpdate = updatable.update.bind(updatable);
+  updatable.update = async (userId, params) => {
+    const updated = await adapterUpdate(userId, params);
+    if (Array.isArray(params?.update?.permissions)) {
+      try {
+        const u = await usersRepository.getUserById(userId);
+        if (u?.username != null) await reconcileSessionsOfGrant({ id: userId, username: u.username }, params.id);
+      } catch (err: unknown) {
+        getLogger('cmc:mall-accesses-adapter').warn(`OAuth sessions of access ${params.id} not re-cut after its update: ${(err as Error)?.message ?? err}`);
+      }
+    }
+    return updated;
+  };
 
   // Mall uses class-instance getters for streams/events, so a plain
   // Object.assign would drop them — forward them via getters instead.

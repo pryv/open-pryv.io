@@ -141,10 +141,16 @@ export function composeShownOffer (
  * and the subject change. The entry order of the shown offer does not count.
  */
 export function shownDigestOf (offerDigest: string, shown: ShownOffer, subjectChange: SubjectChange | null): string {
-  const sorted = { ...shown, permissions: [...shown.permissions].sort((a, b) => sortKey(a).localeCompare(sortKey(b))) };
+  const sorted = { ...shown, permissions: [...shown.permissions].sort((a, b) => byCodeUnit(sortKey(a), sortKey(b))) };
   return crypto.createHash('sha256')
     .update(canonicalJson({ offerDigest, shown: sorted, subjectChange }))
     .digest('base64url');
+}
+
+// Code-unit order: independent of the process's locale, so every core
+// computes the same digest.
+function byCodeUnit (a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function sortKey (p: ExtPermission): string {

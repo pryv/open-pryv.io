@@ -21,7 +21,7 @@
 import type { ConsentTrigger } from '../consentPoll.ts';
 import type { Ctx, CmcOffer, DataGrant, GlueEnv } from './types.ts';
 import type { Permission } from 'business/src/types/public.ts';
-import { mergeStreamPermissions, PermissionMergeConflictError, stripConsentAnnotations } from 'business/src/accesses/permissionSet.ts';
+import { mergeStreamPermissions, PermissionMergeConflictError } from 'business/src/accesses/permissionSet.ts';
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
 import { assertGrantedWithinOffer } from 'business/src/accesses/consentEffectiveGuard.ts';
@@ -52,6 +52,7 @@ type SessionHelpers = {
     permissions: Array<Record<string, unknown>>;
     expiresAt: number;
     dataGrantAccessId?: string;
+    chainPermissions?: Array<Record<string, unknown>>;
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
 };
@@ -181,27 +182,23 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // acknowledged it at /accept) withdraws the old grant first (its sessions
   // die, its alias is released, its refresh chains end), then a new grant is
   // made.
-  async function registryGrantFor (context: Ctx, clientId: string,
-    grantedPermissions: Array<Record<string, unknown>>, wantAlias: boolean,
-    next: Array<Record<string, unknown>> | undefined): Promise<DataGrant> {
+  async function registryGrantFor (context: Ctx, clientId: string, wantAlias: boolean,
+    next: Array<Record<string, unknown>> | undefined, subjectChange: unknown): Promise<DataGrant> {
+    // /accept always hands the final set (the default forbids included): a
+    // grant is never written without it.
+    if (next == null) throw new Error('oauth2.createAccess: a registry consent needs the grant\'s final permissions');
     let current = await findRegistryGrant(context, clientId);
     if (current != null && (typeof current.alias === 'string' && current.alias.length > 0) !== wantAlias) {
+      // Defence in depth: only a change of subject mode /accept checked (and
+      // the user acknowledged) may replace the grant; a concurrent consent
+      // that changed the grant in between is refused.
+      if (subjectChange == null) throw new Error('oauth2.createAccess: the grant\'s subject mode changed during the consent');
       await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(current.id).base });
       current = null;
     }
-    let permissions: Array<Record<string, unknown>>;
-    if (next != null) {
-      permissions = next;
-    } else if (current == null) {
-      permissions = stripConsentAnnotations(grantedPermissions as unknown as Parameters<typeof stripConsentAnnotations>[0]) as unknown as Array<Record<string, unknown>>;
-    } else {
-      const merged = mergeStreamPermissions(current.permissions ?? [], grantedPermissions, 'join');
-      if (merged.conflicts.length > 0) throw new PermissionMergeConflictError(merged.conflicts);
-      permissions = merged.permissions;
-    }
     // A changed grant re-cuts its live sessions: accesses.update does it
     // (reconcileSessionsOfGrant), for this write as for the owner's own.
-    return await ensureRegistryGrant(context, clientId, current, permissions, wantAlias);
+    return await ensureRegistryGrant(context, clientId, current, next, wantAlias);
   }
 
   // The user's current grant for a registry client, read only (no repair
@@ -290,7 +287,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // subset; the data-grant is the consent ceiling that revocation and
   // scope-update govern.
   // ---------------------------------------------------------------------
-  async function createAccess ({ session, clientId, expiresAt, offer, grantedPermissions, grantPermissions }: {
+  async function createAccess ({ session, clientId, expiresAt, offer, grantedPermissions, grantPermissions, subjectChange }: {
     session: { userId: string; username: string; _context?: Ctx };
     clientId: string;
     scope: string[];
@@ -335,7 +332,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
 
     const registry = (offer as { kind?: string }).kind === 'synthesised';
     const dataGrant = registry
-      ? await registryGrantFor(context, clientId, grantedPermissions, (offer as { randomAlias?: boolean }).randomAlias === true, grantPermissions)
+      ? await registryGrantFor(context, clientId, (offer as { randomAlias?: boolean }).randomAlias === true, grantPermissions, subjectChange)
       : await ensureCmcGrant(context, clientId, offer as CmcOffer, grantedPermissions);
 
     // The minted row additionally carries the session selfRevoke override
@@ -347,8 +344,11 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     // under the grant as it now stands (its forbidden features, a registry
     // client's default ones included, and the owner's narrower entries in the
     // stream tree), never the granted subset alone.
-    const sessionPermissions: Array<Record<string, unknown>> =
-      (await effectiveSessionPermissions(context.user.id, dataGrant as unknown as Record<string, unknown>, permissions)).permissions;
+    const underGrant = await effectiveSessionPermissions(context.user.id, dataGrant as unknown as Record<string, unknown>, permissions);
+    // Unreachable in practice (a consent names a stream its grant now holds):
+    // never mint a session that reaches nothing.
+    if (!underGrant.hasReach) throw new Error('oauth2.createAccess: the grant leaves this consent no reach');
+    const sessionPermissions: Array<Record<string, unknown>> = underGrant.permissions;
 
     // Minted storage-direct, like the refreshed sessions: the session
     // carries the server-owned `clientData.oauth` link to its grant (the API
@@ -360,6 +360,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       username: context.user.username,
       clientId,
       permissions: withSessionSelfRevoke(sessionPermissions),
+      chainPermissions: permissions,
       expiresAt,
       dataGrantAccessId: dataGrant.id,
     });

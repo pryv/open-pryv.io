@@ -170,6 +170,18 @@ export function resolveConsentSidecar (requestedPermissions: unknown, sidecar: u
   }
   annotate(mandatoryIds, 'mandatory');
   annotate(optInIds, 'optIn');
+  // A restriction can never be unticked (dropping it widens the access), so
+  // a forbidden feature is mandatory whatever the sidecar lists, and naming
+  // it opt-in is refused: the same rule as every other consent form.
+  for (const p of permissions) {
+    if ((p as { setting?: unknown }).setting !== 'forbidden') continue;
+    if (p.optIn === true) {
+      throw new ConsentSidecarError(
+        `consent.optIn names '${entryId(p)}', a forbidden feature, which cannot be 'optIn' (a restriction is always applied)`
+      );
+    }
+    p.mandatory = true;
+  }
 
   return {
     allowUserChoice: raw.allowUserChoice === true,

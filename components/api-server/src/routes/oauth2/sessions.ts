@@ -65,16 +65,30 @@ export function createSessions (env: GlueEnv) {
 
   // A session access names the consent data-grant it was minted under, so
   // deleting that grant deletes the session with it (accessDeletion.ts)
-  // instead of leaving it valid until its own expiry. Written only here;
-  // accesses.update refuses to change it.
-  function sessionClientData (dataGrantAccessId: string, dpopJkt?: string): Record<string, unknown> {
+  // instead of leaving it valid until its own expiry, and carries its chain's
+  // consent (`chain`: what the user granted, as the refresh row holds it), so
+  // a change of the grant re-cuts it to what its next refresh would mint
+  // (oauthSessionReconcile.ts). Written only here; accesses.update refuses to
+  // change it.
+  function sessionClientData (dataGrantAccessId: string, chainPermissions: Array<Record<string, unknown>>, dpopJkt?: string): Record<string, unknown> {
     return {
-      oauth: { dataGrantId: parseAccessRef(dataGrantAccessId).base },
+      oauth: { dataGrantId: parseAccessRef(dataGrantAccessId).base, chain: chainOf(chainPermissions) },
       ...(dpopJkt != null ? { dpop: { jkt: dpopJkt } } : {}),
     };
   }
 
-  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt, dataGrantAccessId }: {
+  // The chain's consent as stored: lexicon fields only (no consent or display
+  // annotation, no display name), and never the session's selfRevoke override.
+  function chainOf (permissions: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+    const out: Array<Record<string, unknown>> = [];
+    for (const p of permissions ?? []) {
+      if (typeof p?.streamId === 'string' && typeof p.level === 'string') out.push({ streamId: p.streamId, level: p.level });
+      else if (typeof p?.feature === 'string' && typeof p.setting === 'string') out.push({ feature: p.feature, setting: p.setting });
+    }
+    return out;
+  }
+
+  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt, dataGrantAccessId, chainPermissions }: {
     userId: string;
     username: string;
     clientId: string;
@@ -82,9 +96,14 @@ export function createSessions (env: GlueEnv) {
     expiresAt: number;
     dpopJkt?: string;
     dataGrantAccessId?: string;
+    /** Required with `dataGrantAccessId`: the chain's consent (see sessionClientData). */
+    chainPermissions?: Array<Record<string, unknown>>;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
       throw new Error('mintAccessDirect: username required');
+    }
+    if (dataGrantAccessId != null && !Array.isArray(chainPermissions)) {
+      throw new Error('mintAccessDirect: a session of a grant needs its chain permissions');
     }
     const accessesRepository = accessesRepo(storageLayer, 'mintAccessDirect');
     // Millisecond precision, like every other access (timestamp.now()): the
@@ -107,7 +126,7 @@ export function createSessions (env: GlueEnv) {
       // Sender-constrained sessions carry the key thumbprint the
       // resource layer checks the per-request proof against.
       ...(dataGrantAccessId != null
-        ? { clientData: sessionClientData(dataGrantAccessId, dpopJkt) }
+        ? { clientData: sessionClientData(dataGrantAccessId, chainPermissions!, dpopJkt) }
         : (dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {})),
     };
     const minted: { accessId: string; accessToken: string; apiEndpoint: string } = await new Promise((resolve, reject) => {
@@ -214,7 +233,7 @@ export function createSessions (env: GlueEnv) {
     // Session selfRevoke override AFTER the intersection: the intersection
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
-    const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+    const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, chainPermissions: permissions, ...(jkt != null ? { dpopJkt: jkt } : {}) });
     return { ...minted, ...grantSubject(dataGrant, userId), permissions: effective };
   }
 

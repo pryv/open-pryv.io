@@ -84,16 +84,23 @@
 - **Registry grants forbid `webhooks` and `secretSharing` by default**, unless the client row allows
   the feature (`create-registry` / `update --allow-feature webhooks|secretSharing`, repeatable, `none`
   clears; printed by `show`). Applied by the core at every consent, never shown on the consent screen,
-  and carried by the sessions.
+  and carried by the sessions. Allowing a feature later does not lift its forbid on grants that already
+  carry it: a forbid on a grant is kept by every re-consent (only the owner can remove it).
+  `bin/oauth-client.js update` writes nothing when nothing changed.
 - **In a consent offer, a forbidden feature is always mandatory** (it cannot be unticked, whatever the
-  offer says, for CMC offers too), and one marked `optIn` is refused. A forbidden feature never exceeds
+  offer says: OAuth and CMC offers, and the `consent` sidecar of an auth request on `/reg/access`), and
+  one marked `optIn` is refused. A forbidden feature never exceeds
   a registry client's maximum scope set.
 - **A change to a consent grant reaches its live sessions at once.** When a grant's permissions change
-  (a narrowing re-consent, or the owner's `accesses.update` on a registry or CMC grant), each live OAuth
-  session of the grant is re-cut to what the grant still covers; a session left with no reach is
-  deleted, and its refresh chain with it.
-- `/oauth2/authorize/accept` and the signed-in `/offer` accept only the account owner's personal token
-  (another token of the user: 403 `access_denied`).
+  (a re-consent, the owner's `accesses.update` on a registry or CMC grant, a CMC consent scope update),
+  each live OAuth session of the grant is brought to what its next refresh would mint: its chain's
+  consent under the grant as it now stands (narrowed, or widened back, never beyond either). A session
+  left with no reach is deleted; its chain's next refresh is then refused (`invalid_grant`) unless the
+  owner has widened the grant again before it. A session records its chain's consent in the
+  server-owned `clientData.oauth.chain`.
+- `/oauth2/authorize/accept` accepts only the account owner's personal token (another token of the
+  user: 403 `access_denied`); the signed-in `/offer` answers such a token with the request alone and
+  `authenticated: false`.
 - A refresh that fails on the server side (the extension's hook failing or timing out, a storage error)
   no longer uses up the refresh token: the app's retry is a plain refresh, not a reuse that would end
   the grant.

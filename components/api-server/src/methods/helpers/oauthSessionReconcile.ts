@@ -9,16 +9,23 @@
  * OAuth sessions under a consent grant: what a session may still use, and
  * the re-cut of the live sessions when the grant changes.
  *
- * A session access names its grant (`clientData.oauth.dataGrantId`). When the
- * grant's permissions change (a re-consent narrowing it, or the owner editing
- * it), each live session is brought to what the new grant still covers, at
- * once, instead of keeping its reach until the next refresh: the session row
- * is rewritten storage-direct (it is ephemeral: the grant, changed through
- * `accesses.update`, is the consent record), its token leaves every worker's
- * access cache, and the change is notified. A session left with no reach is
- * deleted with what it created, which also ends its refresh chain. Refresh
- * rows keep their chain's permissions: the next refresh computes the same
- * result.
+ * A session access names its grant (`clientData.oauth.dataGrantId`) and
+ * carries its chain's consent (`clientData.oauth.chain`). Invariant: a live
+ * session equals what a refresh of its chain would mint now,
+ * `effectiveSessionPermissions(grant, chain)`. When the grant's permissions
+ * change (a re-consent, the owner editing it, a CMC scope update), each live
+ * session is brought to that at once, instead of at its next refresh: the
+ * row is rewritten storage-direct (it is ephemeral: the grant is the consent
+ * record), narrowing it or widening it back, never beyond its chain's consent
+ * nor beyond the grant; its token leaves every worker's access cache, and the
+ * change is notified. A session left with no reach is deleted with what it
+ * created; its chain's next refresh is then refused (`invalid_grant`) unless
+ * the owner has widened the grant again before it. Refresh rows keep their
+ * chain's permissions.
+ *
+ * Known window: a refresh that read the grant before an owner edit and
+ * inserts its session after the re-cut listed the sessions mints one at the
+ * old reach, until its next refresh or its expiry (`oauth:accessTokenTTL`).
  */
 
 import cache from 'cache';
@@ -31,6 +38,7 @@ import { mergeStreamPermissions } from 'business/src/accesses/permissionSet.ts';
 import { parseAccessRef } from 'business/src/accesses/refs.ts';
 import { deleteAccessChain, notifyScopedAccessChange } from './accessDeletion.ts';
 import { withSessionSelfRevoke, samePermissionKeys } from '../../routes/oauth2/types.ts';
+import { reindexAccessNonFatal } from 'platform/src/accessIndex.ts';
 
 type PermissionEntry = Record<string, unknown>;
 type SessionUser = { id: string; username: string };
@@ -40,7 +48,7 @@ type AccessRow = {
   token?: string;
   expires?: number | null;
   permissions?: PermissionEntry[];
-  clientData?: { oauth?: { dataGrantId?: unknown } } | null;
+  clientData?: { oauth?: { dataGrantId?: unknown; chain?: unknown } } | null;
 };
 type NodeCallback = (err: Error | null, result?: unknown) => void;
 
@@ -96,21 +104,26 @@ export async function reconcileSessionsOfGrant (user: SessionUser, grantId: stri
   let updated = 0;
   let deleted = 0;
   for (const session of sessions) {
-    // The row carries the session's own selfRevoke override: the chain is
-    // what the consent granted, without it.
-    const chain = (session.permissions ?? []).filter((p) => p?.feature !== 'selfRevoke');
+    // The row's own permissions carry the session's selfRevoke override.
+    const current = (session.permissions ?? []).filter((p) => p?.feature !== 'selfRevoke');
+    // The chain's consent; a row minted before it was recorded falls back to
+    // the row (it expires within the access TTL; its next refresh records it).
+    const recorded = session.clientData?.oauth?.chain;
+    const chain = Array.isArray(recorded) ? recorded as PermissionEntry[] : current;
     const eff = await effectiveSessionPermissions(user.id, grant as AccessRow & Record<string, unknown>, chain);
     if (!eff.hasReach) {
       await deleteAccessChain(user, { id: session.id });
       deleted++;
       continue;
     }
-    if (samePermissionKeys(chain, eff.permissions.filter((p) => p.feature !== 'selfRevoke'))) continue;
+    if (samePermissionKeys(current, eff.permissions.filter((p) => p.feature !== 'selfRevoke'))) continue;
     const permissions = withSessionSelfRevoke(eff.permissions);
+    const modified = timestamp.now();
     await fromCallback((cb: NodeCallback) =>
-      accessesRepository.updateOne(user, { id: session.id }, { permissions, modified: timestamp.now() }, cb));
+      accessesRepository.updateOne(user, { id: session.id }, { permissions, modified }, cb));
     if (typeof session.token === 'string') cache.unsetAccessLogic(user.id, { id: session.id, token: session.token });
     notifyScopedAccessChange(user.username, { id: session.id, type: 'app', permissions: permissions as Array<{ streamId?: string }> }, 'update');
+    await reindexAccessNonFatal(user.username, { id: session.id, type: session.type, expires: session.expires, modified });
     updated++;
   }
   if (updated > 0) pubsub.notifications.emit(user.username, USERNAME_BASED_ACCESSES_CHANGED);

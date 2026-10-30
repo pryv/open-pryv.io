@@ -462,6 +462,13 @@ function parseBooleanFlag (args, name, command) {
   throw new Error(command + ': --' + name + ' takes no value, or true / false (got "' + v + '")');
 }
 
+// A copy with object keys in sorted order and undefined members dropped (for comparison).
+function sortedKeys (v) {
+  if (Array.isArray(v)) return v.map(sortedKeys);
+  if (v == null || typeof v !== 'object') return v;
+  return Object.fromEntries(Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => [k, sortedKeys(v[k])]));
+}
+
 function isYes (args) {
   return args.flagsScalar.yes === true || args.flagsScalar.yes === 'true';
 }
@@ -556,6 +563,14 @@ async function runUpdate (platform, args, getClient, persistClient) {
   // core (same operation as the master-boot migration), so this whole-row write
   // does not re-install the old field after the boot converted it.
   const row = (await oauthStorage().convertClientAccount(merged, localUserId)) ?? merged;
+  // Nothing changed (e.g. the same --subject-type again): no write, so the
+  // row's version (and every consent in flight for it) stays as it is.
+  const { updatedAt: _before, ...existingRest } = existing;
+  const { updatedAt: _after, ...rowRest } = row;
+  if (JSON.stringify(sortedKeys(existingRest)) === JSON.stringify(sortedKeys(rowRest))) {
+    console.log('OK   client unchanged: ' + clientId);
+    return;
+  }
   await persistClient(platform, row);
   console.log('OK   client updated: ' + clientId);
   if (row !== merged) console.log('     converted the account reference to the user id');
