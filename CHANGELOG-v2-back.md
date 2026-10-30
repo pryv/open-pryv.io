@@ -77,8 +77,6 @@
   plus a cache bust; a failure never fails the refresh).
 - The scope echo has one input at the code exchange, at refresh and at introspection: the session's
   stored permissions without its selfRevoke override (`resolveAccess` and the mints return them).
-- A deleted grant takes all its sessions, expired ones included, as the refresh-chain collapse already
-  did.
 - Test suites: the two-core suite starts its cores with a toy OAuth grammar and covers introspection,
   revocation and suspension across cores (`OAUTH_TOY_EXTENSION` of `test/helpers/core-process.js`).
 
