@@ -29,7 +29,6 @@ const storage = require('oauth2/src/storage.ts');
 const REDIRECT_URI = 'https://app.registry.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
 const AUD = 'https://resource.test/base';
-const PSEUDONYM_REFUSED = 'pseudonymous subjects are not available on this core';
 const SIGNING_KEY_PEM = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
 const STATE_KEY = 'e2e-state-key-'.repeat(3);
 
@@ -423,19 +422,17 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     }
   });
 
-  it('[OREG9] pseudonymous subjects are refused at /authorize: a pseudonym request, a pairwise client', async () => {
-    const before = await grants();
-    for (const [scope, cid] of [['read/health ctx/pseudo', clientId], ['openid read/health ctx/pseudo', clientId],
-      ['read/health ctx/user', pairwiseClientId], ['openid read/health ctx/user', pairwiseClientId]]) {
-      const res = await authorize(scope, cid);
-      assert.equal(res.status, 302, res.text);
-      const loc = new URL(res.headers.location);
-      assert.equal(loc.origin + loc.pathname, REDIRECT_URI);
-      assert.equal(loc.searchParams.get('error'), 'invalid_scope');
-      assert.equal(loc.searchParams.get('error_description'), PSEUDONYM_REFUSED);
-    }
-    assert.deepEqual(await grants(), before);
-    assert.equal((await grants(pairwiseClientId)).length, 0);
+  it('[OREG9] a pairwise client gets an aliased grant without asking for a pseudonym; the subject (id_token sub included) is the alias', async () => {
+    const r = await runFlow('openid read/health ctx/user', pairwiseClientId);
+    const [grant] = await grants(pairwiseClientId);
+    assert.match(grant.alias, /^r-[a-z0-9]{8}$/);
+    assert.equal(r.offer.offer.randomAlias, true);
+    assert.equal(r.token.user, grant.alias);
+    assert.equal(r.token.apiEndpoint, undefined);
+    assert.equal((await verifiedIdToken(r.token.id_token)).sub, grant.alias);
+    const info = await coreRequest.get('/' + grant.alias + '/access-info').set('Authorization', r.token.access_token);
+    assert.equal(info.status, 200, JSON.stringify(info.body));
+    assert.equal(info.body.user.username, grant.alias);
   });
 
   it('[OREG10] a registered account: the subject is its internal id, distinct from the username; auth_time stays at the first sign-in across a second login', async () => {
@@ -469,6 +466,13 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       // auth_time is the creation of the personal access (its first sign-in).
       assert.ok(Math.abs(idToken.auth_time - Math.floor(Date.now() / 1000)) < 120, 'auth_time ' + idToken.auth_time);
       assert.ok(!JSON.stringify(idToken).includes(name), 'the username is in no claim');
+      // A pairwise client of the same account: sub is the grant's alias, never the id nor the username.
+      const pw = await runFlow('openid read/health ctx/user', pairwiseClientId, { username: name, token: login.body.token });
+      const pwToken = await verifiedIdToken(pw.token.id_token);
+      assert.match(pwToken.sub, /^r-[a-z0-9]{8}$/);
+      assert.equal(pwToken.sub, pw.token.user);
+      assert.ok(!JSON.stringify(pwToken).includes(name) && !JSON.stringify(pwToken).includes(id), JSON.stringify(pwToken));
+      assert.ok(!JSON.stringify(pw.token).includes(name) && !JSON.stringify(pw.token).includes(id), JSON.stringify(pw.token));
 
       // A later sign-in to the same app keeps that access (and its creation
       // time): auth_time is a lower bound, unchanged by the second login.
@@ -564,7 +568,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const conf = await coreRequest.get('/.well-known/openid-configuration');
     assert.equal(conf.status, 200, conf.text);
     // Pseudonymous subjects are not served yet: only `public` is advertised.
-    assert.deepEqual(conf.body.subject_types_supported, ['public']);
+    assert.deepEqual(conf.body.subject_types_supported, ['public', 'pairwise']);
     assert.deepEqual(conf.body.id_token_signing_alg_values_supported, ['RS256']);
     assert.equal(conf.body.jwks_uri, conf.body.issuer + '/oauth2/jwks');
     assert.ok(conf.body.scopes_supported.includes('openid'));

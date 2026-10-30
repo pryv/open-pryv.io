@@ -77,7 +77,8 @@
   signs; (2) move it FIRST and restart: it signs from then on; (3) once `oauth:idTokenTTL` has passed,
   remove the old key.
 - **`id_token` at the code exchange** of a registry client granted `openid`: RS256, header `{ alg, kid,
-  typ: 'JWT' }`, claims `iss`, `sub` (the user's stable internal id, not routable; never the username),
+  typ: 'JWT' }`, claims `iss`, `sub` (the user's stable internal id, not routable, or for a
+  pseudonymous grant the grant's alias, see below; never the username),
   `aud` and `azp` (the client id), `iat`, `exp` (`oauth:idTokenTTL`, default 300 s, at most 3600 s),
   `auth_time`, `nonce` (when the request sent one), plus the extension's `idTokenClaims(ctx)` fields
   (same context as `tokenResponse`; a core claim is refused, a failing or late hook answers 500 before
@@ -91,11 +92,30 @@
   carrying the same nonce only the first exchange answers (the second: `invalid_grant`, its session
   removed).
 - **`GET /.well-known/openid-configuration`**: the authorization-server metadata plus
-  `subject_types_supported: ['public']` (`pairwise` joins the list with the release that serves
-  pseudonymous subjects), `id_token_signing_alg_values_supported: ['RS256']`, `claims_supported` (the
+  `subject_types_supported: ['public', 'pairwise']`, `id_token_signing_alg_values_supported: ['RS256']`, `claims_supported` (the
   core's claims and the extension's `claimsSupported`). **`GET /oauth2/jwks`**: the public keys (`kty n
   e kid alg use` only). With a key, `/.well-known/oauth-authorization-server` gains `jwks_uri`, and
   `openid` joins `scopes_supported`.
+
+### Pseudonymous OAuth subjects
+
+- **Pseudonymous subjects are served** (they were refused in 2.0.0-rc.68). An offer asking for a
+  pseudonym (`randomAlias: true` from the grammar), and every request of a `pairwise` client, make an
+  aliased grant: the grant carries a routable alias (`r-` + 8 characters), one per user and client, kept
+  across refreshes and re-consents, and every session minted under it (at the consent and at each
+  refresh) carries the same alias. The app knows the account by that alias only: the subject of its
+  token responses, extension hooks and `id_token` (`sub`) is the alias, the token responses carry no `apiEndpoint`, and the
+  session's `access-info`, own `apiEndpoint` (`accesses.getOne`) and every access it creates (they carry
+  the alias too) name the alias; the account's username reaches the app in no answer. The grammar's
+  `echo` is told whether the subject is an alias (`aliased: boolean` in its context, an optional field,
+  `apiVersion` unchanged), so it can name a pseudonym marker for a pairwise client that did not ask for
+  one. A session is used at its alias only (see the alias-bound addressing entry below). The alias is
+  released when its last holder is deleted: deleting one session keeps it (the grant and the other
+  sessions hold it); deleting the grant (its sessions, expired ones included, and what they created go
+  with it), a change of subject mode, refresh-token reuse or the account's deletion releases it, and a
+  later consent gets a new one. A grant made before the operator revoked its client id (then registered
+  again under the same id) is withdrawn at the next consent and a fresh one made, a new alias with it.
+  `bin/oauth-client.js create-registry --subject-type pairwise` no longer prints a warning.
 
 ### Changed
 
@@ -122,6 +142,36 @@
   current grant does not hold is offered unticked (`optIn`) unless the request marks it mandatory: a
   stream the user declined at an earlier consent is no longer pre-ticked on the next launch, and a scope
   the app adds later needs a positive tick (or `mandatory`).
+- **BREAKING: an aliased access is used at its alias only (alias-bound addressing).** An access
+  carrying an alias (created with `randomAlias`, an OAuth session of a pseudonymous grant, or an
+  access created by such an access) is accepted only on requests addressed by that alias: HTTP
+  (`https://<alias>.<domain>/…` or `/<alias>/…`), the socket.io namespace `/<alias>`, the
+  high-frequency series URLs `/<alias>/events/<id>/series` and `/<alias>/series/batch`, attachment
+  downloads with a `readToken`; at the username, a former username or another access's alias it is
+  refused. An access without an alias is accepted at the account's username and former usernames, and
+  refused at an access's alias. The owner's personal (sign-in) token is accepted at any of them. A
+  refusal is exactly the answer to an unknown token (403 `invalid-access-token` "Cannot find access
+  from token.", no `Pryv-Access-Id` header), also for an expired access, so a token tells nothing about
+  the account behind another name. Until now any token of an account worked at any of its names, so
+  the holders of two aliased accesses could learn whether their aliases were one person. Clients that
+  address an access by its own `apiEndpoint` are unaffected; a client that called the username (or
+  another alias) with an aliased token, or an alias with a non-aliased token, must use the access's own
+  `apiEndpoint`.
+- **BREAKING: an access created by an aliased access carries the creator's alias** (unless it asks for
+  its own with `randomAlias`), so its `apiEndpoint` names the alias, not the username, and it is used
+  at that alias only (not at the username, where such a child of a `randomAlias` app worked until
+  now). Accesses such an app created before this release keep their username-based `apiEndpoint` and
+  stay usable at the username. Deleting such an access keeps the alias while another access still
+  carries it; an alias is released when its last holder is deleted (an expired access still holds it
+  until then; one left expired under a deleted access that shared its alias is deleted with it).
+- **Sign-in and password reset are refused at an access alias.** `POST /<alias>/auth/login` and the
+  password-reset request addressed by an `r-` alias answer one fixed error (400 `invalid-operation`
+  "The username in the path does not match that of the credentials."), whatever the credentials, before
+  any password check and without counting a failed sign-in for the account: the answer no longer tells
+  whether a guessed username is the account behind the alias. Sign-in at the username and at a former
+  username is unchanged.
+- Deleting a consent grant (registry or CMC) deletes its expired OAuth sessions too, not only the live
+  ones (they could no longer authenticate; they are no longer left in the access list).
 
 ### Fixes
 

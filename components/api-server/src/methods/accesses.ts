@@ -570,6 +570,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     next();
   }
 
+  /** The alias an access created by `creator` inherits: the creator's own, unless it is personal. */
+  function inheritedAlias (creator: { isPersonal?: () => boolean; alias?: unknown } | null | undefined): string | null {
+    if (creator == null || creator.isPersonal?.() === true) return null;
+    return typeof creator.alias === 'string' && creator.alias.length > 0 ? creator.alias : null;
+  }
+
   async function createAccess (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     if (params.type === 'shared') params.deviceName = null;
@@ -593,6 +599,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         ));
       }
       params.alias = await usersRepository.mintAlias(context.user.username, context.user.id);
+    } else if (inheritedAlias(context.access) != null) {
+      // An access created by an aliased one (a pseudonymous OAuth session, an
+      // app created with `randomAlias`) carries the same alias: its holder
+      // knows the account by that name only, its apiEndpoint shows it, and it
+      // is used at it (alias-bound addressing). Not minted: given back only
+      // once its last holder is deleted (accessDeletion.ts).
+      params.alias = inheritedAlias(context.access)!;
     }
     accessesRepository.insertOne(context.user, params, async function (err: (Error & { isDuplicateIndex: (k: string) => boolean }) | null, newAccess: { id: string; [k: string]: unknown } | undefined) {
       if (err != null && usersRepository != null && params.alias != null) {

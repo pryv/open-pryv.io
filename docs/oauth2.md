@@ -249,7 +249,9 @@ cancels the consent screens open at that moment (a state lives 5 minutes).
 With at least one signing key, registry clients (see the extension) may request
 the `openid` scope: the code exchange then returns an `id_token` (RS256, the
 key's `kid` in its header) carrying `iss`, `sub` (the user's stable internal
-id, not routable), `aud` and `azp` (the client id), `iat`, `exp`
+id, not routable; for a pseudonymous grant, a `pairwise` client or an offer
+asking for a pseudonym, the grant's alias, at which the app addresses the
+account), `aud` and `azp` (the client id), `iat`, `exp`
 (`idTokenTTL` later; default 300 s, at most 3600 s: a larger value is clamped
 with a boot warning), `auth_time` and the request's `nonce`, plus the
 extension's own claims. A refresh never returns an `id_token`. A nonce is
@@ -257,7 +259,7 @@ accepted once per client, across the platform: an authorization request or a
 code exchange reusing one that already went into an id_token is refused.
 `/.well-known/openid-configuration` and `/oauth2/jwks` are served, and
 `openid` is listed in `scopes_supported` (it is a scope of registry clients
-only; `subject_types_supported` lists `public`). Without keys, `openid` is
+only; `subject_types_supported` lists `public` and `pairwise`). Without keys, `openid` is
 refused (`invalid_scope`) and both documents answer 404.
 
 `auth_time` is a **lower bound**: the creation of the personal access the user

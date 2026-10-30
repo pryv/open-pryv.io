@@ -71,6 +71,9 @@ async function reprepareWebhookScopes (context: MethodContext, stored: StoredSco
 async function contextForAccess (source: MethodContext['source'], username: string, token: string, storageLayer: unknown): Promise<MethodContext> {
   const context = new MethodContextClass(source, username, token, null, {}, {}, null);
   context.bypassAccessCache = true;
+  // No request addressed the account: the webhook's own access is loaded by
+  // the server, whatever alias it carries.
+  context.skipAddressBinding = true;
   await context.init();
   await context.retrieveAccessFromToken(storageLayer as Parameters<MethodContext['retrieveAccessFromToken']>[0]);
   await context.checkDpopKeyNotRevoked();
