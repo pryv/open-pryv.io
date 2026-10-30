@@ -340,4 +340,32 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal(row.clientSecretHash, undefined);
     assert.equal(row.jwks, undefined);
   });
+
+  it('[OCLI12] rotate-secret: refused on a client whose auth method uses no secret, nothing written; works on a secret client', async () => {
+    const { generateKeyPairSync } = require('node:crypto');
+    const { kty, crv, x, y } = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.rs.none', ['--subject-type', 'public']));
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.rs.jwt', ['--subject-type', 'public', '--auth-method', 'private_key_jwt',
+      '--jwks-json', JSON.stringify({ keys: [{ kty, crv, x, y }] })]));
+    for (const [id, method] of [['Cli.rs.none', 'none'], ['Cli.rs.jwt', 'private_key_jwt']]) {
+      const before = await getClient(platform, id);
+      const r = await run(cli.runRotateSecret, platform, ['rotate-secret', id]);
+      assert.equal(r.error?.message, 'rotate-secret: client "' + id + '" authenticates with ' + method + ', which uses no secret; ' +
+        'to switch it to a secret, run update ' + id + ' --auth-method client_secret_basic');
+      assert.doesNotMatch(r.out, /client_secret:/);
+      assert.deepEqual(await getClient(platform, id), before);
+    }
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.rs.sec', ['--subject-type', 'public', '--auth-method', 'client_secret_basic']));
+    const first = (await getClient(platform, 'Cli.rs.sec')).clientSecretHash;
+    const ok = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.rs.sec']);
+    assert.equal(ok.error, null, ok.error?.message);
+    assert.match(ok.out, /client_secret: \S+/);
+    assert.notEqual((await getClient(platform, 'Cli.rs.sec')).clientSecretHash, first);
+    // An app-account row (no auth method stored) works as before.
+    await persistClient(platform, { clientId: 'appacct', redirectUris: [REDIRECT], grantTypes: ['authorization_code'], scope: [] });
+    const app = await run(cli.runRotateSecret, platform, ['rotate-secret', 'appacct']);
+    assert.equal(app.error, null, app.error?.message);
+    assert.equal(typeof (await getClient(platform, 'appacct')).clientSecretHash, 'string');
+  });
 });
