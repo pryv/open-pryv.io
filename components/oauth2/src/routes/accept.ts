@@ -43,7 +43,10 @@
  * is joined into the grant. A stale `shownDigest`, or a change of subject
  * mode without both `shownDigest` and the acknowledgement, answers 400
  * `invalid_request` with a machine-readable `reason`
- * (`consent-out-of-date`, `subject-change-unacknowledged`).
+ * (`consent-out-of-date`, `subject-change-unacknowledged`). Other refusals
+ * the consent UI tells apart carry one too: `permission-level-conflict`,
+ * `keep-one-stream`, `consent-widens-offer`. Both fields are ignored for
+ * app-account clients.
  *
  * Refuse path: when the user declines, the consent UI does NOT call
  * this endpoint — it calls `POST /oauth2/authorize/refuse` (see
@@ -160,7 +163,7 @@ export type AcceptDeps = {
   readRegistryGrant?: ReadRegistryGrant;
 };
 
-type Refusal = { status: number; body: { error: string; error_description: string } };
+type Refusal = { status: number; body: { error: string; error_description: string; reason?: string } };
 
 /** The consent-grant rule's refusal (granted against the offer the screen showed), or null. */
 function consentRefusal (
@@ -211,7 +214,7 @@ async function levelConflictRefusal (err: unknown, payload: { clientId: string; 
     requestedScope: payload.scope,
     reason: 'permission-level-conflict',
   });
-  return { status: 400, body: { error: 'invalid_scope', error_description: description } };
+  return { status: 400, body: { error: 'invalid_scope', error_description: description, reason: 'permission-level-conflict' } };
 }
 
 /** The consent UI's last screen is not this composition any more. */
@@ -383,6 +386,7 @@ export function handleAccept (deps: AcceptDeps) {
         return sendJson(res, 400, {
           error: 'invalid_scope',
           error_description: 'grantedPermissions must keep at least one stream permission (refuse instead)',
+          reason: 'keep-one-stream',
         });
       }
       // Fail closed: a change of subject mode needs a screen that showed it
@@ -432,6 +436,7 @@ export function handleAccept (deps: AcceptDeps) {
         return sendJson(res, 400, {
           error: 'invalid_scope',
           error_description: 'grantedPermissions widen the offer under the stream hierarchy — the kept subset must not grant more access than the offer',
+          reason: 'consent-widens-offer',
         });
       }
       if ((err as { code?: string } | null)?.code === 'permission-level-conflict') {

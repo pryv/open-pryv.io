@@ -42,15 +42,23 @@ describe('[OCMPU] composed consent of registry clients', () => {
       { streamId: 'a', level: 'read', mandatory: true },
       { streamId: 'b', level: 'read', optIn: true },
       { streamId: 'c', level: 'contribute', optIn: true },
+      { feature: 'selfAudit', setting: 'allowed', optIn: true },
     ], { allowUserChoice: true });
-    const current = { aliased: false, permissions: [{ streamId: 'a', level: 'contribute' }, { streamId: 'c', level: 'read' }, { streamId: 'd', level: 'read' }, { streamId: 'e', level: 'none' }] };
+    const current = {
+      aliased: false,
+      permissions: [{ streamId: 'a', level: 'contribute' }, { streamId: 'c', level: 'read' }, { streamId: 'd', level: 'read' },
+        { streamId: 'e', level: 'none' }, { feature: 'selfAudit', setting: 'allowed' }],
+    };
     const c = composeShownOffer(req, current, CLIENT);
     assert.equal(c.ok, true);
+    // A held entry says the level held now (c is widened by the request), and
+    // is never opt-in (it opens ticked), stream or feature.
     assert.deepEqual(c.shown.permissions, [
-      { streamId: 'a', level: 'contribute', mandatory: true, currentlyGranted: true },
-      { streamId: 'c', level: 'contribute', currentlyGranted: true },
-      { streamId: 'd', level: 'read', currentlyGranted: true },
+      { streamId: 'a', level: 'contribute', mandatory: true, currentlyGranted: true, currentLevel: 'contribute' },
+      { streamId: 'c', level: 'contribute', currentlyGranted: true, currentLevel: 'read' },
+      { streamId: 'd', level: 'read', currentlyGranted: true, currentLevel: 'read' },
       { streamId: 'b', level: 'read', optIn: true },
+      { feature: 'selfAudit', setting: 'allowed', currentlyGranted: true },
     ]);
     assert.equal(c.shown.allowUserChoice, true);
   });
@@ -104,6 +112,16 @@ describe('[OCMPU] composed consent of registry clients', () => {
     // Another grant, another screen.
     const other = composeShownOffer(requested([{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'contribute' }, { feature: 'webhooks', setting: 'forbidden' }]), { aliased: false, permissions: [] }, CLIENT);
     assert.notEqual(other.shownDigest, one.shownDigest);
+    // Same shown levels, another level held: another screen (currentLevel is bound).
+    const heldRead = composeShownOffer(requested([{ streamId: 'a', level: 'contribute' }]), { aliased: false, permissions: [{ streamId: 'a', level: 'read' }] }, CLIENT);
+    const heldContribute = composeShownOffer(requested([{ streamId: 'a', level: 'contribute' }]), { aliased: false, permissions: [{ streamId: 'a', level: 'contribute' }] }, CLIENT);
+    assert.equal(heldRead.shown.permissions[0].level, heldContribute.shown.permissions[0].level);
+    assert.notEqual(heldRead.shownDigest, heldContribute.shownDigest);
+  });
+
+  it('[OCMPU8] the display annotations of a shown entry are dropped from a granted entry', () => {
+    assert.deepEqual(normalizePermissions([{ streamId: 'a', level: 'contribute', currentlyGranted: true, currentLevel: 'read' }]),
+      [{ streamId: 'a', level: 'contribute' }]);
   });
 
   it('[OCMPU7] the grant after a consent: replace exactly, union, sticky restrictions, default forbids', () => {

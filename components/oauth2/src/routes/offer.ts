@@ -202,6 +202,7 @@ export function handleOffer (deps: OfferDeps) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
         error_description: 'conflicting permission level on a requested resource: ' + composition.error.message,
+        reason: 'permission-level-conflict',
       });
     }
     return sendJson(res, 200, {

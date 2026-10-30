@@ -236,8 +236,8 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.equal(composed.status, 200, JSON.stringify(composed.body));
     assert.equal(composed.body.authenticated, true);
     assert.deepEqual(composed.body.offer.permissions, [
-      { streamId: 'a', level: 'read', currentlyGranted: true },
-      { streamId: 'b', level: 'contribute', currentlyGranted: true },
+      { streamId: 'a', level: 'read', currentlyGranted: true, currentLevel: 'read' },
+      { streamId: 'b', level: 'contribute', currentlyGranted: true, currentLevel: 'contribute' },
       { streamId: 'c', level: 'read' },
     ]);
     assert.deepEqual(composed.body.currentGrant, { subjectMode: 'account' });
@@ -276,9 +276,11 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.equal(o.status, 400, JSON.stringify(o.body));
     assert.equal(o.body.error, 'invalid_scope');
     assert.match(o.body.error_description, /conflicting permission level/);
+    assert.equal(o.body.reason, 'permission-level-conflict');
     const a = await accept(flow.state, who, [{ streamId: 'a', level: 'create-only' }]);
     assert.equal(a.status, 400, JSON.stringify(a.body));
     assert.equal(a.body.error, 'invalid_scope');
+    assert.equal(a.body.reason, 'permission-level-conflict');
     assert.equal((await grantOf(who)).id, before.id);
   });
 
@@ -470,6 +472,9 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const now = await grantOf(who);
     assert.notEqual(baseOf(now.id), baseOf(seeded.body.access.id));
     assert.equal(now.alias ?? null, null);
+    // The old grant's alias was released: it no longer addresses the account.
+    const viaAlias = await coreRequest.get('/' + seeded.body.access.alias + '/access-info').set('Authorization', who.token);
+    assert.equal(viaAlias.status, 404, JSON.stringify(viaAlias.body));
     assert.equal((await accesses(who)).some((a) => baseOf(a.id) === baseOf(seeded.body.access.id)), false);
     assert.ok(granteds.some((r) => r.clientId === clientId &&
       JSON.stringify(r.subjectChange) === JSON.stringify({ from: 'pseudonym', to: 'account' })), JSON.stringify(granteds));
@@ -499,6 +504,11 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const dropped = await consent(who, 'read/a ctx/locked ctx/choice', { keep: (p) => p.feature == null });
     assert.equal(dropped.accept.status, 400, JSON.stringify(dropped.accept.body));
     assert.match(dropped.accept.body.error_description, /mandatory/);
+    // Keeping the forbids alone grants nothing: refused, with its reason.
+    const featuresOnly = await consent(who, 'read/a ctx/locked ctx/choice', { keep: (p) => p.feature != null });
+    assert.equal(featuresOnly.accept.status, 400, JSON.stringify(featuresOnly.accept.body));
+    assert.equal(featuresOnly.accept.body.error, 'invalid_scope');
+    assert.equal(featuresOnly.accept.body.reason, 'keep-one-stream');
     // A client allowed both features: its grants carry no default forbid.
     await consentAndToken(who, 'read/a', { cid: openClientId });
     assert.deepEqual((await grantOf(who, openClientId)).permissions, [{ streamId: 'a', level: 'read' }]);

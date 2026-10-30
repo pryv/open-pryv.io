@@ -13,7 +13,8 @@
  * request: one entry per stream at the level covering both (a stream held at
  * `read` and requested at `create-only` has none: the consent is refused).
  * Entries the grant already holds are flagged `currentlyGranted` (shown
- * ticked); a new entry the request marks `optIn` is shown unticked. The
+ * ticked; a stream entry also carries `currentLevel`, the level held now);
+ * a new entry the request marks `optIn` is shown unticked. The
  * grant's forbidden features stay on the screen, locked. The core's own
  * default forbids are never shown: they are applied after every consent.
  *
@@ -87,7 +88,9 @@ export function composeShownOffer (
     const joined = mergeStreamPermissions(currentStreams, normalizePermissions(requestedStreams), 'join');
     if (joined.conflicts.length > 0) return { ok: false, error: new PermissionMergeConflictError(joined.conflicts) };
     const requestedById = new Map<string, ExtPermission>(requestedStreams.map((p) => [canonicalStreamId(p.streamId), p]));
-    const grantedIds = new Set<string>(currentStreams.map((p) => canonicalStreamId(String(p.streamId))));
+    // The level each stream is held at now: the screen says what the app holds
+    // (an entry the request widens shows both levels).
+    const heldLevels = new Map<string, string>(currentStreams.map((p) => [canonicalStreamId(String(p.streamId)), String(p.level)]));
     permissions = [];
     for (const p of joined.permissions) {
       if (!isStreamPermission(p)) continue;
@@ -95,8 +98,13 @@ export function composeShownOffer (
       const r = requestedById.get(id);
       const out: ExtPermission = { streamId: p.streamId, level: p.level };
       if (r?.mandatory === true) out.mandatory = true;
-      if (grantedIds.has(id)) out.currentlyGranted = true;
-      else if (r?.optIn === true) out.optIn = true;
+      const held = heldLevels.get(id);
+      if (held != null) {
+        out.currentlyGranted = true;
+        out.currentLevel = held;
+      } else if (r?.optIn === true) {
+        out.optIn = true;
+      }
       permissions.push(out);
     }
 
@@ -108,7 +116,11 @@ export function composeShownOffer (
       const out: ExtPermission = currentForbids.has(f.feature)
         ? { feature: f.feature, setting: 'forbidden', mandatory: true }
         : { ...f };
-      if (currentFeatureNames.has(f.feature)) out.currentlyGranted = true;
+      // A held entry opens ticked: never opt-in.
+      if (currentFeatureNames.has(f.feature)) {
+        out.currentlyGranted = true;
+        delete out.optIn;
+      }
       permissions.push(out);
     }
     // The grant's own restrictions stay visible (locked), except the core's

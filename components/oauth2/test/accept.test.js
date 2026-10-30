@@ -470,6 +470,22 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.equal(res.body.error, 'invalid_scope');
       assert.match(res.body.error_description, /^conflicting permission level on a requested resource/);
       assert.match(res.body.error_description, /"diary".*"read".*"create-only"/);
+      assert.equal(res.body.reason, 'permission-level-conflict');
+    });
+    it('[OAC-CR3] the stream-hierarchy guard refusing the kept subset → 400 invalid_scope, reason consent-widens-offer', async () => {
+      const handler = require('../src/routes/accept.ts').handleAccept({
+        config: fakeConfig(),
+        platform: fakePlatform(),
+        resolveUser: resolveAlice,
+        createAccess: async () => {
+          throw Object.assign(new Error('granted permissions widen the offer under the stream hierarchy'), { code: 'consent-widens-offer' });
+        },
+      });
+      const res = fakeRes();
+      await handler({ body: validBody() }, res);
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.body.error, 'invalid_scope');
+      assert.equal(res.body.reason, 'consent-widens-offer');
     });
   });
 });

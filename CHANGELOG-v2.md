@@ -57,16 +57,24 @@
 - **Composed re-consent of registry clients.** `POST /oauth2/authorize/offer` takes an optional
   `username` + `userToken` (the owner's personal token): it then answers the consent screen composed
   of the user's current grant and the request, one entry per stream at the level covering both
-  (entries already granted flagged `currentlyGranted: true`; a new `optIn` entry stays unticked; the
-  grant's forbidden features shown, locked), plus `shownDigest`, `currentGrant: { subjectMode:
-  'account' | 'pseudonym' } | null`, `subjectChange` and `authenticated: true`; not cached. Another
-  token answers the request alone plus `authenticated: false`. `read` held and `create-only` requested
-  on one stream is `invalid_scope`. `POST /oauth2/authorize/accept` takes `shownDigest` (and
+  (entries already granted flagged `currentlyGranted: true`, a stream entry also with `currentLevel`,
+  the level held now; a new `optIn` entry stays unticked; the grant's forbidden features shown,
+  locked), plus `shownDigest` (opaque), `currentGrant: { subjectMode: 'account' | 'pseudonym' } |
+  null`, `subjectChange` and `authenticated: true`; not cached. Another token answers the request
+  alone plus `authenticated: false` (`authenticated` is absent when no sign-in was attempted). `read`
+  held and `create-only` requested on one stream is `invalid_scope`. `POST /oauth2/authorize/accept`
+  takes `shownDigest` (and
   `acknowledgeSubjectChange`): with it, the grant becomes exactly what the user ticked (unticking
   narrows), the grant's forbidden features and exclusion masks kept; a `shownDigest` that no longer
   matches answers 400 `invalid_request` with `reason: 'consent-out-of-date'` (restart the flow).
   Without `shownDigest` the consent is joined into the grant per stream and never narrows: per-stream
-  narrowing on re-consent needs the consent UI release that posts `shownDigest`.
+  narrowing on re-consent needs the consent UI release that posts `shownDigest`. Both fields are
+  ignored for app-account clients.
+- **`reason` on `/oauth2/authorize/*` errors.** An error body may carry an optional machine-readable
+  `reason` beside the OAuth `error`: `consent-out-of-date`, `subject-change-unacknowledged`,
+  `permission-level-conflict` (a level conflict with the grant, at `/offer` and `/accept`),
+  `keep-one-stream` (a registry consent keeping no stream), `consent-widens-offer` (the kept subset
+  would widen the offer through the stream hierarchy).
 - **A change of subject mode must be acknowledged.** When the request's subject mode (account id or
   pseudonym) differs from the current grant's, `/offer` reports `subjectChange: { from, to }` and
   `/accept` requires `shownDigest` and `acknowledgeSubjectChange: true`, else 400 `invalid_request`
@@ -100,7 +108,9 @@
 - The OAuth session minted at `/oauth2/authorize/accept` is now written by the server like refreshed
   sessions: its `createdBy` is `system` (it was the personal access that consented), and it no longer
   produces an `accesses.create` row in the user's audit log (the consent is recorded by
-  `oauth.consent.granted` and by the grant's own create / update rows).
+  `oauth.consent.granted` and by the grant's own create / update rows). It starts under the grant's
+  restrictions as it stands (an exclusion mask or a forbidden feature the owner set on the grant, a
+  registry client's default forbids), as its refreshes will; CMC grants included.
 - One more replicated platform write per OAuth session mint (code exchange and refresh, every client):
   a session index row `oauth-at/<sha256(token)>` (user id, client, core; no token, no username).
 - A `consent/request-cmc` offer naming one stream twice (in any spelling, `a` and `:local:a`) is refused

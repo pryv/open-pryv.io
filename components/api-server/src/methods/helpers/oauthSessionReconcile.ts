@@ -39,7 +39,6 @@ type AccessRow = {
   type?: string;
   token?: string;
   expires?: number | null;
-  deleted?: unknown;
   permissions?: PermissionEntry[];
   clientData?: { oauth?: { dataGrantId?: unknown } } | null;
 };
@@ -72,9 +71,12 @@ export async function effectiveSessionPermissions (
   return { permissions: effective, hasReach };
 }
 
+// The repository's `find` returns live head rows only (it adds `deleted:
+// null` and `headId: null` to every query), so a soft-deleted row never
+// reaches here; `deleted` is not even projected.
 function isLiveSessionOf (access: AccessRow, grantBaseId: string, now: number): boolean {
   return access?.type === 'app' && access.clientData?.oauth?.dataGrantId === grantBaseId &&
-    access.deleted == null && !(access.expires != null && now > access.expires);
+    !(access.expires != null && now > access.expires);
 }
 
 /**
