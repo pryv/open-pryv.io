@@ -160,7 +160,7 @@ describe('[PSET] accesses permissionSet', () => {
       { streamId: 'health', level: 'read', mandatory: true },
       { streamId: 'diary', level: 'contribute' },
       { streamId: 'location', level: 'read', optIn: true },
-      { feature: 'selfRevoke', setting: 'forbidden', optIn: true }
+      { feature: 'selfAudit', setting: 'allowed', optIn: true }
     ];
 
     it('[PS11] consent form preserves optIn; plain form and strip drop it', () => {
@@ -170,7 +170,7 @@ describe('[PSET] accesses permissionSet', () => {
         { streamId: 'health', level: 'read' },
         { streamId: 'diary', level: 'contribute' },
         { streamId: 'location', level: 'read' },
-        { feature: 'selfRevoke', setting: 'forbidden' }
+        { feature: 'selfAudit', setting: 'allowed' }
       ];
       assert.deepEqual(ps.normalizePermissions(offered), plain);
       assert.deepEqual(ps.stripConsentAnnotations(consentForm), plain);
@@ -190,7 +190,7 @@ describe('[PSET] accesses permissionSet', () => {
       // Same contradiction on a feature entry, and reported at its own index.
       assert.throws(
         () => ps.normalizePermissions(
-          [{ feature: 'selfRevoke', setting: 'forbidden', mandatory: true, optIn: true }],
+          [{ feature: 'selfAudit', setting: 'allowed', mandatory: true, optIn: true }],
           { consent: true }
         ),
         /index 0: 'mandatory' and 'optIn' contradict/
@@ -228,8 +228,23 @@ describe('[PSET] accesses permissionSet', () => {
       assert.equal(r.reason, 'choice-not-allowed');
       assert.deepEqual(r.offending, [
         { streamId: 'location', level: 'read' },
-        { feature: 'selfRevoke', setting: 'forbidden' }
+        { feature: 'selfAudit', setting: 'allowed' }
       ]);
+    });
+  });
+
+  describe('[PSET-FORBID] forbidden features in consent context', () => {
+    it('[PS14] a forbidden feature is always mandatory; optIn on it is refused; plain form unchanged', () => {
+      assert.deepEqual(ps.normalizePermissions([{ feature: 'webhooks', setting: 'forbidden' }], { consent: true }),
+        [{ feature: 'webhooks', setting: 'forbidden', mandatory: true }]);
+      assert.throws(() => ps.normalizePermissions([{ feature: 'webhooks', setting: 'forbidden', optIn: true }], { consent: true }),
+        /index 0: a forbidden feature cannot be 'optIn'/);
+      assert.deepEqual(ps.normalizePermissions([{ feature: 'webhooks', setting: 'forbidden', mandatory: true }]),
+        [{ feature: 'webhooks', setting: 'forbidden' }]);
+      // Dropping it under user choice narrows nothing: refused as mandatory.
+      const offered = ps.normalizePermissions([{ streamId: 'a', level: 'read' }, { feature: 'webhooks', setting: 'forbidden' }], { consent: true });
+      const r = ps.checkConsentGrant([{ streamId: 'a', level: 'read' }], offered, true);
+      assert.equal(r.reason, 'mandatory-refused');
     });
   });
 

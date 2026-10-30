@@ -18,6 +18,13 @@
  * Unauthenticated like /oauth2/authorize: the state's HMAC bounds it. The
  * re-derivation is memoised per state (bounded, for the state's lifetime), so
  * replaying one valid state does not run the grammar again.
+ *
+ * Signed in (optional `username` + `userToken`, the owner's personal token):
+ * the answer is the consent screen composed with the user's current grant
+ * (`offer` entries flagged `currentlyGranted`), with `shownDigest` (to post
+ * back at /accept), `currentGrant: { subjectMode } | null` and
+ * `subjectChange`; never memoised. A token that does not sign in answers the
+ * request alone, plus `authenticated: false`.
  */
 
 import crypto from 'node:crypto';
@@ -31,10 +38,27 @@ import { verifyState } from '../signedState.ts';
 import { getClient, isRegistryClient } from '../clientRegistry.ts';
 import { resolveRequestedScope } from '../scopeGrammar.ts';
 import { extensionGeneration } from '../extension.ts';
+import type { CurrentGrant } from '../consentComposition.ts';
+import { composeShownOffer, subjectModeOf } from '../consentComposition.ts';
+
+/** A signed-in user, as the host app's resolver answers it. */
+export type OfferSession = {
+  userId: string;
+  username: string;
+  /** The token is a personal one (only those may see the user's grants). */
+  personal?: boolean;
+  /** Host-app data piggybacked (e.g. the MethodContext). */
+  _context?: unknown;
+};
 
 export type OfferDeps = {
   config: { get (key: string): unknown };
   platform: PlatformDB;
+  /** Optional sign-in for the composed answer (same resolver as /accept). */
+  resolveUser?: (params: { username: string; userToken: string }) =>
+  Promise<OfferSession | { refused: true; description: string } | null>;
+  /** The user's current grant for the client, or null. */
+  readRegistryGrant?: (params: { session: OfferSession; clientId: string }) => Promise<CurrentGrant | null>;
 };
 
 export type StateOffer =
@@ -117,6 +141,26 @@ export async function resolveStateOffer (
   return { ok: true, client, resolved };
 }
 
+/**
+ * The signed-in user behind an optional `username` + `userToken` pair: the
+ * session of a valid PERSONAL token, else null (any failure, a refused or a
+ * non-personal token alike: no oracle beyond what /accept already gives).
+ */
+async function personalSession (deps: OfferDeps, body: Record<string, unknown>): Promise<OfferSession | null> {
+  if (deps.resolveUser == null) return null;
+  if (typeof body.username !== 'string' || body.username.length === 0 ||
+      typeof body.userToken !== 'string' || body.userToken.length === 0) return null;
+  let s: OfferSession | { refused: true } | null;
+  try {
+    s = await deps.resolveUser({ username: body.username, userToken: body.userToken });
+  } catch {
+    return null;
+  }
+  if (s == null || (s as { refused?: unknown }).refused === true) return null;
+  const session = s as OfferSession;
+  return session.personal === true ? session : null;
+}
+
 export function handleOffer (deps: OfferDeps) {
   return async function offer (req: Request, res: Response): Promise<void> {
     const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
@@ -131,7 +175,7 @@ export function handleOffer (deps: OfferDeps) {
     const r = await resolveStateOffer(deps, verified.payload);
     if (!r.ok) return sendJson(res, r.status, { error: r.error, error_description: r.description });
     const c = r.client;
-    return sendJson(res, 200, {
+    const answer: Record<string, unknown> = {
       client: {
         clientId: c.clientId,
         clientName: c.clientName,
@@ -142,6 +186,31 @@ export function handleOffer (deps: OfferDeps) {
       },
       offer: { allowUserChoice: false, ...r.resolved.offer },
       scope: r.resolved.requested,
+    };
+    const signInAttempted = body.username !== undefined || body.userToken !== undefined;
+    if (!signInAttempted) return sendJson(res, 200, answer);
+
+    // Signed in: the composition of the user's current grant and the request
+    // (what /accept will check a `shownDigest` against). Never memoised.
+    const session = await personalSession(deps, body);
+    if (session == null) return sendJson(res, 200, { ...answer, authenticated: false });
+    const current = deps.readRegistryGrant != null
+      ? await deps.readRegistryGrant({ session, clientId: c.clientId })
+      : null;
+    const composition = composeShownOffer(r.resolved, current, c);
+    if (!composition.ok) {
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: 'conflicting permission level on a requested resource: ' + composition.error.message,
+      });
+    }
+    return sendJson(res, 200, {
+      ...answer,
+      authenticated: true,
+      offer: composition.shown,
+      shownDigest: composition.shownDigest,
+      currentGrant: current == null ? null : { subjectMode: subjectModeOf(current.aliased) },
+      subjectChange: composition.subjectChange,
     });
   };
 }

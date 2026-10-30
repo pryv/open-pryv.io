@@ -360,7 +360,9 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.equal(v.payload.offer.capabilityUrl, CAP_URL);
       assert.equal(v.payload.offer.capabilityId, 'cap-42');
       assert.equal(v.payload.offer.offerEventId, 'ev-offer-1');
-      assert.deepEqual(v.payload.offer.permissions, OFFER_PERMISSIONS);
+      // A forbidden feature is always mandatory in a consent offer.
+      assert.deepEqual(v.payload.offer.permissions, OFFER_PERMISSIONS.map((p) =>
+        p.setting === 'forbidden' ? { ...p, mandatory: true } : p));
       assert.deepEqual(v.payload.offer.title, { en: 'Example study' });
       assert.deepEqual(v.payload.offer.consent, { en: 'I agree to share with the study.' });
     });

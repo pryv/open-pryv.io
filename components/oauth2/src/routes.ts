@@ -157,6 +157,12 @@ export type Deps = {
   extension?: OAuthExtension | null;
   /** Registry clients: the id the app sees for the user (see GrantSubjectResolver). */
   resolveGrantSubject?: GrantSubjectResolver;
+  /**
+   * Registry clients: the user's current grant for the client, read with the
+   * signed-in user's context (composed consent at /offer and /accept).
+   */
+  readRegistryGrant?: (params: { session: { userId: string; username: string; [key: string]: unknown }; clientId: string })
+  => Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean } | null>;
 };
 
 /**
@@ -208,7 +214,12 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   app.post!('/oauth2/authorize', authorize);
 
   app.post!('/oauth2/authorize/offer',
-    guardRoute(handleOffer({ config: deps.config, platform: deps.platform })));
+    guardRoute(handleOffer({
+      config: deps.config,
+      platform: deps.platform,
+      resolveUser: deps.resolveUser,
+      ...(deps.readRegistryGrant != null ? { readRegistryGrant: deps.readRegistryGrant } : {}),
+    })));
 
   app.post!('/oauth2/authorize/accept',
     guardRoute(handleAccept({
@@ -216,6 +227,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       platform: deps.platform,
       resolveUser: deps.resolveUser,
       createAccess: deps.createAccess,
+      ...(deps.readRegistryGrant != null ? { readRegistryGrant: deps.readRegistryGrant } : {}),
     })));
 
   app.post!('/oauth2/authorize/refuse',

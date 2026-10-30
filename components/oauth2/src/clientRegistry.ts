@@ -232,6 +232,25 @@ function validateRegistryClient (client: OAuthClient): void {
   if (client.status != null && client.status !== 'active' && client.status !== 'suspended') {
     throw new Error('status must be active or suspended');
   }
+  if (client.allowFeatures != null) {
+    if (!Array.isArray(client.allowFeatures) ||
+        client.allowFeatures.some((f) => !REGISTRY_DEFAULT_FORBIDDEN_FEATURES.includes(f))) {
+      throw new Error('registry client: allowFeatures may only list ' + REGISTRY_DEFAULT_FORBIDDEN_FEATURES.join(', '));
+    }
+  }
+}
+
+/**
+ * Features a registry client's grant forbids unless the client row lists them
+ * in `allowFeatures`: the core applies them after every consent (never shown
+ * on the consent screen; a forbid always wins over an allow).
+ */
+export const REGISTRY_DEFAULT_FORBIDDEN_FEATURES: readonly string[] = Object.freeze(['webhooks', 'secretSharing']);
+
+/** The default forbids that apply to this registry client. */
+export function defaultForbiddenFeatures (client: OAuthClient): string[] {
+  const allowed = Array.isArray(client.allowFeatures) ? client.allowFeatures : [];
+  return REGISTRY_DEFAULT_FORBIDDEN_FEATURES.filter((f) => !allowed.includes(f));
 }
 
 const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost'];

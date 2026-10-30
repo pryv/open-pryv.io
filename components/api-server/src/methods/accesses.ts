@@ -45,6 +45,9 @@ const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
 // deletion of an access with its side effects: helpers/accessDeletion.ts,
 // shared with the plugins' teardowns.
 const { deleteAccessChain, notifyScopedAccessChange } = require('./helpers/accessDeletion.ts');
+// A consent grant whose permissions change re-cuts its live OAuth sessions.
+const { reconcileSessionsOfGrant } = require('./helpers/oauthSessionReconcile.ts');
+const { samePermissionKeys } = require('../routes/oauth2/types.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
 const { getLogger, ready } = require('@pryv/boiler');
@@ -662,6 +665,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     createDataStructureFromUpdatePermissions,
     cleanupUpdatePermissions,
     snapshotAndApplyUpdate,
+    reconcileOAuthSessionsOfUpdatedAccess,
     rescopeWebhooksOfUpdatedAccess,
     cmcAccessProvisionAppScopeHook,
     emitUpdateNotifications,
@@ -970,6 +974,25 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // this cache).
     if (headWriteAttempted) cache.unsetAccessLogic(context.user.id, { id: baseId!, token: target.token });
     if (failure != null) return next(errors.unexpectedError(failure));
+    next();
+  }
+
+  /**
+   * An OAuth consent grant (registry client or CMC) whose permissions changed
+   * re-cuts its live sessions at once: a narrowing reaches the apps now, not
+   * at their next refresh. A session left with no reach is deleted, and its
+   * refresh chain with it. Accesses without sessions are untouched. Non-fatal:
+   * the update stands; a session not re-cut here is at the next refresh.
+   */
+  async function reconcileOAuthSessionsOfUpdatedAccess (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    const updated = params.update?.permissions;
+    const before = (params.targetAccess as { permissions?: unknown[] } | undefined)?.permissions ?? [];
+    if (!Array.isArray(updated) || samePermissionKeys(before, updated)) return next();
+    try {
+      await reconcileSessionsOfGrant(context.user, params.targetBase!);
+    } catch (err) {
+      getLogger('accesses').warn(`OAuth sessions of access ${params.targetBase} not re-cut after its update: ${(err as Error).message}`);
+    }
     next();
   }
 

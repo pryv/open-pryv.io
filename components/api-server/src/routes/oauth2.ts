@@ -92,9 +92,12 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
           'the account owner must sign in and consent.',
       };
     }
+    const access = context.access as { isPersonal?: () => boolean } | null;
     return {
       userId: context.user.id,
       username: context.user.username,
+      // Only a personal token may see the user's grants (composed consent).
+      personal: typeof access?.isPersonal === 'function' && access.isPersonal() === true,
       // Carry the live context through so createAccess can call api on it.
       _context: context,
     };
@@ -151,5 +154,6 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     resolveUsername: sessions.resolveUsername,
     resolveUser,
     createAccess: grants.createAccess,
+    readRegistryGrant: grants.readRegistryGrant,
   });
 }

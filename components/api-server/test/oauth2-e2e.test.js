@@ -431,7 +431,8 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     });
 
     it('[OE03] consent downgrade — offer has diary+health, user keeps health only', async function () {
-      const r = await runFullFlow({ grantedPermissions: [{ streamId: 'health', level: 'read' }] });
+      // The offer's forbidden feature is a restriction: it cannot be unticked.
+      const r = await runFullFlow({ grantedPermissions: [{ streamId: 'health', level: 'read' }, { feature: 'selfRevoke', setting: 'forbidden' }] });
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
       const access = await accessInfo(r.tokenRes.body.access_token);
       assert.ok(!access.permissions.some((p) => p.streamId === 'diary'),

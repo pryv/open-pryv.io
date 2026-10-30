@@ -20,7 +20,8 @@
  * The requested offer must stay within the client's maximum scope set (its
  * registered `scope`, parsed by the same grammar): every requested stream
  * entry needs a maximum entry on the same stream granting at least the same
- * capabilities; feature entries match by identity.
+ * capabilities; an allowed feature entry matches by identity, a forbidden one
+ * is always covered (a restriction never exceeds a maximum).
  *
  * Whatever the grammar answers, the core refuses (both in the requested offer
  * and in the maximum set) account and system streams, every stream (`*`) and
@@ -256,6 +257,8 @@ function coveredBy (p: ExtPermission, max: ExtPermission[]): boolean {
     return max.some((m) => isStreamPermission(m) && canonicalStreamId(String(m.streamId)) === id &&
       levelCapabilityExcess(p.level, m.level).length === 0);
   }
+  // A restriction never exceeds a maximum.
+  if (p.setting === 'forbidden') return true;
   // Entries here went through normalizePermissions: lexicon-shaped.
   const k = permissionKey(p as unknown as Permission);
   return max.some((m) => permissionKey(m as unknown as Permission) === k);

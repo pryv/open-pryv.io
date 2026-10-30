@@ -448,7 +448,7 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       extension.setExtension(toyWith((offer) => offer.permissions.push({ feature: 'selfRevoke', setting: 'forbidden' })));
       const ok = scopeGrammar.resolveRequestedScope(client, 'data/a.read');
       assert.equal(ok.ok, true, ok.description);
-      assert.deepEqual(ok.offer.permissions, [{ streamId: 'a', level: 'read' }, { feature: 'selfRevoke', setting: 'forbidden' }]);
+      assert.deepEqual(ok.offer.permissions, [{ streamId: 'a', level: 'read' }, { feature: 'selfRevoke', setting: 'forbidden', mandatory: true }]);
     });
     it('[OXS10] two entries on one stream (any spelling) are a contract error: invalid_scope, generic text', () => {
       const r = scopeGrammar.resolveRequestedScope({ ...client, scope: [...client.scope, 'dup.local'] }, 'dup.local');

@@ -28,15 +28,14 @@ import type { DataGrant, GlueEnv } from './types.ts';
 // Use @paralleldrive/cuid2 (a production dependency): the codebase migrated off
 // the old `cuid`, which is a devDependency and is pruned by `--omit=dev` builds.
 import { createId as cuid } from '@paralleldrive/cuid2';
-import { mergeStreamPermissions } from 'business/src/accesses/permissionSet.ts';
 import { parseAccessRef } from 'business/src/accesses/refs.ts';
-import AccessLogic from 'business/src/accesses/AccessLogic.ts';
 import cache from 'cache';
 import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
 import { withSessionSelfRevoke, accessesRepo } from './types.ts';
 import { notifyScopedAccessChange } from '../../methods/helpers/accessDeletion.ts';
+import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal } from 'platform/src/accessIndex.ts';
 
 export function createSessions (env: GlueEnv) {
@@ -200,30 +199,18 @@ export function createSessions (env: GlueEnv) {
       throw revoked;
     }
     const dataGrant = await readDataGrantHead(userId, username, dataGrantAccessId);
-    // Session grant ∩ data-grant's CURRENT permissions, stream by stream:
-    // consent narrowing propagates on refresh (a stream narrowed from
-    // `contribute` to `read` is kept at `read`), widening needs a fresh
-    // consent, and the grant's forbidden features always reach the session.
-    const effective = mergeStreamPermissions(permissions, dataGrant.permissions ?? [], 'meet').permissions;
-    // A mask alone (`none`) is no reach.
-    const hasReach = effective.some((p: Record<string, unknown>) =>
-      typeof p.streamId === 'string' && p.level !== 'none');
+    // Session grant ∩ data-grant's CURRENT permissions, stream by stream,
+    // completed with the stream tree: consent narrowing propagates on refresh
+    // (a stream narrowed from `contribute` to `read` is kept at `read`),
+    // widening needs a fresh consent, and the grant's forbidden features
+    // always reach the session.
+    const { permissions: effective, hasReach } =
+      await effectiveSessionPermissions(userId, dataGrant as Record<string, unknown>, permissions);
     if (!hasReach) {
       const revoked = new Error('consent no longer covers any of this grant\'s permissions') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
       throw revoked;
     }
-    // The meet is entry by entry; complete it with the stream tree, as
-    // accesses.create does for a child access. A narrower entry of the grant
-    // (an exclusion mask or a create-only carve-out the owner added below a
-    // stream the session keeps) and a narrower entry of the chain's own
-    // consent (a child the grant no longer lists, under a broader parent) are
-    // appended at their narrower level. Both passes only narrow, and skip the
-    // streams the meet already holds, so their order does not matter. Never
-    // creates reach: an entry is appended only under one the session holds.
-    await new AccessLogic(userId, dataGrant as Record<string, unknown>).inheritCarveOuts({ permissions: effective });
-    await new AccessLogic(userId, { id: 'oauth-refresh-chain', type: 'app', permissions })
-      .inheritCarveOuts({ permissions: effective });
     // Session selfRevoke override AFTER the intersection: the intersection
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.

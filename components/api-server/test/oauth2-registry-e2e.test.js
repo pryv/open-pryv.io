@@ -60,6 +60,14 @@ const toyExtension = {
   tokenResponse: (ctx) => (ctx.scopeTokens.includes('ctx/user') ? { user: ctx.subject } : {}),
 };
 
+/** What a registry grant forbids unless the client row allows it. */
+const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }];
+
+/** The stream entries of a permission set, as sorted `id:level`. */
+function streamsOf (permissions) {
+  return permissions.filter((p) => p.streamId != null).map((p) => p.streamId + ':' + p.level).sort();
+}
+
 /** The access id without its version serial. */
 function baseOf (accessId) {
   return String(accessId).split(':')[0];
@@ -209,7 +217,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const grant = list[0];
     assert.equal(grant.alias ?? null, null);
     assert.equal(grant.expires ?? null, null);
-    assert.deepEqual(grant.permissions, [{ streamId: 'health', level: 'read' }]);
+    assert.deepEqual(grant.permissions, [{ streamId: 'health', level: 'read' }, ...DEFAULT_FORBIDS]);
 
     const read = await coreRequest.get('/' + username + '/events').set('Authorization', b.access_token);
     assert.equal(read.status, 200, JSON.stringify(read.body));
@@ -230,7 +238,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal(list.length, 1);
     // Same access (a serial suffix marks the new version).
     assert.equal(baseOf(list[0].id), baseOf(before.id));
-    assert.deepEqual(list[0].permissions.map((p) => p.streamId + ':' + p.level).sort(), ['diary:read', 'health:read']);
+    assert.deepEqual(streamsOf(list[0].permissions), ['diary:read', 'health:read']);
     assert.deepEqual(second.token.scope.split(' ').sort(), ['offline_access', 'read/diary', 'read/health']);
   });
 
@@ -263,7 +271,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     await runFlow('write/diary');
     const list = await grants();
     assert.equal(list.length, 1);
-    assert.deepEqual(list[0].permissions, [{ streamId: 'diary', level: 'contribute' }]);
+    assert.deepEqual(list[0].permissions, [{ streamId: 'diary', level: 'contribute' }, ...DEFAULT_FORBIDS]);
   });
 
   it('[OREG6] read then create-only on one stream: 400 invalid_scope at /accept, the grant is unchanged', async () => {
@@ -276,7 +284,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal(c.accept.body.error, 'invalid_scope');
     const [after] = await grants();
     assert.equal(after.id, before.id, 'no new version');
-    assert.deepEqual(after.permissions, [{ streamId: 'diary', level: 'read' }]);
+    assert.deepEqual(after.permissions, [{ streamId: 'diary', level: 'read' }, ...DEFAULT_FORBIDS]);
   });
 
   it('[OREG7] a grammar offering account fields is refused at /authorize; no grant, the account is untouched', async () => {

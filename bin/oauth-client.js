@@ -31,30 +31,38 @@
 
 const path = require('path');
 
-if (process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
-  printUsage(process.stdout);
-  process.exit(0);
+// The program runs only when this file is executed (see the end of the file);
+// the command functions are exported for tests, run against a fake platform.
+function main () {
+  if (process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
+    printUsage(process.stdout);
+    process.exit(0);
+  }
+  initBoiler();
+  run();
 }
 
-require('@pryv/boiler').init({
-  appName: 'oauth-client',
-  baseFilesDir: path.resolve(__dirname, '../'),
-  baseConfigDir: path.resolve(__dirname, '../config/'),
-  extraConfigs: [{
-    // stdout carries the command's output: logs go to stderr.
-    scope: 'cli-logs-stderr',
-    data: { logs: { console: { stderr: true } } }
-  }, {
-    scope: 'default-paths',
-    file: path.resolve(__dirname, '../config/plugins/paths-config.js')
-  }, {
-    pluginAsync: require('../config/plugins/systemStreams')
-  }, {
-    plugin: require('../config/plugins/core-identity')
-  }]
-});
+function initBoiler () {
+  require('@pryv/boiler').init({
+    appName: 'oauth-client',
+    baseFilesDir: path.resolve(__dirname, '../'),
+    baseConfigDir: path.resolve(__dirname, '../config/'),
+    extraConfigs: [{
+      // stdout carries the command's output: logs go to stderr.
+      scope: 'cli-logs-stderr',
+      data: { logs: { console: { stderr: true } } }
+    }, {
+      scope: 'default-paths',
+      file: path.resolve(__dirname, '../config/plugins/paths-config.js')
+    }, {
+      pluginAsync: require('../config/plugins/systemStreams')
+    }, {
+      plugin: require('../config/plugins/core-identity')
+    }]
+  });
+}
 
-(async () => {
+async function run () {
   try {
     const args = parseArgs(process.argv.slice(2));
     if (args.command == null) {
@@ -64,7 +72,7 @@ require('@pryv/boiler').init({
 
     const platform = await initPlatform();
     const {
-      persistClient, removeClient, listClientIds, getClient,
+      persistClient, removeClient, getClient,
       revokeDpopKey, unrevokeDpopKey, listRevokedDpopKeys, listDpopKeysSeen,
       computeThumbprint,
     } = require('oauth2');
@@ -77,7 +85,7 @@ require('@pryv/boiler').init({
         await runShow(platform, args, getClient, computeThumbprint);
         break;
       case 'list':
-        await runList(platform, listClientIds);
+        await runList(platform, getClient);
         break;
       case 'update':
         await runUpdate(platform, args, getClient, persistClient);
@@ -119,7 +127,7 @@ require('@pryv/boiler').init({
     if (process.env.DEBUG === '1') console.error(err.stack);
     process.exit(1);
   }
-})();
+}
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -245,7 +253,7 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   if (await getClient(platform, clientId) != null) {
     throw new Error('create-registry: client "' + clientId + '" already exists; revoke it first');
   }
-  if (await localUserId(clientId) != null || await hostingCoreOf(clientId) != null) {
+  if (await cliEnv.localUserId(clientId) != null || await cliEnv.hostingCoreOf(clientId) != null) {
     throw new Error('create-registry: "' + clientId + '" is an account name on this platform; a client_id must not be one');
   }
   if (!args.flags['redirect-uri'] || args.flags['redirect-uri'].length === 0) {
@@ -283,7 +291,14 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   if (audiences.length > 0 && anyAudience) {
     throw new Error('create-registry: --audience and --any-audience exclude each other');
   }
-  const allowInsecureRedirect = args.flagsScalar['allow-insecure-redirect'] === true;
+  const allowInsecureRedirect = parseBooleanFlag(args, 'allow-insecure-redirect', 'create-registry') === true;
+  // No default: an operator must never register a client as public by accident.
+  const subjectType = args.flagsScalar['subject-type'];
+  if (!SUBJECT_TYPES.includes(subjectType)) {
+    throw new Error('create-registry: --subject-type public|pairwise is required (no default)' +
+      (typeof subjectType === 'string' ? ', got "' + subjectType + '"' : '') + '. ' + SUBJECT_TYPES_HELP);
+  }
+  const allowFeatures = parseAllowFeatures(args);
   await persistClient(platform, {
     clientId,
     kind: 'registry',
@@ -305,7 +320,8 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     ...(allowInsecureRedirect ? { allowInsecureRedirect: true } : {}),
     tokenResponseExtras: extras,
     launchTypes: args.flags['launch-type'] ?? [],
-    subjectType: args.flagsScalar['subject-type'] ?? 'public',
+    subjectType,
+    ...(allowFeatures != null && allowFeatures.length > 0 ? { allowFeatures } : {}),
     ...(secret != null ? { clientSecretHash: secret.hash } : {}),
     ...(jwks != null ? { jwks } : {}),
   });
@@ -314,6 +330,9 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log('     auth method:   ' + authMethod);
   console.log('     audiences:     ' + (anyAudience ? '(any audience)' : audiences.join(', ')));
+  console.log('     subject type:  ' + describeSubjectType(subjectType));
+  printDefaultForbids({ allowFeatures: allowFeatures ?? [] });
+  if (subjectType === 'pairwise') warnIfNoPseudonyms();
   if (allowInsecureRedirect) console.log('     WARN plain-http redirect URIs allowed on non-loopback hosts');
   if (secret != null) {
     console.log('     client_secret: ' + secret.plaintext);
@@ -355,6 +374,12 @@ async function runShow (platform, args, getClient, computeThumbprint) {
     };
   }
   console.log(JSON.stringify(view, null, 2));
+  if (client.kind === 'registry') {
+    if (client.subjectType == null) {
+      console.log('subjectType: unset, reads as public (set it with update --subject-type)');
+    }
+    printDefaultForbids(client, '');
+  }
   // Derived, not stored: the row carries the account's user id only.
   if (typeof client.accountUserId === 'string' && client.accountUserId.length > 0) {
     const name = await localUsername(client.accountUserId);
@@ -377,13 +402,68 @@ function safeThumbprint (computeThumbprint, jwk) {
   }
 }
 
-async function runList (platform, listClientIds) {
-  const ids = await listClientIds(platform);
+// One line per client: `<clientId>  <kind>  <status>  <subjectType|->`, so
+// `list | grep public` is the audit of the public registry clients.
+async function runList (platform, getClient) {
+  const ids = await oauthStorage().listClientIds(platform);
   if (ids.length === 0) {
     console.log('(no clients registered)');
     return;
   }
-  for (const id of ids) console.log(id);
+  for (const id of ids) {
+    const c = await getClient(platform, id);
+    if (c == null) continue;
+    const kind = c.kind ?? 'app-account';
+    const subject = kind === 'registry' ? (c.subjectType ?? '-') : '-';
+    console.log(id + '  ' + kind + '  ' + (c.status ?? 'active') + '  ' + subject);
+  }
+}
+
+const SUBJECT_TYPES = ['public', 'pairwise'];
+const SUBJECT_TYPES_HELP = 'public: the subject is the user\'s stable id, an alias only when the app asks for a ' +
+  'pseudonym. pairwise: always an alias, one per user and client.';
+
+function describeSubjectType (subjectType) {
+  return subjectType === 'pairwise' ? 'pairwise (always an alias)' : 'public (stable user id)';
+}
+
+// The single switch the core keys its pseudonym refusal off.
+function warnIfNoPseudonyms () {
+  if (require('oauth2').PSEUDONYM_SUBJECTS_AVAILABLE === true) return;
+  console.log('     WARN pseudonymous subjects are not available on this core yet: /authorize refuses this client ' +
+    'until a release that supports them');
+}
+
+// What the grants of a registry client may not do, unless allowed on the row.
+function printDefaultForbids (client, indent = '     ') {
+  const { defaultForbiddenFeatures } = require('oauth2/src/clientRegistry.ts');
+  const forbidden = defaultForbiddenFeatures(client);
+  console.log(indent + 'features forbidden on its grants: ' + (forbidden.length > 0 ? forbidden.join(', ') : '(none)') +
+    (Array.isArray(client.allowFeatures) && client.allowFeatures.length > 0 ? ' (allowed: ' + client.allowFeatures.join(', ') + ')' : ''));
+}
+
+// `--allow-feature <name>` (repeatable): null when absent; `none` clears the list.
+function parseAllowFeatures (args) {
+  const values = args.flags['allow-feature'];
+  if (values == null) {
+    if (args.flagsScalar['allow-feature'] === true) throw new Error('--allow-feature requires a feature name');
+    return null;
+  }
+  if (values.length === 1 && values[0] === 'none') return [];
+  return [...new Set(values)];
+}
+
+// A boolean flag: bare (true), or `true` / `false`; anything else is refused.
+function parseBooleanFlag (args, name, command) {
+  const v = args.flagsScalar[name];
+  if (v == null) return null;
+  if (v === true || v === 'true') return true;
+  if (v === 'false') return false;
+  throw new Error(command + ': --' + name + ' takes no value, or true / false (got "' + v + '")');
+}
+
+function isYes (args) {
+  return args.flagsScalar.yes === true || args.flagsScalar.yes === 'true';
 }
 
 async function runUpdate (platform, args, getClient, persistClient) {
@@ -415,13 +495,32 @@ async function runUpdate (platform, args, getClient, persistClient) {
       ? parseCmcOffers(args.flags['cmc-offer'])
       : existing.cmcOffers,
   };
-  if (args.flagsScalar['subject-type'] != null) {
-    if (existing.kind !== 'registry') throw new Error('update: --subject-type applies to registry clients only');
-    merged.subjectType = args.flagsScalar['subject-type'];
-  }
-  for (const flag of ['audience', 'any-audience', 'allow-insecure-redirect']) {
+  for (const flag of ['audience', 'any-audience', 'allow-insecure-redirect', 'subject-type', 'allow-feature']) {
     if ((args.flags[flag] != null || args.flagsScalar[flag] != null) && existing.kind !== 'registry') {
       throw new Error('update: --' + flag + ' applies to registry clients only');
+    }
+  }
+  // The subject type: a legacy registry row without one is repaired on its
+  // first update; changing the mode a client's grants see needs --yes.
+  let subjectNote = null;
+  const wantedSubject = args.flagsScalar['subject-type'];
+  if (existing.kind === 'registry') {
+    if (wantedSubject == null && existing.subjectType == null) {
+      throw new Error('update: this client has no subject type; pass --subject-type public|pairwise');
+    }
+    if (wantedSubject != null) {
+      if (!SUBJECT_TYPES.includes(wantedSubject)) {
+        throw new Error('update: --subject-type must be public or pairwise' +
+          (typeof wantedSubject === 'string' ? ', got "' + wantedSubject + '"' : ''));
+      }
+      // A row without a subject type reads as public.
+      const effective = existing.subjectType ?? 'public';
+      if (wantedSubject !== effective && !isYes(args)) {
+        throw new Error('update: changing the subject type of "' + clientId + '" from ' + effective + ' to ' +
+          wantedSubject + ' affects every future consent; re-run with --yes');
+      }
+      merged.subjectType = wantedSubject;
+      if (wantedSubject !== effective) subjectNote = { from: effective, to: wantedSubject };
     }
   }
   if (args.flags.audience != null) {
@@ -430,13 +529,22 @@ async function runUpdate (platform, args, getClient, persistClient) {
   }
   if (args.flagsScalar['any-audience'] != null) {
     if (args.flags.audience != null) throw new Error('update: --audience and --any-audience exclude each other');
-    merged.anyAudience = true;
-    merged.allowedAudiences = [];
+    if (parseBooleanFlag(args, 'any-audience', 'update') === true) {
+      merged.anyAudience = true;
+      merged.allowedAudiences = [];
+    } else {
+      delete merged.anyAudience;
+    }
   }
   if (args.flagsScalar['allow-insecure-redirect'] != null) {
     // `--allow-insecure-redirect false` withdraws the permission.
-    if (args.flagsScalar['allow-insecure-redirect'] === 'false') delete merged.allowInsecureRedirect;
-    else merged.allowInsecureRedirect = true;
+    if (parseBooleanFlag(args, 'allow-insecure-redirect', 'update') === true) merged.allowInsecureRedirect = true;
+    else delete merged.allowInsecureRedirect;
+  }
+  const allowFeatures = parseAllowFeatures(args);
+  if (allowFeatures != null) {
+    if (allowFeatures.length > 0) merged.allowFeatures = allowFeatures;
+    else delete merged.allowFeatures;
   }
   // Not read any more: apiEndpoint follows the grant (sent unless aliased).
   delete merged.omitApiEndpoint;
@@ -451,6 +559,16 @@ async function runUpdate (platform, args, getClient, persistClient) {
   await persistClient(platform, row);
   console.log('OK   client updated: ' + clientId);
   if (row !== merged) console.log('     converted the account reference to the user id');
+  if (existing.kind === 'registry' && wantedSubject != null) {
+    console.log('     subject type:  ' + describeSubjectType(merged.subjectType));
+    if (merged.subjectType === 'pairwise') warnIfNoPseudonyms();
+  }
+  if (subjectNote != null) {
+    console.log();
+    console.log('NOTE: existing grants keep their current subject and their sessions keep');
+    console.log('      working; each user sees the change of identity mode, and must');
+    console.log('      acknowledge it, at their next consent (' + subjectNote.from + ' to ' + subjectNote.to + ').');
+  }
 }
 
 async function runRevoke (platform, args, removeClient) {
@@ -660,7 +778,7 @@ async function hostingCoreOf (username) {
 function parseArgs (argv) {
   // Declared here, not at module level: parseArgs runs from the async block
   // at the top of the file, before module-level constants are initialized.
-  const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type'];
+  const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type', 'allow-feature'];
   const result = { command: null, positional: [], flags: {}, flagsScalar: {} };
   let i = 0;
   result.command = argv[i++] ?? null;
@@ -701,7 +819,7 @@ function printUsage (stream) {
     '  node bin/oauth-client.js list-revoked-keys\n' +
     '  node bin/oauth-client.js list-keys [<clientId>]\n' +
     '  node bin/oauth-client.js rotate-secret <clientId>\n' +
-    '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> [flags]\n' +
+    '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n\n' +
     'Flags (create-registry): a client with no app account; --scope is its maximum\n' +
     'scope set in the grammar of the installed OAuth extension.\n' +
@@ -717,10 +835,15 @@ function printUsage (stream) {
     '  --extra <key>=<value>     (multi) static extra field of every token response\n' +
     '  --launch-type <s>         (multi)   --contact <s> (multi)\n' +
     '  --policy-uri <uri>  --tos-uri <uri>\n' +
-    '  --subject-type public|pairwise   (also on update) the subject the app sees:\n' +
-    '                            public (default) the user\'s stable id; pairwise (a\n' +
-    '                            per-client pseudonym) is refused at authorization on\n' +
-    '                            this core for now\n\n' +
+    '  --subject-type public|pairwise   REQUIRED (no default; also on update, where a\n' +
+    '                            change needs --yes) the subject the app sees: public,\n' +
+    '                            the user\'s stable id (an alias only when the app asks\n' +
+    '                            for a pseudonym); pairwise, always an alias, one per\n' +
+    '                            user and client (refused at authorization on this core\n' +
+    '                            for now)\n' +
+    '  --allow-feature <name>    (multi; also on update, "none" clears) a feature its\n' +
+    '                            grants may use: webhooks, secretSharing (both forbidden\n' +
+    '                            on its grants otherwise)\n\n' +
     'Flags (create / update):\n' +
     '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
     '                            the account username. 4-64 chars of A-Z a-z 0-9 . _ ~ -\n' +
@@ -751,3 +874,21 @@ function printUsage (stream) {
     '  - HTTP `POST /oauth2/register` (RFC 7591 mode:open) is intentionally deferred.\n'
   );
 }
+
+// Account-name lookups, replaceable by tests (no users index there).
+const cliEnv = {
+  localUserId: (u) => localUserId(u),
+  hostingCoreOf: (u) => hostingCoreOf(u),
+};
+
+module.exports = {
+  parseArgs,
+  runCreateRegistry,
+  runUpdate,
+  runShow,
+  runList,
+  runSetStatus,
+  cliEnv,
+};
+
+if (require.main === module) main();
