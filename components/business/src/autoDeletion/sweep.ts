@@ -233,6 +233,7 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
   // reported once, not at every pass.
   const refusedReminders = new Set<string>();
   const refusedNamed = new Set<string>();
+  const refusedTransferMails = new Set<string>();
 
   type PassContext = {
     config: AutoDeletionConfig;
@@ -380,7 +381,7 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     // process stopped between the two writes): its end is finished, no new
     // window is opened.
     if (policy != null && setting != null && transfer != null && (transfer.status === 'completed' || transfer.status === 'lapsed') &&
-        transfer.closedAt != null && setting.updatedAt <= transfer.closedAt) {
+        transfer.closedAt != null && setting.updatedAt < transfer.closedAt) {
       if (!config.dryRun) {
         await finishTransfer(flowDeps(ctx), account, transfer);
         logger.warn(`auto-deletion sweep: the ${transfer.status} transfer of account "${account.username}" (${account.id}) was left half-done; finished`);
@@ -577,15 +578,29 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
   async function tellOwnerStarted (p: AccountPass, record: TransferRecord): Promise<TransferRecord> {
     const now = deps.now();
     const outcome = await send(p.ctx, () => deps.sendTransferMail(p.account, p.facts, { kind: 'started', to: 'owner', record, setting: p.setting, now }));
+    logRefused(p.account, 'started', outcome);
     if (outcome !== 'sent' && outcome !== 'off') return record;
     const next = { ...record, ownerToldAt: now };
     await state.saveTransfer(p.account.id, next);
     return next;
   }
 
+  /** A transfer mail the mail server refuses is retried at every pass, logged once. */
+  function logRefused (account: SweepAccount, kind: string, outcome: SendOutcome | 'held'): void {
+    const key = account.id + ':' + kind;
+    if (outcome !== 'rejected') {
+      if (outcome === 'sent') refusedTransferMails.delete(key);
+      return;
+    }
+    if (refusedTransferMails.has(key)) return;
+    refusedTransferMails.add(key);
+    logger.warn(`auto-deletion sweep: the mail server refuses the transfer ${kind} mail of account "${account.username}" (${account.id}); retried at every pass, not logged again`);
+  }
+
   async function sendClaimMail (p: AccountPass, record: TransferRecord): Promise<TransferRecord> {
     const now = deps.now();
     const outcome = await send(p.ctx, () => deps.sendTransferMail(p.account, p.facts, { kind: 'claim', to: 'beneficiary', record, setting: p.setting, now }));
+    logRefused(p.account, 'claim', outcome);
     if (outcome !== 'sent') return record;
     const next = { ...record, claimMailsSent: [...(record.claimMailsSent ?? []), now] };
     await state.saveTransfer(p.account.id, next);
@@ -635,10 +650,26 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
 
   /** In inactivity mode, a use of the account after the window opened and before a claim cancels the transfer. */
   async function cancelledByUse (p: AccountPass, record: TransferRecord, activity: AccountActivity): Promise<boolean> {
-    if (record.status !== 'open' || p.policy.mode !== 'inactivity') return false;
+    if ((record.status !== 'open' && record.status !== 'claimed') || p.policy.mode !== 'inactivity') return false;
     if (activity.at == null || record.openedAt == null || activity.at <= record.openedAt) return false;
+    // A claim not accepted yet has transferred nothing: the owner's use still wins.
+    if (record.status === 'claimed' && record.claimedBy != null) {
+      if (await deps.delegationOf(p.account, record.claimedBy) !== 'invite') return false;
+      try {
+        await deps.withdrawInvite(p.account, record.claimedBy);
+      } catch (err) {
+        logger.warn(`auto-deletion sweep: the pending invite of account "${p.account.username}" (${p.account.id}) to "${record.claimedBy.username}" was not withdrawn: ${errorText(err)}`);
+      }
+    }
     const reason = activity.by === 'delegate' ? 'delegate-activity' : 'owner-activity';
-    await cancelTransfer(flowDeps(p.ctx), p.account, p.facts, record, { reason, mailOwner: true, keepIdentity: true });
+    const declined = record.closedReason === 'declined';
+    await cancelTransfer(flowDeps(p.ctx), p.account, p.facts, record, { reason, mailOwner: true, keepIdentity: !declined });
+    // The beneficiary had declined: the schedule goes on as the owner's
+    // fallback, never as a transfer to them again.
+    if (declined && p.setting != null) {
+      const { transfer: _t, ...rest } = p.setting;
+      await state.setSetting(p.account.id, { ...rest, action: 'delete', updatedAt: deps.now() }, 'system');
+    }
     const evaluation = activity === p.facts.activity
       ? p.evaluation
       : evaluate({

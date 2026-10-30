@@ -872,6 +872,55 @@ describe('[ACTR] account transfer', function () {
       assert.ok(!('autoDeletionTransferIdentity' in account) && !('autoDeletion' in account), JSON.stringify(Object.keys(account)));
     });
 
+    it('[ACTR7J] a decline after the claimant accepted comes too late: the transfer completes, the account stays', async function () {
+      const owner = await freshUser();
+      const claimant = await freshUser('actb');
+      const { s } = await openWindow(owner, transferTo('b@actr.example.com', { fallback: 'delete' }));
+      const record = await state.getTransfer(owner.id);
+      assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
+      assert.equal((await accept(claimant, owner)).status, 200, 'accepted from the delegation list');
+      const late = await decline(owner, linkOf(owner, 'decline', record.declineSalt));
+      assert.equal(errorId(late), 'auto-deletion-transfer-claimed', JSON.stringify(late.body));
+      assert.equal((await state.getTransfer(owner.id)).status, 'completed');
+      await s.run(T0 + 30 * DAY);
+      assert.ok(await exists(owner));
+    });
+
+    it('[ACTR7K] inactivity: the owner returning after a claim not yet accepted cancels it (invite withdrawn)', async function () {
+      const owner = await freshUser();
+      const claimant = await freshUser('actb');
+      await armTransfer(owner, transferTo('b@actr.example.com', { fallback: 'delete' }), 100, 'inactivity');
+      const s = await sweepFor([owner]);
+      for (const d of [0, 40, 70, 93, 99, 101]) await s.run(T0 + d * DAY);
+      const record = await state.getTransfer(owner.id);
+      assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
+      // A wrong link after the claim leaves the claim as it is.
+      await claim(owner, 'wrong', claimant, ADDRESSES[2]);
+      assert.equal((await state.getTransfer(owner.id)).claimedBy.username, claimant.username);
+      await useAt(owner, T0 + 102 * DAY);
+      const r = await s.run(record.endsAt + DAY);
+      assert.equal(r.transfersCancelled, 1);
+      assert.equal(r.erased, 0);
+      assert.ok(await exists(owner));
+      assert.notEqual((await accept(claimant, owner)).status, 200, 'the invite is withdrawn');
+    });
+
+    it('[ACTR7L] a decline (delete) then the owner returning: the schedule goes on as a deletion, never a transfer to them again', async function () {
+      const u = await freshUser();
+      await armTransfer(u, transferTo('b@actr.example.com', { fallback: 'delete' }), 100, 'inactivity');
+      const s = await sweepFor([u]);
+      for (const d of [0, 40, 70, 93, 99, 101]) await s.run(T0 + d * DAY);
+      const record = await state.getTransfer(u.id);
+      assert.equal((await decline(u, linkOf(u, 'decline', record.declineSalt))).status, 200);
+      await useAt(u, T0 + 102 * DAY);
+      const r = await s.run(T0 + 103 * DAY);
+      assert.equal(r.erased, 0);
+      assert.ok(await exists(u));
+      const setting = await state.getSetting(u.id);
+      assert.equal(setting.action, 'delete');
+      assert.equal(setting.transfer, undefined);
+    });
+
     it('[ACTR7I] a beneficiary notice at setup that did not go out is sent by the next pass, once', async function () {
       const u = await freshUser();
       await armTransfer(u, transferTo('b@actr.example.com', { notifyBeneficiary: 'atSetup' }), 60);

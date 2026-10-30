@@ -12,7 +12,7 @@ import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import type { AutoDeletionConfig } from 'business/src/autoDeletion/config.ts';
 import { createAutoDeletionState } from 'business/src/autoDeletion/state.ts';
-import type { Setting, Bookkeeping, AccountStorage, TransferRecord } from 'business/src/autoDeletion/state.ts';
+import type { Setting, Bookkeeping, AccountStorage, TransferRecord, FailedClaims } from 'business/src/autoDeletion/state.ts';
 import { deriveLinkToken, accountAppLink } from 'business/src/autoDeletion/transfer.ts';
 import type { TransferNotice } from 'business/src/autoDeletion/transferFlow.ts';
 import { effectivePolicy, evaluate, nextReminderAt, DAY_SECONDS } from 'business/src/autoDeletion/deadline.ts';
@@ -138,6 +138,7 @@ export function buildView (opts: {
   schedule: Schedule;
   now: number;
   transfer?: TransferRecord | null;
+  failedClaims?: FailedClaims | null;
 }): Record<string, unknown> {
   const { config, adConfig, setting, facts, prev, schedule, now } = opts;
   const { policy } = schedule;
@@ -172,7 +173,7 @@ export function buildView (opts: {
     userOverride: adConfig.userOverride,
     allowUserOptOut: adConfig.allowUserOptOut,
     actions: availableActions(config),
-    transfer: transferView(opts.transfer ?? null),
+    transfer: transferView(opts.transfer ?? null, opts.failedClaims ?? null),
     claimWindowDays: adConfig.transfer.claimWindowDays
   };
 }
@@ -361,14 +362,14 @@ export async function sendTransferMail (config: ConfigLike, account: UserRef, fa
 }
 
 /** What `account.getAutoDeletion` shows of a transfer (never the beneficiary's name or date of birth). */
-export function transferView (record: TransferRecord | null): Record<string, unknown> | null {
+export function transferView (record: TransferRecord | null, failedClaims: FailedClaims | null = null): Record<string, unknown> | null {
   if (record == null) return null;
   const view: Record<string, unknown> = { status: record.status, email: record.email };
   if (record.namedAt != null) view.beneficiaryNotifiedAt = record.namedAt;
   if (record.openedAt != null) view.openedAt = record.openedAt;
   if (record.endsAt != null) view.endsAt = record.endsAt;
   if (record.claimedBy != null) view.claimedBy = { username: record.claimedBy.username, at: record.claimedBy.at };
-  if (record.failedClaims != null) view.failedClaims = record.failedClaims;
+  if (failedClaims != null) view.failedClaims = { count: failedClaims.count, lastAt: failedClaims.lastAt };
   if (record.ownerToldAt != null) view.ownerNotifiedAt = record.ownerToldAt;
   if (record.closedAt != null) view.closedAt = record.closedAt;
   if (record.closedReason != null) view.closedReason = record.closedReason;

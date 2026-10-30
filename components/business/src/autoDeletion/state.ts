@@ -28,6 +28,7 @@ export const IDENTITY_FIELD = 'autoDeletionTransferIdentity';
 export const BOOKKEEPING_STORE_ID = ':_autoDeletion';
 const BOOKKEEPING_KEY = 'state';
 const TRANSFER_KEY = 'transfer';
+const FAILED_CLAIMS_KEY = 'transferFailedClaims';
 const IDENTITY_KEY_PURPOSE = 'account-auto-deletion-identity-v1';
 const LINK_KEY_PURPOSE = 'account-transfer-link-v1';
 const DAY_SECONDS = 24 * 60 * 60;
@@ -72,17 +73,19 @@ export type TransferRecord = {
   claimMailsSent?: number[];
   /** The owner was told the window opened. */
   ownerToldAt?: number;
-  /**
-   * Claims with a wrong link, for the owner's view and the logs. They refuse
-   * nothing: a valid link always proceeds (a cap would let anyone who knows the
-   * username lock the beneficiary out).
-   */
-  failedClaims?: { count: number; lastAt: number };
   claimedBy?: { username: string; hostSlug?: string; relId?: string; at: number };
   closedAt?: number;
   /** Why it closed, when not obvious from the status (e.g. `owner-activity`). */
   closedReason?: string;
 };
+
+/**
+ * Claims with a wrong link, for the owner's view and the logs, in their own
+ * row (an anonymous caller's write must never touch the transfer record). They
+ * refuse nothing: a valid link always proceeds. Counted for the claim link of
+ * `claimSalt` (a new transfer starts at zero).
+ */
+export type FailedClaims = { claimSalt: string; count: number; lastAt: number };
 
 export const OPEN_TRANSFER: readonly TransferStatus[] = Object.freeze(['named', 'open', 'claimed']);
 export const isOpenTransfer = (r: TransferRecord | null | undefined): r is TransferRecord => r != null && OPEN_TRANSFER.includes(r.status);
@@ -233,6 +236,19 @@ export function createAutoDeletionState (storage: AccountStorage) {
     /** null removes the record. */
     async saveTransfer (userId: string, record: TransferRecord | null): Promise<void> {
       await kv.set(userId, TRANSFER_KEY, record);
+    },
+
+    /** The wrong-link count of the transfer whose claim link has `claimSalt`, or null. */
+    async getFailedClaims (userId: string, claimSalt: string | undefined): Promise<FailedClaims | null> {
+      const v = await kv.get(userId, FAILED_CLAIMS_KEY) as FailedClaims | null | undefined;
+      return v != null && claimSalt != null && v.claimSalt === claimSalt ? v : null;
+    },
+
+    async countFailedClaim (userId: string, claimSalt: string, at: number): Promise<FailedClaims> {
+      const prev = await this.getFailedClaims(userId, claimSalt);
+      const next: FailedClaims = { claimSalt, count: (prev?.count ?? 0) + 1, lastAt: at };
+      await kv.set(userId, FAILED_CLAIMS_KEY, next);
+      return next;
     }
   };
 }

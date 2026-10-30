@@ -51,7 +51,9 @@
   before the deadline turns the setting into the holder's fallback (`delete` on the same schedule, or
   `never`); during the window, a claim made meanwhile included (its invite is withdrawn), it applies
   the fallback at once (`keep`) or at the next pass (`delete`). A claimant who refuses the delegation
-  invite declines the same way. The setting rejects an invalid transfer with `auto-deletion-transfer-invalid`
+  invite declines the same way; a decline after the claimant accepted is refused
+  (`auto-deletion-transfer-claimed`) and the transfer completes. A use of the account by its holder
+  (inactivity) also cancels a claim not accepted yet. The setting rejects an invalid transfer with `auto-deletion-transfer-invalid`
   (`data.param`).
 - **Six new mails:** `account-transfer-named`, `-claim`, `-started`, `-cancelled`, `-lapsed`,
   `-completed` (en, fr), switches `services.email.enabled.accountTransfer{Named,Claim,Started,

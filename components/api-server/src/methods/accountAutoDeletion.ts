@@ -181,7 +181,7 @@ export default async function (api: Api) {
     const transfer = await state.getTransfer(user.id);
     const now = timestamp.now();
     const schedule = computeSchedule(adConfig, setting, facts, prev, now);
-    result.autoDeletion = buildView({ config, adConfig, setting, facts, prev, schedule, now, transfer });
+    result.autoDeletion = buildView({ config, adConfig, setting, facts, prev, schedule, now, transfer, failedClaims: await state.getFailedClaims(user.id, transfer?.claimSalt) });
   }
 
   api.register('account.getAutoDeletion',
@@ -327,7 +327,7 @@ export default async function (api: Api) {
           await state.saveBookkeeping(user.id, b, noticed);
           schedule.evaluation.bookkeeping = noticed;
         }
-        result.autoDeletion = buildView({ config, adConfig, setting, facts, prev, schedule, now, transfer });
+        result.autoDeletion = buildView({ config, adConfig, setting, facts, prev, schedule, now, transfer, failedClaims: await state.getFailedClaims(user.id, transfer?.claimSalt) });
         next();
       } catch (err) {
         next(asApiError(err));
@@ -412,9 +412,8 @@ export default async function (api: Api) {
         // transfer is open).
         if (owner == null || record == null || key == null || !live || !linkTokenMatches(key, 'claim', owner.id, record.claimSalt, params.token)) {
           await countFailure(context);
-          if (owner != null && record != null && (record.status === 'open' || record.status === 'claimed')) {
-            const count = (record.failedClaims?.count ?? 0) + 1;
-            await state.saveTransfer(owner.id, { ...record, failedClaims: { count, lastAt: timestamp.now() } });
+          if (owner != null && record?.claimSalt != null && (record.status === 'open' || record.status === 'claimed')) {
+            const { count } = await state.countFailedClaim(owner.id, record.claimSalt, timestamp.now());
             if (count === FAILED_CLAIMS_WARNING) logger.warn(`auto-deletion: ${count} claims of the transfer of account "${owner.username}" with a wrong link`);
           }
           return next(errors.autoDeletionTransferInvalidLink());
@@ -518,8 +517,16 @@ export default async function (api: Api) {
             // The window was open: the owner's fallback applies now. A claim
             // made meanwhile by the beneficiary is withdrawn.
             if (record.status === 'claimed' && record.claimedBy != null) {
+              const delegation = getTransferDelegation();
+              // Accepted already (from the claimant's delegation list): the
+              // transfer is done, a decline comes too late.
+              if (delegation != null && (await delegation.stateOf(owner, record.claimedBy.username)).status === 'active') {
+                await completeTransfer(flow, owner, facts, record);
+                logger.warn(`auto-deletion: decline of the transfer of account "${owner.username}" refused: "${record.claimedBy.username}" already controls it (completed)`);
+                return next(errors.autoDeletionTransferClaimed());
+              }
               try {
-                await getTransferDelegation()?.withdraw(owner, record.claimedBy.username);
+                await delegation?.withdraw(owner, record.claimedBy.username);
               } catch (err) {
                 logger.warn(`auto-deletion: the pending invite of account "${owner.username}" to "${record.claimedBy.username}" was not withdrawn: ${err instanceof Error ? err.message : String(err)}`);
               }
@@ -529,9 +536,9 @@ export default async function (api: Api) {
               await state.saveTransfer(owner.id, { ...lapsed, status: 'declined' });
             } else {
               // Erased by the next sweep, as at the end of the window (guards
-              // included); nobody is left to identify.
-              const { claimedBy: _c, ...unclaimed } = record;
-              await state.saveTransfer(owner.id, { ...unclaimed, status: 'open', endsAt: timestamp.now(), closedReason: 'declined' });
+              // included; an accept that still lands before it completes the
+              // transfer instead); nobody is left to identify.
+              await state.saveTransfer(owner.id, { ...record, status: 'open', endsAt: timestamp.now(), closedReason: 'declined' });
               await state.eraseIdentity(owner.id);
               await sendTransferMail(config, owner, facts, { kind: 'cancelled', to: 'owner', record, setting, now: timestamp.now(), reason: 'declined' });
             }
