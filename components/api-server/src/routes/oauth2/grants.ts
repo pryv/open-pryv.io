@@ -343,15 +343,12 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     // verbatim (returned `permissions` below), so the refresh-time
     // intersection with the data-grant stays exact.
     const permissions: Array<Record<string, unknown>> = grantedPermissions;
-    // A registry session starts as its refreshes will continue: the granted
-    // subset under the grant as it now stands (its forbidden features, the
-    // core's default ones included, and the owner's narrower entries in the
-    // stream tree).
-    let sessionPermissions: Array<Record<string, unknown>> = permissions;
-    if (registry) {
-      const eff = await effectiveSessionPermissions(context.user.id, dataGrant as unknown as Record<string, unknown>, permissions);
-      if (eff.hasReach) sessionPermissions = eff.permissions;
-    }
+    // A session starts as its refreshes will continue: the granted subset
+    // under the grant as it now stands (its forbidden features, a registry
+    // client's default ones included, and the owner's narrower entries in the
+    // stream tree), never the granted subset alone.
+    const sessionPermissions: Array<Record<string, unknown>> =
+      (await effectiveSessionPermissions(context.user.id, dataGrant as unknown as Record<string, unknown>, permissions)).permissions;
 
     // Minted storage-direct, like the refreshed sessions: the session
     // carries the server-owned `clientData.oauth` link to its grant (the API

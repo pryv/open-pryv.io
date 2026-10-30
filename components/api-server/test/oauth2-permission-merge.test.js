@@ -67,7 +67,7 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
   const STREAMS = [
     ['pm1'], ['pm2'], ['pm3'], ['pm4a'], ['pm4b'], ['pm5a'], ['pm5b'], ['pm6'],
     ['pm7'], ['pm7c', 'pm7'], ['pm8'], ['pm8x', 'pm8'], ['pm9'], ['pm9c', 'pm9'], ['pm10'], ['pm10c', 'pm10'],
-    ['pm11'], ['pm11b'], ['pm12'], ['pm13a'], ['pm13b'], ['pm14']
+    ['pm11'], ['pm11b'], ['pm12'], ['pm13a'], ['pm13b'], ['pm14'], ['pm15'], ['pm15c', 'pm15']
   ];
   const INITIAL_OFFERS = {
     p1: [{ streamId: 'pm1', level: 'read' }],
@@ -83,7 +83,8 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     p11: [{ streamId: 'pm11', level: 'read' }, { feature: 'webhooks', setting: 'forbidden' }],
     p12: [{ streamId: 'pm12', level: 'contribute' }],
     p13: [{ streamId: 'pm13a', level: 'read' }, { streamId: 'pm13b', level: 'read' }],
-    p14: [{ streamId: 'pm14', level: 'read' }]
+    p14: [{ streamId: 'pm14', level: 'read' }],
+    p15: [{ streamId: 'pm15', level: 'read' }]
   };
 
   before(async function () {
@@ -512,5 +513,26 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     assert.equal(r.acceptRes.body.error, 'invalid_scope');
     assert.match(r.acceptRes.body.error_description, /appears more than once/);
     assert.equal(await sessionCount(), sessionsBefore, 'no session minted');
+  });
+
+  it('[PMRG15] a re-consent mints its new session under the grant\'s own restrictions (an exclusion mask, a forbidden feature)', async function () {
+    const first = await consent('p15', [{ streamId: 'pm15', level: 'read' }]);
+    assert.equal(first.acceptRes.status, 200, describeRes(first.acceptRes));
+    const grant = await dataGrantOf(first.tokenRes.body.access_token);
+    await ownerUpdateGrant(grant, (perms) => perms.concat([{ streamId: 'pm15c', level: 'none' }, { feature: 'webhooks', setting: 'forbidden' }]));
+
+    const again = await consent('p15', [{ streamId: 'pm15', level: 'read' }]);
+    assert.equal(again.acceptRes.status, 200, describeRes(again.acceptRes));
+    const token = again.tokenRes.body.access_token;
+    assert.equal(baseOf((await dataGrantOf(token)).id), baseOf(grant.id), 'premise: same grant');
+    const info = await accessInfo(token);
+    assert.deepEqual(userStreams(info.permissions), [{ streamId: 'pm15', level: 'read' }, { streamId: 'pm15c', level: 'none' }]);
+    assert.ok(info.permissions.some((p) => p.feature === 'webhooks' && p.setting === 'forbidden'), JSON.stringify(info.permissions));
+    assert.equal((await readEvents(token, 'pm15c')).status, 403);
+    const parent = await readEvents(token, 'pm15');
+    assert.equal(parent.status, 200, describeRes(parent));
+    const hook = await coreRequest.post('/' + username + '/webhooks').set('Authorization', token)
+      .send({ url: 'https://hooks.test/notify' });
+    assert.equal(hook.status, 403, describeRes(hook));
   });
 });
