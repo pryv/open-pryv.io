@@ -175,7 +175,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
     });
 
     describe('setAccountField()', () => {
-      it('[ATM08] a write on the same instant as another version of the field goes just after it', async () => {
+      it('[ATM10] a write on the same instant as another version of the field goes just after it', async () => {
         const uId = cuid();
         await storage.setAccountField(uId, 'language', 'en', 'a', 1000);
         const second = await storage.setAccountField(uId, 'language', 'fr', 'b', 1000);

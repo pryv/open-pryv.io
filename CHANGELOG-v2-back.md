@@ -7,7 +7,7 @@
 - Account-field versions are keyed by their time (milliseconds) on PostgreSQL and SQLite. A second
   write of the same field for the same account in the same millisecond (two concurrent
   `account.update` calls, for instance) failed on the key and the request answered `500`. It is
-  now stored 1 ms after the other version. Conformance tests `[ATM08]` `[ATM09]`.
+  now stored 1 ms after the other version. Conformance tests `[ATM09]` `[ATM10]`.
 
 ### Account auto-deletion sweep loop
 
@@ -39,18 +39,18 @@
   steps done; the auto-deletion sweep completes every record idle for 15 minutes at the start of
   each pass, whatever started it. On SQLite, the refusal to reopen the files of an erased account
   (by design) counts as a step done on such a resume. The sweep's own `deleting` bookkeeping marker
-  is gone (one source of truth). Tests `[ACSW14A-D]` (faults before, inside and after the removal
-  of the account, lost progress), `[ACSW19]` (`auth.delete`).
+  is gone (one source of truth). Tests `[ADSW14A-D]` (faults before, inside and after the removal
+  of the account, lost progress), `[ADSW19]` (`auth.delete`).
 - One erasure of an account at a time: a new record is created with an insert that fails when one
   exists, an unfinished one is taken over only once idle for 15 minutes and with a compare-and-set
   on its last update (`ErasuresLocalDB.insertIfAbsent` / `claim`, conformance `[ERLD4]`
   `[ERLD5]`); a running erasure refreshes its record every minute, a long step included. Test
-  `[ACSW25]`.
+  `[ADSW25]`.
 - A resumed erasure leaves alone the names the account held that another account took after an
   earlier attempt freed them: no series drop under them, no platform rows, routing rows or
-  sessions removed by them (`deleteOne` takes a null username for that). Tests `[ACSW24A]`
-  `[ACSW24B]`. Session rows are removed together with the other rows of the account, so a resumed
-  erasure meeting already-erased files no longer skips them (`[ACSW14D]`).
+  sessions removed by them (`deleteOne` takes a null username for that). Tests `[ADSW24A]`
+  `[ADSW24B]`. Session rows are removed together with the other rows of the account, so a resumed
+  erasure meeting already-erased files no longer skips them (`[ADSW14D]`).
 - The auto-deletion boot check (`config-validation`, `bin/check-config.js`) reads access tracking as
   on unless `accessTracking.isActive` is explicitly false, like the code that records use.
 - `runDeletionGuards` takes `{ failClosed }`: a guard that throws then objects

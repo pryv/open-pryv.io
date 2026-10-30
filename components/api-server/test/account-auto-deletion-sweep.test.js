@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * [ACSW] account auto-deletion sweep, on real storage with a fake clock and a
+ * [ADSW] account auto-deletion sweep, on real storage with a fake clock and a
  * fake mailer: reminders, activity, presets, guards, no-email accounts, the
  * erasure and its resumption, the pass guards (overlap, cap, dry run).
  * [ACRM] the same sweep with its real mailer (mail transport mocked): the
@@ -45,7 +45,7 @@ const BASE_CONFIG = {
 // Accounts the guard below objects to.
 const guarded = new Set();
 
-describe('[ACSW] account auto-deletion sweep', function () {
+describe('[ADSW] account auto-deletion sweep', function () {
   this.timeout(60000);
 
   let config, storageLayer, state, usersRepository, restoreBase, T0;
@@ -151,7 +151,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
 
   const leadsTo = (s, username) => s.sent.reminder.filter((m) => m.username === username).map((m) => m.leadDays);
 
-  it('[ACSW1] accounts without a policy are skipped and never written', async function () {
+  it('[ADSW1] accounts without a policy are skipped and never written', async function () {
     const plain = await freshUser();
     const never = await freshUser();
     const noEmail = await freshUser({ email: false });
@@ -174,7 +174,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.deepEqual(s.sent.reminder, []);
   });
 
-  it('[ACSW2] reminders at 60, 30, 7 and 1 days, each once, then the account is erased', async function () {
+  it('[ADSW2] reminders at 60, 30, 7 and 1 days, each once, then the account is erased', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');
     const s = await sweepFor([u]);
@@ -190,7 +190,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(await exists(u), false);
   });
 
-  it('[ACSW3] a date trigger erases the account between two WARN lines, the trigger passed to the erasure', async function () {
+  it('[ADSW3] a date trigger erases the account between two WARN lines, the trigger passed to the erasure', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     const s = await sweepFor([u]);
@@ -223,7 +223,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(await (await getErasuresLocal()).get(u.id), null, 'the erasure record goes with the last step');
   });
 
-  it('[ACSW4] use of the account moves the deadline and restarts the reminders; a pass moves no lastUsed', async function () {
+  it('[ADSW4] use of the account moves the deadline and restarts the reminders; a pass moves no lastUsed', async function () {
     const u = await freshUser();
     await setLastUsed(u, u.personalAccessId, T0 - DAY);
     await state.setSetting(u.id, inactivity(100), 'test');
@@ -242,7 +242,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.deepEqual(leadsTo(s, u.username), [60, 60]);
   });
 
-  it('[ACSW5] shared-access use is ignored, a delegate\'s use counts and is reported', async function () {
+  it('[ADSW5] shared-access use is ignored, a delegate\'s use counts and is reported', async function () {
     const sharedUser = await freshUser();
     const shared = await sharedUser.fu.access({ type: 'shared', token: cuid(), name: 'acsw-shared', permissions: [{ streamId: '*', level: 'read' }] });
     const delegated = await freshUser();
@@ -260,7 +260,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(b.lastActivity.delegate, T0 + 50 * DAY);
   });
 
-  it('[ACSW6] a preset gives a dormant account the full schedule; shrinking restarts the clock, growing keeps it', async function () {
+  it('[ADSW6] a preset gives a dormant account the full schedule; shrinking restarts the clock, growing keeps it', async function () {
     const u = await freshUser();
     await setLastUsed(u, u.personalAccessId, T0 - 1000 * DAY);
     const s = await sweepFor([u]);
@@ -285,7 +285,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(b.deadline, T0 + 310 * DAY);
   });
 
-  it('[ACSW7] after downtime one reminder is sent and the minimum notice holds the erasure back', async function () {
+  it('[ADSW7] after downtime one reminder is sent and the minimum notice holds the erasure back', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');
     const s = await sweepFor([u]);
@@ -301,7 +301,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(await exists(u), false);
   });
 
-  it('[ACSW8] a guard refusal blocks the erasure, is mailed once, retried silently, then the erasure goes ahead', async function () {
+  it('[ADSW8] a guard refusal blocks the erasure, is mailed once, retried silently, then the erasure goes ahead', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     const s = await sweepFor([u]);
@@ -329,7 +329,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(await exists(u), false);
   });
 
-  it('[ACSW9] no email: a preset skips the account, a user setting pauses unless acknowledged', async function () {
+  it('[ADSW9] no email: a preset skips the account, a user setting pauses unless acknowledged', async function () {
     const underPreset = await freshUser({ email: false });
     const paused = await freshUser({ email: false });
     const acknowledged = await freshUser({ email: false });
@@ -349,7 +349,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.deepEqual(s.sent, { reminder: [], blocked: [] });
   });
 
-  it('[ACSW10] enabled: false schedules nothing; the loop still starts, to complete unfinished erasures', async function () {
+  it('[ADSW10] enabled: false schedules nothing; the loop still starts, to complete unfinished erasures', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     const s = await sweepFor([u]);
@@ -366,7 +366,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.deepEqual(s.sent.reminder, []);
   });
 
-  it('[ACSW11] a pass still running makes the next one a no-op', async function () {
+  it('[ADSW11] a pass still running makes the next one a no-op', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');
     let release, signalEntered;
@@ -390,7 +390,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.ok(s.lines.some((l) => l.msg.includes('still running')));
   });
 
-  it('[ACSW12] maxDeletionsPerPass caps the erasures of a pass; the rest wait for the next one', async function () {
+  it('[ADSW12] maxDeletionsPerPass caps the erasures of a pass; the rest wait for the next one', async function () {
     const users = [await freshUser(), await freshUser(), await freshUser()];
     for (const u of users) await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     const s = await sweepFor(users);
@@ -405,7 +405,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     for (const u of users) assert.equal(await exists(u), false);
   });
 
-  it('[ACSW13] a dry run sends, erases and writes nothing', async function () {
+  it('[ADSW13] a dry run sends, erases and writes nothing', async function () {
     const reminded = await freshUser();
     const due = await freshUser();
     const dormant = await freshUser();
@@ -471,7 +471,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(await (await getErasuresLocal()).get(u.id), null, 'erasure record');
   }
 
-  for (const [code, where] of [['ACSW14A', 'before'], ['ACSW14B', 'inside'], ['ACSW14C', 'after']]) {
+  for (const [code, where] of [['ADSW14A', 'before'], ['ADSW14B', 'inside'], ['ADSW14C', 'after']]) {
     it(`[${code}] an erasure that fails ${where} the removal of the account is completed by the next pass`, async function () {
       const u = await freshUser();
       if (seriesConnection() != null) await writeSeries(u.username);
@@ -514,7 +514,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     });
   }
 
-  it('[ACSW14D] a record whose last updates were lost (the directory already wiped) completes: steps on missing data succeed', async function () {
+  it('[ADSW14D] a record whose last updates were lost (the directory already wiped) completes: steps on missing data succeed', async function () {
     const u = await freshUser();
     await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'date' });
     const store = await getErasuresLocal();
@@ -542,7 +542,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(left ?? null, null, 'session removed');
   });
 
-  it('[ACSW19] auth.delete records its erasure too: one that fails after the removal of the account is completed by the sweep, feature off included', async function () {
+  it('[ADSW19] auth.delete records its erasure too: one that fails after the removal of the account is completed by the sweep, feature off included', async function () {
     // auth.delete binds its steps when registered: registered with the fault
     // in place, on the application coreRequest serves (initCore's)
     const registerDelete = () => require('api-server/src/methods/auth/delete.ts').default(globalThis.app.api);
@@ -572,7 +572,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     await assertFullyErased(u);
   });
 
-  it('[ACSW21] a reminder of a superseded deadline does not count: with no notice getting through for the new one, the account is kept', async function () {
+  it('[ADSW21] a reminder of a superseded deadline does not count: with no notice getting through for the new one, the account is kept', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');
     const s = await sweepFor([u]);
@@ -590,7 +590,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(b.deadlineReason, 'minimum-notice');
   });
 
-  it('[ACSW21B] a confirmation counts for the deadline it named only: once use moves the deadline, a schedule with no reminder of its own is kept', async function () {
+  it('[ADSW21B] a confirmation counts for the deadline it named only: once use moves the deadline, a schedule with no reminder of its own is kept', async function () {
     const u = await freshUser();
     // a 45-day period, reminders 60 days ahead only: no reminder applies
     await state.setSetting(u.id, inactivity(45), 'test');
@@ -606,7 +606,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     });
   });
 
-  it('[ACSW22] with access tracking off, an inactivity schedule past its deadline is suspended, not erased; date schedules still run', async function () {
+  it('[ADSW22] with access tracking off, an inactivity schedule past its deadline is suspended, not erased; date schedules still run', async function () {
     const inact = await freshUser();
     const dated = await freshUser();
     await state.setSetting(inact.id, inactivity(100), 'test');
@@ -628,7 +628,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.ok(await exists(inact));
   });
 
-  it('[ACSW23] a deletion guard that cannot answer holds the erasure (guard-unavailable, mailed once), the next pass goes ahead', async function () {
+  it('[ADSW23] a deletion guard that cannot answer holds the erasure (guard-unavailable, mailed once), the next pass goes ahead', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     let broken = true;
@@ -651,7 +651,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     }
   });
 
-  for (const [code, where] of [['ACSW24A', 'inside'], ['ACSW24B', 'after']]) {
+  for (const [code, where] of [['ADSW24A', 'inside'], ['ADSW24B', 'after']]) {
     it(`[${code}] completing an erasure that failed ${where} the removal of the account leaves alone a new account that took the freed username`, async function () {
       const u = await freshUser();
       if (seriesConnection() != null) await writeSeries(u.username);
@@ -684,7 +684,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     });
   }
 
-  it('[ACSW25] two completions of one unfinished erasure never run together; a fresh record is not taken over', async function () {
+  it('[ADSW25] two completions of one unfinished erasure never run together; a fresh record is not taken over', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     const s = await sweepFor([u]);
@@ -705,7 +705,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     await assertFullyErased(u);
   });
 
-  it('[ACSW26] a schedule armed during a dry run still gets its reminders before it is erased', async function () {
+  it('[ADSW26] a schedule armed during a dry run still gets its reminders before it is erased', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
     const s = await sweepFor([u]);
@@ -726,7 +726,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal((await s.run(T0 + 27 * DAY)).erased, 1);
   });
 
-  it('[ACSW27] a deletion the holder chose waits when self-deletion was withdrawn since; the operator preset does not', async function () {
+  it('[ADSW27] a deletion the holder chose waits when self-deletion was withdrawn since; the operator preset does not', async function () {
     const chosen = await freshUser();
     const preset = await freshUser();
     await state.setSetting(chosen.id, inactivity(100), 'test');
@@ -745,7 +745,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(await exists(preset), false, 'the operator\'s preset is the operator\'s act');
   });
 
-  it('[ACSW20] a mail transport failure stops the mail of the pass (one summary line); a refused recipient does not', async function () {
+  it('[ADSW20] a mail transport failure stops the mail of the pass (one summary line); a refused recipient does not', async function () {
     const users = [await freshUser(), await freshUser(), await freshUser()];
     for (const u of users) await state.setSetting(u.id, inactivity(100), 'test');
     const outcomes = [];
@@ -770,7 +770,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(s.lines.filter((l) => l.msg.includes('mail transport failed')).length, 1);
   });
 
-  it('[ACSW15] a transfer is never erased by the sweep, reported once', async function () {
+  it('[ADSW15] a transfer is never erased by the sweep, reported once', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, onDate(T0 + 20 * DAY, { action: 'transfer', transfer: { email: 'b@acsw.example.com', notifyBeneficiary: 'atTrigger', fallback: 'delete' } }), 'test');
     const s = await sweepFor([u]);
@@ -780,7 +780,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.equal(s.lines.filter((l) => l.msg.includes('transferred')).length, 1);
   });
 
-  it('[ACSW16] a use of the account between the evaluation and the erasure wins', async function () {
+  it('[ADSW16] a use of the account between the evaluation and the erasure wins', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');
     let race = false;
@@ -799,7 +799,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     assert.ok(s.lines.some((l) => l.msg.includes('used while being checked')));
   });
 
-  it('[ACSW17] where the audit outlives the account, the erasure leaves an audit row', async function () {
+  it('[ADSW17] where the audit outlives the account, the erasure leaves an audit row', async function () {
     if (config.get('audit:active') !== true) this.skip();
     const auditStorage = require('storages').auditStorage;
     const userLocalDirectory = require('storage').userLocalDirectory;
@@ -824,7 +824,7 @@ describe('[ACSW] account auto-deletion sweep', function () {
     }
   });
 
-  it('[ACSW18] the sweep runs in the worker the master designates for the background loops', function () {
+  it('[ADSW18] the sweep runs in the worker the master designates for the background loops', function () {
     assert.equal(isDesignatedLoopWorker({ PRYV_CMC_LOOP_WORKER: '1' }), true);
     assert.equal(isDesignatedLoopWorker({ PRYV_CMC_LOOP_WORKER: '0' }), false);
   });
