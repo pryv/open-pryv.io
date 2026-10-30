@@ -44,6 +44,10 @@ export type DiscoveryConfig = {
   oidc?: boolean;
   /** Claims an id_token may carry beyond the core's (the extension's `claimsSupported`). */
   claimsSupported?: string[];
+  /** `/oauth2/introspect` is mounted (RFC 7662). */
+  introspection?: boolean;
+  /** `/oauth2/revoke` is mounted (RFC 7009). */
+  revocation?: boolean;
 };
 
 /** The id_token claims the core itself sets. */
@@ -76,6 +80,19 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     // sender-constrained (DPoP) token; omitting it yields a Bearer token.
     dpop_signing_alg_values_supported: ['ES256'],
     ...(cfg.oidc === true ? { jwks_uri: issuer + '/oauth2/jwks' } : {}),
+    // RFC 8414 §2: introspection is for confidential clients only (no `none`).
+    ...(cfg.introspection === true
+      ? {
+          introspection_endpoint: issuer + '/oauth2/introspect',
+          introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'private_key_jwt'],
+        }
+      : {}),
+    ...(cfg.revocation === true
+      ? {
+          revocation_endpoint: issuer + '/oauth2/revoke',
+          revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'private_key_jwt', 'none'],
+        }
+      : {}),
     // Cache headers + non-standard `apiEndpoint` extension are
     // implementation details, not advertised in the discovery doc.
   };

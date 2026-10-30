@@ -928,14 +928,16 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       }
       assert.equal(calls.length, 0);
     });
-    it('[OXO09] /accept writes the session index row: no token, no username', async () => {
+    it('[OXO09] /accept writes the session index row, the exchange names its refresh token: no token, no username', async () => {
       const platform = fakePlatform(); await seed(platform);
-      await flow({ platform, config: fakeConfig() });
+      const f = await flow({ platform, config: fakeConfig() });
       const row = platform._state.get('oauth-at/' + hashSecret('session-token-1'));
       assert.ok(row != null);
-      assert.deepEqual(Object.keys(row.value).sort(), ['accessId', 'audience', 'clientId', 'coreId', 'coreTokens', 'dataGrantAccessId', 'expiresAt', 'grammarTokens', 'userId']);
+      assert.deepEqual(Object.keys(row.value).sort(), ['accessId', 'audience', 'clientId', 'coreId', 'coreTokens', 'dataGrantAccessId', 'expiresAt', 'grammarTokens', 'refreshTokenHash', 'userId']);
+      assert.equal(row.value.refreshTokenHash, hashSecret(f.token.body.refresh_token));
       const json = JSON.stringify(row.value);
       assert.ok(!json.includes('session-token-1'));
+      assert.ok(!json.includes(f.token.body.refresh_token));
       assert.ok(!json.includes('"alice"'));
     });
   });

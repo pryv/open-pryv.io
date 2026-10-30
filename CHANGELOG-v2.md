@@ -136,6 +136,54 @@
 
 ## 2.0.0-rc.68 - 2026-10-30
 
+### OAuth token introspection, revocation, and the life of a refresh chain
+
+- **`POST /oauth2/introspect` (RFC 7662).** For resource servers: a confidential client (a secret or a
+  key set on file) registered with `--can-introspect` (`bin/oauth-client.js create-registry` and
+  `update`, any client; `--can-introspect false` withdraws it), not suspended; any other caller gets
+  one uniform `401 invalid_client`. Any core answers for any OAuth session token: a token whose session
+  lives on another core answers `421 { "error": "wrong_core", "coreUrl": "<home core>" }`; the home
+  core re-reads the session and answers `{ "active": false }` when it is deleted, expired, its consent
+  grant is gone, or its client is revoked, suspended or gone. An active answer carries `scope` (the
+  same scope answer as the token endpoint, recomputed from the session as it stands), `client_id`,
+  `exp`, `iat`, `sub`, `iss`, `token_type`, `aud` and `cnf` (DPoP-bound sessions), plus two extension
+  members (not standard claims, answered only to these callers, never in a token response):
+  `api_base` (the account's API base URL, no credential in it) and, for a registry client's session,
+  `permissions: [{ streamId, level }]` (the stream permissions the session holds now, as the core
+  enforces them; feature entries are left out). Registry clients' extension hook
+  `introspectionClaims` adds its own members. The discovery document advertises
+  `introspection_endpoint`.
+- **`POST /oauth2/revoke` (RFC 7009).** A client revokes its own tokens (client authentication as at
+  the token endpoint; a public client names itself with `client_id`; `token_type_hint` is honoured as
+  a hint). An access token: its OAuth session is deleted, which also ends its refresh chain. A refresh
+  token: it is ended and its chain collapsed, as on detected refresh-token reuse: the consent grant of
+  that client is deleted, with every session of the client for that user (the app must ask for
+  consent again). An unknown token, another client's token, or one already ended answers `200`
+  (no oracle); a token whose session or chain lives on another core answers `421` with that core's
+  URL. CORS as on `/oauth2/token`. The discovery document advertises `revocation_endpoint`.
+- **Deleting an OAuth session ends its refresh chain.** A session deleted from the account (the
+  account's `accesses.delete`, the re-cut of a session a grant change left with no reach, a revocation)
+  takes the refresh token issued with it along: the next refresh is `invalid_grant`, and replaying
+  that token is refused without being treated as theft (the grant stays). Sessions minted before this
+  release are not linked to their refresh token and delete as before (their chain continues from the
+  grant).
+- **Refreshing an OAuth token now retires the access token it replaces:** the previous access token of
+  that refresh chain expires `oauth:refreshRetireGraceSeconds` (default 60) after the refresh instead
+  of living out `oauth:accessTokenTTL`. Requests already in flight finish within the grace; the
+  account's access list shows one live session per client chain. Other chains of the same client
+  (another device) are not affected. Sessions minted before this release are not linked to their
+  chain and still expire on their own. A shared access the retired session created is kept.
+- A refresh refused for good after its token was used (the client id does not match, the absolute
+  lifetime is exceeded, the consent grant is gone, the client's kind changed) no longer leaves the
+  token looking rotated: a later replay of it is refused without collapsing the user's grant.
+- Registry clients: the scope recorded for a consent (the audit rows of the consent, the code exchange
+  and the refreshes) is the scope actually granted, as the token endpoint answers it, not the
+  requested one; and the token endpoint's scope answer at the code exchange follows the session as it
+  stands (a grant narrowed between the consent and the exchange narrows it), as at refresh and at
+  introspection.
+- An OAuth session row stores one spelling per stream (`:local:a` is stored as `a`), as
+  `accesses.create` does.
+
 ### OAuth registry clients and the OAuth extension (new, opt-in)
 
 - **Registry clients: OAuth clients registered by the operator, with no app account.**
@@ -233,9 +281,9 @@
   (a re-consent, the owner's `accesses.update` on a registry or CMC grant, a CMC consent scope update),
   each live OAuth session of the grant is brought to what its next refresh would mint: its chain's
   consent under the grant as it now stands (narrowed, or widened back, never beyond either). A session
-  left with no reach is deleted; its chain's next refresh is then refused (`invalid_grant`) unless the
-  owner has widened the grant again before it. A session records its chain's consent in the
-  server-owned `clientData.oauth.chain`.
+  left with no reach is deleted, and its refresh chain ends with it (see "Deleting an OAuth session
+  ends its refresh chain" below). A session records its chain's consent in the server-owned
+  `clientData.oauth.chain`.
 - `/oauth2/authorize/accept` accepts only the account owner's personal token (another token of the
   user: 403 `access_denied`); the signed-in `/offer` answers such a token with the request alone and
   `authenticated: false`.

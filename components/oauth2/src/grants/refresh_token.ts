@@ -109,7 +109,19 @@ export type RevokeChain = (params: {
   username: string;
   clientId: string;
   dataGrantAccessId?: string;
+  /** Default `refresh-token-reuse`; `client-revocation` for RFC 7009 revocation. */
+  reason?: 'refresh-token-reuse' | 'client-revocation';
 }) => Promise<void>;
+
+/**
+ * Retire the session a chain backed until this rotation: it expires shortly
+ * (`oauth:refreshRetireGraceSeconds`) instead of living out its own lifetime.
+ * Storage-direct, wired in the api-server layer. Resolves to whether a live
+ * session was retired.
+ */
+export type RetireSession = (params: {
+  userId: string; username: string; accessId: string; clientId: string;
+}) => Promise<boolean>;
 
 export type RefreshTokenDeps = {
   config: { get (key: string): unknown };
@@ -117,6 +129,8 @@ export type RefreshTokenDeps = {
   mintRefreshedAccess: MintRefreshedAccess;
   /** Optional: absent → reuse is detected + audited but the chain is not revoked. */
   revokeChain?: RevokeChain;
+  /** Optional: absent → the replaced session lives out its own lifetime. */
+  retireSession?: RetireSession;
   /**
    * Canonical username for a user id, from THIS core's local users index;
    * null when the user is no longer on this core. Refresh rows and markers
@@ -196,6 +210,18 @@ export async function handleRefreshToken (
       await audit('oauth.code.reused', { clientId: params.client_id, codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…' });
       return INVALID;
     }
+    if (marker.revoked === true) {
+      // Ended on purpose (session deleted, revoked, refused for good): never
+      // rotated, so its replay is no theft evidence and the chain is left alone.
+      await audit('oauth.token.reuse_detected', {
+        clientId: marker.clientId,
+        userId: marker.userId,
+        ...(marker.dataGrantAccessId != null ? { dataGrantAccessId: marker.dataGrantAccessId } : {}),
+        codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…',
+        reason: 'revoked-token',
+      });
+      return INVALID;
+    }
     const graceMs = 1000 * Number(deps.config.get('oauth:refreshReuseGraceSeconds') ?? 10);
     const withinGrace = (Date.now() - marker.consumedAt) < graceMs;
     await audit('oauth.token.reuse_detected', {
@@ -233,28 +259,45 @@ export async function handleRefreshToken (
   // the sooner of the row's sliding + absolute expiry (past that, a replay is
   // genuinely expired). Best-effort: a lost marker costs one detection, not the
   // rotation (which already happened atomically above).
+  // The marker's `consumedAt` identifies this rotation (see undoConsume).
+  let consumedAt: number | null = Date.now();
   try {
     await storage.markRefreshConsumed(deps.platform, coreId, params.refresh_token, {
       clientId: row.clientId,
       userId: row.userId,
       ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
-      consumedAt: Date.now(),
+      consumedAt,
     }, Math.min(row.expiresAt, row.absoluteExpiresAt));
   } catch (err: unknown) {
+    consumedAt = null;
     logServerError('refresh_token: markRefreshConsumed failed (reuse detection degraded for this token)', err);
   }
 
+  // A refusal that is final for the chain: the token was never rotated, so
+  // its marker turns `revoked` and a later replay is refused without
+  // collapsing the chain (a reuse would delete the user's grant).
+  const endChain = async (): Promise<void> => {
+    try {
+      await storage.revokeRefresh(deps.platform, coreId, params.refresh_token as string);
+    } catch (err: unknown) {
+      logServerError('refresh_token: marking the refused token revoked failed', err);
+    }
+  };
+
   if (params.client_id !== row.clientId) {
+    await endChain();
     return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };
   }
 
   // A server-side failure after the consume means the rotation did not
   // happen: the row goes back and the marker away, so the client's retry is a
   // plain refresh (otherwise a transient failure, e.g. an extension hook
-  // timing out, would make the retry a reuse and end the user's grant).
+  // timing out, would make the retry a reuse and end the user's grant). Not
+  // when the token was ended meanwhile (session deleted, token revoked).
   const undoConsume = async (): Promise<void> => {
     try {
-      await storage.restoreConsumedRefresh(deps.platform, coreId, params.refresh_token, row);
+      const restored = await storage.restoreConsumedRefresh(deps.platform, coreId, params.refresh_token as string, row, consumedAt);
+      if (!restored) logServerError('refresh_token: the consumed row was not restored (the token was ended meanwhile, or its marker is missing)', null);
     } catch (err: unknown) {
       logServerError('refresh_token: restoring the consumed row failed (the chain is burned)', err);
     }
@@ -292,6 +335,7 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
   }
   if (row.kind === 'registry' && !isRegistryClient(client)) {
+    await endChain();
     return { ok: false, status: 400, error: 'invalid_grant', description: 'the client registration changed, re-authorize' };
   }
 
@@ -326,6 +370,7 @@ export async function handleRefreshToken (
   const now = Date.now();
   const newRefreshExpiresAt = Math.min(now + refreshTokenTTL * 1000, row.absoluteExpiresAt);
   if (newRefreshExpiresAt <= now) {
+    await endChain();
     return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh-token absolute lifetime exceeded' };
   }
 
@@ -360,6 +405,7 @@ export async function handleRefreshToken (
     });
   } catch (err: unknown) {
     if ((err as { code?: string } | null)?.code === 'data-grant-revoked') {
+      await endChain();
       await audit('oauth.token.revoked', {
         clientId: row.clientId,
         userId: row.userId,
@@ -421,6 +467,7 @@ export async function handleRefreshToken (
       ? { kind: 'registry', coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] }
       : {}),
     ...(row.audience != null ? { audience: row.audience } : {}),
+    accessId: access.accessId,
   });
 
   await indexSession(deps.platform, access.accessToken, {
@@ -432,18 +479,34 @@ export async function handleRefreshToken (
     ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
     ...(row.kind === 'registry' ? { coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] } : {}),
     ...(row.audience != null ? { audience: row.audience } : {}),
+    refreshTokenHash: storage.hashSecret(newRefresh),
   });
+
+  // The new credentials are durable: retire the session this chain backed
+  // until now (a row written before refresh rows named it retires nothing).
+  // Never fails the refresh: the old session then lives out its own lifetime.
+  let retiredAccessId: string | null = null;
+  if (typeof row.accessId === 'string' && row.accessId !== access.accessId && typeof deps.retireSession === 'function') {
+    try {
+      const retired = await deps.retireSession({ userId: row.userId, username, accessId: row.accessId, clientId: row.clientId });
+      if (retired) retiredAccessId = row.accessId;
+    } catch (err: unknown) {
+      logServerError('refresh_token: retiring the previous session failed (it lives out its own lifetime)', err);
+    }
+  }
 
   await audit('oauth.token.refreshed', {
     clientId: row.clientId,
     userId: row.userId,
     oldTokenId: 'refresh:' + params.refresh_token.slice(0, 6) + '…',
     newTokenId: 'refresh:' + newRefresh.slice(0, 6) + '…',
+    ...(retiredAccessId != null ? { retiredAccessId } : {}),
   });
   await audit('oauth.token.issued.authorization_code', {
     clientId: row.clientId,
     userId: row.userId,
-    grantedScope: row.scope,
+    // A registry client: the tokens actually granted (the scope answer).
+    grantedScope: registry != null ? registry.scopeTokens : row.scope,
     accessId: access.accessId,
     ...(boundJkt != null ? { dpopJkt: boundJkt } : {}),
   });

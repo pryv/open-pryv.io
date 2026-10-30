@@ -51,6 +51,37 @@
   `weakSecretReason` rule of the required secrets; `oauth:stateKey` is listed in `SECRET_PATHS`). The
   install wizard generates `oauth.stateKey` and its config appendix shows the signing-key block.
 
+### OAuth: introspection, revocation, refresh-chain life
+
+- New oauth2 modules `introspection.ts` (`POST /oauth2/introspect`) and `revocation.ts`
+  (`POST /oauth2/revoke`), mounted when the host wires `introspectAccess` / `revokeSession`; new glue
+  `api-server/src/routes/oauth2/introspect.ts` (`introspectAccess`, `coreUrlFor`); `revoke.ts` gains
+  `revokeSession` and a `reason` on `revokeChain` (`refresh-token-reuse`, `client-revocation`: audit
+  reason and the CMC revoke notice text).
+- New audit event `oauth.token.introspected` (caller client id, `active`, the token's user and client
+  when active; never the token), user-less (syslog only), declared in the audit method lists.
+  `oauth.token.refreshed` gains `retiredAccessId`; `oauth.token.revoked` is also emitted for the
+  client's revocations (reason `access token revoked by the client` / `refresh token revoked by the
+  client`).
+- Session index rows (`oauth-at/`) gain `refreshTokenHash` (written by the refresh and, after the
+  refresh row, by the code exchange); `deleteAccessChain` reads it for every OAuth session it deletes,
+  removes the refresh row, marks it revoked and deletes the index row (non-fatal, after the delete).
+- Refresh rows gain `accessId` (the session the chain backs); consumed markers gain `revoked`. A
+  revoked marker's replay is refused (`oauth.token.reuse_detected`, reason `revoked-token`) without
+  `revokeChain`; final refusals after the consume write it; `storage.restoreConsumedRefresh` puts a
+  row back only while the marker is still the one its rotation wrote (and takes it out again if the
+  token was ended meanwhile). New storage helpers: `revokeRefresh`, `revokeRefreshByHash`,
+  `findRefreshCore`, `setSessionIndexRefresh`, `deleteSessionIndex`.
+- New config key `oauth:refreshRetireGraceSeconds` (default 60, clamped to `[0, accessTokenTTL]`);
+  `handleRefreshToken` takes an optional `retireSession` dependency (storage-direct `expires` update
+  plus a cache bust; a failure never fails the refresh).
+- The scope echo has one input at the code exchange, at refresh and at introspection: the session's
+  stored permissions without its selfRevoke override (`resolveAccess` and the mints return them).
+- A deleted grant takes all its sessions, expired ones included, as the refresh-chain collapse already
+  did.
+- Test suites: the two-core suite starts its cores with a toy OAuth grammar and covers introspection,
+  revocation and suspension across cores (`OAUTH_TOY_EXTENSION` of `test/helpers/core-process.js`).
+
 ### OAuth: registry clients, extension, glue split
 
 - The OAuth glue of the API server is split: `routes/oauth2.ts` keeps the mount (user resolution, API

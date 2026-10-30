@@ -7,10 +7,12 @@
 
 /**
  * OAuth2 glue: `revokeChain`, the collapse of a refresh chain on detected
- * refresh-token reuse, without a MethodContext: delete the durable
- * data-grant + all live oauth session accesses for (user, client) + their
- * descendants through the accesses.delete teardown, invalidate the access
- * cache cluster-wide, then best-effort notify the counterparty app.
+ * refresh-token reuse or on the client's revocation of its refresh token
+ * (RFC 7009), without a MethodContext: delete the durable data-grant + all
+ * live oauth session accesses for (user, client) + their descendants through
+ * the accesses.delete teardown, invalidate the access cache cluster-wide,
+ * then best-effort notify the counterparty app. And `revokeSession`, the
+ * client's revocation of one access token.
  */
 
 import type { DataGrant, GlueEnv } from './types.ts';
@@ -30,12 +32,50 @@ import { accessesRepo } from './types.ts';
 
 const cmcOutbound = cmc.outbound;
 
-export function createRevoke (env: GlueEnv) {
+/** Why a chain is collapsed: detected refresh-token reuse, or the client's own revocation (RFC 7009). */
+export type ChainRevokeReason = 'refresh-token-reuse' | 'client-revocation';
+
+const REVOKE_TEXTS: Record<ChainRevokeReason, { audit: string; notice: string }> = {
+  'refresh-token-reuse': {
+    audit: 'refresh-token reuse detected',
+    notice: 'Refresh-token reuse was detected; this consent was revoked.',
+  },
+  'client-revocation': {
+    audit: 'refresh token revoked by the client',
+    notice: 'The application revoked its access; this consent was revoked.',
+  },
+};
+
+/** The session glue revokeSession needs (see sessions.ts). */
+type SessionLookup = {
+  resolveUsername: (userId: string) => Promise<string | null>;
+  findOAuthSessionAccess: (userId: string, username: string, accessId: string, clientId: string) => Promise<DataGrant | null>;
+};
+
+export function createRevoke (env: GlueEnv, sessions?: SessionLookup) {
   const { config, storageLayer, logger } = env;
 
-  async function revokeChain ({ userId, username, clientId, dataGrantAccessId }: {
-    userId: string; username: string; clientId: string; dataGrantAccessId?: string;
+  // ---------------------------------------------------------------------
+  // revokeSession: RFC 7009 revocation of an access token by its client.
+  // The session is deleted through the accesses.delete teardown, which also
+  // ends its refresh chain. Resolves to whether a session was deleted.
+  // ---------------------------------------------------------------------
+  async function revokeSession ({ userId, accessId, clientId }: {
+    userId: string; accessId: string; clientId: string;
+  }): Promise<boolean> {
+    if (sessions == null) throw new Error('oauth2.revokeSession: session lookup not wired');
+    const username = await sessions.resolveUsername(userId);
+    if (username == null) return false;
+    const access = await sessions.findOAuthSessionAccess(userId, username, accessId, clientId);
+    if (access == null || access.deleted != null) return false;
+    const outcome = await deleteAccessChain({ id: userId, username }, { id: accessId });
+    return outcome.deleted;
+  }
+
+  async function revokeChain ({ userId, username, clientId, dataGrantAccessId, reason = 'refresh-token-reuse' }: {
+    userId: string; username: string; clientId: string; dataGrantAccessId?: string; reason?: ChainRevokeReason;
   }): Promise<void> {
+    const texts = REVOKE_TEXTS[reason] ?? REVOKE_TEXTS['refresh-token-reuse'];
     const accessesRepository = accessesRepo(storageLayer, 'oauth2.revokeChain');
     const user = { id: userId, username };
 
@@ -89,7 +129,7 @@ export function createRevoke (env: GlueEnv) {
     //    covering a row the bare fallback above deleted.
     cache.unsetUserData(userId);
     pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
-    await oauth2.emitAudit('oauth.token.revoked', { clientId, userId, reason: 'refresh-token reuse detected' });
+    await oauth2.emitAudit('oauth.token.revoked', { clientId, userId, reason: texts.audit });
 
     // 5. CMC back-channel notify (best-effort). The peer ENFORCES an inbound
     //    revoke it accepts (handleIncomingRevoke tears down the back-channel
@@ -107,7 +147,7 @@ export function createRevoke (env: GlueEnv) {
       const revokeContent: Record<string, unknown> = {
         accessId: dataGrant.id,
         from: { username, host: selfHost(username) },
-        reason: { en: 'Refresh-token reuse was detected; this consent was revoked.' },
+        reason: { en: texts.notice },
       };
       for (const key of ['appCode', 'offerEventId', 'acceptEventId', 'inviteEventId'] as const) {
         const value = (cmcCd as Record<string, unknown> | undefined)?.[key];
@@ -141,5 +181,5 @@ export function createRevoke (env: GlueEnv) {
     return selfIdentityHost(config, username);
   }
 
-  return { revokeChain };
+  return { revokeChain, revokeSession };
 }

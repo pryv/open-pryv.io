@@ -155,6 +155,13 @@ const http = require('node:http');
       return await fetch(rawUrl, init);
     });
   }
+  // OAuth registry clients: a consent URL, a short client-revoke check and
+  // (after the boot, below) a toy scope grammar where `read/<s>` reads <s>.
+  const oauthToy = process.env.OAUTH_TOY_EXTENSION === '1';
+  if (oauthToy) {
+    config.set('oauth:consentUrl', 'https://auth.test/oauth2-authorize');
+    config.set('oauth:clientRevokeCheckSeconds', 1);
+  }
   config.set('audit:active', false);
   config.set('webhooks:inProcess', false);
   config.set('http:ssl:backloop.dev', false);
@@ -175,6 +182,22 @@ const http = require('node:http');
   // Boot application
   const app = getApplication(true);
   await app.initiate();
+  if (oauthToy) {
+    require('oauth2').extension.setExtension({
+      apiVersion: 1,
+      name: 'toy-multicore',
+      scopeGrammar: {
+        parse (scopeString) {
+          const tokens = [...new Set(scopeString.split(/\s+/).filter((t) => t !== ''))];
+          if (tokens.some((t) => !t.startsWith('read/'))) return { ok: false, description: 'unknown token' };
+          return { ok: true, tokens, offer: { permissions: tokens.map((t) => ({ streamId: t.slice(5), level: 'read' })) } };
+        },
+        echo ({ permissions, requestedTokens }) {
+          return requestedTokens.filter((t) => permissions.some((p) => 'read/' + p.streamId === t));
+        },
+      },
+    });
+  }
 
   // Register API methods directly on the Application instance
   await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);

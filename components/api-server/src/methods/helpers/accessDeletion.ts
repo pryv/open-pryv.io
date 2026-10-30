@@ -15,6 +15,9 @@ import { managedAccessesOf, isManagedBy, parseAccessRef } from 'business/src/acc
 import { withoutCredentialUrls } from 'business/src/accesses/credentialUrls.ts';
 import WebhooksRepository from 'business/src/webhooks/repository.ts';
 import { tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
+import * as storages from 'storages';
+import * as oauthStorage from 'oauth2/src/storage.ts';
+import type { PlatformDB } from '../../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 
 /**
  * The deletion of an access and of what it manages, with every side effect
@@ -130,10 +133,44 @@ function isSessionOfGrant (access: AccessRow, grantBaseId: string): boolean {
   return access?.type === 'app' && oauth?.dataGrantId === grantBaseId;
 }
 
+// Every not-deleted session of the grant, expired ones included (a refresh
+// retires the session it replaces by expiry), as the refresh-chain collapse
+// on reuse deletes them: a withdrawn grant leaves none of its rows behind.
+/** An OAuth session access: it names its consent grant. */
+function isOAuthSession (access: AccessRow): boolean {
+  const oauth = access?.clientData?.oauth as { dataGrantId?: unknown } | undefined;
+  return access?.type === 'app' && typeof oauth?.dataGrantId === 'string';
+}
+
+/**
+ * A deleted OAuth session ends its refresh chain: its index row (keyed by
+ * the session token's hash) names the refresh token issued with it, which is
+ * removed and marked revoked (a replay is refused without collapsing the
+ * grant, a rotation in flight does not put it back), and the index row goes.
+ * A session indexed before the index named its refresh token, or never
+ * indexed, ends nothing (it still dies). Runs after the deletion committed;
+ * a failure is logged, never thrown.
+ */
+async function endRefreshChainOf (sessionToken: string): Promise<void> {
+  try {
+    const platform = storages.platformDB as PlatformDB | undefined;
+    if (platform == null) return;
+    const index = await oauthStorage.getSessionIndex(platform, sessionToken);
+    if (index == null) return;
+    if (typeof index.refreshTokenHash === 'string' && index.refreshTokenHash.length > 0) {
+      await oauthStorage.revokeRefreshByHash(platform, index.coreId, index.refreshTokenHash);
+    }
+    await oauthStorage.deleteSessionIndex(platform, sessionToken);
+  } catch (err: unknown) {
+    getLogger('accesses:deletion').error('ending the refresh chain of a deleted OAuth session failed; its refresh token stays usable until the next refresh re-reads the grant', {
+      error: String((err as Error)?.message ?? err),
+    });
+  }
+}
+
 function sessionsOfGrant (all: AccessRow[], grantBaseId: string, now: number, known: AccessRow[]): AccessRow[] {
   const seen = new Set<string>(known.map((a) => a.id).concat(grantBaseId));
-  const live = (a: AccessRow) => !seen.has(a.id) && !(a.expires != null && now > a.expires);
-  const sessions = all.filter((a) => live(a) && isSessionOfGrant(a, grantBaseId));
+  const sessions = all.filter((a) => !seen.has(a.id) && isSessionOfGrant(a, grantBaseId));
   for (const s of sessions) seen.add(s.id);
   const created = sessions.flatMap((s) => managedAccessesOf(all, s.id, now)).filter((a) => {
     if (seen.has(a.id)) return false;
@@ -213,8 +250,11 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
   const aliasesToRelease: string[] = [];
   const rowsToTombstone: IndexAccessInput[] = [];
   const rowsToScrub: AccessRow[] = [];
+  // The tokens of the OAuth sessions deleted here: their refresh chains end.
+  const sessionTokens: string[] = [];
   for (const idToDelete of idsToDelete) {
     const access = await fromCallback((cb: NodeCallback) => accessesRepository.findOne(user, { id: idToDelete.id }, dbFindOptions, cb)) as AccessRow | null;
+    if (access != null && isOAuthSession(access) && typeof access.token === 'string') sessionTokens.push(access.token);
     if (access != null && typeof access.alias === 'string') { aliasesToRelease.push(access.alias); }
     if (access != null) { rowsToTombstone.push(access as IndexAccessInput); } else if (idToDelete.id != null) { rowsToTombstone.push({ id: idToDelete.id }); }
     if (access != null) rowsToScrub.push(access);
@@ -262,12 +302,13 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     const now = timestamp.now();
     const deletedIds = new Set(idsToDelete.map((d) => d.id));
     const late = all.filter((a) => typeof a.id === 'string' && !deletedIds.has(a.id) &&
-      !(a.expires != null && now > a.expires) &&
-      (isManagedBy(a, params.id) || isSessionOfGrant(a, grantBaseId) || sessionIds.some((id) => isManagedBy(a, id))));
+      (isSessionOfGrant(a, grantBaseId) || (!(a.expires != null && now > a.expires) &&
+        (isManagedBy(a, params.id) || sessionIds.some((id) => isManagedBy(a, id))))));
     if (late.length > 0) {
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
       for (const a of late) {
         if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(user.id, { id: a.id, token: a.token });
+        if (isOAuthSession(a) && typeof a.token === 'string') sessionTokens.push(a.token);
         if (typeof a.alias === 'string') aliasesToRelease.push(a.alias);
         rowsToTombstone.push(a as IndexAccessInput);
         await scrubOrWarn(accessesRepository as unknown as ScrubRepository, user, a);
@@ -276,6 +317,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
       idsToDelete = idsToDelete.concat(late.map((a) => ({ id: a.id })));
     }
   }
+  for (const token of sessionTokens) await endRefreshChainOf(token);
   if (aliasesToRelease.length > 0) {
     const usersRepository = await getUsersRepository();
     for (const alias of aliasesToRelease) {

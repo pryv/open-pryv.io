@@ -1090,6 +1090,12 @@ oauth:
   # a replay past it revokes the whole chain. Keep small — real client retries are
   # sub-second. 0 = strict (any replay revokes).
   refreshReuseGraceSeconds: 10     # seconds
+  # A refresh retires the access token it replaces: the previous session of
+  # that refresh chain expires this long after the refresh instead of living
+  # out accessTokenTTL (requests in flight finish). Clamped to
+  # [0, accessTokenTTL]; accessTokenTTL keeps the replaced token for its whole
+  # lifetime. Keep it at or above refreshReuseGraceSeconds.
+  refreshRetireGraceSeconds: 60    # seconds
   # DPoP (RFC 9449) sender-constrained tokens: acceptance window for a
   # proof's iat around server time. The feature itself needs no enable
   # flag — it is inert unless a client sends a DPoP header.
