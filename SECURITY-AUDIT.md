@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 9 (2026-10-30), covering releases 2.0.0-rc.40 to 2.0.0-rc.66.
+**Report revision:** 10 (2026-10-30), covering releases 2.0.0-rc.40 to 2.0.0-rc.68.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -42,8 +42,10 @@ added those fixed in 2.0.0-rc.64, and a review of the permissions that consents 
 can carry on account fields, of the consent retry path and of deletion listings, made in October
 2026, added those fixed in 2.0.0-rc.65, and a review of access aliases and username changes, and
 of how consent grants and refreshed OAuth2 sessions combine permissions, made in October 2026,
-added those fixed in 2.0.0-rc.66; they were fixed under the same rules (tests that fail without the
-fix, independent review before merge).
+added those fixed in 2.0.0-rc.66, and a review of the OAuth2 consent flow, made in October 2026
+alongside the work on OAuth2 clients registered by the operator, added the lower-severity fixes of
+2.0.0-rc.68; they were fixed under the same rules (tests that fail without the fix, independent
+review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -104,6 +106,8 @@ its applicability is stated with it.
 | 2.0.0-rc.64 | 2026-10-29 | 2 Medium | yes (2026-10-29) |
 | 2.0.0-rc.65 | 2026-10-29 | 3 Medium, lower-severity fixes | yes (2026-10-29) |
 | 2.0.0-rc.66 | 2026-10-30 | 3 Medium, lower-severity fixes, completion step of an earlier finding | yes (2026-10-30) |
+| 2.0.0-rc.67 | 2026-10-30 | none (not an audit release: the 2.0.0-rc.66 server, with the Docker image that release lacked) | yes (with rc.68) |
+| 2.0.0-rc.68 | 2026-10-30 | lower-severity fixes, completion steps of earlier findings | yes (2026-10-30) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1456,6 +1460,64 @@ details).
   username change are disconnected instead of staying silent; `account.changeUsername` reports the
   steps that did not complete in `warnings`.
 
+2.0.0-rc.67 carries no security fix: it is the 2.0.0-rc.66 server, with the Docker image that
+release lacked.
+
+### Lower-severity fixes in 2.0.0-rc.68 (deployed)
+
+2.0.0-rc.68 adds OAuth2 clients registered by the operator, without an app account, and an OAuth2
+extension entry point. Both are opt-in (without an extension module, every such client is refused)
+and are new features, described in `CHANGELOG-v2.md`, not fixes. The review of the consent flow
+made alongside them found the following in earlier releases:
+
+- **The first OAuth2 session after a consent ignored the restrictions the owner had set on the
+  grant** (Low-Medium; deployments that serve OAuth2 clients): the session minted when the user
+  consented carried exactly the permissions ticked on the consent screen, without the exclusions
+  (`none` below a granted stream) or the feature restrictions (for example `webhooks: forbidden`)
+  that the account owner had added to the app's consent grant; they reached the session only at
+  its first refresh (since 2.0.0-rc.66). The exposure was bounded by one session lifetime
+  (`oauth.accessTokenTTL`, one hour by default) and needed a new consent by the user. The session
+  minted at consent now starts under the grant's restrictions, as its refreshes do.
+- **A change to a consent grant now reaches the live OAuth2 sessions at once** (hardening;
+  completes the 2.0.0-rc.66 item on narrowed grants): a narrowing of the grant (by the owner with
+  `accesses.update`, by a re-consent, or by a consent scope update) reached a session already
+  issued at its next refresh, one session lifetime at most. Each live session of the grant is now
+  brought to what its next refresh would mint as soon as the grant changes, and deleted when it is
+  left with no reach.
+- **A feature restriction in a consent offer could be left unticked** (Low): a consent offer
+  (OAuth2, consent between accounts, or the consent part of an app access request) could mark a
+  forbidden feature as optional, so a user who left it unticked granted the feature. No party
+  obtained more than its own offer allowed, but unticking a restriction widened the access, the
+  opposite of what the consent screen suggests. A forbidden feature is now always mandatory in an
+  offer, and one marked optional is refused.
+- **OAuth2 sessions were missing from the access index used to scope a breach** (Low; incident
+  response): the cluster-wide index that resolves an access id to its account
+  (`GET /system/accesses/:accessId`, admin key) had no row for the sessions minted by a refresh or
+  by the `client_credentials` grant, and these sessions emitted no access-change notification.
+  Every session the OAuth2 flow mints is now indexed and notified as `accesses.create` does, and a
+  session removed after a failed code exchange is marked deleted there. Sessions minted by earlier
+  releases expire on their own, one session lifetime at most after the upgrade.
+- **Only the account owner can consent** (defence in depth): the OAuth2 consent endpoint accepted
+  any valid token of the account and relied on the access-creation rules further on to refuse a
+  token other than the personal one, which they did (a token obtained through delegation was
+  already refused at once). Such a token is now refused at once with `403 access_denied`.
+- **`clientData.oauth` is written by the server only** (hardening; completes the 2.0.0-rc.64 item
+  on withdrawn consents): `accesses.create` refuses an access carrying it and `accesses.update`
+  refuses any change to it (`403`), where only its `dataGrantId` was protected on update before.
+  BREAKING for a client that wrote this key; none is known.
+- **A consent offer naming one stream twice** (Low; completes the 2.0.0-rc.66 item on duplicate
+  stream entries): a `consent/request-cmc` offer naming a stream twice, in any spelling, is refused
+  at write, and one already stored is refused at authorization (`invalid_scope`).
+- Not security fixes, listed for operators: a refresh that failed on the server side (a storage
+  error, or an extension hook failing or timing out) used up the refresh token, so the app's retry
+  was taken for the reuse of a stolen token, which ends the grant; the refresh token now stays
+  usable. The session minted at consent is written by the server (`createdBy: system`), so the
+  consent appears in the audit log as `oauth.consent.granted` and as the grant's own rows, no
+  longer as an `accesses.create` row.
+- **Operator action:** none. The new optional key `oauth.extensionHookTimeoutMs` (default `5000`)
+  bounds each extension hook; the operator CLI `bin/oauth-client.js create-registry` registers the
+  new clients (`--subject-type` and at least one `--audience`, or `--any-audience`, are required).
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1550,3 +1612,4 @@ This report is updated with every release that carries a security fix:
 | 7 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.64 | Adds 2.0.0-rc.64 (follow-up review of the OAuth2 consent and session lifecycle and of event history reads): 2 Medium findings. Deployed on the maintainers' platforms (2026-10-29). |
 | 8 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.65 | Adds 2.0.0-rc.65 (follow-up review of account-field permissions carried by consents and app accesses, of the consent retry path and of deletion listings): 3 Medium findings and lower-severity fixes; section 4.1 notes the deletion-record exception to the `*` scope. Deployed on the maintainers' platforms (2026-10-29). |
 | 9 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.66 | Adds 2.0.0-rc.66 (follow-up review of access aliases and username changes, and of how consent grants and refreshed OAuth2 sessions combine permissions): 3 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.47 HF series item; section 4.1 adds the alias check, section 5 updates the HF series item. Deployed on the maintainers' platforms (2026-10-30). |
+| 10 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.68 | Adds 2.0.0-rc.67 (no security fix: the 2.0.0-rc.66 server with its Docker image) and 2.0.0-rc.68 (review of the OAuth2 consent flow alongside the OAuth2 clients registered by the operator): lower-severity fixes and the completion steps of the 2.0.0-rc.64 and rc.66 consent items; counts unchanged. Deployed on the maintainers' platforms (2026-10-30). |
