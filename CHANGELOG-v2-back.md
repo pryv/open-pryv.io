@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### OAuth: OpenID Connect, consent-state key
+
+- New oauth2 module `signingKeys.ts` (`loadSigningKeys`, validated at route mount, `hasSigningKeys`,
+  `publicJwkSet`, `signJwt`); `responseHooks.prepareRegistryResponse` signs the id_token and calls the
+  extension's `idTokenClaims`; `scopeGrammar.resolveRequestedScope` takes `{ oidcEnabled }`; the
+  discovery documents and the JWK Set are built per request from the live configuration (mounted
+  always; the OpenID ones answer 404 without a key).
+- Code rows of registry clients carry `nonce` and `authTime` when `openid` was requested; the api-server
+  resolver of `/accept` reports `authTime` (the personal access's creation, its sign-in). A burnt
+  nonce is an access-state row `oauth-nonce/<clientId>/<sha256(nonce)>`, kept while its id_token
+  lives and at least one hour.
+- `signedState.stateKeyFromConfig`: `oauth:stateKey`, else `auth:adminAccessKey`; every route that
+  signs or verifies the state uses it.
+- New config keys `oauth:stateKey` (default empty), `oauth:signingKeys` (default empty),
+  `oauth:idTokenTTL` (default 300); `oauth:audAllowList` removed. Boot warnings: state key unset while
+  the consent flow is configured, equal to the admin key or shorter than 32 characters,
+  `audAllowList` still set, `idTokenTTL` not a positive integer. The install wizard generates
+  `oauth.stateKey` and its config appendix shows the signing-key block.
+
 ### OAuth: registry clients, extension, glue split
 
 - The OAuth glue of the API server is split: `routes/oauth2.ts` keeps the mount (user resolution, API

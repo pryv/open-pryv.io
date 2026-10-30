@@ -16,7 +16,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { signState, verifyState, SIGNED_STATE_TTL_SECONDS } = require('../src/signedState.ts');
+const { signState, verifyState, stateKeyFromConfig, SIGNED_STATE_TTL_SECONDS } = require('../src/signedState.ts');
 
 const KEY_A = 'admin-key-aaaa-bbbb';
 const KEY_B = 'admin-key-different';
@@ -142,11 +142,26 @@ describe('[OAUTH-SIGSTATE] signed URL-parameter state', () => {
   });
 
   describe('[OAUTH-SIGSTATE-ERR] input errors', () => {
-    it('[OSS-E1] sign with empty admin key throws', () => {
-      assert.throws(() => signState('', SAMPLE), /adminKey/);
+    it('[OSS-E1] sign with an empty key throws', () => {
+      assert.throws(() => signState('', SAMPLE), /signing secret must be a non-empty string/);
     });
-    it('[OSS-E2] sign with non-string admin key throws', () => {
-      assert.throws(() => signState(null, SAMPLE), /adminKey/);
+    it('[OSS-E2] sign with a non-string key throws', () => {
+      assert.throws(() => signState(null, SAMPLE), /signing secret must be a non-empty string/);
+    });
+  });
+
+  describe('[OAUTH-SIGSTATE-KEY] key selection', () => {
+    const cfg = (m) => ({ get: (k) => m[k] });
+    it('[OSS-K1] oauth:stateKey when set, else auth:adminAccessKey, else empty', () => {
+      assert.equal(stateKeyFromConfig(cfg({ 'oauth:stateKey': 'own', 'auth:adminAccessKey': 'adm' })), 'own');
+      assert.equal(stateKeyFromConfig(cfg({ 'oauth:stateKey': '', 'auth:adminAccessKey': 'adm' })), 'adm');
+      assert.equal(stateKeyFromConfig(cfg({ 'auth:adminAccessKey': 'adm' })), 'adm');
+      assert.equal(stateKeyFromConfig(cfg({})), '');
+    });
+    it('[OSS-K2] a state signed with one key does not verify with the other', () => {
+      const token = signState('own', SAMPLE);
+      assert.equal(verifyState('own', token).ok, true);
+      assert.deepEqual(verifyState('adm', token), { ok: false, reason: 'bad_signature' });
     });
   });
 });

@@ -23,8 +23,10 @@
  *   - the refresh-chain collapse on reuse (`oauth2/revoke.ts`);
  *   - the operator's OAuth extension, loaded here at mount.
  *
- * If `service:api`, `auth:adminAccessKey`, or `oauth:consentUrl` is missing,
- * the oauth2 module soft-degrades with a warn: see its routes.ts.
+ * If `service:api`, the state key (`oauth:stateKey`, or `auth:adminAccessKey`
+ * while it is unset), or `oauth:consentUrl` is missing, the oauth2 module
+ * soft-degrades: see its routes.ts. A malformed `oauth:signingKeys` entry
+ * fails the mount (and so the boot), like a broken extension.
  */
 
 import type { Application as ExpressApp } from 'express';
@@ -95,7 +97,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // Only the account owner consents: the session and the grant are written
     // storage-direct or on this context, so the principal check is explicit
     // here rather than left to the access-creation rules downstream.
-    const access = context.access as { isPersonal?: () => boolean } | null;
+    const access = context.access as { isPersonal?: () => boolean; created?: number } | null;
     if (!(typeof access?.isPersonal === 'function' && access.isPersonal() === true)) {
       return { refused: true as const, description: 'only the account owner can grant OAuth access' };
     }
@@ -103,6 +105,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       userId: context.user.id,
       username: context.user.username,
       personal: true,
+      // The personal access is created at sign-in (a later sign-in for the
+      // same app rotates its token and keeps it): the OpenID Connect
+      // `auth_time`, never later than the real authentication.
+      ...(Number.isFinite(access.created) ? { authTime: Math.floor(access.created as number) } : {}),
       // Carry the live context through so createAccess can call api on it.
       _context: context,
     };

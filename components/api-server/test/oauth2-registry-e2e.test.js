@@ -14,7 +14,9 @@ const require = createRequire(import.meta.url);
  *   GET  /oauth2/authorize        → consent redirect, offer by reference
  *   POST /oauth2/authorize/offer  → the re-derived offer for the consent UI
  *   POST /oauth2/authorize/accept → durable data-grant (no expiry) + session
- *   POST /oauth2/token            → scope echo, subject = the user's id, apiEndpoint
+ *   POST /oauth2/token            → scope echo, subject = the user's id, apiEndpoint,
+ *                                   id_token when openid was granted
+ *   GET  /.well-known/openid-configuration, /oauth2/jwks
  */
 
 /* global initTests, initCore, coreRequest, getNewFixture, cuid */
@@ -28,6 +30,23 @@ const REDIRECT_URI = 'https://app.registry.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
 const AUD = 'https://resource.test/base';
 const PSEUDONYM_REFUSED = 'pseudonymous subjects are not available on this core';
+const SIGNING_KEY_PEM = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+const STATE_KEY = 'e2e-state-key-'.repeat(3);
+
+/** The payload of a JWT, after checking its RS256 signature against the core's published JWK Set. */
+async function verifiedIdToken (jwt) {
+  const [h, p, s] = jwt.split('.');
+  const header = JSON.parse(Buffer.from(h, 'base64url').toString());
+  assert.deepEqual(header, { alg: 'RS256', kid: 'e2e-1', typ: 'JWT' });
+  const jwks = await coreRequest.get('/oauth2/jwks');
+  assert.equal(jwks.status, 200, jwks.text);
+  const jwk = jwks.body.keys.find((k) => k.kid === header.kid);
+  assert.ok(jwk, 'kid not published');
+  const ok = crypto.verify('sha256', Buffer.from(h + '.' + p),
+    { key: crypto.createPublicKey({ key: jwk, format: 'jwk' }), padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(s, 'base64url'));
+  assert.ok(ok, 'id_token signature');
+  return JSON.parse(Buffer.from(p, 'base64url').toString());
+}
 
 // Toy grammar: `read/<s>` reads one stream, `write/<s>` contributes to it,
 // `add/<s>` may only create in it; `ctx/user` is a context token;
@@ -145,7 +164,9 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     await initTests();
     await initCore();
     fixtures = getNewFixture();
-    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL } });
+    restoreConfig = require('test-helpers').injectTestConfigSnapshot({
+      oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, signingKeys: [{ kid: 'e2e-1', privateKeyPem: SIGNING_KEY_PEM }] },
+    });
     oauth2.extension.setExtension(toyExtension);
     platformDB = require('storages').platformDB;
 
@@ -194,7 +215,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     if (fixtures != null) await fixtures.clean();
   });
 
-  function authorize (scope, cid = clientId, challenge = 'x'.repeat(43)) {
+  function authorize (scope, cid = clientId, challenge = 'x'.repeat(43), extra = {}) {
     return coreRequest.get('/oauth2/authorize').query({
       client_id: cid,
       redirect_uri: REDIRECT_URI,
@@ -204,13 +225,16 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       code_challenge_method: 'S256',
       scope,
       aud: AUD,
+      ...extra,
     });
   }
 
   /** Authorize + offer + accept; returns the accept answer (not asserted). */
-  async function consent (scope, cid = clientId, who = { username, token: personalToken }, keep = null) {
+  // `opts.keep`: filter on the offered permissions (default: keep all);
+  // `opts.extra`: more /authorize query parameters (e.g. `nonce`).
+  async function consent (scope, cid = clientId, who = { username, token: personalToken }, { keep = null, extra = {} } = {}) {
     const { verifier, challenge } = pkce();
-    const authRes = await authorize(scope, cid, challenge);
+    const authRes = await authorize(scope, cid, challenge, extra);
     assert.equal(authRes.status, 302, JSON.stringify(authRes.body) + authRes.text);
     const loc = authRes.headers.location;
     assert.ok(loc.startsWith(CONSENT_URL + '?state='), 'unexpected redirect: ' + loc);
@@ -230,8 +254,8 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     });
   }
 
-  async function runFlow (scope = 'offline_access read/health ctx/user', cid = clientId, who, keep = null) {
-    const c = await consent(scope, cid, who, keep);
+  async function runFlow (scope = 'offline_access read/health ctx/user', cid = clientId, who, opts = {}) {
+    const c = await consent(scope, cid, who, opts);
     assert.equal(c.accept.status, 200, JSON.stringify(c.accept.body));
     const code = new URL(c.accept.body.redirectTo).searchParams.get('code');
     const tokenRes = await exchange(code, c.verifier, cid);
@@ -261,15 +285,26 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
 
   let first, second;
 
-  it('[OREG1] the full flow mints a data-grant without alias nor expiry, and a session that reads; the subject is the user id', async () => {
-    first = await runFlow();
+  it('[OREG1] the full flow mints a data-grant without alias nor expiry, and a session that reads; the subject is the user id, in the id_token too', async () => {
+    const before = Math.floor(Date.now() / 1000);
+    first = await runFlow('openid offline_access read/health ctx/user', clientId, undefined, { extra: { nonce: 'nonce-' + cuid() } });
     const b = first.token;
-    assert.deepEqual(b.scope.split(' ').sort(), ['ctx/user', 'offline_access', 'read/health']);
+    assert.deepEqual(b.scope.split(' ').sort(), ['ctx/user', 'offline_access', 'openid', 'read/health']);
     assert.equal(typeof b.refresh_token, 'string');
     // Fixture users have id === username; [OREG10] covers a registered account.
     assert.equal(b.user, userId);
     assert.ok(typeof b.apiEndpoint === 'string' && b.apiEndpoint.includes(username), 'apiEndpoint: ' + b.apiEndpoint);
-    assert.equal(b.id_token, undefined);
+    const idToken = await verifiedIdToken(b.id_token);
+    assert.equal(idToken.sub, userId);
+    assert.equal(idToken.aud, clientId);
+    assert.equal(idToken.azp, clientId);
+    assert.match(idToken.nonce, /^nonce-/);
+    assert.equal(idToken.exp - idToken.iat, 300);
+    assert.ok(idToken.iat >= before, 'iat');
+    // auth_time: the sign-in of the personal token, never after the consent.
+    assert.ok(Number.isInteger(idToken.auth_time) && idToken.auth_time <= idToken.iat, 'auth_time ' + idToken.auth_time);
+    const discovery = await coreRequest.get('/.well-known/openid-configuration');
+    assert.equal(idToken.iss, discovery.body.issuer);
     const list = await grants();
     assert.equal(list.length, 1);
     const grant = list[0];
@@ -324,12 +359,14 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal(res.body.error, 'invalid_grant');
   });
 
-  it('[OREG5] a re-consent at a wider level on a granted stream leaves one entry at that level', async () => {
-    await runFlow('read/diary');
-    await runFlow('write/diary');
+  it('[OREG5] a re-consent at a wider level on a granted stream leaves one entry at that level; the id_token subject is stable', async () => {
+    const r1 = await runFlow('openid read/diary');
+    const r2 = await runFlow('openid write/diary');
     const list = await grants();
     assert.equal(list.length, 1);
     assert.deepEqual(list[0].permissions, [{ streamId: 'diary', level: 'contribute' }, ...DEFAULT_FORBIDS]);
+    assert.equal((await verifiedIdToken(r1.token.id_token)).sub, userId);
+    assert.equal((await verifiedIdToken(r2.token.id_token)).sub, userId);
   });
 
   it('[OREG6] read then create-only on one stream: 400 invalid_scope at /accept, the grant is unchanged', async () => {
@@ -388,7 +425,8 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
 
   it('[OREG9] pseudonymous subjects are refused at /authorize: a pseudonym request, a pairwise client', async () => {
     const before = await grants();
-    for (const [scope, cid] of [['read/health ctx/pseudo', clientId], ['read/health ctx/user', pairwiseClientId]]) {
+    for (const [scope, cid] of [['read/health ctx/pseudo', clientId], ['openid read/health ctx/pseudo', clientId],
+      ['read/health ctx/user', pairwiseClientId], ['openid read/health ctx/user', pairwiseClientId]]) {
       const res = await authorize(scope, cid);
       assert.equal(res.status, 302, res.text);
       const loc = new URL(res.headers.location);
@@ -421,9 +459,16 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       assert.equal(login.status, 200, JSON.stringify(login.body));
       const st = await coreRequest.post('/' + name + '/streams').set('Authorization', login.body.token).send({ id: 'health', name: 'health' });
       assert.equal(st.status, 201, JSON.stringify(st.body));
-      const r = await runFlow('read/health ctx/user', clientId, { username: name, token: login.body.token });
+      const r = await runFlow('openid read/health ctx/user', clientId, { username: name, token: login.body.token });
       assert.equal(r.token.user, id);
       assert.ok(r.token.apiEndpoint.includes(name), r.token.apiEndpoint);
+      const idToken = await verifiedIdToken(r.token.id_token);
+      assert.equal(idToken.sub, id);
+      assert.notEqual(idToken.sub, name);
+      assert.equal(Object.hasOwn(idToken, 'nonce'), false);
+      // auth_time is the sign-in that minted the personal token.
+      assert.ok(Math.abs(idToken.auth_time - Math.floor(Date.now() / 1000)) < 120, 'auth_time ' + idToken.auth_time);
+      assert.ok(!JSON.stringify(idToken).includes(name), 'the username is in no claim');
     } finally {
       await usersRepository.deleteOne(id, name);
     }
@@ -447,7 +492,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
   it('[OREG13] partial consent: the scope names the narrowed and per-stream tokens the session holds (unrequested), at the exchange and at refresh; sent back, it re-derives the same offer', async () => {
     oauth2.extension.setExtension(twoLevelExtension);
     try {
-      const r = await runFlow('offline_access cat/all.read ctx/user', twoLevelClientId, undefined, (p) => p.streamId !== 'notes');
+      const r = await runFlow('offline_access cat/all.read ctx/user', twoLevelClientId, undefined, { keep: (p) => p.streamId !== 'notes' });
       assert.deepEqual(r.token.scope.split(' ').sort(), ['cat/vitals.read', 'ctx/user', 'offline_access', 'read/diary']);
       const info = await coreRequest.get('/' + username + '/access-info').set('Authorization', r.token.access_token);
       assert.equal(info.status, 200, JSON.stringify(info.body));
@@ -502,6 +547,45 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       twoLevelEchoOverride = null;
       oauth2.extension.setExtension(toyExtension);
     }
+  });
+
+  it('[OREG15] OpenID Connect: discovery and JWK Set published; a refresh answers no id_token; a nonce is accepted once', async () => {
+    const conf = await coreRequest.get('/.well-known/openid-configuration');
+    assert.equal(conf.status, 200, conf.text);
+    // Pseudonymous subjects are not served yet: only `public` is advertised.
+    assert.deepEqual(conf.body.subject_types_supported, ['public']);
+    assert.deepEqual(conf.body.id_token_signing_alg_values_supported, ['RS256']);
+    assert.equal(conf.body.jwks_uri, conf.body.issuer + '/oauth2/jwks');
+    assert.ok(conf.body.scopes_supported.includes('openid'));
+    const jwks = await coreRequest.get('/oauth2/jwks');
+    assert.deepEqual(jwks.body.keys.map((k) => Object.keys(k).sort()), [['alg', 'e', 'kid', 'kty', 'n', 'use']]);
+
+    const nonce = 'once-' + cuid();
+    const r = await runFlow('openid offline_access read/health', clientId, undefined, { extra: { nonce } });
+    assert.equal((await verifiedIdToken(r.token.id_token)).nonce, nonce);
+    const refreshed = await refresh(r.token.refresh_token);
+    assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
+    assert.ok(refreshed.body.scope.split(' ').includes('openid'));
+    assert.equal(refreshed.body.id_token, undefined);
+    // The same nonce again: refused before the consent screen.
+    const again = await authorize('openid read/health', clientId, 'x'.repeat(43), { nonce });
+    const loc = new URL(again.headers.location);
+    assert.equal(loc.origin + loc.pathname, REDIRECT_URI);
+    assert.equal(loc.searchParams.get('error'), 'invalid_request');
+    assert.equal(loc.searchParams.get('error_description'), 'nonce already used');
+  });
+
+  it('[OREG16] with oauth.stateKey set, a consent state signed with the admin key is refused', async () => {
+    const authRes = await authorize('read/health');
+    const signed = new URL(authRes.headers.location).searchParams.get('state');
+    const { verifyState, signState } = require('oauth2/src/signedState.ts');
+    const payload = verifyState(STATE_KEY, signed).payload;
+    assert.ok(payload != null, 'the state is keyed on oauth.stateKey');
+    const config = require('@pryv/boiler').getConfigUnsafe(true);
+    const forged = signState(config.get('auth:adminAccessKey'), payload);
+    const res = await coreRequest.post('/oauth2/authorize/offer').send({ state: forged });
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.equal(res.body.error_description, 'signed state bad_signature');
   });
 });
 

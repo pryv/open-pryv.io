@@ -755,6 +755,42 @@ function collectWarnings (config) {
   warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
   warnings.push(...revocationLagWarnings(config));
   warnings.push(...describeAutoDeletion(config).warnings);
+  warnings.push(...oauthWarnings(config));
+  return warnings;
+}
+
+/** Below this, an `oauth.stateKey` gets a boot warning. */
+const OAUTH_STATE_KEY_MIN_LENGTH = 32;
+
+/**
+ * OAuth settings that work but should be changed: the consent-state key still
+ * borrowed from the admin key (transitional), a weak or shared state key, a
+ * removed key still set, an unusable id_token lifetime.
+ */
+function oauthWarnings (config) {
+  const warnings = [];
+  const consentUrl = config.get('oauth:consentUrl');
+  const stateKey = config.get('oauth:stateKey');
+  const stateKeySet = typeof stateKey === 'string' && stateKey.length > 0;
+  // Only the authorization flow signs states, and it needs a consent page.
+  if (!stateKeySet && typeof consentUrl === 'string' && consentUrl.length > 0) {
+    warnings.push("'oauth.stateKey' is not set: OAuth consent states are signed with a key derived from 'auth.adminAccessKey'. " +
+      `Set 'oauth.stateKey' to a random value of at least ${OAUTH_STATE_KEY_MIN_LENGTH} characters (e.g. openssl rand -base64 32); ` +
+      'a later release will require it. Setting it cancels only the consent screens open at that moment.');
+  }
+  if (stateKeySet && stateKey === config.get('auth:adminAccessKey')) {
+    warnings.push("'oauth.stateKey' equals 'auth.adminAccessKey': give it its own random value.");
+  } else if (stateKeySet && stateKey.length < OAUTH_STATE_KEY_MIN_LENGTH) {
+    warnings.push(`'oauth.stateKey' is shorter than ${OAUTH_STATE_KEY_MIN_LENGTH} characters: use a longer random value.`);
+  }
+  if (config.get('oauth:audAllowList') != null) {
+    warnings.push("'oauth.audAllowList' is no longer read and can be removed: the accepted 'aud' values are registered per client " +
+      '(bin/oauth-client.js create-registry --audience).');
+  }
+  const idTokenTTL = config.get('oauth:idTokenTTL');
+  if (idTokenTTL != null && !(Number.isInteger(Number(idTokenTTL)) && Number(idTokenTTL) > 0)) {
+    warnings.push(`'oauth.idTokenTTL' is ${JSON.stringify(idTokenTTL)}: a positive number of seconds is expected; 300 is used.`);
+  }
   return warnings;
 }
 

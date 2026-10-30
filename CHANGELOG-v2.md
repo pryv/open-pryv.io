@@ -41,8 +41,9 @@
   reach unnamed. It narrows when the user unticked part of the offer or the grant was narrowed; a
   refresh refused this way leaves the refresh token usable. The subject handed to
   the extension (and the hook fields built on it) is the user's internal id, not the username and not
-  routable; `apiEndpoint` is sent. `offline_access` asks for a refresh token; `openid` is refused on
-  this core. Without the extension every registry client's `/oauth2/authorize` answers `invalid_scope`.
+  routable; `apiEndpoint` is sent. `offline_access` asks for a refresh token; `openid` asks for an
+  id_token (OpenID Connect, below; refused while the core has no signing key). Without the extension
+  every registry client's `/oauth2/authorize` answers `invalid_scope`.
 - **Pseudonymous subjects are refused for now**: an offer asking for a pseudonym and any request of a
   `pairwise` client answer `invalid_scope` "pseudonymous subjects are not available on this core".
 - **Offer by reference: `POST /oauth2/authorize/offer`** `{ state }` answers `{ client: { clientId,
@@ -109,7 +110,43 @@
   no longer uses up the refresh token: the app's retry is a plain refresh, not a reuse that would end
   the grant.
 
+### OpenID Connect for registry clients (new, opt-in)
+
+- **On when `oauth:signingKeys` lists at least one key** (per core, YAML only): RS256 only, RSA keys of
+  at least 2048 bits, unencrypted PEM, each with a unique `kid` and exactly one of `privateKeyFile` /
+  `privateKeyPem` (`alg`, if given, must be `RS256`). A malformed entry stops the boot. **Rotation by
+  ordering:** the first key signs, every key is published; list the new key first, keep the old one
+  until its last id_token has expired, then remove it. With no key, `openid` is refused at
+  `/oauth2/authorize` (`invalid_scope`) and both documents below answer 404.
+- **`id_token` at the code exchange** of a registry client granted `openid`: RS256, header `{ alg, kid,
+  typ: 'JWT' }`, claims `iss`, `sub` (the user's stable internal id, not routable; never the username),
+  `aud` and `azp` (the client id), `iat`, `exp` (`oauth:idTokenTTL`, default 300 s), `auth_time` (the
+  creation of the personal access that consented, i.e. its first sign-in: never later than the real
+  authentication, possibly earlier), `nonce` (when the request sent one), plus the
+  extension's `idTokenClaims(ctx)` fields (same context as `tokenResponse`; a core claim is refused, a
+  failing or late hook answers 500 before any refresh token is stored). **No `id_token` on refresh.**
+- **`nonce`**: 1 to 512 characters, carried in the signed state and the code, echoed in the id_token,
+  and accepted once per client: an authorization request reusing a nonce that already went into an
+  id_token is refused (`invalid_request` "nonce already used"), and of two codes carrying the same
+  nonce only the first exchange answers (the second: `invalid_grant`, its session removed).
+- **`GET /.well-known/openid-configuration`**: the authorization-server metadata plus
+  `subject_types_supported: ['public', 'pairwise']` (pairwise subjects are still refused at
+  `/oauth2/authorize` on this core), `id_token_signing_alg_values_supported: ['RS256']`,
+  `claims_supported` (the core's claims and the extension's `claimsSupported`). **`GET /oauth2/jwks`**:
+  the public keys (`kty n e kid alg use` only). With a key, `/.well-known/oauth-authorization-server`
+  gains `jwks_uri`, and `openid` joins `scopes_supported`.
+
 ### Changed
+
+- **Operators: set `oauth:stateKey` on every core.** The consent-flow state (carried from
+  `/oauth2/authorize` to the consent page and back) is now signed with its own secret, per core, used
+  for nothing else (a random value of at least 32 characters, e.g. `openssl rand -base64 32`). While it
+  is empty, the key is still derived from `auth:adminAccessKey` and every boot logs a warning; a later
+  release will require it. Setting it only cancels the consent screens open at that moment; once set, a
+  state signed with the admin-derived key is refused. The install wizard writes one.
+- **`oauth:audAllowList` is removed** (it was never enforced): the `aud` values a client may name are
+  registered per client (`create-registry --audience`). A configuration that still sets it gets a boot
+  warning.
 
 - **BREAKING (for a client that wrote it; none known): `clientData.oauth` is server-owned.**
   `accesses.create` refuses an access carrying `clientData.oauth` (403 `forbidden`), and

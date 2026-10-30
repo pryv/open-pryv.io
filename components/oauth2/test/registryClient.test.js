@@ -31,6 +31,13 @@ const { persistClient } = require('../src/clientRegistry.ts');
 const { hashSecret, setRefresh, setClient } = require('../src/storage.ts');
 const { checkRegistryClients } = require('../src/registryBootCheck.ts');
 const { decodeBasicAuth } = require('../src/clientAuth.ts');
+const signingKeys = require('../src/signingKeys.ts');
+const { registerRoutes } = require('../src/routes.ts');
+const { handleRefuse } = require('../src/routes/refuse.ts');
+const { signState } = require('../src/signedState.ts');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const oauth2 = require('../src/index.ts');
 
 const ADMIN_KEY = 'admin-key-for-tests';
@@ -229,8 +236,8 @@ function fakeCreateAccess (calls) {
   };
 }
 
-function acceptDeps (deps, calls = []) {
-  return { ...deps, resolveUser: async () => ({ userId: USER_ID, username: 'alice' }), createAccess: fakeCreateAccess(calls) };
+function acceptDeps (deps, calls = [], session = {}) {
+  return { ...deps, resolveUser: async () => ({ userId: USER_ID, username: 'alice', ...session }), createAccess: fakeCreateAccess(calls) };
 }
 
 async function accept (deps, signed, grantedPermissions) {
@@ -267,7 +274,7 @@ async function postOffer (deps, signed) {
 }
 
 /** Full flow up to the token response. */
-async function flow ({ platform, config, query = {}, keep = null, more = {} }) {
+async function flow ({ platform, config, query = {}, keep = null, more = {}, session = {} }) {
   const deps = { config, platform };
   const a = await authorize(deps, authorizeQuery(query));
   assert.ok(a.signed, 'authorize did not redirect to consent: ' + a.location + ' ' + a.res.raw);
@@ -275,7 +282,7 @@ async function flow ({ platform, config, query = {}, keep = null, more = {} }) {
   assert.equal(offerRes.statusCode, 200, offerRes.raw);
   const calls = [];
   const granted = keep == null ? offerRes.body.offer.permissions : offerRes.body.offer.permissions.filter(keep);
-  const acc = await accept(acceptDeps(deps, calls), a.signed, granted);
+  const acc = await accept(acceptDeps(deps, calls, session), a.signed, granted);
   assert.equal(acc.statusCode, 200, acc.raw);
   const code = new URL(acc.body.redirectTo).searchParams.get('code');
   const tok = await exchange(tokenDeps(platform, config, more), code);
@@ -406,8 +413,12 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.match(wider.description, /maximum scope set/);
       assert.equal(scopeGrammar.resolveRequestedScope(client, 'nope').ok, false);
     });
-    it('[OXS03] openid is refused on this core; offline_access without the refresh grant is dropped', () => {
-      assert.match(scopeGrammar.resolveRequestedScope(client, 'openid data/a.read').description, /openid is not available/);
+    it('[OXS03] openid is refused without a signing key, a core token with one; offline_access without the refresh grant is dropped', () => {
+      assert.match(scopeGrammar.resolveRequestedScope(client, 'openid data/a.read').description, /openid is not available on this core \(no signing key configured\)/);
+      const oidc = scopeGrammar.resolveRequestedScope(client, 'openid offline_access data/a.read', { oidcEnabled: true });
+      assert.equal(oidc.ok, true, oidc.description);
+      assert.deepEqual(oidc.coreTokens, ['openid', 'offline_access']);
+      assert.deepEqual(oidc.grammarTokens, ['data/a.read']);
       const r = scopeGrammar.resolveRequestedScope({ ...client, grantTypes: ['authorization_code'] }, 'offline_access data/a.read');
       assert.deepEqual(r.coreTokens, []);
     });
@@ -989,6 +1000,16 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(token.body.error, 'invalid_grant');
       assert.deepEqual(revoked, ['session-1']);
       assert.equal([...platform._state.keys()].some((k) => k.startsWith('oauth-rt/')), false);
+      // With openid granted: the same refusal, never an id_token naming the user instead.
+      const oidc = await flow({
+        platform,
+        config: fakeConfig({ 'oauth:signingKeys': [{ kid: 'k', privateKeyPem: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) }] }),
+        query: { scope: 'openid data/a.read', nonce: 'n-withdrawn' },
+        more: { resolveGrantSubject: async () => null },
+      });
+      assert.equal(oidc.token.statusCode, 400, oidc.token.raw);
+      assert.equal(oidc.token.body.error, 'invalid_grant');
+      assert.equal(oidc.token.body.id_token, undefined);
     });
     it('[OXT06] refresh: the echo follows the effective (narrowed) permissions', async () => {
       const platform = fakePlatform(); await seed(platform);
@@ -1110,6 +1131,305 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(retry.statusCode, 200, retry.raw);
       assert.deepEqual(retry.body.scope.split(' ').sort(), ['ctx/patient', 'data/a.read', 'data/b.read', 'offline_access']);
       assert.deepEqual(chainRevokes, []);
+    });
+  });
+
+  describe('[OXOIDC] OpenID Connect', () => {
+    const pem = (bits) => crypto.generateKeyPairSync('rsa', { modulusLength: bits }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+    const PEM_1 = pem(2048);
+    const PEM_2 = pem(2048);
+    const KEY_1 = { kid: 'k1', privateKeyPem: PEM_1 };
+    const KEY_2 = { kid: 'k2', alg: 'RS256', privateKeyPem: PEM_2 };
+    const oidcConfig = (overrides = {}) => fakeConfig({ 'oauth:signingKeys': [KEY_1], 'oauth:idTokenTTL': 120, ...overrides });
+    const PRIVATE_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi'];
+
+    function decodeJwt (jwt) {
+      const [h, p, s] = jwt.split('.');
+      return {
+        header: JSON.parse(Buffer.from(h, 'base64url').toString()),
+        payload: JSON.parse(Buffer.from(p, 'base64url').toString()),
+        input: h + '.' + p,
+        sig: s,
+      };
+    }
+    /** Verify a JWT against a published JWK Set, by its kid. */
+    function verifiedBy (jwt, jwkSet) {
+      const { header, input, sig } = decodeJwt(jwt);
+      assert.equal(header.alg, 'RS256');
+      const jwk = jwkSet.keys.find((k) => k.kid === header.kid);
+      assert.ok(jwk, 'no published key for kid ' + header.kid);
+      const pub = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+      return crypto.verify('sha256', Buffer.from(input), { key: pub, padding: crypto.constants.RSA_PKCS1_PADDING }, Buffer.from(sig, 'base64url'));
+    }
+    function withIdClaims () {
+      extension.setExtension({
+        ...toyExtension(),
+        idTokenClaims (ctx) { lastCtx.idTokenClaims = ctx; return { who: 'P/' + ctx.subject }; },
+        claimsSupported: ['who'],
+      });
+    }
+
+    beforeEach(() => { signingKeys._resetForTests(); });
+    afterEach(() => { signingKeys._resetForTests(); });
+
+    it('[OXK01] the JWK Set carries public members only, signing key first', () => {
+      const set = signingKeys.publicJwkSet(signingKeys.loadSigningKeys(oidcConfig({ 'oauth:signingKeys': [KEY_1, KEY_2] })));
+      assert.deepEqual(set.keys.map((k) => k.kid), ['k1', 'k2']);
+      for (const k of set.keys) {
+        assert.deepEqual(Object.keys(k).sort(), ['alg', 'e', 'kid', 'kty', 'n', 'use']);
+        assert.equal(k.alg, 'RS256');
+        assert.equal(k.use, 'sig');
+        for (const m of PRIVATE_MEMBERS) assert.equal(k[m], undefined, m);
+      }
+    });
+
+    it('[OXK02] a bad key entry fails loudly, without echoing the key', () => {
+      const ec = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' });
+      const small = pem(1024);
+      const pub = crypto.createPublicKey(PEM_1).export({ type: 'spki', format: 'pem' });
+      const encrypted = crypto.createPrivateKey(PEM_1).export({ type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase: 'x' });
+      for (const [entries, re] of [
+        [[{ privateKeyPem: PEM_1 }], /kid is required/],
+        [[{ kid: 'has space', privateKeyPem: PEM_1 }], /kid is required/],
+        [[{ kid: 'a', alg: 'ES256', privateKeyPem: PEM_1 }], /alg must be RS256/],
+        [[{ kid: 'a', alg: 'none', privateKeyPem: PEM_1 }], /alg must be RS256/],
+        [[{ kid: 'a', privateKeyPem: ec }], /an RSA key is required/],
+        [[{ kid: 'a', privateKeyPem: small }], /1024 bits, at least 2048 required/],
+        [[{ kid: 'a', privateKeyPem: 'garbage' }], /cannot be read/],
+        [[{ kid: 'a', privateKeyPem: pub }], /cannot be read/],
+        [[{ kid: 'a', privateKeyPem: encrypted }], /cannot be read/],
+        [[{ kid: 'a' }], /exactly one of privateKeyFile or privateKeyPem/],
+        [[{ kid: 'a', privateKeyPem: PEM_1, privateKeyFile: '/x.pem' }], /exactly one of/],
+        [[{ kid: 'a', privateKeyFile: '/nonexistent/key.pem' }], /cannot read privateKeyFile \(ENOENT\)/],
+        [[KEY_1, { ...KEY_2, kid: 'k1' }], /duplicate kid/],
+        [['k1'], /must be an object/],
+      ]) {
+        let thrown = null;
+        try { signingKeys.loadSigningKeys(oidcConfig({ 'oauth:signingKeys': entries })); } catch (e) { thrown = e; }
+        assert.ok(thrown, 'no throw for ' + re);
+        assert.match(thrown.message, re);
+        assert.ok(!thrown.message.includes('PRIVATE KEY'), 'key material in: ' + thrown.message);
+      }
+      assert.throws(() => signingKeys.loadSigningKeys(oidcConfig({ 'oauth:signingKeys': { kid: 'a' } })), /must be a list/);
+      assert.equal(signingKeys.hasSigningKeys(fakeConfig()), false);
+      assert.equal(signingKeys.hasSigningKeys(fakeConfig({ 'oauth:signingKeys': [] })), false);
+    });
+
+    it('[OXK03] keys load from a file; rotation by ordering: the first signs, all are published, a removed key is gone', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oidc-keys-'));
+      try {
+        const file = path.join(dir, 'k2.pem');
+        fs.writeFileSync(file, PEM_2, { mode: 0o600 });
+        const both = signingKeys.loadSigningKeys(oidcConfig({ 'oauth:signingKeys': [KEY_1, { kid: 'k2', privateKeyFile: file }] }));
+        const setBoth = signingKeys.publicJwkSet(both);
+        const jwt1 = signingKeys.signJwt(both[0], { sub: 's' });
+        assert.equal(decodeJwt(jwt1).header.kid, 'k1');
+        assert.ok(verifiedBy(jwt1, setBoth));
+        // The new key moved first: it signs, the old one still verifies.
+        const swapped = signingKeys.loadSigningKeys(oidcConfig({ 'oauth:signingKeys': [{ kid: 'k2', privateKeyFile: file }, KEY_1] }));
+        const jwt2 = signingKeys.signJwt(swapped[0], { sub: 's' });
+        assert.equal(decodeJwt(jwt2).header.kid, 'k2');
+        const setSwapped = signingKeys.publicJwkSet(swapped);
+        assert.ok(verifiedBy(jwt2, setSwapped) && verifiedBy(jwt1, setSwapped));
+        // The old key removed: no longer published.
+        const only2 = signingKeys.publicJwkSet(signingKeys.loadSigningKeys(oidcConfig({ 'oauth:signingKeys': [{ kid: 'k2', privateKeyFile: file }] })));
+        assert.deepEqual(only2.keys.map((k) => k.kid), ['k2']);
+        assert.throws(() => verifiedBy(jwt1, only2), /no published key for kid k1/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('[OXD01] the code exchange answers an id_token: RS256, kid, core claims over the hook claims, verifiable with the JWK Set', async () => {
+      withIdClaims();
+      const platform = fakePlatform(); await seed(platform);
+      const config = oidcConfig();
+      const before = Math.floor(Date.now() / 1000);
+      const { token } = await flow({ platform, config, query: { scope: 'openid offline_access data/*.read ctx/patient who', nonce: 'n-1' }, session: { authTime: 1700000000.7 } });
+      assert.equal(token.statusCode, 200, token.raw);
+      const b = token.body;
+      assert.deepEqual(b.scope.split(' ').sort(), ['ctx/patient', 'data/*.read', 'offline_access', 'openid', 'who']);
+      const jwt = decodeJwt(b.id_token);
+      assert.deepEqual(jwt.header, { alg: 'RS256', kid: 'k1', typ: 'JWT' });
+      const p = jwt.payload;
+      assert.equal(p.iss, ISSUER);
+      assert.equal(p.sub, USER_ID);
+      assert.equal(p.aud, 'reg-app');
+      assert.equal(p.azp, 'reg-app');
+      assert.equal(p.nonce, 'n-1');
+      assert.equal(p.auth_time, 1700000000);
+      assert.ok(p.iat >= before && p.iat <= before + 5);
+      assert.equal(p.exp - p.iat, 120);
+      assert.equal(p.who, 'P/' + USER_ID);
+      assert.ok(verifiedBy(b.id_token, signingKeys.publicJwkSet(signingKeys.loadSigningKeys(config))));
+      // The hook got the granted tokens and the same subject.
+      assert.deepEqual([...lastCtx.idTokenClaims.scopeTokens].sort(), ['ctx/patient', 'data/*.read', 'offline_access', 'openid', 'who']);
+      assert.equal(lastCtx.idTokenClaims.subject, USER_ID);
+      // The other fields are unchanged.
+      assert.equal(b.apiEndpoint, 'https://alice.example.com/');
+      assert.equal(typeof b.refresh_token, 'string');
+    });
+
+    it('[OXD02] without auth time from the sign-in, auth_time is the consent time; without a nonce, none is set', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const before = Math.floor(Date.now() / 1000);
+      const { token } = await flow({ platform, config: oidcConfig(), query: { scope: 'openid data/a.read' } });
+      assert.equal(token.statusCode, 200, token.raw);
+      const p = decodeJwt(token.body.id_token).payload;
+      assert.ok(p.auth_time >= before && p.auth_time <= p.iat, JSON.stringify(p));
+      assert.equal(Object.hasOwn(p, 'nonce'), false);
+    });
+
+    it('[OXD03] no id_token without openid, nor on refresh; the code row carries no nonce without openid', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const config = oidcConfig();
+      const { token } = await flow({ platform, config, query: { scope: 'offline_access data/a.read', nonce: 'n-unused' } });
+      assert.equal(token.statusCode, 200, token.raw);
+      assert.equal(token.body.id_token, undefined);
+      // The nonce of a request without openid is not even carried.
+      const { signed } = await authorize({ config, platform }, authorizeQuery({ scope: 'data/a.read', nonce: 'n-x' }));
+      assert.equal(verifyState(ADMIN_KEY, signed).payload.nonce, undefined);
+      // A chain granted openid refreshes without an id_token.
+      await seedRefresh(platform, 'RT-O', { coreTokens: ['openid', 'offline_access'] });
+      const res = fakeRes();
+      await handleToken(tokenDeps(platform, config, { mintRefreshedAccess: refreshedMint() }))({
+        headers: {}, body: { grant_type: 'refresh_token', refresh_token: 'RT-O', client_id: 'reg-app' },
+      }, res);
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.ok(res.body.scope.split(' ').includes('openid'));
+      assert.equal(res.body.id_token, undefined);
+    });
+
+    it('[OXD04] openid without a signing key is refused at /authorize; with keys the state carries the nonce', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const off = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'openid data/a.read', nonce: 'n' }));
+      assert.equal(off.signed, null);
+      assert.deepEqual(redirectError(off.res), { error: 'invalid_scope', description: 'openid is not available on this core (no signing key configured)' });
+      const on = await authorize({ config: oidcConfig(), platform }, authorizeQuery({ scope: 'openid data/a.read', nonce: 'n-2' }));
+      assert.equal(verifyState(ADMIN_KEY, on.signed).payload.nonce, 'n-2');
+    });
+
+    it('[OXD05] an id_token hook setting a core claim, or failing, answers 500 before any refresh row; the session is removed', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      for (const hook of [() => ({ sub: 'someone-else' }), () => { throw new Error('boom'); }]) {
+        extension.setExtension({ ...toyExtension(), idTokenClaims: hook });
+        const revoked = [];
+        const { token } = await flow({ platform, config: oidcConfig(), query: { scope: 'openid offline_access data/a.read' }, more: { revokeAccessLocal: async (p) => { revoked.push(p.accessId); } } });
+        assert.equal(token.statusCode, 500, token.raw);
+        assert.equal(token.body.id_token, undefined);
+        assert.deepEqual(revoked, ['session-1']);
+        assert.equal([...platform._state.keys()].some((k) => k.startsWith('oauth-rt/')), false);
+      }
+    });
+
+    it('[OXN01] a nonce is accepted once per client: a replay is refused at /authorize, a racing second code at the exchange', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const config = oidcConfig();
+      const deps = { config, platform };
+      // Two authorizations with the same nonce, both consented before any exchange.
+      const query = authorizeQuery({ scope: 'openid data/a.read', nonce: 'n-race' });
+      const a1 = await authorize(deps, query);
+      const a2 = await authorize(deps, query);
+      const codes = [];
+      for (const a of [a1, a2]) {
+        const acc = await accept(acceptDeps(deps), a.signed, [{ streamId: 'a', level: 'read' }]);
+        assert.equal(acc.statusCode, 200, acc.raw);
+        codes.push(new URL(acc.body.redirectTo).searchParams.get('code'));
+      }
+      const first = await exchange(tokenDeps(platform, config), codes[0]);
+      assert.equal(first.statusCode, 200, first.raw);
+      assert.equal(decodeJwt(first.body.id_token).payload.nonce, 'n-race');
+      const revoked = [];
+      const second = await exchange(tokenDeps(platform, config, { revokeAccessLocal: async (p) => { revoked.push(p.accessId); } }), codes[1]);
+      assert.equal(second.statusCode, 400, second.raw);
+      assert.deepEqual([second.body.error, second.body.error_description], ['invalid_grant', 'nonce already used']);
+      assert.deepEqual(revoked, ['session-1']);
+      // A later authorization request with that nonce is refused up front.
+      const replay = await authorize(deps, query);
+      assert.equal(replay.signed, null);
+      assert.deepEqual(redirectError(replay.res), { error: 'invalid_request', description: 'nonce already used' });
+      // Per client: another client may use the same value.
+      await persistClient(platform, { ...REGISTRY_CLIENT, clientId: 'reg-app-2' });
+      assert.ok((await authorize(deps, { ...query, client_id: 'reg-app-2' })).signed);
+      // The burn is keyed on a hash: the nonce itself is not stored.
+      assert.ok(![...platform._state.keys()].some((k) => k.includes('n-race')));
+    });
+
+    it('[OXN02] a nonce is 1 to 512 characters', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const deps = { config: oidcConfig(), platform };
+      for (const nonce of ['', 'x'.repeat(513)]) {
+        const { res, signed } = await authorize(deps, authorizeQuery({ scope: 'openid data/a.read', nonce }));
+        assert.equal(signed, null);
+        assert.deepEqual(redirectError(res), { error: 'invalid_request', description: 'nonce must be 1 to 512 characters' });
+      }
+      assert.ok((await authorize(deps, authorizeQuery({ scope: 'openid data/a.read', nonce: 'x'.repeat(512) }))).signed);
+    });
+
+    it('[OXD06] discovery: OpenID documents 404 without a key; with keys the configuration, the JWK Set and openid in scopes_supported', async () => {
+      withIdClaims();
+      const app = { routes: {} };
+      for (const m of ['get', 'post', 'options']) app[m] = (p, ...h) => { app.routes[m.toUpperCase() + ' ' + p] = h[h.length - 1]; };
+      let keys = [];
+      const config = { get: (k) => (k === 'oauth:signingKeys' ? keys : fakeConfig().get(k)) };
+      registerRoutes(app, { config, extension: extension.getExtension() });
+      const get = (p) => { const res = fakeRes(); app.routes['GET ' + p]({}, res); return res; };
+
+      for (const p of ['/.well-known/openid-configuration', '/oauth2/jwks']) assert.equal(get(p).statusCode, 404, p);
+      let as = get('/.well-known/oauth-authorization-server').body;
+      assert.equal(as.jwks_uri, undefined);
+      assert.ok(!as.scopes_supported.includes('openid'));
+
+      keys = [KEY_1, KEY_2];
+      as = get('/.well-known/oauth-authorization-server').body;
+      assert.equal(as.jwks_uri, ISSUER + '/oauth2/jwks');
+      assert.ok(as.scopes_supported.includes('openid') && as.scopes_supported.includes('offline_access'));
+      const oidc = get('/.well-known/openid-configuration');
+      assert.equal(oidc.statusCode, 200);
+      assert.equal(oidc.headers['cache-control'], 'public, max-age=300');
+      assert.equal(oidc.body.issuer, ISSUER);
+      assert.equal(oidc.body.jwks_uri, ISSUER + '/oauth2/jwks');
+      assert.deepEqual(oidc.body.subject_types_supported, ['public', 'pairwise']);
+      assert.deepEqual(oidc.body.id_token_signing_alg_values_supported, ['RS256']);
+      assert.deepEqual(oidc.body.response_types_supported, ['code']);
+      assert.ok(oidc.body.scopes_supported.includes('openid') && oidc.body.scopes_supported.includes('data/a.read'));
+      assert.deepEqual(oidc.body.claims_supported, ['iss', 'sub', 'aud', 'azp', 'exp', 'iat', 'auth_time', 'nonce', 'who']);
+      const jwks = get('/oauth2/jwks');
+      assert.equal(jwks.statusCode, 200);
+      assert.deepEqual(jwks.body.keys.map((k) => k.kid), ['k1', 'k2']);
+      for (const k of jwks.body.keys) for (const m of PRIVATE_MEMBERS) assert.equal(k[m], undefined, m);
+      // A malformed key fails the mount (the boot), not the first sign-in.
+      assert.throws(() => registerRoutes({ get () {}, post () {} }, { config: oidcConfig({ 'oauth:signingKeys': [{ kid: 'a', privateKeyPem: 'garbage' }] }) }), /cannot be read/);
+    });
+
+    it('[OXSK1] the state is keyed on oauth:stateKey; until it is set, on the admin key; once set, an admin-keyed state is refused', async () => {
+      const STATE_KEY = 's'.repeat(40);
+      const platform = fakePlatform(); await seed(platform);
+      // Fallback: no state key, the admin-derived key signs and verifies.
+      const fallback = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'data/a.read' }));
+      assert.equal(verifyState(ADMIN_KEY, fallback.signed).ok, true);
+      // Set: states are signed with it, not with the admin key.
+      const config = fakeConfig({ 'oauth:stateKey': STATE_KEY });
+      const deps = { config, platform };
+      const fresh = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      assert.equal(verifyState(STATE_KEY, fresh.signed).ok, true);
+      assert.deepEqual(verifyState(ADMIN_KEY, fresh.signed), { ok: false, reason: 'bad_signature' });
+      assert.equal((await postOffer(deps, fresh.signed)).statusCode, 200);
+      // The state issued before the key was set no longer verifies anywhere.
+      const offerRes = await postOffer(deps, fallback.signed);
+      const acceptRes = await accept(acceptDeps(deps), fallback.signed, [{ streamId: 'a', level: 'read' }]);
+      const refuseRes = fakeRes();
+      await handleRefuse({ config })({ body: { state: fallback.signed } }, refuseRes);
+      for (const res of [offerRes, acceptRes, refuseRes]) {
+        assert.equal(res.statusCode, 400, res.raw);
+        assert.equal(res.body.error_description, 'signed state bad_signature');
+      }
+      // A forged state signed with the admin key is refused the same way.
+      const forged = signState(ADMIN_KEY, verifyState(STATE_KEY, fresh.signed).payload);
+      assert.equal((await postOffer(deps, forged)).statusCode, 400);
+      // The flow completes with the state key.
+      const acc = await accept(acceptDeps(deps), fresh.signed, [{ streamId: 'a', level: 'read' }]);
+      assert.equal(acc.statusCode, 200, acc.raw);
     });
   });
 

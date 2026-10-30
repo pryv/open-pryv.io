@@ -14,8 +14,8 @@
  * work). App-account clients keep the namespaced path unchanged.
  *
  * The core owns two tokens and strips them before the grammar sees the string:
- * `openid` (reserved: not available on this core, refused) and
- * `offline_access` (refresh-token issuance).
+ * `openid` (id_token issuance; refused when this core has no OpenID Connect
+ * signing key) and `offline_access` (refresh-token issuance).
  *
  * The requested offer must stay within the client's maximum scope set (its
  * registered `scope`, parsed by the same grammar): every requested stream
@@ -90,7 +90,9 @@ export function splitScope (scopeString: string): string[] {
  * offer. Never throws for a client error; a grammar that throws or answers
  * out of contract is logged and reported as `invalid_scope`.
  */
-export function resolveRequestedScope (client: OAuthClient, scopeString: string): ResolveScopeResult {
+export function resolveRequestedScope (
+  client: OAuthClient, scopeString: string, opts: { oidcEnabled?: boolean } = {}
+): ResolveScopeResult {
   const ext: OAuthExtension | null = getExtension();
   if (ext == null) return { ok: false, description: 'no scope grammar registered on this core' };
 
@@ -104,7 +106,9 @@ export function resolveRequestedScope (client: OAuthClient, scopeString: string)
   const coreTokens: string[] = [];
   for (const t of CORE_SCOPE_TOKENS) {
     if (!requested.includes(t)) continue;
-    if (t === 'openid') return { ok: false, description: 'openid is not available on this core' };
+    if (t === 'openid' && opts.oidcEnabled !== true) {
+      return { ok: false, description: 'openid is not available on this core (no signing key configured)' };
+    }
     // Refresh tokens only for clients registered for the refresh grant.
     if (t === 'offline_access' && !(client.grantTypes ?? []).includes('refresh_token')) continue;
     coreTokens.push(t);

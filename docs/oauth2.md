@@ -21,6 +21,8 @@ Once enabled, each core exposes:
 | `GET /.well-known/oauth-authorization-server` | RFC 8414 discovery document (public, cacheable, CORS `*`) |
 | `GET /oauth2/authorize` | Authorization endpoint — starts the consent flow |
 | `POST /oauth2/token` | Token endpoint — code exchange, refresh, client credentials |
+| `GET /.well-known/openid-configuration` | OpenID Connect discovery (404 while `oauth.signingKeys` is empty) |
+| `GET /oauth2/jwks` | JWK Set of the id_token signing keys, public members only (404 while `oauth.signingKeys` is empty) |
 
 The discovery document advertises:
 
@@ -135,7 +137,9 @@ oauth:
   clientRegistration:
     mode: curated                  # ONLY supported value (see below)
   requireAppAccountMfa: true       # NOT ENFORCED yet (see below)
-  audAllowList: []                 # NOT ENFORCED, superseded (see below)
+  stateKey: ''                     # SET IT: consent-state signing secret (see below)
+  signingKeys: []                  # OpenID Connect id_token keys; empty = OIDC off (see below)
+  idTokenTTL: 300                  # id_token lifetime, seconds
   grantTypesSupported:             # advertised in the discovery document
     - authorization_code
 ```
@@ -180,11 +184,52 @@ value, an app account without MFA is not refused. A later release will either
 enforce it or remove it. Until then, protect app accounts by other means (MFA
 enrolled by the operator, strong credentials, curated registration).
 
-### `audAllowList` (not enforced, superseded)
+### `stateKey` (set it)
 
-**No code reads this key**: `/oauth2/authorize` does not check an `aud` value
-against it, whatever it lists. It is superseded by a planned per-client
-audience check and will be removed then. Do not rely on it.
+The secret the consent-flow state is signed with (the parameter carried from
+`/oauth2/authorize` to the consent page and back to `/oauth2/authorize/accept`).
+It is used for nothing else and is per core: a consent flow runs on one core.
+Set a random value of at least 32 characters (`openssl rand -base64 32`).
+While it is empty, the key is derived from `auth.adminAccessKey` and every boot
+logs a warning; a later release will require it. Setting or changing it only
+cancels the consent screens open at that moment (a state lives 5 minutes).
+
+### `signingKeys`, `idTokenTTL` (OpenID Connect)
+
+With at least one signing key, registry clients (see the extension) may request
+the `openid` scope: the code exchange then returns an `id_token` (RS256, the
+key's `kid` in its header) carrying `iss`, `sub` (the user's stable internal
+id, not routable), `aud` and `azp` (the client id), `iat`, `exp`
+(`idTokenTTL` later), `auth_time` (the creation of the personal access the
+user consented with, i.e. its first sign-in: never later than the real
+authentication) and the
+request's `nonce`, plus the extension's own claims. A refresh never returns an
+`id_token`. A nonce is accepted once per client: an authorization request or a
+code exchange reusing one that already went into an id_token is refused.
+`/.well-known/openid-configuration` and `/oauth2/jwks` are served, and
+`openid` is listed in `scopes_supported`. Without keys, `openid` is refused
+(`invalid_scope`) and both documents answer 404.
+
+```yaml
+oauth:
+  signingKeys:
+    - kid: '2026-10'                       # unique; printable, no space
+      privateKeyFile: /etc/pryv/oidc.pem   # or privateKeyPem: "-----BEGIN PRIVATE KEY-----..."
+```
+
+RSA keys of at least 2048 bits, unencrypted PEM (`openssl genpkey -algorithm
+RSA -pkeyopt rsa_keygen_bits:3072 -out oidc.pem`); `alg` may be given and must
+then be `RS256`. A malformed entry stops the boot. **Rotation is by ordering:**
+the first entry signs, every entry is published. List the new key first, keep
+the old one until its last id_token has expired (`idTokenTTL`), then remove it.
+Keys are per core (each core is its own issuer) and are secrets: keep them in
+the YAML file, readable by the server only.
+
+### `audAllowList` (removed)
+
+No longer read. The `aud` values a registry client may name at
+`/oauth2/authorize` are registered per client (`create-registry --audience`).
+A configuration that still sets the key gets a boot warning; remove it.
 
 ### Token lifetimes
 
@@ -197,8 +242,10 @@ audience check and will be removed then. Do not rely on it.
 On a multi-core deployment each core serves its own discovery document, whose
 `issuer` and endpoints name **that core** (see `issuer` above): the code and
 refresh exchanges must reach the issuing core, and no core forwards them.
-Apart from `issuer`, **every core in a cluster MUST carry the same `oauth:`
-block.** A drifting block on one core (different TTLs, grant types, DPoP or
+Apart from `issuer` and the per-core secrets (`stateKey`, `signingKeys`: each
+core signs its own states and id_tokens and publishes its own JWK Set; their
+lifetimes such as `idTokenTTL` stay common), **every core in a cluster MUST
+carry the same `oauth:` block.** A drifting block on one core (different TTLs, grant types, DPoP or
 revoke settings) produces inconsistent token behaviour depending on which core
 served the user. Treat it as a deployment-wide invariant and roll it out to
 all cores together.

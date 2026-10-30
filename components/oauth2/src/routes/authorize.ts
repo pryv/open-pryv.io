@@ -41,7 +41,9 @@ const { getClient, validateRedirectUri, isRegistryClient } = require('../clientR
 const { resolveRequestedScope } = require('../scopeGrammar.ts');
 const { mapError } = require('../errorMap.ts');
 const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
-const { signState } = require('../signedState.ts');
+const { signState, stateKeyFromConfig } = require('../signedState.ts');
+const { hasSigningKeys } = require('../signingKeys.ts');
+const { isNonceUsed } = require('../storage.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
 const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
@@ -62,8 +64,8 @@ export function handleAuthorize (deps: AuthorizeDeps) {
   return async function authorize (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
     if (!issuer) return sendServerError(res, 'service:api not configured');
-    const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
-    if (!adminKey) return sendServerError(res, 'auth:adminAccessKey not configured');
+    const stateKey = stateKeyFromConfig(deps.config);
+    if (!stateKey) return sendServerError(res, 'oauth:stateKey (or auth:adminAccessKey) not configured');
     const consentUrl = String(deps.config.get('oauth:consentUrl') ?? '').replace(/\/$/, '');
     if (!consentUrl) return sendServerError(res, 'oauth:consentUrl not configured');
 
@@ -216,7 +218,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       ...(offer != null ? { offerName: offer.offerName, offerCapabilityId: offer.capabilityId } : {}),
     });
 
-    const signed = signState(adminKey, {
+    const signed = signState(stateKey, {
       clientId: client.clientId,
       redirectUri: q.redirect_uri,
       state,
@@ -233,15 +235,28 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     // grammar; the synthesised offer is NOT put in the state (its size is
     // unbounded), only its digest: /accept and the consent UI re-derive it.
     async function authorizeRegistryClient (): Promise<void> {
-      const resolved = resolveRequestedScope(client, isNonEmptyString(q.scope) ? String(q.scope) : '');
+      // OpenID Connect nonce: opaque to the core, bounded (it rides in the
+      // signed state), bound to the code and echoed in the id_token.
+      const nonce = q.nonce;
+      if (nonce != null && (!isNonEmptyString(nonce) || nonce.length > MAX_NONCE_LENGTH)) {
+        return redirectError('invalid_request', `nonce must be 1 to ${MAX_NONCE_LENGTH} characters`);
+      }
+      const resolved = resolveRequestedScope(client, isNonEmptyString(q.scope) ? String(q.scope) : '',
+        { oidcEnabled: hasSigningKeys(deps.config) });
       if (!resolved.ok) return redirectError('invalid_scope', resolved.description);
+      // A nonce already used in an id_token for this client is refused here,
+      // before the user is asked; the code exchange burns it (race-safe).
+      const oidcNonce = resolved.coreTokens.includes('openid') && nonce != null ? nonce : undefined;
+      if (oidcNonce != null && await isNonceUsed(deps.platform, client.clientId, oidcNonce)) {
+        return redirectError('invalid_request', 'nonce already used');
+      }
 
       await audit('oauth.consent.shown', {
         clientId: client.clientId,
         requestedScope: resolved.requested,
         offerKind: 'synthesised',
       });
-      const signed = signState(adminKey, {
+      const signed = signState(stateKey, {
         clientId: client.clientId,
         redirectUri: String(q.redirect_uri),
         state,
@@ -251,6 +266,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
         userIdHint: isNonEmptyString(q.login_hint) ? String(q.login_hint) : undefined,
         offerRef: { kind: 'synthesised', digest: resolved.digest },
         ...(audience != null ? { audience } : {}),
+        ...(oidcNonce != null ? { nonce: oidcNonce } : {}),
       });
       return redirectToConsent(signed);
     }
@@ -271,6 +287,9 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     }
   };
 }
+
+/** Upper bound on the OpenID Connect `nonce` (it rides in the signed state). */
+const MAX_NONCE_LENGTH = 512;
 
 function trimSlash (s: string): string {
   return s.replace(/\/+$/, '');

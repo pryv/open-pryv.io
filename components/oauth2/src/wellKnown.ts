@@ -39,7 +39,14 @@ export type DiscoveryConfig = {
   scopesSupported: string[];
   /** Grant types currently wired. Defaults conservatively. */
   grantTypesSupported?: string[];
+  /** OpenID Connect is on (a signing key is configured): the JWK Set is published. */
+  oidc?: boolean;
+  /** Claims an id_token may carry beyond the core's (the extension's `claimsSupported`). */
+  claimsSupported?: string[];
 };
+
+/** The id_token claims the core itself sets. */
+export const CORE_ID_TOKEN_CLAIMS = ['iss', 'sub', 'aud', 'azp', 'exp', 'iat', 'auth_time', 'nonce'];
 
 /**
  * Build the RFC 8414 doc as a plain JSON-serializable object.
@@ -67,8 +74,48 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     // A client that presents a DPoP proof on /oauth2/token receives a
     // sender-constrained (DPoP) token; omitting it yields a Bearer token.
     dpop_signing_alg_values_supported: ['ES256'],
+    ...(cfg.oidc === true ? { jwks_uri: issuer + '/oauth2/jwks' } : {}),
     // Cache headers + non-standard `apiEndpoint` extension are
     // implementation details, not advertised in the discovery doc.
+  };
+}
+
+/**
+ * The OpenID Connect discovery document (`/.well-known/openid-configuration`):
+ * the RFC 8414 document plus the OpenID Connect members. Both subject types
+ * are listed: `public` (the user's stable internal id) and `pairwise` (an
+ * alias per grant, for clients registered so or offers asking for a
+ * pseudonym; refused at /oauth2/authorize until this core serves them).
+ */
+export function buildOpenIdConfiguration (cfg: DiscoveryConfig): Record<string, unknown> {
+  return {
+    ...buildDiscoveryDocument({ ...cfg, oidc: true }),
+    subject_types_supported: ['public', 'pairwise'],
+    id_token_signing_alg_values_supported: ['RS256'],
+    claims_supported: [...new Set([...CORE_ID_TOKEN_CLAIMS, ...(cfg.claimsSupported ?? [])])],
+  };
+}
+
+/**
+ * Express-style handler serving a JSON document built per request (the
+ * builder is cheap and reads live configuration); a null document is a 404
+ * (e.g. the OpenID Connect documents while no signing key is configured).
+ * Same headers as the discovery document.
+ */
+export function handleJsonDocument (build: () => Record<string, unknown> | null) {
+  return function (req: Request, res: Response): void {
+    const doc = build();
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (doc == null) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.statusCode = 404;
+      res.end(JSON.stringify({ error: 'not_found', error_description: 'not available on this server' }));
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.statusCode = 200;
+    res.end(JSON.stringify(doc));
   };
 }
 

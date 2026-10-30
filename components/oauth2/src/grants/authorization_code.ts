@@ -40,10 +40,13 @@ import { tokenEndpointAudiences, issuerFromConfig } from '../issuer.ts';
 import { prepareRegistryResponse } from '../responseHooks.ts';
 import type { RegistryResponseParts } from '../responseHooks.ts';
 import { revokeOrphanAccess } from '../orphanAccess.ts';
-import { logServerError } from '../serverLog.ts';
+import { logServerError, logServerWarning } from '../serverLog.ts';
 
 /** RFC 7636 §4.1 code_verifier: 43 to 128 unreserved characters. */
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
+
+/** Shortest time an OpenID Connect nonce stays burnt after its id_token (seconds). */
+const NONCE_BURN_MIN_SECONDS = 3600;
 
 /** Read a live access from this core's storage; null when absent, deleted or expired. */
 export type AuthCodeAccessResolver = (params: {
@@ -310,14 +313,35 @@ export async function handleAuthorizationCode (
           client: client!,
           grantType: 'authorization_code',
           issuer: issuerFromConfig(deps.config),
+          config: deps.config,
           coreTokens: row.coreTokens ?? [],
           grammarTokens: row.grammarTokens ?? [],
           permissions: (row.permissions ?? []) as unknown as Array<Record<string, unknown>>,
           subject: resolved.subject,
+          ...(row.nonce != null ? { nonce: row.nonce } : {}),
+          ...(row.authTime != null ? { authTime: row.authTime } : {}),
         });
       } catch (err) {
         logServerError('authorization_code: registry token response failed', err);
         return { ok: false, status: 500, error: 'server_error', description: 'failed to build the token response' };
+      }
+      // One id_token per (client, nonce): burnt now, before any refresh row,
+      // so a second exchange carrying the same nonce never gets one.
+      if (registry.extra.id_token != null && row.nonce != null) {
+        let fresh: boolean;
+        try {
+          // Kept while the id_token and any authorization carrying the nonce
+          // could still be presented.
+          const until = Math.max(registry.idTokenExpiresAt ?? 0, Math.floor(Date.now() / 1000) + NONCE_BURN_MIN_SECONDS);
+          fresh = await storage.markNonceUsed(deps.platform, row.clientId, row.nonce, until * 1000);
+        } catch (err) {
+          logServerError('authorization_code: nonce burn failed', err);
+          return { ok: false, status: 500, error: 'server_error', description: 'failed to build the token response' };
+        }
+        if (!fresh) {
+          logServerWarning('authorization_code: OpenID Connect nonce replayed by client "' + row.clientId + '"');
+          return { ok: false, status: 400, error: 'invalid_grant', description: 'nonce already used' };
+        }
       }
     }
 

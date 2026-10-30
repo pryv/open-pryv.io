@@ -34,7 +34,8 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
 import type { OAuthClient } from '../storage.ts';
 import type { SignedStatePayload } from '../signedState.ts';
 import type { ResolvedScope } from '../scopeGrammar.ts';
-import { verifyState } from '../signedState.ts';
+import { verifyState, stateKeyFromConfig } from '../signedState.ts';
+import { hasSigningKeys } from '../signingKeys.ts';
 import { getClient, isRegistryClient } from '../clientRegistry.ts';
 import { resolveRequestedScope } from '../scopeGrammar.ts';
 import { extensionGeneration } from '../extension.ts';
@@ -71,12 +72,12 @@ export const OFFER_CACHE_SIZE = 1000;
 type CacheEntry = { resolved: ResolvedScope; expiresAt: number };
 const offerCache = new Map<string, CacheEntry>();
 
-function cacheKey (payload: SignedStatePayload, client: OAuthClient): string {
+function cacheKey (payload: SignedStatePayload, client: OAuthClient, oidcEnabled: boolean): string {
   // The installed grammar, the digest, the scope and the client version
   // together name one re-derivation; a client edit (new `updatedAt`) or
   // another grammar never hits an old entry.
   return crypto.createHash('sha256')
-    .update(JSON.stringify([extensionGeneration(), payload.clientId, String(client.updatedAt), payload.scope, payload.offerRef?.digest]))
+    .update(JSON.stringify([extensionGeneration(), oidcEnabled, payload.clientId, String(client.updatedAt), payload.scope, payload.offerRef?.digest]))
     .digest('base64url');
 }
 
@@ -121,10 +122,11 @@ export async function resolveStateOffer (
   if (client.status === 'suspended') {
     return { ok: false, status: 403, error: 'access_denied', description: 'this client is suspended' };
   }
-  const key = cacheKey(payload, client);
+  const oidcEnabled = hasSigningKeys(deps.config);
+  const key = cacheKey(payload, client, oidcEnabled);
   const cached = cacheGet(key);
   if (cached != null) return { ok: true, client, resolved: cached };
-  const resolved = resolveRequestedScope(client, payload.scope.join(' '));
+  const resolved = resolveRequestedScope(client, payload.scope.join(' '), { oidcEnabled });
   if (!resolved.ok) {
     return { ok: false, status: 400, error: 'invalid_scope', description: resolved.description };
   }
@@ -163,12 +165,12 @@ async function personalSession (deps: OfferDeps, body: Record<string, unknown>):
 
 export function handleOffer (deps: OfferDeps) {
   return async function offer (req: Request, res: Response): Promise<void> {
-    const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
+    const stateKey = stateKeyFromConfig(deps.config);
     const body = (req.body ?? {}) as Record<string, unknown>;
     if (typeof body.state !== 'string' || body.state.length === 0) {
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'state is required' });
     }
-    const verified = verifyState(adminKey, body.state);
+    const verified = verifyState(stateKey, body.state);
     if (!verified.ok) {
       return sendJson(res, 400, { error: 'invalid_request', error_description: `signed state ${verified.reason}` });
     }

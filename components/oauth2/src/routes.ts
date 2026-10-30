@@ -26,8 +26,9 @@ import type { OAuthExtension } from './extension.ts';
 import type { NextFunction, Request, Response } from 'express';
 const require = createRequire(import.meta.url);
 
-const { handleWellKnown } = require('./wellKnown.ts');
-const { setExtension, getExtension } = require('./extension.ts');
+const { buildDiscoveryDocument, buildOpenIdConfiguration, handleJsonDocument } = require('./wellKnown.ts');
+const { setExtension, getExtension, extensionGeneration } = require('./extension.ts');
+const { loadSigningKeys, hasSigningKeys, publicJwkSet } = require('./signingKeys.ts');
 const { handleOffer } = require('./routes/offer.ts');
 const { checkRegistryClients } = require('./registryBootCheck.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
@@ -187,16 +188,33 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   setExtension(deps.extension ?? null, {
     hookTimeoutMs: Number(deps.config.get('oauth:extensionHookTimeoutMs')),
   });
+  // OpenID Connect signing keys: a malformed entry throws here, so the boot
+  // fails rather than the first sign-in.
+  loadSigningKeys(deps.config);
 
-  const scopesSupported = buildScopesSupported();
+  // The discovery documents follow the live configuration (signing keys) and
+  // the installed extension (its advertised scopes and claims).
+  function discovery (): { issuer: string; scopesSupported: string[]; grantTypesSupported: string[]; oidc: boolean; claimsSupported: string[] } {
+    const oidc = hasSigningKeys(deps.config);
+    return {
+      issuer,
+      scopesSupported: buildScopesSupported(oidc),
+      grantTypesSupported: (deps.config.get('oauth:grantTypesSupported') as string[] | undefined) ?? ['authorization_code'],
+      oidc,
+      claimsSupported: getExtension()?.claimsSupported ?? [],
+    };
+  }
 
-  const grantTypesSupported = (deps.config.get('oauth:grantTypesSupported') as string[] | undefined) ??
-    ['authorization_code'];
-
-  app.get!(
-    '/.well-known/oauth-authorization-server',
-    handleWellKnown({ issuer, scopesSupported, grantTypesSupported })
-  );
+  app.get!('/.well-known/oauth-authorization-server', handleJsonDocument(() => buildDiscoveryDocument(discovery())));
+  // Mounted always, answering 404 while no signing key is configured.
+  app.get!('/.well-known/openid-configuration', handleJsonDocument(() => {
+    const d = discovery();
+    return d.oidc ? buildOpenIdConfiguration(d) : null;
+  }));
+  app.get!('/oauth2/jwks', handleJsonDocument(() => {
+    const keys = loadSigningKeys(deps.config);
+    return keys.length > 0 ? publicJwkSet(keys) : null;
+  }));
 
   if (deps.platform == null) {
     console.warn('[oauth2] platform not provided — only the discovery doc is mounted');
@@ -264,10 +282,16 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
  * reference per-client consent offers (`cmc:<offer-name>`) or other
  * parser-owned grammars — so each namespace advertises a wildcard
  * hint per RFC 8414 conventions. An installed extension adds what its
- * grammar advertises, and the core token it serves (`offline_access`).
+ * grammar advertises, and the core tokens it serves (`openid` when this core
+ * has a signing key, `offline_access`). Memoised per installed extension.
  */
-function buildScopesSupported (): string[] {
-  const out: string[] = listNamespaces().map((ns: string) => `${ns}:*`);
+const scopesMemo = new Map<string, string[]>();
+function buildScopesSupported (oidc: boolean): string[] {
+  const namespaces: string[] = listNamespaces();
+  const key = extensionGeneration() + '|' + String(oidc) + '|' + namespaces.join(',');
+  const memo = scopesMemo.get(key);
+  if (memo != null) return memo;
+  const out: string[] = namespaces.map((ns: string) => `${ns}:*`);
   const ext = getExtension();
   if (ext != null) {
     let advertised: unknown = [];
@@ -277,7 +301,11 @@ function buildScopesSupported (): string[] {
       logServerError(`oauth extension ${ext.name}: scopeGrammar.supported threw`, err);
     }
     if (Array.isArray(advertised)) out.push(...advertised.filter((s): s is string => typeof s === 'string'));
+    if (oidc) out.push('openid');
     out.push('offline_access');
   }
-  return [...new Set(out)];
+  const scopes = [...new Set(out)];
+  scopesMemo.clear();
+  scopesMemo.set(key, scopes);
+  return scopes;
 }

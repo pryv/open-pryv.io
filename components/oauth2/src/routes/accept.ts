@@ -68,7 +68,7 @@ const { composeShownOffer, nextGrantPermissions } = require('../consentCompositi
 const { getClient } = require('../clientRegistry.ts');
 
 const { generateToken } = require('../secureToken.ts');
-const { verifyState } = require('../signedState.ts');
+const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { indexSession } = require('../sessionIndex.ts');
@@ -85,6 +85,8 @@ const { canonicalStreamId } = require('mall/src/helpers/storeDataUtils.ts');
 export type UserSession = {
   userId: string;
   username: string;
+  /** When the user signed in for the token presented (seconds), if known. */
+  authTime?: number;
   /** Host-app data piggybacked through createAccess (e.g. MethodContext). */
   [key: string]: unknown;
 };
@@ -229,10 +231,10 @@ export const CODE_TTL_SECONDS = 600;
 export function handleAccept (deps: AcceptDeps) {
   return async function accept (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
-    const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
+    const stateKey = stateKeyFromConfig(deps.config);
     const accessTokenTTL = Number(deps.config.get('oauth:accessTokenTTL') ?? 3600);
-    if (!issuer || !adminKey) {
-      return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or auth:adminAccessKey not configured' });
+    if (!issuer || !stateKey) {
+      return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or oauth:stateKey (auth:adminAccessKey) not configured' });
     }
 
     const body = req.body ?? {};
@@ -245,7 +247,7 @@ export function handleAccept (deps: AcceptDeps) {
     if (!isNonEmptyString(body.userToken)) {
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'userToken is required' });
     }
-    const verified = verifyState(adminKey, body.state);
+    const verified = verifyState(stateKey, body.state);
     if (!verified.ok) {
       return sendJson(res, 400, {
         error: 'invalid_request',
@@ -497,6 +499,13 @@ export function handleAccept (deps: AcceptDeps) {
             kind: 'registry',
             coreTokens: synthesised.coreTokens,
             grammarTokens: synthesised.grammarTokens,
+            // OpenID Connect: what the id_token needs at the exchange.
+            ...(synthesised.coreTokens.includes('openid')
+              ? {
+                  authTime: Number.isFinite(session.authTime) ? Math.floor(session.authTime as number) : Math.floor(Date.now() / 1000),
+                  ...(payload.nonce != null ? { nonce: payload.nonce } : {}),
+                }
+              : {}),
           }
         : {}),
       ...(payload.audience != null ? { audience: payload.audience } : {}),

@@ -193,6 +193,10 @@ export interface OAuthCode {
   grammarTokens?: string[];
   /** The `aud` value the request named (checked against the client's list). */
   audience?: string;
+  /** OpenID Connect `nonce` of the authorization request, for the id_token. */
+  nonce?: string;
+  /** When the consenting user signed in (seconds), the id_token `auth_time`. */
+  authTime?: number;
 }
 
 /**
@@ -268,6 +272,7 @@ const LEGACY_PREFIX_REFRESH = 'oauth-refresh/';
 const LEGACY_PREFIX_REFRESH_USED = 'oauth-refresh-used/';
 const PREFIX_DPOP_JTI = 'dpop-jti/';
 const PREFIX_CASSERT_JTI = 'oauth-cassert-jti/';
+const PREFIX_OIDC_NONCE = 'oauth-nonce/';
 const PREFIX_DPOP_JKT_REVOKED = 'dpop-jkt-revoked/';
 const PREFIX_DPOP_JKT_SEEN = 'dpop-jkt-seen/';
 
@@ -625,6 +630,27 @@ export async function markClientAssertionJtiUsed (
   platform: PlatformDB, clientId: string, jti: string, expiresAt: number
 ): Promise<boolean> {
   return platform.setAccessStateIfAbsent(PREFIX_CASSERT_JTI + clientId + '/' + jti, 1, expiresAt);
+}
+
+/**
+ * OpenID Connect nonce single-use marker: one id_token per (client, nonce).
+ * Atomic first-writer-wins, burnt when the id_token is issued; the nonce is
+ * hashed (it is client-chosen, up to 512 characters). Swept with the rest of
+ * the access-state keyspace.
+ */
+export async function markNonceUsed (
+  platform: PlatformDB, clientId: string, nonce: string, expiresAt: number
+): Promise<boolean> {
+  return platform.setAccessStateIfAbsent(nonceKey(clientId, nonce), 1, expiresAt);
+}
+
+/** Whether an id_token was already issued with this nonce for this client. */
+export async function isNonceUsed (platform: PlatformDB, clientId: string, nonce: string): Promise<boolean> {
+  return (await platform.getAccessState(nonceKey(clientId, nonce))) != null;
+}
+
+function nonceKey (clientId: string, nonce: string): string {
+  return PREFIX_OIDC_NONCE + clientId + '/' + hashSecret(nonce);
 }
 
 // --- DPoP key revoke tombstones (indefinite, cluster-wide) --- //
