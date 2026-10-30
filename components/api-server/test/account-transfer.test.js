@@ -644,6 +644,19 @@ describe('[ACTR] account transfer', function () {
       });
     });
 
+    it('[ACTR5I] claims, refused ones included, are recorded in the owner\'s audit trail', async function () {
+      const { pollUntil } = require('test-helpers');
+      const { owner, claimant, token } = await openFor();
+      assert.equal((await claim(owner, token, claimant)).status, 200);
+      const other = await freshUser('actc');
+      assert.equal(errorId(await claim(owner, token, other)), 'auto-deletion-transfer-claimed');
+      const trail = async () => (await coreRequest.get(`/${owner.username}/events`).set('Authorization', owner.token)
+        .query({ streams: JSON.stringify([':_audit:action-account.transferClaim']), limit: 20 })).body.events ?? [];
+      const events = await pollUntil(trail, (list) => list.length >= 2, { timeoutMs: 5000 });
+      assert.ok(events.length >= 2, JSON.stringify(events));
+      assert.ok(events.some((e) => e.content?.error != null || e.type?.includes('error')), 'the refused claim is there: ' + JSON.stringify(events.map((e) => e.type)));
+    });
+
     it('[ACTR5H] a claim and a decline cannot run inside a batch call', async function () {
       const { owner, token, claimant } = await openFor();
       const res = await coreRequest.post('/' + owner.username).set('Authorization', owner.token)
