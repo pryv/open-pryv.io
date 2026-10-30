@@ -201,28 +201,40 @@ describe('[ASTE] Audit Streams and Events', function () {
       validateResults(logs, appAccess.id);
     });
 
-    it('[WLP1] the accesses / actions parents read the whole log, as an account export pages it', async () => {
+    it('[WLP1] the accesses / actions parents read the whole log, as an account export pages it', async function () {
+      this.timeout(10000);
       // Each read below is audited too: bound the time so they all see the same log.
       const query = { modifiedSince: 1, fromTime: -1000000000000, toTime: timestamp.now() - 0.001, limit: 1000 };
       const ids = (events) => events.map((e) => e.id).sort();
-      // The audit row of an earlier request can land after its response
-      // (a streamed result): read the whole log until two reads agree.
-      let all = null;
-      for (let tries = 0; tries < 20; tries++) {
-        const read = await coreRequest.get(eventsPath).set('Authorization', personalToken)
-          .query(Object.assign({ streams: [':_audit:'] }, query));
-        assert.strictEqual(read.status, 200);
-        const settled = all != null && JSON.stringify(ids(read.body.events)) === JSON.stringify(ids(all.body.events));
-        all = read;
-        if (settled) break;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      assert.ok(all.body.events.length >= 5);
-      for (const streams of [[':_audit:accesses', ':_audit:actions'], [':_audit:accesses'], [':_audit:actions']]) {
+      const read = async (streams) => {
         const res = await coreRequest.get(eventsPath).set('Authorization', personalToken)
           .query(Object.assign({ streams }, query));
         assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-        assert.deepStrictEqual(ids(res.body.events), ids(all.body.events), JSON.stringify(streams));
+        return ids(res.body.events);
+      };
+      const parents = [[':_audit:accesses', ':_audit:actions'], [':_audit:accesses'], [':_audit:actions']];
+      // The audit row of an earlier request is written after its response, and
+      // on a slow runner several of them can commit late together: two reads of
+      // the whole log agreeing does not prove they have all landed. Rows inside
+      // the bound only ever appear, so compare all the reads of one round, and
+      // retry the round until they agree. A parent that really misses or adds
+      // rows never agrees and fails below once the deadline is reached.
+      const deadline = Date.now() + 8000;
+      let round;
+      do {
+        if (round != null) await new Promise((resolve) => setTimeout(resolve, 200));
+        const before = await read([':_audit:']);
+        const byParent = [];
+        for (const streams of parents) byParent.push(await read(streams));
+        const after = await read([':_audit:']);
+        round = { before, byParent, after };
+      } while (Date.now() < deadline &&
+        !(JSON.stringify(round.before) === JSON.stringify(round.after) &&
+          round.byParent.every((got) => JSON.stringify(got) === JSON.stringify(round.after))));
+      assert.ok(round.after.length >= 5);
+      assert.deepStrictEqual(round.before, round.after, 'the whole log settled');
+      for (let i = 0; i < parents.length; i++) {
+        assert.deepStrictEqual(round.byParent[i], round.after, JSON.stringify(parents[i]));
       }
     });
 
