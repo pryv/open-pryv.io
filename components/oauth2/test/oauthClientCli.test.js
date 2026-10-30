@@ -228,4 +228,116 @@ describe('[OCLI] operator CLI: registry clients', () => {
       'appacct  app-account  active  -',
     ]);
   });
+
+  it('[OCLI8] update applies the descriptive registry flags as create-registry parses them; "none" clears them', async () => {
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.eight', ['--subject-type', 'public', '--contact', 'a@example.com', '--extra', 'k=1']));
+    const r = await run(cli.runUpdate, platform, ['update', 'Cli.eight',
+      '--policy-uri', 'https://app.example.com/policy', '--tos-uri', 'https://app.example.com/tos',
+      '--contact', 'b@example.com', '--contact', 'c@example.com',
+      '--extra', 'flag=true', '--extra', 'n=42', '--extra', 's=text',
+      '--launch-type', 'standalone']);
+    assert.equal(r.error, null, r.error?.message);
+    assert.match(r.out, /client updated/);
+    let row = await getClient(platform, 'Cli.eight');
+    assert.equal(row.policyUri, 'https://app.example.com/policy');
+    assert.equal(row.tosUri, 'https://app.example.com/tos');
+    assert.deepEqual(row.contacts, ['b@example.com', 'c@example.com']);
+    assert.deepEqual(row.tokenResponseExtras, { flag: true, n: 42, s: 'text' });
+    assert.deepEqual(row.launchTypes, ['standalone']);
+    // The same values again: nothing written.
+    const again = await run(cli.runUpdate, platform, ['update', 'Cli.eight', '--tos-uri', 'https://app.example.com/tos', '--launch-type', 'standalone']);
+    assert.match(again.out, /client unchanged/);
+    // A malformed --extra is refused with the create-registry message, row kept.
+    const bad = await run(cli.runUpdate, platform, ['update', 'Cli.eight', '--extra', 'novalue']);
+    assert.equal(bad.error?.message, 'update: --extra expects key=value, got "novalue"');
+    assert.deepEqual((await getClient(platform, 'Cli.eight')).tokenResponseExtras, { flag: true, n: 42, s: 'text' });
+    const cleared = await run(cli.runUpdate, platform, ['update', 'Cli.eight',
+      '--policy-uri', 'none', '--tos-uri', 'none', '--contact', 'none', '--extra', 'none', '--launch-type', 'none']);
+    assert.equal(cleared.error, null, cleared.error?.message);
+    row = await getClient(platform, 'Cli.eight');
+    assert.equal(row.policyUri, undefined);
+    assert.equal(row.tosUri, undefined);
+    assert.deepEqual(row.contacts, []);
+    assert.deepEqual(row.tokenResponseExtras, {});
+    assert.deepEqual(row.launchTypes, []);
+  });
+
+  it('[OCLI9] --scope splits space-separated tokens on update, as on create-registry', async () => {
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.nine', ['--subject-type', 'public', '--scope', 'read/b  read/c']));
+    assert.deepEqual((await getClient(platform, 'Cli.nine')).scope, ['read/a', 'read/b', 'read/c']);
+    const r = await run(cli.runUpdate, platform, ['update', 'Cli.nine', '--scope', 'read/x read/y', '--scope', 'read/z']);
+    assert.equal(r.error, null, r.error?.message);
+    assert.deepEqual((await getClient(platform, 'Cli.nine')).scope, ['read/x', 'read/y', 'read/z']);
+    await persistClient(platform, { clientId: 'appacct', redirectUris: [REDIRECT], grantTypes: ['authorization_code'], scope: [] });
+    await run(cli.runUpdate, platform, ['update', 'appacct', '--scope', 'openid offline_access']);
+    assert.deepEqual((await getClient(platform, 'appacct')).scope, ['openid', 'offline_access']);
+  });
+
+  it('[OCLI10] an unknown flag, a value flag given bare, or a registry flag on an app-account client: refused, nothing written', async () => {
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.ten', ['--subject-type', 'public']));
+    const before = await getClient(platform, 'Cli.ten');
+    const typo = await run(cli.runUpdate, platform, ['update', 'Cli.ten', '--polcy-uri', 'https://app.example.com/p']);
+    assert.equal(typo.error?.message, 'update: unknown flag --polcy-uri');
+    const bare = await run(cli.runUpdate, platform, ['update', 'Cli.ten', '--policy-uri']);
+    assert.equal(bare.error?.message, 'update: --policy-uri requires a value');
+    const bareName = await run(cli.runUpdate, platform, ['update', 'Cli.ten', '--name']);
+    assert.equal(bareName.error?.message, 'update: --name requires a value');
+    assert.deepEqual(await getClient(platform, 'Cli.ten'), before);
+    const created = await run(cli.runCreateRegistry, platform, createArgs('Cli.ten2', ['--subject-type', 'public', '--launch', 'x']));
+    assert.equal(created.error?.message, 'create-registry: unknown flag --launch');
+    assert.equal(await getClient(platform, 'Cli.ten2'), null);
+    await persistClient(platform, { clientId: 'appacct', redirectUris: [REDIRECT], grantTypes: ['authorization_code'], scope: [] });
+    for (const flag of ['--policy-uri', '--tos-uri', '--contact', '--extra', '--launch-type', '--auth-method']) {
+      const r = await run(cli.runUpdate, platform, ['update', 'appacct', flag, 'k=v']);
+      assert.equal(r.error?.message, 'update: ' + flag + ' applies to registry clients only');
+    }
+  });
+
+  it('[OCLI11] update --auth-method: the credentials follow the method, a new secret is shown once, none needs --yes', async () => {
+    const { generateKeyPairSync } = require('node:crypto');
+    const { kty, crv, x, y } = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
+    const jwks = JSON.stringify({ keys: [{ kty, crv, x, y }] });
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.auth', ['--subject-type', 'public']));
+    // A key set goes with private_key_jwt only.
+    const stray = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--jwks-json', jwks]);
+    assert.equal(stray.error?.message, 'update: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses none)');
+    const noKeys = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'private_key_jwt']);
+    assert.equal(noKeys.error?.message, 'update: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
+    const badMethod = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'client_secret_post']);
+    assert.equal(badMethod.error?.message, 'update: --auth-method must be none, client_secret_basic or private_key_jwt');
+    // none -> client_secret_basic: a secret minted, printed once, its hash stored.
+    const toSecret = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'client_secret_basic']);
+    assert.equal(toSecret.error, null, toSecret.error?.message);
+    assert.match(toSecret.out, /auth method: {3}client_secret_basic \(was none\)/);
+    assert.match(toSecret.out, /client_secret: \S+\n {5}\(shown once: store it now\)/);
+    let row = await getClient(platform, 'Cli.auth');
+    assert.equal(row.tokenEndpointAuthMethod, 'client_secret_basic');
+    assert.equal(typeof row.clientSecretHash, 'string');
+    // The same method again rotates nothing.
+    const same = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'client_secret_basic']);
+    assert.match(same.out, /client unchanged/);
+    assert.equal((await getClient(platform, 'Cli.auth')).clientSecretHash, row.clientSecretHash);
+    // -> private_key_jwt: the secret is dropped.
+    const toJwt = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'private_key_jwt', '--jwks-json', jwks]);
+    assert.equal(toJwt.error, null, toJwt.error?.message);
+    row = await getClient(platform, 'Cli.auth');
+    assert.equal(row.tokenEndpointAuthMethod, 'private_key_jwt');
+    assert.equal(row.clientSecretHash, undefined);
+    assert.equal(row.jwks.keys.length, 1);
+    // -> none: refused without --yes (row unchanged), applied with it, every credential dropped.
+    const refused = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'none']);
+    assert.equal(refused.error?.message, 'update: changing the client authentication of "Cli.auth" from private_key_jwt to none ' +
+      'makes it a public client (its refresh tokens are then redeemed without client authentication); re-run with --yes');
+    assert.equal((await getClient(platform, 'Cli.auth')).tokenEndpointAuthMethod, 'private_key_jwt');
+    const toNone = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'none', '--yes']);
+    assert.equal(toNone.error, null, toNone.error?.message);
+    row = await getClient(platform, 'Cli.auth');
+    assert.equal(row.tokenEndpointAuthMethod, 'none');
+    assert.equal(row.clientSecretHash, undefined);
+    assert.equal(row.jwks, undefined);
+  });
 });
