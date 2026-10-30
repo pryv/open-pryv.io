@@ -471,6 +471,23 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
         ['offline_access', 'data/a.read', 'data/b.read']);
       extension.setExtension({ ...toyExtension(), scopeGrammar: { ...toyExtension().scopeGrammar, echo: () => 'x' } });
       assert.throws(() => scopeGrammar.grantedScopeTokens(client, [], [], []), /array of strings/);
+      // A grammar reporting a token the client did not send (which its echo
+      // could then answer) is a contract error at parse time.
+      extension.setExtension(toyWith(() => {}));
+      const adding = toyExtension();
+      extension.setExtension({
+        ...adding,
+        scopeGrammar: {
+          ...adding.scopeGrammar,
+          parse (s, ctx) {
+            const out = adding.scopeGrammar.parse(s, ctx);
+            return ctx.purpose === 'request' && out.ok ? { ...out, tokens: [...out.tokens, 'data/b.read'] } : out;
+          },
+        },
+      });
+      const r = scopeGrammar.resolveRequestedScope(client, 'data/a.read');
+      assert.equal(r.ok, false);
+      assert.equal(r.description, 'scope could not be parsed');
     });
     it('[OXS13] pseudonymous subjects are refused: an offer asking for one, a pairwise client', () => {
       const pseudo = scopeGrammar.resolveRequestedScope({ ...client, scope: [...client.scope, 'pseudo'] }, 'data/a.read pseudo');
@@ -854,6 +871,13 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(rt.statusCode, 400, rt.raw);
       assert.equal(rt.body.error, 'unauthorized_client');
       assert.equal(minted, false);
+      // Suspension is reversible: the refused refresh consumed nothing, so
+      // after a resume the same refresh token rotates (no reuse, no revoke).
+      await persistClient(platform, { ...REGISTRY_CLIENT, status: 'active' });
+      const revokes = [];
+      const again = await refresh(platform, 'RT-S', refreshedMint(), { revokeChain: async (p) => { revokes.push(p); } });
+      assert.equal(again.statusCode, 200, again.raw);
+      assert.deepEqual(revokes, []);
     });
     it('[OXT08] a hook that times out answers 500 before any refresh row; the session is removed', async () => {
       const platform = fakePlatform(); await seed(platform);
@@ -870,6 +894,17 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const rt = await refresh(platform, 'RT-T', refreshedMint(), { revokeAccessLocal: async (p) => { rRevoked.push(p.accessId); } });
       assert.equal(rt.statusCode, 500, rt.raw);
       assert.deepEqual(rRevoked, ['session-9']);
+      // The rotation did not happen: the row is back, no reuse marker. The
+      // app's retry once the hook answers again (past the reuse grace window)
+      // rotates; the chain and the grant survive.
+      hookOverride = null;
+      const chainRevokes = [];
+      const retry = fakeRes();
+      await handleToken(tokenDeps(platform, fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }), {
+        mintRefreshedAccess: refreshedMint(), revokeChain: async (p) => { chainRevokes.push(p); },
+      }))({ headers: {}, body: { grant_type: 'refresh_token', refresh_token: 'RT-T', client_id: 'reg-app' } }, retry);
+      assert.equal(retry.statusCode, 200, retry.raw);
+      assert.deepEqual(chainRevokes, []);
     });
     it('[OXT09] a registry client presenting a DPoP proof is refused before its code is consumed', async () => {
       const platform = fakePlatform(); await seed(platform);

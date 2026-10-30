@@ -206,6 +206,19 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'invalid_request');
     });
+    it('[OAC-S6] a client suspended since /authorize (any kind) → 403 access_denied, nothing created', async () => {
+      const platform = fakePlatform();
+      await platform.setPlatformKv('oauth-client/myapp', JSON.stringify({ clientId: 'myapp', status: 'suspended' }));
+      let created = false;
+      const handler = require('../src/routes/accept.ts').handleAccept({
+        config: fakeConfig(), platform, resolveUser: resolveAlice, createAccess: async (p) => { created = true; return createAccessFake(p); },
+      });
+      const res = fakeRes();
+      await handler({ body: validBody() }, res);
+      assert.equal(res.statusCode, 403);
+      assert.equal(res.body.error, 'access_denied');
+      assert.equal(created, false);
+    });
     it('[OAC-S4] state without a consent offer (stale/foreign) → 400 invalid_request', async () => {
       const handler = mkHandler();
       const res = fakeRes();

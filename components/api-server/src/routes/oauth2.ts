@@ -92,12 +92,17 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
           'the account owner must sign in and consent.',
       };
     }
+    // Only the account owner consents: the session and the grant are written
+    // storage-direct or on this context, so the principal check is explicit
+    // here rather than left to the access-creation rules downstream.
     const access = context.access as { isPersonal?: () => boolean } | null;
+    if (!(typeof access?.isPersonal === 'function' && access.isPersonal() === true)) {
+      return { refused: true as const, description: 'only the account owner can grant OAuth access' };
+    }
     return {
       userId: context.user.id,
       username: context.user.username,
-      // Only a personal token may see the user's grants (composed consent).
-      personal: typeof access?.isPersonal === 'function' && access.isPersonal() === true,
+      personal: true,
       // Carry the live context through so createAccess can call api on it.
       _context: context,
     };

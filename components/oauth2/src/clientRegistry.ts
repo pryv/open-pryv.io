@@ -253,6 +253,10 @@ export function defaultForbiddenFeatures (client: OAuthClient): string[] {
   return REGISTRY_DEFAULT_FORBIDDEN_FEATURES.filter((f) => !allowed.includes(f));
 }
 
+// `localhost` counts here (RFC 6761 reserves it for loopback): this list only
+// decides which plain-http redirect URIs need an explicit registration. The
+// port carve-out of `validateRedirectUri` is stricter (RFC 8252 § 8.3 does not
+// recommend `localhost`) and is unchanged.
 const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost'];
 
 /**

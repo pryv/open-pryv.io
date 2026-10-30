@@ -13,9 +13,26 @@
   component), `responseHooks.ts`, `routes/offer.ts`, `registryBootCheck.ts`, `sessionIndex.ts`,
   `clientAuth.ts` (`decodeBasicAuth`, moved from the token route).
 - New config key `oauth:extensionHookTimeoutMs` (default 5000): bound on each asynchronous extension
-  hook; a hook that does not answer in time fails the token request (500, before any refresh row).
-- Boot pass over the registry clients: each one whose registered scope the grammar refuses, registered
-  for plain-http redirects, or stored without a subject type, is reported with a warning; never fatal.
+  hook; a hook that does not answer in time fails the token request (500, before any new refresh row).
+  On a refresh, the consumed refresh row is put back and its reuse marker removed on any server-side
+  failure (`storage.restoreConsumedRefresh`), so the chain survives; a suspended client is refused
+  before the row is consumed.
+- Boot pass over the registry clients: each one whose registered scope the grammar refuses, with
+  plain-http redirect URIs on a non-loopback host (registered for them or not), or stored without a
+  subject type, is reported with a warning; never fatal.
+- `oauth2/consentComposition.ts`: `composeShownOffer` (the composed consent screen, `shownDigest`,
+  `subjectChange`; pure) and `nextGrantPermissions` (the grant after a consent: replace exactly or join,
+  kept restrictions, default forbids). Client row field `allowFeatures` (registry clients).
+- `api-server/src/methods/helpers/oauthSessionReconcile.ts`: `effectiveSessionPermissions` (meet plus
+  the two stream-tree passes, shared by refresh, the consent mint and the re-cut) and
+  `reconcileSessionsOfGrant`, run by `accesses.update` when an access's permissions change (sessions
+  rewritten storage-direct, token cache busted, scoped change notified; no reach: `deleteAccessChain`).
+- The glue resolves the consenting user with the owner's personal token only; a session removed after a
+  failed code exchange is tombstoned in the breach-scope index; grant deletions use the base access id
+  (an updated grant, whose wire id carries a version serial, was not found, so a change of subject mode
+  on it failed).
+- `bin/oauth-client.js` runs its program only when executed; its registry command functions are
+  exported for tests (`components/oauth2/test/oauthClientCli.test.js`).
 - Storage-direct session mints (consent, refresh, client credentials) now emit the access-change
   notifications (coarse and scoped) and write the breach-scope index row, as `accesses.create` does.
   Refreshed and client-credentials sessions were previously missing from that index.

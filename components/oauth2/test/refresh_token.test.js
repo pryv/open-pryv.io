@@ -573,7 +573,7 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       assert.deepEqual(revokes, []);
     });
 
-    it('[OPI9] a failing username resolution → 500, nothing minted; on the reuse path → still invalid_grant', async () => {
+    it('[OPI9] a failing username resolution → 500, nothing minted; the row is kept, so the retry is not a reuse', async () => {
       const platform = fakePlatform();
       await seedRefresh(platform, 'RT-PI9');
       const mints = [];
@@ -597,8 +597,18 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
         mintRefreshedAccess: MINT_REFRESHED_FAKE,
         revokeChain: async (p) => { revokes.push(p); },
       })({ body: params('RT-PI9') }, reuse);
-      assert.equal(reuse.statusCode, 400);
-      assert.equal(reuse.body.error, 'invalid_grant');
+      assert.equal(reuse.statusCode, 500, 'the same server error again, not a reuse');
+      assert.deepEqual(revokes, []);
+      // Healthy again: the same refresh token rotates.
+      const ok = fakeRes();
+      await handleToken({
+        config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }),
+        platform,
+        resolveUsername: async () => 'alice',
+        mintRefreshedAccess: MINT_REFRESHED_FAKE,
+        revokeChain: async (p) => { revokes.push(p); },
+      })({ body: params('RT-PI9') }, ok);
+      assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
       assert.deepEqual(revokes, []);
     });
   });

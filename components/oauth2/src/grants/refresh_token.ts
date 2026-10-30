@@ -170,6 +170,15 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'invalid_request', description: 'client_id is required' };
   }
 
+  // A suspended client is refused BEFORE the row is consumed: suspension is
+  // reversible (`resume`), and a refusal that consumed the row would turn the
+  // app's retry after the resume into a reuse, which ends the user's grant.
+  // Nothing is learned that the client does not already know.
+  const presentedClient = await getClient(deps.platform, params.client_id);
+  if (presentedClient?.status === 'suspended') {
+    return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
+  }
+
   // ATOMIC single-use: consume deletes-and-returns in one linearized op, so
   // two concurrent refreshes of the same token cannot both mint a new chain
   // (which also defeated reuse-detection, since both reads saw the row).
@@ -239,6 +248,22 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };
   }
 
+  // A server-side failure after the consume means the rotation did not
+  // happen: the row goes back and the marker away, so the client's retry is a
+  // plain refresh (otherwise a transient failure, e.g. an extension hook
+  // timing out, would make the retry a reuse and end the user's grant).
+  const undoConsume = async (): Promise<void> => {
+    try {
+      await storage.restoreConsumedRefresh(deps.platform, coreId, params.refresh_token, row);
+    } catch (err: unknown) {
+      logServerError('refresh_token: restoring the consumed row failed (the chain is burned)', err);
+    }
+  };
+  const serverError = async (description: string) => {
+    await undoConsume();
+    return { ok: false as const, status: 500, error: 'server_error', description };
+  };
+
   // Confidential-client authentication (RFC 6749 §6 refers to §3.2.1):
   // a client that has a secret on file must authenticate on refresh too,
   // consistent with the authorization_code + client_credentials paths.
@@ -262,6 +287,8 @@ export async function handleRefreshToken (
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
   }
   if (client?.status === 'suspended') {
+    // Suspended since the check above: the rotation did not happen either.
+    await undoConsume();
     return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
   }
   if (row.kind === 'registry' && !isRegistryClient(client)) {
@@ -311,7 +338,7 @@ export async function handleRefreshToken (
     username = await deps.resolveUsername(row.userId);
   } catch (err: unknown) {
     logServerError('refresh_token: username resolution failed', err);
-    return { ok: false, status: 500, error: 'server_error', description: 'failed to resolve the authorizing user' };
+    return await serverError('failed to resolve the authorizing user');
   }
   if (username == null) {
     return { ok: false, status: 400, error: 'invalid_grant', description: 'the authorized access is no longer valid' };
@@ -341,12 +368,7 @@ export async function handleRefreshToken (
       return { ok: false, status: 400, error: 'invalid_grant', description: 'consent has been revoked' };
     }
     logServerError('refresh_token: mintRefreshedAccess failed', err);
-    return {
-      ok: false,
-      status: 500,
-      error: 'server_error',
-      description: 'failed to mint refreshed access',
-    };
+    return await serverError('failed to mint refreshed access');
   }
 
   // Registry client: the scope echo follows the EFFECTIVE permissions (a
@@ -376,7 +398,7 @@ export async function handleRefreshToken (
           logServerError('refresh_token: revoke of the unanswered access failed', revokeErr);
         }
       }
-      return { ok: false, status: 500, error: 'server_error', description: 'failed to build the token response' };
+      return await serverError('failed to build the token response');
     }
   }
 

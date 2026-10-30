@@ -62,6 +62,7 @@ const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
 const { composeShownOffer, nextGrantPermissions } = require('../consentComposition.ts');
+const { getClient } = require('../clientRegistry.ts');
 
 const { generateToken } = require('../secureToken.ts');
 const { verifyState } = require('../signedState.ts');
@@ -249,6 +250,12 @@ export function handleAccept (deps: AcceptDeps) {
       });
     }
     const payload = verified.payload;
+    // A client suspended since /authorize consents to nothing, whatever its
+    // kind (no grant, no consent record, no session).
+    const stateClient = await getClient(deps.platform, payload.clientId);
+    if (stateClient?.status === 'suspended') {
+      return sendJson(res, 403, { error: 'access_denied', error_description: 'this client is suspended' });
+    }
 
     // Consent contract (selected by the signed state, never the
     // caller): the granular cmc-offer grant carries
@@ -291,6 +298,15 @@ export function handleAccept (deps: AcceptDeps) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
         error_description: 'grantedPermissions invalid: ' + ((e as Error)?.message ?? String(e)),
+      });
+    }
+    // A registry consent never creates a stream: display names (which would
+    // make the grant's creation add missing streams under the owner's
+    // context) are dropped, as they are from the grammar's offer.
+    if (synthesised != null) {
+      grantedPermissions = grantedPermissions.map((p) => {
+        const { defaultName: _d, name: _n, ...rest } = p;
+        return rest;
       });
     }
     // One level per stream: the consent check compares entry SETS, so a

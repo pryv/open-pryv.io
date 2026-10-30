@@ -27,6 +27,8 @@ import { mergeStreamPermissions, PermissionMergeConflictError, stripConsentAnnot
 import { assertGrantedWithinOffer } from 'business/src/accesses/consentEffectiveGuard.ts';
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
 import { deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
+// Wire ids carry a version serial; storage reads by the base id.
+import { parseAccessRef } from 'business/src/accesses/refs.ts';
 // Outcome-driven CMC consent poll: keys on the trigger's terminal status so a
 // transient data-grant about to be rolled back on a peer refusal is never
 // observed as a success. See consentPoll.ts.
@@ -184,7 +186,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     next: Array<Record<string, unknown>> | undefined): Promise<DataGrant> {
     let current = await findRegistryGrant(context, clientId);
     if (current != null && (typeof current.alias === 'string' && current.alias.length > 0) !== wantAlias) {
-      await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: current.id });
+      await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(current.id).base });
       current = null;
     }
     let permissions: Array<Record<string, unknown>>;
@@ -257,12 +259,24 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // The grant's identity is (type, name, deviceName), unique among live
   // accesses; `clientData.oauth.grantOf` confirms it and is written again
   // when missing (a grant whose stamp did not land, after a failure between
-  // the create and the stamp).
+  // the create and the stamp). Consequence: an app access the owner creates by
+  // hand with that name and deviceName is adopted as the grant (only the
+  // owner can create one: app tokens create shared accesses only).
+  // An expired grant (the owner may put an expiry on it) still holds the
+  // (type, name, deviceName) slot: on a consent (`repair`) it is withdrawn
+  // (its sessions and chains go with it) so a fresh one can be made; a
+  // read-only lookup treats it as absent.
   async function findRegistryGrant (context: Ctx, clientId: string, opts: { repair?: boolean } = {}): Promise<DataGrant | null> {
-    const result = await apiCall(context, 'accesses.get', {});
-    const grant = (result?.accesses ?? []).find((a) =>
+    const result = await apiCall(context, 'accesses.get', { includeExpired: true });
+    let grant = (result?.accesses ?? []).find((a) =>
       a?.type === 'app' && a?.name === REGISTRY_GRANT_PREFIX + clientId &&
       a?.deviceName === REGISTRY_GRANT_DEVICE) ?? null;
+    if (grant != null && typeof grant.expires === 'number' && grant.expires <= Date.now() / 1000) {
+      if (opts.repair !== false) {
+        await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(grant.id).base });
+      }
+      grant = null;
+    }
     if (grant != null && opts.repair !== false && grant.clientData?.oauth?.grantOf !== clientId) {
       await sessions.setGrantOf(context.user.id, context.user.username, grant.id, clientId);
     }

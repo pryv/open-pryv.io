@@ -170,6 +170,18 @@ function callParse (
     logServerError(`oauth extension ${ext.name}: scopeGrammar.parse answered out of contract`, new Error(String(JSON.stringify(out)).slice(0, 200)));
     return { ok: false, description: 'scope could not be parsed' };
   }
+  // The tokens a request's grammar reports must be tokens the client sent:
+  // the echo is checked against them, so an added token could be reported as
+  // granted without ever being requested.
+  if (purpose === 'request') {
+    const sent = new Set(splitScope(scopeString));
+    const added = (r.tokens as string[]).filter((t) => !sent.has(t));
+    if (added.length > 0) {
+      logServerError(`oauth extension ${ext.name}: contract error in scopeGrammar.parse (${purpose})`,
+        new Error('tokens not in the requested scope: ' + added.slice(0, 5).join(' ')));
+      return { ok: false, description: 'scope could not be parsed' };
+    }
+  }
   // Display names would make the consent create missing streams under the
   // user's personal context: never taken from a grammar.
   const raw = (r.offer.permissions as unknown[]).map((p) => {

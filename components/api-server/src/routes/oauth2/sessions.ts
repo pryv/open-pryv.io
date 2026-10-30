@@ -36,7 +36,7 @@ import { getUsersLocalIndex } from 'storage';
 import { withSessionSelfRevoke, accessesRepo } from './types.ts';
 import { notifyScopedAccessChange } from '../../methods/helpers/accessDeletion.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
-import { reindexAccessNonFatal } from 'platform/src/accessIndex.ts';
+import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 
 export function createSessions (env: GlueEnv) {
   const { storageLayer } = env;
@@ -300,11 +300,14 @@ export function createSessions (env: GlueEnv) {
     userId: string; username: string; accessId: string; clientId: string;
   }): Promise<void> {
     const accessesRepository = accessesRepo(storageLayer, 'oauth2.revokeAccessLocal');
-    if (await findOAuthSessionAccess(userId, username, accessId, clientId) == null) return;
+    const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
+    if (access == null) return;
     const user = { id: userId, username };
     await fromCallback((cb: (e: unknown, r?: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
     // The cache validates tokens on `expires` only, never `deleted`.
     cache.unsetUserData(userId);
+    // The mint indexed it: the breach-scope index keeps it as deleted.
+    await tombstoneAccessesNonFatal(username, [access as Parameters<typeof tombstoneAccessesNonFatal>[1][number]], Date.now() / 1000);
     pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
   }
 

@@ -579,6 +579,18 @@ export async function markRefreshConsumed (
   await platform.setAccessState(refreshUsedKey(coreId, token), payload, expiresAt);
 }
 
+/**
+ * Undo a consume whose rotation did not happen (a server-side failure after
+ * the consume): the row is put back and the consumed marker removed, so the
+ * client's retry is a plain refresh, not a reuse.
+ */
+export async function restoreConsumedRefresh (
+  platform: PlatformDB, coreId: string, token: string, row: OAuthRefresh
+): Promise<void> {
+  await setRefresh(platform, coreId, token, row);
+  await platform.deleteAccessState(refreshUsedKey(coreId, token));
+}
+
 /** Non-consuming read of the consumed marker (repeat replays must each re-detect). */
 export async function getRefreshConsumed (platform: PlatformDB, coreId: string, token: string): Promise<OAuthRefreshUsed | null> {
   const entry = await platform.getAccessState(refreshUsedKey(coreId, token));

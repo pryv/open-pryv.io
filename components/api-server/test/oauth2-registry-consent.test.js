@@ -23,6 +23,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const oauth2 = require('oauth2');
 const storage = require('oauth2/src/storage.ts');
+const accessIndex = require('platform/src/accessIndex.ts');
 
 const REDIRECT_URI = 'https://app.consent.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
@@ -427,6 +428,10 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     });
     assert.equal(seeded.status, 201, JSON.stringify(seeded.body));
     assert.equal(typeof seeded.body.access.alias, 'string');
+    // An updated grant: its wire id carries a version serial.
+    const bumped = await ownerUpdate(who, seeded.body.access, { permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }] });
+    assert.equal(bumped.status, 200, JSON.stringify(bumped.body));
+    assert.notEqual(bumped.body.access.id, seeded.body.access.id);
 
     const flow = await authorize('read/a');
     const o = await offer(flow.state, who);
@@ -446,7 +451,7 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const noScreen = await accept(flow.state, who, [{ streamId: 'a', level: 'read' }], { acknowledgeSubjectChange: true });
     assert.equal(noScreen.status, 400, JSON.stringify(noScreen.body));
     assert.equal(noScreen.body.reason, 'subject-change-unacknowledged');
-    assert.equal((await grantOf(who)).id, seeded.body.access.id, 'grant untouched');
+    assert.equal((await grantOf(who)).id, bumped.body.access.id, 'grant untouched');
 
     const auditSingleton = require('audit').default;
     const original = auditSingleton.eventForUser;
@@ -497,5 +502,54 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     // A client allowed both features: its grants carry no default forbid.
     await consentAndToken(who, 'read/a', { cid: openClientId });
     assert.deepEqual((await grantOf(who, openClientId)).permissions, [{ streamId: 'a', level: 'read' }]);
+  });
+
+  it('[OCMP13] only the account owner consents: an app token of the user is refused, nothing minted', async () => {
+    const who = await newUser();
+    const app = await coreRequest.post('/' + who.username + '/accesses').set('Authorization', who.token)
+      .send({ type: 'app', name: 'some-app', permissions: [{ streamId: 'a', level: 'read' }] });
+    assert.equal(app.status, 201, JSON.stringify(app.body));
+    const flow = await authorize('read/a');
+    const o = await offer(flow.state);
+    const res = await accept(flow.state, { username: who.username, token: app.body.access.token }, o.body.offer.permissions);
+    assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'access_denied');
+    assert.equal(await grantOf(who), null);
+    assert.equal((await accesses(who)).some((a) => a.name === 'oauth:' + clientId), false);
+  });
+
+  it('[OCMP14] display names in the consent body never create a stream', async () => {
+    const who = await newUser();
+    const flow = await authorize('read/zz');
+    await offer(flow.state);
+    await accept(flow.state, who, [{ streamId: 'zz', level: 'read', defaultName: 'Created by a consent' }]);
+    const streams = await coreRequest.get('/' + who.username + '/streams').set('Authorization', who.token);
+    assert.equal(streams.status, 200);
+    assert.equal(streams.body.streams.some((s) => s.id === 'zz'), false, JSON.stringify(streams.body.streams.map((s) => s.id)));
+  });
+
+  it('[OCMP15] an expired grant does not block the next consent: it is withdrawn and a fresh one made', async () => {
+    const who = await newUser();
+    await consentAndToken(who, 'read/a');
+    const grant = await grantOf(who);
+    assert.equal((await ownerUpdate(who, grant, { expireAfter: 0 })).status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await consentAndToken(who, 'read/b');
+    const fresh = await grantOf(who);
+    assert.notEqual(baseOf(fresh.id), baseOf(grant.id));
+    assert.deepEqual(streamsOf(fresh.permissions), ['b:read']);
+  });
+
+  it('[OCMP16] a session removed after a failed code exchange is tombstoned in the access index', async () => {
+    const who = await newUser();
+    const c = await consent(who, 'read/a');
+    assert.equal(c.accept.status, 200, JSON.stringify(c.accept.body));
+    const session = (await accesses(who)).find((a) => a.name === 'oauth:' + clientId);
+    assert.ok(await accessIndex.getAccessIndex(platformDB, baseOf(session.id)) != null, 'indexed at the mint');
+    tokenHookOverride = () => { throw new Error('extension outage'); };
+    const t = await exchange(c.flow, c.accept);
+    assert.equal(t.status, 500, JSON.stringify(t.body));
+    const row = await accessIndex.getAccessIndex(platformDB, baseOf(session.id));
+    assert.ok(row != null && row.deleted != null, JSON.stringify(row));
   });
 });

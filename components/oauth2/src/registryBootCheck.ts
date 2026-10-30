@@ -47,12 +47,12 @@ export async function checkRegistryClients (platform: PlatformDB): Promise<numbe
       warnings++;
       logServerWarning(`oauth registry client ${id}: no subject type registered, read as public (set it with the operator CLI update --subject-type)`);
     }
-    if (client.allowInsecureRedirect === true) {
-      const insecure = insecureRedirectUris(client.redirectUris);
-      if (insecure.length > 0) {
-        warnings++;
-        logServerWarning(`oauth registry client ${id}: registered with plain-http redirect URIs on a non-loopback host (${insecure.join(', ')})`);
-      }
+    const insecure = insecureRedirectUris(client.redirectUris);
+    if (insecure.length > 0) {
+      warnings++;
+      logServerWarning(client.allowInsecureRedirect === true
+        ? `oauth registry client ${id}: registered with plain-http redirect URIs on a non-loopback host (${insecure.join(', ')})`
+        : `oauth registry client ${id}: plain-http redirect URIs on a non-loopback host (${insecure.join(', ')}) stored without the insecure-redirect registration (a row written before the rule; update it)`);
     }
   }
   return warnings;
