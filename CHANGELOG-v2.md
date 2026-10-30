@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.66 - 2026-10-30
 
 - **Account auto-deletion setting: `account.getAutoDeletion` / `account.setAutoDeletion`
   (`GET` / `PUT /{username}/account/auto-deletion`, personal token).** The holder of an account can
