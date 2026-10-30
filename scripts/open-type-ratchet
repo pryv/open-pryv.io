@@ -42,7 +42,8 @@ cd "$(dirname "$0")/.."
 # and sections instead of leaving them open.
 # 223->222: the login route no longer reads the login result's token, so its
 # open result type is gone.
-MAX=222
+# 222->221: measured 221 on master; lowered to lock it in.
+MAX=221
 
 COUNT=$(grep -rE --include='*.ts' \
   --exclude-dir=node_modules --exclude-dir=test --exclude-dir=test-helpers \

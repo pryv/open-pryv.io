@@ -381,7 +381,8 @@ describe('[RGAC] Register access authorization', () => {
         permissions: [
           { streamId: 'diary', level: 'read', defaultName: 'Journal', mandatory: true },
           { streamId: 'weight', level: 'read', optIn: true },
-          { feature: 'selfRevoke', setting: 'forbidden' }
+          // A restriction is always mandatory, whatever the sidecar lists.
+          { feature: 'selfRevoke', setting: 'forbidden', mandatory: true }
         ]
       };
       // Echoed on create: this is how an app detects that the server

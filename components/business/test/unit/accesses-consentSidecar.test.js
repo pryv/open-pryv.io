@@ -28,14 +28,14 @@ describe('[CSID] auth-request consent sidecar', () => {
       const form = resolveConsentSidecar(PERMS, {
         allowUserChoice: true,
         mandatory: ['diary'],
-        optIn: ['weight', 'selfRevoke'],
+        optIn: ['weight'],
       });
       assert.deepEqual(form, {
         allowUserChoice: true,
         permissions: [
           { streamId: 'diary', level: 'read', defaultName: 'Journal', mandatory: true },
           { streamId: 'weight', level: 'read', optIn: true },
-          { feature: 'selfRevoke', setting: 'forbidden', optIn: true },
+          { feature: 'selfRevoke', setting: 'forbidden', mandatory: true },
         ],
       });
     });
@@ -46,7 +46,7 @@ describe('[CSID] auth-request consent sidecar', () => {
       assert.deepEqual(form.permissions, [
         { streamId: 'diary', level: 'read', defaultName: 'Journal' },
         { streamId: 'weight', level: 'read' },
-        { feature: 'selfRevoke', setting: 'forbidden' },
+        { feature: 'selfRevoke', setting: 'forbidden', mandatory: true },
       ]);
     });
 
@@ -124,6 +124,15 @@ describe('[CSID] auth-request consent sidecar', () => {
     it('[CS11] a malformed permission entry is reported, not coerced', () => {
       rejects([{ streamId: 'diary', level: 'root' }], {}, /invalid permission at index 0/);
       rejects('not-an-array', {}, /permissions must be an array/);
+    });
+
+    it('[CS12] a forbidden feature is always mandatory: naming it opt-in is refused, dropping it is refused by the grant rule', () => {
+      rejects(PERMS, { allowUserChoice: true, optIn: ['selfRevoke'] }, /forbidden feature, which cannot be 'optIn'/);
+      const { checkConsentGrant } = require('../../src/accesses/permissionSet.ts');
+      const form = resolveConsentSidecar(PERMS, { allowUserChoice: true });
+      const r = checkConsentGrant([{ streamId: 'diary', level: 'read' }], form.permissions, true);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'mandatory-refused');
     });
   });
 });

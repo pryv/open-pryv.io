@@ -21,13 +21,16 @@
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { handleAuthorizationCode } from '../grants/authorization_code.ts';
-import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver } from '../grants/authorization_code.ts';
+import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver, GrantSubjectResolver } from '../grants/authorization_code.ts';
 import { handleRefreshToken } from '../grants/refresh_token.ts';
+import type { MintRefreshedAccess } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
 import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
 import { externalRequestUri } from '../externalUri.ts';
 import { markDPoPJtiUsed, getDpopKeyRevokedAt, recordDpopKeySeen } from '../storage.ts';
 import { logServerError } from '../serverLog.ts';
+import { getClient, isRegistryClient } from '../clientRegistry.ts';
+import { decodeBasicAuth } from '../clientAuth.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -42,9 +45,7 @@ export type TokenDeps = {
     userId: string; username: string; accessId: string; jkt: string;
   }) => Promise<void>;
   /** Required when grant_type=refresh_token is dispatched. */
-  mintRefreshedAccess?: (params: {
-    userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
-  }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  mintRefreshedAccess?: MintRefreshedAccess;
   /** Required when grant_type=client_credentials is dispatched. */
   mintClientAccess?: (params: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
@@ -61,36 +62,9 @@ export type TokenDeps = {
   revokeAccessLocal?: AuthCodeAccessRevoker;
   /** Canonical username for a user id on this core (rows carry the id only). */
   resolveUsername: UsernameResolver;
+  /** Registry clients: the id the app sees for the user. */
+  resolveGrantSubject?: GrantSubjectResolver;
 };
-
-/**
- * Decode RFC 6749 §2.3.1 Basic credentials from an Authorization
- * header. Returns null if absent or malformed. The values are URL-
- * decoded per spec (the header carries percent-encoded credentials).
- */
-function decodeBasicAuth (headerValue: unknown): { client_id: string; client_secret: string } | null {
-  if (typeof headerValue !== 'string') return null;
-  // RFC 7617 §2: the `Basic` auth-scheme name is case-INSENSITIVE (`basic`,
-  // `BASIC`, … are all valid). The base64 credentials stay strict.
-  const m = headerValue.match(/^Basic\s+([A-Za-z0-9+/=]+)\s*$/i);
-  if (m == null) return null;
-  let decoded: string;
-  try {
-    decoded = Buffer.from(m[1], 'base64').toString('utf8');
-  } catch {
-    return null;
-  }
-  const idx = decoded.indexOf(':');
-  if (idx <= 0) return null;
-  try {
-    return {
-      client_id: decodeURIComponent(decoded.slice(0, idx)),
-      client_secret: decodeURIComponent(decoded.slice(idx + 1)),
-    };
-  } catch {
-    return null;
-  }
-}
 
 export function handleToken (deps: TokenDeps) {
   return async function token (req: Request, res: Response): Promise<void> {
@@ -113,7 +87,15 @@ export function handleToken (deps: TokenDeps) {
     // exactly one proceeds.
     let dpopJkt: string | null = null;
     const dpopHeader = req.headers?.dpop;
-    if (dpopHeader != null) {
+    // Registry clients cannot bind their tokens to a key in this version:
+    // refused before the proof is verified (its jti is not burned) and before
+    // any grant runs (the code or refresh token is not consumed). The proof
+    // itself is not at fault, so this is invalid_request, as for
+    // client_credentials below, not invalid_dpop_proof.
+    if (dpopHeader != null && typeof body.client_id === 'string' && body.client_id !== '' &&
+        isRegistryClient(await getClient(deps.platform, body.client_id))) {
+      outcome = { ok: false as const, status: 400, error: 'invalid_request', description: 'DPoP is not available for this client' };
+    } else if (dpopHeader != null) {
       const clockSkewSeconds = Number(deps.config.get('oauth:dpop:clockSkewSeconds') ?? 120);
       try {
         const verified = await verifyDPoPProof(
@@ -160,6 +142,7 @@ export function handleToken (deps: TokenDeps) {
             ...(deps.bindAccessDpop != null ? { bindAccessDpop: deps.bindAccessDpop } : {}),
             ...(deps.resolveAccess != null ? { resolveAccess: deps.resolveAccess } : {}),
             ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
+            ...(deps.resolveGrantSubject != null ? { resolveGrantSubject: deps.resolveGrantSubject } : {}),
             resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },
@@ -181,6 +164,7 @@ export function handleToken (deps: TokenDeps) {
             platform: deps.platform,
             mintRefreshedAccess: deps.mintRefreshedAccess,
             ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
+            ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
             resolveUsername: deps.resolveUsername,
           },
           { ...body, basic },

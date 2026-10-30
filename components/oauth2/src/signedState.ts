@@ -68,6 +68,13 @@ export type SignedStatePayload = {
     consent?: Record<string, string>;
     requesterMeta?: Record<string, unknown>;
   };
+  /**
+   * Registry clients: the offer is NOT carried (its size is unbounded); it is
+   * re-derived from `scope` at /accept and must match this digest.
+   */
+  offerRef?: { kind: 'synthesised'; digest: string };
+  /** The `aud` value the request named (registry clients with an audience list). */
+  audience?: string;
   iat: number;
   exp: number;
 };
