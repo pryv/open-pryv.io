@@ -464,11 +464,14 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(r.ok, true, r.description);
       assert.deepEqual(r.offer.permissions, [{ streamId: 'a', level: 'read' }]);
     });
-    it('[OXS12] the echo may only answer requested tokens', () => {
+    it('[OXS12] the echo is bounded by what the session holds, not by the requested tokens; a request reports only sent tokens', () => {
       extension.setExtension({ ...toyExtension(), scopeGrammar: { ...toyExtension().scopeGrammar, echo: () => ['data/a.read', 'data/b.read'] } });
-      assert.throws(() => scopeGrammar.grantedScopeTokens(client, [], ['data/a.read'], []), /did not request: data\/b\.read/);
-      assert.deepEqual(scopeGrammar.grantedScopeTokens(client, ['offline_access'], ['data/a.read', 'data/b.read'], []),
+      const held = [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }];
+      // An unrequested token the session covers is fine; one it does not is refused.
+      assert.deepEqual(scopeGrammar.grantedScopeTokens(client, ['offline_access'], ['data/a.read'], held),
         ['offline_access', 'data/a.read', 'data/b.read']);
+      assert.throws(() => scopeGrammar.grantedScopeTokens(client, [], ['data/a.read', 'data/b.read'], [held[0]]),
+        /claims reach the session does not have: stream b read \(held: none\)/);
       extension.setExtension({ ...toyExtension(), scopeGrammar: { ...toyExtension().scopeGrammar, echo: () => 'x' } });
       assert.throws(() => scopeGrammar.grantedScopeTokens(client, [], [], []), /array of strings/);
       // A grammar reporting a token the client did not send (which its echo
@@ -503,6 +506,149 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       }));
       const r = scopeGrammar.resolveRequestedScope(client, 'data/a.read');
       assert.equal(r.ok, true, r.description);
+    });
+  });
+
+  describe('[OXCOV] echo coverage: the echo may name reach, never claim it', () => {
+    const client = { ...REGISTRY_CLIENT, updatedAt: 1 };
+    const A_READ = { streamId: 'a', level: 'read' };
+    const B_READ = { streamId: 'b', level: 'read' };
+    /** The toy grammar with a fixed echo. */
+    function withEcho (echo) {
+      const toy = toyExtension();
+      return { ...toy, scopeGrammar: { ...toy.scopeGrammar, echo } };
+    }
+    /** The toy grammar plus `feat/<feature>.<setting>` tokens, with a fixed echo. */
+    function withFeatureTokens (echo) {
+      const toy = toyExtension();
+      return {
+        ...toy,
+        scopeGrammar: {
+          ...toy.scopeGrammar,
+          echo,
+          parse (s, ctx) {
+            const tokens = s.split(/\s+/).filter((t) => t !== '');
+            const feats = tokens.filter((t) => t.startsWith('feat/'));
+            const out = toy.scopeGrammar.parse(tokens.filter((t) => !t.startsWith('feat/')).join(' '), ctx);
+            if (!out.ok) return out;
+            for (const t of feats) {
+              const [feature, setting] = t.slice('feat/'.length).split('.');
+              out.offer.permissions.push({ feature, setting });
+            }
+            return { ...out, tokens: [...out.tokens, ...feats] };
+          },
+        },
+      };
+    }
+    const granted = (requested, held, core = []) => scopeGrammar.grantedScopeTokens(client, core, requested, held);
+
+    it('[OXC1] an unrequested token the session covers is accepted and answered (a narrowed token after an untick)', () => {
+      extension.setExtension(withEcho(() => ['data/a.read', 'ctx/patient']));
+      assert.deepEqual(granted(['data/*.read', 'ctx/patient'], [A_READ], ['offline_access']), ['offline_access', 'data/a.read', 'ctx/patient']);
+    });
+    it('[OXC2] a level above the held one is refused, naming the stream, the claimed and the held level', () => {
+      extension.setExtension(withEcho(() => ['data/a.write']));
+      assert.throws(() => granted(['data/a.write'], [A_READ]), /claims reach the session does not have: stream a contribute \(held: read\)/);
+      // create-only does not cover read.
+      extension.setExtension(withEcho(() => ['data/a.read']));
+      assert.throws(() => granted(['data/a.read'], [{ streamId: 'a', level: 'create-only' }]), /stream a read \(held: create-only\)/);
+    });
+    it('[OXC3] a stream the session lacks, or holds at none, is refused; another spelling of a held stream passes', () => {
+      extension.setExtension(withEcho(() => ['data/a.read', 'data/b.read']));
+      assert.throws(() => granted([], [A_READ]), /stream b read \(held: none\)/);
+      assert.throws(() => granted([], [A_READ, { streamId: 'b', level: 'none' }]), /stream b read \(held: none\)/);
+      assert.deepEqual(granted([], [{ streamId: ':local:a', level: 'read' }, B_READ]), ['data/a.read', 'data/b.read']);
+    });
+    it('[OXC4] a marker (a token whose parse yields no entry) passes, requested or not', () => {
+      extension.setExtension(withEcho(() => ['data/a.read', 'ctx/patient', 'who', 'pseudo']));
+      assert.deepEqual(granted(['data/a.read', 'ctx/patient'], [A_READ]), ['data/a.read', 'ctx/patient', 'who', 'pseudo']);
+      extension.setExtension(withEcho(() => ['who']));
+      assert.deepEqual(granted([], [A_READ]), ['who']);
+    });
+    it('[OXC5] a core token, a token the parse refuses, every stream, an account stream, two entries on one stream: refused', () => {
+      const cases = [
+        [['offline_access', 'data/a.read'], /token the core owns: offline_access/],
+        [['openid'], /token the core owns: openid/],
+        // Tokens, not array elements: a core token inside one element is still found.
+        [['data/a.read offline_access'], /token the core owns: offline_access/],
+        [['x openid'], /token the core owns: openid/],
+        [['data/a.read', 'nope'], /parse refuses: unknown token nope/],
+        [['all.read'], /parse refuses: .*every stream/],
+        [['acct/email.read'], /parse refuses: .*account or system stream/],
+        [['dup.local'], /parse refuses: conflicting permissions/],
+      ];
+      for (const [echo, re] of cases) {
+        extension.setExtension(withEcho(() => echo));
+        assert.throws(() => granted([], [A_READ, { streamId: '*', level: 'read' }, { streamId: ':system:email', level: 'read' }]), re, echo.join(' '));
+      }
+    });
+    it('[OXC6] a requested token echoed after the grant narrowed below it is refused; the honest narrower token passes', () => {
+      extension.setExtension(withEcho(() => ['data/a.write']));
+      assert.throws(() => granted(['data/a.write'], [A_READ]), /stream a contribute \(held: read\)/);
+      extension.setExtension(withEcho(() => ['data/a.read']));
+      assert.deepEqual(granted(['data/a.write'], [A_READ]), ['data/a.read']);
+    });
+    it('[OXC7] an echo leaving held reach unnamed is accepted and logged', () => {
+      extension.setExtension(withEcho(() => ['data/a.read']));
+      const warnings = [];
+      const origWarn = console.warn;
+      console.warn = (...a) => warnings.push(a.join(' '));
+      let out;
+      try {
+        out = granted(['data/*.read'], [A_READ, B_READ]);
+        // A complete echo logs nothing.
+        extension.setExtension(withEcho(() => ['data/*.read']));
+        granted(['data/*.read'], [A_READ, B_READ, { streamId: 'c', level: 'none' }]);
+      } finally {
+        console.warn = origWarn;
+      }
+      assert.deepEqual(out, ['data/a.read']);
+      assert.equal(warnings.length, 1, warnings.join('\n'));
+      assert.match(warnings[0], /client reg-app leaves held reach unnamed: stream b read/);
+    });
+    it('[OXC8] more than 1000 echoed tokens are refused before any parse', () => {
+      extension.setExtension(withEcho(() => Array.from({ length: 1001 }, (_v, i) => 'who' + i)));
+      assert.throws(() => granted([], [A_READ]), /more than 1000 tokens/);
+      assert.equal(parseCalls, 0);
+      // One element carrying 1001 tokens counts as 1001 tokens.
+      extension.setExtension(withEcho(() => [Array.from({ length: 1001 }, (_v, i) => 'who' + i).join(' ')]));
+      assert.throws(() => granted([], [A_READ]), /more than 1000 tokens/);
+      assert.equal(parseCalls, 0);
+      // Duplicates count once; empty elements yield no token.
+      extension.setExtension(withEcho(() => Array.from({ length: 1001 }, () => 'data/a.read')));
+      assert.deepEqual(granted([], [A_READ]), ['data/a.read']);
+      extension.setExtension(withEcho(() => ['data/a.read', '', '  ']));
+      assert.deepEqual(granted(['data/a.read'], [A_READ], ['offline_access']), ['offline_access', 'data/a.read']);
+      extension.setExtension(withEcho(() => ['']));
+      assert.deepEqual(granted([], [A_READ]), []);
+    });
+    it('[OXC9] the echo parse is memoised per extension, client row and echoed string', () => {
+      extension.setExtension(withEcho(() => ['data/a.read']));
+      granted([], [A_READ]);
+      granted([], [A_READ, B_READ]);
+      assert.equal(parseCalls, 1);
+      scopeGrammar.grantedScopeTokens({ ...client, updatedAt: 2 }, [], [], [A_READ]);
+      assert.equal(parseCalls, 2);
+      extension.setExtension(withEcho(() => ['data/a.read']));
+      granted([], [A_READ]);
+      assert.equal(parseCalls, 3);
+      extension.setExtension(withEcho(() => ['data/a.read', 'who']));
+      granted([], [A_READ]);
+      assert.equal(parseCalls, 4);
+      // Coverage is recomputed on every call: the memo holds the parse, not the verdict.
+      assert.throws(() => granted([], [B_READ]), /stream a read \(held: none\)/);
+      assert.equal(parseCalls, 4);
+    });
+    it('[OXC10] feature entries: an allowed feature the session lacks is refused, a forbidden one always passes', () => {
+      const held = [A_READ, { feature: 'selfRevoke', setting: 'allowed' }];
+      extension.setExtension(withFeatureTokens(() => ['data/a.read', 'feat/webhooks.allowed']));
+      assert.throws(() => granted([], held), /feature webhooks allowed \(held: none\)/);
+      // The default restriction of a registry session: a held forbid never covers an allowed claim.
+      assert.throws(() => granted([], [A_READ, { feature: 'webhooks', setting: 'forbidden' }]), /feature webhooks allowed \(held: forbidden\)/);
+      extension.setExtension(withFeatureTokens(() => ['data/a.read', 'feat/webhooks.forbidden']));
+      assert.deepEqual(granted([], held), ['data/a.read', 'feat/webhooks.forbidden']);
+      extension.setExtension(withFeatureTokens(() => ['data/a.read', 'feat/selfRevoke.allowed']));
+      assert.deepEqual(granted([], held), ['data/a.read', 'feat/selfRevoke.allowed']);
     });
   });
 
@@ -934,12 +1080,36 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(rt.statusCode, 400, rt.raw);
       assert.equal(rt.body.error, 'invalid_request');
     });
-    it('[OXT10] an echo outside the requested tokens is an extension error (500, no refresh row)', async () => {
+    it('[OXT10] an echo beyond the session is an extension error: 500 at the exchange (no refresh row, session removed), 500 at refresh (the token works again once fixed)', async () => {
       const platform = fakePlatform(); await seed(platform);
-      extension.setExtension({ ...toyExtension(), scopeGrammar: { ...toyExtension().scopeGrammar, echo: () => ['data/*.read', 'never-asked'] } });
-      const { token } = await flow({ platform, config: fakeConfig() });
+      const beyond = { ...toyExtension(), scopeGrammar: { ...toyExtension().scopeGrammar, echo: () => ['data/*.read', 'data/a.write'] } };
+      extension.setExtension(beyond);
+      const revoked = [];
+      const { token } = await flow({ platform, config: fakeConfig(), more: { revokeAccessLocal: async (p) => { revoked.push(p.accessId); } } });
       assert.equal(token.statusCode, 500, token.raw);
+      assert.equal(token.body.error, 'server_error');
+      assert.equal(token.body.error_description, 'failed to build the token response');
       assert.equal([...platform._state.keys()].some((k) => k.startsWith('oauth-rt/')), false);
+      assert.deepEqual(revoked, ['session-1']);
+      // Refresh: refused, the new session removed, the consumed row restored.
+      await seedRefresh(platform, 'RT-E');
+      const rRevoked = [];
+      const rt = await refresh(platform, 'RT-E', refreshedMint([{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }]),
+        { revokeAccessLocal: async (p) => { rRevoked.push(p.accessId); } });
+      assert.equal(rt.statusCode, 500, rt.raw);
+      assert.equal(rt.body.error, 'server_error');
+      assert.deepEqual(rRevoked, ['session-9']);
+      // The grammar fixed: the same refresh token rotates, nothing is revoked.
+      extension.setExtension(toyExtension());
+      const chainRevokes = [];
+      const retry = fakeRes();
+      await handleToken(tokenDeps(platform, fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }), {
+        mintRefreshedAccess: refreshedMint([{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }]),
+        revokeChain: async (p) => { chainRevokes.push(p); },
+      }))({ headers: {}, body: { grant_type: 'refresh_token', refresh_token: 'RT-E', client_id: 'reg-app' } }, retry);
+      assert.equal(retry.statusCode, 200, retry.raw);
+      assert.deepEqual(retry.body.scope.split(' ').sort(), ['ctx/patient', 'data/a.read', 'data/b.read', 'offline_access']);
+      assert.deepEqual(chainRevokes, []);
     });
   });
 

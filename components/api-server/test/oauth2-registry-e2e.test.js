@@ -60,6 +60,51 @@ const toyExtension = {
   tokenResponse: (ctx) => (ctx.scopeTokens.includes('ctx/user') ? { user: ctx.subject } : {}),
 };
 
+// Two-level grammar: `cat/<group>.read` reads every stream of a group,
+// `read/<s>` one stream, `write/<s>` contributes to it; `ctx/user` is a
+// context token. Its echo names the largest groups the permissions fully
+// read, then one `read/<s>` per readable stream no echoed group covers
+// (tokens the client may never have requested), so it never understates.
+const GROUPS = { 'cat/all': ['health', 'diary', 'notes'], 'cat/vitals': ['health'] };
+let twoLevelEchoOverride = null;
+const twoLevelExtension = {
+  apiVersion: 1,
+  name: 'two-level-e2e',
+  scopeGrammar: {
+    parse (scopeString) {
+      const tokens = [...new Set(scopeString.split(/\s+/).filter((t) => t !== ''))];
+      const levels = new Map();
+      for (const t of tokens) {
+        if (t === 'ctx/user') continue;
+        const group = GROUPS[t.replace(/\.read$/, '')];
+        const entries = t.endsWith('.read') && group != null
+          ? group.map((s) => [s, 'read'])
+          : t.startsWith('read/') ? [[t.slice(5), 'read']] : t.startsWith('write/') ? [[t.slice(6), 'contribute']] : null;
+        if (entries == null) return { ok: false, description: 'unknown token ' + t };
+        for (const [s, l] of entries) if (levels.get(s) !== 'contribute') levels.set(s, l);
+      }
+      const permissions = [...levels.entries()].map(([streamId, level]) => ({ streamId, level }));
+      return { ok: true, tokens, offer: { permissions, allowUserChoice: true } };
+    },
+    echo (ctx) {
+      if (twoLevelEchoOverride != null) return twoLevelEchoOverride(ctx);
+      const { permissions, requestedTokens } = ctx;
+      const readable = permissions.filter((p) => p.level === 'read' || p.level === 'contribute').map((p) => p.streamId);
+      const out = [];
+      const named = new Set();
+      for (const [g, streams] of Object.entries(GROUPS)) {
+        if (streams.every((s) => readable.includes(s)) && streams.some((s) => !named.has(s))) {
+          out.push(g + '.read');
+          for (const s of streams) named.add(s);
+        }
+      }
+      for (const s of readable) if (!named.has(s)) out.push('read/' + s);
+      if (requestedTokens.includes('ctx/user')) out.push('ctx/user');
+      return out;
+    },
+  },
+};
+
 /** What a registry grant forbids unless the client row allows it. */
 const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }];
 
@@ -81,7 +126,7 @@ function pkce () {
 describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)', function () {
   this.timeout(60000);
 
-  let username, personalToken, fixtures, restoreConfig, clientId, wideClientId, writerClientId, pairwiseClientId, userId, platformDB;
+  let username, personalToken, fixtures, restoreConfig, clientId, wideClientId, writerClientId, pairwiseClientId, twoLevelClientId, userId, platformDB;
 
   async function registry (id, extra) {
     await oauth2.persistClient(platformDB, {
@@ -110,7 +155,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     userId = user.attrs.id;
     await user.access({ token: personalToken, type: 'personal' });
     await user.session(personalToken);
-    for (const id of ['health', 'diary']) {
+    for (const id of ['health', 'diary', 'notes']) {
       const res = await coreRequest.post('/' + username + '/streams').set('Authorization', personalToken).send({ id, name: id });
       assert.equal(res.status, 201, JSON.stringify(res.body));
     }
@@ -132,12 +177,18 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     await registry(writerClientId, { scope: ['write/diary'] });
     pairwiseClientId = 'Pw.' + cuid().slice(-10);
     await registry(pairwiseClientId, { scope: ['read/health', 'ctx/user'], subjectType: 'pairwise' });
+    // Registered with the two-level grammar's vocabulary.
+    twoLevelClientId = 'Two.' + cuid().slice(-10);
+    await registry(twoLevelClientId, {
+      scope: ['cat/all.read', 'ctx/user'],
+      grantTypes: ['authorization_code', 'refresh_token'],
+    });
   });
 
   after(async function () {
     oauth2.extension._resetForTests();
     if (restoreConfig != null) restoreConfig();
-    for (const id of [clientId, wideClientId, writerClientId, pairwiseClientId]) {
+    for (const id of [clientId, wideClientId, writerClientId, pairwiseClientId, twoLevelClientId]) {
       if (id != null) { try { await storage.deleteClient(platformDB, id); } catch (_) { /* best-effort */ } }
     }
     if (fixtures != null) await fixtures.clean();
@@ -157,7 +208,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
   }
 
   /** Authorize + offer + accept; returns the accept answer (not asserted). */
-  async function consent (scope, cid = clientId, who = { username, token: personalToken }) {
+  async function consent (scope, cid = clientId, who = { username, token: personalToken }, keep = null) {
     const { verifier, challenge } = pkce();
     const authRes = await authorize(scope, cid, challenge);
     assert.equal(authRes.status, 302, JSON.stringify(authRes.body) + authRes.text);
@@ -166,8 +217,9 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const signedState = new URL(loc).searchParams.get('state');
     const offerRes = await coreRequest.post('/oauth2/authorize/offer').send({ state: signedState });
     assert.equal(offerRes.status, 200, JSON.stringify(offerRes.body));
+    const offered = offerRes.body.offer.permissions;
     const acceptRes = await coreRequest.post('/oauth2/authorize/accept').send({
-      state: signedState, username: who.username, userToken: who.token, grantedPermissions: offerRes.body.offer.permissions,
+      state: signedState, username: who.username, userToken: who.token, grantedPermissions: keep == null ? offered : offered.filter(keep),
     });
     return { verifier, offer: offerRes.body, accept: acceptRes };
   }
@@ -178,8 +230,8 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     });
   }
 
-  async function runFlow (scope = 'offline_access read/health ctx/user', cid = clientId, who) {
-    const c = await consent(scope, cid, who);
+  async function runFlow (scope = 'offline_access read/health ctx/user', cid = clientId, who, keep = null) {
+    const c = await consent(scope, cid, who, keep);
     assert.equal(c.accept.status, 200, JSON.stringify(c.accept.body));
     const code = new URL(c.accept.body.redirectTo).searchParams.get('code');
     const tokenRes = await exchange(code, c.verifier, cid);
@@ -187,8 +239,14 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     return { offer: c.offer, token: tokenRes.body };
   }
 
-  function refresh (refreshToken) {
-    return coreRequest.post('/oauth2/token').type('form').send({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId });
+  function refresh (refreshToken, cid = clientId) {
+    return coreRequest.post('/oauth2/token').type('form').send({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: cid });
+  }
+
+  async function sessionsOf (cid) {
+    const res = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body.accesses.filter((a) => a.name === 'oauth:' + cid);
   }
 
   function accessPath (id) {
@@ -384,6 +442,66 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     const sessions = (await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken))
       .body.accesses.filter((a) => a.name === 'oauth:' + clientId);
     assert.deepEqual(sessions, []);
+  });
+
+  it('[OREG13] partial consent: the scope names the narrowed and per-stream tokens the session holds (unrequested), at the exchange and at refresh; sent back, it re-derives the same offer', async () => {
+    oauth2.extension.setExtension(twoLevelExtension);
+    try {
+      const r = await runFlow('offline_access cat/all.read ctx/user', twoLevelClientId, undefined, (p) => p.streamId !== 'notes');
+      assert.deepEqual(r.token.scope.split(' ').sort(), ['cat/vitals.read', 'ctx/user', 'offline_access', 'read/diary']);
+      const info = await coreRequest.get('/' + username + '/access-info').set('Authorization', r.token.access_token);
+      assert.equal(info.status, 200, JSON.stringify(info.body));
+      // The data streams the session holds (access-info adds the session's own audit stream and the account mask).
+      const held = streamsOf(info.body.permissions.filter((p) => !String(p.streamId ?? '').startsWith(':')));
+      assert.deepEqual(held, ['diary:read', 'health:read']);
+
+      const res = await refresh(r.token.refresh_token, twoLevelClientId);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.deepEqual(res.body.scope.split(' ').sort(), r.token.scope.split(' ').sort());
+
+      // Round trip: the answered scope, sent back to /authorize, offers what the session holds.
+      const authRes = await authorize(res.body.scope, twoLevelClientId);
+      assert.equal(authRes.status, 302, authRes.text);
+      const signedState = new URL(authRes.headers.location).searchParams.get('state');
+      assert.ok(signedState, 'not sent to consent: ' + authRes.headers.location);
+      const offerRes = await coreRequest.post('/oauth2/authorize/offer').send({ state: signedState });
+      assert.equal(offerRes.status, 200, JSON.stringify(offerRes.body));
+      assert.deepEqual(streamsOf(offerRes.body.offer.permissions), held);
+    } finally {
+      oauth2.extension.setExtension(toyExtension);
+    }
+  });
+
+  it('[OREG14] an echo claiming a stream or a level the session does not hold: 500 at the exchange (session removed) and at refresh; the refresh token works again once the grammar is fixed', async () => {
+    oauth2.extension.setExtension(twoLevelExtension);
+    try {
+      const good = await runFlow('offline_access cat/all.read ctx/user', twoLevelClientId);
+      for (const beyond of [['cat/all.read', 'read/elsewhere'], ['cat/all.read', 'write/diary']]) {
+        twoLevelEchoOverride = () => beyond;
+        // Code exchange: refused, the session minted at /accept is removed.
+        const before = (await sessionsOf(twoLevelClientId)).map((s) => s.id).sort();
+        const c = await consent('offline_access cat/all.read ctx/user', twoLevelClientId);
+        assert.equal(c.accept.status, 200, JSON.stringify(c.accept.body));
+        const code = new URL(c.accept.body.redirectTo).searchParams.get('code');
+        const tok = await exchange(code, c.verifier, twoLevelClientId);
+        assert.equal(tok.status, 500, JSON.stringify(tok.body));
+        assert.equal(tok.body.error, 'server_error');
+        assert.equal(tok.body.error_description, 'failed to build the token response');
+        assert.deepEqual((await sessionsOf(twoLevelClientId)).map((s) => s.id).sort(), before);
+        // Refresh: refused, nothing burned.
+        const rt = await refresh(good.token.refresh_token, twoLevelClientId);
+        assert.equal(rt.status, 500, JSON.stringify(rt.body));
+        assert.equal(rt.body.error, 'server_error');
+        assert.deepEqual((await sessionsOf(twoLevelClientId)).map((s) => s.id).sort(), before);
+      }
+      twoLevelEchoOverride = null;
+      const fixed = await refresh(good.token.refresh_token, twoLevelClientId);
+      assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
+      assert.deepEqual(fixed.body.scope.split(' ').sort(), ['cat/all.read', 'ctx/user', 'offline_access']);
+    } finally {
+      twoLevelEchoOverride = null;
+      oauth2.extension.setExtension(toyExtension);
+    }
   });
 });
 

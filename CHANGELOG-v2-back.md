@@ -9,9 +9,10 @@
   `routes/oauth2/grants.ts`, the storage-direct session paths of `/token` in `routes/oauth2/sessions.ts`,
   the refresh-chain collapse on reuse in `routes/oauth2/revoke.ts`.
 - New oauth2 modules: `extension.ts` (contract, hook runner), `scopeGrammar.ts` (whole-scope dispatch,
-  core guards, digest, echo bound; `PSEUDONYM_SUBJECTS_AVAILABLE` switch, also exported by the
-  component), `responseHooks.ts`, `routes/offer.ts`, `registryBootCheck.ts`, `sessionIndex.ts`,
-  `clientAuth.ts` (`decodeBasicAuth`, moved from the token route).
+  core guards, digest, echo bound: the echo's own parse, memoised per client row and echo string;
+  `PSEUDONYM_SUBJECTS_AVAILABLE` switch, also exported by the component), `responseHooks.ts`,
+  `routes/offer.ts`, `registryBootCheck.ts`, `sessionIndex.ts`, `clientAuth.ts` (`decodeBasicAuth`,
+  moved from the token route).
 - New config key `oauth:extensionHookTimeoutMs` (default 5000): bound on each asynchronous extension
   hook; a hook that does not answer in time fails the token request (500, before any new refresh row).
   On a refresh, the consumed refresh row is put back and its reuse marker removed on any server-side

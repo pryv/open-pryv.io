@@ -38,8 +38,18 @@
  *     `a` and `:local:a` are the same stream);
  *   - no `defaultName` / `name` on a permission (consent must never create
  *     a stream; they are removed and logged);
- *   - `echo` may only answer tokens the client requested (a server error
- *     otherwise).
+ *   - `echo` answers the scope string that, parsed by this grammar as a
+ *     request, names what the minted permissions hold: it may name tokens
+ *     the client did not request (a narrowed token, a per-stream token, a
+ *     marker that expands to no permission), it may never claim a stream or
+ *     a level the permissions do not hold (an extension error,
+ *     `server_error`), and it should not leave held reach unnamed (logged).
+ *     The core parses the echoed string whole, with `purpose: 'request'`, so
+ *     the request rules above apply to it; a stream entry is held only by an
+ *     entry on the same stream (no inheritance through the stream tree, a
+ *     stream held at `none` is not held), a feature entry by the same entry
+ *     (a `forbidden` one always passes). At most 1000 tokens, never a core
+ *     token (`openid`, `offline_access`: the core adds them).
  *
  * `entryLabels` (optional, display only, passed through to the consent UI
  * unchanged): keyed by `s|<streamId>|<level>` for a stream entry and
@@ -110,6 +120,13 @@ export type OAuthExtension = {
   name: string;
   scopeGrammar: {
     parse (scopeString: string, ctx: { client: ClientView; purpose: 'request' | 'max' }): ParseResult;
+    /**
+     * The scope tokens naming what `permissions` (the minted session's)
+     * hold, `requestedTokens` being the grammar tokens of the request. Parsed
+     * again by `parse` as a request and checked against `permissions`: may
+     * name unrequested tokens, may never claim reach not held (see the
+     * contract rules above).
+     */
     echo (ctx: { permissions: ExtPermission[]; requestedTokens: string[]; client: ClientView }): string[];
     supported? (): string[];
   };
