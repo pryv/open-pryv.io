@@ -20,6 +20,36 @@ registerScopeParser('ext', (body) => {
 
 The registry is **process-global** — register at boot, before `registerRoutes(app, deps)` runs. Every whitespace-separated token in the OAuth `scope` parameter is split at its first `:` and handed to the parser of that namespace; a token without a namespace prefix, or with an unregistered one, is rejected with `invalid_scope`.
 
+This per-token path serves **app-account clients** only. Registry clients hand their whole scope string to the operator's OAuth extension instead (next section): prefer an extension over a new namespace parser when the vocabulary is not Pryv's own.
+
+## Writing an OAuth extension (registry clients)
+
+A registry client's scope vocabulary comes from a module the operator installs with `customExtensions:oauthExtension` (options in `oauth:extensionOptions`, hook bound `oauth:extensionHookTimeoutMs`). The contract is the header and the types of `src/extension.ts`; the dispatch is `src/scopeGrammar.ts`; the token response is `src/responseHooks.ts`. The operator side is in [`docs/oauth2.md`](../../docs/oauth2.md) § 1c to § 3b.
+
+The module exports a factory `(host: { apiVersion, options, logger }) => { apiVersion: 1, name, scopeGrammar: { parse, echo, supported? }, tokenResponse? }`. `idTokenClaims`, `introspectionClaims` and `claimsSupported` are part of the contract (validated when present) but not called by this core yet. A factory or object that breaks the contract fails the boot.
+
+`scopeGrammar.parse(scopeString, { client, purpose })` answers `{ ok: true, tokens, offer }` or `{ ok: false, description }`. `purpose` is `'max'` for the client's registered scope (its maximum scope set) and `'request'` for a request (and for the echo check below). The rules the core enforces:
+
+- **Pure and deterministic** in (scope string, client). The offer is not carried in the signed state: it is re-derived at `/oauth2/authorize/offer` and `/accept` and pinned by a digest, so a grammar that answers differently between calls makes every consent fail as out of date.
+- `tokens` are the request tokens the grammar recognised; reporting a token the client did not send is refused.
+- **One permission entry per stream** after canonicalisation (`a` and `:local:a` are one stream), at most 1000 entries. Account and system streams, every stream (`*`) and the `manage` level are refused whatever the grammar answers. `defaultName` / `name` are removed and logged: a registry consent never creates a stream.
+- A forbidden feature in an offer is always mandatory; one marked `optIn` is refused.
+- `allowUserChoice` is the grammar's choice (core default `false`, all-or-nothing). Set it to let the user untick entries; mark entries the app cannot run without `mandatory`.
+- `randomAlias: true` asks for a pseudonymous subject: refused on this core for now (`invalid_scope`), like every request of a `pairwise` client.
+- `entryLabels` (optional, display only) are keyed `s|<streamId>|<level>` / `f|<feature>|<setting>`, values `{ [lang]: text }`; passed through to the consent UI unchanged.
+- `openid` and `offline_access` are the core's tokens: the grammar never sees them.
+
+`scopeGrammar.echo({ permissions, requestedTokens, client })` answers the scope tokens naming what `permissions` (the minted session's) hold. The core parses the echoed string **whole**, with `purpose: 'request'`, so every request rule above applies to it, and then checks:
+
+- every parsed stream entry is held by an entry **on the same stream** (no inheritance through the stream tree; a stream held at `none` is not held) at a level that does not exceed it; a feature entry by the same entry (`forbidden` always passes). A violation is an extension error: `500 server_error` at `/oauth2/token`, logged, and a refresh refused this way leaves the refresh token usable;
+- tokens the client did not request are fine (a narrowed token after a partial consent, a per-stream token, a marker expanding to no permission);
+- held stream reach that the echo leaves unnamed is logged as a warning (one line per response);
+- at most 1000 tokens, never `openid` / `offline_access`.
+
+Make the round trip a test on the extension's side: the echoed scope sent back to `/oauth2/authorize` should re-derive an offer equal to the session's data streams.
+
+`tokenResponse(ctx)` may add fields to the token response. `ctx.subject` is the user's internal id (never the username, not routable), `ctx.scopeTokens` the granted tokens (core tokens plus the echo), `ctx.permissions` the minted permissions. A hook that throws, times out, returns a non-object or sets a reserved key (`RESERVED_KEYS` in `src/extension.ts`) fails the request with `500 server_error` before any refresh token is stored (fail closed).
+
 ## Adding a new grant type
 
 Each `grant_type` lives in `src/grants/<grant_type>.ts` and exports a single `handle(req, res, deps)` function. Register in `src/routes/token.ts`:
@@ -78,9 +108,13 @@ The App account IS the OAuth2 client. Its `:_app:*` streams carry RFC 7591 metad
 
 `getClient(clientId)` reads from the PlatformDB cache row `oauth-client/<clientId>`, NOT directly from the App-account streams. The cache is refreshed by the CLI at every write (`create` / `update` / `revoke`) atomically. Cross-core consistency: PlatformDB is rqlite-replicated.
 
+**Registry clients** (`kind: 'registry'`, written by `create-registry`) have no app account: the `oauth-client/<clientId>` row is the whole registration (validated by `persistClient` in `src/clientRegistry.ts`). Their durable consent record is an app access `oauth-grant:<clientId>` on the user's account; their default forbidden features are `REGISTRY_DEFAULT_FORBIDDEN_FEATURES` minus the row's `allowFeatures`.
+
+**`clientData.oauth` is server-owned** on every OAuth access (a session's `{ dataGrantId, chain }`, a registry grant's client): `accesses.create` refuses it and `accesses.update` refuses any change to it. Write it storage-direct from the OAuth flow only.
+
 ## What NOT to do here
 
-- **Do not store `client_secret` plaintext anywhere.** The CLI hashes it with Argon2id at creation time; only the hash leaves the operator's terminal.
+- **Do not store `client_secret` plaintext anywhere.** The CLI hashes it with bcrypt at creation time; only the hash leaves the operator's terminal.
 - **Do not extend `oauth-client/<clientId>` with credentials.** By design, that keyspace is metadata-only. `client_secret_hash` IS permitted (one-way; not a usable credential by itself); plaintexts and reversible encryption are not.
 - **Do not match `redirect_uri` with regex or prefix.** Exact match only, with the loopback carve-out (`127.0.0.1` / `[::1]` may vary port). See `INTERNALS.md` for the matcher rules.
 - **Do not redirect back to a supplied `redirect_uri` on validation failure.** Render an HTML 400 instead — defends against open-redirector phishing.

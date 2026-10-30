@@ -861,7 +861,7 @@ function printUsage (stream) {
     '                            on its grants otherwise)\n\n' +
     'Flags (create / update):\n' +
     '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
-    '                            the account username. 4-64 chars of A-Z a-z 0-9 . _ ~ -\n' +
+    '                            the account username. 4-64 chars of A-Z a-z 0-9 . ~ -\n' +
     '                            Use it where the username must not reach the platform\n' +
     '                            store or the wire (hashed-PII deployments)\n' +
     '  --redirect-uri <uri>      (multi-valued; at least one required on create)\n' +
