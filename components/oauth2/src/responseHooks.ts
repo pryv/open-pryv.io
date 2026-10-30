@@ -18,13 +18,10 @@
  * App-account clients do not go through here: their response is unchanged.
  */
 
-import { createRequire } from 'node:module';
 import type { OAuthClient } from './storage.ts';
 import type { HookCtx, ExtPermission } from './extension.ts';
-const require = createRequire(import.meta.url);
-
-const { runHook, toClientView, RESERVED_KEYS } = require('./extension.ts');
-const { grantedScopeTokens } = require('./scopeGrammar.ts');
+import { runHook, toClientView, RESERVED_KEYS } from './extension.ts';
+import { grantedScopeTokens } from './scopeGrammar.ts';
 
 export type RegistryGrant = {
   client: OAuthClient;

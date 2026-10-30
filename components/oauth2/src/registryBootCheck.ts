@@ -18,16 +18,12 @@
  * must not take the core down.
  */
 
-import { createRequire } from 'node:module';
-
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from './storage.ts';
-const require = createRequire(import.meta.url);
-
-const storage = require('./storage.ts');
-const { checkMaxSet } = require('./scopeGrammar.ts');
-const { insecureRedirectUris } = require('./clientRegistry.ts');
-const { logServerWarning } = require('./serverLog.ts');
+import * as storage from './storage.ts';
+import { checkMaxSet } from './scopeGrammar.ts';
+import { insecureRedirectUris } from './clientRegistry.ts';
+import { logServerWarning } from './serverLog.ts';
 
 /** Check every registry client of the platform. Resolves to the number of warnings. */
 export async function checkRegistryClients (platform: PlatformDB): Promise<number> {

@@ -29,17 +29,13 @@
  */
 
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 import type { OAuthClient } from './storage.ts';
 import type { ExtPermission, SynthOffer, OAuthExtension } from './extension.ts';
-const require = createRequire(import.meta.url);
-
-const { getExtension, toClientView, extensionGeneration } = require('./extension.ts');
-const { logServerError } = require('./serverLog.ts');
-const { normalizePermissions, isStreamPermission, levelCapabilityExcess, permissionKey } =
-  require('business/src/accesses/permissionSet.ts');
-const { canonicalStreamId, parseStoreIdAndStoreItemId, AccountStoreId } =
-  require('mall/src/helpers/storeDataUtils.ts');
+import type { Permission } from 'business/src/types/public.ts';
+import { getExtension, toClientView, extensionGeneration } from './extension.ts';
+import { logServerError } from './serverLog.ts';
+import { normalizePermissions, isStreamPermission, levelCapabilityExcess, permissionKey } from 'business/src/accesses/permissionSet.ts';
+import { canonicalStreamId, parseStoreIdAndStoreItemId, AccountStoreId } from 'mall/src/helpers/storeDataUtils.ts';
 
 /** Scope tokens the core owns (never handed to the grammar). */
 export const CORE_SCOPE_TOKENS = ['openid', 'offline_access'];
@@ -260,8 +256,9 @@ function coveredBy (p: ExtPermission, max: ExtPermission[]): boolean {
     return max.some((m) => isStreamPermission(m) && canonicalStreamId(String(m.streamId)) === id &&
       levelCapabilityExcess(p.level, m.level).length === 0);
   }
-  const k = permissionKey(p);
-  return max.some((m) => permissionKey(m) === k);
+  // Entries here went through normalizePermissions: lexicon-shaped.
+  const k = permissionKey(p as unknown as Permission);
+  return max.some((m) => permissionKey(m as unknown as Permission) === k);
 }
 
 /** Digest of what the consent shows: grammar identity, client version, offer. */

@@ -10,10 +10,8 @@
  * (`grants.ts`, `sessions.ts`, `revoke.ts`) and the mount (`../oauth2.ts`).
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-
-const { permissionKey } = require('business/src/accesses/permissionSet.ts');
+import type { Permission } from 'business/src/types/public.ts';
+import { permissionKey } from 'business/src/accesses/permissionSet.ts';
 
 /**
  * Structural view of the members this module touches on a business
@@ -118,8 +116,9 @@ export function withSessionSelfRevoke (permissions: Array<Record<string, unknown
  * changed, so the merge result is written.
  */
 export function samePermissionKeys (a: Array<Record<string, unknown>>, b: Array<Record<string, unknown>>): boolean {
-  const ka: string[] = a.map(permissionKey);
-  const kb = new Set<string>(b.map(permissionKey));
+  const key = (p: Record<string, unknown>): string => permissionKey(p as unknown as Permission);
+  const ka: string[] = a.map(key);
+  const kb = new Set<string>(b.map(key));
   return ka.length === kb.size && new Set(ka).size === kb.size && ka.every((k) => kb.has(k));
 }
 

@@ -13,23 +13,22 @@
  * cache cluster-wide, then best-effort notify the counterparty app.
  */
 
-import { createRequire } from 'node:module';
 import type { DataGrant, GlueEnv } from './types.ts';
-const require = createRequire(import.meta.url);
-
-const oauth2 = require('oauth2');
-const { peerFetch } = require('business/src/outbound/peerFetch.ts');
-const { parseAccessRef } = require('business/src/accesses/refs.ts');
-const cache = require('cache').default;
-const { pubsub } = require('messages');
-const { fromCallback } = require('utils');
+import * as oauth2 from 'oauth2';
+import { peerFetch } from 'business/src/outbound/peerFetch.ts';
+import { parseAccessRef } from 'business/src/accesses/refs.ts';
+import cache from 'cache';
+import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
+import { fromCallback } from 'utils';
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
-const { deleteAccessChain, accessChainIds } = require('../../methods/helpers/accessDeletion.ts');
+import { deleteAccessChain, accessChainIds } from '../../methods/helpers/accessDeletion.ts';
 // CMC back-channel revoke notify: pure DI HTTP sender, no MethodContext needed.
-const { outbound: cmcOutbound } = require('cmc');
-const cmcRelationshipKey = require('cmc/src/relationshipKey.ts');
-const { selfIdentityHost } = require('../../methods/helpers/selfIdentityHost.ts');
-const { accessesRepo } = require('./types.ts');
+import * as cmc from 'cmc';
+import * as cmcRelationshipKey from 'cmc/src/relationshipKey.ts';
+import { selfIdentityHost } from '../../methods/helpers/selfIdentityHost.ts';
+import { accessesRepo } from './types.ts';
+
+const cmcOutbound = cmc.outbound;
 
 export function createRevoke (env: GlueEnv) {
   const { config, storageLayer, logger } = env;
@@ -79,7 +78,7 @@ export function createRevoke (env: GlueEnv) {
           logger.warn('oauth2.revokeChain: could not read the chain of ' + id + ', soft-deleting it alone', readErr);
         }
         for (const chainId of ids) {
-          await fromCallback((cb: (e: unknown) => void) => accessesRepository.delete(user, { id: chainId }, cb));
+          await fromCallback((cb: (e: unknown, r?: unknown) => void) => accessesRepository.delete(user, { id: chainId }, cb));
         }
       }
     }
@@ -89,7 +88,7 @@ export function createRevoke (env: GlueEnv) {
     //    unsetUserData clears every access-logic for the user cluster-wide,
     //    covering a row the bare fallback above deleted.
     cache.unsetUserData(userId);
-    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
     await oauth2.emitAudit('oauth.token.revoked', { clientId, userId, reason: 'refresh-token reuse detected' });
 
     // 5. CMC back-channel notify (best-effort). The peer ENFORCES an inbound
@@ -114,7 +113,7 @@ export function createRevoke (env: GlueEnv) {
         const value = (cmcCd as Record<string, unknown> | undefined)?.[key];
         if (typeof value === 'string') revokeContent[key] = value;
       }
-      const revokedScope = cmcRelationshipKey.scopeOfAccess(dataGrant);
+      const revokedScope = cmcRelationshipKey.scopeOfAccess(dataGrant as unknown as Parameters<typeof cmcRelationshipKey.scopeOfAccess>[0]);
       if (typeof revokedScope === 'string') revokeContent.scopeStreamId = revokedScope;
       try {
         // postToPeer returns a discriminated union: it does NOT throw on an HTTP

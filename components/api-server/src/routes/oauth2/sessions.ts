@@ -24,22 +24,20 @@
  * username resolution and the subject a registry client sees.
  */
 
-import { createRequire } from 'node:module';
 import type { DataGrant, GlueEnv } from './types.ts';
-const require = createRequire(import.meta.url);
-
 // Use @paralleldrive/cuid2 (a production dependency): the codebase migrated off
 // the old `cuid`, which is a devDependency and is pruned by `--omit=dev` builds.
-const { createId: cuid } = require('@paralleldrive/cuid2');
-const { mergeStreamPermissions } = require('business/src/accesses/permissionSet.ts');
-const { parseAccessRef } = require('business/src/accesses/refs.ts');
-const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
-const cache = require('cache').default;
-const { pubsub } = require('messages');
-const { fromCallback } = require('utils');
-const { withSessionSelfRevoke, accessesRepo } = require('./types.ts');
-const { notifyScopedAccessChange } = require('../../methods/helpers/accessDeletion.ts');
-const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
+import { createId as cuid } from '@paralleldrive/cuid2';
+import { mergeStreamPermissions } from 'business/src/accesses/permissionSet.ts';
+import { parseAccessRef } from 'business/src/accesses/refs.ts';
+import AccessLogic from 'business/src/accesses/AccessLogic.ts';
+import cache from 'cache';
+import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
+import { fromCallback, ApiEndpoint } from 'utils';
+import { getUsersLocalIndex } from 'storage';
+import { withSessionSelfRevoke, accessesRepo } from './types.ts';
+import { notifyScopedAccessChange } from '../../methods/helpers/accessDeletion.ts';
+import { reindexAccessNonFatal } from 'platform/src/accessIndex.ts';
 
 export function createSessions (env: GlueEnv) {
   const { storageLayer } = env;
@@ -113,7 +111,6 @@ export function createSessions (env: GlueEnv) {
         ? { clientData: sessionClientData(dataGrantAccessId, dpopJkt) }
         : (dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {})),
     };
-    const ApiEndpoint = require('utils').ApiEndpoint;
     const minted: { accessId: string; accessToken: string; apiEndpoint: string } = await new Promise((resolve, reject) => {
       accessesRepository.insertOne({ id: userId, username }, newAccessRow,
         (err: unknown, newAccess: { id?: unknown; token?: unknown } | null) => {
@@ -130,7 +127,7 @@ export function createSessions (env: GlueEnv) {
     });
     // What accesses.create does after its insert: the access-change
     // notifications (coarse and scoped) and the breach-scope index row.
-    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
     notifyScopedAccessChange(username, { id: minted.accessId, type: 'app', permissions }, 'create');
     await reindexAccessNonFatal(username, { ...newAccessRow, id: minted.accessId });
     return minted;
@@ -153,7 +150,7 @@ export function createSessions (env: GlueEnv) {
       ? { ...grant.clientData }
       : {};
     const oauth = { ...((existing.oauth as Record<string, unknown> | undefined) ?? {}), grantOf: clientId };
-    await fromCallback((cb: (e: unknown) => void) =>
+    await fromCallback((cb: (e: unknown, r?: unknown) => void) =>
       accessesRepository.updateOne(user, { id: base },
         { clientData: { ...existing, oauth }, modified: Date.now() / 1000 }, cb));
     cache.unsetUserData(userId);
@@ -165,7 +162,6 @@ export function createSessions (env: GlueEnv) {
   // ---------------------------------------------------------------------
   async function resolveAccountUserId (username: string): Promise<string | null> {
     if (typeof username !== 'string' || username.length === 0) return null;
-    const { getUsersLocalIndex } = require('storage');
     const usersIndex = await getUsersLocalIndex();
     const id = await usersIndex.getUserId(username);
     return typeof id === 'string' && id.length > 0 ? id : null;
@@ -178,7 +174,6 @@ export function createSessions (env: GlueEnv) {
   // ---------------------------------------------------------------------
   async function resolveUsername (userId: string): Promise<string | null> {
     if (typeof userId !== 'string' || userId.length === 0) return null;
-    const { getUsersLocalIndex } = require('storage');
     const usersIndex = await getUsersLocalIndex();
     const name = await usersIndex.getUsername(userId);
     return typeof name === 'string' && name.length > 0 ? name : null;
@@ -280,11 +275,11 @@ export function createSessions (env: GlueEnv) {
     // tamper-evidence hash over the post-update row itself (it skips the
     // recompute when `modified` is absent): hand-computing the hash here
     // would have to replicate the storage layer's canonicalization.
-    await fromCallback((cb: (e: unknown) => void) =>
+    await fromCallback((cb: (e: unknown, r?: unknown) => void) =>
       accessesRepository.updateOne(user, { id: accessId },
         { clientData: { ...existingClientData, dpop: { jkt } }, modified: Date.now() / 1000 }, cb));
     cache.unsetUserData(userId);
-    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
   }
 
   // ---------------------------------------------------------------------
@@ -311,8 +306,7 @@ export function createSessions (env: GlueEnv) {
     if (access == null || access.deleted != null || typeof access.token !== 'string') return null;
     if (typeof access.expires === 'number' && access.expires <= Date.now() / 1000) return null;
     // Same builder accesses.create uses, so the exchange returns what /accept minted.
-    const ApiEndpoint = require('utils').ApiEndpoint;
-    return { accessToken: access.token, apiEndpoint: ApiEndpoint.buildForAccess(access, username) };
+    return { accessToken: access.token, apiEndpoint: ApiEndpoint.buildForAccess(access as { alias?: string | null; token?: string }, username) };
   }
 
   async function revokeAccessLocal ({ userId, username, accessId, clientId }: {
@@ -321,10 +315,10 @@ export function createSessions (env: GlueEnv) {
     const accessesRepository = accessesRepo(storageLayer, 'oauth2.revokeAccessLocal');
     if (await findOAuthSessionAccess(userId, username, accessId, clientId) == null) return;
     const user = { id: userId, username };
-    await fromCallback((cb: (e: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
+    await fromCallback((cb: (e: unknown, r?: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
     // The cache validates tokens on `expires` only, never `deleted`.
     cache.unsetUserData(userId);
-    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
   }
 
   async function mintClientAccess ({ userId, username, clientId, expiresAt }: {

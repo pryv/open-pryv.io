@@ -18,25 +18,20 @@
  * The short-TTL session is then minted from the user's granted subset.
  */
 
-import { createRequire } from 'node:module';
-import type { ConsentTrigger, AwaitConsentDeps } from '../consentPoll.ts';
+import type { ConsentTrigger } from '../consentPoll.ts';
 import type { Ctx, CmcOffer, DataGrant, GlueEnv } from './types.ts';
-const require = createRequire(import.meta.url);
-
-const { mergeStreamPermissions, PermissionMergeConflictError, stripConsentAnnotations } =
-  require('business/src/accesses/permissionSet.ts');
+import type { Permission } from 'business/src/types/public.ts';
+import { mergeStreamPermissions, PermissionMergeConflictError, stripConsentAnnotations } from 'business/src/accesses/permissionSet.ts';
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
-const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
+import { assertGrantedWithinOffer } from 'business/src/accesses/consentEffectiveGuard.ts';
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
-const { deleteAccessChain } = require('../../methods/helpers/accessDeletion.ts');
+import { deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
 // Outcome-driven CMC consent poll: keys on the trigger's terminal status so a
 // transient data-grant about to be rolled back on a peer refusal is never
 // observed as a success. See consentPoll.ts.
-const { awaitConsentOutcome } = require('../consentPoll.ts') as {
-  awaitConsentOutcome: <G>(deps: AwaitConsentDeps<G>) => Promise<G>;
-};
-const { withSessionSelfRevoke, samePermissionKeys } = require('./types.ts');
+import { awaitConsentOutcome } from '../consentPoll.ts';
+import { withSessionSelfRevoke, samePermissionKeys } from './types.ts';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -190,7 +185,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     }
     let next: Array<Record<string, unknown>>;
     if (current == null) {
-      next = stripConsentAnnotations(grantedPermissions);
+      next = stripConsentAnnotations(grantedPermissions as unknown as Parameters<typeof stripConsentAnnotations>[0]) as unknown as Array<Record<string, unknown>>;
     } else {
       const merged = mergeStreamPermissions(current.permissions ?? [], grantedPermissions, 'join');
       if (merged.conflicts.length > 0) throw new PermissionMergeConflictError(merged.conflicts);
@@ -288,8 +283,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     // broader ancestor). Reject as a consent error the endpoint maps to 400.
     const eff = await assertGrantedWithinOffer({
       userId: context.user.id,
-      granted: grantedPermissions,
-      offered: offer.permissions,
+      granted: grantedPermissions as unknown as Permission[],
+      offered: offer.permissions as unknown as Permission[],
     });
     if (!eff.ok) {
       const e = new Error(

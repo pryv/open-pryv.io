@@ -15,14 +15,10 @@
  * the index (it introspects inactive).
  */
 
-import { createRequire } from 'node:module';
-
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthSessionIndex } from './storage.ts';
-const require = createRequire(import.meta.url);
-
-const storage = require('./storage.ts');
-const { logServerError } = require('./serverLog.ts');
+import * as storage from './storage.ts';
+import { logServerError } from './serverLog.ts';
 
 /** Write the index row of a freshly minted session. Never throws. */
 export async function indexSession (platform: PlatformDB, accessToken: string, row: OAuthSessionIndex): Promise<void> {

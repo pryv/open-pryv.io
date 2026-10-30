@@ -21,19 +21,16 @@
  */
 
 import crypto from 'node:crypto';
-import { createRequire } from 'node:module';
 
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from '../storage.ts';
 import type { SignedStatePayload } from '../signedState.ts';
 import type { ResolvedScope } from '../scopeGrammar.ts';
-const require = createRequire(import.meta.url);
-
-const { verifyState } = require('../signedState.ts');
-const { getClient, isRegistryClient } = require('../clientRegistry.ts');
-const { resolveRequestedScope } = require('../scopeGrammar.ts');
-const { extensionGeneration } = require('../extension.ts');
+import { verifyState } from '../signedState.ts';
+import { getClient, isRegistryClient } from '../clientRegistry.ts';
+import { resolveRequestedScope } from '../scopeGrammar.ts';
+import { extensionGeneration } from '../extension.ts';
 
 export type OfferDeps = {
   config: { get (key: string): unknown };

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### OAuth: registry clients, extension, glue split
+
+- The OAuth glue of the API server is split: `routes/oauth2.ts` keeps the mount (user resolution, API
+  calls, extension loading, wiring); the consent records and the `/accept` session are in
+  `routes/oauth2/grants.ts`, the storage-direct session paths of `/token` in `routes/oauth2/sessions.ts`,
+  the refresh-chain collapse on reuse in `routes/oauth2/revoke.ts`.
+- New oauth2 modules: `extension.ts` (contract, hook runner), `scopeGrammar.ts` (whole-scope dispatch,
+  core guards, digest, echo bound; `PSEUDONYM_SUBJECTS_AVAILABLE` switch, also exported by the
+  component), `responseHooks.ts`, `routes/offer.ts`, `registryBootCheck.ts`, `sessionIndex.ts`,
+  `clientAuth.ts` (`decodeBasicAuth`, moved from the token route).
+- New config key `oauth:extensionHookTimeoutMs` (default 5000): bound on each asynchronous extension
+  hook; a hook that does not answer in time fails the token request (500, before any refresh row).
+- Boot pass over the registry clients: each one whose registered scope the grammar refuses, registered
+  for plain-http redirects, or stored without a subject type, is reported with a warning; never fatal.
+- Storage-direct session mints (consent, refresh, client credentials) now emit the access-change
+  notifications (coarse and scoped) and write the breach-scope index row, as `accesses.create` does.
+  Refreshed and client-credentials sessions were previously missing from that index.
+- `suspend` / `resume` of the operator CLI write the status only, without the registration rules, so a
+  row registered before a newer rule stays suspendable.
+
 ### Account fields: two writes of one field in the same millisecond both land
 
 - Account-field versions are keyed by their time (milliseconds) on PostgreSQL and SQLite. A second

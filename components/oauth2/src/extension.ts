@@ -51,11 +51,8 @@
  * in time is a hook failure.
  */
 
-import { createRequire } from 'node:module';
 import type { OAuthClient } from './storage.ts';
-const require = createRequire(import.meta.url);
-
-const { logServerError } = require('./serverLog.ts');
+import { logServerError } from './serverLog.ts';
 
 /** Contract versions this core supports. */
 export const SUPPORTED_API_VERSIONS = [1];
