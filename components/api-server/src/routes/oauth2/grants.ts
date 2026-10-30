@@ -23,9 +23,6 @@ import type { ConsentTrigger, AwaitConsentDeps } from '../consentPoll.ts';
 import type { Ctx, CmcOffer, DataGrant, GlueEnv } from './types.ts';
 const require = createRequire(import.meta.url);
 
-// Use @paralleldrive/cuid2 (a production dependency): the codebase migrated off
-// the old `cuid`, which is a devDependency and is pruned by `--omit=dev` builds.
-const { createId: cuid } = require('@paralleldrive/cuid2');
 const { mergeStreamPermissions, PermissionMergeConflictError, stripConsentAnnotations } =
   require('business/src/accesses/permissionSet.ts');
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
@@ -48,7 +45,20 @@ const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
 const REGISTRY_GRANT_PREFIX = 'oauth-grant:';
 const REGISTRY_GRANT_DEVICE = 'oauth-grant';
 
-export function createGrants (env: GlueEnv, sessions: { sessionClientData: (dataGrantAccessId: string, dpopJkt?: string) => Record<string, unknown> }) {
+/** The session-side helpers the grants need (see sessions.ts). */
+type SessionHelpers = {
+  mintAccessDirect: (params: {
+    userId: string;
+    username: string;
+    clientId: string;
+    permissions: Array<Record<string, unknown>>;
+    expiresAt: number;
+    dataGrantAccessId?: string;
+  }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
+  setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
+};
+
+export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   const { apiCall } = env;
 
   // Idempotent streams.create: swallows "already exists" only.
@@ -203,11 +213,12 @@ export function createGrants (env: GlueEnv, sessions: { sessionClientData: (data
           deviceName: REGISTRY_GRANT_DEVICE,
           permissions,
           ...(wantAlias ? { randomAlias: true } : {}),
-          clientData: { oauth: { grantOf: clientId } },
         });
         if (created?.access == null || typeof created.access.id !== 'string') {
           throw new Error('oauth2.createAccess: accesses.create returned no data-grant');
         }
+        // `clientData.oauth` is server-owned: written storage-direct.
+        await sessions.setGrantOf(context.user.id, context.user.username, created.access.id, clientId);
         return created.access;
       } catch (err: unknown) {
         // A concurrent first consent may have won the (type, name, deviceName) slot.
@@ -225,11 +236,19 @@ export function createGrants (env: GlueEnv, sessions: { sessionClientData: (data
     return grant;
   }
 
+  // The grant's identity is (type, name, deviceName), unique among live
+  // accesses; `clientData.oauth.grantOf` confirms it and is written again
+  // when missing (a grant whose stamp did not land, after a failure between
+  // the create and the stamp).
   async function findRegistryGrant (context: Ctx, clientId: string): Promise<DataGrant | null> {
     const result = await apiCall(context, 'accesses.get', {});
-    return (result?.accesses ?? []).find((a) =>
+    const grant = (result?.accesses ?? []).find((a) =>
       a?.type === 'app' && a?.name === REGISTRY_GRANT_PREFIX + clientId &&
-      a?.deviceName === REGISTRY_GRANT_DEVICE && a?.clientData?.oauth?.grantOf === clientId) ?? null;
+      a?.deviceName === REGISTRY_GRANT_DEVICE) ?? null;
+    if (grant != null && grant.clientData?.oauth?.grantOf !== clientId) {
+      await sessions.setGrantOf(context.user.id, context.user.username, grant.id, clientId);
+    }
+    return grant;
   }
 
   // ---------------------------------------------------------------------
@@ -290,28 +309,21 @@ export function createGrants (env: GlueEnv, sessions: { sessionClientData: (data
     // intersection with the data-grant stays exact.
     const permissions: Array<Record<string, unknown>> = grantedPermissions;
 
-    const expireAfter = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-    // Pryv enforces (type, name, deviceName) uniqueness on access rows.
-    // Every OAuth authorize-then-token flow mints a fresh access (its
-    // own refresh-token chain): disambiguate via a session-unique
-    // deviceName, keeping the human-readable name on the clientId.
-    const params = {
-      type: 'app',
-      name: 'oauth:' + clientId,
-      deviceName: 'oauth-session-' + cuid(),
+    // Minted storage-direct, like the refreshed sessions: the session
+    // carries the server-owned `clientData.oauth` link to its grant (the API
+    // refuses that key), no stream is created from its permissions, and it
+    // is recorded as created by the system. The consent itself was recorded
+    // above, through the API, on the grant.
+    const minted = await sessions.mintAccessDirect({
+      userId: context.user.id,
+      username: context.user.username,
+      clientId,
       permissions: withSessionSelfRevoke(permissions),
-      expireAfter,
-      clientData: sessions.sessionClientData(dataGrant.id),
-    };
-    const result = await apiCall(context, 'accesses.create', params);
-    const a = result?.access;
-    if (a == null || typeof a.id !== 'string' || typeof a.token !== 'string') {
-      throw new Error('oauth2.createAccess: accesses.create returned no usable access');
-    }
+      expiresAt,
+      dataGrantAccessId: dataGrant.id,
+    });
     return {
-      accessId: a.id,
-      accessToken: a.token as string,
-      apiEndpoint: typeof a.apiEndpoint === 'string' ? a.apiEndpoint : '',
+      ...minted,
       dataGrantAccessId: dataGrant.id,
       permissions,
     };

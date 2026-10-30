@@ -380,6 +380,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (cd != null && cd.dpop !== undefined) {
       return next(errors.forbidden('clientData.dpop is reserved for the OAuth token-issuance path and cannot be set through accesses.create.'));
     }
+    // `clientData.oauth` (a session's link to its consent grant, a grant's
+    // client) is written by the OAuth flow only, storage-direct.
+    if (cd != null && cd.oauth !== undefined) {
+      return next(errors.forbidden('clientData.oauth is reserved for the OAuth authorization flow and cannot be set through accesses.create.'));
+    }
     next();
   }
 
@@ -765,10 +770,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * the update touches clientData, the binding (present or absent) must
    * come through unchanged. Defense-in-depth: with uniform enforcement
    * a stolen bound token cannot reach this method in the first place.
-   * The link of an OAuth session to its consent data-grant
-   * (`clientData.oauth.dataGrantId`) is protected too, on a session that has
-   * one: removing or changing it would let the session outlive a withdrawn
-   * grant. Only that sub-key, and only when the update touches `oauth`:
+   * The whole `clientData.oauth` sub-object is server-owned the same way
+   * (a session's link to its consent grant: removing or changing it would let
+   * the session outlive a withdrawn grant; a grant's client): when the update
+   * touches `oauth`, it must come through unchanged (present or absent).
    * `clientData` is the app's own free-form data otherwise.
    */
   function dpopBindingUpdateGuard (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
@@ -780,12 +785,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (JSON.stringify(current ?? null) !== JSON.stringify(updated ?? null)) {
       return next(errors.forbidden('The clientData.dpop key cannot be created, changed or removed through accesses.update.'));
     }
-    const sessionLink = (currentClientData?.oauth as { dataGrantId?: unknown } | undefined)?.dataGrantId;
     const touchesOauth = updatedClientData === null || Object.prototype.hasOwnProperty.call(updatedClientData, 'oauth');
-    if (sessionLink != null && touchesOauth) {
-      const updatedLink = (updatedClientData?.oauth as { dataGrantId?: unknown } | null | undefined)?.dataGrantId;
-      if (updatedLink !== sessionLink) {
-        return next(errors.forbidden('The clientData.oauth.dataGrantId link of an OAuth session cannot be changed or removed through accesses.update.'));
+    if (touchesOauth) {
+      const currentOauth = currentClientData?.oauth ?? null;
+      const updatedOauth = updatedClientData?.oauth ?? null;
+      if (!isDeepStrictEqual(currentOauth, updatedOauth)) {
+        return next(errors.forbidden('The clientData.oauth key is written by the OAuth authorization flow only and cannot be created, changed or removed through accesses.update.'));
       }
     }
     next();

@@ -897,7 +897,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       }
     });
 
-    it('[OE33] clientData stays free-form: an update not touching the link passes, and other accesses keep their own oauth key', async function () {
+    it('[OE33] clientData stays free-form outside the server-owned oauth key: an update not touching it passes, the same oauth value passes', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
       const session = await accessInfo(r.tokenRes.body.access_token);
@@ -906,18 +906,52 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         .send({ clientData: { note: 'x' } });
       assert.equal(noteRes.status, 200, describeRes(noteRes));
       assert.equal(noteRes.body.access.clientData?.oauth?.dataGrantId, session.clientData.oauth.dataGrantId, 'the link is kept');
-      const created = await coreRequest.post('/' + username + '/accesses').set('Authorization', personalToken)
-        .send({ name: 'oe33-' + cuid(), type: 'app', permissions: [{ streamId: 'health', level: 'read' }], clientData: { oauth: { mine: 1 } } });
-      assert.equal(created.status, 201, describeRes(created));
-      // Each update bumps the access serial: address the head id it answers.
-      let headId = created.body.access.id;
-      for (const clientData of [{ oauth: { mine: 2 } }, { oauth: null }]) {
-        const res = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(headId))
+      // A get-then-put that sends the oauth key back unchanged passes.
+      const sameRes = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(noteRes.body.access.id))
+        .set('Authorization', personalToken)
+        .send({ clientData: { note: 'y', oauth: { ...session.clientData.oauth } } });
+      assert.equal(sameRes.status, 200, describeRes(sameRes));
+    });
+
+    it('[OE35] clientData.oauth is server-owned: refused on accesses.create, and set or changed on accesses.update (403)', async function () {
+      const create = await coreRequest.post('/' + username + '/accesses').set('Authorization', personalToken)
+        .send({ name: 'oe35-' + cuid(), type: 'app', permissions: [{ streamId: 'health', level: 'read' }], clientData: { oauth: { mine: 1 } } });
+      assert.equal(create.status, 403, describeRes(create));
+      const plain = await coreRequest.post('/' + username + '/accesses').set('Authorization', personalToken)
+        .send({ name: 'oe35-' + cuid(), type: 'app', permissions: [{ streamId: 'health', level: 'read' }], clientData: { mine: 1 } });
+      assert.equal(plain.status, 201, describeRes(plain));
+      for (const clientData of [{ oauth: { grantOf: 'x' } }, { oauth: { mine: 2 } }]) {
+        const res = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(plain.body.access.id))
           .set('Authorization', personalToken)
           .send({ clientData });
-        assert.equal(res.status, 200, 'clientData ' + JSON.stringify(clientData) + ': ' + describeRes(res));
-        headId = res.body.access.id;
+        assert.equal(res.status, 403, 'clientData ' + JSON.stringify(clientData) + ': ' + describeRes(res));
       }
+      // Absent and absent: unchanged, passes.
+      const none = await coreRequest.put('/' + username + '/accesses/' + encodeURIComponent(plain.body.access.id))
+        .set('Authorization', personalToken)
+        .send({ clientData: { oauth: null, mine: 3 } });
+      assert.equal(none.status, 200, describeRes(none));
+    });
+
+    it('[OE36] the session minted at consent is written by the system, carries its grant link, and is announced like any created access', async function () {
+      const { pubsub } = require('messages');
+      const seen = [];
+      const remove = pubsub.scopedNotifications.onAndGetRemovable(username, (payload) => { seen.push(payload); });
+      let r;
+      try {
+        r = await runFullFlow();
+      } finally {
+        remove();
+      }
+      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
+      const session = await accessInfo(r.tokenRes.body.access_token);
+      const full = await coreRequest.get('/' + username + '/accesses/' + encodeURIComponent(session.id)).set('Authorization', personalToken);
+      assert.equal(full.status, 200, describeRes(full));
+      assert.equal(full.body.access.createdBy, 'system');
+      assert.equal(typeof full.body.access.clientData?.oauth?.dataGrantId, 'string');
+      const base = (id) => String(id).split(':')[0];
+      assert.ok(seen.some((n) => n?.kind === 'accesses' && n.changeType === 'create' && base(n.access?.id) === base(session.id)),
+        'scoped create notification for the session: ' + JSON.stringify(seen));
     });
 
     it('[OE34] when the teardown fails, the reuse revoke still deletes the whole chain (sub-accesses included)', async function () {

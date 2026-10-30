@@ -27,6 +27,7 @@ const C = require('./constants.ts');
 // Permission-lexicon single point — validators accept the FULL
 // accesses.create grammar (stream AND feature permissions).
 const permissionSet = require('business/src/accesses/permissionSet.ts');
+const { canonicalStreamId } = require('mall/src/helpers/storeDataUtils.ts');
 
 type ValidationResult = { valid: boolean; errors: string[] };
 
@@ -365,11 +366,19 @@ function validateSystemScopeUpdate (content: unknown): ValidationResult {
 function offerPermissionViolations (permissions: unknown): string[] {
   if (!Array.isArray(permissions)) return [];
   const errors: string[] = [];
+  // One level per stream (`a` and `:local:a` are one stream): a grant cannot
+  // hold two entries for one stream, so an offer cannot ask for two.
+  const seen = new Set<string>();
   for (const p of permissions) {
     if (!isPlainObject(p) || typeof p.streamId !== 'string') continue;
     if (C.isPluginManagedStreamId(p.streamId)) {
       errors.push('content.request.permissions: ' + p.streamId + ' is managed by the plugin on the accepter\'s account and cannot be offered');
     }
+    const id: string = canonicalStreamId(p.streamId);
+    if (seen.has(id)) {
+      errors.push('content.request.permissions: stream ' + p.streamId + ' appears more than once (one level per stream)');
+    }
+    seen.add(id);
   }
   return errors;
 }

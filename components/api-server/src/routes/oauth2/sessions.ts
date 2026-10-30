@@ -10,6 +10,8 @@
  * core (the user is gone at /token time, so no MethodContext is available).
  *
  * Shared mint path `mintAccessDirect`, used by:
+ *   - the session minted at /oauth2/authorize/accept (grants.ts), under the
+ *     consent grant just created or updated through the API
  *   - mintRefreshedAccess (refresh_token grant: the chain is bound to the
  *     durable data-grant, re-read at every rotation)
  *   - mintClientAccess (client_credentials grant: no end-user; the app
@@ -36,6 +38,8 @@ const cache = require('cache').default;
 const { pubsub } = require('messages');
 const { fromCallback } = require('utils');
 const { withSessionSelfRevoke, accessesRepo } = require('./types.ts');
+const { notifyScopedAccessChange } = require('../../methods/helpers/accessDeletion.ts');
+const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
 
 export function createSessions (env: GlueEnv) {
   const { storageLayer } = env;
@@ -110,7 +114,7 @@ export function createSessions (env: GlueEnv) {
         : (dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {})),
     };
     const ApiEndpoint = require('utils').ApiEndpoint;
-    return await new Promise((resolve, reject) => {
+    const minted: { accessId: string; accessToken: string; apiEndpoint: string } = await new Promise((resolve, reject) => {
       accessesRepository.insertOne({ id: userId, username }, newAccessRow,
         (err: unknown, newAccess: { id?: unknown; token?: unknown } | null) => {
           if (err != null) return reject(err);
@@ -124,6 +128,35 @@ export function createSessions (env: GlueEnv) {
           });
         });
     });
+    // What accesses.create does after its insert: the access-change
+    // notifications (coarse and scoped) and the breach-scope index row.
+    pubsub.notifications.emit(username, pubsub.USERNAME_BASED_ACCESSES_CHANGED);
+    notifyScopedAccessChange(username, { id: minted.accessId, type: 'app', permissions }, 'create');
+    await reindexAccessNonFatal(username, { ...newAccessRow, id: minted.accessId });
+    return minted;
+  }
+
+  // ---------------------------------------------------------------------
+  // setGrantOf: stamp `clientData.oauth.grantOf` on a registry client's
+  // consent grant. `clientData.oauth` is server-owned (accesses.create and
+  // accesses.update refuse it), so it is written storage-direct, merged into
+  // the rest of clientData, with the integrity hash recomputed.
+  // ---------------------------------------------------------------------
+  async function setGrantOf (userId: string, username: string, grantId: string, clientId: string): Promise<void> {
+    const accessesRepository = accessesRepo(storageLayer, 'oauth2.setGrantOf');
+    const user = { id: userId, username };
+    const base = parseAccessRef(grantId).base;
+    const grant = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
+      accessesRepository.findOne(user, { id: base }, null, cb));
+    if (grant == null) throw new Error('oauth2.setGrantOf: grant not found: ' + grantId);
+    const existing: Record<string, unknown> = (grant.clientData != null && typeof grant.clientData === 'object')
+      ? { ...grant.clientData }
+      : {};
+    const oauth = { ...((existing.oauth as Record<string, unknown> | undefined) ?? {}), grantOf: clientId };
+    await fromCallback((cb: (e: unknown) => void) =>
+      accessesRepository.updateOne(user, { id: base },
+        { clientData: { ...existing, oauth }, modified: Date.now() / 1000 }, cb));
+    cache.unsetUserData(userId);
   }
 
   // ---------------------------------------------------------------------
@@ -321,6 +354,7 @@ export function createSessions (env: GlueEnv) {
     readDataGrantHead,
     sessionClientData,
     mintAccessDirect,
+    setGrantOf,
     resolveAccountUserId,
     resolveUsername,
     mintRefreshedAccess,

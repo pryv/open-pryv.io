@@ -301,6 +301,25 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal(ev.status, 201, JSON.stringify(ev.body));
   });
 
+  it('[OREG12] the grant is stamped with its client by the server; the owner cannot change that stamp', async () => {
+    const [grant] = await grants();
+    assert.deepEqual(grant.clientData?.oauth, { grantOf: clientId });
+    for (const clientData of [{ oauth: { grantOf: 'someone-else' } }, { oauth: null }, null]) {
+      const res = await coreRequest.put(accessPath(grant.id)).set('Authorization', personalToken).send({ clientData });
+      assert.equal(res.status, 403, JSON.stringify(clientData) + ': ' + JSON.stringify(res.body));
+    }
+    const [after] = await grants();
+    assert.deepEqual(after.clientData?.oauth, { grantOf: clientId });
+    // Sessions are minted by the system, linked to the grant.
+    const sessions = (await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken))
+      .body.accesses.filter((a) => a.name === 'oauth:' + clientId);
+    assert.ok(sessions.length > 0);
+    for (const s of sessions) {
+      assert.equal(s.createdBy, 'system');
+      assert.equal(s.clientData?.oauth?.dataGrantId, baseOf(grant.id));
+    }
+  });
+
   it('[OREG9] pseudonymous subjects are refused at /authorize: a pseudonym request, a pairwise client', async () => {
     const before = await grants();
     for (const [scope, cid] of [['read/health ctx/pseudo', clientId], ['read/health ctx/user', pairwiseClientId]]) {

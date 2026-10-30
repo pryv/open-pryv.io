@@ -31,6 +31,20 @@ const require = createRequire(import.meta.url);
 
 const { readOfferViaCapability, permissionsFromOffer, allowsUserChoice } =
   require('cmc/src/acceptOrchestration.ts');
+const { canonicalStreamId } = require('mall/src/helpers/storeDataUtils.ts');
+const { logServerWarning } = require('./serverLog.ts');
+
+/** The first stream named twice in a permission set (canonical id), or null. */
+function firstDuplicateStream (permissions: Array<Record<string, unknown>>): string | null {
+  const seen = new Set<string>();
+  for (const p of permissions) {
+    if (typeof p?.streamId !== 'string') continue;
+    const id: string = canonicalStreamId(p.streamId);
+    if (seen.has(id)) return p.streamId;
+    seen.add(id);
+  }
+  return null;
+}
 
 export type LocalizableText = Record<string, string>;
 
@@ -137,6 +151,16 @@ export async function resolveOffer (params: {
     const err = e as Error & { id?: string };
     throw new OfferResolveError(
       `offer "${offerName}" carries no valid permissions: ${err.message}`, err.id);
+  }
+
+  // One level per stream (`a` and `:local:a` are one stream): an offer
+  // stored before the request validator refused two would make the consent
+  // fail at grant creation. Refused here, before the user is asked; the
+  // detail goes to the server log, the app gets a generic description.
+  const twice = firstDuplicateStream(permissions);
+  if (twice != null) {
+    logServerWarning(`offer "${offerName}" names stream ${twice} more than once`);
+    throw new OfferResolveError(`offer "${offerName}": conflicting permissions on a requested resource`, 'cmc-offer-invalid');
   }
 
   const content = (offerEvent?.content ?? {}) as Record<string, unknown>;
