@@ -1092,7 +1092,8 @@ oauth:
   # Secret the consent-flow state (the signed parameter carried from
   # /oauth2/authorize to the consent page and back) is keyed on; used for
   # nothing else. Per core (a consent flow runs on one core). Set it to a random
-  # value of at least 32 characters, e.g. `openssl rand -base64 32`. While it is
+  # value of at least 32 characters, e.g. `openssl rand -base64 32` (a
+  # placeholder or `${…}` value refuses the boot). While it is
   # empty, the key is derived from auth.adminAccessKey and a warning is logged
   # at every boot; a later release will require it. Changing it only cancels
   # the consent screens open at that moment.
@@ -1103,14 +1104,15 @@ oauth:
   # of at least 2048 bits, unencrypted PEM. Each entry: `kid` (unique, sent in
   # the id_token header) and exactly one of `privateKeyFile` (path) or
   # `privateKeyPem` (inline). The FIRST entry signs; every entry is published
-  # in the JWK Set. To rotate, list the new key first and keep the old one
-  # until its last id_token has expired (idTokenTTL), then remove it. A
-  # malformed entry stops the boot. Per core, secret, YAML only.
+  # in the JWK Set (cached 5 minutes by clients). To rotate: (1) add the new
+  # key SECOND, restart, wait at least 5 minutes (published, not signing);
+  # (2) move it FIRST, restart (it signs); (3) after idTokenTTL, remove the
+  # old key. A malformed entry stops the boot. Per core, secret, YAML only.
   #   signingKeys:
   #     - kid: '2026-10'
   #       privateKeyFile: /path/to/oidc-signing-key.pem
   signingKeys: []
-  idTokenTTL: 300                  # seconds; id_token lifetime
+  idTokenTTL: 300                  # seconds; id_token lifetime (at most 3600)
   grantTypesSupported:             # advertised in the discovery doc
     - authorization_code
   # Options handed as-is to the OAuth extension (customExtensions:oauthExtension).

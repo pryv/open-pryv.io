@@ -8,13 +8,14 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 /**
- * [CVOA] Boot warnings of the OAuth settings: the consent-state key still
- * borrowed from the admin key, a weak or shared state key, a removed key still
- * set, an unusable id_token lifetime. Warnings never stop the boot.
+ * [CVOA] Boot checks of the OAuth settings. Warnings (never stop the boot):
+ * the consent-state key still borrowed from the admin key, a short or shared
+ * state key, a removed key still set, an unusable or too long id_token
+ * lifetime. Problem (refuses the boot): a set state key that is no secret.
  */
 
 const assert = require('node:assert/strict');
-const { collectWarnings } = require('../../../config/plugins/config-validation.js');
+const { collectWarnings, checkOptionalSecrets } = require('../../../config/plugins/config-validation.js');
 
 /** A config with mail off (no unrelated warning) plus the given values. */
 function config (values) {
@@ -54,11 +55,27 @@ describe('[CVOA] OAuth boot warnings', () => {
     for (const idTokenTTL of [0, -5, 'abc', 1.5]) {
       assert.match(oauthWarnings({ oauth: { idTokenTTL } })[0], /'oauth\.idTokenTTL' is .*300 is used/, String(idTokenTTL));
     }
+    // Above the bound: clamped, and said so.
+    assert.match(oauthWarnings({ oauth: { idTokenTTL: 3000000 } })[0], /'oauth\.idTokenTTL' is 3000000 s, above the 3600 s maximum/);
+    assert.deepEqual(oauthWarnings({ oauth: { idTokenTTL: 3600 } }), []);
     const yaml = require('js-yaml');
     const fs = require('node:fs');
     const defaults = yaml.load(fs.readFileSync(new URL('../../../config/default-config.yml', import.meta.url), 'utf8'));
     assert.equal(defaults.oauth.idTokenTTL, 300);
     assert.equal(Object.hasOwn(defaults.oauth, 'audAllowList'), false);
     assert.deepEqual(oauthWarnings({ oauth: defaults.oauth }), []);
+  });
+
+  it('[CVOA5] a set state key that is a placeholder, an unexpanded reference or a stand-in refuses the boot; empty or random passes', () => {
+    const problemsFor = (stateKey) => { const p = []; checkOptionalSecrets(config({ oauth: { stateKey } }), p); return p; };
+    for (const stateKey of ['REPLACE_ME', '$' + '{OAUTH_STATE_KEY}', 'changeme', 'override me', 42]) {
+      const p = problemsFor(stateKey);
+      assert.equal(p.length, 1, JSON.stringify(stateKey));
+      assert.match(p[0].message, /secret 'oauth:stateKey' (is a placeholder value|must be a string)/);
+      assert.deepEqual(p[0].payload, { path: 'oauth:stateKey', weakSecret: true });
+    }
+    for (const stateKey of ['', undefined, 'k3yV4lue-' + 'a1B2c3D4e5'.repeat(4)]) {
+      assert.deepEqual(problemsFor(stateKey), [], JSON.stringify(stateKey));
+    }
   });
 });

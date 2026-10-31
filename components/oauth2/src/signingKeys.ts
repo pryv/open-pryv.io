@@ -19,9 +19,10 @@
  * carries.
  *
  * Rotation is by ordering: the FIRST entry signs; every entry is published in
- * the JWK Set. To rotate, put the new key first and keep the old one listed
- * until every id_token it signed has expired (`oauth:idTokenTTL`), then remove
- * it. To introduce a key before it signs, list it second.
+ * the JWK Set (served with a 5-minute cache). To rotate: list the new key
+ * SECOND and wait at least the cache lifetime (published, not signing), then
+ * move it FIRST (it signs), then, once every id_token the old key signed has
+ * expired (`oauth:idTokenTTL`), remove the old one.
  *
  * No `signingKeys`: OpenID Connect is off on this core (`openid` is refused at
  * /oauth2/authorize, the discovery document and the JWK Set answer 404). A

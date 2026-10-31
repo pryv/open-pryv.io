@@ -26,6 +26,7 @@
  */
 
 import type { Request, Response } from 'express';
+import { PSEUDONYM_SUBJECTS_AVAILABLE } from './scopeGrammar.ts';
 
 /**
  * Inputs the discovery doc needs from the surrounding config. The
@@ -82,15 +83,15 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
 
 /**
  * The OpenID Connect discovery document (`/.well-known/openid-configuration`):
- * the RFC 8414 document plus the OpenID Connect members. Both subject types
- * are listed: `public` (the user's stable internal id) and `pairwise` (an
- * alias per grant, for clients registered so or offers asking for a
- * pseudonym; refused at /oauth2/authorize until this core serves them).
+ * the RFC 8414 document plus the OpenID Connect members. Subject types:
+ * `public` (the user's stable internal id), and `pairwise` (an alias per
+ * grant) only once this core serves pseudonymous subjects (the same switch
+ * the /oauth2/authorize refusal reads).
  */
 export function buildOpenIdConfiguration (cfg: DiscoveryConfig): Record<string, unknown> {
   return {
     ...buildDiscoveryDocument({ ...cfg, oidc: true }),
-    subject_types_supported: ['public', 'pairwise'],
+    subject_types_supported: ['public', ...(PSEUDONYM_SUBJECTS_AVAILABLE ? ['pairwise'] : [])],
     id_token_signing_alg_values_supported: ['RS256'],
     claims_supported: [...new Set([...CORE_ID_TOKEN_CLAIMS, ...(cfg.claimsSupported ?? [])])],
   };

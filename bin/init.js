@@ -742,8 +742,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # OpenID Connect for OAuth registry clients (id_token, discovery, JWK Set):
 # # add these keys under the oauth: block above. RS256, RSA >= 2048 bits,
 # # unencrypted PEM (openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072).
-# # The FIRST key signs, all are published: rotate by listing the new key first,
-# # drop the old one once idTokenTTL has passed. Per-core secret, YAML only.
+# # The FIRST key signs, all are published (JWK Set cached 5 min). Rotate in 3
+# # restarts: add the new key SECOND and wait >= 5 min; move it FIRST; drop the
+# # old one once idTokenTTL has passed. Per-core secret, YAML only.
 # #   signingKeys:
 # #     - kid: '2026-10'
 # #       privateKeyFile: /path/to/oidc-signing-key.pem

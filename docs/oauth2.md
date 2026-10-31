@@ -189,8 +189,10 @@ enrolled by the operator, strong credentials, curated registration).
 The secret the consent-flow state is signed with (the parameter carried from
 `/oauth2/authorize` to the consent page and back to `/oauth2/authorize/accept`).
 It is used for nothing else and is per core: a consent flow runs on one core.
-Set a random value of at least 32 characters (`openssl rand -base64 32`).
-While it is empty, the key is derived from `auth.adminAccessKey` and every boot
+Set a random value of at least 32 characters (`openssl rand -base64 32`). A
+placeholder, an unexpanded `${…}` reference or a value published as an example
+refuses the boot (like the `auth.*` secrets); one equal to `auth.adminAccessKey`
+or shorter than 32 characters is reported at boot. While it is empty, the key is derived from `auth.adminAccessKey` and every boot
 logs a warning; a later release will require it. Setting or changing it only
 cancels the consent screens open at that moment (a state lives 5 minutes).
 
@@ -200,15 +202,23 @@ With at least one signing key, registry clients (see the extension) may request
 the `openid` scope: the code exchange then returns an `id_token` (RS256, the
 key's `kid` in its header) carrying `iss`, `sub` (the user's stable internal
 id, not routable), `aud` and `azp` (the client id), `iat`, `exp`
-(`idTokenTTL` later), `auth_time` (the creation of the personal access the
-user consented with, i.e. its first sign-in: never later than the real
-authentication) and the
-request's `nonce`, plus the extension's own claims. A refresh never returns an
-`id_token`. A nonce is accepted once per client: an authorization request or a
+(`idTokenTTL` later; default 300 s, at most 3600 s: a larger value is clamped
+with a boot warning), `auth_time` and the request's `nonce`, plus the
+extension's own claims. A refresh never returns an `id_token`. A nonce is
+accepted once per client, across the platform: an authorization request or a
 code exchange reusing one that already went into an id_token is refused.
 `/.well-known/openid-configuration` and `/oauth2/jwks` are served, and
-`openid` is listed in `scopes_supported`. Without keys, `openid` is refused
-(`invalid_scope`) and both documents answer 404.
+`openid` is listed in `scopes_supported` (it is a scope of registry clients
+only; `subject_types_supported` lists `public`). Without keys, `openid` is
+refused (`invalid_scope`) and both documents answer 404.
+
+`auth_time` is a **lower bound**: the creation of the personal access the user
+consented with. A later sign-in to the same app (the consent UI) rotates that
+access's token and keeps its creation time, so `auth_time` may be much earlier
+than the authentication behind the consent, never later. `max_age`, `prompt`
+(including `prompt=login`) and `at_hash` are **not supported**: `/oauth2/authorize`
+ignores `max_age` and `prompt`. A relying party that needs a fresh
+authentication must not rely on `auth_time` from this server.
 
 ```yaml
 oauth:
@@ -219,9 +229,20 @@ oauth:
 
 RSA keys of at least 2048 bits, unencrypted PEM (`openssl genpkey -algorithm
 RSA -pkeyopt rsa_keygen_bits:3072 -out oidc.pem`); `alg` may be given and must
-then be `RS256`. A malformed entry stops the boot. **Rotation is by ordering:**
-the first entry signs, every entry is published. List the new key first, keep
-the old one until its last id_token has expired (`idTokenTTL`), then remove it.
+then be `RS256`. A malformed entry stops the boot.
+
+**Rotation is by ordering:** the first entry signs, every entry is published.
+`/oauth2/jwks` is served with `Cache-Control: public, max-age=300`, and relying
+parties may cache it longer, so a key must be published before it signs. Three
+steps:
+
+1. Add the new key **second** and restart. Wait at least the JWK Set cache
+   lifetime (5 minutes, longer if your relying parties cache it longer): the
+   key is published, not yet signing.
+2. Move it **first** and restart: it signs from then on; the old key stays
+   published.
+3. Once `idTokenTTL` has passed, remove the old key and restart.
+
 Keys are per core (each core is its own issuer) and are secrets: keep them in
 the YAML file, readable by the server only.
 

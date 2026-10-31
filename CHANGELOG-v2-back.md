@@ -16,10 +16,13 @@
 - `signedState.stateKeyFromConfig`: `oauth:stateKey`, else `auth:adminAccessKey`; every route that
   signs or verifies the state uses it.
 - New config keys `oauth:stateKey` (default empty), `oauth:signingKeys` (default empty),
-  `oauth:idTokenTTL` (default 300); `oauth:audAllowList` removed. Boot warnings: state key unset while
-  the consent flow is configured, equal to the admin key or shorter than 32 characters,
-  `audAllowList` still set, `idTokenTTL` not a positive integer. The install wizard generates
-  `oauth.stateKey` and its config appendix shows the signing-key block.
+  `oauth:idTokenTTL` (default 300, clamped to 3600); `oauth:audAllowList` removed. Boot warnings: state
+  key unset while the consent flow is configured, equal to the admin key or shorter than 32 characters,
+  `audAllowList` still set, `idTokenTTL` not a positive integer or above 3600. Boot problem (and
+  `bin/check-config.js` problem): a set `oauth:stateKey` that is a placeholder, an unexpanded `${…}`
+  reference or (in production) a short or published value (`checkOptionalSecrets`, the
+  `weakSecretReason` rule of the required secrets; `oauth:stateKey` is listed in `SECRET_PATHS`). The
+  install wizard generates `oauth.stateKey` and its config appendix shows the signing-key block.
 
 ### OAuth: registry clients, extension, glue split
 

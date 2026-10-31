@@ -1307,6 +1307,14 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.deepEqual(redirectError(off.res), { error: 'invalid_scope', description: 'openid is not available on this core (no signing key configured)' });
       const on = await authorize({ config: oidcConfig(), platform }, authorizeQuery({ scope: 'openid data/a.read', nonce: 'n-2' }));
       assert.equal(verifyState(ADMIN_KEY, on.signed).payload.nonce, 'n-2');
+      // Keys removed between /authorize and the consent: /offer and /accept refuse it too.
+      const offRes = await postOffer({ config: fakeConfig(), platform }, on.signed);
+      const accRes = await accept(acceptDeps({ config: fakeConfig(), platform }), on.signed, [{ streamId: 'a', level: 'read' }]);
+      for (const res of [offRes, accRes]) {
+        assert.equal(res.statusCode, 400, res.raw);
+        assert.equal(res.body.error, 'invalid_scope');
+        assert.match(res.body.error_description, /openid is not available/);
+      }
     });
 
     it('[OXD05] an id_token hook setting a core claim, or failing, answers 500 before any refresh row; the session is removed', async () => {
@@ -1320,6 +1328,18 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
         assert.deepEqual(revoked, ['session-1']);
         assert.equal([...platform._state.keys()].some((k) => k.startsWith('oauth-rt/')), false);
       }
+    });
+
+    it('[OXD07] the id_token lifetime is clamped to 3600 s; an unusable value falls back to 300 s', async () => {
+      const { idTokenTTL, MAX_ID_TOKEN_TTL } = require('../src/responseHooks.ts');
+      assert.equal(MAX_ID_TOKEN_TTL, 3600);
+      for (const [v, expected] of [[120, 120], [3600, 3600], [99999, 3600], [0, 300], ['x', 300], [undefined, 300]]) {
+        assert.equal(idTokenTTL(fakeConfig({ 'oauth:idTokenTTL': v })), expected, String(v));
+      }
+      const platform = fakePlatform(); await seed(platform);
+      const { token } = await flow({ platform, config: oidcConfig({ 'oauth:idTokenTTL': 99999 }), query: { scope: 'openid data/a.read' } });
+      const p = decodeJwt(token.body.id_token).payload;
+      assert.equal(p.exp - p.iat, 3600);
     });
 
     it('[OXN01] a nonce is accepted once per client: a replay is refused at /authorize, a racing second code at the exchange', async () => {
@@ -1389,7 +1409,9 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(oidc.headers['cache-control'], 'public, max-age=300');
       assert.equal(oidc.body.issuer, ISSUER);
       assert.equal(oidc.body.jwks_uri, ISSUER + '/oauth2/jwks');
-      assert.deepEqual(oidc.body.subject_types_supported, ['public', 'pairwise']);
+      // `pairwise` is advertised by the same switch that lets /authorize serve it.
+      assert.equal(scopeGrammar.PSEUDONYM_SUBJECTS_AVAILABLE, false);
+      assert.deepEqual(oidc.body.subject_types_supported, ['public']);
       assert.deepEqual(oidc.body.id_token_signing_alg_values_supported, ['RS256']);
       assert.deepEqual(oidc.body.response_types_supported, ['code']);
       assert.ok(oidc.body.scopes_supported.includes('openid') && oidc.body.scopes_supported.includes('data/a.read'));

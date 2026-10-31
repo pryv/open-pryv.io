@@ -438,7 +438,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal((await grants(pairwiseClientId)).length, 0);
   });
 
-  it('[OREG10] a registered account: the subject is its internal id, distinct from the username', async () => {
+  it('[OREG10] a registered account: the subject is its internal id, distinct from the username; auth_time stays at the first sign-in across a second login', async () => {
     const name = 'oreg' + cuid().toLowerCase().slice(1, 12);
     const reg = await coreRequest.post('/users').send({
       appId: 'pryv-test',
@@ -466,9 +466,20 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       assert.equal(idToken.sub, id);
       assert.notEqual(idToken.sub, name);
       assert.equal(Object.hasOwn(idToken, 'nonce'), false);
-      // auth_time is the sign-in that minted the personal token.
+      // auth_time is the creation of the personal access (its first sign-in).
       assert.ok(Math.abs(idToken.auth_time - Math.floor(Date.now() / 1000)) < 120, 'auth_time ' + idToken.auth_time);
       assert.ok(!JSON.stringify(idToken).includes(name), 'the username is in no claim');
+
+      // A later sign-in to the same app keeps that access (and its creation
+      // time): auth_time is a lower bound, unchanged by the second login.
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      const relogin = await coreRequest.post('/' + name + '/auth/login').set('Origin', 'http://test.pryv.local')
+        .send({ username: name, password: 'oreg-passw0rd', appId: 'pryv-test' });
+      assert.equal(relogin.status, 200, JSON.stringify(relogin.body));
+      const again = await runFlow('openid read/health ctx/user', clientId, { username: name, token: relogin.body.token });
+      const idToken2 = await verifiedIdToken(again.token.id_token);
+      assert.equal(idToken2.auth_time, idToken.auth_time);
+      assert.ok(idToken2.iat > idToken2.auth_time, 'the second consent comes after the first sign-in');
     } finally {
       await usersRepository.deleteOne(id, name);
     }

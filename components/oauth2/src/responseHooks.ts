@@ -89,10 +89,22 @@ export async function prepareRegistryResponse (g: RegistryGrant): Promise<Regist
   return parts;
 }
 
-/** id_token lifetime in seconds (`oauth:idTokenTTL`, positive integer, default 300). */
+/**
+ * Upper bound on the id_token lifetime, seconds. An id_token is an
+ * authentication assertion read once, right after the code exchange; an hour
+ * covers any clock skew or slow relying party, and keeps a burnt nonce's row
+ * (kept while its id_token lives, and at least an hour) to one hour.
+ */
+export const MAX_ID_TOKEN_TTL = 3600;
+
+/**
+ * id_token lifetime in seconds (`oauth:idTokenTTL`): a positive integer,
+ * default 300, clamped to `MAX_ID_TOKEN_TTL` (both reported at boot).
+ */
 export function idTokenTTL (config: { get (key: string): unknown }): number {
   const ttl = Number(config.get('oauth:idTokenTTL'));
-  return Number.isInteger(ttl) && ttl > 0 ? ttl : DEFAULT_ID_TOKEN_TTL;
+  if (!(Number.isInteger(ttl) && ttl > 0)) return DEFAULT_ID_TOKEN_TTL;
+  return Math.min(ttl, MAX_ID_TOKEN_TTL);
 }
 
 async function signIdToken (g: RegistryGrant, ctx: HookCtx): Promise<{ jwt: string; exp: number }> {
