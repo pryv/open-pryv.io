@@ -15,6 +15,12 @@
  * Static per-client extras and the extension's `tokenResponse` fields are
  * added under the core fields.
  *
+ * OpenID Connect: when `openid` was granted, the code exchange (never a
+ * refresh: the nonce belongs to the authorization request) adds an
+ * `id_token`, signed RS256 with the core's first signing key. Its claims are
+ * the extension's `idTokenClaims` under the core's own (`iss sub aud azp exp
+ * iat auth_time nonce`).
+ *
  * App-account clients do not go through here: their response is unchanged.
  */
 
@@ -22,24 +28,36 @@ import type { OAuthClient } from './storage.ts';
 import type { HookCtx, ExtPermission } from './extension.ts';
 import { runHook, toClientView, RESERVED_KEYS } from './extension.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
+import { loadSigningKeys, signJwt } from './signingKeys.ts';
+
+/** Default id_token lifetime, seconds. */
+export const DEFAULT_ID_TOKEN_TTL = 300;
 
 export type RegistryGrant = {
   client: OAuthClient;
   grantType: 'authorization_code' | 'refresh_token';
   issuer: string;
+  /** Read for the signing keys and `oauth:idTokenTTL`. */
+  config: { get (key: string): unknown };
   coreTokens: string[];
   grammarTokens: string[];
   permissions: ExtPermission[];
   /** The id the app sees for the user (the user's stable internal id). */
   subject: string;
+  /** OpenID Connect `nonce` of the authorization request. */
+  nonce?: string;
+  /** When the consenting user signed in (seconds). */
+  authTime?: number;
 };
 
 export type RegistryResponseParts = {
   scopeTokens: string[];
-  /** Fields to merge into the response (static extras, hook output). */
+  /** Fields to merge into the response (static extras, hook output, id_token). */
   extra: Record<string, unknown>;
   /** Whether a refresh token may be issued (`offline_access` granted). */
   refresh: boolean;
+  /** Seconds since epoch at which the id_token expires, when one was signed. */
+  idTokenExpiresAt?: number;
 };
 
 /**
@@ -60,5 +78,54 @@ export async function prepareRegistryResponse (g: RegistryGrant): Promise<Regist
   const staticExtras = { ...(g.client.tokenResponseExtras ?? {}) } as Record<string, unknown>;
   for (const k of RESERVED_KEYS.tokenResponse) delete staticExtras[k];
   const extra: Record<string, unknown> = { ...staticExtras, ...(await runHook('tokenResponse', ctx)) };
-  return { scopeTokens, extra, refresh: scopeTokens.includes('offline_access') };
+  const parts: RegistryResponseParts = { scopeTokens, extra, refresh: scopeTokens.includes('offline_access') };
+  // No id_token on refresh (OpenID Connect Core §12.2 makes it optional; the
+  // nonce of the original request must not be replayed).
+  if (g.grantType === 'authorization_code' && scopeTokens.includes('openid')) {
+    const signed = await signIdToken(g, ctx);
+    extra.id_token = signed.jwt;
+    parts.idTokenExpiresAt = signed.exp;
+  }
+  return parts;
+}
+
+/**
+ * Upper bound on the id_token lifetime, seconds. An id_token is an
+ * authentication assertion read once, right after the code exchange; an hour
+ * covers any clock skew or slow relying party, and keeps a burnt nonce's row
+ * (kept while its id_token lives, and at least an hour) to one hour.
+ */
+export const MAX_ID_TOKEN_TTL = 3600;
+
+/**
+ * id_token lifetime in seconds (`oauth:idTokenTTL`): a positive integer,
+ * default 300, clamped to `MAX_ID_TOKEN_TTL` (both reported at boot).
+ */
+export function idTokenTTL (config: { get (key: string): unknown }): number {
+  const ttl = Number(config.get('oauth:idTokenTTL'));
+  if (!(Number.isInteger(ttl) && ttl > 0)) return DEFAULT_ID_TOKEN_TTL;
+  return Math.min(ttl, MAX_ID_TOKEN_TTL);
+}
+
+async function signIdToken (g: RegistryGrant, ctx: HookCtx): Promise<{ jwt: string; exp: number }> {
+  if (typeof g.subject !== 'string' || g.subject.length === 0) throw new Error('id_token: the grant has no subject');
+  const keys = loadSigningKeys(g.config);
+  if (keys.length === 0) throw new Error('id_token: no signing key configured');
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + idTokenTTL(g.config);
+  // The hook cannot set a core claim (runHook refuses reserved keys); the core
+  // claims are written last all the same.
+  const claims = await runHook('idTokenClaims', ctx);
+  const jwt = signJwt(keys[0], {
+    ...claims,
+    iss: g.issuer,
+    sub: g.subject,
+    aud: g.client.clientId,
+    azp: g.client.clientId,
+    exp,
+    iat: now,
+    ...(Number.isFinite(g.authTime) ? { auth_time: g.authTime } : {}),
+    ...(g.nonce != null ? { nonce: g.nonce } : {}),
+  });
+  return { jwt, exp };
 }

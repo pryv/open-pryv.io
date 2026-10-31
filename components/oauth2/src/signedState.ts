@@ -25,9 +25,12 @@
  * dangerous). A stolen state is useless without the matching PKCE
  * `code_verifier` (which never leaves the client).
  *
- * The signing key is derived from `auth.adminAccessKey` via
- * HMAC-SHA256 with a fixed label, so it rotates whenever the operator
- * rotates the admin key. No additional config key needed.
+ * The signing key is derived (HMAC-SHA256, fixed label) from
+ * `oauth.stateKey`, a secret used for nothing else. While it is not set,
+ * the key is derived from `auth.adminAccessKey` instead, with a boot
+ * warning; once it is set, a state signed with the admin-derived key no
+ * longer verifies. Changing either key only invalidates the states in
+ * flight (a few minutes of consent screens). See `stateKeyFromConfig`.
  */
 
 import crypto from 'node:crypto';
@@ -75,6 +78,8 @@ export type SignedStatePayload = {
   offerRef?: { kind: 'synthesised'; digest: string };
   /** The `aud` value the request named (registry clients with an audience list). */
   audience?: string;
+  /** OpenID Connect `nonce` of the authorization request (registry clients). */
+  nonce?: string;
   iat: number;
   exp: number;
 };
@@ -82,16 +87,26 @@ export type SignedStatePayload = {
 const SIGNING_LABEL = Buffer.from('pryv-oauth2-signed-state-v1');
 
 /**
- * Derive the HMAC signing key from the operator's admin key. Same
- * input → same key (deterministic), so signed states issued by one
- * core verify on any other core in the cluster (admin key is operator-
- * sync). Re-derivation is cheap; not memoised.
+ * The secret the signed state is keyed on: `oauth:stateKey` when set,
+ * otherwise (transitional fallback, reported at boot) `auth:adminAccessKey`.
+ * Empty string when neither is configured.
  */
-function deriveKey (adminKey: string): Buffer {
-  if (typeof adminKey !== 'string' || adminKey.length === 0) {
-    throw new Error('signedState: adminKey must be a non-empty string');
+export function stateKeyFromConfig (config: { get (key: string): unknown }): string {
+  const stateKey = config.get('oauth:stateKey');
+  if (typeof stateKey === 'string' && stateKey.length > 0) return stateKey;
+  const adminKey = config.get('auth:adminAccessKey');
+  return typeof adminKey === 'string' ? adminKey : '';
+}
+
+/**
+ * Derive the HMAC signing key from the configured secret. Same input,
+ * same key (deterministic). Re-derivation is cheap; not memoised.
+ */
+function deriveKey (secret: string): Buffer {
+  if (typeof secret !== 'string' || secret.length === 0) {
+    throw new Error('signedState: the signing secret must be a non-empty string');
   }
-  return crypto.createHmac('sha256', adminKey).update(SIGNING_LABEL).digest();
+  return crypto.createHmac('sha256', secret).update(SIGNING_LABEL).digest();
 }
 
 function base64urlEncode (buf: Buffer): string {
@@ -108,7 +123,7 @@ function base64urlDecode (s: string): Buffer {
  * pass only the request-derived fields.
  */
 export function signState (
-  adminKey: string,
+  secret: string,
   payload: Omit<SignedStatePayload, 'iat' | 'exp'>,
   nowSeconds: number = Math.floor(Date.now() / 1000),
   ttlSeconds: number = SIGNED_STATE_TTL_SECONDS
@@ -116,7 +131,7 @@ export function signState (
   const full: SignedStatePayload = { ...payload, iat: nowSeconds, exp: nowSeconds + ttlSeconds };
   const json = Buffer.from(JSON.stringify(full));
   const body = base64urlEncode(json);
-  const key = deriveKey(adminKey);
+  const key = deriveKey(secret);
   const mac = base64urlEncode(crypto.createHmac('sha256', key).update(body).digest());
   return body + '.' + mac;
 }
@@ -131,7 +146,7 @@ export type VerifyResult =
  * Returns a tagged result; callers map to RFC 6749 error enums.
  */
 export function verifyState (
-  adminKey: string,
+  secret: string,
   token: string,
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): VerifyResult {
@@ -142,7 +157,7 @@ export function verifyState (
   const macPresented = token.slice(dot + 1);
   let macExpected: string;
   try {
-    const key = deriveKey(adminKey);
+    const key = deriveKey(secret);
     macExpected = base64urlEncode(crypto.createHmac('sha256', key).update(body).digest());
   } catch {
     return { ok: false, reason: 'malformed' };

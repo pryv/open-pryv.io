@@ -22,7 +22,7 @@
  * `oauth.consent.refused` audit event.
  */
 
-import { verifyState } from '../signedState.ts';
+import { verifyState, stateKeyFromConfig } from '../signedState.ts';
 import { issuerFromConfig } from '../issuer.ts';
 import { audit } from '../audit.ts';
 
@@ -35,9 +35,9 @@ export type RefuseDeps = {
 export function handleRefuse (deps: RefuseDeps) {
   return async function refuse (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
-    const adminKey = String(deps.config.get('auth:adminAccessKey') ?? '');
-    if (!issuer || !adminKey) {
-      return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or auth:adminAccessKey not configured' });
+    const stateKey = stateKeyFromConfig(deps.config);
+    if (!issuer || !stateKey) {
+      return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or oauth:stateKey (auth:adminAccessKey) not configured' });
     }
 
     const body = req.body ?? {};
@@ -45,7 +45,7 @@ export function handleRefuse (deps: RefuseDeps) {
       return sendJson(res, 400, { error: 'invalid_request', error_description: 'state is required' });
     }
 
-    const verified = verifyState(adminKey, body.state);
+    const verified = verifyState(stateKey, body.state);
     if (!verified.ok) {
       return sendJson(res, 400, {
         error: 'invalid_request',

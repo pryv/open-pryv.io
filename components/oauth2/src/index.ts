@@ -24,9 +24,11 @@ import * as storage from './storage.ts';
 import * as jwks from './jwks.ts';
 import * as extension from './extension.ts';
 import * as scopeGrammar from './scopeGrammar.ts';
+import * as signingKeys from './signingKeys.ts';
 
 export {
   scopeGrammar,
+  signingKeys,
   scopeRegistry,
   errorMap,
   clientRegistry,

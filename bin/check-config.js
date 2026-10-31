@@ -169,6 +169,26 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
+// oauth.stateKey: optional (empty = derived from auth.adminAccessKey, with a
+// boot warning), but a set value is a secret held to the same rule (mirrors
+// checkOptionalSecrets in config/plugins/config-validation.js).
+{
+  const value = get('oauth.stateKey');
+  if (value == null || value === '') {
+    if (typeof get('oauth.consentUrl') === 'string' && get('oauth.consentUrl') !== '') {
+      warnings.push('oauth.stateKey not set: consent states are signed with a key derived from auth.adminAccessKey; set a random value of at least 32 characters (a later release requires it)');
+    }
+  } else if (typeof value !== 'string') {
+    problems.push('oauth.stateKey must be a string');
+  } else if (isMissingOrSentinel(value)) {
+    problems.push('oauth.stateKey is a placeholder value: set a long random value of your own, or leave it empty');
+  } else if (weakSecretReason(value) != null) {
+    problems.push(`oauth.stateKey ${weakSecretReason(value)}: set a long random value of your own, or leave it empty`);
+  } else if (weakSecretReason(value, { production: true }) != null) {
+    warnings.push(`oauth.stateKey ${weakSecretReason(value, { production: true })}: a production core refuses to boot with it`);
+  }
+}
+
 // auth.trustedApps — required at boot, every entry must parse (same parser as
 // the server).
 {
