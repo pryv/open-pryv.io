@@ -911,7 +911,9 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(parseCalls, afterAuthorize + 1);
       const acc = await accept(acceptDeps(deps), signed, [{ streamId: 'a', level: 'read' }]);
       assert.equal(acc.statusCode, 200, acc.raw);
-      assert.equal(parseCalls, afterAuthorize + 1);
+      // The offer is not re-derived; the one more parse is the coverage check
+      // of the granted scope recorded for the consent (memoised from then on).
+      assert.equal(parseCalls, afterAuthorize + 2);
       // Bounded: entries beyond the bound are dropped, oldest first.
       assert.equal(offerRoute.OFFER_CACHE_SIZE, 1000);
     });

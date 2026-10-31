@@ -134,8 +134,6 @@
 - **Operator CLI: `show` no longer prints the client secret's hash** (an offline-guessable value in
   terminal scrollback); it prints `"clientSecretHash": "(set)"` when the client has a secret.
 
-## 2.0.0-rc.68 - 2026-10-30
-
 ### OAuth token introspection, revocation, and the life of a refresh chain
 
 - **`POST /oauth2/introspect` (RFC 7662).** For resource servers: a confidential client (a secret or a
@@ -183,6 +181,8 @@
   introspection.
 - An OAuth session row stores one spelling per stream (`:local:a` is stored as `a`), as
   `accesses.create` does.
+
+## 2.0.0-rc.68 - 2026-10-30
 
 ### OAuth registry clients and the OAuth extension (new, opt-in)
 
@@ -281,9 +281,9 @@
   (a re-consent, the owner's `accesses.update` on a registry or CMC grant, a CMC consent scope update),
   each live OAuth session of the grant is brought to what its next refresh would mint: its chain's
   consent under the grant as it now stands (narrowed, or widened back, never beyond either). A session
-  left with no reach is deleted, and its refresh chain ends with it (see "Deleting an OAuth session
-  ends its refresh chain" below). A session records its chain's consent in the server-owned
-  `clientData.oauth.chain`.
+  left with no reach is deleted; its chain's next refresh is then refused (`invalid_grant`) unless the
+  owner has widened the grant again before it. A session records its chain's consent in the
+  server-owned `clientData.oauth.chain`.
 - `/oauth2/authorize/accept` accepts only the account owner's personal token (another token of the
   user: 403 `access_denied`); the signed-in `/offer` answers such a token with the request alone and
   `authenticated: false`.

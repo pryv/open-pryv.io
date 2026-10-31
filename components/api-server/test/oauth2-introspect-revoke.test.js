@@ -42,6 +42,7 @@ const toyExtension = {
       const permissions = [];
       for (const t of tokens) {
         if (t.startsWith('ctx/')) continue;
+        if (t === 'feat/hooks') { permissions.push({ feature: 'webhooks', setting: 'allowed' }); continue; }
         const slash = t.indexOf('/');
         const level = LEVEL_OF[t.slice(0, slash)];
         if (slash <= 0 || level == null) return { ok: false, description: 'unknown token ' + t };
@@ -55,6 +56,7 @@ const toyExtension = {
       const has = (s, levels) => permissions.some((p) => p.streamId === s && levels.includes(p.level));
       return requestedTokens.filter((t) => {
         if (t.startsWith('ctx/')) return true;
+        if (t === 'feat/hooks') return permissions.some((p) => p.feature === 'webhooks' && p.setting === 'allowed');
         const [kind, s] = t.split('/');
         return kind === 'read' ? has(s, ['read', 'contribute']) : has(s, ['contribute']);
       });
@@ -62,7 +64,7 @@ const toyExtension = {
   },
 };
 
-const SCOPE = ['read/a', 'read/b', 'write/a', 'ctx/choice'];
+const SCOPE = ['read/a', 'read/b', 'write/a', 'ctx/choice', 'feat/hooks'];
 
 function pkce () {
   const verifier = crypto.randomBytes(32).toString('base64url');
@@ -375,6 +377,30 @@ describe('[OIR] OAuth sessions: introspection, revocation, chain end, retirement
       assert.ok(!row.record.grantedScope.includes('read/b'), event + ': ' + JSON.stringify(row.record.grantedScope));
       assert.deepEqual(row.record.grantedScope, t.scope.split(' '), event);
     }
+  });
+
+  it('[OIR10] a feature consented as allowed but forbidden by the client\'s defaults: the exchange and the refresh agree (not named; a grammar naming it fails both alike)', async () => {
+    const who = await newUser();
+    const t = await consentAndToken(who, 'offline_access read/a feat/hooks');
+    const [session] = await sessions(who);
+    assert.ok(session.permissions.some((p) => p.feature === 'webhooks' && p.setting === 'forbidden'));
+    assert.deepEqual(t.scope.split(' ').sort(), ['offline_access', 'read/a']);
+    const r = await refresh(t.refresh_token);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.scope, t.scope);
+    assert.equal((await introspect(r.body.access_token)).body.scope, t.scope);
+    // A grammar echoing the request as is claims the forbidden feature: the
+    // code exchange refuses it as the refresh does (it read the code row's
+    // consent before, so it answered 200 and only the refresh failed).
+    const flow = await consent(who, 'offline_access read/a feat/hooks');
+    echoOverride = ({ requestedTokens }) => requestedTokens;
+    const ex = await exchange(flow);
+    assert.equal(ex.status, 500, JSON.stringify(ex.body));
+    const rr = await refresh(r.body.refresh_token);
+    assert.equal(rr.status, 500, JSON.stringify(rr.body));
+    echoOverride = null;
+    // The refresh failure used up nothing: the same token works once the grammar is fixed.
+    assert.equal((await refresh(r.body.refresh_token)).status, 200);
   });
 
   describe('[ORET] a refresh retires the session it replaces', () => {
