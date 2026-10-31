@@ -60,12 +60,17 @@
   stored list; `none` clears the field). `--auth-method` is applied too: the credentials on file follow
   the method (a change to `client_secret_basic` mints a secret, printed once, and drops the key set; a
   change to `private_key_jwt` needs `--jwks-file` / `--jwks-json` and drops the secret; a change to
-  `none` drops both and needs `--yes`); on a registry client `--jwks-file` / `--jwks-json` go with
-  `private_key_jwt` only. These flags are refused on app-account clients. `--scope` splits
-  space-separated tokens on `update` and `create` as on `create-registry`. `update` and
-  `create-registry` refuse an unknown flag, and a flag that needs a value given without one, instead of
+  `none` drops both and needs `--yes`). On a registry client, `create-registry` and `update` accept
+  `--jwks-file` / `--jwks-json` with `private_key_jwt` only (before, `create-registry` stored a key set
+  next to `none` or `client_secret_basic`, which `/oauth2/token` then accepted as a second credential).
+  These flags are refused on app-account clients. `update` echoes `--audience` / `--any-audience`,
+  `--allow-insecure-redirect` and `--allow-feature` as `create-registry` does. `--scope` splits
+  space-separated tokens on `update` and `create` as on `create-registry`. `create`, `create-registry`
+  and `update` refuse an unknown flag, and a flag that needs a value given without one, instead of
   ignoring it. `rotate-secret` refuses a client whose auth method uses no secret (`none`,
   `private_key_jwt`) instead of writing a secret hash next to it.
+- **Operator CLI: `show` no longer prints the client secret's hash** (an offline-guessable value in
+  terminal scrollback); it prints `"clientSecretHash": "(set)"` when the client has a secret.
 
 ## 2.0.0-rc.68 - 2026-10-30
 

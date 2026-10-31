@@ -21,6 +21,7 @@ const scopeGrammar = require('../src/scopeGrammar.ts');
 const offerRoute = require('../src/routes/offer.ts');
 const { getClient, persistClient } = require('../src/clientRegistry.ts');
 const { setClient } = require('../src/storage.ts');
+const { verifySecret } = require('../src/clientSecret.ts');
 const { checkRegistryClients } = require('../src/registryBootCheck.ts');
 const { handleAuthorize } = require('../src/routes/authorize.ts');
 
@@ -68,7 +69,7 @@ async function run (fn, platform, argv) {
   console.log = (...a) => { lines.push(a.join(' ')); };
   let error = null;
   try {
-    if (fn === cli.runCreateRegistry) await fn(platform, args, persistClient, getClient);
+    if (fn === cli.runCreateRegistry || fn === cli.runCreate) await fn(platform, args, persistClient, getClient);
     else await fn(platform, args, getClient, persistClient);
   } catch (err) {
     error = err;
@@ -301,6 +302,13 @@ describe('[OCLI] operator CLI: registry clients', () => {
     const { kty, crv, x, y } = generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
     const jwks = JSON.stringify({ keys: [{ kty, crv, x, y }] });
     const platform = fakePlatform();
+    // create-registry: a key set goes with private_key_jwt only, nothing written otherwise.
+    for (const method of ['none', 'client_secret_basic']) {
+      const c = await run(cli.runCreateRegistry, platform, createArgs('Cli.auth.k', ['--subject-type', 'public', '--auth-method', method, '--jwks-json', jwks]));
+      assert.equal(c.error?.message, 'create-registry: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses ' + method + ')');
+      assert.doesNotMatch(c.out, /client_secret:/);
+      assert.equal(await getClient(platform, 'Cli.auth.k'), null);
+    }
     await run(cli.runCreateRegistry, platform, createArgs('Cli.auth', ['--subject-type', 'public']));
     // A key set goes with private_key_jwt only.
     const stray = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--jwks-json', jwks]);
@@ -316,7 +324,9 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.match(toSecret.out, /client_secret: \S+\n {5}\(shown once: store it now\)/);
     let row = await getClient(platform, 'Cli.auth');
     assert.equal(row.tokenEndpointAuthMethod, 'client_secret_basic');
-    assert.equal(typeof row.clientSecretHash, 'string');
+    // The secret printed is the one stored.
+    const printed = toSecret.out.match(/client_secret: (\S+)/)[1];
+    assert.equal(await verifySecret(printed, row.clientSecretHash), true);
     // The same method again rotates nothing.
     const same = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'client_secret_basic']);
     assert.match(same.out, /client unchanged/);
@@ -360,12 +370,58 @@ describe('[OCLI] operator CLI: registry clients', () => {
     const first = (await getClient(platform, 'Cli.rs.sec')).clientSecretHash;
     const ok = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.rs.sec']);
     assert.equal(ok.error, null, ok.error?.message);
-    assert.match(ok.out, /client_secret: \S+/);
-    assert.notEqual((await getClient(platform, 'Cli.rs.sec')).clientSecretHash, first);
+    const rotated = (await getClient(platform, 'Cli.rs.sec')).clientSecretHash;
+    assert.notEqual(rotated, first);
+    // The secret printed is the one stored.
+    assert.equal(await verifySecret(ok.out.match(/client_secret: (\S+)/)[1], rotated), true);
     // An app-account row (no auth method stored) works as before.
     await persistClient(platform, { clientId: 'appacct', redirectUris: [REDIRECT], grantTypes: ['authorization_code'], scope: [] });
     const app = await run(cli.runRotateSecret, platform, ['rotate-secret', 'appacct']);
     assert.equal(app.error, null, app.error?.message);
     assert.equal(typeof (await getClient(platform, 'appacct')).clientSecretHash, 'string');
+  });
+
+  it('[OCLI13] update echoes the audience, insecure-redirect and feature flags it applies', async () => {
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.echo', ['--subject-type', 'public']));
+    const any = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--any-audience']);
+    assert.equal(any.error, null, any.error?.message);
+    assert.match(any.out, /audiences: {5}\(any audience\)/);
+    const insecure = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--allow-insecure-redirect']);
+    assert.match(insecure.out, /WARN plain-http redirect URIs allowed on non-loopback hosts/);
+    const withdrawn = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--allow-insecure-redirect', 'false']);
+    assert.match(withdrawn.out, /plain-http redirect URIs refused on non-loopback hosts/);
+    const feature = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--allow-feature', 'webhooks']);
+    assert.match(feature.out, /features forbidden on its grants: secretSharing \(allowed: webhooks\)/);
+    const back = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--audience', AUD]);
+    assert.match(back.out, new RegExp('audiences: {5}' + AUD.replace(/[.]/g, '\\.')));
+    // Flags not given are not echoed.
+    const name = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--name', 'Echo']);
+    assert.doesNotMatch(name.out, /audiences:|plain-http|features forbidden/);
+  });
+
+  it('[OCLI14] show never prints the secret hash, only that a secret is set', async () => {
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.show', ['--subject-type', 'public', '--auth-method', 'client_secret_basic']));
+    const hash = (await getClient(platform, 'Cli.show')).clientSecretHash;
+    const shown = await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.show']);
+    assert.match(shown.out, /"clientSecretHash": "\(set\)"/);
+    assert.doesNotMatch(shown.out, /\$2[aby]\$/);
+    assert.equal(shown.out.includes(hash.slice(7, 20)), false);
+    // A client without a secret shows no such field.
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.show2', ['--subject-type', 'public']));
+    const plain = await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.show2']);
+    assert.doesNotMatch(plain.out, /clientSecretHash/);
+  });
+
+  it('[OCLI15] create (app-account) refuses an unknown flag and a value flag given bare, before any lookup', async () => {
+    const platform = fakePlatform();
+    const typo = await run(cli.runCreate, platform, ['create', 'someone', '--redirect-uri', REDIRECT, '--scopes', 'x']);
+    assert.equal(typo.error?.message, 'create: unknown flag --scopes');
+    const registryOnly = await run(cli.runCreate, platform, ['create', 'someone', '--redirect-uri', REDIRECT, '--auth-method', 'client_secret_basic']);
+    assert.equal(registryOnly.error?.message, 'create: unknown flag --auth-method');
+    const bare = await run(cli.runCreate, platform, ['create', 'someone', '--redirect-uri']);
+    assert.equal(bare.error?.message, 'create: --redirect-uri requires a value');
+    assert.deepEqual(await platform.listPlatformKvKeys(''), []);
   });
 });
