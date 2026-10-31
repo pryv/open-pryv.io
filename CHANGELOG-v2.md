@@ -47,6 +47,10 @@
 - **`oauth:audAllowList` is removed** (it was never enforced): the `aud` values a client may name are
   registered per client (`create-registry --audience`). A configuration that still sets it gets a boot
   warning.
+- On a re-authorization of a registry client with per-entry choice, every requested entry the user's
+  current grant does not hold is offered unticked (`optIn`) unless the request marks it mandatory: a
+  stream the user declined at an earlier consent is no longer pre-ticked on the next launch, and a scope
+  the app adds later needs a positive tick (or `mandatory`).
 
 ## 2.0.0-rc.68 - 2026-10-30
 

@@ -42,6 +42,7 @@ describe('[OCMPU] composed consent of registry clients', () => {
       { streamId: 'a', level: 'read', mandatory: true },
       { streamId: 'b', level: 'read', optIn: true },
       { streamId: 'c', level: 'contribute', optIn: true },
+      { streamId: 'f', level: 'read' },
       { feature: 'selfAudit', setting: 'allowed', optIn: true },
     ], { allowUserChoice: true });
     const current = {
@@ -58,9 +59,42 @@ describe('[OCMPU] composed consent of registry clients', () => {
       { streamId: 'c', level: 'contribute', currentlyGranted: true, currentLevel: 'read' },
       { streamId: 'd', level: 'read', currentlyGranted: true, currentLevel: 'read' },
       { streamId: 'b', level: 'read', optIn: true },
+      // Not held, not marked: opt-in all the same (the user has a choice).
+      { streamId: 'f', level: 'read', optIn: true },
       { feature: 'selfAudit', setting: 'allowed', currentlyGranted: true },
     ]);
     assert.equal(c.shown.allowUserChoice, true);
+  });
+
+  it('[OCMPU9] with a choice, an entry the grant does not hold opens unticked unless mandatory', () => {
+    const entries = [
+      { streamId: 'a', level: 'read', optIn: true },
+      { streamId: 'n', level: 'read', mandatory: true },
+      { streamId: 'p', level: 'read' },
+      { feature: 'selfAudit', setting: 'allowed' },
+    ];
+    const current = { aliased: false, permissions: [{ streamId: 'a', level: 'read' }] };
+    const withChoice = composeShownOffer(requested(entries, { allowUserChoice: true }), current, CLIENT);
+    const byId = (c, key) => c.shown.permissions.find((p) => p.streamId === key || p.feature === key);
+    // Mandatory: ticked and locked, never opt-in.
+    assert.deepEqual(byId(withChoice, 'n'), { streamId: 'n', level: 'read', mandatory: true });
+    assert.deepEqual(byId(withChoice, 'p'), { streamId: 'p', level: 'read', optIn: true });
+    assert.deepEqual(byId(withChoice, 'selfAudit'), { feature: 'selfAudit', setting: 'allowed', optIn: true });
+    // Held, though requested opt-in: opens ticked.
+    assert.deepEqual(byId(withChoice, 'a'), { streamId: 'a', level: 'read', currentlyGranted: true, currentLevel: 'read' });
+
+    // All or nothing: no box to leave unticked.
+    const noChoice = composeShownOffer(requested(entries), current, CLIENT);
+    assert.equal(noChoice.shown.permissions.length, 4);
+    assert.ok(noChoice.shown.permissions.every((p) => p.optIn !== true));
+    // The flag is part of the screen: another digest, still deterministic.
+    const again = composeShownOffer(requested(entries, { allowUserChoice: true }), current, CLIENT);
+    assert.equal(again.shownDigest, withChoice.shownDigest);
+    assert.notEqual(withChoice.shownDigest, noChoice.shownDigest);
+    // Same screen without the opt-in flags: another digest (the flag itself is bound).
+    const withoutFlags = { ...withChoice.shown, permissions: withChoice.shown.permissions.map(({ optIn: _o, ...p }) => p) };
+    assert.equal(shownDigestOf(DIGEST, withChoice.shown, null), withChoice.shownDigest);
+    assert.notEqual(shownDigestOf(DIGEST, withoutFlags, null), withChoice.shownDigest);
   });
 
   it('[OCMPU3] read held, create-only requested: a level conflict', () => {
