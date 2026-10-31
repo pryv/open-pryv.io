@@ -475,6 +475,24 @@ oauth:
     assert.strictEqual(withUrl.status, 0, withUrl.stdout + withUrl.stderr);
     assert.ok(!/oauth\.consentUrl/.test(withUrl.stdout), withUrl.stdout);
   });
+
+  it('[CKOC2] oauth.stateKey: unset with a consent page warns; a placeholder is a problem; a random value is clean', () => {
+    const oauth = (stateKey) => BASE + `
+oauth:
+  consentUrl: https://app.example.com/oauth2-authorize
+` + (stateKey == null ? '' : `  stateKey: '${stateKey}'\n`);
+    const unset = runCheck(oauth(null));
+    assert.strictEqual(unset.status, 0, unset.stdout + unset.stderr);
+    assert.match(unset.stdout, /oauth\.stateKey not set/);
+    for (const placeholder of ['REPLACE_ME', '$' + '{OAUTH_STATE_KEY}', 'changeme']) {
+      const res = runCheck(oauth(placeholder));
+      assert.strictEqual(res.status, 1, placeholder + ': ' + res.stdout + res.stderr);
+      assert.match(res.stderr, /oauth\.stateKey/, placeholder);
+    }
+    const good = runCheck(oauth('k3yV4lue-' + 'a1B2c3D4e5'.repeat(4)));
+    assert.strictEqual(good.status, 0, good.stdout + good.stderr);
+    assert.doesNotMatch(good.stdout, /oauth\.stateKey/);
+  });
 });
 
 describe('[CCDL] bin/check-config.js reads the shipped defaults under the file', function () {

@@ -140,8 +140,35 @@ function checkRequiredWhen (config, problems) {
 // a config file (or a common stand-in) is as good as public, so it never boots;
 // in production a short value, or one published for development and tests, is
 // refused too.
-const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret', 'platform:piiHmacKey'];
+const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret', 'platform:piiHmacKey', 'oauth:stateKey'];
 const { weakSecretReason, MIN_SECRET_LENGTH } = require('../../components/business/src/secretValues.ts');
+
+// Secrets that may be left empty (the feature then falls back or stays off)
+// but, once set, are held to the same rule as the required ones.
+const OPTIONAL_SECRET_PATHS = ['oauth:stateKey'];
+
+/**
+ * An optional secret that is set must be a real secret: a placeholder, an
+ * unexpanded `${…}` reference or (in production) a short or published value
+ * refuses the boot, as for the required secrets.
+ */
+function checkOptionalSecrets (config, problems) {
+  for (const path of OPTIONAL_SECRET_PATHS) {
+    const value = config.get(path);
+    if (value == null || value === '') continue;
+    let reason;
+    if (typeof value !== 'string') reason = 'must be a string';
+    else if (isMissingOrSentinel(value)) reason = 'is a placeholder value';
+    else reason = weakSecretReason(value, { production: process.env.NODE_ENV === 'production' });
+    if (reason != null) {
+      problems.push({
+        message: `secret '${path}' ${reason}: set a long random value of your own (e.g. \`openssl rand -base64 32\`), or leave it empty.`,
+        path: path.split(':'),
+        payload: { path, weakSecret: true }
+      });
+    }
+  }
+}
 
 // `auth.trustedApps` gates the browser login and password-reset flows. Absent,
 // every such call would fail at request time; a malformed entry would be
@@ -602,6 +629,7 @@ async function validate (config) {
   }
 
   checkRequiredWhen(config, problems);
+  checkOptionalSecrets(config, problems);
   checkTrustedApps(config, problems);
   checkAuditOnUserDeleteMode(config, problems);
   checkDnsTopologyConsistency(config, problems);
@@ -755,6 +783,46 @@ function collectWarnings (config) {
   warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
   warnings.push(...revocationLagWarnings(config));
   warnings.push(...describeAutoDeletion(config).warnings);
+  warnings.push(...oauthWarnings(config));
+  return warnings;
+}
+
+/** Below this, an `oauth.stateKey` gets a boot warning. */
+const OAUTH_STATE_KEY_MIN_LENGTH = 32;
+/** Upper bound on `oauth.idTokenTTL`, seconds (same value as the oauth2 component's MAX_ID_TOKEN_TTL). */
+const OAUTH_MAX_ID_TOKEN_TTL = 3600;
+
+/**
+ * OAuth settings that work but should be changed: the consent-state key still
+ * borrowed from the admin key (transitional), a weak or shared state key, a
+ * removed key still set, an unusable id_token lifetime.
+ */
+function oauthWarnings (config) {
+  const warnings = [];
+  const consentUrl = config.get('oauth:consentUrl');
+  const stateKey = config.get('oauth:stateKey');
+  const stateKeySet = typeof stateKey === 'string' && stateKey.length > 0;
+  // Only the authorization flow signs states, and it needs a consent page.
+  if (!stateKeySet && typeof consentUrl === 'string' && consentUrl.length > 0) {
+    warnings.push("'oauth.stateKey' is not set: OAuth consent states are signed with a key derived from 'auth.adminAccessKey'. " +
+      `Set 'oauth.stateKey' to a random value of at least ${OAUTH_STATE_KEY_MIN_LENGTH} characters (e.g. openssl rand -base64 32); ` +
+      'a later release will require it. Setting it cancels only the consent screens open at that moment.');
+  }
+  if (stateKeySet && stateKey === config.get('auth:adminAccessKey')) {
+    warnings.push("'oauth.stateKey' equals 'auth.adminAccessKey': give it its own random value.");
+  } else if (stateKeySet && stateKey.length < OAUTH_STATE_KEY_MIN_LENGTH) {
+    warnings.push(`'oauth.stateKey' is shorter than ${OAUTH_STATE_KEY_MIN_LENGTH} characters: use a longer random value.`);
+  }
+  if (config.get('oauth:audAllowList') != null) {
+    warnings.push("'oauth.audAllowList' is no longer read and can be removed: the accepted 'aud' values are registered per client " +
+      '(bin/oauth-client.js create-registry --audience).');
+  }
+  const idTokenTTL = config.get('oauth:idTokenTTL');
+  if (idTokenTTL != null && !(Number.isInteger(Number(idTokenTTL)) && Number(idTokenTTL) > 0)) {
+    warnings.push(`'oauth.idTokenTTL' is ${JSON.stringify(idTokenTTL)}: a positive number of seconds is expected; 300 is used.`);
+  } else if (Number(idTokenTTL) > OAUTH_MAX_ID_TOKEN_TTL) {
+    warnings.push(`'oauth.idTokenTTL' is ${idTokenTTL} s, above the ${OAUTH_MAX_ID_TOKEN_TTL} s maximum: id_tokens live ${OAUTH_MAX_ID_TOKEN_TTL} s.`);
+  }
   return warnings;
 }
 
@@ -800,6 +868,7 @@ module.exports = {
   reportProblems,
   collectWarnings,
   checkRequiredWhen,
+  checkOptionalSecrets,
   checkTrustedApps,
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,

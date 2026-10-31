@@ -21,9 +21,11 @@
  *              tokenResponse?, idTokenClaims?, introspectionClaims?, claimsSupported? };
  *   };
  *
- * `idTokenClaims`, `introspectionClaims` and `claimsSupported` are part of
- * the contract (validated when present) and reserved: this core does not
- * call them yet.
+ * `idTokenClaims` adds claims to the OpenID Connect id_token (code exchange
+ * with `openid` granted; it may not set a claim the core owns) and
+ * `claimsSupported` lists them in the OpenID Connect discovery document.
+ * `introspectionClaims` is part of the contract (validated when present) and
+ * reserved: this core does not call it yet.
  *
  * Versioning: an integer `apiVersion`. Adding an optional hook or an optional
  * context field does not bump it; changing a context field's meaning, a return

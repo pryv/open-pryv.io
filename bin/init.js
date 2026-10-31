@@ -739,6 +739,17 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #       clientSecret: <per-core secret>
 # #       label: Google
 
+# # OpenID Connect for OAuth registry clients (id_token, discovery, JWK Set):
+# # add these keys under the oauth: block above. RS256, RSA >= 2048 bits,
+# # unencrypted PEM (openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072).
+# # The FIRST key signs, all are published (JWK Set cached 5 min). Rotate in 3
+# # restarts: add the new key SECOND and wait >= 5 min; move it FIRST; drop the
+# # old one once idTokenTTL has passed. Per-core secret, YAML only.
+# #   signingKeys:
+# #     - kid: '2026-10'
+# #       privateKeyFile: /path/to/oidc-signing-key.pem
+# #   idTokenTTL: 300
+
 # # hostedSites: a reserved name that serves a static folder (e.g. an auth /
 # # account UI bundle) or proxies a fixed upstream, instead of a user account.
 # # ${dnsLess ? 'dnsLess: served under <publicUrl>/<name>/, same origin as the API (build the bundle with that base).' : 'Served on <name>.<dns.domain>, its own origin. Deploy the folder on every core listing it.'}
@@ -1602,7 +1613,11 @@ async function main () {
       defaultAuthUrl: `${authUiUrl}/auth`
     },
     oauth: {
-      consentUrl
+      consentUrl,
+      // Consent-state signing secret, per core and used for nothing else.
+      // Losing it only cancels the consent screens open at that moment, so it
+      // is generated, never asked, and needs no backup.
+      stateKey: genSecret(32)
     },
     cluster: {
       apiWorkers: 2,

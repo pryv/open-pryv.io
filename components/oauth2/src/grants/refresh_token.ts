@@ -384,6 +384,7 @@ export async function handleRefreshToken (
         client,
         grantType: 'refresh_token',
         issuer: issuerFromConfig(deps.config),
+        config: deps.config,
         coreTokens: row.coreTokens ?? [],
         grammarTokens: row.grammarTokens ?? [],
         permissions: access.permissions ?? row.permissions ?? [],

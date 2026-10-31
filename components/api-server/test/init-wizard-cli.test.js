@@ -104,13 +104,17 @@ describe('[INWZ] bin/init.js generated files', function () {
       ['*@https://account.example.com', '*@https://core.example.com']);
   });
 
-  it('[INWZA] the OAuth consent page defaults to the auth UI\'s /oauth2-authorize route, a key default-config.yml also carries', () => {
+  it('[INWZA] the OAuth consent page defaults to the auth UI\'s /oauth2-authorize route, a key default-config.yml also carries; a consent-state key of its own is generated', () => {
     const res = runWizard(configDir);
     assert.strictEqual(res.status, 0, res.output);
     const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
     assert.strictEqual(config.oauth.consentUrl, 'https://account.example.com/oauth2-authorize');
     const defaults = yaml.load(fs.readFileSync(path.join(REPO_ROOT, 'config/default-config.yml'), 'utf8'));
     assert.ok(Object.hasOwn(defaults.oauth, 'consentUrl'), 'default-config.yml declares oauth.consentUrl');
+    // The consent-state key is generated, of its own (not the admin key).
+    assert.ok(typeof config.oauth.stateKey === 'string' && config.oauth.stateKey.length >= 32, 'oauth.stateKey generated');
+    assert.notStrictEqual(config.oauth.stateKey, config.auth.adminAccessKey);
+    assert.ok(Object.hasOwn(defaults.oauth, 'stateKey'), 'default-config.yml declares oauth.stateKey');
   });
 
   it('[INWZ7] dns-active: the default trustedApps include the register and access hosts', () => {

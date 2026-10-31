@@ -1,5 +1,53 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### OpenID Connect for registry clients (new, opt-in)
+
+- **On when `oauth:signingKeys` lists at least one key** (per core, YAML only): RS256 only, RSA keys of
+  at least 2048 bits, unencrypted PEM, each with a unique `kid` and exactly one of `privateKeyFile` /
+  `privateKeyPem` (`alg`, if given, must be `RS256`). A malformed entry stops the boot. With no key,
+  `openid` is refused at `/oauth2/authorize` (`invalid_scope`) and both documents below answer 404.
+  `openid` is a scope of registry clients only.
+- **Key rotation by ordering** (the first key signs, every listed key is published in the JWK Set,
+  served with a 5-minute cache): (1) add the new key SECOND and restart, then wait at least the JWK
+  Set cache lifetime (longer if your relying parties cache it longer) so it is published before it
+  signs; (2) move it FIRST and restart: it signs from then on; (3) once `oauth:idTokenTTL` has passed,
+  remove the old key.
+- **`id_token` at the code exchange** of a registry client granted `openid`: RS256, header `{ alg, kid,
+  typ: 'JWT' }`, claims `iss`, `sub` (the user's stable internal id, not routable; never the username),
+  `aud` and `azp` (the client id), `iat`, `exp` (`oauth:idTokenTTL`, default 300 s, at most 3600 s),
+  `auth_time`, `nonce` (when the request sent one), plus the extension's `idTokenClaims(ctx)` fields
+  (same context as `tokenResponse`; a core claim is refused, a failing or late hook answers 500 before
+  any refresh token is stored). **No `id_token` on refresh.** `auth_time` is a LOWER BOUND: the
+  creation of the personal access that consented, which a later sign-in to the same app keeps, so it
+  may be much earlier than the authentication behind the consent, never later. `max_age`, `prompt` and
+  `at_hash` are not supported (`/oauth2/authorize` ignores `max_age` and `prompt`).
+- **`nonce`**: 1 to 512 characters, carried in the signed state and the code, echoed in the id_token,
+  and accepted once per client across the platform: an authorization request reusing a nonce that
+  already went into an id_token is refused (`invalid_request` "nonce already used"), and of two codes
+  carrying the same nonce only the first exchange answers (the second: `invalid_grant`, its session
+  removed).
+- **`GET /.well-known/openid-configuration`**: the authorization-server metadata plus
+  `subject_types_supported: ['public']` (`pairwise` joins the list with the release that serves
+  pseudonymous subjects), `id_token_signing_alg_values_supported: ['RS256']`, `claims_supported` (the
+  core's claims and the extension's `claimsSupported`). **`GET /oauth2/jwks`**: the public keys (`kty n
+  e kid alg use` only). With a key, `/.well-known/oauth-authorization-server` gains `jwks_uri`, and
+  `openid` joins `scopes_supported`.
+
+### Changed
+
+- **Operators: set `oauth:stateKey` on every core.** The consent-flow state (carried from
+  `/oauth2/authorize` to the consent page and back) is now signed with its own secret, per core, used
+  for nothing else (a random value of at least 32 characters, e.g. `openssl rand -base64 32`). While it
+  is empty, the key is still derived from `auth:adminAccessKey` and every boot logs a warning; a later
+  release will require it. A set value that is a placeholder, an unexpanded `${…}` reference or a
+  published example refuses the boot. Setting it only cancels the consent screens open at that moment;
+  once set, a state signed with the admin-derived key is refused. The install wizard writes one.
+- **`oauth:audAllowList` is removed** (it was never enforced): the `aud` values a client may name are
+  registered per client (`create-registry --audience`). A configuration that still sets it gets a boot
+  warning.
+
 ## 2.0.0-rc.68 - 2026-10-30
 
 ### OAuth registry clients and the OAuth extension (new, opt-in)
