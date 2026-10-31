@@ -471,6 +471,7 @@ export async function handleRefreshToken (
         grammarTokens: row.grammarTokens ?? [],
         permissions: access.permissions ?? row.permissions ?? [],
         subject: access.subject,
+        aliased: access.aliased === true,
       });
     } catch (err: unknown) {
       logServerError('refresh_token: registry token response failed', err);

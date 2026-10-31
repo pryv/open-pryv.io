@@ -154,12 +154,17 @@
   (`addressedName`; `usersRepository.resolveUsername` now tells whether the name is the username,
   `isCanonical`), and `checkAddressedName` runs right after the access is loaded by token or by id
   (before the expiry check), dropping it from the context before refusing. A server-side load on
-  behalf of no request sets `skipAddressBinding` (the webhook scope re-preparation).
+  behalf of no request sets `skipAddressBinding` (the webhook scope re-preparation). A context whose
+  `init` did not run (no addressed name) refuses an aliased access (fails closed). `isAccessAlias`
+  (same file) gates `auth.login` / `auth.ssoLogin` and `account.requestPasswordReset` at an `r-` alias.
+- The extension's `echo` and the response hooks receive `aliased` (`grantedScopeTokens(…, { aliased })`,
+  from the grant subject at the code exchange and the refreshed session at refresh).
 - `accessDeletion.ts` `releaseAliasesIfUnused(user, aliases)`: an alias is released only once no live
   (not deleted) access of the account carries it; used by `deleteAccessChain`, `revokeChain` (also
   after its bare-delete fallback) and the removal of a session after a failed code exchange.
   `sessionsOfGrant` takes expired sessions too; an expired access managed by a deleted one and sharing
-  its alias is deleted with it.
+  its alias is deleted with it (by `deleteAccessChain` and in `accessChainIds`, the bare-delete
+  fallback's list).
 - OAuth glue: `mintAccessDirect` takes the grant's `alias` (consent and refresh mints) and builds the
   session's `apiEndpoint` with `buildForAccess`; `findRegistryGrant` treats a grant created before its
   client's revoke epoch (read from the platform store at each consent) like an expired one. The

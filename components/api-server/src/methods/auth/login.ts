@@ -39,6 +39,8 @@ const { normalizeMfaConfig, getMFAMethodForProfile, getMFASessionStore, Profile:
 const { reindexAccessNonFatal } = require('platform/src/accessIndex.ts');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
 const { isMintedAliasShape } = require('business/src/users/aliasShape.ts');
+const { isAccessAlias } = require('business/src/accesses/aliasAddressing.ts') as typeof import('business/src/accesses/aliasAddressing.ts');
+const USERNAME_MISMATCH = 'The username in the path does not match that of the credentials.';
 const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAttemptThrottle } = require('../helpers/accountAttemptThrottle.ts') as typeof import('../helpers/accountAttemptThrottle.ts');
 
@@ -146,7 +148,15 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // shape registration refuses as a username) is not a sign-in name: it is
   // handed out with a token, and would otherwise let its holder try passwords
   // without knowing the username.
+  // Addressed BY such an alias (`/<alias>/auth/login`), the sign-in is refused
+  // first, with the answer a wrong username gets, whatever the credentials:
+  // comparing them would tell the alias holder whether a guessed username is
+  // the account behind the alias (and a right guess would count failed
+  // sign-ins against the owner).
   async function applyPrerequisitesForLogin (context: MethodContext, params: { username: string }, _result: ResultBag, next: Next) {
+    if (context.addressedName != null && isAccessAlias(context.addressedName)) {
+      return next(errors.invalidOperation(USERNAME_MISMATCH));
+    }
     const fixedUsername = params.username.toLowerCase();
     if (context.user.username === fixedUsername) return next();
     try {
@@ -157,8 +167,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     } catch (err) {
       return next(errors.unexpectedError(err as Error));
     }
-    next(errors.invalidOperation('The username in the path does not match that of ' +
-        'the credentials.'));
+    next(errors.invalidOperation(USERNAME_MISMATCH));
   }
 
   async function checkPassword (context: MethodContext, params: { password: string }, result: ResultBag, next: Next) {

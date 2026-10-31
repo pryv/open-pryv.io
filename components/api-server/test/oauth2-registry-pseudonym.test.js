@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  * alias is released when its last holder is deleted.
  */
 
-/* global initTests, initCore, coreRequest, cuid, withInjectedConfig */
+/* global initTests, initCore, coreRequest, cuid, withInjectedConfig, app */
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -42,9 +42,11 @@ const toyExtension = {
       }
       return { ok: true, tokens, offer: { permissions, randomAlias: tokens.includes('ctx/pseudo') } };
     },
-    echo ({ permissions, requestedTokens }) {
-      return requestedTokens.filter((t) => t === 'ctx/user' || t === 'ctx/pseudo' ||
+    echo ({ permissions, requestedTokens, aliased }) {
+      const echoed = requestedTokens.filter((t) => t === 'ctx/user' ||
         permissions.some((p) => p.level === 'read' && 'read/' + p.streamId === t));
+      // The pseudonym marker, whenever the subject is an alias (asked for or not).
+      return aliased ? [...echoed, 'ctx/pseudo'] : echoed;
     },
   },
   tokenResponse: (ctx) => (ctx.scopeTokens.includes('ctx/user') ? { user: ctx.subject } : {}),
@@ -256,9 +258,11 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     assert.deepEqual(await aliases(), [...before, grant.alias].sort(), 'one alias minted');
     first = { token: t.access_token, refresh: t.refresh_token, alias: grant.alias, sessionId: session.id };
 
-    // Token response: the subject is the alias, no apiEndpoint.
+    // Token response: the subject is the alias, no apiEndpoint; the echo was
+    // told the subject is an alias (its marker, though the app did not ask).
     assert.equal(t.user, grant.alias);
     assert.equal(t.apiEndpoint, undefined);
+    assert.deepEqual(t.scope.split(' ').sort(), ['ctx/pseudo', 'ctx/user', 'offline_access', 'read/health']);
     assertNoUsername('token response', t);
 
     const at = (p) => '/' + grant.alias + p;
@@ -291,6 +295,7 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.user, grant.alias);
     assert.equal(r.body.apiEndpoint, undefined);
+    assert.ok(r.body.scope.split(' ').includes('ctx/pseudo'), 'the echo knows the subject is an alias at refresh: ' + r.body.scope);
     assertNoUsername('refresh response', r.body);
     first.token = r.body.access_token;
     first.refresh = r.body.refresh_token;
@@ -469,6 +474,7 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
   it('[OPSE14] account to pseudonym: the change is shown and acknowledged, then an aliased grant replaces the account one', async () => {
     const plain = await runFlow('read/health ctx/user', publicClient);
     assert.equal(plain.user, userId);
+    assert.equal(plain.scope.split(' ').includes('ctx/pseudo'), false, 'no marker for an account grant');
     const oldGrant = await grantOf(publicClient);
     assert.equal(oldGrant.alias ?? null, null);
     const flow = await authorize('read/health ctx/user ctx/pseudo', publicClient);
@@ -489,6 +495,90 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     assert.equal(oldSession.status, 403, 'the account-mode session died with its grant');
     const info = await coreRequest.get('/' + now.alias + '/access-info').set('Authorization', t.access_token);
     assert.equal(info.status, 200, JSON.stringify(info.body));
+  });
+
+  it('[OPSE15] refresh-token reuse whose teardown falls back to the bare delete still releases the alias, an expired child holding it included', async () => {
+    const t = await runFlow('offline_access read/health', pairwiseClient);
+    const grant = await grantOf(pairwiseClient);
+    const child = await coreRequest.post('/' + grant.alias + '/accesses').set('Authorization', t.access_token)
+      .send({ name: 'opse15 child', type: 'shared', permissions: [{ streamId: 'health', level: 'read' }] });
+    assert.equal(child.status, 201, JSON.stringify(child.body));
+    assert.equal(child.body.access.alias, grant.alias);
+    const user = { id: userId, username: who.username };
+    await new Promise((resolve, reject) => storageLayer.accesses.updateOne(user, { id: child.body.access.id },
+      { expires: Date.now() / 1000 - 60 }, (err) => (err != null ? reject(err) : resolve())));
+    assert.equal((await refresh(t.refresh_token, pairwiseClient)).status, 200);
+    // The webhook store fails: every teardown of the chain falls back to the bare soft-delete.
+    const webhooks = storageLayer.webhooks;
+    const original = webhooks.delete;
+    webhooks.delete = function (u, q, cb) { cb(new Error('webhook store down (test)')); };
+    try {
+      await withInjectedConfig({ oauth: { refreshReuseGraceSeconds: 0 } }, async () => {
+        const replay = await refresh(t.refresh_token, pairwiseClient);
+        assert.equal(replay.status, 400, JSON.stringify(replay.body));
+      });
+    } finally {
+      webhooks.delete = original;
+    }
+    assert.equal(await grantOf(pairwiseClient), null);
+    const all = await coreRequest.get('/' + who.username + '/accesses').query({ includeExpired: true }).set('Authorization', who.token);
+    assert.equal(all.body.accesses.some((a) => a.alias === grant.alias), false, 'no row holds the alias any more');
+    assert.equal((await aliases()).includes(grant.alias), false, 'the alias is released');
+  });
+
+  it('[OPSE16] socket.io: a pseudonymous session connects to its alias namespace only; at the username it is an unknown token', async () => {
+    const http = require('node:http');
+    const ioClient = require('socket.io-client');
+    const setupSocketIO = require('../src/socket-io/index.ts').default;
+    const t = await runFlow('read/health', pairwiseClient);
+    const alias = (await grantOf(pairwiseClient)).alias;
+    const s = http.createServer(app.expressApp);
+    const setup = await setupSocketIO(s, app.api, app.getCustomAuthFunction('test'));
+    await new Promise((resolve) => s.listen(0, '127.0.0.1', resolve));
+    const clients = [];
+    const outcome = (name, token) => new Promise((resolve) => {
+      const c = ioClient.connect(`http://127.0.0.1:${s.address().port}/${name}?auth=${token}`, { forceNew: true, transports: ['websocket'], reconnection: false });
+      clients.push(c);
+      const timer = setTimeout(() => resolve({ timeout: true }), 10000);
+      c.once('connect', () => { clearTimeout(timer); resolve({ connected: true }); });
+      c.once('connect_error', (err) => { clearTimeout(timer); resolve({ error: err?.message }); });
+      c.once('error', (err) => { clearTimeout(timer); resolve({ error: typeof err === 'string' ? err : err?.message }); });
+    });
+    try {
+      assert.deepEqual(await outcome(alias, t.access_token), { connected: true });
+      const atName = await outcome(who.username, t.access_token);
+      const unknown = await outcome(who.username, 'no-such-token-' + cuid());
+      assert.ok(atName.error != null, JSON.stringify(atName));
+      assert.deepEqual(atName, unknown);
+    } finally {
+      for (const c of clients) c.disconnect();
+      s.closeAllConnections();
+      if (setup?.io != null) await new Promise((resolve) => setup.io.close(() => resolve()));
+      else await new Promise((resolve) => s.close(resolve));
+    }
+  });
+
+  it('[OPSE17] sign-in and password reset at an alias: one fixed answer, right or wrong username, and no failed sign-in counted', async () => {
+    await runFlow('read/health', pairwiseClient);
+    const alias = (await grantOf(pairwiseClient)).alias;
+    const login = (name, username, password) => coreRequest.post('/' + name + '/auth/login').set('Origin', 'http://test.pryv.local')
+      .send({ username, password, appId: 'pryv-test' });
+    const strip = (res) => JSON.stringify({ status: res.status, body: { ...res.body, meta: undefined } });
+    const right = await login(alias, who.username, 'not-the-password');
+    const wrong = await login(alias, 'nobody' + cuid().toLowerCase().slice(1, 9), 'not-the-password');
+    assert.equal(right.status, 400, JSON.stringify(right.body));
+    assert.equal(right.body.error.id, 'invalid-operation');
+    assert.equal(strip(right), strip(wrong), 'byte-identical, whatever the username');
+    // Even with the right password, and past the free failures: never checked, never counted.
+    for (let i = 0; i < 7; i++) assert.equal(strip(await login(alias, who.username, 'opse-passw0rd')), strip(wrong));
+    for (let i = 0; i < 7; i++) assert.equal(strip(await login(alias, who.username, 'not-the-password')), strip(wrong));
+    const owner = await login(who.username, who.username, 'opse-passw0rd');
+    assert.equal(owner.status, 200, 'the owner is not locked out: ' + JSON.stringify(owner.body));
+    who.token = owner.body.token;
+    const reset = await coreRequest.post('/' + alias + '/account/request-password-reset').set('Origin', 'http://test.pryv.local')
+      .send({ appId: 'pryv-test' });
+    assert.equal(reset.status, 400, JSON.stringify(reset.body));
+    assert.equal(reset.body.error.id, 'invalid-operation');
   });
 
   it('[OPSE12] a change of username: the session keeps working at its alias; deleting the account releases it', async () => {

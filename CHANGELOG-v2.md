@@ -164,12 +164,14 @@
   stay usable at the username. Deleting such an access keeps the alias while another access still
   carries it; an alias is released when its last holder is deleted (an expired access still holds it
   until then; one left expired under a deleted access that shared its alias is deleted with it).
-- **Sign-in and password reset are refused at an access alias.** `POST /<alias>/auth/login` and the
-  password-reset request addressed by an `r-` alias answer one fixed error (400 `invalid-operation`
-  "The username in the path does not match that of the credentials."), whatever the credentials, before
-  any password check and without counting a failed sign-in for the account: the answer no longer tells
-  whether a guessed username is the account behind the alias. Sign-in at the username and at a former
-  username is unchanged.
+- **Sign-in and password reset are refused at an access alias.** `POST /<alias>/auth/login` addressed
+  by an `r-` alias answers one fixed error (400 `invalid-operation` "The username in the path does not
+  match that of the credentials."), whatever the credentials, before any password check and without
+  counting a failed sign-in for the account: the answer no longer tells whether a guessed username is
+  the account behind the alias, and an alias holder can no longer delay the owner's sign-in.
+  `POST /<alias>/account/request-password-reset` is refused the same way (400 `invalid-operation`), so
+  an alias holder cannot send reset mails to the owner. Both are unchanged at the username and at a
+  former username.
 - Deleting a consent grant (registry or CMC) deletes its expired OAuth sessions too, not only the live
   ones (they could no longer authenticate; they are no longer left in the access list).
 

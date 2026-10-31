@@ -211,7 +211,11 @@ async function accessChainIds (user: DeletionUser, id: string): Promise<string[]
   const now = timestamp.now();
   const related = managedAccessesOf(all, id, now);
   const sessions = sessionsOfGrant(all, parseAccessRef(id).base, now, related);
-  return [id].concat(related.map((a) => a.id), sessions.map((a) => a.id));
+  const self = all.find((a) => a.id === parseAccessRef(id).base);
+  const chain = (self != null ? [{ ...self, id: parseAccessRef(id).base }] : []).concat(related, sessions);
+  // As deleteAccessChain: expired accesses sharing the chain's alias go too.
+  const pinning = expiredAliasHolders(all, chain, now);
+  return [id].concat(related.map((a) => a.id), sessions.map((a) => a.id), pinning.map((a) => a.id));
 }
 
 /**

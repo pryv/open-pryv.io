@@ -43,6 +43,7 @@ type EmailsUserContext = {
 };
 
 const errors = require('errors').factory;
+const { isAccessAlias } = require('business/src/accesses/aliasAddressing.ts') as typeof import('business/src/accesses/aliasAddressing.ts');
 const commonFns = require('./helpers/commonFunctions.ts');
 const mailing = require('./helpers/mailing.ts');
 const methodsSchema = require('../schema/accountMethods.ts');
@@ -374,12 +375,23 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     commonFns.refuseGenericDispatch,
     commonFns.getParamsValidation(methodsSchema.requestPasswordReset.params),
     requireTrustedAppFn,
+    refuseAtAccessAlias,
     throttlePasswordResetRequest,
     generatePasswordResetRequest,
     addUserBusinessToContext,
     sendPasswordResetMail,
     setAuditAccessId(AuditAccessIds.PASSWORD_RESET_REQUEST)
   );
+
+  // Addressed by the alias of an access (`/<alias>/account/...`): refused with
+  // one fixed answer, before the throttle counts it, so the holder of an alias
+  // cannot send password-reset mails to the account's owner.
+  function refuseAtAccessAlias (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    if (context.addressedName != null && isAccessAlias(context.addressedName)) {
+      return next(errors.invalidOperation('A password reset cannot be requested at the alias of an access; use the account\'s username.'));
+    }
+    next();
+  }
 
   async function throttlePasswordResetRequest (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     let outcome;

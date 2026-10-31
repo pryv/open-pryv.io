@@ -661,6 +661,14 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       extension.setExtension(withFeatureTokens(() => ['data/a.read', 'feat/selfRevoke.allowed']));
       assert.deepEqual(granted([], held), ['data/a.read', 'feat/selfRevoke.allowed']);
     });
+    it('[OXC11] the echo is told whether the subject is an alias, and may name a marker from it', () => {
+      const seen = [];
+      extension.setExtension(withEcho((ctx) => { seen.push(ctx.aliased); return ctx.aliased ? ['data/a.read', 'pseudo'] : ['data/a.read']; }));
+      assert.deepEqual(scopeGrammar.grantedScopeTokens(client, [], ['data/a.read'], [A_READ], { aliased: true }), ['data/a.read', 'pseudo']);
+      assert.deepEqual(scopeGrammar.grantedScopeTokens(client, [], ['data/a.read'], [A_READ], { aliased: false }), ['data/a.read']);
+      assert.deepEqual(granted(['data/a.read'], [A_READ]), ['data/a.read']);
+      assert.deepEqual(seen, [true, false, false], 'a boolean, false when not given');
+    });
   });
 
   describe('[OXFZ] grammar fuzz: whatever the grammar answers, the core keeps its rules', () => {

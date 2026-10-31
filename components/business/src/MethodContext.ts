@@ -380,13 +380,20 @@ class MethodContext {
    * access may not be used at. The refusal is the unknown-token answer, and
    * the access is dropped from the context first, so neither the body nor
    * the `Pryv-Access-Id` header tells it apart from a token of another
-   * account. No-op before `init` and for a server-side load
-   * (`skipAddressBinding`).
+   * account. No-op for a server-side load (`skipAddressBinding`). Without a
+   * recorded name (a context whose `init` did not run) it fails closed for an
+   * aliased access, which may be used at its alias only.
    */
   checkAddressedName () {
     const access = this.access;
-    if (access == null || this.addressedName == null || this.skipAddressBinding === true) return;
-    if (accessMayBeAddressedAs(access, this.addressedName)) return;
+    if (access == null || this.skipAddressBinding === true) return;
+    const addressed = this.addressedName;
+    if (addressed == null) {
+      const alias = (access as { alias?: unknown }).alias;
+      if (access.type === 'personal' || typeof alias !== 'string' || alias.length === 0) return;
+    } else if (accessMayBeAddressedAs(access, addressed)) {
+      return;
+    }
     this.access = null;
     throw errors.invalidAccessToken('Cannot find access from token.', 403);
   }

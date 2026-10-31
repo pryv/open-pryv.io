@@ -37,7 +37,21 @@ export function accessMayBeAddressedAs (access: { type?: unknown; alias?: unknow
   if (access.type === 'personal') return true;
   const own = typeof access.alias === 'string' && access.alias.length > 0 ? access.alias : null;
   if (own != null) return addressed.name === own;
-  // A minted alias has a shape no username may take (refused at registration
-  // and at a change of username), which tells it from a former username.
-  return addressed.isCanonical || !isMintedAliasShape(addressed.name);
+  return !isAccessAlias(addressed);
+}
+
+/**
+ * Whether the request addressed the account by the alias of an access (not
+ * by its username nor by a former username). Sign-in and password reset are
+ * refused at such a name with one fixed answer: the holder of an alias must
+ * not be able to confirm a guessed username, nor to send mails to the owner.
+ *
+ * Invariant the shape test rests on: an access alias is only ever produced by
+ * `mintAlias` (the minted shape, which registration and a change of username
+ * refuse as a username); `reserveSpecificAlias` backs former usernames only.
+ * If an access alias were ever reserved by value, this test would have to
+ * read the account's accesses instead of the shape.
+ */
+export function isAccessAlias (addressed: AddressedName): boolean {
+  return !addressed.isCanonical && isMintedAliasShape(addressed.name);
 }

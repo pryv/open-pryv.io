@@ -132,8 +132,8 @@ export type CreateAccess = (params: {
     kind: 'synthesised';
     permissions: Array<Record<string, unknown>>;
     /**
-     * The app asked for a pseudonym (the grant's alias as subject). Always
-     * false while pseudonymous subjects are refused at /oauth2/authorize.
+     * The app asked for a pseudonym, or the client is `pairwise`: the grant
+     * (and every session of it) carries an alias, the subject the app sees.
      */
     randomAlias?: boolean;
   };

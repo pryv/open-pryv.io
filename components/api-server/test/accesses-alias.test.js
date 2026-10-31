@@ -169,6 +169,24 @@ describe('[ALIA] access aliases (randomAlias)', function () {
     assert.equal((await usersIndex.getAliasesForId(fixtureUser.attrs.id)).includes(alias), false);
   });
 
+  it('[AL16] a context whose init did not run refuses an aliased access (fails closed) and still loads a plain one', async function () {
+    const { MethodContext } = require('business/src/MethodContext.ts');
+    const storageLayer = await require('storage').getStorageLayer();
+    const aliased = await createAccess({ name: 'al16 aliased', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(aliased.status, 201, JSON.stringify(aliased.body));
+    const contextFor = (token) => {
+      const context = new MethodContext({ name: 'test' }, username, token, null, {}, {}, null);
+      context.user = { id: fixtureUser.attrs.id, username }; // no init: no addressed name recorded
+      return context;
+    };
+    const refused = contextFor(aliased.body.access.token);
+    await assert.rejects(refused.retrieveAccessFromToken(storageLayer), (err) => err.id === 'invalid-access-token');
+    assert.equal(refused.access, null);
+    const plain = contextFor(masterToken);
+    await plain.retrieveAccessFromToken(storageLayer);
+    assert.ok(plain.access != null);
+  });
+
   it('[AL15] a create refused by the insert (type, name and device name taken) gives its minted alias back', async function () {
     const usersIndex = await require('storage').getUsersLocalIndex();
     const userId = fixtureUser.attrs.id;

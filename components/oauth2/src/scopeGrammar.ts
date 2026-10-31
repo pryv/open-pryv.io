@@ -304,11 +304,14 @@ export function grantedScopeTokens (
   client: OAuthClient,
   coreTokens: string[],
   grammarTokens: string[],
-  permissions: ExtPermission[]
+  permissions: ExtPermission[],
+  opts: { aliased?: boolean } = {}
 ): string[] {
   const ext: OAuthExtension | null = getExtension();
   if (ext == null) throw new Error('no scope grammar registered on this core');
-  const answer = ext.scopeGrammar.echo({ permissions, requestedTokens: grammarTokens, client: toClientView(client) });
+  // `aliased`: the subject is the grant's alias (a pseudonymous grant), so a
+  // grammar can name its pseudonym marker for a client that did not ask for one.
+  const answer = ext.scopeGrammar.echo({ permissions, requestedTokens: grammarTokens, client: toClientView(client), aliased: opts.aliased === true });
   if (!Array.isArray(answer) || answer.some((t) => typeof t !== 'string')) {
     throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo must return an array of strings`);
   }
