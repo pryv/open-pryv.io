@@ -23,6 +23,41 @@ Once enabled, each core exposes:
 | `POST /oauth2/token` | Token endpoint — code exchange, refresh, client credentials |
 | `GET /.well-known/openid-configuration` | OpenID Connect discovery (404 while `oauth.signingKeys` is empty) |
 | `GET /oauth2/jwks` | JWK Set of the id_token signing keys, public members only (404 while `oauth.signingKeys` is empty) |
+| `POST /oauth2/introspect` | RFC 7662 token introspection, for resource servers (confidential clients registered with `--can-introspect`) |
+| `POST /oauth2/revoke` | RFC 7009 token revocation, a client revoking its own access or refresh token |
+
+**Introspection.** The caller authenticates as at the token endpoint (HTTP
+Basic, `client_secret_post` or `private_key_jwt`) and must be confidential,
+registered with `--can-introspect` and not suspended; anyone else gets one
+uniform `401 invalid_client`. Any core answers for any OAuth session token: a
+session living on another core answers `421 { "error": "wrong_core",
+"coreUrl": "<home core>" }` (ask there); the home core re-reads the session and
+answers `{ "active": false }` when it is deleted, expired, its consent grant is
+gone or its client is revoked, suspended or gone. An active answer carries the
+RFC members (`scope`: the same scope answer as the token endpoint, recomputed
+from the session as it stands; `client_id`, `exp`, `iat`, `sub`, `iss`,
+`token_type`, `aud`, `cnf` for DPoP-bound sessions) and two extension members,
+never present in a token response: `api_base` (the account's API base URL, no
+credential in it) and, for a registry client's session, `permissions`
+(`[{ "streamId", "level" }]`, the stream permissions the session holds now, as
+the core enforces them). The extension's `introspectionClaims` hook may add
+members of its own (not the reserved ones).
+
+**Revocation.** The client authenticates as at the token endpoint (a public
+client names itself with `client_id`); `token_type_hint` is a hint only.
+Revoking an access token deletes its session, which also ends its refresh
+chain. Revoking a refresh token ends the chain like a detected refresh-token
+reuse: the user's consent grant for that client is deleted with every session
+of the client for that user, so the app must ask for consent again. An unknown
+token, another client's token or one already ended answers `200` (no oracle); a
+token whose session or chain lives on another core answers `421` with that
+core's URL.
+
+**Refresh chains.** A refresh retires the access token it replaces: the previous
+session of the chain expires `oauth.refreshRetireGraceSeconds` (default 60)
+after the refresh. Deleting an OAuth session (from the account, by a grant
+change that leaves it no reach, by a revocation) ends its refresh chain; a
+replay of a token ended that way is refused without being treated as theft.
 
 The discovery document advertises:
 
@@ -257,6 +292,9 @@ A configuration that still sets the key gets a boot warning; remove it.
 `accessTokenTTL` is short by design; clients renew via the refresh token.
 `refreshTokenTTL` is a **sliding** window (each refresh resets it), bounded by
 `refreshTokenAbsoluteTTL` (a hard cap regardless of activity).
+`refreshRetireGraceSeconds` (default 60, clamped to `[0, accessTokenTTL]`) is how
+long the access token a refresh replaces keeps working; keep it at or above
+`refreshReuseGraceSeconds`.
 
 ### ⚑ Per-deployment config agreement (multi-core)
 
@@ -399,7 +437,8 @@ Collect these for security monitoring and incident response.
 | `oauth.token.issued.authorization_code` | access token issued via the authorization-code grant |
 | `oauth.token.issued.client_credentials` | access token issued via the client-credentials grant |
 | `oauth.token.refreshed` | access token renewed via the refresh grant |
-| `oauth.token.revoked` | a token was revoked |
+| `oauth.token.revoked` | a token was revoked (reuse detected, consent withdrawn, or revoked by its client at `/oauth2/revoke`) |
+| `oauth.token.introspected` | a resource server introspected a token (caller, `active`; never the token; syslog only) |
 
 `oauth.code.reused` in particular should page: per RFC 6749 a code is
 single-use, so a reuse means either a broken client or a stolen code.

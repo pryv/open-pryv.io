@@ -216,8 +216,13 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   // The discovery documents follow the live configuration (signing keys) and
   // the installed extension (its advertised scopes and claims).
   function discovery (): {
-    issuer: string; scopesSupported: string[]; grantTypesSupported: string[]; oidc: boolean; claimsSupported: string[];
-    introspection: boolean; revocation: boolean;
+    issuer: string;
+    scopesSupported: string[];
+    grantTypesSupported: string[];
+    oidc: boolean;
+    claimsSupported: string[];
+    introspection: boolean;
+    revocation: boolean;
   } {
     const oidc = hasSigningKeys(deps.config);
     return {
