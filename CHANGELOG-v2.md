@@ -181,6 +181,10 @@
   introspection.
 - An OAuth session row stores one spelling per stream (`:local:a` is stored as `a`), as
   `accesses.create` does.
+- Registry clients: the composed consent screen (the signed-in `/oauth2/authorize/offer`) shows a feature the request
+  asks to allow, but that the client's grants forbid by default (`webhooks`, `secretSharing` without
+  `--allow-feature`), as the locked forbid it becomes (`setting: 'forbidden'`, `mandatory: true`), on
+  a first consent as on a re-consent; before, the first consent showed it as allowed.
 
 ## 2.0.0-rc.68 - 2026-10-30
 
