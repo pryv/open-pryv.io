@@ -485,6 +485,29 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     for (const s of ['a', 'b', 'c']) assert.equal((await readStream(who, t.access_token, s)).status, 200, s);
   });
 
+  it('[OCMP21] a stream unticked at the first consent opens unticked on the next one; a quick accept keeps it out', async () => {
+    const who = await newUser();
+    const first = await consent(who, 'read/a read/b ctx/choice', { keep: (p) => p.streamId === 'a' });
+    assert.equal(first.accept.status, 200, JSON.stringify(first.accept.body));
+    assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:read']);
+
+    const flow = await authorize('read/a read/b ctx/choice');
+    const o = await offer(flow.state, who);
+    assert.equal(o.status, 200, JSON.stringify(o.body));
+    const b = o.body.offer.permissions.find((p) => p.streamId === 'b');
+    assert.deepEqual(b, { streamId: 'b', level: 'read', optIn: true });
+    // What a consent UI honouring `optIn` posts on a plain Accept.
+    const ticked = o.body.offer.permissions.filter((p) => p.optIn !== true);
+    assert.deepEqual(ticked.map((p) => p.streamId), ['a']);
+    const a = await accept(flow.state, who, ticked, { shownDigest: o.body.shownDigest });
+    assert.equal(a.status, 200, JSON.stringify(a.body));
+    assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:read']);
+    const t = await exchange(flow, a);
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    assert.deepEqual(userStreamsOf((await holds(who, t.body.access_token)).permissions), ['a:read']);
+    assert.equal((await readStream(who, t.body.access_token, 'b')).status, 403);
+  });
+
   it('[OCMP10] write narrowed to read by the owner: the refreshed scope echoes read, not write', async () => {
     const who = await newUser();
     const t = await consentAndToken(who, 'offline_access write/a');
