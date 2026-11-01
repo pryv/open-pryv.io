@@ -151,6 +151,8 @@ export type CreateAccess = (params: {
   permissions?: Array<Record<string, unknown>>;
   /** What the minted session row stores, without its selfRevoke override (the scope echo input). */
   sessionPermissions?: Array<Record<string, unknown>>;
+  /** The grant carries an alias (a pseudonymous grant): told to the scope echo. */
+  aliased?: boolean;
 }>;
 
 /**
@@ -488,7 +490,7 @@ export function handleAccept (deps: AcceptDeps) {
     if (synthesised != null) {
       try {
         grantedTokens = grantedScopeTokens(registryClient!, synthesised.coreTokens, synthesised.grammarTokens,
-          access.sessionPermissions ?? access.permissions ?? grantedPermissions);
+          access.sessionPermissions ?? access.permissions ?? grantedPermissions, { aliased: access.aliased === true });
       } catch (err: unknown) {
         logServerError('accept: granted scope of a registry consent could not be computed (the request is recorded)', err);
       }

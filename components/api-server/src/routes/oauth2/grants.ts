@@ -328,6 +328,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
     sessionPermissions?: Array<Record<string, unknown>>;
+    aliased?: boolean;
   }> {
     const context = session._context;
     if (context == null) {
@@ -397,6 +398,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       dataGrantAccessId: dataGrant.id,
       permissions,
       sessionPermissions: sessions.storedSessionPermissions(sessionPermissions),
+      aliased: typeof dataGrant.alias === 'string' && dataGrant.alias.length > 0,
     };
   }
 

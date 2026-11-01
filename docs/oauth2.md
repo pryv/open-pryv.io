@@ -39,7 +39,8 @@ the token endpoint, recomputed from the session as it stands; omitted for an
 app-account session; `client_id`, `exp`, `iat`, `sub`, `iss`,
 `token_type`, `aud`, `cnf` for DPoP-bound sessions) and two extension members,
 never present in a token response: `api_base` (the account's API base URL, no
-credential in it) and, for a registry client's session, `permissions`
+credential in it; for a pseudonymous grant, built on its alias, which is then
+also the `sub`) and, for a registry client's session, `permissions`
 (`[{ "streamId", "level" }]`, the stream permissions the session holds now, as
 the core enforces them). The extension's `introspectionClaims` hook may add
 members of its own (not the reserved ones).

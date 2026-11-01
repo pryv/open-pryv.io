@@ -51,6 +51,8 @@ export type IntrospectAccess = (params: {
   created: number; // seconds
   expires: number; // seconds
   subject: string | null;
+  /** The subject is the grant's alias (a pseudonymous grant). */
+  aliased?: boolean;
   /** The account's API base URL, no credential in it (alias-based when the grant is aliased). */
   apiBase?: string;
   dpopJkt?: string;
@@ -148,11 +150,15 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
   const registry = isRegistryClient(client);
   if (registry) {
     try {
-      scopeTokens = grantedScopeTokens(client, row.coreTokens ?? [], row.grammarTokens ?? [], permissions);
+      // Told whether the subject is an alias, as at /token and at refresh,
+      // so the scope answer is the same one.
+      const aliased = session.aliased === true;
+      scopeTokens = grantedScopeTokens(client, row.coreTokens ?? [], row.grammarTokens ?? [], permissions, { aliased });
       const ctx: HookCtx = {
         clientId: client.clientId,
         client: toClientView(client),
         subject: session.subject,
+        aliased,
         grantType: 'introspection',
         scopeTokens,
         permissions,

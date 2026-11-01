@@ -104,12 +104,14 @@
   aliased grant: the grant carries a routable alias (`r-` + 8 characters), one per user and client, kept
   across refreshes and re-consents, and every session minted under it (at the consent and at each
   refresh) carries the same alias. The app knows the account by that alias only: the subject of its
-  token responses, extension hooks and `id_token` (`sub`) is the alias, the token responses carry no `apiEndpoint`, and the
-  session's `access-info`, own `apiEndpoint` (`accesses.getOne`) and every access it creates (they carry
-  the alias too) name the alias; the account's username reaches the app in no answer. The grammar's
-  `echo` is told whether the subject is an alias (`aliased: boolean` in its context, an optional field,
-  `apiVersion` unchanged), so it can name a pseudonym marker for a pairwise client that did not ask for
-  one. A session is used at its alias only (see the alias-bound addressing entry below). The alias is
+  token responses, extension hooks, `id_token` and introspection answers (`sub`) is the alias, the
+  token responses carry no `apiEndpoint`, and the session's `access-info`, own `apiEndpoint`
+  (`accesses.getOne`), its introspection `api_base` and every access it creates (they carry the alias
+  too) name the alias; the account's username reaches the app in no answer. The grammar's `echo` is
+  told whether the subject is an alias (`aliased: boolean` in its context, an optional field,
+  `apiVersion` unchanged; at the consent, the code exchange, refresh and introspection alike), so it
+  can name a pseudonym marker for a pairwise client that did not ask for one. Revoking a token
+  (`/oauth2/revoke`) or the retirement of a session on refresh keeps the alias with the grant. A session is used at its alias only (see the alias-bound addressing entry below). The alias is
   released when its last holder is deleted: deleting one session keeps it (the grant and the other
   sessions hold it); deleting the grant (its sessions, expired ones included, and what they created go
   with it), a change of subject mode, refresh-token reuse or the account's deletion releases it, and a

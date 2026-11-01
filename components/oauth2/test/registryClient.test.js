@@ -1353,6 +1353,28 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(p.exp - p.iat, 3600);
     });
 
+    it('[OXD08] a pairwise client: the id_token sub is the grant\'s alias, never the internal id nor the username', async () => {
+      withIdClaims();
+      const platform = fakePlatform(); await seed(platform, { subjectType: 'pairwise' });
+      const ALIAS = 'r-abcd1234';
+      const { token } = await flow({
+        platform,
+        config: oidcConfig(),
+        query: { scope: 'openid offline_access data/a.read ctx/patient' },
+        more: { resolveGrantSubject: async () => ({ subject: ALIAS, aliased: true }) },
+      });
+      assert.equal(token.statusCode, 200, token.raw);
+      const p = decodeJwt(token.body.id_token).payload;
+      assert.equal(p.sub, ALIAS);
+      assert.equal(p.who, 'P/' + ALIAS);
+      assert.equal(lastCtx.idTokenClaims.subject, ALIAS);
+      assert.equal(lastCtx.idTokenClaims.aliased, true);
+      assert.equal(token.body.patient, ALIAS);
+      assert.equal(token.body.apiEndpoint, undefined);
+      const answer = token.raw + JSON.stringify(p);
+      assert.ok(!answer.includes(USER_ID) && !answer.includes('alice'), answer);
+    });
+
     it('[OXN01] a nonce is accepted once per client: a replay is refused at /authorize, a racing second code at the exchange', async () => {
       const platform = fakePlatform(); await seed(platform);
       const config = oidcConfig();

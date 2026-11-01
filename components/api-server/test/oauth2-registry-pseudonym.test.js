@@ -21,6 +21,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const oauth2 = require('oauth2');
 const storage = require('oauth2/src/storage.ts');
+const { mintSecret } = require('oauth2/src/clientSecret.ts');
 
 const REDIRECT_URI = 'https://app.pseudo.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
@@ -579,6 +580,58 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
       .send({ appId: 'pryv-test' });
     assert.equal(reset.status, 400, JSON.stringify(reset.body));
     assert.equal(reset.body.error.id, 'invalid-operation');
+  });
+
+  it('[OPSE18] introspection of a pseudonymous session answers on its alias; revoking a token or retiring a session on refresh leaves the alias with its grant', async () => {
+    const cid = await registry('Pwi', { subjectType: 'pairwise' });
+    const rsSecret = await mintSecret();
+    const rsId = await registry('Rsi', { tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, canIntrospect: true });
+    const introspect = (token) => coreRequest.post('/oauth2/introspect').type('form')
+      .set('Authorization', 'Basic ' + Buffer.from(rsId + ':' + rsSecret.plaintext).toString('base64')).send({ token });
+    const revoke = (token, hint) => coreRequest.post('/oauth2/revoke').type('form').send({ token, client_id: cid, token_type_hint: hint });
+
+    const t = await runFlow('offline_access read/health ctx/user', cid);
+    const grant = await grantOf(cid);
+    assert.match(grant.alias, /^r-[a-z0-9]{8}$/);
+    const i = await introspect(t.access_token);
+    assert.equal(i.status, 200, JSON.stringify(i.body));
+    assert.equal(i.body.active, true);
+    assert.equal(i.body.sub, grant.alias);
+    assert.ok(i.body.api_base.includes(grant.alias), i.body.api_base);
+    // The echo is told the subject is an alias here too: the token endpoint's scope answer.
+    assert.equal(i.body.scope, t.scope);
+    assert.ok(i.body.scope.split(' ').includes('ctx/pseudo'), i.body.scope);
+    assertNoUsername('introspection', i.body);
+
+    // A refresh retires the session it replaces; the new one is on the alias as well.
+    const r = await refresh(t.refresh_token, cid);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const ir = await introspect(r.body.access_token);
+    assert.equal(ir.body.active, true, JSON.stringify(ir.body));
+    assert.equal(ir.body.sub, grant.alias);
+    assert.equal(ir.body.scope, r.body.scope);
+    assertNoUsername('introspection after a refresh', ir.body);
+    const all = await coreRequest.get('/' + who.username + '/accesses').query({ includeExpired: true }).set('Authorization', who.token);
+    const rows = all.body.accesses.filter((a) => a.name === 'oauth:' + cid);
+    assert.equal(rows.length, 2, JSON.stringify(rows));
+    for (const row of rows) assert.equal(row.alias, grant.alias, 'the retired session keeps the alias too');
+
+    // Revoking the access token deletes its session: the grant keeps the alias.
+    assert.equal((await revoke(r.body.access_token, 'access_token')).status, 200);
+    assert.equal((await introspect(r.body.access_token)).body.active, false);
+    assert.ok((await aliases()).includes(grant.alias), 'the alias is still held');
+
+    // Revoking a refresh token ends that chain only: the grant and its alias stay.
+    const t2 = await runFlow('offline_access read/health', cid);
+    assert.equal((await revoke(t2.refresh_token, 'refresh_token')).status, 200);
+    assert.equal((await refresh(t2.refresh_token, cid)).status, 400);
+    assert.equal((await introspect(t2.access_token)).body.active, false);
+    assert.equal((await grantOf(cid)).alias, grant.alias);
+    assert.ok((await aliases()).includes(grant.alias), 'the alias is still held');
+    const t3 = await runFlow('read/health ctx/user', cid);
+    assert.equal(t3.user, grant.alias);
+    const info = await coreRequest.get('/' + grant.alias + '/access-info').set('Authorization', t3.access_token);
+    assert.equal(info.status, 200, JSON.stringify(info.body));
   });
 
   it('[OPSE12] a change of username: the session keeps working at its alias; deleting the account releases it', async () => {

@@ -35,6 +35,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
     created: number;
     expires: number;
     subject: string | null;
+    aliased: boolean;
     apiBase: string;
     dpopJkt?: string;
   } | null> {
@@ -44,6 +45,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
     const now = Date.now() / 1000;
     if (access == null || access.deleted != null || typeof access.expires !== 'number' || access.expires <= now) return null;
     let subject: string | null = null;
+    let aliased = false;
     // The account's API base URL, without any credential: built on the
     // grant's alias when it has one, so an aliased grant never names the user.
     let apiBaseName = username;
@@ -52,6 +54,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
       try {
         const s = sessions.grantSubject(await sessions.readDataGrantHead(userId, username, grantId), userId);
         subject = s.subject;
+        aliased = s.aliased;
         if (s.aliased) apiBaseName = s.subject;
       } catch (err: unknown) {
         if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
@@ -65,6 +68,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
       created: typeof access.created === 'number' ? access.created : 0,
       expires: access.expires,
       subject,
+      aliased,
       apiBase: ApiEndpoint.build(apiBaseName, undefined),
       ...(typeof access.clientData?.dpop?.jkt === 'string' ? { dpopJkt: access.clientData.dpop.jkt } : {}),
     };
