@@ -17,13 +17,14 @@
  *
  * Events split into two classes (mirrored by ApiMethods.WITHOUT_USER_METHODS
  * in components/audit/):
- *  - user-resolved (consent.granted, code.exchanged,
+ *  - user-resolved (consent.granted, code.exchanged, nonce.reused,
  *    token.issued.authorization_code, token.refreshed, token.revoked) — carry
  *    a `userId` and are persisted to that user's audit storage (+ syslog).
  *  - user-less (consent.shown, consent.refused, code.reused,
- *    token.issued.client_credentials) — no user is known (pre-consent /
- *    app-to-app / reuse of an already-consumed code or refresh token), so they
- *    go to syslog only (per-user storage needs a user to key on).
+ *    token.introspected): no user is known (pre-consent / reuse of an
+ *    already-consumed code or refresh token / a resource server asking about
+ *    any token), so they go to syslog only (per-user storage needs a user to
+ *    key on).
  */
 
 import { createRequire } from 'node:module';
@@ -46,12 +47,14 @@ export type OAuthAuditEvent =
   | 'oauth.consent.refused'
   | 'oauth.code.exchanged'
   | 'oauth.code.reused'
+  | 'oauth.nonce.reused'
   | 'oauth.token.issued.authorization_code'
   | 'oauth.token.issued.client_credentials'
   | 'oauth.token.refreshed'
   | 'oauth.token.reuse_detected'
   | 'oauth.token.dpop_mismatch'
-  | 'oauth.token.revoked';
+  | 'oauth.token.revoked'
+  | 'oauth.token.introspected';
 
 /**
  * OAuth events for which no user is resolvable at emit time (pre-consent
@@ -66,7 +69,10 @@ export type OAuthAuditEvent =
 export const USERLESS_EVENTS: ReadonlySet<OAuthAuditEvent> = new Set([
   'oauth.consent.shown',
   'oauth.consent.refused',
-  'oauth.code.reused'
+  'oauth.code.reused',
+  // A resource server's question about a token: the answer may be about no
+  // user at all (unknown, expired or another core's token).
+  'oauth.token.introspected'
 ]);
 
 /**
@@ -92,6 +98,9 @@ export type OAuthAuditPayload = {
   source?: 'user' | 'operator';
   scope?: string[]; // for oauth.token.revoked
   subjectChange?: { from: string; to: string }; // oauth.consent.granted: an acknowledged change of subject mode
+  retiredAccessId?: string; // oauth.token.refreshed: the session the rotation retired
+  active?: boolean; // oauth.token.introspected: the answer (the token itself is never recorded)
+  tokenClientId?: string; // oauth.token.introspected: the client the token was issued to, when known
 };
 
 /** The subset of AuditEventLike (components/audit/) we build here. */

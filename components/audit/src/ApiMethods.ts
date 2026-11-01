@@ -123,12 +123,14 @@ const ALL_METHODS = [
   'oauth.consent.refused',
   'oauth.code.exchanged',
   'oauth.code.reused',
+  'oauth.nonce.reused',
   'oauth.token.issued.authorization_code',
   'oauth.token.issued.client_credentials',
   'oauth.token.refreshed',
   'oauth.token.reuse_detected',
   'oauth.token.dpop_mismatch',
   'oauth.token.revoked',
+  'oauth.token.introspected',
   // Third-party sign-in (OIDC relying party). Emitted from routes/sso.ts's
   // onIdentity (a bare api.call bypasses the method-wrapper audit, like oauth2).
   // sso.login is user-resolved (the signed-in account's trail); sso.refused has
@@ -195,6 +197,7 @@ const WITHOUT_USER_METHODS = [
   'oauth.consent.shown',
   'oauth.consent.refused',
   'oauth.code.reused',
+  'oauth.token.introspected',
   // SSO refusals resolve no user (no-account / unproved email / mint failure).
   'sso.refused'
 ];

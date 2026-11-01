@@ -380,7 +380,7 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     ]);
   });
 
-  it('[OCMP9] the owner narrows the grant: its sessions are re-cut at once; one left with no reach is deleted, its chain refused at refresh, unless the grant is widened back first (until deleting a session ends its chain)', async () => {
+  it('[OCMP9] the owner narrows the grant: its sessions are re-cut at once; one left with no reach is deleted and its chain ends with it, even when the grant is widened back before its refresh', async () => {
     const who = await newUser();
     const s1 = await consentAndToken(who, 'offline_access read/a read/b');
     const s2 = await consentAndToken(who, 'offline_access read/b', { composed: false });
@@ -401,13 +401,15 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const alive = await refresh(s1.refresh_token);
     assert.equal(alive.status, 200, JSON.stringify(alive.body));
     assert.deepEqual(alive.body.scope.split(' ').sort(), ['offline_access', 'read/a']);
-    // The owner widens the grant back before s3's chain refreshes: its deleted
-    // session removed no consent, the chain mints again.
+    // The owner widens the grant back before s3's chain refreshes: deleting
+    // its session ended the chain, so it does not mint again.
     assert.equal((await ownerUpdate(who, await grantOf(who), { permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }] })).status, 200);
     const back = await refresh(s3.refresh_token);
-    assert.equal(back.status, 200, JSON.stringify(back.body));
-    assert.deepEqual(back.body.scope.split(' ').sort(), ['offline_access', 'read/b']);
-    assert.equal((await readStream(who, back.body.access_token, 'b')).status, 200);
+    assert.equal(back.status, 400, JSON.stringify(back.body));
+    assert.equal(back.body.error, 'invalid_grant');
+    // A refused replay of an ended token never collapses the grant.
+    assert.ok(await grantOf(who) != null, 'the grant is kept');
+    assert.equal((await readStream(who, alive.body.access_token, 'a')).status, 200);
   });
 
   /** The permissions a session token holds now (its row). */

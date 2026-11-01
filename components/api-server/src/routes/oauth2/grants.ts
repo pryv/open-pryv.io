@@ -55,6 +55,7 @@ type SessionHelpers = {
     chainPermissions?: Array<Record<string, unknown>>;
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
+  storedSessionPermissions: (permissions: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
 };
 
 export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
@@ -302,6 +303,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     apiEndpoint: string;
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
+    sessionPermissions?: Array<Record<string, unknown>>;
   }> {
     const context = session._context;
     if (context == null) {
@@ -368,6 +370,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       ...minted,
       dataGrantAccessId: dataGrant.id,
       permissions,
+      sessionPermissions: sessions.storedSessionPermissions(sessionPermissions),
     };
   }
 

@@ -321,7 +321,9 @@ describe('[RG2C] Two-core integration tests', function () {
       // A queued CMC notice is due in half a second, the loop ticks often
       CMC_RETRY_INTERVAL_MS: '300',
       CMC_DELIVERY_BACKOFF_BASE_MS: '500',
-      CMC_PEERS_VIA_PLATFORM: '1'
+      CMC_PEERS_VIA_PLATFORM: '1',
+      // OAuth registry clients (toy grammar), for the OAuth tests below
+      OAUTH_TOY_EXTENSION: '1'
     };
 
     coreAEnv = {
@@ -1007,6 +1009,187 @@ describe('[RG2C] Two-core integration tests', function () {
       coreB = await startCore(coreBEnv);
       const gone = await poll(async () => (await grantTo(CORE_B_PORT, bob, alice.username)) === null);
       assert.ok(gone, 'the counterparty tore the relationship down');
+    });
+  });
+
+  describe('OAuth sessions across cores', () => {
+    const oauth2 = require('oauth2');
+    const oauthStorage = require('oauth2/src/storage.ts');
+    const { mintSecret } = require('oauth2/src/clientSecret.ts');
+    const crypto = require('node:crypto');
+    const REDIRECT = 'https://app.multicore.test/redirect';
+    const appId = 'Mc.' + Date.now().toString(36);
+    const rsId = 'McRs.' + Date.now().toString(36);
+    let rsSecret, user, session;
+
+    const trim = (url) => String(url).replace(/\/$/, '');
+
+    // A form-less JSON call with HTTP Basic client authentication.
+    function asResourceServer (port, path, body) {
+      return httpRequest(port, 'POST', path, body, {
+        Authorization: 'Basic ' + Buffer.from(rsId + ':' + rsSecret.plaintext).toString('base64')
+      });
+    }
+
+    function registryRow (extra) {
+      return {
+        kind: 'registry',
+        redirectUris: [REDIRECT],
+        grantTypes: ['authorization_code', 'refresh_token'],
+        tokenEndpointAuthMethod: 'none',
+        anyAudience: true,
+        subjectType: 'public',
+        scope: ['read/notes'],
+        ...extra
+      };
+    }
+
+    before(async () => {
+      // A user on Core B (the home core of the session below)
+      const username = 'tco' + Date.now().toString(36);
+      const reg = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_B_HOSTING
+      });
+      assert.strictEqual(reg.status, 201, JSON.stringify(reg.body));
+      user = { username, token: new URL(reg.body.apiEndpoint).username };
+      const stream = await httpRequest(CORE_B_PORT, 'POST', '/' + username + '/streams', { id: 'notes', name: 'notes' }, { Authorization: user.token });
+      assert.strictEqual(stream.status, 201, JSON.stringify(stream.body));
+      // The operator CLI writes client rows to the shared platform store
+      rsSecret = await mintSecret();
+      await oauth2.persistClient(platformDB, registryRow({ clientId: appId }));
+      await oauth2.persistClient(platformDB, registryRow({
+        clientId: rsId, tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, canIntrospect: true
+      }));
+      session = await newChain();
+    });
+
+    // Consent and code exchange on the home core: one refresh chain.
+    async function newChain () {
+      const username = user.username;
+      const verifier = crypto.randomBytes(32).toString('base64url');
+      const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+      const q = new URLSearchParams({
+        client_id: appId,
+        redirect_uri: REDIRECT,
+        response_type: 'code',
+        state: 'mc',
+        scope: 'offline_access read/notes',
+        code_challenge: challenge,
+        code_challenge_method: 'S256'
+      });
+      const auth = await fetch(`http://127.0.0.1:${CORE_B_PORT}/oauth2/authorize?${q}`, { redirect: 'manual' });
+      assert.strictEqual(auth.status, 302, await auth.text());
+      const state = new URL(auth.headers.get('location')).searchParams.get('state');
+      const offer = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/authorize/offer', { state });
+      assert.strictEqual(offer.status, 200, JSON.stringify(offer.body));
+      const accept = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/authorize/accept', {
+        state, username, userToken: user.token, grantedPermissions: offer.body.offer.permissions
+      });
+      assert.strictEqual(accept.status, 200, JSON.stringify(accept.body));
+      const code = new URL(accept.body.redirectTo).searchParams.get('code');
+      const token = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/token', {
+        grant_type: 'authorization_code', code, code_verifier: verifier, client_id: appId, redirect_uri: REDIRECT
+      });
+      assert.strictEqual(token.status, 200, JSON.stringify(token.body));
+      return token.body;
+    }
+
+    after(async () => {
+      for (const id of [appId, rsId]) {
+        try { await oauthStorage.deleteClient(platformDB, id); } catch (_) { /* best-effort */ }
+      }
+    });
+
+    it('[2C70] introspection on the other core answers 421 with the home core\'s URL; the home core answers active', async () => {
+      const onA = await asResourceServer(CORE_A_PORT, '/oauth2/introspect', { token: session.access_token });
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(onA.body.error, 'wrong_core');
+      assert.strictEqual(trim(onA.body.coreUrl), trim(CORE_B_URL));
+      const onB = await asResourceServer(CORE_B_PORT, '/oauth2/introspect', { token: session.access_token });
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+      assert.strictEqual(onB.body.active, true);
+      assert.deepStrictEqual(onB.body.permissions, [{ streamId: 'notes', level: 'read' }]);
+      // Revocation is home-core work too
+      const revokeOnA = await httpRequest(CORE_A_PORT, 'POST', '/oauth2/revoke', { token: session.refresh_token, client_id: appId });
+      assert.strictEqual(revokeOnA.status, 421, JSON.stringify(revokeOnA.body));
+      assert.strictEqual(trim(revokeOnA.body.coreUrl), trim(CORE_B_URL));
+    });
+
+    it('[2C71] a client suspended by a write to the shared store (from the test process, as the operator CLI does) is refused at /token on the home core at once', async () => {
+      const row = await oauthStorage.getClient(platformDB, appId);
+      await oauthStorage.setClient(platformDB, { ...row, status: 'suspended', updatedAt: Date.now() });
+      try {
+        const res = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/token', { grant_type: 'refresh_token', refresh_token: session.refresh_token, client_id: appId });
+        assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error, 'unauthorized_client');
+      } finally {
+        await oauthStorage.setClient(platformDB, { ...row, status: 'active', updatedAt: Date.now() });
+      }
+      // Not consumed by the refusal: the same refresh token works after the resume
+      const res = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/token', { grant_type: 'refresh_token', refresh_token: session.refresh_token, client_id: appId });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      session = res.body;
+    });
+
+    it('[2C72] a client revoked through the shared store: its session is refused on the home core within the revoke check period', async () => {
+      const second = 'Mc2.' + Date.now().toString(36);
+      // A session of another client, so the grant of [2C73] stays
+      await oauth2.persistClient(platformDB, registryRow({ clientId: second }));
+      const access = await httpRequest(CORE_B_PORT, 'POST', '/' + user.username + '/accesses', {
+        type: 'app', name: 'oauth:' + second, permissions: [{ streamId: 'notes', level: 'read' }]
+      }, { Authorization: user.token });
+      assert.strictEqual(access.status, 201, JSON.stringify(access.body));
+      const token = access.body.access.token;
+      const read = () => httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/access-info', null, { Authorization: token });
+      assert.strictEqual((await read()).status, 200);
+      await oauthStorage.deleteClient(platformDB, second);
+      const deadline = Date.now() + 5000;
+      let status = 200;
+      while (Date.now() < deadline) {
+        status = (await read()).status;
+        if (status !== 200) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      assert.ok(status === 401 || status === 403, 'still accepted after the revoke check period: ' + status);
+    });
+
+    it('[2C74] revoking a refresh token on its home core after the 421 ends that chain only: its session is inactive from both cores, the grant and the other chain stay', async () => {
+      const other = await newChain();
+      const onA = await httpRequest(CORE_A_PORT, 'POST', '/oauth2/revoke', { token: other.refresh_token, client_id: appId, token_type_hint: 'refresh_token' });
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(trim(onA.body.coreUrl), trim(CORE_B_URL));
+      const onB = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/revoke', { token: other.refresh_token, client_id: appId, token_type_hint: 'refresh_token' });
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        const gone = await asResourceServer(port, '/oauth2/introspect', { token: other.access_token });
+        assert.strictEqual(gone.status, 200, JSON.stringify(gone.body));
+        assert.deepStrictEqual(gone.body, { active: false }, 'core port ' + port);
+      }
+      const replay = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/token', { grant_type: 'refresh_token', refresh_token: other.refresh_token, client_id: appId });
+      assert.strictEqual(replay.status, 400, JSON.stringify(replay.body));
+      assert.strictEqual(replay.body.error, 'invalid_grant');
+      // The first chain and the consent grant are untouched.
+      const live = await asResourceServer(CORE_B_PORT, '/oauth2/introspect', { token: session.access_token });
+      assert.strictEqual(live.body.active, true, JSON.stringify(live.body));
+      const list = await httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/accesses', null, { Authorization: user.token });
+      assert.ok(list.body.accesses.some((a) => a.name === 'oauth-grant:' + appId), 'the grant stays');
+    });
+
+    it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {
+      const list = await httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/accesses', null, { Authorization: user.token });
+      const grant = list.body.accesses.find((a) => a.name === 'oauth-grant:' + appId);
+      assert.ok(grant != null, JSON.stringify(list.body.accesses.map((a) => a.name)));
+      const del = await httpRequest(CORE_B_PORT, 'DELETE', '/' + user.username + '/accesses/' + encodeURIComponent(grant.id), null, { Authorization: user.token });
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      const res = await asResourceServer(CORE_B_PORT, '/oauth2/introspect', { token: session.access_token });
+      assert.strictEqual(res.status, 200);
+      assert.deepStrictEqual(res.body, { active: false });
     });
   });
 

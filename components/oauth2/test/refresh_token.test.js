@@ -189,19 +189,39 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
   });
 
   describe('[OAUTH-TKN-RT-MISMATCH] client mismatch', () => {
-    it('[OTR-M1] client_id mismatch → invalid_grant; token IS consumed', async () => {
+    it('[OTR-M1] client_id mismatch → invalid_grant; the token is NOT consumed (the right client then refreshes)', async () => {
       const platform = fakePlatform();
       await seedRefresh(platform, 'RT-M1');
       const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
       const res = fakeRes();
       await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-M1', client_id: 'attacker' } }, res);
       assert.equal(res.statusCode, 400);
-      assert.equal(res.body.error, 'invalid_grant');
-      // Even on client mismatch the row is deleted (single-use, defense
-      // in depth) — a second attempt with the right client also fails.
+      assert.deepEqual([res.body.error, res.body.error_description], ['invalid_grant', 'client_id mismatch']);
+      assert.ok(await getRefresh(platform, CORE_ID, 'RT-M1') != null, 'still live');
+      assert.equal(await getRefreshConsumed(platform, CORE_ID, 'RT-M1'), null, 'no marker');
       const res2 = fakeRes();
       await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-M1', client_id: 'myapp' } }, res2);
-      assert.equal(res2.statusCode, 400);
+      assert.equal(res2.statusCode, 200, JSON.stringify(res2.body));
+    });
+
+    it('[OTR-M2] a rotated token presented by another client past the grace: refused, audited, never a chain revoke', async () => {
+      const platform = fakePlatform();
+      await seedRefresh(platform, 'RT-M2');
+      let revoked = 0;
+      const handler = handleToken({
+        config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE, revokeChain: async () => { revoked++; },
+      });
+      const ok = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-M2', client_id: 'myapp' } }, ok);
+      assert.equal(ok.statusCode, 200);
+      const foreign = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-M2', client_id: 'attacker' } }, foreign);
+      assert.equal(foreign.body.error, 'invalid_grant');
+      assert.equal(revoked, 0);
+      // The same replay by the client it was issued to is reuse.
+      const replay = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-M2', client_id: 'myapp' } }, replay);
+      assert.equal(revoked, 1);
     });
   });
 
@@ -344,6 +364,37 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
       }, res);
       assert.equal(res.statusCode, 401);
       assert.equal(res.body.error, 'invalid_client');
+    });
+    it('[OTR-CF6] a wrong secret with the right client_id: 401, the token stays live, the legitimate refresh then works', async () => {
+      const { plaintext, hash } = await mintSecret();
+      const platform = fakePlatform({ myapp: { clientSecretHash: hash } });
+      await seedRefresh(platform, 'RT-CF6');
+      const handler = handleToken({ config: fakeConfig({ 'oauth:refreshReuseGraceSeconds': 0 }), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      for (const secret of ['wrong', undefined]) {
+        const res = fakeRes();
+        await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-CF6', client_id: 'myapp', ...(secret != null ? { client_secret: secret } : {}) } }, res);
+        assert.equal(res.statusCode, 401, String(secret));
+        assert.ok(await getRefresh(platform, CORE_ID, 'RT-CF6') != null, 'still live');
+        assert.equal(await getRefreshConsumed(platform, CORE_ID, 'RT-CF6'), null, 'no marker');
+      }
+      const ok = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-CF6' }, headers: { authorization: basicAuth('myapp', plaintext) } }, ok);
+      assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
+    });
+    it('[OTR-CF7] another confidential client with its own right secret presenting the token: invalid_grant, the token stays live', async () => {
+      const mine = await mintSecret();
+      const theirs = await mintSecret();
+      const platform = fakePlatform({ myapp: { clientSecretHash: mine.hash }, other: { clientSecretHash: theirs.hash } });
+      await seedRefresh(platform, 'RT-CF7');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      const res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-CF7' }, headers: { authorization: basicAuth('other', theirs.plaintext) } }, res);
+      assert.equal(res.statusCode, 400, JSON.stringify(res.body));
+      assert.deepEqual([res.body.error, res.body.error_description], ['invalid_grant', 'client_id mismatch']);
+      assert.ok(await getRefresh(platform, CORE_ID, 'RT-CF7') != null, 'still live');
+      const ok = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-CF7' }, headers: { authorization: basicAuth('myapp', mine.plaintext) } }, ok);
+      assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
     });
     it('[OTR-CF4] public client (no secret on file) refresh needs no secret → 200', async () => {
       const platform = fakePlatform({ myapp: {} }); // registered, but no clientSecretHash

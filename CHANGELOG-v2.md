@@ -134,6 +134,71 @@
 - **Operator CLI: `show` no longer prints the client secret's hash** (an offline-guessable value in
   terminal scrollback); it prints `"clientSecretHash": "(set)"` when the client has a secret.
 
+### OAuth token introspection, revocation, and the life of a refresh chain
+
+- **`POST /oauth2/introspect` (RFC 7662).** For resource servers: a confidential client (a secret or a
+  key set on file) registered with `--can-introspect` (`bin/oauth-client.js create-registry` and
+  `update`, any client; `--can-introspect false` withdraws it), not suspended; any other caller gets
+  one uniform `401 invalid_client`. Any core answers for any OAuth session token: a token whose session
+  lives on another core answers `421 { "error": "wrong_core", "coreUrl": "<home core>" }`; the home
+  core re-reads the session and answers `{ "active": false }` when it is deleted, expired, its consent
+  grant is gone, or its client is revoked, suspended or gone. An active answer carries `scope` (for a
+  registry client's session, the same scope answer as the token endpoint, recomputed from the session
+  as it stands; omitted for an app-account session), `client_id`,
+  `exp`, `iat`, `sub`, `iss`, `token_type`, `aud` and `cnf` (DPoP-bound sessions), plus two extension
+  members (not standard claims, answered only to these callers, never in a token response):
+  `api_base` (the account's API base URL, no credential in it) and, for a registry client's session,
+  `permissions: [{ streamId, level }]` (the stream permissions the session holds now, as the core
+  enforces them; feature entries are left out). Registry clients' extension hook
+  `introspectionClaims` adds its own members. The discovery document advertises
+  `introspection_endpoint`.
+- **`POST /oauth2/revoke` (RFC 7009).** A client revokes its own tokens (client authentication as at
+  the token endpoint; a public client names itself with `client_id`; `token_type_hint` is honoured as
+  a hint). Revoking either token of a refresh chain ends that chain: an access token's OAuth session
+  is deleted, which also ends its refresh chain; a refresh token is ended and the session it
+  currently backs is deleted. The user's consent grant and the client's other chains (other devices
+  or launches) stay: a sign-out on one device logs out nowhere else and asks for no new consent. A
+  refresh token issued before this release ends alone (its session lives out its lifetime). An
+  unknown token, another client's token, or one already ended answers `200` (no oracle); a token
+  whose session or chain lives on another core answers `421` with that core's URL. CORS as on
+  `/oauth2/token`. The discovery document advertises `revocation_endpoint`.
+- The discovery document lists `client_secret_post` in `token_endpoint_auth_methods_supported` (and
+  in the introspection and revocation lists): a secret in the form body was already accepted.
+- **Deleting an OAuth session ends its refresh chain.** A session deleted from the account (the
+  account's `accesses.delete`, the re-cut of a session a grant change left with no reach, a revocation)
+  takes the refresh token issued with it along: the next refresh is `invalid_grant`, and replaying
+  that token is refused without being treated as theft (the grant stays). Sessions minted before this
+  release are not linked to their refresh token and delete as before (their chain continues from the
+  grant).
+- **Refreshing an OAuth token now retires the access token it replaces:** the previous access token of
+  that refresh chain expires `oauth:refreshRetireGraceSeconds` (default 60) after the refresh instead
+  of living out `oauth:accessTokenTTL`. Requests already in flight finish within the grace; the
+  account's access list shows one live session per client chain. Other chains of the same client
+  (another device) are not affected. Sessions minted before this release are not linked to their
+  chain and still expire on their own. A shared access the retired session created is kept.
+- A refresh refused for good after its token was used (the absolute lifetime is exceeded, the
+  consent grant is gone, the client's kind changed) no longer leaves the token looking rotated: a
+  later replay of it is refused without collapsing the user's grant.
+- Fix: a refresh whose client authentication fails (a wrong or missing secret or assertion), or that
+  presents a refresh token issued to another client, no longer consumes the refresh token: the token
+  keeps working for the client it was issued to. Before, such a request used the token up, and the
+  legitimate client's next refresh was taken for a reuse that withdrew the user's consent. A rotated
+  refresh token presented by another client is refused without that collapse either.
+- A refresh whose session was deleted (or whose token was revoked) while the refresh was in progress
+  now answers `invalid_grant` and ends the tokens it had just issued.
+- Registry clients: the scope recorded for a consent (the audit rows of the consent, the code exchange
+  and the refreshes) is the scope actually granted, as the token endpoint answers it, not the
+  requested one; and the token endpoint's scope answer at the code exchange follows the session as it
+  stands (a grant narrowed between the consent and the exchange narrows it), as at refresh and at
+  introspection.
+- An OAuth session row stores one spelling per stream (`:local:a` is stored as `a`), as
+  `accesses.create` does.
+- Registry clients: the composed consent screen (the signed-in `/oauth2/authorize/offer`) shows a
+  feature the request asks to allow, but that the client's grants forbid by default (`webhooks`,
+  `secretSharing` without `--allow-feature`), as the locked forbid it becomes (`setting: 'forbidden'`,
+  `mandatory: true`), on a first consent as on a re-consent; before, the first consent showed it as
+  allowed.
+
 ## 2.0.0-rc.68 - 2026-10-30
 
 ### OAuth registry clients and the OAuth extension (new, opt-in)

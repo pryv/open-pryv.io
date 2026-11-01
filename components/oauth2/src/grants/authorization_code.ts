@@ -51,7 +51,12 @@ const NONCE_BURN_MIN_SECONDS = 3600;
 /** Read a live access from this core's storage; null when absent, deleted or expired. */
 export type AuthCodeAccessResolver = (params: {
   userId: string; username: string; accessId: string; clientId: string;
-}) => Promise<{ accessToken: string; apiEndpoint: string } | null>;
+}) => Promise<{
+  accessToken: string;
+  apiEndpoint: string;
+  /** What the session row stores, without its selfRevoke override (the scope echo input). */
+  permissions?: Array<Record<string, unknown>>;
+} | null>;
 
 /** Delete an access from this core's storage (best-effort orphan cleanup). */
 export type AuthCodeAccessRevoker = (params: {
@@ -262,6 +267,10 @@ export async function handleAuthorizationCode (
     const issued = await resolveIssuedAccess(row, row.accessId);
     if (!issued.ok) return issued;
     const { accessToken, apiEndpoint } = issued;
+    // The scope echo reads the session as minted at /accept (its stored row),
+    // not the consent on the code row: a grant narrowed since, or a feature
+    // its defaults forbid, would make this answer and the refresh disagree.
+    const sessionPermissions = issued.permissions ?? ((row.permissions ?? []) as unknown as Array<Record<string, unknown>>);
 
     // DPoP binding (RFC 9449 §5): stamp the pre-minted access with the
     // proof key's thumbprint BEFORE issuing any credential — a binding
@@ -316,7 +325,7 @@ export async function handleAuthorizationCode (
           config: deps.config,
           coreTokens: row.coreTokens ?? [],
           grammarTokens: row.grammarTokens ?? [],
-          permissions: (row.permissions ?? []) as unknown as Array<Record<string, unknown>>,
+          permissions: sessionPermissions,
           subject: resolved.subject,
           ...(row.nonce != null ? { nonce: row.nonce } : {}),
           ...(row.authTime != null ? { authTime: row.authTime } : {}),
@@ -340,6 +349,13 @@ export async function handleAuthorizationCode (
         }
         if (!fresh) {
           logServerWarning('authorization_code: OpenID Connect nonce replayed by client "' + row.clientId + '"');
+          // Same class as a reused code; the code is named by its hash, the
+          // nonce not at all.
+          await audit('oauth.nonce.reused', {
+            clientId: row.clientId,
+            userId: row.userId,
+            codeId: storage.hashSecret(params.code as string),
+          });
           return { ok: false, status: 400, error: 'invalid_grant', description: 'nonce already used' };
         }
       }
@@ -369,19 +385,30 @@ export async function handleAuthorizationCode (
           ? { kind: 'registry' as const, coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] }
           : {}),
         ...(row.audience != null ? { audience: row.audience } : {}),
+        // The session this chain backs: retired at its first rotation.
+        accessId: row.accessId,
       });
+      // The session's index row names its refresh token, so deleting the
+      // session ends the chain. Never fails the exchange.
+      try {
+        await storage.setSessionIndexRefresh(deps.platform, accessToken, refreshToken);
+      } catch (err) {
+        logServerError('authorization_code: session index update failed (deleting the session will not end its refresh chain)', err);
+      }
     }
 
+    // A registry client: the tokens actually granted (the scope answer).
+    const grantedScope = registry != null ? registry.scopeTokens : row.scope;
     await audit('oauth.code.exchanged', {
       clientId: row.clientId,
       userId: row.userId,
       codeId: storage.hashSecret(params.code as string),
-      grantedScope: row.scope,
+      grantedScope,
     });
     await audit('oauth.token.issued.authorization_code', {
       clientId: row.clientId,
       userId: row.userId,
-      grantedScope: row.scope,
+      grantedScope,
       accessId: row.accessId,
       ...(dpopJkt != null ? { dpopJkt } : {}),
     });
@@ -419,7 +446,7 @@ export async function handleAuthorizationCode (
    * issuing core can read the token from its own storage.
    */
   async function resolveIssuedAccess (row: OAuthCode | LegacyOAuthCode, accessId: string): Promise<
-    | { ok: true; accessToken: string; apiEndpoint: string }
+    | { ok: true; accessToken: string; apiEndpoint: string; permissions?: Array<Record<string, unknown>> }
     | { ok: false; status: number; error: string; description?: string }
   > {
     if (isLegacy(row)) {
@@ -454,7 +481,12 @@ export async function handleAuthorizationCode (
       // Deleted or expired between /accept and /token.
       return { ok: false, status: 400, error: 'invalid_grant', description: 'the authorized access is no longer valid' };
     }
-    return { ok: true, accessToken: resolved.accessToken, apiEndpoint: resolved.apiEndpoint };
+    return {
+      ok: true,
+      accessToken: resolved.accessToken,
+      apiEndpoint: resolved.apiEndpoint,
+      ...(Array.isArray(resolved.permissions) ? { permissions: resolved.permissions } : {}),
+    };
   }
 }
 

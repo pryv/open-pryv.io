@@ -51,6 +51,50 @@
   `weakSecretReason` rule of the required secrets; `oauth:stateKey` is listed in `SECRET_PATHS`). The
   install wizard generates `oauth.stateKey` and its config appendix shows the signing-key block.
 
+### OAuth: introspection, revocation, refresh-chain life
+
+- New oauth2 modules `introspection.ts` (`POST /oauth2/introspect`) and `revocation.ts`
+  (`POST /oauth2/revoke`), mounted when the host wires `introspectAccess` / `revokeSession`; new glue
+  `api-server/src/routes/oauth2/introspect.ts` (`introspectAccess`, `coreUrlFor`; the session's
+  permissions through `storedSessionPermissions`); `revoke.ts` gains `revokeSession`, used for both
+  token kinds (a refresh token's row names its session, `accessId`); `revokeChain` stays the reuse
+  collapse only.
+- New audit event `oauth.token.introspected` (caller client id, `active`, the token's user and client
+  when active; never the token), user-less (syslog only), declared in the audit method lists.
+  `oauth.token.refreshed` gains `retiredAccessId`; `oauth.token.revoked` is also emitted for the
+  client's revocations (reason `access token revoked by the client` / `refresh token revoked by the
+  client`, with the deleted session's `accessId`) and for a rotation whose chain was ended while it ran
+  (reason `refresh chain ended during its rotation`).
+- New audit event `oauth.nonce.reused` (`clientId`, `userId`, `codeId` = the code's hash; never the
+  nonce), user-resolved, emitted when a code exchange is refused because its OpenID Connect nonce was
+  already used; declared in the audit method list.
+- Refresh grant order: Basic / `client_id` consistency, suspension, client authentication and a
+  non-consuming read of the row's client binding now run before the atomic consume (the
+  post-consume `client_id` check stays as a defence); a rotation re-reads its consumed marker once its
+  new rows are durable and, if the chain was ended meanwhile, ends the new refresh row, index row and
+  session. `oauth.token.reuse_detected` gains reason `foreign-client` (a rotated token presented by
+  another client: no collapse). Refresh-token correlation ids in audit rows (`codeId`, `oldTokenId`,
+  `newTokenId`) are now `refresh:` + 12 characters of the token's SHA-256, not its first characters
+  (this also changes the format of the existing refresh audit rows).
+- Boot warning: `oauth:refreshRetireGraceSeconds` below `oauth:refreshReuseGraceSeconds`. The
+  `bin/oauth-client.js update` output warns when a client made public keeps `canIntrospect`.
+- Session index rows (`oauth-at/`) gain `refreshTokenHash` (written by the refresh and, after the
+  refresh row, by the code exchange); `deleteAccessChain` reads it for every OAuth session it deletes,
+  removes the refresh row, marks it revoked and deletes the index row (non-fatal, after the delete).
+- Refresh rows gain `accessId` (the session the chain backs); consumed markers gain `revoked`. A
+  revoked marker's replay is refused (`oauth.token.reuse_detected`, reason `revoked-token`) without
+  `revokeChain`; final refusals after the consume write it; `storage.restoreConsumedRefresh` puts a
+  row back only while the marker is still the one its rotation wrote (and takes it out again if the
+  token was ended meanwhile). New storage helpers: `revokeRefresh`, `revokeRefreshByHash`,
+  `findRefreshCore`, `setSessionIndexRefresh`, `deleteSessionIndex`.
+- New config key `oauth:refreshRetireGraceSeconds` (default 60, clamped to `[0, accessTokenTTL]`);
+  `handleRefreshToken` takes an optional `retireSession` dependency (storage-direct `expires` update
+  plus a cache bust; a failure never fails the refresh).
+- The scope echo has one input at the code exchange, at refresh and at introspection: the session's
+  stored permissions without its selfRevoke override (`resolveAccess` and the mints return them).
+- Test suites: the two-core suite starts its cores with a toy OAuth grammar and covers introspection,
+  revocation and suspension across cores (`OAUTH_TOY_EXTENSION` of `test/helpers/core-process.js`).
+
 ### OAuth: registry clients, extension, glue split
 
 - The OAuth glue of the API server is split: `routes/oauth2.ts` keeps the mount (user resolution, API

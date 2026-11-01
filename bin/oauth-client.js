@@ -298,6 +298,11 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
       (typeof subjectType === 'string' ? ', got "' + subjectType + '"' : '') + '. ' + SUBJECT_TYPES_HELP);
   }
   const allowFeatures = parseAllowFeatures(args);
+  // The resource-server role: token introspection needs an authenticating client.
+  const canIntrospect = parseBooleanFlag(args, 'can-introspect', 'create-registry') === true;
+  if (canIntrospect && authMethod === 'none') {
+    throw new Error('create-registry: --can-introspect needs a confidential client (--auth-method client_secret_basic or private_key_jwt)');
+  }
   await persistClient(platform, {
     clientId,
     kind: 'registry',
@@ -321,10 +326,12 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     launchTypes: fields.launchTypes ?? [],
     subjectType,
     ...(allowFeatures != null && allowFeatures.length > 0 ? { allowFeatures } : {}),
+    ...(canIntrospect ? { canIntrospect: true } : {}),
     ...(secret != null ? { clientSecretHash: secret.hash } : {}),
     ...(jwks != null ? { jwks } : {}),
   });
   console.log('OK   registry client created: ' + clientId);
+  if (canIntrospect) console.log('     introspection: allowed (resource-server role)');
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log('     auth method:   ' + authMethod);
@@ -476,12 +483,12 @@ const CREATE_FLAGS = {
 };
 const CREATE_REGISTRY_FLAGS = {
   values: [...COMMON_VALUES, ...REGISTRY_VALUES],
-  booleans: ['any-audience', 'allow-insecure-redirect'],
+  booleans: ['any-audience', 'allow-insecure-redirect', 'can-introspect'],
   own: ['subject-type', 'allow-feature'],
 };
 const UPDATE_FLAGS = {
   values: [...COMMON_VALUES, ...REGISTRY_VALUES, ...APP_ACCOUNT_VALUES],
-  booleans: ['any-audience', 'allow-insecure-redirect', 'yes'],
+  booleans: ['any-audience', 'allow-insecure-redirect', 'yes', 'can-introspect'],
   own: ['subject-type', 'allow-feature', 'client-id'],
 };
 // Flags that only mean something on a registry row.
@@ -650,6 +657,16 @@ async function runUpdate (platform, args, getClient, persistClient) {
   const jwks = resolveJwks(args);
   if (jwks != null) merged.jwks = jwks;
   const secret = existing.kind === 'registry' ? await updateAuthMethod(existing, merged, args, jwks != null) : null;
+  // `--can-introspect` (bare / true / false): the resource-server role.
+  const canIntrospect = parseBooleanFlag(args, 'can-introspect', 'update');
+  if (canIntrospect === true) {
+    const confidential = (typeof merged.clientSecretHash === 'string' && merged.clientSecretHash.length > 0) ||
+      (merged.jwks != null && Array.isArray(merged.jwks.keys) && merged.jwks.keys.length > 0);
+    if (!confidential) throw new Error('update: --can-introspect needs a confidential client (a secret or a key set on file)');
+    merged.canIntrospect = true;
+  } else if (canIntrospect === false) {
+    delete merged.canIntrospect;
+  }
   // A row written before accountUserId: convert it when the account is on this
   // core (same operation as the master-boot migration), so this whole-row write
   // does not re-install the old field after the boot converted it.
@@ -671,6 +688,13 @@ async function runUpdate (platform, args, getClient, persistClient) {
   }
   if (row.tokenEndpointAuthMethod !== existing.tokenEndpointAuthMethod) {
     console.log('     auth method:   ' + row.tokenEndpointAuthMethod + ' (was ' + (existing.tokenEndpointAuthMethod ?? '(unset)') + ')');
+  }
+  // Introspection refuses a public caller at run time; say so rather than
+  // leave a role that silently does nothing.
+  if (row.canIntrospect === true && !(typeof row.clientSecretHash === 'string' && row.clientSecretHash.length > 0) &&
+      !(row.jwks != null && Array.isArray(row.jwks.keys) && row.jwks.keys.length > 0)) {
+    console.log('     WARN introspection role kept on a public client: refused until it has a secret or a key set ' +
+      '(--can-introspect false withdraws it)');
   }
   // The flags that widen what the client may do, echoed as create-registry does.
   if (args.flags.audience != null || args.flagsScalar['any-audience'] != null) {
@@ -1014,7 +1038,10 @@ function printUsage (stream) {
     '                            for now)\n' +
     '  --allow-feature <name>    (multi; also on update, "none" clears) a feature its\n' +
     '                            grants may use: webhooks, secretSharing (both forbidden\n' +
-    '                            on its grants otherwise)\n\n' +
+    '                            on its grants otherwise)\n' +
+    '  --can-introspect          (also on update, any client; "false" withdraws it) the\n' +
+    '                            resource-server role: may call /oauth2/introspect.\n' +
+    '                            Confidential clients only (a secret or a key set)\n\n' +
     'Flags (create / update):\n' +
     '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
     '                            the account username. 4-64 chars of A-Z a-z 0-9 . _ ~ -\n' +

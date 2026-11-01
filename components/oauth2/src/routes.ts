@@ -23,6 +23,11 @@ import { createRequire } from 'node:module';
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver, GrantSubjectResolver } from './grants/authorization_code.ts';
 import type { OAuthExtension } from './extension.ts';
+import type { RevokeChain, RetireSession } from './grants/refresh_token.ts';
+import type { IntrospectAccess } from './introspection.ts';
+import type { RevokeSession } from './revocation.ts';
+import { handleIntrospect } from './introspection.ts';
+import { handleRevoke } from './revocation.ts';
 import type { NextFunction, Request, Response } from 'express';
 const require = createRequire(import.meta.url);
 
@@ -129,9 +134,18 @@ export type Deps = {
    * for (user, client) and notifies the counterparty. If absent, reuse is still
    * detected + audited but the chain is not revoked.
    */
-  revokeChain?: (params: {
-    userId: string; username: string; clientId: string; dataGrantAccessId?: string;
-  }) => Promise<void>;
+  revokeChain?: RevokeChain;
+  /** Retire the session a refresh rotation replaces (expires after a short grace). */
+  retireSession?: RetireSession;
+  /**
+   * Delete a session of a client on this core (RFC 7009 revocation of an
+   * access token). `/oauth2/revoke` mounts only with it.
+   */
+  revokeSession?: RevokeSession;
+  /** Re-read a session for /oauth2/introspect; the route mounts only with it. */
+  introspectAccess?: IntrospectAccess;
+  /** Public URL of a core (wrong-core answer of /introspect and /revoke). */
+  coreUrlFor?: (coreId: string) => string | Promise<string>;
   /**
    * Write the DPoP key-thumbprint binding onto the access pre-minted at
    * /accept (authorization_code + DPoP proof at /token). Storage-layer-
@@ -192,9 +206,24 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   // fails rather than the first sign-in.
   loadSigningKeys(deps.config);
 
+  // Introspection and revocation are mounted (and advertised) only when the
+  // host wires them, with the flow.
+  const flowWired = deps.platform != null && typeof deps.resolveUser === 'function' &&
+    typeof deps.createAccess === 'function' && typeof deps.resolveUsername === 'function';
+  const introspection = flowWired && typeof deps.introspectAccess === 'function';
+  const revocation = flowWired && typeof deps.revokeSession === 'function';
+
   // The discovery documents follow the live configuration (signing keys) and
   // the installed extension (its advertised scopes and claims).
-  function discovery (): { issuer: string; scopesSupported: string[]; grantTypesSupported: string[]; oidc: boolean; claimsSupported: string[] } {
+  function discovery (): {
+    issuer: string;
+    scopesSupported: string[];
+    grantTypesSupported: string[];
+    oidc: boolean;
+    claimsSupported: string[];
+    introspection: boolean;
+    revocation: boolean;
+  } {
     const oidc = hasSigningKeys(deps.config);
     return {
       issuer,
@@ -202,6 +231,8 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       grantTypesSupported: (deps.config.get('oauth:grantTypesSupported') as string[] | undefined) ?? ['authorization_code'],
       oidc,
       claimsSupported: getExtension()?.claimsSupported ?? [],
+      introspection,
+      revocation,
     };
   }
 
@@ -262,12 +293,36 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       mintClientAccess: deps.mintClientAccess,
       resolveAccountUserId: deps.resolveAccountUserId,
       revokeChain: deps.revokeChain,
+      ...(deps.retireSession != null ? { retireSession: deps.retireSession } : {}),
       bindAccessDpop: deps.bindAccessDpop,
       resolveAccess: deps.resolveAccess,
       revokeAccessLocal: deps.revokeAccessLocal,
       resolveUsername: deps.resolveUsername,
       ...(deps.resolveGrantSubject != null ? { resolveGrantSubject: deps.resolveGrantSubject } : {}),
     })));
+
+  if (introspection) {
+    app.post!('/oauth2/introspect',
+      guardRoute(handleIntrospect({
+        config: deps.config,
+        platform: deps.platform,
+        introspectAccess: deps.introspectAccess!,
+        ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+      })));
+  }
+  if (revocation) {
+    // Public clients (browser apps) revoke on sign-out: same CORS as /token.
+    if (typeof app.options === 'function') {
+      app.options!('/oauth2/revoke', corsMiddleware);
+    }
+    app.post!('/oauth2/revoke', corsMiddleware,
+      guardRoute(handleRevoke({
+        config: deps.config,
+        platform: deps.platform,
+        revokeSession: deps.revokeSession!,
+        ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+      })));
+  }
 
   // Registry rows are written by the operator CLI, which does not load the
   // extension: check their maximum scope sets now, in the background. A bad

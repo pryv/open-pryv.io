@@ -229,4 +229,22 @@ describe('[OFBD] forbidden features in consent context', () => {
     const check = checkConsentGrant(normalizePermissions(c.shown.permissions), normalizePermissions(c.shown.permissions, { consent: true }), false);
     assert.equal(check.ok, true);
   });
+
+  it('[OCMPU10] a requested allowed feature the client\'s grants forbid by default is shown as the locked forbid it will be, with or without a grant; allowed on the row, it is shown as asked', () => {
+    const req = requested([{ streamId: 'a', level: 'read' }, { feature: 'webhooks', setting: 'allowed' }, { feature: 'selfAudit', setting: 'allowed' }]);
+    const forbid = { feature: 'webhooks', setting: 'forbidden', mandatory: true };
+    const first = composeShownOffer(req, null, CLIENT);
+    assert.deepEqual(first.shown.permissions, [{ streamId: 'a', level: 'read' }, forbid, { feature: 'selfAudit', setting: 'allowed' }]);
+    // The re-consent shows the same (the grant holds the default forbid).
+    const current = { aliased: false, permissions: [{ streamId: 'a', level: 'read' }, { feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }] };
+    const again = composeShownOffer(req, current, CLIENT);
+    assert.deepEqual(again.shown.permissions.find((p) => p.feature === 'webhooks'), { ...forbid, currentlyGranted: true });
+    assert.equal(again.shown.permissions.some((p) => p.feature === 'secretSharing'), false, 'a default forbid the request does not name stays hidden');
+    // What the user can accept is what the grant becomes.
+    const next = nextGrantPermissions({ granted: normalizePermissions(first.shown.permissions), current: null, client: CLIENT, replace: true });
+    assert.ok(next.some((p) => p.feature === 'webhooks' && p.setting === 'forbidden'));
+    // The client row allows it: shown as asked.
+    const open = composeShownOffer(req, null, { ...CLIENT, allowFeatures: ['webhooks'] });
+    assert.deepEqual(open.shown.permissions.find((p) => p.feature === 'webhooks'), { feature: 'webhooks', setting: 'allowed' });
+  });
 });

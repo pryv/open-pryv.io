@@ -33,6 +33,7 @@ import cache from 'cache';
 import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
+import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo } from './types.ts';
 import { notifyScopedAccessChange } from '../../methods/helpers/accessDeletion.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
@@ -82,13 +83,27 @@ export function createSessions (env: GlueEnv) {
   function chainOf (permissions: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
     const out: Array<Record<string, unknown>> = [];
     for (const p of permissions ?? []) {
-      if (typeof p?.streamId === 'string' && typeof p.level === 'string') out.push({ streamId: p.streamId, level: p.level });
+      if (typeof p?.streamId === 'string' && typeof p.level === 'string') out.push({ streamId: canonicalStreamId(p.streamId), level: p.level });
       else if (typeof p?.feature === 'string' && typeof p.setting === 'string') out.push({ feature: p.feature, setting: p.setting });
     }
     return out;
   }
 
-  async function mintAccessDirect ({ userId, username, clientId, permissions, expiresAt, dpopJkt, dataGrantAccessId, chainPermissions }: {
+  // One spelling per stream in what a session row stores, notifies and
+  // indexes (`:local:a` is `a`), as accesses.create writes it.
+  function canonicalPermissions (permissions: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+    return permissions.map((p) => (typeof p?.streamId === 'string' ? { ...p, streamId: canonicalStreamId(p.streamId) } : p));
+  }
+
+  // What a session holds, as its STORED row says it, without the session's
+  // selfRevoke override: the one input of the scope echo at the code
+  // exchange, at refresh and at introspection (never the code row's consent,
+  // never the loaded access view, which adds the audit and account entries).
+  function storedSessionPermissions (permissions: Array<Record<string, unknown>> | null | undefined): Array<Record<string, unknown>> {
+    return canonicalPermissions((permissions ?? []).filter((p) => p?.feature !== 'selfRevoke'));
+  }
+
+  async function mintAccessDirect ({ userId, username, clientId, permissions: rawPermissions, expiresAt, dpopJkt, dataGrantAccessId, chainPermissions }: {
     userId: string;
     username: string;
     clientId: string;
@@ -105,6 +120,7 @@ export function createSessions (env: GlueEnv) {
     if (dataGrantAccessId != null && !Array.isArray(chainPermissions)) {
       throw new Error('mintAccessDirect: a session of a grant needs its chain permissions');
     }
+    const permissions = canonicalPermissions(rawPermissions);
     const accessesRepository = accessesRepo(storageLayer, 'mintAccessDirect');
     // Millisecond precision, like every other access (timestamp.now()): the
     // client-revoke check compares `created` with a revoke epoch in ms, so a
@@ -234,7 +250,8 @@ export function createSessions (env: GlueEnv) {
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
     const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, chainPermissions: permissions, ...(jkt != null ? { dpopJkt: jkt } : {}) });
-    return { ...minted, ...grantSubject(dataGrant, userId), permissions: effective };
+    // The scope echo reads what the session row stores (minus the override).
+    return { ...minted, ...grantSubject(dataGrant, userId), permissions: storedSessionPermissions(effective) };
   }
 
   // ---------------------------------------------------------------------
@@ -307,12 +324,16 @@ export function createSessions (env: GlueEnv) {
 
   async function resolveAccess ({ userId, username, accessId, clientId }: {
     userId: string; username: string; accessId: string; clientId: string;
-  }): Promise<{ accessToken: string; apiEndpoint: string } | null> {
+  }): Promise<{ accessToken: string; apiEndpoint: string; permissions: Array<Record<string, unknown>> } | null> {
     const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
     if (access == null || access.deleted != null || typeof access.token !== 'string') return null;
     if (typeof access.expires === 'number' && access.expires <= Date.now() / 1000) return null;
     // Same builder accesses.create uses, so the exchange returns what /accept minted.
-    return { accessToken: access.token, apiEndpoint: ApiEndpoint.buildForAccess(access as { alias?: string | null; token?: string }, username) };
+    return {
+      accessToken: access.token,
+      apiEndpoint: ApiEndpoint.buildForAccess(access as { alias?: string | null; token?: string }, username),
+      permissions: storedSessionPermissions(access.permissions),
+    };
   }
 
   async function revokeAccessLocal ({ userId, username, accessId, clientId }: {
@@ -328,6 +349,37 @@ export function createSessions (env: GlueEnv) {
     // The mint indexed it: the breach-scope index keeps it as deleted.
     await tombstoneAccessesNonFatal(username, [access as Parameters<typeof tombstoneAccessesNonFatal>[1][number]], Date.now() / 1000);
     pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
+  }
+
+  // ---------------------------------------------------------------------
+  // retireSession: a refresh rotation retires the session its chain backed
+  // until then. The row expires `oauth:refreshRetireGraceSeconds` from now
+  // (clamped to [0, accessTokenTTL]) instead of living out its lifetime:
+  // requests in flight finish, and what the session created survives as on
+  // a natural expiry (no deletion, no history, no notification). Skipped for
+  // a row already gone or expiring within the grace.
+  // ---------------------------------------------------------------------
+  async function retireSession ({ userId, username, accessId, clientId }: {
+    userId: string; username: string; accessId: string; clientId: string;
+  }): Promise<boolean> {
+    const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
+    if (access == null || access.deleted != null) return false;
+    const until = Math.floor(Date.now() / 1000) + retireGraceSeconds();
+    if (typeof access.expires === 'number' && access.expires <= until) return false;
+    const accessesRepository = accessesRepo(storageLayer, 'oauth2.retireSession');
+    // `modified` makes the integrity-aware updateOne recompute the row hash.
+    await fromCallback((cb: (e: unknown, r?: unknown) => void) =>
+      accessesRepository.updateOne({ id: userId, username }, { id: accessId }, { expires: until, modified: Date.now() / 1000 }, cb));
+    // The access cache validates on `expires`: drop the cached copy.
+    cache.unsetUserData(userId);
+    return true;
+  }
+
+  function retireGraceSeconds (): number {
+    const ttl = Number(env.config.get('oauth:accessTokenTTL') ?? 3600);
+    const raw = Number(env.config.get('oauth:refreshRetireGraceSeconds') ?? 60);
+    const grace = Number.isFinite(raw) ? raw : 60;
+    return Math.min(Math.max(0, Math.floor(grace)), Number.isFinite(ttl) ? ttl : 3600);
   }
 
   async function mintClientAccess ({ userId, username, clientId, expiresAt }: {
@@ -365,6 +417,10 @@ export function createSessions (env: GlueEnv) {
     bindAccessDpop,
     resolveAccess,
     revokeAccessLocal,
+    retireSession,
+    storedSessionPermissions,
+    findOAuthSessionAccess,
+    grantSubject,
     mintClientAccess,
   };
 }

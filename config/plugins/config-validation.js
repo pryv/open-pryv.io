@@ -795,7 +795,8 @@ const OAUTH_MAX_ID_TOKEN_TTL = 3600;
 /**
  * OAuth settings that work but should be changed: the consent-state key still
  * borrowed from the admin key (transitional), a weak or shared state key, a
- * removed key still set, an unusable id_token lifetime.
+ * removed key still set, an unusable id_token lifetime, a refresh retire grace
+ * shorter than the refresh reuse grace.
  */
 function oauthWarnings (config) {
   const warnings = [];
@@ -822,6 +823,14 @@ function oauthWarnings (config) {
     warnings.push(`'oauth.idTokenTTL' is ${JSON.stringify(idTokenTTL)}: a positive number of seconds is expected; 300 is used.`);
   } else if (Number(idTokenTTL) > OAUTH_MAX_ID_TOKEN_TTL) {
     warnings.push(`'oauth.idTokenTTL' is ${idTokenTTL} s, above the ${OAUTH_MAX_ID_TOKEN_TTL} s maximum: id_tokens live ${OAUTH_MAX_ID_TOKEN_TTL} s.`);
+  }
+  // A client retrying a refresh within the reuse grace (a double-submit) gets
+  // no new token; the token it holds must still work meanwhile.
+  const retireGrace = Number(config.get('oauth:refreshRetireGraceSeconds') ?? 60);
+  const reuseGrace = Number(config.get('oauth:refreshReuseGraceSeconds') ?? 10);
+  if (Number.isFinite(retireGrace) && Number.isFinite(reuseGrace) && retireGrace < reuseGrace) {
+    warnings.push(`'oauth.refreshRetireGraceSeconds' (${retireGrace}) is below 'oauth.refreshReuseGraceSeconds' (${reuseGrace}): ` +
+      'a client retrying a refresh inside the reuse grace can be left with an expired access token. Keep it at or above.');
   }
   return warnings;
 }

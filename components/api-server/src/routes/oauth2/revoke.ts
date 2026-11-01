@@ -10,7 +10,10 @@
  * refresh-token reuse, without a MethodContext: delete the durable
  * data-grant + all live oauth session accesses for (user, client) + their
  * descendants through the accesses.delete teardown, invalidate the access
- * cache cluster-wide, then best-effort notify the counterparty app.
+ * cache cluster-wide, then best-effort notify the counterparty app. And
+ * `revokeSession`, the deletion of one session on the client's own
+ * revocation (RFC 7009) of its access token or of the refresh token backing
+ * it: that chain ends, the consent grant and the client's other sessions stay.
  */
 
 import type { DataGrant, GlueEnv } from './types.ts';
@@ -30,8 +33,32 @@ import { accessesRepo } from './types.ts';
 
 const cmcOutbound = cmc.outbound;
 
-export function createRevoke (env: GlueEnv) {
+/** The session glue revokeSession needs (see sessions.ts). */
+type SessionLookup = {
+  resolveUsername: (userId: string) => Promise<string | null>;
+  findOAuthSessionAccess: (userId: string, username: string, accessId: string, clientId: string) => Promise<DataGrant | null>;
+};
+
+export function createRevoke (env: GlueEnv, sessions?: SessionLookup) {
   const { config, storageLayer, logger } = env;
+
+  // ---------------------------------------------------------------------
+  // revokeSession: RFC 7009 revocation by the client of an access token, or
+  // of the refresh token backing the session. The session is deleted through
+  // the accesses.delete teardown, which also ends its refresh chain.
+  // Resolves to whether a session was deleted.
+  // ---------------------------------------------------------------------
+  async function revokeSession ({ userId, accessId, clientId }: {
+    userId: string; accessId: string; clientId: string;
+  }): Promise<boolean> {
+    if (sessions == null) throw new Error('oauth2.revokeSession: session lookup not wired');
+    const username = await sessions.resolveUsername(userId);
+    if (username == null) return false;
+    const access = await sessions.findOAuthSessionAccess(userId, username, accessId, clientId);
+    if (access == null || access.deleted != null) return false;
+    const outcome = await deleteAccessChain({ id: userId, username }, { id: accessId });
+    return outcome.deleted;
+  }
 
   async function revokeChain ({ userId, username, clientId, dataGrantAccessId }: {
     userId: string; username: string; clientId: string; dataGrantAccessId?: string;
@@ -141,5 +168,5 @@ export function createRevoke (env: GlueEnv) {
     return selfIdentityHost(config, username);
   }
 
-  return { revokeChain };
+  return { revokeChain, revokeSession };
 }
