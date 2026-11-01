@@ -734,8 +734,9 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # Single-core / dnsLess only in this version. clientSecret is a per-core
 # # secret — keep it YAML-only. At each IdP register the callback served by
 # # THIS core's API host: <callbackBaseURL or public API URL>/auth/sso/<id>/
-# # callback (NOT the landingPageURL host).
-# # sso:
+# # callback (NOT the landingPageURL host). Add these keys under the sso:
+# # block above, which already holds the generated stateKey (the per-core
+# # secret the sign-in state cookie is keyed on).
 # #   enabled: true
 # #   landingPageURL: ${authUiUrl}/sso-signin
 # #   providers:
@@ -1625,6 +1626,13 @@ async function main () {
       // is generated, never asked, and needs no backup.
       stateKey: genSecret(32)
     },
+    sso: {
+      // Sign-in state-cookie secret, per core and used for nothing else.
+      // Generated now so it is already in place when sso.enabled is turned
+      // on; like the consent-state key, losing it only cancels the sign-ins
+      // in progress, so it needs no backup.
+      stateKey: genSecret(32)
+    },
     cluster: {
       apiWorkers: 2,
       hfsWorkers,
@@ -1826,6 +1834,11 @@ async function main () {
     ['Consent page of the auth UI: GET /oauth2/authorize redirects the user there',
       'to sign in and approve the client. Without it that flow answers 500.'],
     { oauth: config.oauth });
+
+  yamlBody += section(yaml, 'Third-party sign-in state key',
+    ['Signs the state cookie of third-party sign-in (off until sso.enabled is',
+      'true, see the sso block in the appendix: add its keys here).'],
+    { sso: config.sso });
 
   yamlBody += section(yaml, 'Cluster sizing',
     ['apiWorkers + hfsWorkers + previewsWorker each fork a worker process.',

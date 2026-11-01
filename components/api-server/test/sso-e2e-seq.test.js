@@ -42,6 +42,8 @@ const timestamp = require('unix-timestamp');
 const LANDING = 'https://auth.example.com/sso-signin';
 const CALLBACK_BASE = 'https://core.example.com';
 const ADMIN_KEY = 'sso-e2e-admin-key';
+const STATE_KEY = 'sso-e2e-state-key-' + 'a1B2c3D4e5'.repeat(3);
+const { signStateCookie, verifyStateCookie, STATE_COOKIE_NAME } = require('sso/src/stateCookie.ts');
 const PROVIDER = 'testidp';
 const PASSWORD = 'password-for-sso-e2e-123';
 const TRUSTED_ORIGIN = 'http://test.pryv.local';
@@ -91,6 +93,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
       sharedSecrets: { enabled: true, maxSizeBytes: 4096, maxTtl: 2592000 },
       sso: {
         enabled: true,
+        stateKey: STATE_KEY,
         landingPageURL: LANDING,
         callbackBaseURL: CALLBACK_BASE,
         providers: {
@@ -446,5 +449,48 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(p.ssoReturn, RETURN_VALUE);
     assert.strictEqual(p.ssoKey, undefined);
     assert.strictEqual(p.ssoStatus, undefined);
+  });
+
+  /** The round-trip fields of a state cookie (`name=value`), unverified. */
+  function roundTripFields (cookie) {
+    const body = cookie.slice(cookie.indexOf('=') + 1).split('.')[0];
+    const { provider, state, nonce, pkceVerifier } = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    return { provider, state, nonce, pkceVerifier };
+  }
+
+  it('[SSOE11] with sso.stateKey set, the state cookie is keyed on it and a cookie signed with the admin key is refused', async function () {
+    idp.control.email = cuid() + '@nobody-ssoe11.example.com';
+    // The cookie /start sets verifies with the state key, not the admin key.
+    const first = await startFlow();
+    const value = first.cookie.slice(first.cookie.indexOf('=') + 1);
+    assert.strictEqual(verifyStateCookie(STATE_KEY, value).ok, true);
+    assert.strictEqual(verifyStateCookie(ADMIN_KEY, value).ok, false);
+    // Same round-trip fields, signed with the admin key: refused before the IdP code is used.
+    const forged = signStateCookie(ADMIN_KEY, roundTripFields(first.cookie));
+    const refused = await ssoRequest.get(first.callbackPath).set('Cookie', `${STATE_COOKIE_NAME}=${forged}`);
+    assert.strictEqual(refused.status, 302);
+    assert.strictEqual(hashParams(refused.headers.location).ssoError, 'sso-failed');
+    // Control: the same fields signed with the state key go through (identity proven, no account).
+    const second = await startFlow();
+    const resigned = signStateCookie(STATE_KEY, roundTripFields(second.cookie));
+    const accepted = await ssoRequest.get(second.callbackPath).set('Cookie', `${STATE_COOKIE_NAME}=${resigned}`);
+    assert.strictEqual(hashParams(accepted.headers.location).ssoError, 'no-account');
+  });
+
+  it('[SSOE12] while sso.stateKey is empty, the state cookie is keyed on the admin key', async function () {
+    const restore = injectTestConfigSnapshot({ sso: { stateKey: '' } });
+    try {
+      const fallbackApp = express();
+      require('../src/routes/sso.ts').default(fallbackApp, global.app);
+      const fallbackRequest = await listeningAgent(fallbackApp);
+      const res = await fallbackRequest.get(`/auth/sso/${PROVIDER}/start`);
+      assert.strictEqual(res.status, 302, JSON.stringify(res.body));
+      const cookie = res.headers['set-cookie'][0].split(';')[0];
+      const value = cookie.slice(cookie.indexOf('=') + 1);
+      assert.strictEqual(verifyStateCookie(ADMIN_KEY, value).ok, true);
+      assert.strictEqual(verifyStateCookie(STATE_KEY, value).ok, false);
+    } finally {
+      restore();
+    }
   });
 });

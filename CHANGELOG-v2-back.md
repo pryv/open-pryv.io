@@ -95,6 +95,21 @@
 - Test suites: the two-core suite starts its cores with a toy OAuth grammar and covers introspection,
   revocation and suspension across cores (`OAUTH_TOY_EXTENSION` of `test/helpers/core-process.js`).
 
+### Third-party sign-in: state-cookie key
+
+- `sso` component: `signStateCookie` / `verifyStateCookie` take the signing `secret` (was the admin
+  key; the HMAC label `pryv-sso-state-v1` is unchanged), the mount deps carry `stateKey` (was
+  `adminKey`), and the new `ssoStateKeyFromConfig` (exported) resolves `sso:stateKey`, else
+  `auth:adminAccessKey`. No dual-key verification: a sign-in in flight across the change fails once
+  and is retried.
+- New config key `sso:stateKey` (default empty), listed in `SECRET_PATHS` and `OPTIONAL_SECRET_PATHS`
+  (boot problem, and `bin/check-config.js` problem: a set value that is a placeholder, an unexpanded
+  `${…}` reference or, in production, a short or published value). Boot warnings while `sso:enabled`
+  is true: key unset, equal to `auth:adminAccessKey` or `oauth:stateKey`, or shorter than 32
+  characters. `bin/check-config.js` shares one optional state-key check between `oauth.stateKey` and
+  `sso.stateKey`. The install wizard generates `sso.stateKey` (sign-in stays off) and its appendix
+  points the `sso` keys at that block.
+
 ### OAuth: registry clients, extension, glue split
 
 - The OAuth glue of the API server is split: `routes/oauth2.ts` keeps the mount (user resolution, API

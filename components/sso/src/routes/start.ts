@@ -27,7 +27,8 @@ import { signStateCookie, STATE_COOKIE_NAME, cookieOptions, isValidReturnState }
 
 export type StartDeps = {
   registry: Registry;
-  adminKey: string;
+  /** State-cookie signing secret (see `ssoStateKeyFromConfig`). */
+  stateKey: string;
   /** Absolute redirect_uri for a provider — registered verbatim at the IdP. */
   callbackUrl: (provider: string) => string;
   logger?: { warn: (msg: string) => void };
@@ -82,7 +83,7 @@ export function handleStart (deps: StartDeps) {
 
       // `returnState` is omitted when absent, so a start without it signs a
       // payload byte-identical to the one this route produced before.
-      const cookie = signStateCookie(deps.adminKey, returnState === undefined
+      const cookie = signStateCookie(deps.stateKey, returnState === undefined
         ? { provider, state, nonce, pkceVerifier }
         : { provider, state, nonce, pkceVerifier, returnState });
       res.cookie(STATE_COOKIE_NAME, cookie, cookieOptions());

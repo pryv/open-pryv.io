@@ -211,6 +211,15 @@ sso:
   callbackBaseURL: ''            # optional; defaults from the public service
                                  # URL. `<base>/auth/sso/<provider>/callback`
                                  # must be registered VERBATIM at each IdP.
+  # Secret the sign-in state cookie (carried from /auth/sso/<id>/start to the
+  # IdP and back to the callback) is keyed on; used for nothing else. Per core
+  # (the cookie is set and read on one core). Set it on every core where
+  # enabled is true, to a random value of at least 32 characters, e.g.
+  # `openssl rand -base64 32` (a placeholder or `${…}` value refuses the
+  # boot). While it is empty, the key is derived from auth.adminAccessKey and
+  # a warning is logged at every boot; a later release will require it.
+  # Changing it only cancels the sign-ins in progress at that moment.
+  stateKey: ''
   providers: {}                  # operator IdP allow-list, default EMPTY
   # providers:
   #   google:

@@ -495,6 +495,31 @@ oauth:
   });
 });
 
+describe('[CKSO] bin/check-config.js sso.stateKey', function () {
+  this.timeout(60000);
+
+  it('[CKSO1] sso.stateKey: unset with sign-in enabled warns, disabled is silent; a placeholder is a problem; a random value is clean', () => {
+    const sso = (enabled, stateKey) => BASE + `
+sso:
+  enabled: ${enabled}
+` + (stateKey == null ? '' : `  stateKey: '${stateKey}'\n`);
+    const unset = runCheck(sso(true, null));
+    assert.strictEqual(unset.status, 0, unset.stdout + unset.stderr);
+    assert.match(unset.stdout, /sso\.stateKey not set: sign-in state cookies are signed with a key derived from auth\.adminAccessKey/);
+    const disabled = runCheck(sso(false, null));
+    assert.strictEqual(disabled.status, 0, disabled.stdout + disabled.stderr);
+    assert.doesNotMatch(disabled.stdout, /sso\.stateKey/);
+    for (const placeholder of ['REPLACE_ME', '$' + '{SSO_STATE_KEY}', 'changeme']) {
+      const res = runCheck(sso(false, placeholder));
+      assert.strictEqual(res.status, 1, placeholder + ': ' + res.stdout + res.stderr);
+      assert.match(res.stderr, /sso\.stateKey/, placeholder);
+    }
+    const good = runCheck(sso(true, 'k3yV4lue-' + 'a1B2c3D4e5'.repeat(4)));
+    assert.strictEqual(good.status, 0, good.stdout + good.stderr);
+    assert.doesNotMatch(good.stdout, /sso\.stateKey/);
+  });
+});
+
 describe('[CCDL] bin/check-config.js reads the shipped defaults under the file', function () {
   this.timeout(60000);
 

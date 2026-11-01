@@ -17,9 +17,13 @@
  *
  * `SameSite=Lax` is REQUIRED: the IdP callback is a top-level cross-site GET
  * navigation, which `Strict` would strip the cookie from. The signing key is
- * derived from `auth.adminAccessKey` (a DISTINCT label from the oauth2 signed
- * state), so it rotates with the admin key and needs no new config, and a
- * value minted on one core verifies on any other (admin key is operator-sync).
+ * derived (HMAC-SHA256, fixed label distinct from the oauth2 signed state)
+ * from `sso.stateKey`, a per-core secret used for nothing else: the cookie is
+ * set and read on one core's origin, so no other core ever verifies it. While
+ * `sso.stateKey` is not set, the key is derived from `auth.adminAccessKey`
+ * instead, with a boot warning; once it is set, a cookie signed with the
+ * admin-derived key no longer verifies. Changing either key only cancels the
+ * sign-ins in flight (at most the cookie TTL). See `ssoStateKeyFromConfig`.
  *
  * The cookie carries the PKCE `code_verifier`: signing gives integrity, and
  * confidentiality rests on HttpOnly + Secure (TLS) + the short TTL. The
@@ -75,15 +79,27 @@ export type StateCookiePayload = {
 };
 
 /**
- * Derive the HMAC signing key from the operator admin key. Deterministic
- * (same key on every core); distinct label from oauth2's signed state so the
- * two signing domains never overlap.
+ * The secret the state cookie is keyed on: `sso:stateKey` when set,
+ * otherwise (transitional fallback, reported at boot) `auth:adminAccessKey`.
+ * Empty string when neither is configured.
  */
-function deriveKey (adminKey: string): Buffer {
-  if (typeof adminKey !== 'string' || adminKey.length === 0) {
-    throw new Error('sso stateCookie: adminKey must be a non-empty string');
+export function ssoStateKeyFromConfig (config: { get (key: string): unknown }): string {
+  const stateKey = config.get('sso:stateKey');
+  if (typeof stateKey === 'string' && stateKey.length > 0) return stateKey;
+  const adminKey = config.get('auth:adminAccessKey');
+  return typeof adminKey === 'string' ? adminKey : '';
+}
+
+/**
+ * Derive the HMAC signing key from the state secret. The label is distinct
+ * from oauth2's signed state, so the two signing domains never overlap even
+ * if both were ever keyed on the same secret.
+ */
+function deriveKey (secret: string): Buffer {
+  if (typeof secret !== 'string' || secret.length === 0) {
+    throw new Error('sso stateCookie: secret must be a non-empty string');
   }
-  return crypto.createHmac('sha256', adminKey).update(SIGNING_LABEL).digest();
+  return crypto.createHmac('sha256', secret).update(SIGNING_LABEL).digest();
 }
 
 function base64urlEncode (buf: Buffer): string {
@@ -100,14 +116,14 @@ function base64urlDecode (s: string): Buffer {
  * callers pass only the round-trip fields.
  */
 export function signStateCookie (
-  adminKey: string,
+  secret: string,
   payload: Omit<StateCookiePayload, 'iat' | 'exp'>,
   nowSeconds: number = Math.floor(Date.now() / 1000),
   ttlSeconds: number = STATE_COOKIE_TTL_SECONDS
 ): string {
   const full: StateCookiePayload = { ...payload, iat: nowSeconds, exp: nowSeconds + ttlSeconds };
   const body = base64urlEncode(Buffer.from(JSON.stringify(full)));
-  const key = deriveKey(adminKey);
+  const key = deriveKey(secret);
   const mac = base64urlEncode(crypto.createHmac('sha256', key).update(body).digest());
   return body + '.' + mac;
 }
@@ -123,7 +139,7 @@ export type VerifyCookieResult =
  * user-facing error (no oracle).
  */
 export function verifyStateCookie (
-  adminKey: string,
+  secret: string,
   value: string,
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): VerifyCookieResult {
@@ -134,7 +150,7 @@ export function verifyStateCookie (
   const macPresented = value.slice(dot + 1);
   let macExpected: string;
   try {
-    const key = deriveKey(adminKey);
+    const key = deriveKey(secret);
     macExpected = base64urlEncode(crypto.createHmac('sha256', key).update(body).digest());
   } catch {
     return { ok: false, reason: 'malformed' };
