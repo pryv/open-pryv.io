@@ -109,6 +109,30 @@
 - **`oauth:audAllowList` is removed** (it was never enforced): the `aud` values a client may name are
   registered per client (`create-registry --audience`). A configuration that still sets it gets a boot
   warning.
+- On a re-authorization of a registry client with per-entry choice, every requested entry the user's
+  current grant does not hold is offered unticked (`optIn`) unless the request marks it mandatory: a
+  stream the user declined at an earlier consent is no longer pre-ticked on the next launch, and a scope
+  the app adds later needs a positive tick (or `mandatory`).
+
+### Fixes
+
+- **Operator CLI: `bin/oauth-client.js update` applies every registry flag.** On a registry client,
+  `--policy-uri`, `--tos-uri`, `--contact`, `--extra` and `--launch-type` were accepted and silently
+  ignored; they are now applied, parsed as `create-registry` parses them (a repeatable flag replaces the
+  stored list; `none` clears the field). `--auth-method` is applied too: the credentials on file follow
+  the method (a change to `client_secret_basic` mints a secret, printed once, and drops the key set; a
+  change to `private_key_jwt` needs `--jwks-file` / `--jwks-json` and drops the secret; a change to
+  `none` drops both and needs `--yes`). On a registry client, `create-registry` and `update` accept
+  `--jwks-file` / `--jwks-json` with `private_key_jwt` only (before, `create-registry` stored a key set
+  next to `none` or `client_secret_basic`, which `/oauth2/token` then accepted as a second credential).
+  These flags are refused on app-account clients. `update` echoes `--audience` / `--any-audience`,
+  `--allow-insecure-redirect` and `--allow-feature` as `create-registry` does. `--scope` splits
+  space-separated tokens on `update` and `create` as on `create-registry`. `create`, `create-registry`
+  and `update` refuse an unknown flag, and a flag that needs a value given without one, instead of
+  ignoring it. `rotate-secret` refuses a client whose auth method uses no secret (`none`,
+  `private_key_jwt`) instead of writing a secret hash next to it.
+- **Operator CLI: `show` no longer prints the client secret's hash** (an offline-guessable value in
+  terminal scrollback); it prints `"clientSecretHash": "(set)"` when the client has a secret.
 
 ## 2.0.0-rc.68 - 2026-10-30
 

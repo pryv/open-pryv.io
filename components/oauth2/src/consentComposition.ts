@@ -14,9 +14,10 @@
  * `read` and requested at `create-only` has none: the consent is refused).
  * Entries the grant already holds are flagged `currentlyGranted` (shown
  * ticked; a stream entry also carries `currentLevel`, the level held now);
- * a new entry the request marks `optIn` is shown unticked. The
- * grant's forbidden features stay on the screen, locked. The core's own
- * default forbids are never shown: they are applied after every consent.
+ * a new entry is shown unticked when the user has a choice (`optIn`),
+ * unless the request marks it mandatory. The grant's forbidden features
+ * stay on the screen, locked. The core's own default forbids are never
+ * shown: they are applied after every consent.
  *
  * `shownDigest` binds that screen. A consent posting it back proves the user
  * saw the composition, so the grant becomes exactly what was ticked (an
@@ -91,6 +92,9 @@ export function composeShownOffer (
     // The level each stream is held at now: the screen says what the app holds
     // (an entry the request widens shows both levels).
     const heldLevels = new Map<string, string>(currentStreams.map((p) => [canonicalStreamId(String(p.streamId)), String(p.level)]));
+    // With a choice, anything the grant does not hold needs a positive tick:
+    // a stream declined at an earlier consent is not pre-ticked again.
+    const allowUserChoice = requested.offer.allowUserChoice === true;
     permissions = [];
     for (const p of joined.permissions) {
       if (!isStreamPermission(p)) continue;
@@ -102,7 +106,7 @@ export function composeShownOffer (
       if (held != null) {
         out.currentlyGranted = true;
         out.currentLevel = held;
-      } else if (r?.optIn === true) {
+      } else if (r?.optIn === true || (allowUserChoice && r?.mandatory !== true)) {
         out.optIn = true;
       }
       permissions.push(out);
@@ -121,6 +125,7 @@ export function composeShownOffer (
         out.currentlyGranted = true;
         delete out.optIn;
       }
+      if (allowUserChoice && out.currentlyGranted !== true && out.mandatory !== true && out.setting !== 'forbidden') out.optIn = true;
       permissions.push(out);
     }
     // The grant's own restrictions stay visible (locked), except the core's

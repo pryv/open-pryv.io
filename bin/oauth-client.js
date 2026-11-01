@@ -134,6 +134,7 @@ async function run () {
 // ---------------------------------------------------------------------------
 
 async function runCreate (platform, args, persistClient, getClient) {
+  checkFlags(args, 'create', CREATE_FLAGS);
   const username = args.positional[0];
   if (!username) throw new Error('create: <username> required');
 
@@ -214,7 +215,7 @@ async function runCreate (platform, args, persistClient, getClient) {
   await persistClient(platform, {
     clientId,
     redirectUris: args.flags['redirect-uri'],
-    scope: args.flags['scope'] ?? [],
+    scope: scopeTokens(args.flags.scope ?? []),
     // The client name is stored in the replicated row and shown on the
     // consent screen. Defaulting it to the username would put back exactly
     // what an opaque client_id was chosen to keep out, so with one the id is
@@ -246,6 +247,7 @@ async function runCreate (platform, args, persistClient, getClient) {
 // on any core. Its scope is the MAXIMUM scope set in the grammar of the OAuth
 // extension installed on the cores (customExtensions:oauthExtension).
 async function runCreateRegistry (platform, args, persistClient, getClient) {
+  checkFlags(args, 'create-registry', CREATE_REGISTRY_FLAGS);
   const clientId = args.positional[0];
   if (!clientId) throw new Error('create-registry: <clientId> required');
   const idError = oauthStorage().clientIdError(clientId);
@@ -262,23 +264,20 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   if (!args.flags.scope || args.flags.scope.length === 0) {
     throw new Error('create-registry: at least one --scope is required (the maximum scope set)');
   }
-  const authMethod = args.flagsScalar['auth-method'] ?? 'none';
+  const authMethod = authMethodFlag(args, 'create-registry') ?? 'none';
   const jwks = resolveJwks(args);
+  if (authMethod === 'private_key_jwt' && jwks == null) {
+    throw new Error('create-registry: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
+  }
+  // A key set is a credential at /token whatever the method says: only with private_key_jwt.
+  if (jwks != null && authMethod !== 'private_key_jwt') {
+    throw new Error('create-registry: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses ' + authMethod + ')');
+  }
+  const fields = registryFieldsFromFlags(args, 'create-registry');
   let secret = null;
   if (authMethod === 'client_secret_basic') {
     const { mintSecret } = require('oauth2/src/clientSecret.ts');
     secret = await mintSecret();
-  } else if (authMethod === 'private_key_jwt' && jwks == null) {
-    throw new Error('create-registry: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
-  } else if (authMethod !== 'none' && authMethod !== 'private_key_jwt') {
-    throw new Error('create-registry: --auth-method must be none, client_secret_basic or private_key_jwt');
-  }
-  const extras = {};
-  for (const kv of args.flags.extra ?? []) {
-    const eq = kv.indexOf('=');
-    if (eq <= 0) throw new Error('create-registry: --extra expects key=value, got "' + kv + '"');
-    const raw = kv.slice(eq + 1);
-    extras[kv.slice(0, eq)] = raw === 'true' ? true : raw === 'false' ? false : (/^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
   }
   const grantTypes = (args.flags['grant-type'] && args.flags['grant-type'].length > 0)
     ? args.flags['grant-type']
@@ -303,13 +302,13 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     clientId,
     kind: 'registry',
     redirectUris: args.flags['redirect-uri'],
-    scope: args.flags.scope.flatMap((s) => s.split(/\s+/).filter((t) => t !== '')),
+    scope: scopeTokens(args.flags.scope),
     clientName: args.flagsScalar.name ?? clientId,
     clientUri: args.flagsScalar['client-uri'],
     logoUri: args.flagsScalar['logo-uri'],
-    policyUri: args.flagsScalar['policy-uri'],
-    tosUri: args.flagsScalar['tos-uri'],
-    contacts: args.flags.contact ?? [],
+    policyUri: fields.policyUri,
+    tosUri: fields.tosUri,
+    contacts: fields.contacts ?? [],
     registeredBy: process.env.USER ?? 'operator',
     registeredAt: Date.now(),
     status: 'active',
@@ -318,8 +317,8 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     allowedAudiences: audiences,
     ...(anyAudience ? { anyAudience: true } : {}),
     ...(allowInsecureRedirect ? { allowInsecureRedirect: true } : {}),
-    tokenResponseExtras: extras,
-    launchTypes: args.flags['launch-type'] ?? [],
+    tokenResponseExtras: fields.tokenResponseExtras ?? {},
+    launchTypes: fields.launchTypes ?? [],
     subjectType,
     ...(allowFeatures != null && allowFeatures.length > 0 ? { allowFeatures } : {}),
     ...(secret != null ? { clientSecretHash: secret.hash } : {}),
@@ -365,6 +364,8 @@ async function runShow (platform, args, getClient, computeThumbprint) {
   // are not secret, but an operator wants a stable fingerprint to compare
   // against, not raw curve points.
   const view = { ...client };
+  // The secret's hash is offline-guessable: say only that one is set.
+  if (client.clientSecretHash != null) view.clientSecretHash = '(set)';
   if (client.jwks != null && Array.isArray(client.jwks.keys)) {
     view.jwks = {
       keys: client.jwks.keys.map((k) => ({
@@ -462,6 +463,90 @@ function parseBooleanFlag (args, name, command) {
   throw new Error(command + ': --' + name + ' takes no value, or true / false (got "' + v + '")');
 }
 
+// The flags a command reads. `values` need a value (refused bare), `booleans`
+// take none (or true / false), `own` are checked by the command itself.
+// Anything else is refused: a mistyped flag must not report success.
+const COMMON_VALUES = ['redirect-uri', 'scope', 'grant-type', 'name', 'client-uri', 'logo-uri', 'jwks-file', 'jwks-json'];
+const APP_ACCOUNT_VALUES = ['application-type', 'cmc-offer'];
+const REGISTRY_VALUES = ['audience', 'policy-uri', 'tos-uri', 'contact', 'extra', 'launch-type', 'auth-method'];
+const CREATE_FLAGS = {
+  values: [...COMMON_VALUES, ...APP_ACCOUNT_VALUES],
+  booleans: [],
+  own: ['client-id'],
+};
+const CREATE_REGISTRY_FLAGS = {
+  values: [...COMMON_VALUES, ...REGISTRY_VALUES],
+  booleans: ['any-audience', 'allow-insecure-redirect'],
+  own: ['subject-type', 'allow-feature'],
+};
+const UPDATE_FLAGS = {
+  values: [...COMMON_VALUES, ...REGISTRY_VALUES, ...APP_ACCOUNT_VALUES],
+  booleans: ['any-audience', 'allow-insecure-redirect', 'yes'],
+  own: ['subject-type', 'allow-feature', 'client-id'],
+};
+// Flags that only mean something on a registry row.
+const REGISTRY_ONLY_FLAGS = [...REGISTRY_VALUES, 'any-audience', 'allow-insecure-redirect', 'subject-type', 'allow-feature'];
+
+function checkFlags (args, command, known) {
+  for (const name of [...Object.keys(args.flags), ...Object.keys(args.flagsScalar)]) {
+    if (!known.values.includes(name) && !known.booleans.includes(name) && !known.own.includes(name)) {
+      throw new Error(command + ': unknown flag --' + name);
+    }
+    if (known.values.includes(name) && args.flagsScalar[name] === true) {
+      throw new Error(command + ': --' + name + ' requires a value');
+    }
+  }
+}
+
+// `--scope` values: one value may hold several space-separated tokens.
+function scopeTokens (values) {
+  return values.flatMap((s) => s.split(/\s+/).filter((t) => t !== ''));
+}
+
+const AUTH_METHODS = ['none', 'client_secret_basic', 'private_key_jwt'];
+
+function authMethodFlag (args, command) {
+  const method = args.flagsScalar['auth-method'];
+  if (method != null && !AUTH_METHODS.includes(method)) {
+    throw new Error(command + ': --auth-method must be none, client_secret_basic or private_key_jwt');
+  }
+  return method ?? null;
+}
+
+// `--extra key=value` values: true, false and numbers are stored as such.
+function parseExtras (values, command) {
+  const extras = {};
+  for (const kv of values) {
+    const eq = kv.indexOf('=');
+    if (eq <= 0) throw new Error(command + ': --extra expects key=value, got "' + kv + '"');
+    const raw = kv.slice(eq + 1);
+    extras[kv.slice(0, eq)] = raw === 'true' ? true : raw === 'false' ? false : (/^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
+  }
+  return extras;
+}
+
+/**
+ * The descriptive registry fields given on the command line, parsed the same
+ * way by create-registry and update; absent flags are left out. `none` clears
+ * a field (as for --allow-feature): undefined for a URI, empty for a list.
+ */
+function registryFieldsFromFlags (args, command) {
+  const fields = {};
+  for (const [flag, key] of [['policy-uri', 'policyUri'], ['tos-uri', 'tosUri']]) {
+    const v = args.flagsScalar[flag];
+    if (v != null) fields[key] = v === 'none' ? undefined : v;
+  }
+  const isClear = (values) => values.length === 1 && values[0] === 'none';
+  for (const [flag, key] of [['contact', 'contacts'], ['launch-type', 'launchTypes']]) {
+    const values = args.flags[flag];
+    if (values != null) fields[key] = isClear(values) ? [] : values;
+  }
+  if (args.flags.extra != null) {
+    fields.tokenResponseExtras = isClear(args.flags.extra) ? {} : parseExtras(args.flags.extra, command);
+  }
+  return fields;
+}
+
 // A copy with object keys in sorted order and undefined members dropped (for comparison).
 function sortedKeys (v) {
   if (Array.isArray(v)) return v.map(sortedKeys);
@@ -484,13 +569,19 @@ async function runUpdate (platform, args, getClient, persistClient) {
       'with --client-id (its existing tokens and refresh chains die with the revoke).'
     );
   }
+  checkFlags(args, 'update', UPDATE_FLAGS);
   const existing = await getClient(platform, clientId);
   if (!existing) throw new Error('update: client "' + clientId + '" not found');
+  for (const flag of REGISTRY_ONLY_FLAGS) {
+    if ((args.flags[flag] != null || args.flagsScalar[flag] != null) && existing.kind !== 'registry') {
+      throw new Error('update: --' + flag + ' applies to registry clients only');
+    }
+  }
 
   const merged = {
     ...existing,
     redirectUris: args.flags['redirect-uri'] ?? existing.redirectUris,
-    scope: args.flags['scope'] ?? existing.scope,
+    scope: args.flags.scope != null ? scopeTokens(args.flags.scope) : existing.scope,
     clientName: args.flagsScalar['name'] ?? existing.clientName,
     clientUri: args.flagsScalar['client-uri'] ?? existing.clientUri,
     logoUri: args.flagsScalar['logo-uri'] ?? existing.logoUri,
@@ -502,10 +593,9 @@ async function runUpdate (platform, args, getClient, persistClient) {
       ? parseCmcOffers(args.flags['cmc-offer'])
       : existing.cmcOffers,
   };
-  for (const flag of ['audience', 'any-audience', 'allow-insecure-redirect', 'subject-type', 'allow-feature']) {
-    if ((args.flags[flag] != null || args.flagsScalar[flag] != null) && existing.kind !== 'registry') {
-      throw new Error('update: --' + flag + ' applies to registry clients only');
-    }
+  for (const [key, value] of Object.entries(registryFieldsFromFlags(args, 'update'))) {
+    if (value === undefined) delete merged[key];
+    else merged[key] = value;
   }
   // The subject type: a legacy registry row without one is repaired on its
   // first update; changing the mode a client's grants see needs --yes.
@@ -559,6 +649,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
   // otherwise keep the existing set untouched.
   const jwks = resolveJwks(args);
   if (jwks != null) merged.jwks = jwks;
+  const secret = existing.kind === 'registry' ? await updateAuthMethod(existing, merged, args, jwks != null) : null;
   // A row written before accountUserId: convert it when the account is on this
   // core (same operation as the master-boot migration), so this whole-row write
   // does not re-install the old field after the boot converted it.
@@ -578,12 +669,64 @@ async function runUpdate (platform, args, getClient, persistClient) {
     console.log('     subject type:  ' + describeSubjectType(merged.subjectType));
     if (merged.subjectType === 'pairwise') warnIfNoPseudonyms();
   }
+  if (row.tokenEndpointAuthMethod !== existing.tokenEndpointAuthMethod) {
+    console.log('     auth method:   ' + row.tokenEndpointAuthMethod + ' (was ' + (existing.tokenEndpointAuthMethod ?? '(unset)') + ')');
+  }
+  // The flags that widen what the client may do, echoed as create-registry does.
+  if (args.flags.audience != null || args.flagsScalar['any-audience'] != null) {
+    console.log('     audiences:     ' + (row.anyAudience === true ? '(any audience)' : (row.allowedAudiences ?? []).join(', ')));
+  }
+  if (args.flagsScalar['allow-insecure-redirect'] != null) {
+    console.log(row.allowInsecureRedirect === true
+      ? '     WARN plain-http redirect URIs allowed on non-loopback hosts'
+      : '     plain-http redirect URIs refused on non-loopback hosts');
+  }
+  if (args.flags['allow-feature'] != null) printDefaultForbids(row);
+  if (secret != null) {
+    console.log('     client_secret: ' + secret.plaintext);
+    console.log('     (shown once: store it now)');
+  }
   if (subjectNote != null) {
     console.log();
     console.log('NOTE: existing grants keep their current subject and their sessions keep');
     console.log('      working; each user sees the change of identity mode, and must');
     console.log('      acknowledge it, at their next consent (' + subjectNote.from + ' to ' + subjectNote.to + ').');
   }
+}
+
+/**
+ * `update --auth-method` on a registry row: the credentials on file follow the
+ * method (authentication at /token keys on them), so a change drops the ones
+ * of the old method. A new client_secret_basic mints a secret (returned, to be
+ * printed once); a move to none needs --yes. Mutates `merged`.
+ */
+async function updateAuthMethod (existing, merged, args, jwksGiven) {
+  const from = existing.tokenEndpointAuthMethod ?? '(unset)';
+  const to = authMethodFlag(args, 'update') ?? from;
+  if (jwksGiven && to !== 'private_key_jwt') {
+    throw new Error('update: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses ' + to + ')');
+  }
+  if (to === from) return null;
+  merged.tokenEndpointAuthMethod = to;
+  if (to === 'none') {
+    if (!isYes(args)) {
+      throw new Error('update: changing the client authentication of "' + existing.clientId + '" from ' + from +
+        ' to none makes it a public client (its refresh tokens are then redeemed without client authentication); re-run with --yes');
+    }
+    delete merged.clientSecretHash;
+    delete merged.jwks;
+    return null;
+  }
+  if (to === 'private_key_jwt') {
+    if (merged.jwks == null) throw new Error('update: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
+    delete merged.clientSecretHash;
+    return null;
+  }
+  const { mintSecret } = require('oauth2/src/clientSecret.ts');
+  const secret = await mintSecret();
+  merged.clientSecretHash = secret.hash;
+  delete merged.jwks;
+  return secret;
 }
 
 async function runRevoke (platform, args, removeClient) {
@@ -679,6 +822,13 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
   }
   const existing = await getClient(platform, clientId);
   if (!existing) throw new Error('rotate-secret: client "' + clientId + '" not found');
+  // A secret on such a client would make it confidential by a method it is
+  // not registered for (authentication at /token keys on the credentials on file).
+  const method = existing.tokenEndpointAuthMethod;
+  if (method === 'none' || method === 'private_key_jwt') {
+    throw new Error('rotate-secret: client "' + clientId + '" authenticates with ' + method + ', which uses no secret; ' +
+      'to switch it to a secret, run update ' + clientId + ' --auth-method client_secret_basic');
+  }
 
   const { mintSecret } = require('oauth2/src/clientSecret.ts');
   const { plaintext, hash } = await mintSecret();
@@ -836,10 +986,16 @@ function printUsage (stream) {
     '  node bin/oauth-client.js rotate-secret <clientId>\n' +
     '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n\n' +
-    'Flags (create-registry): a client with no app account; --scope is its maximum\n' +
-    'scope set in the grammar of the installed OAuth extension.\n' +
-    '  --auth-method none|client_secret_basic|private_key_jwt   (default none; the\n' +
-    '                            secret is printed once)\n' +
+    'Flags (create-registry; on update too, registry clients only): a client with\n' +
+    'no app account; --scope is its maximum scope set in the grammar of the\n' +
+    'installed OAuth extension. On update, a repeatable flag replaces the stored\n' +
+    'list, and "none" clears --extra, --contact, --launch-type, --policy-uri and\n' +
+    '--tos-uri. An unknown flag is refused.\n' +
+    '  --auth-method none|client_secret_basic|private_key_jwt   (default none;\n' +
+    '                            --jwks-file / --jwks-json go with private_key_jwt only; the\n' +
+    '                            secret is printed once; on update, a change drops the\n' +
+    '                            credentials of the old method, a new secret is minted\n' +
+    '                            for client_secret_basic, and none needs --yes)\n' +
     '  --audience <url>          (multi; also on update) resource values the client may\n' +
     '                            request (aud); at least one, unless --any-audience\n' +
     '  --any-audience            (also on update) register the client explicitly for any\n' +
@@ -865,7 +1021,8 @@ function printUsage (stream) {
     '                            Use it where the username must not reach the platform\n' +
     '                            store or the wire (hashed-PII deployments)\n' +
     '  --redirect-uri <uri>      (multi-valued; at least one required on create)\n' +
-    '  --scope <scope-token>     (multi-valued; e.g. cmc:<offer-name> — pair with --cmc-offer)\n' +
+    '  --scope <scope-token>     (multi-valued; space-separated tokens in one value are\n' +
+    '                            split; e.g. cmc:<offer-name>, paired with --cmc-offer)\n' +
     '  --grant-type <name>       (multi-valued; default authorization_code,refresh_token)\n' +
     '  --name <human-name>       client_name shown on the consent screen\n' +
     '  --client-uri <uri>        client_uri shown on the consent screen\n' +
@@ -886,6 +1043,10 @@ function printUsage (stream) {
     '  - create requires the user to ALREADY exist on THIS core (promotion-only;\n' +
     '    run it on the account\'s home core).\n' +
     '  - revoke requires --yes (operator footgun protection;).\n' +
+    '  - create, create-registry and update refuse an unknown flag.\n' +
+    '  - rotate-secret is refused on a client whose auth method uses no secret\n' +
+    '    (none, private_key_jwt): switch it with update --auth-method.\n' +
+    '  - show prints the client secret as "(set)", never its hash.\n' +
     '  - HTTP `POST /oauth2/register` (RFC 7591 mode:open) is intentionally deferred.\n'
   );
 }
@@ -898,11 +1059,13 @@ const cliEnv = {
 
 module.exports = {
   parseArgs,
+  runCreate,
   runCreateRegistry,
   runUpdate,
   runShow,
   runList,
   runSetStatus,
+  runRotateSecret,
   cliEnv,
 };
 
