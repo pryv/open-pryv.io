@@ -11,13 +11,20 @@
  * The client authenticates as at the token endpoint (a public client names
  * itself with `client_id`). The token is looked up as an access token (the
  * session index) and as a refresh token (this core's rows, then the other
- * cores'), in the order `token_type_hint` suggests:
+ * cores'), in the order `token_type_hint` suggests. Revoking either token of
+ * a refresh chain ends that chain (its session and its refresh token); the
+ * consent grant and the chains of other devices or launches of the same
+ * client stay:
  *
  *   - access token: its session is deleted through the accesses.delete
  *     teardown, which also ends the session's refresh chain;
- *   - refresh token: the token is ended (removed, marked revoked) and the
- *     chain collapsed like on detected reuse (the consent grant deleted with
- *     every session of the client for that user).
+ *   - refresh token: the token is ended (removed, marked revoked), then the
+ *     session it currently backs is deleted the same way. A refresh token
+ *     issued before refresh rows named their session ends alone; its session
+ *     lives out its own lifetime.
+ *
+ * Withdrawing the consent itself is the user's act (from the account), or the
+ * server's on refresh-token reuse (theft evidence), never a revocation.
  *
  * An unknown token, a token issued to another client, or one already ended
  * answers 200 like a revoked one (no oracle). A token whose session or chain
@@ -27,8 +34,6 @@
 
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import type { UsernameResolver } from './grants/authorization_code.ts';
-import type { RevokeChain } from './grants/refresh_token.ts';
 import * as storage from './storage.ts';
 import { getClient } from './clientRegistry.ts';
 import { authenticateClient } from './clientSecret.ts';
@@ -44,8 +49,6 @@ export type RevocationDeps = {
   config: { get (key: string): unknown };
   platform: PlatformDB;
   revokeSession: RevokeSession;
-  revokeChain?: RevokeChain;
-  resolveUsername: UsernameResolver;
   /** Public URL of a core, for the wrong-core answer. */
   coreUrlFor?: (coreId: string) => string | Promise<string>;
 };
@@ -131,23 +134,20 @@ async function revokeRefreshToken (deps: RevocationDeps, clientId: string, token
   const row = await storage.revokeRefresh(deps.platform, self, token);
   // Rotated or revoked meanwhile: nothing left to end.
   if (row == null) return { kind: 'done' };
-  const username = await deps.resolveUsername(row.userId);
-  if (username != null && typeof deps.revokeChain === 'function') {
+  let accessId: string | undefined;
+  if (typeof row.accessId === 'string') {
     try {
-      await deps.revokeChain({
-        userId: row.userId,
-        username,
-        clientId,
-        ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
-        reason: 'client-revocation',
-      });
+      // Its own refresh chain is already ended above (the teardown's chain
+      // end then finds the revoked marker and changes nothing).
+      if (await deps.revokeSession({ userId: row.userId, accessId: row.accessId, clientId })) accessId = row.accessId;
     } catch (err: unknown) {
-      // The token itself is ended; its sessions die with their own lifetime.
-      logServerError('revoke: collapsing the refresh chain failed', err);
+      // The token itself is ended; the session dies with its own lifetime.
+      logServerError('revoke: deleting the session of the revoked refresh token failed', err);
     }
-  } else {
-    await audit('oauth.token.revoked', { clientId, userId: row.userId, reason: 'refresh token revoked by the client' });
   }
+  await audit('oauth.token.revoked', {
+    clientId, userId: row.userId, ...(accessId != null ? { accessId } : {}), reason: 'refresh token revoked by the client',
+  });
   return { kind: 'done' };
 }
 

@@ -22,7 +22,7 @@ import { mintSecret } from 'oauth2/src/clientSecret.ts';
 import { ApiEndpoint } from 'utils';
 import * as storages from 'storages';
 import { injectTestConfigSnapshot, withInjectedConfig } from 'test-helpers';
-import { getConfigUnsafe } from '@pryv/boiler';
+import { getConfigUnsafe, getLogger } from '@pryv/boiler';
 import auditModule from 'audit';
 
 const REDIRECT_URI = 'https://app.lifecycle.test/redirect';
@@ -338,17 +338,32 @@ describe('[OIR] OAuth sessions: introspection, revocation, chain end, retirement
     assert.ok(!JSON.stringify(rows).includes(t.access_token));
   });
 
-  it('[OIR7] revoking a refresh token ends the chain: the grant and every session of the client go; audited', async () => {
+  it('[OIR7] revoking a refresh token ends that chain only: its session goes, the grant and the client\'s other chain stay; audited', async () => {
     const who = await newUser();
     const t = await consentAndToken(who);
+    const other = await consentAndToken(who);
+    const session = (await sessions(who)).find((s) => s.token === t.access_token);
     let res;
     const rows = await auditRows(async () => { res = await revoke(t.refresh_token, 'refresh_token'); });
     assert.equal(res.status, 200, res.text);
-    assert.equal(await grantOf(who), null);
+    assert.ok(await grantOf(who) != null, 'the grant is kept');
     assert.equal((await readStream(who, t.access_token, 'a')).status, 403);
-    assert.equal((await refresh(t.refresh_token)).body.error, 'invalid_grant');
-    assert.ok(rows.some((r) => r.event === 'oauth.token.revoked' && r.record.reason === 'refresh token revoked by the client'),
-      JSON.stringify(rows));
+    assert.ok(!(await sessions(who)).some((s) => s.id === session.id), 'the chain\'s session is gone');
+    const revoked = rows.filter((r) => r.event === 'oauth.token.revoked');
+    assert.equal(revoked.length, 1, JSON.stringify(rows));
+    assert.deepEqual([revoked[0].record.reason, revoked[0].record.accessId], ['refresh token revoked by the client', session.id]);
+    assert.ok(!JSON.stringify(rows).includes(t.refresh_token), 'no token in the audit rows');
+    // A replay is refused as a token ended on purpose, never as theft.
+    await withInjectedConfig({ oauth: { consentUrl: CONSENT_URL, refreshReuseGraceSeconds: 0 } }, async () => {
+      let replay;
+      const replayRows = await auditRows(async () => { replay = await refresh(t.refresh_token); });
+      assert.equal(replay.body.error, 'invalid_grant');
+      assert.ok(replayRows.some((r) => r.event === 'oauth.token.reuse_detected' && r.record.reason === 'revoked-token'), JSON.stringify(replayRows));
+    });
+    assert.ok(await grantOf(who) != null, 'still kept after the replay');
+    // The other chain (another device) is untouched.
+    assert.equal((await readStream(who, other.access_token, 'a')).status, 200);
+    assert.equal((await refresh(other.refresh_token)).status, 200);
   });
 
   it('[OIR8] an unknown token, or another client\'s token, answers 200 and changes nothing', async () => {
@@ -432,6 +447,36 @@ describe('[OIR] OAuth sessions: introspection, revocation, chain end, retirement
       assert.equal((await readStream(who, a.access_token, 'a')).status, 403);
       assert.equal((await readStream(who, b.access_token, 'a')).status, 200);
       assert.equal((await sessions(who)).find((s) => s.token === b.access_token).expires, bBefore);
+    });
+
+    it('[ORET3] a failing retire never fails the refresh: the previous session keeps its expiry, and the server log says so', async () => {
+      const who = await newUser();
+      const t = await consentAndToken(who);
+      const old = (await sessions(who)).find((s) => s.token === t.access_token);
+      const repo = storages.storageLayer.accesses;
+      const updateOne = repo.updateOne;
+      const loggerProto = Object.getPrototypeOf(getLogger('oauth2'));
+      const logError = loggerProto.error;
+      const logged = [];
+      repo.updateOne = function (user, query, update, cb) {
+        if (query?.id === old.id && update?.expires != null) return cb(new Error('storage down'));
+        return updateOne.apply(this, arguments);
+      };
+      loggerProto.error = function (message, ...rest) {
+        logged.push(String(message));
+        return logError.call(this, message, ...rest);
+      };
+      let r;
+      try {
+        r = await refresh(t.refresh_token);
+      } finally {
+        repo.updateOne = updateOne;
+        loggerProto.error = logError;
+      }
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(logged.some((m) => m.includes('retiring the previous session failed')), JSON.stringify(logged));
+      assert.equal((await sessions(who)).find((s) => s.id === old.id).expires, old.expires);
+      assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
     });
 
     it('[ORET4] a refresh row written before it named its session retires nothing', async () => {

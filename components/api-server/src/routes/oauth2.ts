@@ -20,8 +20,8 @@
  *   - the consent records and the session minted at /accept
  *     (`oauth2/grants.ts`);
  *   - the storage-direct session paths used at /token (`oauth2/sessions.ts`);
- *   - the refresh-chain collapse on reuse, and the client's own revocation
- *     of a token (`oauth2/revoke.ts`);
+ *   - the refresh-chain collapse on reuse, and the session deletion behind
+ *     the client's own revocation of a token (`oauth2/revoke.ts`);
  *   - the session re-read behind token introspection (`oauth2/introspect.ts`);
  *   - the operator's OAuth extension, loaded here at mount.
  *

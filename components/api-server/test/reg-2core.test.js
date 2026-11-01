@@ -1066,7 +1066,12 @@ describe('[RG2C] Two-core integration tests', function () {
       await oauth2.persistClient(platformDB, registryRow({
         clientId: rsId, tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, canIntrospect: true
       }));
-      // Consent and code exchange on the home core
+      session = await newChain();
+    });
+
+    // Consent and code exchange on the home core: one refresh chain.
+    async function newChain () {
+      const username = user.username;
       const verifier = crypto.randomBytes(32).toString('base64url');
       const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
       const q = new URLSearchParams({
@@ -1092,8 +1097,8 @@ describe('[RG2C] Two-core integration tests', function () {
         grant_type: 'authorization_code', code, code_verifier: verifier, client_id: appId, redirect_uri: REDIRECT
       });
       assert.strictEqual(token.status, 200, JSON.stringify(token.body));
-      session = token.body;
-    });
+      return token.body;
+    }
 
     after(async () => {
       for (const id of [appId, rsId]) {
@@ -1116,7 +1121,7 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.strictEqual(trim(revokeOnA.body.coreUrl), trim(CORE_B_URL));
     });
 
-    it('[2C71] a client suspended through the shared store is refused at /token on the other core at once', async () => {
+    it('[2C71] a client suspended by a write to the shared store (from the test process, as the operator CLI does) is refused at /token on the home core at once', async () => {
       const row = await oauthStorage.getClient(platformDB, appId);
       await oauthStorage.setClient(platformDB, { ...row, status: 'suspended', updatedAt: Date.now() });
       try {
@@ -1152,6 +1157,28 @@ describe('[RG2C] Two-core integration tests', function () {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       assert.ok(status === 401 || status === 403, 'still accepted after the revoke check period: ' + status);
+    });
+
+    it('[2C74] revoking a refresh token on its home core after the 421 ends that chain only: its session is inactive from both cores, the grant and the other chain stay', async () => {
+      const other = await newChain();
+      const onA = await httpRequest(CORE_A_PORT, 'POST', '/oauth2/revoke', { token: other.refresh_token, client_id: appId, token_type_hint: 'refresh_token' });
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(trim(onA.body.coreUrl), trim(CORE_B_URL));
+      const onB = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/revoke', { token: other.refresh_token, client_id: appId, token_type_hint: 'refresh_token' });
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        const gone = await asResourceServer(port, '/oauth2/introspect', { token: other.access_token });
+        assert.strictEqual(gone.status, 200, JSON.stringify(gone.body));
+        assert.deepStrictEqual(gone.body, { active: false }, 'core port ' + port);
+      }
+      const replay = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/token', { grant_type: 'refresh_token', refresh_token: other.refresh_token, client_id: appId });
+      assert.strictEqual(replay.status, 400, JSON.stringify(replay.body));
+      assert.strictEqual(replay.body.error, 'invalid_grant');
+      // The first chain and the consent grant are untouched.
+      const live = await asResourceServer(CORE_B_PORT, '/oauth2/introspect', { token: session.access_token });
+      assert.strictEqual(live.body.active, true, JSON.stringify(live.body));
+      const list = await httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/accesses', null, { Authorization: user.token });
+      assert.ok(list.body.accesses.some((a) => a.name === 'oauth-grant:' + appId), 'the grant stays');
     });
 
     it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {

@@ -55,14 +55,29 @@
 
 - New oauth2 modules `introspection.ts` (`POST /oauth2/introspect`) and `revocation.ts`
   (`POST /oauth2/revoke`), mounted when the host wires `introspectAccess` / `revokeSession`; new glue
-  `api-server/src/routes/oauth2/introspect.ts` (`introspectAccess`, `coreUrlFor`); `revoke.ts` gains
-  `revokeSession` and a `reason` on `revokeChain` (`refresh-token-reuse`, `client-revocation`: audit
-  reason and the CMC revoke notice text).
+  `api-server/src/routes/oauth2/introspect.ts` (`introspectAccess`, `coreUrlFor`; the session's
+  permissions through `storedSessionPermissions`); `revoke.ts` gains `revokeSession`, used for both
+  token kinds (a refresh token's row names its session, `accessId`); `revokeChain` stays the reuse
+  collapse only.
 - New audit event `oauth.token.introspected` (caller client id, `active`, the token's user and client
   when active; never the token), user-less (syslog only), declared in the audit method lists.
   `oauth.token.refreshed` gains `retiredAccessId`; `oauth.token.revoked` is also emitted for the
   client's revocations (reason `access token revoked by the client` / `refresh token revoked by the
-  client`).
+  client`, with the deleted session's `accessId`) and for a rotation whose chain was ended while it ran
+  (reason `refresh chain ended during its rotation`).
+- New audit event `oauth.nonce.reused` (`clientId`, `userId`, `codeId` = the code's hash; never the
+  nonce), user-resolved, emitted when a code exchange is refused because its OpenID Connect nonce was
+  already used; declared in the audit method list.
+- Refresh grant order: Basic / `client_id` consistency, suspension, client authentication and a
+  non-consuming read of the row's client binding now run before the atomic consume (the
+  post-consume `client_id` check stays as a defence); a rotation re-reads its consumed marker once its
+  new rows are durable and, if the chain was ended meanwhile, ends the new refresh row, index row and
+  session. `oauth.token.reuse_detected` gains reason `foreign-client` (a rotated token presented by
+  another client: no collapse). Refresh-token correlation ids in audit rows (`codeId`, `oldTokenId`,
+  `newTokenId`) are now `refresh:` + 12 characters of the token's SHA-256, not its first characters
+  (this also changes the format of the existing refresh audit rows).
+- Boot warning: `oauth:refreshRetireGraceSeconds` below `oauth:refreshReuseGraceSeconds`. The
+  `bin/oauth-client.js update` output warns when a client made public keeps `canIntrospect`.
 - Session index rows (`oauth-at/`) gain `refreshTokenHash` (written by the refresh and, after the
   refresh row, by the code exchange); `deleteAccessChain` reads it for every OAuth session it deletes,
   removes the refresh row, marks it revoked and deletes the index row (non-fatal, after the delete).

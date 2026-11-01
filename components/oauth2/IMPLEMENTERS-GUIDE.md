@@ -66,6 +66,7 @@ Every grant + revoke path calls into `src/audit.ts`. Available event types:
 | `oauth.consent.refused` | `{ clientId, requestedScope, userId?, reason }` |
 | `oauth.code.exchanged` | `{ clientId, codeId, grantedScope, userId }` |
 | `oauth.code.reused` | `{ clientId, codeId, attemptedBy }` — stolen-code indicator |
+| `oauth.nonce.reused` | `{ clientId, userId, codeId }`: an OpenID Connect nonce replayed at a code exchange (no nonce in it) |
 | `oauth.token.issued.<grant_type>` | `{ clientId, grantedScope, userId?, accessId }` |
 | `oauth.token.refreshed` | `{ clientId, userId, oldTokenId, newTokenId }` |
 | `oauth.token.revoked` | `{ clientId, scope, source: 'user' \| 'operator' }` |

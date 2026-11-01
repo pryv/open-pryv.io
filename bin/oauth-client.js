@@ -689,6 +689,13 @@ async function runUpdate (platform, args, getClient, persistClient) {
   if (row.tokenEndpointAuthMethod !== existing.tokenEndpointAuthMethod) {
     console.log('     auth method:   ' + row.tokenEndpointAuthMethod + ' (was ' + (existing.tokenEndpointAuthMethod ?? '(unset)') + ')');
   }
+  // Introspection refuses a public caller at run time; say so rather than
+  // leave a role that silently does nothing.
+  if (row.canIntrospect === true && !(typeof row.clientSecretHash === 'string' && row.clientSecretHash.length > 0) &&
+      !(row.jwks != null && Array.isArray(row.jwks.keys) && row.jwks.keys.length > 0)) {
+    console.log('     WARN introspection role kept on a public client: refused until it has a secret or a key set ' +
+      '(--can-introspect false withdraws it)');
+  }
   // The flags that widen what the client may do, echoed as create-registry does.
   if (args.flags.audience != null || args.flagsScalar['any-audience'] != null) {
     console.log('     audiences:     ' + (row.anyAudience === true ? '(any audience)' : (row.allowedAudiences ?? []).join(', ')));

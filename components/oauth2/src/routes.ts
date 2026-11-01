@@ -320,8 +320,6 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
         config: deps.config,
         platform: deps.platform,
         revokeSession: deps.revokeSession!,
-        ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
-        resolveUsername: deps.resolveUsername,
         ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
       })));
   }

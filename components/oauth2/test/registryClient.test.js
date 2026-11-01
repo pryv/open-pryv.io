@@ -1364,7 +1364,23 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(first.statusCode, 200, first.raw);
       assert.equal(decodeJwt(first.body.id_token).payload.nonce, 'n-race');
       const revoked = [];
-      const second = await exchange(tokenDeps(platform, config, { revokeAccessLocal: async (p) => { revoked.push(p.accessId); } }), codes[1]);
+      // The audit rows the second exchange emits (debug hook, before the config gate).
+      const audited = [];
+      const debug = console.debug;
+      process.env.OAUTH_AUDIT_DEBUG = '1';
+      console.debug = (tag, event, payload) => { if (tag === '[oauth.audit]') audited.push({ event, payload }); };
+      let second;
+      try {
+        second = await exchange(tokenDeps(platform, config, { revokeAccessLocal: async (p) => { revoked.push(p.accessId); } }), codes[1]);
+      } finally {
+        console.debug = debug;
+        delete process.env.OAUTH_AUDIT_DEBUG;
+      }
+      const nonceRows = audited.filter((r) => r.event === 'oauth.nonce.reused');
+      assert.equal(nonceRows.length, 1, JSON.stringify(audited));
+      assert.equal(nonceRows[0].payload.clientId, REGISTRY_CLIENT.clientId);
+      assert.ok(!JSON.stringify(nonceRows[0].payload).includes(codes[1]), 'no code in the row');
+      assert.ok(!JSON.stringify(nonceRows[0].payload).includes('n-race'), 'no nonce in the row');
       assert.equal(second.statusCode, 400, second.raw);
       assert.deepEqual([second.body.error, second.body.error_description], ['invalid_grant', 'nonce already used']);
       assert.deepEqual(revoked, ['session-1']);

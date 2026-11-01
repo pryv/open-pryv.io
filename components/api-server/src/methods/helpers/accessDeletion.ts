@@ -147,6 +147,11 @@ function isOAuthSession (access: AccessRow): boolean {
  * A session indexed before the index named its refresh token, or never
  * indexed, ends nothing (it still dies). Runs after the deletion committed;
  * a failure is logged, never thrown.
+ *
+ * The index row lives only as long as its session: deleting a session that
+ * has already EXPIRED finds no row and ends nothing, so a refresh chain still
+ * alive behind it continues (expired sessions are not listed by default, and
+ * deleting the consent grant still ends every chain of the grant).
  */
 async function endRefreshChainOf (sessionToken: string): Promise<void> {
   try {

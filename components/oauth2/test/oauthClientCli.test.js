@@ -446,5 +446,11 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal((await getClient(platform, 'Cli.rs.none')).canIntrospect, undefined);
     const bad = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--can-introspect', 'maybe']);
     assert.match(bad.error?.message ?? '', /--can-introspect takes no value, or true \/ false/);
+    // Made public with the role still set: kept (refused at run time), and said so.
+    const toNone = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--auth-method', 'none', '--yes']);
+    assert.equal(toNone.error, null, toNone.error?.message);
+    assert.match(toNone.out, /WARN introspection role kept on a public client/);
+    const silent = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--can-introspect', 'false']);
+    assert.doesNotMatch(silent.out, /WARN introspection/);
   });
 });

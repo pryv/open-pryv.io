@@ -349,6 +349,13 @@ export async function handleAuthorizationCode (
         }
         if (!fresh) {
           logServerWarning('authorization_code: OpenID Connect nonce replayed by client "' + row.clientId + '"');
+          // Same class as a reused code; the code is named by its hash, the
+          // nonce not at all.
+          await audit('oauth.nonce.reused', {
+            clientId: row.clientId,
+            userId: row.userId,
+            codeId: storage.hashSecret(params.code as string),
+          });
           return { ok: false, status: 400, error: 'invalid_grant', description: 'nonce already used' };
         }
       }

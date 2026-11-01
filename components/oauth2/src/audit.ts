@@ -17,7 +17,7 @@
  *
  * Events split into two classes (mirrored by ApiMethods.WITHOUT_USER_METHODS
  * in components/audit/):
- *  - user-resolved (consent.granted, code.exchanged,
+ *  - user-resolved (consent.granted, code.exchanged, nonce.reused,
  *    token.issued.authorization_code, token.refreshed, token.revoked) — carry
  *    a `userId` and are persisted to that user's audit storage (+ syslog).
  *  - user-less (consent.shown, consent.refused, code.reused,
@@ -47,6 +47,7 @@ export type OAuthAuditEvent =
   | 'oauth.consent.refused'
   | 'oauth.code.exchanged'
   | 'oauth.code.reused'
+  | 'oauth.nonce.reused'
   | 'oauth.token.issued.authorization_code'
   | 'oauth.token.issued.client_credentials'
   | 'oauth.token.refreshed'

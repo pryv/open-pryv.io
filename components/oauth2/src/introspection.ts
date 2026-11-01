@@ -18,6 +18,10 @@
  * session was minted, client suspended or gone, or consent grant gone, means
  * `active: false`.
  *
+ * The answer's `scope` is the scope tokens granted to a registry client's
+ * session (the token endpoint's answer); it is omitted for an app-account
+ * session, whose token response scope is not grammar tokens.
+ *
  * Beyond the RFC members, an active answer carries `api_base` (the account's
  * API base URL, no credential in it) and, for a registry client's session,
  * `permissions` (the stream permissions the session holds now, as the core
@@ -135,9 +139,10 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
   const client = await getClient(deps.platform, row.clientId);
   if (client == null || client.status === 'suspended') return { status: 200, body: INACTIVE };
 
-  // The session row carries the session-only selfRevoke override; the scope
-  // answer is computed over the granted permissions, as at /token.
-  const permissions = session.permissions.filter((p) => p.feature !== 'selfRevoke');
+  // The stored session permissions without the session-only selfRevoke
+  // override (the glue strips it): the scope answer is computed over them, as
+  // at /token.
+  const permissions = session.permissions;
   let scopeTokens: string[] = row.grammarTokens ?? [];
   let extra: Record<string, unknown> = {};
   const registry = isRegistryClient(client);
@@ -164,7 +169,9 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
     body: {
       ...extra,
       active: true,
-      scope: scopeTokens.join(' '),
+      // Omitted (RFC 7662: OPTIONAL) when the session carries no grammar
+      // tokens (an app-account session): an empty scope would read as "none".
+      ...(registry || (row.grammarTokens?.length ?? 0) > 0 ? { scope: scopeTokens.join(' ') } : {}),
       client_id: row.clientId,
       exp: Math.floor(session.expires),
       iat: Math.floor(session.created),

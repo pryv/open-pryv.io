@@ -66,7 +66,8 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     response_types_supported: ['code'],
     response_modes_supported: ['query'],
     grant_types_supported: cfg.grantTypesSupported ?? ['authorization_code'],
-    token_endpoint_auth_methods_supported: ['client_secret_basic', 'private_key_jwt', 'none'],
+    // A client with a secret may send it as Basic or in the form body.
+    token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
     // RFC 7523 §2.2 — JWS algorithms accepted for a `private_key_jwt`
     // client-authentication assertion. ES256 only (no alg confusion).
     token_endpoint_auth_signing_alg_values_supported: ['ES256'],
@@ -84,13 +85,13 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     ...(cfg.introspection === true
       ? {
           introspection_endpoint: issuer + '/oauth2/introspect',
-          introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'private_key_jwt'],
+          introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt'],
         }
       : {}),
     ...(cfg.revocation === true
       ? {
           revocation_endpoint: issuer + '/oauth2/revoke',
-          revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'private_key_jwt', 'none'],
+          revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
         }
       : {}),
     // Cache headers + non-standard `apiEndpoint` extension are

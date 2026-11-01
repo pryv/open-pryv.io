@@ -138,8 +138,28 @@ describe('[ORL] OAuth2: refresh chain lifecycle', () => {
     assert.equal(revoked, 0);
   });
 
+  it('[ORL04] client_id mismatch is refused before the consume (the row stays live); a consume racing the check still ends the token', async () => {
+    const platform = fakePlatform();
+    await seed(platform, 'RT-ORL04');
+    const first = await refresh({ config: fakeConfig(), platform, mintRefreshedAccess: mint }, 'RT-ORL04', 'other');
+    assert.deepEqual([first.statusCode, first.body.error], [400, 'invalid_grant']);
+    assert.ok(await getRefresh(platform, CORE_ID, 'RT-ORL04') != null, 'not consumed');
+    assert.equal(await getRefreshConsumed(platform, CORE_ID, 'RT-ORL04'), null);
+    // The peek saw the presenter's client, the consume returns the real row.
+    const racing = fakePlatform();
+    await seed(racing, 'RT-ORL04b');
+    const get = racing.getAccessState.bind(racing);
+    racing.getAccessState = async (k) => {
+      const e = await get(k);
+      return e != null && k.startsWith('oauth-rt/') ? { ...e, value: { ...e.value, clientId: 'other' } } : e;
+    };
+    const raced = await refresh({ config: fakeConfig(), platform: racing, mintRefreshedAccess: mint }, 'RT-ORL04b', 'other');
+    assert.deepEqual([raced.statusCode, raced.body.error], [400, 'invalid_grant']);
+    racing.getAccessState = get;
+    assert.equal((await getRefreshConsumed(racing, CORE_ID, 'RT-ORL04b')).revoked, true);
+  });
+
   for (const [code, label, setup] of [
-    ['ORL04', 'client_id mismatch', { clientId: 'other' }],
     ['ORL05', 'absolute lifetime exceeded', { absolute: true }],
     ['ORL06', 'consent revoked', { grantGone: true }],
   ]) {
@@ -207,6 +227,55 @@ describe('[ORL] OAuth2: refresh chain lifecycle', () => {
     racing.setAccessState = set;
     assert.equal(await getRefresh(racing, CORE_ID, 'RT-11'), null);
     assert.equal((await getRefreshConsumed(racing, CORE_ID, 'RT-11')).revoked, true);
+  });
+
+  it('[ORL11] a token ended while its rotation is in flight (after the marker): what the rotation minted is ended, nothing retired, invalid_grant', async () => {
+    const platform = fakePlatform();
+    await seed(platform, 'RT-12', { accessId: 'acc-old' });
+    const revokedLocal = [];
+    let retired = 0;
+    let minted12 = null;
+    const res = await refresh({
+      config: fakeConfig(),
+      platform,
+      // The session is deleted (its chain ended) while the mint runs.
+      mintRefreshedAccess: async () => { await revokeRefresh(platform, CORE_ID, 'RT-12'); minted12 = await mint(); return minted12; },
+      revokeAccessLocal: async (p) => { revokedLocal.push(p.accessId); },
+      retireSession: async () => { retired++; return true; },
+    }, 'RT-12');
+    assert.deepEqual([res.statusCode, res.body.error], [400, 'invalid_grant'], JSON.stringify(res.body));
+    assert.deepEqual(revokedLocal, [minted12.accessId]);
+    assert.equal(retired, 0);
+    assert.equal(await getSessionIndex(platform, minted12.accessToken), null, 'the new index row is gone');
+    // No live refresh row is left: the new token was ended too.
+    assert.deepEqual([...platform._state.keys()].filter((k) => k.startsWith('oauth-rt/')), []);
+    assert.equal((await getRefreshConsumed(platform, CORE_ID, 'RT-12')).revoked, true);
+  });
+
+  it('[ORL12] audit rows name refresh tokens by a hash prefix, never by token characters', async () => {
+    const platform = fakePlatform();
+    await seed(platform, 'RT13-secretvalue');
+    const audited = [];
+    const debug = console.debug;
+    process.env.OAUTH_AUDIT_DEBUG = '1';
+    console.debug = (tag, event, payload) => { if (tag === '[oauth.audit]') audited.push({ event, payload }); };
+    let ok;
+    try {
+      ok = await refresh({ config: fakeConfig(), platform, mintRefreshedAccess: mint }, 'RT13-secretvalue');
+      await refresh({ config: fakeConfig(), platform, mintRefreshedAccess: mint }, 'RT13-secretvalue');
+      await refresh({ config: fakeConfig(), platform, mintRefreshedAccess: mint }, 'never-issued');
+    } finally {
+      console.debug = debug;
+      delete process.env.OAUTH_AUDIT_DEBUG;
+    }
+    assert.equal(ok.statusCode, 200);
+    const refreshed = audited.find((r) => r.event === 'oauth.token.refreshed');
+    assert.equal(refreshed.payload.oldTokenId, 'refresh:' + hashSecret('RT13-secretvalue').slice(0, 12));
+    assert.equal(refreshed.payload.newTokenId, 'refresh:' + hashSecret(ok.body.refresh_token).slice(0, 12));
+    assert.ok(audited.some((r) => r.event === 'oauth.token.reuse_detected'));
+    assert.ok(audited.some((r) => r.event === 'oauth.code.reused'));
+    const text = JSON.stringify(audited);
+    for (const t of ['RT13-s', ok.body.refresh_token.slice(0, 6), 'never-']) assert.ok(!text.includes(t), t);
   });
 
   it('[ORL10] the code exchange names the refresh token on the session index row (no token in it)', async () => {

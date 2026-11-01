@@ -24,6 +24,7 @@ type SessionReads = {
   findOAuthSessionAccess: (userId: string, username: string, accessId: string, clientId: string) => Promise<DataGrant | null>;
   readDataGrantHead: (userId: string, username: string, dataGrantAccessId: string) => Promise<DataGrant>;
   grantSubject: (grant: DataGrant, userId: string) => { subject: string; aliased: boolean };
+  storedSessionPermissions: (permissions: Array<Record<string, unknown>> | null | undefined) => Array<Record<string, unknown>>;
 };
 
 export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
@@ -58,7 +59,9 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
       }
     }
     return {
-      permissions: access.permissions ?? [],
+      // The same echo input as at the code exchange and at refresh: the
+      // stored row, canonical, without the session's selfRevoke override.
+      permissions: sessions.storedSessionPermissions(access.permissions),
       created: typeof access.created === 'number' ? access.created : 0,
       expires: access.expires,
       subject,

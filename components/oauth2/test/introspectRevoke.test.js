@@ -93,8 +93,9 @@ const REGISTRY_CLIENT = {
   subjectType: 'public',
 };
 
+// As the glue returns it: the stored row without the selfRevoke override.
 const SESSION = {
-  permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'x', level: 'none' }, { feature: 'webhooks', setting: 'forbidden' }, { feature: 'selfRevoke', setting: 'allowed' }],
+  permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'x', level: 'none' }, { feature: 'webhooks', setting: 'forbidden' }],
   created: 1000.25,
   expires: 9999999999,
   subject: USER_ID,
@@ -221,12 +222,13 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     assert.deepEqual(res.body, { error: 'wrong_core', coreUrl: 'https://core-a.example.com' });
   });
 
-  it('[OXI05] an app-account session: no permissions member; a missing token is invalid_request', async () => {
+  it('[OXI05] an app-account session: no permissions member, no scope member; a missing token is invalid_request', async () => {
     const platform = await seeded();
     const res = await introspect(platform, { token: 'cmc-token' });
     assert.equal(res.body.active, true);
     assert.equal(res.body.client_id, 'cmc-app');
     assert.equal(res.body.permissions, undefined);
+    assert.ok(!Object.hasOwn(res.body, 'scope'), JSON.stringify(res.body));
     const missing = await introspect(platform, { token: '' });
     assert.equal(missing.statusCode, 400);
     assert.equal(missing.body.error, 'invalid_request');
@@ -241,17 +243,19 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     assert.equal(full.revocation_endpoint, ISSUER + '/oauth2/revoke');
     assert.ok(!full.introspection_endpoint_auth_methods_supported.includes('none'));
     assert.ok(full.revocation_endpoint_auth_methods_supported.includes('none'));
+    // A secret in the form body is accepted ([OXI03]), and advertised.
+    for (const key of ['token_endpoint_auth_methods_supported', 'introspection_endpoint_auth_methods_supported', 'revocation_endpoint_auth_methods_supported']) {
+      assert.ok(full[key].includes('client_secret_post'), key);
+    }
   });
 
   async function revoke (platform, { auth = null, clientId = 'reg-app', token, hint, config = fakeConfig(), deps = {}, body = {} } = {}) {
     const res = fakeRes();
-    const calls = { sessions: [], chains: [] };
+    const calls = { sessions: [] };
     await handleRevoke({
       config,
       platform,
       revokeSession: async (p) => { calls.sessions.push(p); return true; },
-      revokeChain: async (p) => { calls.chains.push(p); },
-      resolveUsername: async (id) => (id === USER_ID ? 'alice' : null),
       coreUrlFor: async (id) => 'https://' + id + '.example.com',
       ...deps,
     })({
@@ -267,20 +271,31 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     assert.equal(res.statusCode, 200);
     assert.equal(res.raw, '');
     assert.deepEqual(calls.sessions, [{ userId: USER_ID, accessId: 'session-1', clientId: 'reg-app' }]);
-    assert.deepEqual(calls.chains, []);
   });
 
-  it('[ORVK2] a refresh token: ended (revoked marker), its chain collapsed as a client revocation; a replay finds nothing', async () => {
+  it('[ORVK2] a refresh token: ended (revoked marker), and the session it backs deleted; no chain collapse exists to call; a replay finds nothing', async () => {
     const platform = await seeded();
     const { res, calls } = await revoke(platform, { token: 'refresh-1', hint: 'refresh_token' });
     assert.equal(res.statusCode, 200);
     assert.equal(await getRefresh(platform, CORE_ID, 'refresh-1'), null);
     assert.equal((await getRefreshConsumed(platform, CORE_ID, 'refresh-1')).revoked, true);
-    assert.deepEqual(calls.chains, [{ userId: USER_ID, username: 'alice', clientId: 'reg-app', dataGrantAccessId: 'grant-1', reason: 'client-revocation' }]);
-    assert.deepEqual(calls.sessions, []);
+    assert.deepEqual(calls.sessions, [{ userId: USER_ID, accessId: 'session-1', clientId: 'reg-app' }]);
     const again = await revoke(platform, { token: 'refresh-1' });
     assert.equal(again.res.statusCode, 200);
-    assert.deepEqual(again.calls, { sessions: [], chains: [] });
+    assert.deepEqual(again.calls, { sessions: [] });
+    // A refresh token issued before refresh rows named their session ends alone.
+    await setRefresh(platform, CORE_ID, 'refresh-legacy', {
+      clientId: 'reg-app', userId: USER_ID, scope: [], issuedAt: 0, lastUsedAt: 0, expiresAt: Date.now() + 1e6, absoluteExpiresAt: Date.now() + 2e6,
+    });
+    const legacy = await revoke(platform, { token: 'refresh-legacy', hint: 'refresh_token' });
+    assert.equal(legacy.res.statusCode, 200);
+    assert.deepEqual(legacy.calls, { sessions: [] });
+    assert.equal((await getRefreshConsumed(platform, CORE_ID, 'refresh-legacy')).revoked, true);
+    // A failing session deletion still answers 200: the token is ended.
+    const platform2 = await seeded();
+    const failing = await revoke(platform2, { token: 'refresh-1', hint: 'refresh_token', deps: { revokeSession: async () => { throw new Error('down'); } } });
+    assert.equal(failing.res.statusCode, 200);
+    assert.equal(await getRefresh(platform2, CORE_ID, 'refresh-1'), null);
   });
 
   it('[ORVK3] an unknown token, or another client\'s, answers 200 and touches nothing', async () => {
@@ -288,7 +303,7 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     for (const token of ['unknown', 'session-token-1', 'refresh-1']) {
       const { res, calls } = await revoke(platform, { auth: basic('cmc-app', appSecret.plaintext), token });
       assert.equal(res.statusCode, 200, token);
-      assert.deepEqual(calls, { sessions: [], chains: [] }, token);
+      assert.deepEqual(calls, { sessions: [] }, token);
     }
     assert.ok(await getRefresh(platform, CORE_ID, 'refresh-1') != null);
     assert.ok(await getSessionIndex(platform, 'session-token-1') != null);
@@ -302,7 +317,7 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     assert.deepEqual(access.res.body, { error: 'wrong_core', coreUrl: 'https://core-a.example.com' });
     const refresh = await revoke(platform, { token: 'refresh-1', config: onB, hint: 'refresh_token' });
     assert.equal(refresh.res.statusCode, 421);
-    assert.deepEqual(refresh.calls, { sessions: [], chains: [] });
+    assert.deepEqual(refresh.calls, { sessions: [] });
     assert.ok(await getRefresh(platform, CORE_ID, 'refresh-1') != null);
   });
 
