@@ -23,7 +23,7 @@
 
 import type { AppLike } from './_types.ts';
 import { getLogger } from '@pryv/boiler';
-import { registerRoutes, resolveAccountForIdentity, type IdentityClaims } from 'sso';
+import { registerRoutes, resolveAccountForIdentity, ssoStateKeyFromConfig, type IdentityClaims } from 'sso';
 import { getPlatform } from 'platform';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { buildSsoLinkDeps } from './ssoLinkDeps.ts';
@@ -68,7 +68,8 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   const config = app.config;
   const logger = getLogger('routes:sso');
   const landingPageURL = config.get('sso:landingPageURL');
-  const adminKey = config.get('auth:adminAccessKey');
+  // `sso:stateKey`, else (transitional, warned at boot) `auth:adminAccessKey`.
+  const stateKey = ssoStateKeyFromConfig(config);
 
   // Promisified api dispatch: the dispatcher reads methodId off the context
   // (set here, since we bypass the setMethodId route middleware), mirroring
@@ -200,7 +201,7 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
 
   registerRoutes(expressApp, {
     config,
-    adminKey: typeof adminKey === 'string' ? adminKey : undefined,
+    stateKey: stateKey !== '' ? stateKey : undefined,
     callbackBaseURL: deriveCallbackBase(config),
     landingPageURL: typeof landingPageURL === 'string' ? landingPageURL : undefined,
     onIdentity,

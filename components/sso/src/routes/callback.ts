@@ -41,7 +41,8 @@ export type IdentityClaims = {
 
 export type CallbackDeps = {
   registry: Registry;
-  adminKey: string;
+  /** State-cookie signing secret (see `ssoStateKeyFromConfig`). */
+  stateKey: string;
   callbackUrl: (provider: string) => string;
   landingPageURL: string;
   /** Completion seam: resolve the account + mint a session, return where to go. */
@@ -115,7 +116,7 @@ export function handleCallback (deps: CallbackDeps) {
       res.clearCookie(STATE_COOKIE_NAME, { path: STATE_COOKIE_PATH });
       if (raw == null) return redirectFail();
 
-      const verified = verifyStateCookie(deps.adminKey, raw);
+      const verified = verifyStateCookie(deps.stateKey, raw);
       if (!verified.ok) return redirectFail();
       // Anti-mixup: the cookie was minted for THIS provider.
       if (verified.payload.provider !== provider) return redirectFail();
