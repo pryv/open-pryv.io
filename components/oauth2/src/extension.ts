@@ -24,8 +24,8 @@
  * `idTokenClaims` adds claims to the OpenID Connect id_token (code exchange
  * with `openid` granted; it may not set a claim the core owns) and
  * `claimsSupported` lists them in the OpenID Connect discovery document.
- * `introspectionClaims` is part of the contract (validated when present) and
- * reserved: this core does not call it yet.
+ * `introspectionClaims` adds members to the introspection answer of a
+ * registry client's session (it may not set a member the core answers).
  *
  * Versioning: an integer `apiVersion`. Adding an optional hook or an optional
  * context field does not bump it; changing a context field's meaning, a return

@@ -7,6 +7,18 @@ Pryv-native access-request polling flow.
 
 This document is for **operators** running a deployment: how to enable it,
 register application accounts, front it with a reverse proxy, and audit it.
+
+There are two kinds of OAuth client:
+
+- **App-account clients** (the original kind): an existing Pryv account
+  promoted to an application account. Its scope is a `cmc:<offer-name>`
+  reference to a consent offer the account publishes (§ 1b, § 3).
+- **Registry clients**: registered by the operator with no account behind
+  them. Their scope vocabulary comes from an **OAuth extension** the operator
+  installs on the cores, which maps a scope string to Pryv permissions
+  (§ 1c, § 1d, § 3b). Without an installed extension, registry clients are
+  refused at `/oauth2/authorize`.
+
 Developers extending the layer (new scopes, grants, error mappings) should
 read [`components/oauth2/IMPLEMENTERS-GUIDE.md`](../components/oauth2/IMPLEMENTERS-GUIDE.md).
 
@@ -20,6 +32,10 @@ Once enabled, each core exposes:
 |---|---|
 | `GET /.well-known/oauth-authorization-server` | RFC 8414 discovery document (public, cacheable, CORS `*`) |
 | `GET /oauth2/authorize` | Authorization endpoint — starts the consent flow |
+| `POST /oauth2/authorize` | Same as `GET`, parameters in a form-encoded body (`application/x-www-form-urlencoded`) |
+| `POST /oauth2/authorize/offer` | Consent UI: fetch the consent offer of a registry client by reference (§ 1d) |
+| `POST /oauth2/authorize/accept` | Consent UI: the user grants the request |
+| `POST /oauth2/authorize/refuse` | Consent UI: the user declines the request |
 | `POST /oauth2/token` | Token endpoint — code exchange, refresh, client credentials |
 | `GET /.well-known/openid-configuration` | OpenID Connect discovery (404 while `oauth.signingKeys` is empty) |
 | `GET /oauth2/jwks` | JWK Set of the id_token signing keys, public members only (404 while `oauth.signingKeys` is empty) |
@@ -37,7 +53,8 @@ gone or its client is revoked, suspended or gone. An active answer carries the
 RFC members (`scope`, for a registry client's session: the same scope answer as
 the token endpoint, recomputed from the session as it stands; omitted for an
 app-account session; `client_id`, `exp`, `iat`, `sub`, `iss`,
-`token_type`, `aud`, `cnf` for DPoP-bound sessions) and two extension members,
+`token_type`, `aud` when the request named one, `cnf` for DPoP-bound sessions)
+and two extension members,
 never present in a token response: `api_base` (the account's API base URL, no
 credential in it; for a pseudonymous grant, built on its alias, which is then
 also the `sub`) and, for a registry client's session, `permissions`
@@ -65,6 +82,10 @@ after the refresh. Deleting an OAuth session (from the account, by a grant
 change that leaves it no reach, by a revocation) ends its refresh chain; a
 replay of a token ended that way is refused without being treated as theft.
 
+On `/oauth2/authorize` (either method), a parameter given twice is refused
+with an HTML 400, and so is a `POST` body that is not form-encoded (JSON
+included).
+
 The discovery document advertises:
 
 ```json
@@ -81,6 +102,7 @@ The discovery document advertises:
   "code_challenge_methods_supported": ["S256"],
   "authorization_response_iss_parameter_supported": true,
   "dpop_signing_alg_values_supported": ["ES256"],
+  "jwks_uri": "https://<deployment-base>/oauth2/jwks",
   "introspection_endpoint": "https://<deployment-base>/oauth2/introspect",
   "introspection_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
   "revocation_endpoint": "https://<deployment-base>/oauth2/revoke",
@@ -90,7 +112,8 @@ The discovery document advertises:
 
 `grant_types_supported` reflects `oauth.grantTypesSupported`. The
 introspection and revocation members appear only when those endpoints are
-mounted (with the authorization-code flow). A client with a secret may send it
+mounted (with the authorization-code flow); `jwks_uri` only when
+`oauth.signingKeys` lists a key (§ 2). A client with a secret may send it
 as HTTP Basic (`client_secret_basic`) or in the form body (`client_secret_post`).
 `private_key_jwt` is RFC 7523 client authentication with an ES256 assertion
 (`aud` = the issuer or the token-endpoint URL; `/oauth2/introspect` and
@@ -115,6 +138,9 @@ field, `apiEndpoint`, that clients use to build a working connection:
 ---
 
 ## 1b. Scope model — consent-offer references
+
+This section describes **app-account clients**. Registry clients use the
+scope grammar of the installed OAuth extension instead (§ 1c).
 
 There are **no coarse wildcard scopes**. Every authorization-code grant goes
 through an explicit granular permission set — as expressive as a native
@@ -172,6 +198,294 @@ before expiry; an expired offer surfaces as `invalid_scope` at
 
 ---
 
+## 1c. Registry clients and the OAuth extension
+
+A registry client has no Pryv account behind it: the operator registers it
+with `bin/oauth-client.js create-registry` (§ 3b), on any core. Its whole
+`scope` string is handed to the **scope grammar** of the OAuth extension
+installed on the cores, which turns it into a consent offer of granular Pryv
+permissions (the same lexicon as `accesses.create`).
+
+### Installing the extension
+
+Point `customExtensions:oauthExtension` at the extension module on every core
+(see § 2). The module exports a factory that receives
+`{ apiVersion, options, logger }` (`options` is `oauth:extensionOptions`,
+handed over as is) and returns:
+
+```js
+module.exports = function (host) {
+  return {
+    apiVersion: 1,
+    name: 'my-extension',
+    scopeGrammar: {
+      parse (scopeString, { client, purpose }) { /* { ok: true, tokens, offer } or { ok: false, description } */ },
+      echo ({ permissions, requestedTokens, client }) { /* scope tokens naming what permissions hold */ },
+      supported () { /* optional */ }
+    },
+    tokenResponse (ctx) { /* optional: extra fields of the token response */ },
+    idTokenClaims (ctx) { /* optional: extra claims of the id_token */ },
+    claimsSupported: [ /* optional: those claims, for the OpenID discovery document */ ],
+    introspectionClaims (ctx) { /* optional: extra members of an introspection answer */ }
+  };
+};
+```
+
+The module is loaded at boot. **A module that cannot be loaded, or that breaks
+the contract (unsupported `apiVersion`, missing `name` or grammar functions),
+fails the boot**, not a user's first consent. The contract itself (types,
+determinism, display labels, hook context) is documented in
+`components/oauth2/src/extension.ts` and in the implementers' guide.
+
+The extension's hooks (`tokenResponse`, `idTokenClaims`,
+`introspectionClaims`) **fail closed**: a hook that throws, does not settle
+within `oauth:extensionHookTimeoutMs` (default 5000 ms), returns a value that
+is neither an object nor nothing (an array, a string or a number; `null` /
+`undefined` add no field), or sets a key the core owns fails the request with
+`500 server_error`. The core's keys are, for `tokenResponse`, `access_token`,
+`token_type`, `expires_in`, `refresh_token`, `scope`, `id_token` and
+`apiEndpoint`; for `idTokenClaims`, `iss`, `sub`, `aud`, `exp`, `iat`,
+`nonce`, `auth_time` and `azp`; for `introspectionClaims`, the members the
+core answers (§ 1). A token request that fails this way stores no refresh
+token, and a refresh that fails this way does not use up the refresh token:
+the app retries with the same one.
+
+### Scope rules the core enforces
+
+- A registry client's registered `scope` is its **maximum scope set**, parsed
+  by the same grammar. A request beyond it answers `invalid_scope`.
+- Whatever the grammar answers, the core refuses (`invalid_scope`) account and
+  system streams, every stream (`*`), the `manage` level, two permissions on
+  one stream in one offer, a token the client did not send, and an offer of
+  more than 1000 permissions. It removes `defaultName` / `name` from the offer:
+  a registry consent never creates a stream.
+- The core owns two scope tokens and never hands them to the grammar:
+  `offline_access` asks for a refresh token (granted only when the client is
+  registered for the `refresh_token` grant), `openid` asks for an `id_token`
+  and is refused (`invalid_scope`) unless `oauth:signingKeys` lists a key
+  (§ 2).
+- `client_credentials` and DPoP-bound tokens are not available to registry
+  clients (a DPoP proof at `/oauth2/token` is refused with `invalid_request`
+  before the code or refresh token is used).
+- A client registered with audiences (`--audience`) must name one of them in
+  the `aud` parameter of `/oauth2/authorize` (a trailing slash is ignored),
+  else `invalid_request`.
+
+### The token response `scope` (the echo)
+
+The `scope` of a registry client's token response is the grammar's `echo`
+over the permissions actually minted, so it narrows when the user unticked
+part of the offer or the grant was narrowed later. The core checks the echo by
+parsing the echoed string again with the same grammar, as a request:
+
+- it **may** name tokens the client did not request (a narrowed token after a
+  partial consent, a per-stream token, a marker that expands to no
+  permission);
+- it **may not** claim a stream or a level the session does not hold: a
+  stream is held only by an entry on the same stream (no inheritance through
+  the stream tree, and a stream held at `none` is not held); a feature entry
+  is held by the same entry, and a `forbidden` one always passes. Such an echo
+  fails the token request with `500 server_error` and is logged; a refresh
+  refused this way leaves the refresh token usable once the extension is
+  fixed;
+- it should name all the reach the session holds: an echo that leaves a held
+  stream unnamed is logged as a warning, not refused;
+- at most 1000 tokens, and never `openid` or `offline_access` (the core adds
+  those itself).
+
+### What the app receives
+
+The token response carries the core fields, `apiEndpoint` (not for a
+pseudonymous grant, see below), the client's static `--extra` fields, then the
+fields of the extension's `tokenResponse` hook and, at the code exchange of a
+request granted `openid`, an `id_token` (§ 2 `signingKeys`; never on refresh).
+The subject handed to the extension (and every hook field built on it, the
+`id_token` `sub`, the introspection `sub`) is the user's **internal id**: not
+the username, and not routable (it does not address the account); for a
+pseudonymous grant it is the grant's alias.
+
+### Pseudonymous subjects
+
+A `pairwise` client (§ 3b `--subject-type`) always gets a pseudonymous
+subject; a `public` client gets one when the grammar's offer asks for it
+(`randomAlias: true`). Such a consent makes an **aliased grant**: the grant
+carries a routable alias (`r-` and 8 characters), one per user and client,
+kept across refreshes and re-consents, and every session minted under it
+carries the same alias. The app knows the account by that alias only:
+
+- the subject of its token responses, of the extension hooks, the `id_token`
+  `sub` and the introspection `sub` are the alias;
+- its token responses carry no `apiEndpoint`; the session's `access-info`,
+  its own `apiEndpoint` (`accesses.getOne`), the introspection `api_base` and
+  every access it creates (which carry the alias too) name the alias. The
+  account's username reaches the app in no answer;
+- the grammar's `echo` is told whether the subject is an alias (`aliased` in
+  its context).
+
+**Alias-bound addressing.** An aliased access (a session of an aliased grant,
+an access created with `randomAlias`, or one created by such an access) is
+accepted only on requests addressed by its alias: `https://<alias>.<domain>/…`
+or `/<alias>/…`, the socket.io namespace `/<alias>`, the high-frequency series
+URLs and attachment downloads. At the username, a former username or another
+access's alias it is refused, answered like an unknown token. An access
+without an alias is accepted at the account's own names and refused at an
+access's alias; the owner's personal token is accepted at any of them.
+**Sign-in and password reset are refused at an access alias**
+(`POST /<alias>/auth/login` and `POST /<alias>/account/request-password-reset`
+answer `400 invalid-operation`, whatever the credentials, before any password
+check).
+
+The alias is released when its last holder is deleted: deleting one session
+keeps it (the grant and the other sessions hold it); deleting the grant, a
+change of subject mode, a refresh-token reuse or the account's deletion
+releases it, and a later consent gets a new one. Revoking a token
+(`/oauth2/revoke`) or the retirement of a session on refresh keeps the alias
+with the grant.
+
+---
+
+## 1d. Consent for registry clients
+
+### Offer by reference
+
+For a registry client, the signed `state` sent to the consent UI carries only
+the **digest** of the consent offer, not the offer itself. The consent UI
+fetches the offer with:
+
+```
+POST /oauth2/authorize/offer
+{ "state": "<signed state>" }
+```
+
+which answers (unauthenticated like `/oauth2/authorize`, `Cache-Control:
+no-store`):
+
+```json
+{
+  "client": { "clientId": "…", "clientName": "…", "logoUri": "…", "clientUri": "…", "policyUri": "…", "tosUri": "…" },
+  "offer": { "allowUserChoice": false, "permissions": [ … ], "randomAlias": false, "entryLabels": { … } },
+  "scope": [ "…" ]
+}
+```
+
+`offer.entryLabels` (display labels keyed `s|<streamId>|<level>` or
+`f|<feature>|<setting>`, values `{ [lang]: text }`) and the offer texts come
+from the grammar and are passed through unchanged. The signed-out offer is the
+request as parsed; client defaults (forbidden features) and the current grant
+appear only on the signed-in composed offer, which is the authoritative screen
+(next section). `/offer` and `/oauth2/authorize/accept` re-derive the offer
+from the request; a state whose client or grammar changed since
+`/oauth2/authorize` is refused with `invalid_request` (or `invalid_scope` when
+the new registration no longer covers the request): restart the flow.
+App-account clients keep the offer inside the state, unchanged.
+
+`/oauth2/authorize/accept` accepts only the account owner's **personal**
+token; another token of the user answers `403 access_denied`.
+
+### Composed re-consent (`shownDigest`)
+
+When the user already has a grant for the client, the consent screen should
+show the grant and the request together, so a later request for a subset never
+silently strips what the user granted before. The consent UI posts the user's
+credentials to `/offer`:
+
+```
+POST /oauth2/authorize/offer
+{ "state": "…", "username": "…", "userToken": "<the owner's personal token>" }
+```
+
+and receives the **composed** screen (never cached): one entry per stream at
+the level covering both the grant and the request; entries already granted
+flagged `currentlyGranted: true` (a stream entry also with `currentLevel`, the
+level held now); a new `optIn` entry left unticked; the grant's forbidden
+features shown, locked; a feature the request asks to allow but the client's
+grants forbid by default (see "Registry grants" below) shown as the locked
+forbid it becomes. The core's other default forbids are not listed: they are applied
+after every consent. Beside it: `shownDigest` (opaque: never parse it, only
+post it back), `currentGrant: { "subjectMode": "account" | "pseudonym" } |
+null`, `subjectChange` and `authenticated: true`. A token that is not the
+owner's personal token gets the request alone plus `authenticated: false`
+(`authenticated` is absent when no sign-in was attempted). A stream held at
+`read` and requested at `create-only` cannot be covered by one level and
+answers `invalid_scope` with `reason: "permission-level-conflict"`.
+
+On `POST /oauth2/authorize/accept` the consent UI then sends `shownDigest`
+with the user's choice (`grantedPermissions`):
+
+- **With `shownDigest`**: the grant becomes **exactly** what the user ticked
+  (unticking narrows it), keeping the grant's forbidden features and
+  exclusion masks. A `shownDigest` that no longer matches (the grant, the
+  client or the grammar changed meanwhile) answers `400 invalid_request` with
+  `reason: "consent-out-of-date"`: restart the flow.
+- **Without `shownDigest`** (a consent UI older than this mechanism): the
+  consent is **joined** into the grant per stream and never narrows it.
+  Per-stream narrowing on re-consent needs a consent UI that posts
+  `shownDigest`.
+
+Both fields are ignored for app-account clients. A registry consent must keep
+at least one stream entry (`reason: "keep-one-stream"`; refuse instead).
+
+### Change of subject mode
+
+When the request's subject mode (the user's id, or a pseudonym) differs from
+the current grant's, `/offer` reports `subjectChange: { "from", "to" }` and
+`/accept` requires both `shownDigest` and `acknowledgeSubjectChange: true`,
+else `400 invalid_request` with `reason: "subject-change-unacknowledged"`.
+Once acknowledged, the old grant is withdrawn (its sessions and refresh chains
+end, its alias is released) and a new one is made; `oauth.consent.granted`
+carries `subjectChange`. A change of a client's `--subject-type` reaches each
+user this way at their next consent (§ 1c, pseudonymous subjects).
+
+### `reason` on `/oauth2/authorize/*` errors
+
+An error body of `/oauth2/authorize/*` may carry an optional machine-readable
+`reason` beside the OAuth `error` and `error_description`. Match on `reason`,
+never on the wording; render errors without one generically.
+
+| `reason` | Meaning |
+|---|---|
+| `consent-out-of-date` | the screen the user saw is no longer current: restart the flow |
+| `subject-change-unacknowledged` | a change of subject mode was not acknowledged |
+| `permission-level-conflict` | a requested level conflicts with the grant's (`/offer` and `/accept`) |
+| `keep-one-stream` | a registry consent kept no stream |
+| `consent-widens-offer` | the kept subset would widen the offer through the stream hierarchy |
+
+### Registry grants and their sessions
+
+- The durable consent record of a registry client is an app access named
+  `oauth-grant:<clientId>` on the user's account (no expiry; one the owner let
+  expire is replaced at the next consent). A grant withdrawn between consent
+  and code exchange answers `invalid_grant` at `/oauth2/token`.
+- **Registry grants forbid the `webhooks` and `secretSharing` features by
+  default**, unless the client row allows the feature
+  (`--allow-feature`, § 3b). The core applies these forbids at every consent
+  and the sessions carry them. They are not part of the offer the grammar
+  answers, so the signed-out offer does not show them; the signed-in composed
+  screen shows one, locked, only when the request asks to allow that feature.
+  Allowing a feature later does not lift the forbid on grants that already
+  carry it: a forbid on a grant is kept by every re-consent, only the owner
+  can remove it.
+- **In any consent offer, a forbidden feature is mandatory** (it cannot be
+  unticked, whatever the offer says); one marked `optIn` is refused. This
+  holds for OAuth and CMC offers and for the `consent` sidecar of an auth
+  request on `/reg/access`.
+- **A change to a grant reaches its live sessions at once.** When a grant's
+  permissions change (a re-consent, the owner's `accesses.update` on a
+  registry or CMC grant, a CMC consent scope update), each live OAuth session
+  of the grant is re-cut to what its next refresh would mint: its chain's
+  consent under the grant as it now stands (narrowed, or widened back, never
+  beyond either). A session left with no reach is deleted; its chain's next
+  refresh is then refused (`invalid_grant`) unless the owner widened the grant
+  again before it.
+- **`clientData.oauth` is server-owned.** OAuth session accesses
+  (`name: "oauth:<clientId>"`, `createdBy: "system"`) carry
+  `clientData.oauth = { dataGrantId, chain }`, the link to their grant and
+  their chain's consent. `accesses.create` refuses an access carrying
+  `clientData.oauth`, and `accesses.update` refuses any change to it
+  (`403 forbidden`); sending it back unchanged passes.
+
+---
+
 ## 2. Configuration
 
 All settings live under the `oauth:` block. Defaults:
@@ -183,6 +497,12 @@ oauth:
   accessTokenTTL: 3600             # access-token lifetime, seconds (1 hour)
   refreshTokenTTL: 2592000         # refresh-token sliding window, seconds (30 days)
   refreshTokenAbsoluteTTL: 7776000 # refresh-token absolute cap, seconds (90 days)
+  refreshReuseGraceSeconds: 10     # a replay within this window of a rotation is a benign double-submit
+  refreshRetireGraceSeconds: 60    # how long the access token a refresh replaces keeps working
+  dpop:
+    clockSkewSeconds: 120          # accepted DPoP proof iat drift, seconds
+    keyRevokeCheckSeconds: 30      # revoke-key reaches live DPoP-bound tokens within this, seconds
+  clientRevokeCheckSeconds: 30     # revoke <clientId> reaches live access tokens within this, seconds
   clientRegistration:
     mode: curated                  # ONLY supported value (see below)
   requireAppAccountMfa: true       # NOT ENFORCED yet (see below)
@@ -191,7 +511,37 @@ oauth:
   idTokenTTL: 300                  # id_token lifetime, seconds
   grantTypesSupported:             # advertised in the discovery document
     - authorization_code
+  extensionOptions: {}             # handed as is to the OAuth extension (see below)
+  extensionHookTimeoutMs: 5000     # bound on each asynchronous extension hook, milliseconds
+
+customExtensions:
+  oauthExtension: ''               # module path of the OAuth extension (see below)
 ```
+
+### `customExtensions:oauthExtension`, `extensionOptions`, `extensionHookTimeoutMs`
+
+`customExtensions:oauthExtension` is the module path of the OAuth extension
+that serves registry clients (§ 1c). It is loaded with Node's `require`, so
+give an absolute path (or a resolvable module name). Empty (the default)
+means no extension: every registry client's `/oauth2/authorize` answers
+`invalid_scope`, app-account clients are unaffected. A module that fails to
+load or breaks the contract fails the boot.
+
+`oauth:extensionOptions` is handed to the extension's factory as
+`host.options`, unchanged; its shape is the extension's business.
+
+`oauth:extensionHookTimeoutMs` bounds each asynchronous hook of the extension
+(the token-response, id_token-claims and introspection-claims hooks). A hook
+that does not answer in time fails the request (`500 server_error`), before
+any refresh token is stored.
+
+Like the rest of the `oauth:` block, these must be identical on every core
+of a cluster (same module, same version, same options): registry clients are
+registered once for the whole platform, and their scopes must mean the same
+on every core. Upgrading the extension while a consent is in progress is
+safe but visible: the offer is re-derived at `/offer` and at `/accept`, and a
+state whose grammar changed since `/oauth2/authorize` is refused (the user
+restarts the flow).
 
 ### `consentUrl` (required for the authorization-code flow)
 
@@ -241,13 +591,15 @@ It is used for nothing else and is per core: a consent flow runs on one core.
 Set a random value of at least 32 characters (`openssl rand -base64 32`). A
 placeholder, an unexpanded `${…}` reference or a value published as an example
 refuses the boot (like the `auth.*` secrets); one equal to `auth.adminAccessKey`
-or shorter than 32 characters is reported at boot. While it is empty, the key is derived from `auth.adminAccessKey` and every boot
-logs a warning; a later release will require it. Setting or changing it only
+or shorter than 32 characters is reported at boot. While it is empty, the key
+is derived from `auth.adminAccessKey` and every boot of a core with
+`consentUrl` set logs a warning (as does `bin/check-config.js` there); a later
+release will require it. Setting or changing it only
 cancels the consent screens open at that moment (a state lives 5 minutes).
 
 ### `signingKeys`, `idTokenTTL` (OpenID Connect)
 
-With at least one signing key, registry clients (see the extension) may request
+With at least one signing key, registry clients (§ 1c) may request
 the `openid` scope: the code exchange then returns an `id_token` (RS256, the
 key's `kid` in its header) carrying `iss`, `sub` (the user's stable internal
 id, not routable; for a pseudonymous grant, a `pairwise` client or an offer
@@ -259,9 +611,9 @@ extension's own claims. A refresh never returns an `id_token`. A nonce is
 accepted once per client, across the platform: an authorization request or a
 code exchange reusing one that already went into an id_token is refused.
 `/.well-known/openid-configuration` and `/oauth2/jwks` are served, and
-`openid` is listed in `scopes_supported` (it is a scope of registry clients
-only; `subject_types_supported` lists `public` and `pairwise`). Without keys, `openid` is
-refused (`invalid_scope`) and both documents answer 404.
+`openid` is listed in `scopes_supported` with an extension installed (it is a
+scope of registry clients only; `subject_types_supported` lists `public` and
+`pairwise`). Without keys, `openid` is refused (`invalid_scope`) and both documents answer 404.
 
 `auth_time` is a **lower bound**: the creation of the personal access the user
 consented with. A later sign-in to the same app (the consent UI) rotates that
@@ -379,22 +731,35 @@ created stay on their accounts.
 ```
 node bin/oauth-client.js create <username> [--client-id <opaque-id>] \
     --redirect-uri <uri> [--redirect-uri <uri> ...] \
-    [--scope cmc:<name>] [--cmc-offer <name>=<capabilityUrl>] \
-    [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native]
+    [--scope cmc:<name>] [--cmc-offer <name>=<capabilityUrl>] [--grant-type <name> ...] \
+    [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native] \
+    [--jwks-file <path> | --jwks-json <json>]
 node bin/oauth-client.js list
 node bin/oauth-client.js show   <clientId>
 node bin/oauth-client.js update <clientId> [--redirect-uri <uri> ...] [--scope <s>] ...
 node bin/oauth-client.js rotate-secret <clientId>
-node bin/oauth-client.js revoke <clientId>
+node bin/oauth-client.js revoke <clientId> --yes
+node bin/oauth-client.js list-keys [<clientId>]
+node bin/oauth-client.js revoke-key <jkt> --yes
+node bin/oauth-client.js unrevoke-key <jkt> --yes
+node bin/oauth-client.js list-revoked-keys
 ```
+
+(`list`, `show`, `update`, `rotate-secret`, `revoke`, `suspend` and `resume`
+work on both client kinds; registry clients are created with
+`create-registry`, § 3b.)
 
 Notes:
 
+- **An unknown flag is refused** by `create`, `create-registry` and `update`
+  (`<command>: unknown flag --x`), and so is a flag that needs a value given
+  without one (`<command>: --x requires a value`): exit 1, nothing written.
+  The registry flags (`--auth-method`, `--audience`, …) are unknown to
+  `create`.
 - **`--redirect-uri` is repeatable and required** — pass the flag once per URI.
   At least one is mandatory on `create`.
-- **`--scope` is repeatable** — pass it once per scope; do **not** space-join
-  several scopes into a single value (that registers one malformed scope and
-  `/oauth2/authorize` will reject the request with `invalid_scope`).
+- **`--scope` is repeatable**; one value may hold several space-separated
+  tokens, which are split (on `create`, `update` and `create-registry`).
 - **`--cmc-offer <name>=<capabilityUrl>` is repeatable** — registers the
   consent offer behind each `cmc:<name>` scope token (see § 1b). Every
   `cmc:<name>` in `--scope` must have a matching `--cmc-offer` entry;
@@ -404,7 +769,19 @@ Notes:
 - **`rotate-secret <clientId>`** mints a `client_secret`, promoting the client to
   **confidential** (for server-side apps). The plaintext is printed **once** and
   only its bcrypt hash is stored — re-run to rotate (which invalidates the old
-  secret).
+  secret). On a registry client it works only for `client_secret_basic`; one
+  registered with `none` or `private_key_jwt` is refused, nothing written
+  (switch it with `update <clientId> --auth-method client_secret_basic`).
+- **`show <clientId>`** prints the client secret as `"clientSecretHash":
+  "(set)"` when the client has one, never the hash, and JWK Sets as `kid` and
+  thumbprint only.
+- **DPoP keys.** `list-keys [<clientId>]` lists the DPoP key thumbprints
+  (`jkt`) seen bound to a client's tokens, most recently used first, flagged
+  `REVOKED` where revoked. `revoke-key <jkt> --yes` revokes one key across the
+  platform: every core stops the live tokens bound to it within
+  `oauth.dpop.keyRevokeCheckSeconds` (default 30 s), and it can neither mint nor
+  rotate tokens. `unrevoke-key <jkt> --yes` reverses it; `list-revoked-keys`
+  lists the revoked keys.
 - `application-type native` is for installed/mobile apps that use a loopback or
   custom-scheme redirect; `web` is the default for server-hosted apps.
 
@@ -415,6 +792,126 @@ by `create` — and authenticates the token endpoint with PKCE only
 (`token_endpoint_auth_method: none`). A server-side app becomes **confidential**
 by running `rotate-secret` to obtain a `client_secret`, which it then presents
 via `client_secret_basic`. PKCE is mandatory either way.
+
+---
+
+## 3b. Registry clients: `create-registry`
+
+A registry client (§ 1c) needs no account: run `create-registry` on any core.
+The `client_id` follows the same rules as `--client-id` above (4 to 64
+characters of `A-Z a-z 0-9 . ~ -`, not an existing client, not an account name
+on the platform).
+
+```
+node bin/oauth-client.js create-registry <clientId> \
+    --redirect-uri <uri> [--redirect-uri <uri> ...] \
+    --scope <s> [--scope <s> ...] \
+    --subject-type public|pairwise \
+    (--audience <url> [--audience <url> ...] | --any-audience) \
+    [--auth-method none|client_secret_basic|private_key_jwt] \
+    [--jwks-file <path> | --jwks-json <json>] [--can-introspect] \
+    [--allow-insecure-redirect] [--allow-feature webhooks|secretSharing ...] \
+    [--extra <key>=<value> ...] [--grant-type <name> ...] \
+    [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--policy-uri <s>] [--tos-uri <s>] \
+    [--contact <s> ...] [--launch-type <s> ...]
+node bin/oauth-client.js suspend <clientId>
+node bin/oauth-client.js resume  <clientId>
+```
+
+Flags:
+
+- **`--scope`** (repeatable; space-separated tokens in one value are split):
+  the client's **maximum scope set**, in the grammar of the installed
+  extension. At least one is required. Requests beyond it answer
+  `invalid_scope`; a registered scope the grammar refuses is reported at boot.
+- **`--subject-type public|pairwise`** is **required, with no default**, and
+  echoed back: `public`, the app sees the user's stable internal id (an alias
+  only when its offer asks for a pseudonym); `pairwise`, always an alias, one
+  per user and client, at which the app addresses the account (§ 1c,
+  pseudonymous subjects).
+- **`--audience <url>`** (repeatable): the absolute `https` resource URLs the
+  client may name in the `aud` parameter of `/oauth2/authorize`. At least one
+  is required, unless **`--any-audience`** registers the client explicitly for
+  any audience (no `aud` check). The two exclude each other.
+- **`--allow-insecure-redirect`**: plain-http redirect URIs are refused unless
+  their host is a loopback one (`127.0.0.1`, `[::1]`, `localhost`); this flag
+  accepts them on other hosts. Such clients are reported at every core boot.
+- **`--allow-feature webhooks|secretSharing`** (repeatable): lifts the default
+  forbid of that feature on the client's grants (§ 1d). Only these two
+  features are accepted; `--allow-feature none` clears the list. `create-registry`
+  and `show` print the features forbidden on the client's grants.
+- **`--auth-method`**: `none` (the default, a public client using PKCE only),
+  `client_secret_basic` (a secret is minted and printed **once**), or
+  `private_key_jwt` (needs `--jwks-file` or `--jwks-json`, EC P-256 public
+  keys only). `--jwks-file` / `--jwks-json` go with `private_key_jwt` only:
+  with another method they are refused, nothing written.
+- **`--can-introspect`**: the resource-server role, the client may call
+  `/oauth2/introspect` (§ 1). Confidential clients only (`client_secret_basic`
+  or `private_key_jwt`); refused with `--auth-method none`.
+- **`--extra <key>=<value>`** (repeatable): a static field added to every
+  token response of the client (`true`, `false` and numbers are stored as
+  such, anything else as a string). Keys the core owns are ignored.
+- **`--grant-type`** defaults to `authorization_code` and `refresh_token`;
+  `client_credentials` is refused for registry clients.
+- `--name` (the `client_name`, default the client id), `--logo-uri`,
+  `--client-uri`, `--policy-uri`, `--tos-uri` are returned to the consent UI by
+  `/oauth2/authorize/offer`. `--contact` and `--launch-type` are stored on the
+  row and visible to the extension; the core does not act on them.
+
+The boolean flags (`--any-audience`, `--allow-insecure-redirect`,
+`--can-introspect`) take no value, or `true` / `false`; anything else is
+refused. For `--contact`, `--launch-type`, `--extra`, `--policy-uri` and
+`--tos-uri`, the value `none` means empty / unset.
+
+**`suspend <clientId>` / `resume <clientId>`** (any client kind) refuse or
+restore the client everywhere, with the description "this client is
+suspended": `/oauth2/authorize`, `/offer` and `/accept` answer
+`access_denied`, the code exchange and refresh at `/oauth2/token` answer
+`unauthorized_client`. A
+refused refresh consumes nothing, so the app's refresh token works again after
+`resume`. Access tokens already issued keep working until they expire; use
+`revoke` to stop them.
+
+**`update <clientId>`** takes `--redirect-uri`, `--scope`, `--grant-type`,
+`--name`, `--logo-uri`, `--client-uri`, `--jwks-file` / `--jwks-json` and
+`--can-introspect` (`false` withdraws it; a confidential client only) on both
+kinds; on an app-account client also `--application-type` and `--cmc-offer`;
+on a registry client also `--audience`, `--any-audience`,
+`--allow-insecure-redirect` (`false` withdraws it), `--subject-type`,
+`--allow-feature`, `--policy-uri`, `--tos-uri`, `--contact`, `--extra`,
+`--launch-type` and `--auth-method` (all refused on app-account clients:
+`update: --x applies to registry clients only`), parsed as `create-registry`
+parses them. A repeatable flag replaces the stored list; `none` clears
+`--policy-uri`, `--tos-uri`, `--contact`, `--extra`, `--launch-type` and
+`--allow-feature`. **`--auth-method`** moves the credentials with it: to
+`client_secret_basic` mints a secret, printed **once**, and drops the key set;
+to `private_key_jwt` needs a key set (given with the command or already on the
+row) and drops the secret; to `none` drops both and needs `--yes` (the client
+becomes public: its refresh tokens are then redeemed without client
+authentication). The same method again changes nothing (use `rotate-secret` to
+rotate). On a registry client a key set is accepted only with
+`private_key_jwt`. An unknown flag, or a flag that needs a value given without
+one, is refused and nothing is written.
+
+Changing `--subject-type` needs `--yes`: existing grants keep their subject
+and their sessions keep working, and each user sees the change, and must
+acknowledge it, at their next consent (§ 1d). A registry row stored without a
+subject type reads as `public`, is reported at boot and by `show`, and
+`update` on it asks for `--subject-type`. `update` writes nothing when nothing
+changed (`OK   client unchanged: <id>`). On a registry client, every write
+ends the consent screens open for it at that moment (the synthesised offer is
+pinned to the registration's version); app-account consents in flight are
+unaffected (their offer travels in the state). After `OK   client updated: <id>`, `update` echoes what the flags
+given changed: the subject type, the auth method (`<new> (was <old>)`), the
+new `client_secret` (once), the audiences, the plain-http redirect setting and
+the features forbidden on the client's grants.
+
+**`list`** prints one line per client, `<clientId>  <kind>  <status>
+<subjectType|->`, so `list | grep public` lists the public registry clients.
+**`show <clientId>`** prints the row (`"clientSecretHash": "(set)"` when the
+client has a secret, never the hash; JWK Sets as `kid` and thumbprint only),
+then a note when the subject type is unset and the features forbidden on its
+grants.
 
 ---
 
@@ -454,8 +951,13 @@ Collect these for security monitoring and incident response.
 | `oauth.token.issued.authorization_code` | access token issued via the authorization-code grant |
 | `oauth.token.issued.client_credentials` | access token issued via the client-credentials grant |
 | `oauth.token.refreshed` | access token renewed via the refresh grant |
+| `oauth.token.reuse_detected` | a consumed or ended refresh token was presented again (`reason`: `revoked-token`, `foreign-client`, `within-grace`, or `chain-revoked`: theft signal, the chain is revoked) |
+| `oauth.token.dpop_mismatch` | a refresh carried a DPoP proof that does not match the chain's key (refused) |
 | `oauth.token.revoked` | a token was revoked (reuse detected, consent withdrawn, revoked by its client at `/oauth2/revoke`, or its chain ended while a refresh was in flight) |
 | `oauth.token.introspected` | a resource server introspected a token (caller, `active`; never the token; syslog only) |
+
+Registry clients emit the same events. `oauth.consent.granted` carries
+`subjectChange` when the consent switched the grant's subject mode (§ 1d).
 
 `oauth.code.reused` in particular should page: per RFC 6749 a code is
 single-use, so a reuse means either a broken client or a stolen code.
@@ -466,12 +968,19 @@ single-use, so a reuse means either a broken client or a stolen code.
 
 | Symptom | Likely cause |
 |---|---|
-| `/oauth2/authorize` → `invalid_scope` | scope is not exactly one registered `cmc:<offer-name>` reference, the offer's capability URL expired/was invalidated, or scopes were space-joined into one `--scope` value at registration |
+| `/oauth2/authorize` → `invalid_scope` | scope is not exactly one registered `cmc:<offer-name>` reference, the offer's capability URL expired/was invalidated, or (on a client registered before `--scope` values were split) scopes were space-joined into one `--scope` value at registration |
 | `/oauth2/authorize` → `invalid_request` / `redirect_uri` mismatch | the request's `redirect_uri` is not byte-for-byte one of the registered URIs |
 | `/oauth2/token` → `invalid_grant` (PKCE) | the `code_verifier` does not match the `code_challenge` sent at `/authorize`, or the code expired / was already used |
 | `/oauth2/token` → `invalid_client` | confidential client presented a wrong/rotated `client_secret` |
 | `/oauth2/token` → `invalid_grant` on a multi-core deployment, the core logs "presented to core" | the exchange reached a core other than the one that issued the code: an `oauth.issuer` shared by several cores (see §2) |
 | tokens behave differently between requests | `oauth:` block drift across cores (see §2) |
+| registry client: `/oauth2/authorize` → `invalid_scope` "no scope grammar registered on this core" | no OAuth extension installed (`customExtensions:oauthExtension`, § 2) |
+| a pseudonymous session's token is refused like an unknown token | the request addressed the account by its username (or another name) instead of the session's alias: use the alias the app received as its subject (§ 1c, alias-bound addressing) |
+| registry client: `/oauth2/authorize` → `invalid_scope` "openid is not available on this core (no signing key configured)" | no `oauth.signingKeys` on this core (§ 2) |
+| registry client: `/oauth2/authorize` → `invalid_request` about `aud` | the client has audiences and the request named none of them (§ 3b) |
+| registry client: `/oauth2/token` → `500 server_error` "failed to build the token response" | the extension's hook failed or timed out, or its echo claimed reach the session does not hold; see the server log (§ 1c) |
+| consent UI: `400 invalid_request` with `reason: consent-out-of-date` | the grant, the client or the extension changed while the screen was shown: restart the flow (§ 1d) |
+| `access_denied` / `unauthorized_client` "this client is suspended" | the client was suspended (`resume <clientId>`, § 3b) |
 
 ---
 
@@ -488,3 +997,12 @@ single-use, so a reuse means either a broken client or a stolen code.
   of `oauth.consent.refused` / `invalid_client`.
 - **Keep the `oauth:` block identical across all cores** (§2) so token semantics
   are uniform deployment-wide.
+- **Treat the OAuth extension as trusted code.** It runs in the core process
+  and decides which permissions a registry client's scope maps to. The core
+  bounds what it may grant (§ 1c), but review and pin the module like any
+  other server code, and install the same version on every core.
+- **Register registry clients narrowly**: the smallest maximum scope set, an
+  explicit `--audience` list rather than `--any-audience`, https redirect URIs
+  (avoid `--allow-insecure-redirect`), and `--allow-feature` only when the app
+  needs it. Use `suspend` to stop an app quickly without losing its
+  registration.

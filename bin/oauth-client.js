@@ -7,12 +7,12 @@
  * Refer to LICENSE file
  */
 
-// OAuth2 — app-account promotion CLI (curated registration mode).
+// OAuth2 client CLI (curated registration mode): app-account promotion and
+// registry clients.
 //
 // This is the only operator-CLI path for OAuth client
 // registration. The HTTP POST /oauth2/register endpoint (RFC 7591
-// dynamic registration in `mode: open`) is intentionally deferred —
-// see the project backlog.
+// dynamic registration in `mode: open`) is intentionally deferred.
 //
 // `create` is promotion-only: the user account must already exist
 // (created via the regular /reg/users flow). The CLI exits 1 with a
@@ -987,7 +987,7 @@ function parseArgs (argv) {
 
 function printUsage (stream) {
   stream.write(
-    'OAuth2 client (app-account) management CLI\n\n' +
+    'OAuth2 client management CLI (app-account and registry clients)\n\n' +
     'Usage:\n' +
     '  node bin/oauth-client.js create <username> [--client-id <opaque-id>] --redirect-uri <uri> [more flags]\n' +
     '  node bin/oauth-client.js show <clientId>\n' +
@@ -999,7 +999,8 @@ function printUsage (stream) {
     '  node bin/oauth-client.js list-revoked-keys\n' +
     '  node bin/oauth-client.js list-keys [<clientId>]\n' +
     '  node bin/oauth-client.js rotate-secret <clientId>\n' +
-    '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise [flags]\n' +
+    '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise\n' +
+    '      (--audience <url> | --any-audience) [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n\n' +
     'Flags (create-registry; on update too, registry clients only): a client with\n' +
     'no app account; --scope is its maximum scope set in the grammar of the\n' +
@@ -1025,8 +1026,8 @@ function printUsage (stream) {
     '                            change needs --yes) the subject the app sees: public,\n' +
     '                            the user\'s stable id (an alias only when the app asks\n' +
     '                            for a pseudonym); pairwise, always an alias, one per\n' +
-    '                            user and client (refused at authorization on this core\n' +
-    '                            for now)\n' +
+    '                            user and client; an aliased session is used at its\n' +
+    '                            alias only\n' +
     '  --allow-feature <name>    (multi; also on update, "none" clears) a feature its\n' +
     '                            grants may use: webhooks, secretSharing (both forbidden\n' +
     '                            on its grants otherwise)\n' +
@@ -1035,7 +1036,7 @@ function printUsage (stream) {
     '                            Confidential clients only (a secret or a key set)\n\n' +
     'Flags (create / update):\n' +
     '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
-    '                            the account username. 4-64 chars of A-Z a-z 0-9 . _ ~ -\n' +
+    '                            the account username. 4-64 chars of A-Z a-z 0-9 . ~ -\n' +
     '                            Use it where the username must not reach the platform\n' +
     '                            store or the wire (hashed-PII deployments)\n' +
     '  --redirect-uri <uri>      (multi-valued; at least one required on create)\n' +
@@ -1047,7 +1048,7 @@ function printUsage (stream) {
     '  --logo-uri <uri>          logo_uri shown on the consent screen\n' +
     '  --application-type web|native\n' +
     '  --jwks-file <path>        inline public JWK Set (private_key_jwt client auth);\n' +
-    '                            EC P-256 (ES256) PUBLIC keys only — a key with a\n' +
+    '                            EC P-256 (ES256) PUBLIC keys only: a key with a\n' +
     '                            private "d" member is rejected\n' +
     '  --jwks-json <json>        same, as an inline JSON string (mutually exclusive\n' +
     '                            with --jwks-file)\n' +
@@ -1060,7 +1061,7 @@ function printUsage (stream) {
     'Notes:\n' +
     '  - create requires the user to ALREADY exist on THIS core (promotion-only;\n' +
     '    run it on the account\'s home core).\n' +
-    '  - revoke requires --yes (operator footgun protection;).\n' +
+    '  - revoke requires --yes (operator footgun protection).\n' +
     '  - create, create-registry and update refuse an unknown flag.\n' +
     '  - rotate-secret is refused on a client whose auth method uses no secret\n' +
     '    (none, private_key_jwt): switch it with update --auth-method.\n' +
