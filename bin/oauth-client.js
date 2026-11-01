@@ -987,7 +987,7 @@ function parseArgs (argv) {
 
 function printUsage (stream) {
   stream.write(
-    'OAuth2 client (app-account) management CLI\n\n' +
+    'OAuth2 client management CLI (app-account and registry clients)\n\n' +
     'Usage:\n' +
     '  node bin/oauth-client.js create <username> [--client-id <opaque-id>] --redirect-uri <uri> [more flags]\n' +
     '  node bin/oauth-client.js show <clientId>\n' +
@@ -1047,7 +1047,7 @@ function printUsage (stream) {
     '  --logo-uri <uri>          logo_uri shown on the consent screen\n' +
     '  --application-type web|native\n' +
     '  --jwks-file <path>        inline public JWK Set (private_key_jwt client auth);\n' +
-    '                            EC P-256 (ES256) PUBLIC keys only — a key with a\n' +
+    '                            EC P-256 (ES256) PUBLIC keys only: a key with a\n' +
     '                            private "d" member is rejected\n' +
     '  --jwks-json <json>        same, as an inline JSON string (mutually exclusive\n' +
     '                            with --jwks-file)\n' +
@@ -1060,7 +1060,7 @@ function printUsage (stream) {
     'Notes:\n' +
     '  - create requires the user to ALREADY exist on THIS core (promotion-only;\n' +
     '    run it on the account\'s home core).\n' +
-    '  - revoke requires --yes (operator footgun protection;).\n' +
+    '  - revoke requires --yes (operator footgun protection).\n' +
     '  - create, create-registry and update refuse an unknown flag.\n' +
     '  - rotate-secret is refused on a client whose auth method uses no secret\n' +
     '    (none, private_key_jwt): switch it with update --auth-method.\n' +

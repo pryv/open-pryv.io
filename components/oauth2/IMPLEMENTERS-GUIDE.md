@@ -26,7 +26,7 @@ This per-token path serves **app-account clients** only. Registry clients hand t
 
 A registry client's scope vocabulary comes from a module the operator installs with `customExtensions:oauthExtension` (options in `oauth:extensionOptions`, hook bound `oauth:extensionHookTimeoutMs`). The contract is the header and the types of `src/extension.ts`; the dispatch is `src/scopeGrammar.ts`; the token response is `src/responseHooks.ts`. The operator side is in [`docs/oauth2.md`](../../docs/oauth2.md) § 1c to § 3b.
 
-The module exports a factory `(host: { apiVersion, options, logger }) => { apiVersion: 1, name, scopeGrammar: { parse, echo, supported? }, tokenResponse? }`. `idTokenClaims`, `introspectionClaims` and `claimsSupported` are part of the contract (validated when present) but not called by this core yet. A factory or object that breaks the contract fails the boot.
+The module exports a factory `(host: { apiVersion, options, logger }) => { apiVersion: 1, name, scopeGrammar: { parse, echo, supported? }, tokenResponse?, idTokenClaims?, claimsSupported?, introspectionClaims? }`. `idTokenClaims(ctx)` adds claims to the id_token (code exchange with `openid` granted; a core claim, `RESERVED_KEYS.idTokenClaims`, fails the request) and `claimsSupported` feeds the OpenID discovery document; `introspectionClaims(ctx)` adds members to the introspection answer of a registry client's session (a core member, `RESERVED_KEYS.introspectionClaims`, fails it). A factory or object that breaks the contract fails the boot.
 
 `scopeGrammar.parse(scopeString, { client, purpose })` answers `{ ok: true, tokens, offer }` or `{ ok: false, description }`. `purpose` is `'max'` for the client's registered scope (its maximum scope set) and `'request'` for a request (and for the echo check below). The rules the core enforces:
 
@@ -48,7 +48,7 @@ The module exports a factory `(host: { apiVersion, options, logger }) => { apiVe
 
 Make the round trip a test on the extension's side: the echoed scope sent back to `/oauth2/authorize` should re-derive an offer equal to the session's data streams.
 
-`tokenResponse(ctx)` may add fields to the token response. `ctx.subject` is the user's internal id (never the username, not routable), `ctx.scopeTokens` the granted tokens (core tokens plus the echo), `ctx.permissions` the minted permissions. A hook that throws, times out, returns a non-object or sets a reserved key (`RESERVED_KEYS` in `src/extension.ts`) fails the request with `500 server_error` before any refresh token is stored (fail closed).
+`tokenResponse(ctx)` may add fields to the token response. `ctx.subject` is the user's internal id (never the username, not routable), `ctx.scopeTokens` the granted tokens (core tokens plus the echo), `ctx.permissions` the minted permissions. A hook (`tokenResponse`, `idTokenClaims`, `introspectionClaims`) that throws, times out, returns a non-object or sets a reserved key (`RESERVED_KEYS` in `src/extension.ts`) fails the request with `500 server_error`, before any refresh token is stored (fail closed).
 
 ## Adding a new grant type
 
