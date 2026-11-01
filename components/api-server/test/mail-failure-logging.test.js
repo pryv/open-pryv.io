@@ -380,7 +380,7 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
         });
         assert.strictEqual(res.status, 500, JSON.stringify(res.body));
         assert.match(res.body.error.message, /Sending email failed\. Please try again later or contact support\./);
-        assert.ok(!/550|Domain not found/.test(JSON.stringify(res.body)), 'the SMTP reply stays out of the answer');
+        assert.ok(!/550|Domain not found/.test(JSON.stringify(res.body.error)), 'the SMTP reply stays out of the answer');
         const senderLines = lines.filter((l) => /Sending email failed \(in-process\)/.test(l.text));
         assert.strictEqual(senderLines.length, 1, show(lines));
         assert.strictEqual(senderLines[0].level, 'warn', show(lines));
@@ -389,12 +389,15 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
       }
     });
 
-    /** A 400 naming the refused address, without the SMTP reply, logged once at warn by the sender only. */
+    /**
+     * A 400 naming the refused address, without the SMTP reply, logged once at warn by the sender only.
+     * The SMTP-reply check reads the error only: `meta.serverTime` can itself contain "550".
+     */
     function assertRecipientRejectedAnswer (res, lines, email) {
       assert.strictEqual(res.status, 400, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, 'invalid-parameters-format', JSON.stringify(res.body));
       assert.deepStrictEqual(res.body.error.data, { email, reason: 'recipient-rejected' });
-      assert.ok(!/550|Domain not found/.test(JSON.stringify(res.body)), 'the SMTP reply stays out of the answer');
+      assert.ok(!/550|Domain not found/.test(JSON.stringify(res.body.error)), 'the SMTP reply stays out of the answer');
       assertLoggedOnceAsRejected(lines);
     }
 
