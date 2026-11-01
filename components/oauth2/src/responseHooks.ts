@@ -42,8 +42,10 @@ export type RegistryGrant = {
   coreTokens: string[];
   grammarTokens: string[];
   permissions: ExtPermission[];
-  /** The id the app sees for the user (the user's stable internal id). */
+  /** The id the app sees for the user: the user's stable internal id, or the grant's alias. */
   subject: string;
+  /** Whether `subject` is the grant's alias (a pseudonymous grant). */
+  aliased: boolean;
   /** OpenID Connect `nonce` of the authorization request. */
   nonce?: string;
   /** When the consenting user signed in (seconds). */
@@ -65,11 +67,12 @@ export type RegistryResponseParts = {
  * is stored: a throwing (or timed-out) hook must leave no refresh row behind.
  */
 export async function prepareRegistryResponse (g: RegistryGrant): Promise<RegistryResponseParts> {
-  const scopeTokens: string[] = grantedScopeTokens(g.client, g.coreTokens, g.grammarTokens, g.permissions);
+  const scopeTokens: string[] = grantedScopeTokens(g.client, g.coreTokens, g.grammarTokens, g.permissions, { aliased: g.aliased });
   const ctx: HookCtx = {
     clientId: g.client.clientId,
     client: toClientView(g.client),
     subject: g.subject,
+    aliased: g.aliased,
     grantType: g.grantType,
     scopeTokens,
     permissions: g.permissions,

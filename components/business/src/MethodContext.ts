@@ -7,6 +7,8 @@
 import { createRequire } from 'node:module';
 import type { HttpHeaders } from './types/public.ts';
 import type { Mall } from 'mall/src/types.ts';
+import type { AddressedName } from './accesses/aliasAddressing.ts';
+import { accessMayBeAddressedAs } from './accesses/aliasAddressing.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const timestamp = require('unix-timestamp');
@@ -110,6 +112,20 @@ class MethodContext {
   bypassAccessCache?: boolean;
 
   /**
+   * The name the request addressed the account by, set by `init`; the
+   * access loaded from the request's credential must be usable at it (see
+   * `accesses/aliasAddressing.ts`). Null before `init`.
+   */
+  addressedName: AddressedName | null;
+
+  /**
+   * Set by a server-side caller that loads an access by its token on behalf
+   * of no request (a webhook's own access): no name was addressed, so the
+   * alias-bound addressing rule does not apply.
+   */
+  skipAddressBinding?: boolean;
+
+  /**
    * Set by the generic dispatchers while they run a call whose method id came
    * from the client: 'batch' for an inner call of callBatch, 'socket.io' for a
    * socket message. Absent on a call reached through its own HTTP route.
@@ -137,6 +153,7 @@ class MethodContext {
     this.authScheme = null;
     this.requestSignatureTarget = null;
     this.readTokenAuthenticated = false;
+    this.addressedName = null;
     // Only a string is a credential, whatever the transport handed over (an
     // array from a repeated form field, an object from a bracketed query key):
     // anything else leaves the call without a token.
@@ -210,6 +227,7 @@ class MethodContext {
     const addressedName = this.user.username;
     const resolved = await usersRepository.resolveUsername(addressedName);
     if (resolved == null) { throw errors.unknownResource('user', addressedName); }
+    this.addressedName = { name: addressedName, isCanonical: resolved.isCanonical };
     this.user = {
       id: resolved.userId,
       username: resolved.username
@@ -335,6 +353,9 @@ class MethodContext {
       // retreiveing from Db
       await this._retrieveAccess(storage, { token });
     }
+    // Before any other check: a token presented at a name it may not be used
+    // at must answer like an unknown token, not like an expired one.
+    this.checkAddressedName();
     this.checkAccessValid(this.access);
     await this.checkManagingAccessExpiry(storage);
   }
@@ -351,6 +372,30 @@ class MethodContext {
     if (access == null) return;
     const now = timestamp.now();
     if (access.expires != null && now > access.expires) { throw errors.forbidden('Access has expired.'); }
+  }
+
+  /**
+   * Alias-bound addressing (`accesses/aliasAddressing.ts`): refuses the
+   * loaded access when the request addressed the account by a name this
+   * access may not be used at. The refusal is the unknown-token answer, and
+   * the access is dropped from the context first, so neither the body nor
+   * the `Pryv-Access-Id` header tells it apart from a token of another
+   * account. No-op for a server-side load (`skipAddressBinding`). Without a
+   * recorded name (a context whose `init` did not run) it fails closed for an
+   * aliased access, which may be used at its alias only.
+   */
+  checkAddressedName () {
+    const access = this.access;
+    if (access == null || this.skipAddressBinding === true) return;
+    const addressed = this.addressedName;
+    if (addressed == null) {
+      const alias = (access as { alias?: unknown }).alias;
+      if (access.type === 'personal' || typeof alias !== 'string' || alias.length === 0) return;
+    } else if (accessMayBeAddressedAs(access, addressed)) {
+      return;
+    }
+    this.access = null;
+    throw errors.invalidAccessToken('Cannot find access from token.', 403);
   }
 
   /**
@@ -539,6 +584,7 @@ class MethodContext {
     if (this.access == null) {
       await this._retrieveAccess(storage, { id: accessId });
     }
+    this.checkAddressedName();
     this.accessToken = this.access.token;
     this.checkAccessValid(this.access);
     await this.checkManagingAccessExpiry(storage);

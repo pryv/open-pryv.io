@@ -30,6 +30,9 @@
  *   storages__<kind>__engine: the test run's storage engines; pass
  *                     `childStorageEngineEnv()` (test-helpers) so the core uses
  *                     the same engines as the test process.
+ *   OAUTH_TOY_EXTENSION: optional '1': the core serves registry OAuth
+ *                     clients with the toy extension of oauth-toy-extension.cjs
+ *                     (consent page OAUTH_CONSENT_URL when set).
  *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
  *                     runs the DNS topology (dnsLess off, sites matched by Host),
  *                     applies the same boot checks as the api-server (exit 1 on
@@ -156,10 +159,10 @@ const http = require('node:http');
     });
   }
   // OAuth registry clients: a consent URL, a short client-revoke check and
-  // (after the boot, below) a toy scope grammar where `read/<s>` reads <s>.
+  // (after the boot, below) the toy extension of oauth-toy-extension.cjs.
   const oauthToy = process.env.OAUTH_TOY_EXTENSION === '1';
   if (oauthToy) {
-    config.set('oauth:consentUrl', 'https://auth.test/oauth2-authorize');
+    config.set('oauth:consentUrl', process.env.OAUTH_CONSENT_URL || 'https://auth.test/oauth2-authorize');
     config.set('oauth:clientRevokeCheckSeconds', 1);
   }
   config.set('audit:active', false);
@@ -183,20 +186,8 @@ const http = require('node:http');
   const app = getApplication(true);
   await app.initiate();
   if (oauthToy) {
-    require('oauth2').extension.setExtension({
-      apiVersion: 1,
-      name: 'toy-multicore',
-      scopeGrammar: {
-        parse (scopeString) {
-          const tokens = [...new Set(scopeString.split(/\s+/).filter((t) => t !== ''))];
-          if (tokens.some((t) => !t.startsWith('read/'))) return { ok: false, description: 'unknown token' };
-          return { ok: true, tokens, offer: { permissions: tokens.map((t) => ({ streamId: t.slice(5), level: 'read' })) } };
-        },
-        echo ({ permissions, requestedTokens }) {
-          return requestedTokens.filter((t) => permissions.some((p) => 'read/' + p.streamId === t));
-        },
-      },
-    });
+    // `read/<s>` reads <s>; `ctx/user` and `ctx/pseudo` (see the module).
+    require('oauth2').extension.setExtension(require('./oauth-toy-extension.cjs')());
   }
 
   // Register API methods directly on the Application instance

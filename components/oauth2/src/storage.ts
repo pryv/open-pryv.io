@@ -136,9 +136,9 @@ export interface OAuthClient {
   launchTypes?: string[];
   /**
    * Registry clients: the subject the app sees for the user. `public` (the
-   * default when absent): the user's stable internal id. `pairwise` (a
-   * per-client pseudonym) is not available on this core yet: such a client
-   * is refused at /oauth2/authorize.
+   * default when absent): the user's stable internal id, or an alias when
+   * the app asks for a pseudonym. `pairwise`: always an alias, one per user
+   * and client (the alias of the user's grant for this client).
    */
   subjectType?: 'public' | 'pairwise';
   /**

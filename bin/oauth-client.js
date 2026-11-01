@@ -338,7 +338,6 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   console.log('     audiences:     ' + (anyAudience ? '(any audience)' : audiences.join(', ')));
   console.log('     subject type:  ' + describeSubjectType(subjectType));
   printDefaultForbids({ allowFeatures: allowFeatures ?? [] });
-  if (subjectType === 'pairwise') warnIfNoPseudonyms();
   if (allowInsecureRedirect) console.log('     WARN plain-http redirect URIs allowed on non-loopback hosts');
   if (secret != null) {
     console.log('     client_secret: ' + secret.plaintext);
@@ -433,13 +432,6 @@ const SUBJECT_TYPES_HELP = 'public: the subject is the user\'s stable id, an ali
 
 function describeSubjectType (subjectType) {
   return subjectType === 'pairwise' ? 'pairwise (always an alias)' : 'public (stable user id)';
-}
-
-// The single switch the core keys its pseudonym refusal off.
-function warnIfNoPseudonyms () {
-  if (require('oauth2').PSEUDONYM_SUBJECTS_AVAILABLE === true) return;
-  console.log('     WARN pseudonymous subjects are not available on this core yet: /authorize refuses this client ' +
-    'until a release that supports them');
 }
 
 // What the grants of a registry client may not do, unless allowed on the row.
@@ -684,7 +676,6 @@ async function runUpdate (platform, args, getClient, persistClient) {
   if (row !== merged) console.log('     converted the account reference to the user id');
   if (existing.kind === 'registry' && wantedSubject != null) {
     console.log('     subject type:  ' + describeSubjectType(merged.subjectType));
-    if (merged.subjectType === 'pairwise') warnIfNoPseudonyms();
   }
   if (row.tokenEndpointAuthMethod !== existing.tokenEndpointAuthMethod) {
     console.log('     auth method:   ' + row.tokenEndpointAuthMethod + ' (was ' + (existing.tokenEndpointAuthMethod ?? '(unset)') + ')');
