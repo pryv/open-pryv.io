@@ -1,12 +1,28 @@
 p Bonjour #{USERNAME},
 if TRIGGER_DATE
-  p Votre compte sera supprimé le #{DEADLINE}, dans #{DAYS_LEFT} jours.
+  if ACTION_TRANSFER
+    p Votre compte sera transféré à #{BENEFICIARY} le #{DEADLINE}, dans #{DAYS_LEFT} jours.
+  else
+    p Votre compte sera supprimé le #{DEADLINE}, dans #{DAYS_LEFT} jours.
 else if TRIGGER_INACTIVITY
-  p Votre compte sera désormais supprimé après #{INACTIVITY_DAYS} jours sans utilisation. S'il n'est pas utilisé d'ici là, il sera supprimé le #{DEADLINE}, dans #{DAYS_LEFT} jours ; chaque utilisation du compte (une connexion, une application que vous avez autorisée) repousse cette date.
+  if ACTION_TRANSFER
+    p Votre compte sera désormais transféré à #{BENEFICIARY} après #{INACTIVITY_DAYS} jours sans utilisation. S'il n'est pas utilisé d'ici là, il sera transféré le #{DEADLINE}, dans #{DAYS_LEFT} jours ; chaque utilisation du compte (une connexion, une application que vous avez autorisée) repousse cette date.
+  else
+    p Votre compte sera désormais supprimé après #{INACTIVITY_DAYS} jours sans utilisation. S'il n'est pas utilisé d'ici là, il sera supprimé le #{DEADLINE}, dans #{DAYS_LEFT} jours ; chaque utilisation du compte (une connexion, une application que vous avez autorisée) repousse cette date.
+else if ACTION_TRANSFER
+  p Aucun transfert de votre compte n'est plus prévu. Votre compte et vos données restent tels quels.
 else
   p Aucune suppression de votre compte n'est plus prévue. Votre compte et vos données restent tels quels.
 if SCHEDULED
-  p Toutes les données du compte seront alors effacées, et cela ne peut pas être annulé. Vous recevrez des rappels avant cette date.
+  if ACTION_TRANSFER
+    p #{BENEFICIARY} recevra alors un e-mail l'invitant à l'accepter et à reprendre la gestion de votre compte.
+    if FALLBACK_DELETE
+      p Si #{BENEFICIARY} ne l'accepte pas à temps, votre compte et toutes ses données seront supprimés, et cela ne pourra pas être annulé.
+    else if FALLBACK_KEEP
+      p Si #{BENEFICIARY} ne l'accepte pas à temps, votre compte restera tel quel.
+    p Vous recevrez des rappels avant cette date.
+  else
+    p Toutes les données du compte seront alors effacées, et cela ne peut pas être annulé. Vous recevrez des rappels avant cette date.
   if EXPORT_URL
     p
       | Pour garder une copie de vos données, téléchargez-les avant cette date :

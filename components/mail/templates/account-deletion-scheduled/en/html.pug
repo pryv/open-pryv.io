@@ -1,12 +1,28 @@
 p Hi #{USERNAME},
 if TRIGGER_DATE
-  p Your account is now set to be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
+  if ACTION_TRANSFER
+    p Your account is now set to be transferred to #{BENEFICIARY} on #{DEADLINE}, in #{DAYS_LEFT} days.
+  else
+    p Your account is now set to be deleted on #{DEADLINE}, in #{DAYS_LEFT} days.
 else if TRIGGER_INACTIVITY
-  p Your account is now set to be deleted after #{INACTIVITY_DAYS} days without use. If nobody uses it until then, it will be deleted on #{DEADLINE}, in #{DAYS_LEFT} days; each use of the account (signing in, an app you connected) moves that date.
+  if ACTION_TRANSFER
+    p Your account is now set to be transferred to #{BENEFICIARY} after #{INACTIVITY_DAYS} days without use. If nobody uses it until then, it will be transferred on #{DEADLINE}, in #{DAYS_LEFT} days; each use of the account (signing in, an app you connected) moves that date.
+  else
+    p Your account is now set to be deleted after #{INACTIVITY_DAYS} days without use. If nobody uses it until then, it will be deleted on #{DEADLINE}, in #{DAYS_LEFT} days; each use of the account (signing in, an app you connected) moves that date.
+else if ACTION_TRANSFER
+  p No transfer of your account is scheduled any more. Your account and your data stay as they are.
 else
   p No deletion of your account is scheduled any more. Your account and your data stay as they are.
 if SCHEDULED
-  p All the data of the account will then be erased, and this cannot be undone. You will get reminders before that date.
+  if ACTION_TRANSFER
+    p #{BENEFICIARY} will then get an email inviting them to accept it and take over the management of your account.
+    if FALLBACK_DELETE
+      p If #{BENEFICIARY} does not accept it in time, your account and all its data will be deleted, and this cannot be undone.
+    else if FALLBACK_KEEP
+      p If #{BENEFICIARY} does not accept it in time, your account stays as it is.
+    p You will get reminders before that date.
+  else
+    p All the data of the account will then be erased, and this cannot be undone. You will get reminders before that date.
   if EXPORT_URL
     p
       | To keep a copy of your data, download it before that date:

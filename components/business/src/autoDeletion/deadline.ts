@@ -145,7 +145,6 @@ export function evaluate (input: EvaluateInput): Evaluation {
     }
   };
   if (firstNoticeAt != null) next.firstNoticeAt = firstNoticeAt;
-  if (prev?.transfer != null && !restart) next.transfer = prev.transfer;
   if (prev?.blocked != null && !ENGINE_BLOCKS.includes(prev.blocked.reason) && !restart) next.blocked = prev.blocked;
 
   if (policy.mode === 'inactivity' && input.inactivityMeasurable === false) {

@@ -1,0 +1,25 @@
+if TO_BENEFICIARY
+  if BENEFICIARY_NAME
+    p Hi #{BENEFICIARY_NAME},
+  else
+    p Hi,
+  if CLAIMANT
+    p You now manage the account #{USERNAME}, through your own account #{CLAIMANT}.
+  else
+    p You now manage the account #{USERNAME}.
+  if ACCOUNT_APP_URL
+    p
+      | To reach it, sign in to your own account:
+      |
+      a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+  else
+    p To reach it, sign in to your own account on this platform.
+else
+  p Hi #{USERNAME},
+  if CLAIMANT
+    p #{CLAIMANT} (#{BENEFICIARY}) now manages your account, as you chose.
+  else
+    p #{BENEFICIARY} now manages your account, as you chose.
+  p You can still sign in with your password.
+  p If you gave a name or a date of birth to identify #{BENEFICIARY}, this information has been deleted.
+  p If this is not what you expected, sign in and contact the support of your platform.

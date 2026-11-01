@@ -1,0 +1,23 @@
+p Hi #{USERNAME},
+p The transfer of your account to #{BENEFICIARY} has started.
+if WINDOW_END
+  p An invitation to accept it was sent to #{BENEFICIARY}, who has until #{WINDOW_END} to do so.
+else
+  p An invitation to accept it was sent to #{BENEFICIARY}.
+if FALLBACK_DELETE
+  p If #{BENEFICIARY} does not accept it in time, your account and all its data will be deleted, and this cannot be undone.
+else if FALLBACK_KEEP
+  p If #{BENEFICIARY} does not accept it in time, your account stays as it is.
+if ACCOUNT_APP_URL
+  p
+    | If you still use this account and want to keep it, you can cancel the transfer on your account page:
+    |
+    a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
+else
+  p If you still use this account and want to keep it, you can cancel the transfer on your account page.
+if EXPORT_URL
+  p
+    | To keep a copy of your data, download it:
+    |
+    a(href=EXPORT_URL target="_blank" rel="noopener") #{EXPORT_URL}
+p If you did not set this, sign in, change your password right away and contact the support of your platform.

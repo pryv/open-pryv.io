@@ -1,0 +1,20 @@
+if BENEFICIARY_NAME
+  p Hi #{BENEFICIARY_NAME},
+else
+  p Hi,
+p
+  | The holder of the account #{USERNAME}
+  if OPERATOR_NAME
+    |  on #{OPERATOR_NAME}
+  |  named you as the person to take over this account.
+p This means that if the account is not used for a while, or on a date its holder chose, you will get an email inviting you to take over its management. You have nothing to do now.
+if IDENTITY_GIVEN
+  p The account holder also gave your name, your date of birth, or both. This information is stored encrypted and is only used by the operator of the platform to identify you if this email cannot reach you. The operator can read it only after the transfer has started; each reading is logged and reported to the account holder. It is deleted when the transfer ends, whether it is completed or not.
+if DECLINE_LINK
+  p
+    | If you do not want to take over this account, you can decline with this link; the account holder will then be told:
+    |
+    a(href=DECLINE_LINK target="_blank" rel="noopener") #{DECLINE_LINK}
+  p If you do not know this person, you can ignore this message or decline.
+else
+  p If you do not know this person, you can ignore this message.

@@ -115,6 +115,20 @@ const ErrorIds = {
    */
   AutoDeletionNoEmail: 'auto-deletion-no-email',
   /**
+   * Account transfer: the claim or decline link is not valid (unknown,
+   * replaced, or no transfer of this account is open). One answer for all.
+   */
+  AutoDeletionTransferInvalidLink: 'auto-deletion-transfer-invalid-link',
+  /** Account transfer: the claim window has ended. */
+  AutoDeletionTransferExpired: 'auto-deletion-transfer-expired',
+  /** Account transfer: the transfer was claimed by another account. */
+  AutoDeletionTransferClaimed: 'auto-deletion-transfer-claimed',
+  /**
+   * Account transfer: the transfer settings are not valid (`data.param`), or
+   * transfers cannot work on this platform (`data.reason`).
+   */
+  AutoDeletionTransferInvalid: 'auto-deletion-transfer-invalid',
+  /**
    * Used for removed API methods
    */
   Gone: 'removed-method',

@@ -19,7 +19,7 @@ const { seedIfEmpty } = require('../src/TemplateSeeder.ts');
 /** The template set shipped with the mail component, seeded when no
  *  `templatesRootDir` is configured. */
 const BUNDLED = path.resolve(import.meta.dirname, '../templates');
-const EXPECTED_TYPES = ['welcome-email', 'reset-password', 'verify-email', 'email-challenge', 'mfa-change', 'external-id-released', 'account-deletion-scheduled', 'account-deletion-reminder', 'account-deletion-blocked'];
+const EXPECTED_TYPES = ['welcome-email', 'reset-password', 'verify-email', 'email-challenge', 'mfa-change', 'external-id-released', 'account-deletion-scheduled', 'account-deletion-reminder', 'account-deletion-blocked', 'account-transfer-named', 'account-transfer-claim', 'account-transfer-started', 'account-transfer-cancelled', 'account-transfer-lapsed', 'account-transfer-completed'];
 
 function fakePlatformDB () {
   const rows = new Map();

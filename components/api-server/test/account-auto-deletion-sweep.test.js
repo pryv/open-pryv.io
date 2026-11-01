@@ -770,16 +770,6 @@ describe('[ADSW] account auto-deletion sweep', function () {
     assert.equal(s.lines.filter((l) => l.msg.includes('mail transport failed')).length, 1);
   });
 
-  it('[ADSW15] a transfer is never erased by the sweep, reported once', async function () {
-    const u = await freshUser();
-    await state.setSetting(u.id, onDate(T0 + 20 * DAY, { action: 'transfer', transfer: { email: 'b@acsw.example.com', notifyBeneficiary: 'atTrigger', fallback: 'delete' } }), 'test');
-    const s = await sweepFor([u]);
-    for (const d of [0, 19, 30, 31]) await s.run(T0 + d * DAY);
-    assert.ok(await exists(u));
-    assert.deepEqual(s.sent.reminder, []);
-    assert.equal(s.lines.filter((l) => l.msg.includes('transferred')).length, 1);
-  });
-
   it('[ADSW16] a use of the account between the evaluation and the erasure wins', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');

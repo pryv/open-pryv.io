@@ -15,6 +15,9 @@
  *    accounts with no policy are never written, idle passes write nothing.
  *  - a transfer beneficiary's **identity** (name, date of birth): an account
  *    field holding an encrypted envelope, erased with every version.
+ *  - the **transfer record**: a second key-value row, the life of one transfer
+ *    (beneficiary told, claim window, claim), apart from the schedule so a
+ *    change of schedule never loses it. Kept once closed, as the record.
  */
 
 import { deriveKey, encryptJson, decryptJson, KEY_BYTES } from '../acme/AtRestEncryption.ts';
@@ -24,11 +27,68 @@ export const IDENTITY_FIELD = 'autoDeletionTransferIdentity';
 /** `:_` prefixed: never the id of a configured data store. */
 export const BOOKKEEPING_STORE_ID = ':_autoDeletion';
 const BOOKKEEPING_KEY = 'state';
+const TRANSFER_KEY = 'transfer';
+const FAILED_CLAIMS_KEY = 'transferFailedClaims';
 const IDENTITY_KEY_PURPOSE = 'account-auto-deletion-identity-v1';
+const LINK_KEY_PURPOSE = 'account-transfer-link-v1';
 const DAY_SECONDS = 24 * 60 * 60;
 
 export type Mode = 'never' | 'date' | 'inactivity';
 export type Action = 'delete' | 'transfer';
+
+/** What the holder chose for a transfer (name and date of birth are kept apart, encrypted). */
+export type TransferSetting = {
+  email: string;
+  notifyBeneficiary: 'atSetup' | 'atTrigger';
+  fallback: 'delete' | 'keep';
+  /** A name or a date of birth was given (they are in the identity field). */
+  identityGiven?: boolean;
+};
+
+/**
+ * The life of one transfer. Links (decline, claim) are derived from a salt and
+ * the core's key, never stored: re-sent links are the same, and a database dump
+ * holds none.
+ *  - `named`: the beneficiary was told at setup (or is to be: `namedAt` unset);
+ *  - `open`: the claim window is open;
+ *  - `claimed`: bound to the first account that claimed it, the delegation
+ *    invite is out;
+ *  - closed: `completed` (the claimant controls the account), `declined`,
+ *    `cancelled` (owner change, or account use before a claim), `lapsed`
+ *    (window ended, `keep`), `fallback-delete` (window ended, account erased).
+ */
+export type TransferStatus = 'named' | 'open' | 'claimed' | 'completed' | 'declined' | 'cancelled' | 'lapsed' | 'fallback-delete';
+
+export type TransferRecord = {
+  email: string;
+  status: TransferStatus;
+  createdAt: number;
+  declineSalt?: string;
+  namedAt?: number;
+  openedAt?: number;
+  /** End of the claim window. */
+  endsAt?: number;
+  claimSalt?: string;
+  /** Send times of the claim mail (the first, then the re-sends). */
+  claimMailsSent?: number[];
+  /** The owner was told the window opened. */
+  ownerToldAt?: number;
+  claimedBy?: { username: string; hostSlug?: string; relId?: string; at: number };
+  closedAt?: number;
+  /** Why it closed, when not obvious from the status (e.g. `owner-activity`). */
+  closedReason?: string;
+};
+
+/**
+ * Claims with a wrong link, for the owner's view and the logs, in their own
+ * row (an anonymous caller's write must never touch the transfer record). They
+ * refuse nothing: a valid link always proceeds. Counted for the claim link of
+ * `claimSalt` (a new transfer starts at zero).
+ */
+export type FailedClaims = { claimSalt: string; count: number; lastAt: number };
+
+export const OPEN_TRANSFER: readonly TransferStatus[] = Object.freeze(['named', 'open', 'claimed']);
+export const isOpenTransfer = (r: TransferRecord | null | undefined): r is TransferRecord => r != null && OPEN_TRANSFER.includes(r.status);
 
 export type Setting = {
   mode: Mode;
@@ -36,7 +96,7 @@ export type Setting = {
   date?: number;
   inactivityDays?: number;
   action: Action;
-  transfer?: { email: string; notifyBeneficiary: 'atSetup' | 'atTrigger'; fallback: 'delete' | 'keep' };
+  transfer?: TransferSetting;
   acknowledgedNoReminders?: boolean;
   updatedAt: number;
 };
@@ -56,7 +116,6 @@ export type Bookkeeping = {
   reminders: { deadlineDay: number | null; sent: Array<{ leadDays: number; at: number; skipped?: boolean }> };
   /** `notifiedAt`: the holder was mailed about this block (once); `guard`: the deletion guard that refused. */
   blocked?: { reason: string; at: number; notifiedAt?: number; guard?: string };
-  transfer?: Record<string, unknown>;
 };
 
 export type Identity = { name?: string; dateOfBirth?: string };
@@ -88,6 +147,20 @@ export function resolveIdentityKey (secretsKey: string | null | undefined, admin
   }
   if (typeof adminAccessKey === 'string' && adminAccessKey.length > 0) {
     return deriveKey(adminAccessKey, IDENTITY_KEY_PURPOSE);
+  }
+  return null;
+}
+
+/**
+ * Key the transfer links are derived from: from the same source as the
+ * identity key, for another purpose. Null when no source is available.
+ */
+export function resolveLinkKey (secretsKey: string | null | undefined, adminAccessKey: unknown): Buffer | null {
+  if (typeof secretsKey === 'string' && secretsKey.length > 0) {
+    return deriveKey(Buffer.from(secretsKey, 'base64'), LINK_KEY_PURPOSE);
+  }
+  if (typeof adminAccessKey === 'string' && adminAccessKey.length > 0) {
+    return deriveKey(adminAccessKey, LINK_KEY_PURPOSE);
   }
   return null;
 }
@@ -154,6 +227,28 @@ export function createAutoDeletionState (storage: AccountStorage) {
     /** Removes the identity and every earlier version of it. */
     async eraseIdentity (userId: string): Promise<void> {
       await storage.deleteAccountField(userId, IDENTITY_FIELD);
+    },
+
+    async getTransfer (userId: string): Promise<TransferRecord | null> {
+      return (await kv.get(userId, TRANSFER_KEY) as TransferRecord | null | undefined) ?? null;
+    },
+
+    /** null removes the record. */
+    async saveTransfer (userId: string, record: TransferRecord | null): Promise<void> {
+      await kv.set(userId, TRANSFER_KEY, record);
+    },
+
+    /** The wrong-link count of the transfer whose claim link has `claimSalt`, or null. */
+    async getFailedClaims (userId: string, claimSalt: string | undefined): Promise<FailedClaims | null> {
+      const v = await kv.get(userId, FAILED_CLAIMS_KEY) as FailedClaims | null | undefined;
+      return v != null && claimSalt != null && v.claimSalt === claimSalt ? v : null;
+    },
+
+    async countFailedClaim (userId: string, claimSalt: string, at: number): Promise<FailedClaims> {
+      const prev = await this.getFailedClaims(userId, claimSalt);
+      const next: FailedClaims = { claimSalt, count: (prev?.count ?? 0) + 1, lastAt: at };
+      await kv.set(userId, FAILED_CLAIMS_KEY, next);
+      return next;
     }
   };
 }

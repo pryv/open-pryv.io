@@ -1,0 +1,37 @@
+if BENEFICIARY_NAME
+  p Bonjour #{BENEFICIARY_NAME},
+else
+  p Bonjour,
+p
+  | Le titulaire du compte #{USERNAME}
+  if OPERATOR_NAME
+    |  sur #{OPERATOR_NAME}
+  |  a choisi de vous confier la gestion de ce compte. Le transfert a commencé et attend votre réponse.
+if CLAIM_LINK
+  if WINDOW_END
+    p
+      | Pour accepter, suivez ce lien avant le #{WINDOW_END} :
+      |
+      a(href=CLAIM_LINK target="_blank" rel="noopener") #{CLAIM_LINK}
+  else
+    p
+      | Pour accepter, suivez ce lien :
+      |
+      a(href=CLAIM_LINK target="_blank" rel="noopener") #{CLAIM_LINK}
+else if WINDOW_END
+  p Pour accepter, contactez le support de cette plateforme avant le #{WINDOW_END}.
+else
+  p Pour accepter, contactez le support de cette plateforme.
+p Vous vous connecterez avec votre propre compte sur cette plateforme, ou en créerez un, puis vous gérerez le compte #{USERNAME}. Vous ne recevez pas le mot de passe de son titulaire : vous accédez au compte avec votre propre connexion.
+if IDENTITY_GIVEN
+  p Le titulaire du compte a aussi indiqué votre nom, votre date de naissance, ou les deux. Ces informations sont conservées chiffrées et servent uniquement à l'opérateur de la plateforme pour vous identifier si cet e-mail ne peut pas vous joindre. L'opérateur ne peut les lire qu'une fois le transfert commencé ; chaque lecture est enregistrée et signalée au titulaire du compte. Elles sont supprimées à la fin du transfert, qu'il aboutisse ou non.
+if DECLINE_LINK
+  p
+    | Si vous ne souhaitez pas reprendre ce compte, vous pouvez refuser avec ce lien ; le titulaire du compte en sera informé :
+    |
+    a(href=DECLINE_LINK target="_blank" rel="noopener") #{DECLINE_LINK}
+if FALLBACK_DELETE
+  p Si vous n'acceptez pas à temps, ou si vous refusez, le compte et toutes ses données seront supprimés.
+else if FALLBACK_KEEP
+  p Si vous n'acceptez pas à temps, ou si vous refusez, le compte restera tel quel.
+p Si vous ne connaissez pas cette personne, vous pouvez ignorer ce message.
