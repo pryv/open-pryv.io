@@ -20,7 +20,9 @@
  *   - the consent records and the session minted at /accept
  *     (`oauth2/grants.ts`);
  *   - the storage-direct session paths used at /token (`oauth2/sessions.ts`);
- *   - the refresh-chain collapse on reuse (`oauth2/revoke.ts`);
+ *   - the refresh-chain collapse on reuse, and the session deletion behind
+ *     the client's own revocation of a token (`oauth2/revoke.ts`);
+ *   - the session re-read behind token introspection (`oauth2/introspect.ts`);
  *   - the operator's OAuth extension, loaded here at mount.
  *
  * If `service:api`, the state key (`oauth:stateKey`, or `auth:adminAccessKey`
@@ -44,6 +46,7 @@ const { ExtensionLoader } = require('utils').extension;
 const { createSessions } = require('./oauth2/sessions.ts');
 const { createGrants } = require('./oauth2/grants.ts');
 const { createRevoke } = require('./oauth2/revoke.ts');
+const { createIntrospect } = require('./oauth2/introspect.ts');
 
 export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void {
   const config = app.config;
@@ -148,7 +151,8 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   const env: GlueEnv = { config, storageLayer, logger, apiCall };
   const sessions = createSessions(env);
   const grants = createGrants(env, sessions);
-  const { revokeChain } = createRevoke(env);
+  const { revokeChain, revokeSession } = createRevoke(env, sessions);
+  const { introspectAccess, coreUrlFor } = createIntrospect(env, sessions);
 
   oauth2.registerRoutes(expressApp, {
     config,
@@ -159,6 +163,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     mintClientAccess: sessions.mintClientAccess,
     resolveAccountUserId: sessions.resolveAccountUserId,
     revokeChain,
+    revokeSession,
+    retireSession: sessions.retireSession,
+    introspectAccess,
+    coreUrlFor,
     bindAccessDpop: sessions.bindAccessDpop,
     resolveAccess: sessions.resolveAccess,
     revokeAccessLocal: sessions.revokeAccessLocal,

@@ -72,11 +72,18 @@ export function composeShownOffer (
   current: CurrentGrant | null,
   client: OAuthClient
 ): Composition {
+  // A feature the request asks to allow that this client's grants forbid by
+  // default is shown as the forbid it will be (locked), not as allowed.
+  const defaults = new Set<string>(defaultForbiddenFeatures(client));
+  const asShown = (p: ExtPermission): ExtPermission =>
+    (isFeaturePermission(p) && p.setting !== 'forbidden' && defaults.has(p.feature)
+      ? { feature: p.feature, setting: 'forbidden', mandatory: true }
+      : { ...p });
   const requestedPermissions = requested.offer.permissions;
   let permissions: ExtPermission[];
   let subjectChange: SubjectChange | null = null;
   if (current == null) {
-    permissions = requestedPermissions.map((p) => ({ ...p }));
+    permissions = requestedPermissions.map(asShown);
   } else {
     const from = subjectModeOf(current.aliased);
     const to = subjectModeOf(requested.offer.randomAlias === true);
@@ -119,7 +126,7 @@ export function composeShownOffer (
     for (const f of requestedFeatures) {
       const out: ExtPermission = currentForbids.has(f.feature)
         ? { feature: f.feature, setting: 'forbidden', mandatory: true }
-        : { ...f };
+        : asShown(f);
       // A held entry opens ticked: never opt-in.
       if (currentFeatureNames.has(f.feature)) {
         out.currentlyGranted = true;
@@ -129,8 +136,7 @@ export function composeShownOffer (
       permissions.push(out);
     }
     // The grant's own restrictions stay visible (locked), except the core's
-    // default forbids, which are never shown.
-    const defaults = new Set<string>(defaultForbiddenFeatures(client));
+    // default forbids, which are never shown (unless the request names them).
     const requestedNames = new Set<string>(requestedFeatures.map((p) => p.feature));
     for (const feature of currentForbids) {
       if (requestedNames.has(feature) || defaults.has(feature)) continue;

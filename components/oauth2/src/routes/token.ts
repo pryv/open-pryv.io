@@ -23,7 +23,7 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
 import { handleAuthorizationCode } from '../grants/authorization_code.ts';
 import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver, GrantSubjectResolver } from '../grants/authorization_code.ts';
 import { handleRefreshToken } from '../grants/refresh_token.ts';
-import type { MintRefreshedAccess } from '../grants/refresh_token.ts';
+import type { MintRefreshedAccess, RetireSession } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
 import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
 import { externalRequestUri } from '../externalUri.ts';
@@ -56,6 +56,8 @@ export type TokenDeps = {
   revokeChain?: (params: {
     userId: string; username: string; clientId: string; dataGrantAccessId?: string;
   }) => Promise<void>;
+  /** Optional: retire the session a refresh rotation replaces (refresh_token grant). */
+  retireSession?: RetireSession;
   /** Required for authorization_code: read the pre-minted access back by id. */
   resolveAccess?: AuthCodeAccessResolver;
   /** authorization_code: delete an orphaned pre-minted access locally. */
@@ -164,6 +166,7 @@ export function handleToken (deps: TokenDeps) {
             platform: deps.platform,
             mintRefreshedAccess: deps.mintRefreshedAccess,
             ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
+            ...(deps.retireSession != null ? { retireSession: deps.retireSession } : {}),
             ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
             resolveUsername: deps.resolveUsername,
           },

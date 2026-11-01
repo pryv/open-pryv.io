@@ -66,6 +66,15 @@ describe('[CVOA] OAuth boot warnings', () => {
     assert.deepEqual(oauthWarnings({ oauth: defaults.oauth }), []);
   });
 
+  it('[CVOA6] a refresh retire grace below the reuse grace is reported; equal or above is silent', () => {
+    const w = oauthWarnings({ oauth: { refreshRetireGraceSeconds: 5, refreshReuseGraceSeconds: 10 } });
+    assert.equal(w.length, 1, JSON.stringify(w));
+    assert.match(w[0], /'oauth\.refreshRetireGraceSeconds' \(5\) is below 'oauth\.refreshReuseGraceSeconds' \(10\)/);
+    assert.deepEqual(oauthWarnings({ oauth: { refreshRetireGraceSeconds: 10, refreshReuseGraceSeconds: 10 } }), []);
+    // Only the reuse grace set, above the retire default (60).
+    assert.equal(oauthWarnings({ oauth: { refreshReuseGraceSeconds: 120 } }).length, 1);
+  });
+
   it('[CVOA5] a set state key that is a placeholder, an unexpanded reference or a stand-in refuses the boot; empty or random passes', () => {
     const problemsFor = (stateKey) => { const p = []; checkOptionalSecrets(config({ oauth: { stateKey } }), p); return p; };
     for (const stateKey of ['REPLACE_ME', '$' + '{OAUTH_STATE_KEY}', 'changeme', 'override me', 42]) {

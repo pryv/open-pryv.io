@@ -71,6 +71,7 @@ const { generateToken } = require('../secureToken.ts');
 const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
+const { grantedScopeTokens } = require('../scopeGrammar.ts');
 const { indexSession } = require('../sessionIndex.ts');
 const { audit } = require('../audit.ts');
 const { logServerError, logServerWarning } = require('../serverLog.ts');
@@ -146,7 +147,10 @@ export type CreateAccess = (params: {
   accessToken: string;
   apiEndpoint: string;
   dataGrantAccessId?: string;
+  /** The chain's consent (what the code and refresh rows carry). */
   permissions?: Array<Record<string, unknown>>;
+  /** What the minted session row stores, without its selfRevoke override (the scope echo input). */
+  sessionPermissions?: Array<Record<string, unknown>>;
 }>;
 
 /**
@@ -476,6 +480,20 @@ export function handleAccept (deps: AcceptDeps) {
       ...(payload.audience != null ? { audience: payload.audience } : {}),
     });
 
+    // A registry client: the scope the consent actually granted (core tokens
+    // allowed for the client plus the grammar's echo over the granted
+    // permissions), not the request. An echo failure here only costs the
+    // record its precision: the exchange recomputes it and refuses then.
+    let grantedTokens: string[] = granted;
+    if (synthesised != null) {
+      try {
+        grantedTokens = grantedScopeTokens(registryClient!, synthesised.coreTokens, synthesised.grammarTokens,
+          access.sessionPermissions ?? access.permissions ?? grantedPermissions);
+      } catch (err: unknown) {
+        logServerError('accept: granted scope of a registry consent could not be computed (the request is recorded)', err);
+      }
+    }
+
     // Mint code + persist with the access id so the grant can return the
     // access after PKCE verification (user is gone by then). The token is
     // NOT stored: the platform store is replicated to every core, so the
@@ -488,7 +506,7 @@ export function handleAccept (deps: AcceptDeps) {
       codeChallenge: payload.codeChallenge,
       codeChallengeMethod: payload.codeChallengeMethod,
       userId: session.userId,
-      scope: granted,
+      scope: grantedTokens,
       expiresAt: codeExpiresAt,
       accessId: access.accessId,
       coreId: String(deps.config.get('core:id') ?? 'single'),
@@ -515,7 +533,7 @@ export function handleAccept (deps: AcceptDeps) {
       clientId: payload.clientId,
       userId: session.userId,
       requestedScope: payload.scope,
-      grantedScope: granted,
+      grantedScope: grantedTokens,
       grantedPermissions,
       accessId: access.accessId,
       ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),

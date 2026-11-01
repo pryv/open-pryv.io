@@ -911,7 +911,9 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(parseCalls, afterAuthorize + 1);
       const acc = await accept(acceptDeps(deps), signed, [{ streamId: 'a', level: 'read' }]);
       assert.equal(acc.statusCode, 200, acc.raw);
-      assert.equal(parseCalls, afterAuthorize + 1);
+      // The offer is not re-derived; the one more parse is the coverage check
+      // of the granted scope recorded for the consent (memoised from then on).
+      assert.equal(parseCalls, afterAuthorize + 2);
       // Bounded: entries beyond the bound are dropped, oldest first.
       assert.equal(offerRoute.OFFER_CACHE_SIZE, 1000);
     });
@@ -928,14 +930,16 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       }
       assert.equal(calls.length, 0);
     });
-    it('[OXO09] /accept writes the session index row: no token, no username', async () => {
+    it('[OXO09] /accept writes the session index row, the exchange names its refresh token: no token, no username', async () => {
       const platform = fakePlatform(); await seed(platform);
-      await flow({ platform, config: fakeConfig() });
+      const f = await flow({ platform, config: fakeConfig() });
       const row = platform._state.get('oauth-at/' + hashSecret('session-token-1'));
       assert.ok(row != null);
-      assert.deepEqual(Object.keys(row.value).sort(), ['accessId', 'audience', 'clientId', 'coreId', 'coreTokens', 'dataGrantAccessId', 'expiresAt', 'grammarTokens', 'userId']);
+      assert.deepEqual(Object.keys(row.value).sort(), ['accessId', 'audience', 'clientId', 'coreId', 'coreTokens', 'dataGrantAccessId', 'expiresAt', 'grammarTokens', 'refreshTokenHash', 'userId']);
+      assert.equal(row.value.refreshTokenHash, hashSecret(f.token.body.refresh_token));
       const json = JSON.stringify(row.value);
       assert.ok(!json.includes('session-token-1'));
+      assert.ok(!json.includes(f.token.body.refresh_token));
       assert.ok(!json.includes('"alice"'));
     });
   });
@@ -1360,7 +1364,23 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(first.statusCode, 200, first.raw);
       assert.equal(decodeJwt(first.body.id_token).payload.nonce, 'n-race');
       const revoked = [];
-      const second = await exchange(tokenDeps(platform, config, { revokeAccessLocal: async (p) => { revoked.push(p.accessId); } }), codes[1]);
+      // The audit rows the second exchange emits (debug hook, before the config gate).
+      const audited = [];
+      const debug = console.debug;
+      process.env.OAUTH_AUDIT_DEBUG = '1';
+      console.debug = (tag, event, payload) => { if (tag === '[oauth.audit]') audited.push({ event, payload }); };
+      let second;
+      try {
+        second = await exchange(tokenDeps(platform, config, { revokeAccessLocal: async (p) => { revoked.push(p.accessId); } }), codes[1]);
+      } finally {
+        console.debug = debug;
+        delete process.env.OAUTH_AUDIT_DEBUG;
+      }
+      const nonceRows = audited.filter((r) => r.event === 'oauth.nonce.reused');
+      assert.equal(nonceRows.length, 1, JSON.stringify(audited));
+      assert.equal(nonceRows[0].payload.clientId, REGISTRY_CLIENT.clientId);
+      assert.ok(!JSON.stringify(nonceRows[0].payload).includes(codes[1]), 'no code in the row');
+      assert.ok(!JSON.stringify(nonceRows[0].payload).includes('n-race'), 'no nonce in the row');
       assert.equal(second.statusCode, 400, second.raw);
       assert.deepEqual([second.body.error, second.body.error_description], ['invalid_grant', 'nonce already used']);
       assert.deepEqual(revoked, ['session-1']);

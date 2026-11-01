@@ -23,6 +23,46 @@ Once enabled, each core exposes:
 | `POST /oauth2/token` | Token endpoint — code exchange, refresh, client credentials |
 | `GET /.well-known/openid-configuration` | OpenID Connect discovery (404 while `oauth.signingKeys` is empty) |
 | `GET /oauth2/jwks` | JWK Set of the id_token signing keys, public members only (404 while `oauth.signingKeys` is empty) |
+| `POST /oauth2/introspect` | RFC 7662 token introspection, for resource servers (confidential clients registered with `--can-introspect`) |
+| `POST /oauth2/revoke` | RFC 7009 token revocation, a client revoking its own access or refresh token |
+
+**Introspection.** The caller authenticates as at the token endpoint (HTTP
+Basic, `client_secret_post` or `private_key_jwt`) and must be confidential,
+registered with `--can-introspect` and not suspended; anyone else gets one
+uniform `401 invalid_client`. Any core answers for any OAuth session token: a
+session living on another core answers `421 { "error": "wrong_core",
+"coreUrl": "<home core>" }` (ask there); the home core re-reads the session and
+answers `{ "active": false }` when it is deleted, expired, its consent grant is
+gone or its client is revoked, suspended or gone. An active answer carries the
+RFC members (`scope`, for a registry client's session: the same scope answer as
+the token endpoint, recomputed from the session as it stands; omitted for an
+app-account session; `client_id`, `exp`, `iat`, `sub`, `iss`,
+`token_type`, `aud`, `cnf` for DPoP-bound sessions) and two extension members,
+never present in a token response: `api_base` (the account's API base URL, no
+credential in it) and, for a registry client's session, `permissions`
+(`[{ "streamId", "level" }]`, the stream permissions the session holds now, as
+the core enforces them). The extension's `introspectionClaims` hook may add
+members of its own (not the reserved ones).
+
+**Revocation.** The client authenticates as at the token endpoint (a public
+client names itself with `client_id`); `token_type_hint` is a hint only.
+Revoking either token of a refresh chain ends that chain (its session and its
+refresh token): revoking an access token deletes its session, which also ends
+its refresh chain; revoking a refresh token ends it and deletes the session it
+currently backs. The user's consent grant and the client's other chains (other
+devices or launches) stay, so a sign-out on one device logs out nowhere else
+and asks for no new consent. A refresh token issued before refresh tokens named
+their session ends alone (its session lives out its lifetime). The consent
+itself is withdrawn only by the user, or by the server on a detected
+refresh-token reuse. An unknown token, another client's token or one already
+ended answers `200` (no oracle); a token whose session or chain lives on
+another core answers `421` with that core's URL.
+
+**Refresh chains.** A refresh retires the access token it replaces: the previous
+session of the chain expires `oauth.refreshRetireGraceSeconds` (default 60)
+after the refresh. Deleting an OAuth session (from the account, by a grant
+change that leaves it no reach, by a revocation) ends its refresh chain; a
+replay of a token ended that way is refused without being treated as theft.
 
 The discovery document advertises:
 
@@ -35,17 +75,25 @@ The discovery document advertises:
   "response_types_supported": ["code"],
   "response_modes_supported": ["query"],
   "grant_types_supported": ["authorization_code"],
-  "token_endpoint_auth_methods_supported": ["client_secret_basic", "private_key_jwt", "none"],
+  "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
   "token_endpoint_auth_signing_alg_values_supported": ["ES256"],
   "code_challenge_methods_supported": ["S256"],
   "authorization_response_iss_parameter_supported": true,
-  "dpop_signing_alg_values_supported": ["ES256"]
+  "dpop_signing_alg_values_supported": ["ES256"],
+  "introspection_endpoint": "https://<deployment-base>/oauth2/introspect",
+  "introspection_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
+  "revocation_endpoint": "https://<deployment-base>/oauth2/revoke",
+  "revocation_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"]
 }
 ```
 
-`grant_types_supported` reflects `oauth.grantTypesSupported`.
+`grant_types_supported` reflects `oauth.grantTypesSupported`. The
+introspection and revocation members appear only when those endpoints are
+mounted (with the authorization-code flow). A client with a secret may send it
+as HTTP Basic (`client_secret_basic`) or in the form body (`client_secret_post`).
 `private_key_jwt` is RFC 7523 client authentication with an ES256 assertion
-(`aud` = the issuer or the token-endpoint URL). `dpop_signing_alg_values_supported`
+(`aud` = the issuer or the token-endpoint URL; `/oauth2/introspect` and
+`/oauth2/revoke` also accept their own URL as `aud`). `dpop_signing_alg_values_supported`
 means a client that sends an RFC 9449 DPoP proof to `/oauth2/token` receives a
 sender-constrained `DPoP` token instead of a `Bearer` one.
 
@@ -257,6 +305,9 @@ A configuration that still sets the key gets a boot warning; remove it.
 `accessTokenTTL` is short by design; clients renew via the refresh token.
 `refreshTokenTTL` is a **sliding** window (each refresh resets it), bounded by
 `refreshTokenAbsoluteTTL` (a hard cap regardless of activity).
+`refreshRetireGraceSeconds` (default 60, clamped to `[0, accessTokenTTL]`) is how
+long the access token a refresh replaces keeps working; keep it at or above
+`refreshReuseGraceSeconds`.
 
 ### ⚑ Per-deployment config agreement (multi-core)
 
@@ -396,10 +447,12 @@ Collect these for security monitoring and incident response.
 | `oauth.consent.refused` | user declined the authorization request |
 | `oauth.code.exchanged` | authorization code successfully exchanged for tokens |
 | `oauth.code.reused` | an already-consumed authorization code was presented again (attack signal) |
+| `oauth.nonce.reused` | an OpenID Connect nonce already used by the client came back at a code exchange (refused; the code by its hash, never the nonce) |
 | `oauth.token.issued.authorization_code` | access token issued via the authorization-code grant |
 | `oauth.token.issued.client_credentials` | access token issued via the client-credentials grant |
 | `oauth.token.refreshed` | access token renewed via the refresh grant |
-| `oauth.token.revoked` | a token was revoked |
+| `oauth.token.revoked` | a token was revoked (reuse detected, consent withdrawn, revoked by its client at `/oauth2/revoke`, or its chain ended while a refresh was in flight) |
+| `oauth.token.introspected` | a resource server introspected a token (caller, `active`; never the token; syslog only) |
 
 `oauth.code.reused` in particular should page: per RFC 6749 a code is
 single-use, so a reuse means either a broken client or a stolen code.

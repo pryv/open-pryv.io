@@ -9,14 +9,21 @@
  * OAuth2 — `grant_type=refresh_token` handler.
  *
  * Exchange flow:
- *   1. Load the refresh row (key: `oauth-rt/<coreId>/<sha256(token)>`).
- *      `getAccessState` lazy-expires past `min(expiresAt, absoluteExpiresAt)`.
- *   2. Consume the row atomically (single-use; rotation always on). If the
- *      token no longer resolves, a consumed-marker lookup distinguishes genuine
- *      reuse (→ `oauth.token.reuse_detected` + chain revoke past the grace
- *      window) from expired/never-issued (→ `oauth.code.reused`). Both return
- *      an identical `invalid_grant` so the two are not distinguishable on the wire.
- *   3. Verify `client_id` matches the row's clientId.
+ *   1. Authenticate the client (Basic / `client_id` consistency, secret or
+ *      assertion, not suspended) and check, on a NON-consuming read of the
+ *      row, that the token was issued to it. None of these refusals consumes
+ *      the token: a presenter holding only a leaked refresh token cannot burn
+ *      it (which would make the legitimate client's next refresh a "reuse"
+ *      and end the user's grant).
+ *   2. Consume the row atomically (single-use; rotation always on; key
+ *      `oauth-rt/<coreId>/<sha256(token)>`, lazy-expired past
+ *      `min(expiresAt, absoluteExpiresAt)`). If the token no longer resolves,
+ *      a consumed-marker lookup distinguishes genuine reuse (→
+ *      `oauth.token.reuse_detected` + chain revoke past the grace window)
+ *      from expired/never-issued (→ `oauth.code.reused`). Both return an
+ *      identical `invalid_grant` so the two are not distinguishable on the wire.
+ *   3. Re-verify `client_id` against the consumed row (a peek/consume
+ *      interleaving); a mismatch then ends the token.
  *   4. Mint a NEW app access under the same user/scope/client via the
  *      injected `mintRefreshedAccess` callback. The grant runs without
  *      a user context (the user is gone by refresh time), so the host
@@ -35,6 +42,23 @@
  * in a follow-up; for now the row simply isn't there and `invalid_grant`
  * is returned, denying the attacker the new tokens but leaving the
  * legitimately rotated chain intact.
+ *
+ * A chain ended while its rotation is in flight (the session deleted, or the
+ * token revoked, between the consume and the response):
+ *   - after the consumed marker is written, the end turns the marker
+ *     `revoked`; the rotation re-reads it once its new rows are durable and,
+ *     if so, ends what it just minted and answers `invalid_grant`;
+ *   - between the consume and the marker write, the end finds neither row
+ *     nor marker and does nothing: the rotation completes (known residual,
+ *     a window of one write; a second deletion of the new session ends it);
+ *   - a failed rotation never restores a token ended meanwhile; restoring
+ *     re-checks the marker after the write, and a presenter consuming the
+ *     restored row in the microseconds between the write and the re-check
+ *     is a known residual (it would need the marker read before every mint).
+ * When the marker write itself fails (`consumedAt` null), reuse detection is
+ * lost for that token, a later server failure cannot restore the row (the
+ * client must re-authorize), and a final refusal ends nothing more (its
+ * replay is then classified "unknown", the probe signal).
  */
 
 import { createRequire } from 'node:module';
@@ -111,12 +135,24 @@ export type RevokeChain = (params: {
   dataGrantAccessId?: string;
 }) => Promise<void>;
 
+/**
+ * Retire the session a chain backed until this rotation: it expires shortly
+ * (`oauth:refreshRetireGraceSeconds`) instead of living out its own lifetime.
+ * Storage-direct, wired in the api-server layer. Resolves to whether a live
+ * session was retired.
+ */
+export type RetireSession = (params: {
+  userId: string; username: string; accessId: string; clientId: string;
+}) => Promise<boolean>;
+
 export type RefreshTokenDeps = {
   config: { get (key: string): unknown };
   platform: PlatformDB;
   mintRefreshedAccess: MintRefreshedAccess;
   /** Optional: absent → reuse is detected + audited but the chain is not revoked. */
   revokeChain?: RevokeChain;
+  /** Optional: absent → the replaced session lives out its own lifetime. */
+  retireSession?: RetireSession;
   /**
    * Canonical username for a user id, from THIS core's local users index;
    * null when the user is no longer on this core. Refresh rows and markers
@@ -170,13 +206,44 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'invalid_request', description: 'client_id is required' };
   }
 
-  // A suspended client is refused BEFORE the row is consumed: suspension is
-  // reversible (`resume`), and a refusal that consumed the row would turn the
-  // app's retry after the resume into a reuse, which ends the user's grant.
-  // Nothing is learned that the client does not already know.
-  const presentedClient = await getClient(deps.platform, params.client_id);
-  if (presentedClient?.status === 'suspended') {
+  // Client authentication and the token's client binding run BEFORE the row
+  // is consumed (RFC 6749 § 10.4: no side effect for a presenter the token is
+  // not bound to). A refusal that consumed the row would let anyone holding
+  // only a leaked refresh token burn it, and the legitimate client's next
+  // refresh would then be a "reuse" that ends the user's grant.
+  //
+  // Confidential-client authentication (RFC 6749 §6 refers to §3.2.1):
+  // a client that has a secret on file must authenticate on refresh too,
+  // consistent with the authorization_code + client_credentials paths.
+  // Public clients (no secret on file) rely on refresh-token rotation +
+  // reuse detection.
+  if (params.basic != null && params.basic.client_id !== params.client_id) {
+    return { ok: false, status: 401, error: 'invalid_client', description: 'client_id mismatch between request and Basic authorization' };
+  }
+  const client = await getClient(deps.platform, params.client_id);
+  // Suspension is reversible (`resume`): refused without touching the token,
+  // so the app's retry after the resume is a plain refresh. Nothing is
+  // learned that the client does not already know.
+  if (client?.status === 'suspended') {
     return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
+  }
+  const auth = await authenticateClient({
+    client,
+    clientId: params.client_id,
+    presentedSecret: params.basic?.client_secret ?? params.client_secret,
+    assertion: params.client_assertion,
+    assertionType: params.client_assertion_type,
+    platform: deps.platform,
+    expectedAudiences: tokenEndpointAudiences(deps.config),
+  });
+  if (!auth.ok) {
+    return { ok: false, status: auth.status, error: auth.error, description: auth.description };
+  }
+  // Non-consuming read: a token issued to another client is refused and left
+  // live (the presenter learns nothing it does not hold: it has the token).
+  const peek = await storage.getRefresh(deps.platform, coreId, params.refresh_token);
+  if (peek != null && peek.clientId !== params.client_id) {
+    return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };
   }
 
   // ATOMIC single-use: consume deletes-and-returns in one linearized op, so
@@ -187,25 +254,42 @@ export async function handleRefreshToken (
   // a distinct message would let an unauthenticated caller probe whether a token
   // was real + recently consumed (and tell an attacker their theft was detected).
   const INVALID = { ok: false as const, status: 400, error: 'invalid_grant', description: 'refresh_token is invalid or already used' };
+  // Audit correlation id of a refresh token: a hash prefix, no token material.
+  const tokenRef = (token: string): string => 'refresh:' + storage.hashSecret(token).slice(0, 12);
   if (row == null) {
     // Token no longer resolves. Consult the consumed marker to tell genuine REUSE
     // (a rotated token replayed) from expired/never-issued.
     const marker = await storage.getRefreshConsumed(deps.platform, coreId, params.refresh_token);
     if (marker == null) {
       // Expired or never issued — not reuse. Keep the user-less probe signal.
-      await audit('oauth.code.reused', { clientId: params.client_id, codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…' });
+      await audit('oauth.code.reused', { clientId: params.client_id, codeId: tokenRef(params.refresh_token) });
+      return INVALID;
+    }
+    if (marker.revoked === true) {
+      // Ended on purpose (session deleted, revoked, refused for good): never
+      // rotated, so its replay is no theft evidence and the chain is left alone.
+      await audit('oauth.token.reuse_detected', {
+        clientId: marker.clientId,
+        userId: marker.userId,
+        ...(marker.dataGrantAccessId != null ? { dataGrantAccessId: marker.dataGrantAccessId } : {}),
+        codeId: tokenRef(params.refresh_token),
+        reason: 'revoked-token',
+      });
       return INVALID;
     }
     const graceMs = 1000 * Number(deps.config.get('oauth:refreshReuseGraceSeconds') ?? 10);
     const withinGrace = (Date.now() - marker.consumedAt) < graceMs;
+    // Presented by another client than the one it was issued to: refused,
+    // recorded, and never a collapse (the same binding rule as a live token).
+    const foreign = marker.clientId !== params.client_id;
     await audit('oauth.token.reuse_detected', {
       clientId: marker.clientId,
       userId: marker.userId,
       ...(marker.dataGrantAccessId != null ? { dataGrantAccessId: marker.dataGrantAccessId } : {}),
-      codeId: 'refresh:' + params.refresh_token.slice(0, 6) + '…',
-      reason: withinGrace ? 'within-grace' : 'chain-revoked',
+      codeId: tokenRef(params.refresh_token),
+      reason: foreign ? 'foreign-client' : withinGrace ? 'within-grace' : 'chain-revoked',
     });
-    if (!withinGrace && typeof deps.revokeChain === 'function') {
+    if (!foreign && !withinGrace && typeof deps.revokeChain === 'function') {
       let username: string | null;
       try {
         username = await deps.resolveUsername(marker.userId);
@@ -233,30 +317,52 @@ export async function handleRefreshToken (
   // the sooner of the row's sliding + absolute expiry (past that, a replay is
   // genuinely expired). Best-effort: a lost marker costs one detection, not the
   // rotation (which already happened atomically above).
+  // The marker's `consumedAt` identifies this rotation (see undoConsume).
+  let consumedAt: number | null = Date.now();
   try {
     await storage.markRefreshConsumed(deps.platform, coreId, params.refresh_token, {
       clientId: row.clientId,
       userId: row.userId,
       ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
-      consumedAt: Date.now(),
+      consumedAt,
     }, Math.min(row.expiresAt, row.absoluteExpiresAt));
   } catch (err: unknown) {
+    consumedAt = null;
     logServerError('refresh_token: markRefreshConsumed failed (reuse detection degraded for this token)', err);
   }
 
+  // A refusal that is final for the chain: the token was never rotated, so
+  // its marker turns `revoked` and a later replay is refused without
+  // collapsing the chain (a reuse would delete the user's grant).
+  const endChain = async (): Promise<void> => {
+    try {
+      await storage.revokeRefresh(deps.platform, coreId, params.refresh_token as string);
+    } catch (err: unknown) {
+      logServerError('refresh_token: marking the refused token revoked failed', err);
+    }
+  };
+
+  // Defence for a peek/consume interleaving (checked on the peek above).
   if (params.client_id !== row.clientId) {
+    await endChain();
     return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };
   }
 
   // A server-side failure after the consume means the rotation did not
   // happen: the row goes back and the marker away, so the client's retry is a
   // plain refresh (otherwise a transient failure, e.g. an extension hook
-  // timing out, would make the retry a reuse and end the user's grant).
+  // timing out, would make the retry a reuse and end the user's grant). Not
+  // when the token was ended meanwhile (session deleted, token revoked).
   const undoConsume = async (): Promise<void> => {
     try {
-      await storage.restoreConsumedRefresh(deps.platform, coreId, params.refresh_token, row);
+      const restored = await storage.restoreConsumedRefresh(deps.platform, coreId, params.refresh_token as string, row, consumedAt);
+      if (!restored) {
+        logServerError(consumedAt == null
+          ? 'refresh_token: the consumed row was not restored (its consumed marker could not be written): the client must re-authorize'
+          : 'refresh_token: the consumed row was not restored (the token was ended meanwhile): the client must re-authorize', null);
+      }
     } catch (err: unknown) {
-      logServerError('refresh_token: restoring the consumed row failed (the chain is burned)', err);
+      logServerError('refresh_token: restoring the consumed row failed: the client must re-authorize', err);
     }
   };
   const serverError = async (description: string) => {
@@ -264,34 +370,8 @@ export async function handleRefreshToken (
     return { ok: false as const, status: 500, error: 'server_error', description };
   };
 
-  // Confidential-client authentication (RFC 6749 §6 refers to §3.2.1):
-  // a client that has a secret on file must authenticate on refresh too,
-  // consistent with the authorization_code + client_credentials paths.
-  // Public clients (no secret on file) rely on refresh-token rotation +
-  // reuse detection.
-  if (params.basic != null && params.basic.client_id !== params.client_id) {
-    return { ok: false, status: 401, error: 'invalid_client', description: 'client_id mismatch between request and Basic authorization' };
-  }
-  const client = await getClient(deps.platform, params.client_id);
-  const presentedSecret = params.basic?.client_secret ?? params.client_secret;
-  const auth = await authenticateClient({
-    client,
-    clientId: params.client_id,
-    presentedSecret,
-    assertion: params.client_assertion,
-    assertionType: params.client_assertion_type,
-    platform: deps.platform,
-    expectedAudiences: tokenEndpointAudiences(deps.config),
-  });
-  if (!auth.ok) {
-    return { ok: false, status: auth.status, error: auth.error, description: auth.description };
-  }
-  if (client?.status === 'suspended') {
-    // Suspended since the check above: the rotation did not happen either.
-    await undoConsume();
-    return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
-  }
   if (row.kind === 'registry' && !isRegistryClient(client)) {
+    await endChain();
     return { ok: false, status: 400, error: 'invalid_grant', description: 'the client registration changed, re-authorize' };
   }
 
@@ -326,6 +406,7 @@ export async function handleRefreshToken (
   const now = Date.now();
   const newRefreshExpiresAt = Math.min(now + refreshTokenTTL * 1000, row.absoluteExpiresAt);
   if (newRefreshExpiresAt <= now) {
+    await endChain();
     return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh-token absolute lifetime exceeded' };
   }
 
@@ -360,6 +441,7 @@ export async function handleRefreshToken (
     });
   } catch (err: unknown) {
     if ((err as { code?: string } | null)?.code === 'data-grant-revoked') {
+      await endChain();
       await audit('oauth.token.revoked', {
         clientId: row.clientId,
         userId: row.userId,
@@ -421,6 +503,7 @@ export async function handleRefreshToken (
       ? { kind: 'registry', coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] }
       : {}),
     ...(row.audience != null ? { audience: row.audience } : {}),
+    accessId: access.accessId,
   });
 
   await indexSession(deps.platform, access.accessToken, {
@@ -432,18 +515,65 @@ export async function handleRefreshToken (
     ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
     ...(row.kind === 'registry' ? { coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] } : {}),
     ...(row.audience != null ? { audience: row.audience } : {}),
+    refreshTokenHash: storage.hashSecret(newRefresh),
   });
+
+  // Ended while this rotation was in flight (the session deleted, the token
+  // revoked: the consumed marker turned `revoked`)? Then what was just minted
+  // is ended too, the replaced session is left as it is, and the answer is
+  // the refusal the client would have had a moment later.
+  if (consumedAt != null) {
+    let endedMeanwhile = false;
+    try {
+      endedMeanwhile = (await storage.getRefreshConsumed(deps.platform, coreId, params.refresh_token))?.revoked === true;
+    } catch (err: unknown) {
+      logServerError('refresh_token: re-reading the consumed marker failed', err);
+    }
+    if (endedMeanwhile) {
+      try {
+        await storage.revokeRefresh(deps.platform, coreId, newRefresh);
+        await storage.deleteSessionIndex(deps.platform, access.accessToken);
+        if (typeof deps.revokeAccessLocal === 'function') {
+          await deps.revokeAccessLocal({ userId: row.userId, username, accessId: access.accessId, clientId: row.clientId });
+        }
+      } catch (err: unknown) {
+        logServerError('refresh_token: ending the session minted by a rotation ended meanwhile failed', err);
+      }
+      await audit('oauth.token.revoked', {
+        clientId: row.clientId,
+        userId: row.userId,
+        accessId: access.accessId,
+        reason: 'refresh chain ended during its rotation',
+      });
+      return INVALID;
+    }
+  }
+
+  // The new credentials are durable: retire the session this chain backed
+  // until now (a row written before refresh rows named it retires nothing).
+  // Never fails the refresh: the old session then lives out its own lifetime.
+  let retiredAccessId: string | null = null;
+  if (typeof row.accessId === 'string' && row.accessId !== access.accessId && typeof deps.retireSession === 'function') {
+    try {
+      const retired = await deps.retireSession({ userId: row.userId, username, accessId: row.accessId, clientId: row.clientId });
+      if (retired) retiredAccessId = row.accessId;
+    } catch (err: unknown) {
+      logServerError('refresh_token: retiring the previous session failed (it lives out its own lifetime)', err);
+    }
+  }
 
   await audit('oauth.token.refreshed', {
     clientId: row.clientId,
     userId: row.userId,
-    oldTokenId: 'refresh:' + params.refresh_token.slice(0, 6) + '…',
-    newTokenId: 'refresh:' + newRefresh.slice(0, 6) + '…',
+    oldTokenId: tokenRef(params.refresh_token),
+    newTokenId: tokenRef(newRefresh),
+    ...(retiredAccessId != null ? { retiredAccessId } : {}),
   });
   await audit('oauth.token.issued.authorization_code', {
     clientId: row.clientId,
     userId: row.userId,
-    grantedScope: row.scope,
+    // A registry client: the tokens actually granted (the scope answer).
+    grantedScope: registry != null ? registry.scopeTokens : row.scope,
     accessId: access.accessId,
     ...(boundJkt != null ? { dpopJkt: boundJkt } : {}),
   });

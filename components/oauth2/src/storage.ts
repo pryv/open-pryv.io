@@ -147,9 +147,12 @@ export interface OAuthClient {
    * here (applied by the core at every consent, never shown).
    */
   allowFeatures?: string[];
-  // Reserved, not read yet: resource-server role, per-client key reference,
-  // algorithms and lifetimes.
+  /**
+   * Resource-server role: may call `/oauth2/introspect` (confidential
+   * clients only: a secret or a key set on file).
+   */
   canIntrospect?: boolean;
+  // Reserved, not read yet: per-client key reference, algorithms and lifetimes.
   jwksUri?: string;
   tokenEndpointAuthSigningAlgs?: string[];
   accessTokenTTL?: number;
@@ -243,6 +246,12 @@ export interface OAuthRefresh {
   coreTokens?: string[];
   grammarTokens?: string[];
   audience?: string;
+  /**
+   * The session this chain currently backs (the access minted with the
+   * refresh token now in this row), retired at the next rotation. Absent on
+   * rows written before it existed: such a rotation retires nothing.
+   */
+  accessId?: string;
 }
 
 /**
@@ -252,12 +261,18 @@ export interface OAuthRefresh {
  * only what reuse-detection needs to revoke the chain — NO live credentials.
  * TTL matches the consumed row's remaining validity (bounded growth, swept by
  * sweepExpiredAccessStates). Cluster-wide storage, per-issuing-core key.
+ *
+ * `revoked`: the token was ended on purpose (its session deleted, revoked by
+ * the client, or refused for good after the consume). A replay of it is not
+ * theft evidence: it is refused without collapsing the chain, and a rotation
+ * in flight never puts the row back.
  */
 export interface OAuthRefreshUsed {
   clientId: string;
   userId: string;
   dataGrantAccessId?: string;
   consumedAt: number; // Date.now() at rotation — drives the grace window
+  revoked?: true;
 }
 
 const PREFIX_CLIENT = 'oauth-client/';
@@ -523,6 +538,12 @@ export interface OAuthSessionIndex {
   grammarTokens?: string[];
   audience?: string;
   expiresAt: number;
+  /**
+   * SHA-256 of the refresh token issued with this session (refresh rows live
+   * under `coreId`), so deleting the session ends its refresh chain. Absent
+   * when no refresh token was issued, and on rows written before it existed.
+   */
+  refreshTokenHash?: string;
 }
 
 export async function setSessionIndex (
@@ -534,6 +555,24 @@ export async function setSessionIndex (
 export async function getSessionIndex (platform: PlatformDB, accessToken: string): Promise<OAuthSessionIndex | null> {
   const entry = await platform.getAccessState(PREFIX_SESSION + hashSecret(accessToken));
   return entry == null ? null : (entry.value as OAuthSessionIndex);
+}
+
+/**
+ * Record on a session's index row the refresh token issued with it (code
+ * exchange: the row was written at consent, before the refresh token
+ * existed). No-op when the row is absent (its write failed, or it expired).
+ */
+export async function setSessionIndexRefresh (
+  platform: PlatformDB, accessToken: string, refreshToken: string
+): Promise<void> {
+  const key = PREFIX_SESSION + hashSecret(accessToken);
+  const entry = await platform.getAccessState(key);
+  if (entry == null) return;
+  await platform.setAccessState(key, { ...(entry.value as OAuthSessionIndex), refreshTokenHash: hashSecret(refreshToken) }, entry.expiresAt);
+}
+
+export async function deleteSessionIndex (platform: PlatformDB, accessToken: string): Promise<void> {
+  await platform.deleteAccessState(PREFIX_SESSION + hashSecret(accessToken));
 }
 
 // --- Refresh tokens (per-core, sliding TTL with absolute cap) --- //
@@ -587,13 +626,79 @@ export async function markRefreshConsumed (
 /**
  * Undo a consume whose rotation did not happen (a server-side failure after
  * the consume): the row is put back and the consumed marker removed, so the
- * client's retry is a plain refresh, not a reuse.
+ * client's retry is a plain refresh, not a reuse. Only while the marker is
+ * still the one this rotation wrote (`consumedAt`): a token ended meanwhile
+ * (its session deleted, revoked by the client, see `revokeRefreshByHash`)
+ * stays ended, and so does one whose marker could not be written. Resolves
+ * to whether the row was put back.
  */
 export async function restoreConsumedRefresh (
-  platform: PlatformDB, coreId: string, token: string, row: OAuthRefresh
-): Promise<void> {
+  platform: PlatformDB, coreId: string, token: string, row: OAuthRefresh, consumedAt: number | null
+): Promise<boolean> {
+  const usedKey = refreshUsedKey(coreId, token);
+  const stillOurs = async (): Promise<boolean> => {
+    const marker = (await platform.getAccessState(usedKey))?.value as OAuthRefreshUsed | undefined;
+    return marker != null && marker.revoked !== true && marker.consumedAt === consumedAt;
+  };
+  if (consumedAt == null || !(await stillOurs())) return false;
   await setRefresh(platform, coreId, token, row);
-  await platform.deleteAccessState(refreshUsedKey(coreId, token));
+  // Ended between the check and the write: take the row back out.
+  if (!(await stillOurs())) {
+    await platform.consumeAccessState(refreshKey(coreId, token));
+    return false;
+  }
+  await platform.deleteAccessState(usedKey);
+  return true;
+}
+
+/**
+ * End a refresh token on purpose, by the SHA-256 of the token (the form a
+ * session's index row holds): the row is removed and a `revoked` marker takes
+ * its place; a token already consumed (only its marker left) has the marker
+ * turned `revoked`, so a rotation of it still in flight never puts the row
+ * back. Resolves to the removed row, or null when the token was not live.
+ */
+export async function revokeRefreshByHash (
+  platform: PlatformDB, coreId: string, tokenHash: string
+): Promise<OAuthRefresh | null> {
+  const usedKey = PREFIX_REFRESH_USED + coreId + '/' + tokenHash;
+  const entry = await platform.consumeAccessState(PREFIX_REFRESH + coreId + '/' + tokenHash);
+  if (entry != null) {
+    const row = entry.value as OAuthRefresh;
+    const marker: OAuthRefreshUsed = {
+      clientId: row.clientId,
+      userId: row.userId,
+      ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
+      consumedAt: Date.now(),
+      revoked: true,
+    };
+    await platform.setAccessState(usedKey, marker, Math.min(row.expiresAt, row.absoluteExpiresAt));
+    return row;
+  }
+  const used = await platform.getAccessState(usedKey);
+  if (used != null && (used.value as OAuthRefreshUsed).revoked !== true) {
+    await platform.setAccessState(usedKey, { ...(used.value as OAuthRefreshUsed), revoked: true }, used.expiresAt);
+  }
+  return null;
+}
+
+/** `revokeRefreshByHash` for a token at hand. */
+export async function revokeRefresh (platform: PlatformDB, coreId: string, token: string): Promise<OAuthRefresh | null> {
+  return await revokeRefreshByHash(platform, coreId, hashSecret(token));
+}
+
+/**
+ * The core whose keyspace holds a live refresh row for `token`, among
+ * `coreIds`, with the row (non-consuming read), or null.
+ */
+export async function findRefreshCore (
+  platform: PlatformDB, token: string, coreIds: string[]
+): Promise<{ coreId: string; row: OAuthRefresh } | null> {
+  for (const coreId of coreIds) {
+    const row = await getRefresh(platform, coreId, token);
+    if (row != null) return { coreId, row };
+  }
+  return null;
 }
 
 /** Non-consuming read of the consumed marker (repeat replays must each re-detect). */

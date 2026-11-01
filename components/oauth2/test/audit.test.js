@@ -28,6 +28,7 @@ const OAUTH_EVENTS = [
   'oauth.consent.refused',
   'oauth.code.exchanged',
   'oauth.code.reused',
+  'oauth.nonce.reused',
   'oauth.token.issued.authorization_code',
   'oauth.token.issued.client_credentials',
   'oauth.token.refreshed',

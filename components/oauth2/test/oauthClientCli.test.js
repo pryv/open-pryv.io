@@ -424,4 +424,33 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal(bare.error?.message, 'create: --redirect-uri requires a value');
     assert.deepEqual(await platform.listPlatformKvKeys(''), []);
   });
+
+  it('[OCLI16] --can-introspect: confidential clients only, on create-registry and update; "false" withdraws it', async () => {
+    const platform = fakePlatform();
+    const pub = await run(cli.runCreateRegistry, platform, createArgs('Cli.rs.pub', ['--subject-type', 'public', '--can-introspect']));
+    assert.match(pub.error?.message ?? '', /--can-introspect needs a confidential client/);
+    assert.equal(await getClient(platform, 'Cli.rs.pub'), null);
+    const rs = await run(cli.runCreateRegistry, platform, createArgs('Cli.rs', ['--subject-type', 'public', '--auth-method', 'client_secret_basic', '--can-introspect']));
+    assert.equal(rs.error, null, rs.error?.message);
+    assert.match(rs.out, /introspection: allowed/);
+    assert.equal((await getClient(platform, 'Cli.rs')).canIntrospect, true);
+    const off = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--can-introspect', 'false']);
+    assert.equal(off.error, null, off.error?.message);
+    assert.equal((await getClient(platform, 'Cli.rs')).canIntrospect, undefined);
+    const on = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--can-introspect']);
+    assert.equal(on.error, null, on.error?.message);
+    assert.equal((await getClient(platform, 'Cli.rs')).canIntrospect, true);
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.rs.none', ['--subject-type', 'public']));
+    const refused = await run(cli.runUpdate, platform, ['update', 'Cli.rs.none', '--can-introspect']);
+    assert.match(refused.error?.message ?? '', /--can-introspect needs a confidential client/);
+    assert.equal((await getClient(platform, 'Cli.rs.none')).canIntrospect, undefined);
+    const bad = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--can-introspect', 'maybe']);
+    assert.match(bad.error?.message ?? '', /--can-introspect takes no value, or true \/ false/);
+    // Made public with the role still set: kept (refused at run time), and said so.
+    const toNone = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--auth-method', 'none', '--yes']);
+    assert.equal(toNone.error, null, toNone.error?.message);
+    assert.match(toNone.out, /WARN introspection role kept on a public client/);
+    const silent = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--can-introspect', 'false']);
+    assert.doesNotMatch(silent.out, /WARN introspection/);
+  });
 });
