@@ -35,11 +35,11 @@ The module exports a factory `(host: { apiVersion, options, logger }) => { apiVe
 - **One permission entry per stream** after canonicalisation (`a` and `:local:a` are one stream), at most 1000 entries. Account and system streams, every stream (`*`) and the `manage` level are refused whatever the grammar answers. `defaultName` / `name` are removed and logged: a registry consent never creates a stream.
 - A forbidden feature in an offer is always mandatory; one marked `optIn` is refused.
 - `allowUserChoice` is the grammar's choice (core default `false`, all-or-nothing). Set it to let the user untick entries; mark entries the app cannot run without `mandatory`.
-- `randomAlias: true` asks for a pseudonymous subject: refused on this core for now (`invalid_scope`), like every request of a `pairwise` client.
+- `randomAlias: true` asks for a pseudonymous subject: the grant then carries an alias (one per user and client), every session of it is used at that alias only, and the app never sees the username. Every request of a `pairwise` client gets one whatever the offer says (the core sets `randomAlias` before the digest, so the consent shows it).
 - `entryLabels` (optional, display only) are keyed `s|<streamId>|<level>` / `f|<feature>|<setting>`, values `{ [lang]: text }`; passed through to the consent UI unchanged.
 - `openid` and `offline_access` are the core's tokens: the grammar never sees them.
 
-`scopeGrammar.echo({ permissions, requestedTokens, client })` answers the scope tokens naming what `permissions` (the minted session's) hold. The core parses the echoed string **whole**, with `purpose: 'request'`, so every request rule above applies to it, and then checks:
+`scopeGrammar.echo({ permissions, requestedTokens, client, aliased? })` answers the scope tokens naming what `permissions` (the minted session's) hold; `aliased` (optional) tells whether the subject is the grant's alias, so the echo can name a pseudonym marker for a `pairwise` client that did not ask for one. The core parses the echoed string **whole**, with `purpose: 'request'`, so every request rule above applies to it, and then checks:
 
 - every parsed stream entry is held by an entry **on the same stream** (no inheritance through the stream tree; a stream held at `none` is not held) at a level that does not exceed it; a feature entry by the same entry (`forbidden` always passes). A violation is an extension error: `500 server_error` at `/oauth2/token`, logged, and a refresh refused this way leaves the refresh token usable;
 - tokens the client did not request are fine (a narrowed token after a partial consent, a per-stream token, a marker expanding to no permission);
@@ -48,7 +48,7 @@ The module exports a factory `(host: { apiVersion, options, logger }) => { apiVe
 
 Make the round trip a test on the extension's side: the echoed scope sent back to `/oauth2/authorize` should re-derive an offer equal to the session's data streams.
 
-`tokenResponse(ctx)` may add fields to the token response. `ctx.subject` is the user's internal id (never the username, not routable), `ctx.scopeTokens` the granted tokens (core tokens plus the echo), `ctx.permissions` the minted permissions. A hook (`tokenResponse`, `idTokenClaims`, `introspectionClaims`) that throws, times out, returns a value that is neither an object nor nothing (an array, a string or a number; `null` / `undefined` add no field) or sets a reserved key (`RESERVED_KEYS` in `src/extension.ts`) fails the request with `500 server_error`, before any refresh token is stored (fail closed).
+`tokenResponse(ctx)` may add fields to the token response. `ctx.subject` is the user's internal id (never the username, not routable) or, when `ctx.aliased` is true, the grant's alias (routable: the session is used at it), `ctx.scopeTokens` the granted tokens (core tokens plus the echo), `ctx.permissions` the minted permissions. A hook (`tokenResponse`, `idTokenClaims`, `introspectionClaims`) that throws, times out, returns a value that is neither an object nor nothing (an array, a string or a number; `null` / `undefined` add no field) or sets a reserved key (`RESERVED_KEYS` in `src/extension.ts`) fails the request with `500 server_error`, before any refresh token is stored (fail closed).
 
 ## Adding a new grant type
 

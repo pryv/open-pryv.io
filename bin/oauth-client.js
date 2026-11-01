@@ -1026,8 +1026,8 @@ function printUsage (stream) {
     '                            change needs --yes) the subject the app sees: public,\n' +
     '                            the user\'s stable id (an alias only when the app asks\n' +
     '                            for a pseudonym); pairwise, always an alias, one per\n' +
-    '                            user and client (refused at authorization on this core\n' +
-    '                            for now)\n' +
+    '                            user and client; an aliased session is used at its\n' +
+    '                            alias only\n' +
     '  --allow-feature <name>    (multi; also on update, "none" clears) a feature its\n' +
     '                            grants may use: webhooks, secretSharing (both forbidden\n' +
     '                            on its grants otherwise)\n' +

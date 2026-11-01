@@ -295,18 +295,52 @@ parsing the echoed string again with the same grammar, as a request:
 
 ### What the app receives
 
-The token response carries the core fields, `apiEndpoint`, the client's
-static `--extra` fields, then the fields of the extension's `tokenResponse`
-hook and, at the code exchange of a request granted `openid`, an `id_token`
-(§ 2 `signingKeys`; never on refresh). The subject handed to the extension
-(and every hook field built on it) is the user's **internal id**: not the
-username, and not routable (it does not address the account).
+The token response carries the core fields, `apiEndpoint` (not for a
+pseudonymous grant, see below), the client's static `--extra` fields, then the
+fields of the extension's `tokenResponse` hook and, at the code exchange of a
+request granted `openid`, an `id_token` (§ 2 `signingKeys`; never on refresh).
+The subject handed to the extension (and every hook field built on it, the
+`id_token` `sub`, the introspection `sub`) is the user's **internal id**: not
+the username, and not routable (it does not address the account); for a
+pseudonymous grant it is the grant's alias.
 
-### Not available yet
+### Pseudonymous subjects
 
-- **Pseudonymous subjects.** A `pairwise` client can be registered, but every
-  request it makes, and any offer asking for a pseudonym, answers
-  `invalid_scope` "pseudonymous subjects are not available on this core".
+A `pairwise` client (§ 3b `--subject-type`) always gets a pseudonymous
+subject; a `public` client gets one when the grammar's offer asks for it
+(`randomAlias: true`). Such a consent makes an **aliased grant**: the grant
+carries a routable alias (`r-` and 8 characters), one per user and client,
+kept across refreshes and re-consents, and every session minted under it
+carries the same alias. The app knows the account by that alias only:
+
+- the subject of its token responses, of the extension hooks, the `id_token`
+  `sub` and the introspection `sub` are the alias;
+- its token responses carry no `apiEndpoint`; the session's `access-info`,
+  its own `apiEndpoint` (`accesses.getOne`), the introspection `api_base` and
+  every access it creates (which carry the alias too) name the alias. The
+  account's username reaches the app in no answer;
+- the grammar's `echo` is told whether the subject is an alias (`aliased` in
+  its context).
+
+**Alias-bound addressing.** An aliased access (a session of an aliased grant,
+an access created with `randomAlias`, or one created by such an access) is
+accepted only on requests addressed by its alias: `https://<alias>.<domain>/…`
+or `/<alias>/…`, the socket.io namespace `/<alias>`, the high-frequency series
+URLs and attachment downloads. At the username, a former username or another
+access's alias it is refused, answered like an unknown token. An access
+without an alias is accepted at the account's own names and refused at an
+access's alias; the owner's personal token is accepted at any of them.
+**Sign-in and password reset are refused at an access alias**
+(`POST /<alias>/auth/login` and `POST /<alias>/account/request-password-reset`
+answer `400 invalid-operation`, whatever the credentials, before any password
+check).
+
+The alias is released when its last holder is deleted: deleting one session
+keeps it (the grant and the other sessions hold it); deleting the grant, a
+change of subject mode, a refresh-token reuse or the account's deletion
+releases it, and a later consent gets a new one. Revoking a token
+(`/oauth2/revoke`) or the retirement of a session on refresh keeps the alias
+with the grant.
 
 ---
 
@@ -398,9 +432,9 @@ the current grant's, `/offer` reports `subjectChange: { "from", "to" }` and
 `/accept` requires both `shownDigest` and `acknowledgeSubjectChange: true`,
 else `400 invalid_request` with `reason: "subject-change-unacknowledged"`.
 Once acknowledged, the old grant is withdrawn (its sessions and refresh chains
-end) and a new one is made; `oauth.consent.granted` carries `subjectChange`.
-(Pseudonymous subjects themselves are not available yet, § 1c; a change of a
-client's `--subject-type` reaches each user this way at their next consent.)
+end, its alias is released) and a new one is made; `oauth.consent.granted`
+carries `subjectChange`. A change of a client's `--subject-type` reaches each
+user this way at their next consent (§ 1c, pseudonymous subjects).
 
 ### `reason` on `/oauth2/authorize/*` errors
 
@@ -577,9 +611,9 @@ extension's own claims. A refresh never returns an `id_token`. A nonce is
 accepted once per client, across the platform: an authorization request or a
 code exchange reusing one that already went into an id_token is refused.
 `/.well-known/openid-configuration` and `/oauth2/jwks` are served, and
-`openid` is listed in `scopes_supported` with an extension installed (it is a scope of
-registry clients only; `subject_types_supported` lists `public` and `pairwise`). Without keys,
-`openid` is refused (`invalid_scope`) and both documents answer 404.
+`openid` is listed in `scopes_supported` with an extension installed (it is a
+scope of registry clients only; `subject_types_supported` lists `public` and
+`pairwise`). Without keys, `openid` is refused (`invalid_scope`) and both documents answer 404.
 
 `auth_time` is a **lower bound**: the creation of the personal access the user
 consented with. A later sign-in to the same app (the consent UI) rotates that
@@ -792,10 +826,9 @@ Flags:
   `invalid_scope`; a registered scope the grammar refuses is reported at boot.
 - **`--subject-type public|pairwise`** is **required, with no default**, and
   echoed back: `public`, the app sees the user's stable internal id (an alias
-  only when it asks for a pseudonym); `pairwise`, always an alias, one per
-  user and client. `pairwise` is accepted with a warning: pseudonymous
-  subjects are not available yet, and `/oauth2/authorize` refuses every
-  request of such a client (§ 1c).
+  only when its offer asks for a pseudonym); `pairwise`, always an alias, one
+  per user and client, at which the app addresses the account (§ 1c,
+  pseudonymous subjects).
 - **`--audience <url>`** (repeatable): the absolute `https` resource URLs the
   client may name in the `aud` parameter of `/oauth2/authorize`. At least one
   is required, unless **`--any-audience`** registers the client explicitly for
@@ -942,7 +975,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 | `/oauth2/token` → `invalid_grant` on a multi-core deployment, the core logs "presented to core" | the exchange reached a core other than the one that issued the code: an `oauth.issuer` shared by several cores (see §2) |
 | tokens behave differently between requests | `oauth:` block drift across cores (see §2) |
 | registry client: `/oauth2/authorize` → `invalid_scope` "no scope grammar registered on this core" | no OAuth extension installed (`customExtensions:oauthExtension`, § 2) |
-| registry client: `/oauth2/authorize` → `invalid_scope` "pseudonymous subjects are not available on this core" | the client is `pairwise`, or its grammar asked for a pseudonym (§ 1c) |
+| a pseudonymous session's token is refused like an unknown token | the request addressed the account by its username (or another name) instead of the session's alias: use the alias the app received as its subject (§ 1c, alias-bound addressing) |
 | registry client: `/oauth2/authorize` → `invalid_scope` "openid is not available on this core (no signing key configured)" | no `oauth.signingKeys` on this core (§ 2) |
 | registry client: `/oauth2/authorize` → `invalid_request` about `aud` | the client has audiences and the request named none of them (§ 3b) |
 | registry client: `/oauth2/token` → `500 server_error` "failed to build the token response" | the extension's hook failed or timed out, or its echo claimed reach the session does not hold; see the server log (§ 1c) |
