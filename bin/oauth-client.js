@@ -7,12 +7,12 @@
  * Refer to LICENSE file
  */
 
-// OAuth2 — app-account promotion CLI (curated registration mode).
+// OAuth2 client CLI (curated registration mode): app-account promotion and
+// registry clients.
 //
 // This is the only operator-CLI path for OAuth client
 // registration. The HTTP POST /oauth2/register endpoint (RFC 7591
-// dynamic registration in `mode: open`) is intentionally deferred —
-// see the project backlog.
+// dynamic registration in `mode: open`) is intentionally deferred.
 //
 // `create` is promotion-only: the user account must already exist
 // (created via the regular /reg/users flow). The CLI exits 1 with a
@@ -999,7 +999,8 @@ function printUsage (stream) {
     '  node bin/oauth-client.js list-revoked-keys\n' +
     '  node bin/oauth-client.js list-keys [<clientId>]\n' +
     '  node bin/oauth-client.js rotate-secret <clientId>\n' +
-    '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise [flags]\n' +
+    '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise\n' +
+    '      (--audience <url> | --any-audience) [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n\n' +
     'Flags (create-registry; on update too, registry clients only): a client with\n' +
     'no app account; --scope is its maximum scope set in the grammar of the\n' +

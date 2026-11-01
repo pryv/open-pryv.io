@@ -53,7 +53,8 @@ gone or its client is revoked, suspended or gone. An active answer carries the
 RFC members (`scope`, for a registry client's session: the same scope answer as
 the token endpoint, recomputed from the session as it stands; omitted for an
 app-account session; `client_id`, `exp`, `iat`, `sub`, `iss`,
-`token_type`, `aud`, `cnf` for DPoP-bound sessions) and two extension members,
+`token_type`, `aud` when the request named one, `cnf` for DPoP-bound sessions)
+and two extension members,
 never present in a token response: `api_base` (the account's API base URL, no
 credential in it; for a pseudonymous grant, built on its alias, which is then
 also the `sub`) and, for a registry client's session, `permissions`
@@ -101,6 +102,7 @@ The discovery document advertises:
   "code_challenge_methods_supported": ["S256"],
   "authorization_response_iss_parameter_supported": true,
   "dpop_signing_alg_values_supported": ["ES256"],
+  "jwks_uri": "https://<deployment-base>/oauth2/jwks",
   "introspection_endpoint": "https://<deployment-base>/oauth2/introspect",
   "introspection_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
   "revocation_endpoint": "https://<deployment-base>/oauth2/revoke",
@@ -110,7 +112,8 @@ The discovery document advertises:
 
 `grant_types_supported` reflects `oauth.grantTypesSupported`. The
 introspection and revocation members appear only when those endpoints are
-mounted (with the authorization-code flow). A client with a secret may send it
+mounted (with the authorization-code flow); `jwks_uri` only when
+`oauth.signingKeys` lists a key (§ 2). A client with a secret may send it
 as HTTP Basic (`client_secret_basic`) or in the form body (`client_secret_post`).
 `private_key_jwt` is RFC 7523 client authentication with an ES256 assertion
 (`aud` = the issuer or the token-endpoint URL; `/oauth2/introspect` and
@@ -236,8 +239,9 @@ determinism, display labels, hook context) is documented in
 
 The extension's hooks (`tokenResponse`, `idTokenClaims`,
 `introspectionClaims`) **fail closed**: a hook that throws, does not settle
-within `oauth:extensionHookTimeoutMs` (default 5000 ms), returns something
-other than an object, or sets a key the core owns fails the request with
+within `oauth:extensionHookTimeoutMs` (default 5000 ms), returns a value that
+is neither an object nor nothing (an array, a string or a number; `null` /
+`undefined` add no field), or sets a key the core owns fails the request with
 `500 server_error`. The core's keys are, for `tokenResponse`, `access_token`,
 `token_type`, `expires_in`, `refresh_token`, `scope`, `id_token` and
 `apiEndpoint`; for `idTokenClaims`, `iss`, `sub`, `aud`, `exp`, `iat`,
@@ -459,6 +463,12 @@ oauth:
   accessTokenTTL: 3600             # access-token lifetime, seconds (1 hour)
   refreshTokenTTL: 2592000         # refresh-token sliding window, seconds (30 days)
   refreshTokenAbsoluteTTL: 7776000 # refresh-token absolute cap, seconds (90 days)
+  refreshReuseGraceSeconds: 10     # a replay within this window of a rotation is a benign double-submit
+  refreshRetireGraceSeconds: 60    # how long the access token a refresh replaces keeps working
+  dpop:
+    clockSkewSeconds: 120          # accepted DPoP proof iat drift, seconds
+    keyRevokeCheckSeconds: 30      # revoke-key reaches live DPoP-bound tokens within this, seconds
+  clientRevokeCheckSeconds: 30     # revoke <clientId> reaches live access tokens within this, seconds
   clientRegistration:
     mode: curated                  # ONLY supported value (see below)
   requireAppAccountMfa: true       # NOT ENFORCED yet (see below)
@@ -547,8 +557,10 @@ It is used for nothing else and is per core: a consent flow runs on one core.
 Set a random value of at least 32 characters (`openssl rand -base64 32`). A
 placeholder, an unexpanded `${…}` reference or a value published as an example
 refuses the boot (like the `auth.*` secrets); one equal to `auth.adminAccessKey`
-or shorter than 32 characters is reported at boot. While it is empty, the key is derived from `auth.adminAccessKey` and every boot
-logs a warning; a later release will require it. Setting or changing it only
+or shorter than 32 characters is reported at boot. While it is empty, the key
+is derived from `auth.adminAccessKey` and every boot of a core with
+`consentUrl` set logs a warning (as does `bin/check-config.js` there); a later
+release will require it. Setting or changing it only
 cancels the consent screens open at that moment (a state lives 5 minutes).
 
 ### `signingKeys`, `idTokenTTL` (OpenID Connect)
@@ -565,9 +577,9 @@ extension's own claims. A refresh never returns an `id_token`. A nonce is
 accepted once per client, across the platform: an authorization request or a
 code exchange reusing one that already went into an id_token is refused.
 `/.well-known/openid-configuration` and `/oauth2/jwks` are served, and
-`openid` is listed in `scopes_supported` (it is a scope of registry clients
-only; `subject_types_supported` lists `public` and `pairwise`). Without keys, `openid` is
-refused (`invalid_scope`) and both documents answer 404.
+`openid` is listed in `scopes_supported` with an extension installed (it is a scope of
+registry clients only; `subject_types_supported` lists `public` and `pairwise`). Without keys,
+`openid` is refused (`invalid_scope`) and both documents answer 404.
 
 `auth_time` is a **lower bound**: the creation of the personal access the user
 consented with. A later sign-in to the same app (the consent UI) rotates that
@@ -830,7 +842,8 @@ refused refresh consumes nothing, so the app's refresh token works again after
 **`update <clientId>`** takes `--redirect-uri`, `--scope`, `--grant-type`,
 `--name`, `--logo-uri`, `--client-uri`, `--jwks-file` / `--jwks-json` and
 `--can-introspect` (`false` withdraws it; a confidential client only) on both
-kinds; on a registry client also `--audience`, `--any-audience`,
+kinds; on an app-account client also `--application-type` and `--cmc-offer`;
+on a registry client also `--audience`, `--any-audience`,
 `--allow-insecure-redirect` (`false` withdraws it), `--subject-type`,
 `--allow-feature`, `--policy-uri`, `--tos-uri`, `--contact`, `--extra`,
 `--launch-type` and `--auth-method` (all refused on app-account clients:
@@ -852,9 +865,10 @@ and their sessions keep working, and each user sees the change, and must
 acknowledge it, at their next consent (§ 1d). A registry row stored without a
 subject type reads as `public`, is reported at boot and by `show`, and
 `update` on it asks for `--subject-type`. `update` writes nothing when nothing
-changed (`OK   client unchanged: <id>`). Every write ends the consent screens
-open for the client at that moment (the offer is pinned to the registration's
-version). After `OK   client updated: <id>`, `update` echoes what the flags
+changed (`OK   client unchanged: <id>`). On a registry client, every write
+ends the consent screens open for it at that moment (the synthesised offer is
+pinned to the registration's version); app-account consents in flight are
+unaffected (their offer travels in the state). After `OK   client updated: <id>`, `update` echoes what the flags
 given changed: the subject type, the auth method (`<new> (was <old>)`), the
 new `client_secret` (once), the audiences, the plain-http redirect setting and
 the features forbidden on the client's grants.
@@ -904,6 +918,8 @@ Collect these for security monitoring and incident response.
 | `oauth.token.issued.authorization_code` | access token issued via the authorization-code grant |
 | `oauth.token.issued.client_credentials` | access token issued via the client-credentials grant |
 | `oauth.token.refreshed` | access token renewed via the refresh grant |
+| `oauth.token.reuse_detected` | a consumed or ended refresh token was presented again (`reason`: `revoked-token`, `foreign-client`, `within-grace`, or `chain-revoked`: theft signal, the chain is revoked) |
+| `oauth.token.dpop_mismatch` | a refresh carried a DPoP proof that does not match the chain's key (refused) |
 | `oauth.token.revoked` | a token was revoked (reuse detected, consent withdrawn, revoked by its client at `/oauth2/revoke`, or its chain ended while a refresh was in flight) |
 | `oauth.token.introspected` | a resource server introspected a token (caller, `active`; never the token; syslog only) |
 

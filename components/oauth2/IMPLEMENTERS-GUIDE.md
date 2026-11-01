@@ -48,7 +48,7 @@ The module exports a factory `(host: { apiVersion, options, logger }) => { apiVe
 
 Make the round trip a test on the extension's side: the echoed scope sent back to `/oauth2/authorize` should re-derive an offer equal to the session's data streams.
 
-`tokenResponse(ctx)` may add fields to the token response. `ctx.subject` is the user's internal id (never the username, not routable), `ctx.scopeTokens` the granted tokens (core tokens plus the echo), `ctx.permissions` the minted permissions. A hook (`tokenResponse`, `idTokenClaims`, `introspectionClaims`) that throws, times out, returns a non-object or sets a reserved key (`RESERVED_KEYS` in `src/extension.ts`) fails the request with `500 server_error`, before any refresh token is stored (fail closed).
+`tokenResponse(ctx)` may add fields to the token response. `ctx.subject` is the user's internal id (never the username, not routable), `ctx.scopeTokens` the granted tokens (core tokens plus the echo), `ctx.permissions` the minted permissions. A hook (`tokenResponse`, `idTokenClaims`, `introspectionClaims`) that throws, times out, returns a value that is neither an object nor nothing (an array, a string or a number; `null` / `undefined` add no field) or sets a reserved key (`RESERVED_KEYS` in `src/extension.ts`) fails the request with `500 server_error`, before any refresh token is stored (fail closed).
 
 ## Adding a new grant type
 
@@ -98,8 +98,13 @@ Every grant + revoke path calls into `src/audit.ts`. Available event types:
 | `oauth.code.reused` | `{ clientId, codeId, attemptedBy }` — stolen-code indicator |
 | `oauth.nonce.reused` | `{ clientId, userId, codeId }`: an OpenID Connect nonce replayed at a code exchange (no nonce in it) |
 | `oauth.token.issued.<grant_type>` | `{ clientId, grantedScope, userId?, accessId }` |
-| `oauth.token.refreshed` | `{ clientId, userId, oldTokenId, newTokenId }` |
-| `oauth.token.revoked` | `{ clientId, scope, source: 'user' \| 'operator' }` |
+| `oauth.token.refreshed` | `{ clientId, userId, oldTokenId, newTokenId, retiredAccessId? }` |
+| `oauth.token.reuse_detected` | `{ clientId, userId, dataGrantAccessId?, codeId, reason }`: a consumed or ended refresh token presented again (`reason`: `revoked-token`, `foreign-client`, `within-grace`, `chain-revoked`) |
+| `oauth.token.dpop_mismatch` | `{ clientId, userId, dataGrantAccessId?, reason }`: a refresh with a DPoP proof that does not match the chain's key |
+| `oauth.token.revoked` | `{ clientId, userId, accessId?, reason }`: reuse detected, consent withdrawn, revoked by the client at `/oauth2/revoke`, or the chain ended during its rotation |
+| `oauth.token.introspected` | `{ clientId, active, userId?, tokenClientId?, reason? }`: syslog only, never the token |
+
+The type list and payload fields are `OAuthAuditEvent` / `OAuthAuditPayload` in `src/audit.ts`; the events without a resolvable user (`USERLESS_EVENTS`) go to syslog only.
 
 Audit calls MUST be awaited — silent fire-and-forget is a deliberate anti-pattern (audit failures must surface, per the existing `components/audit/` contract).
 
