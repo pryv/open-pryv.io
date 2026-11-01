@@ -132,8 +132,8 @@ export type CreateAccess = (params: {
     kind: 'synthesised';
     permissions: Array<Record<string, unknown>>;
     /**
-     * The app asked for a pseudonym (the grant's alias as subject). Always
-     * false while pseudonymous subjects are refused at /oauth2/authorize.
+     * The app asked for a pseudonym, or the client is `pairwise`: the grant
+     * (and every session of it) carries an alias, the subject the app sees.
      */
     randomAlias?: boolean;
   };
@@ -151,6 +151,8 @@ export type CreateAccess = (params: {
   permissions?: Array<Record<string, unknown>>;
   /** What the minted session row stores, without its selfRevoke override (the scope echo input). */
   sessionPermissions?: Array<Record<string, unknown>>;
+  /** The grant carries an alias (a pseudonymous grant): told to the scope echo. */
+  aliased?: boolean;
 }>;
 
 /**
@@ -488,7 +490,7 @@ export function handleAccept (deps: AcceptDeps) {
     if (synthesised != null) {
       try {
         grantedTokens = grantedScopeTokens(registryClient!, synthesised.coreTokens, synthesised.grammarTokens,
-          access.sessionPermissions ?? access.permissions ?? grantedPermissions);
+          access.sessionPermissions ?? access.permissions ?? grantedPermissions, { aliased: access.aliased === true });
       } catch (err: unknown) {
         logServerError('accept: granted scope of a registry consent could not be computed (the request is recorded)', err);
       }

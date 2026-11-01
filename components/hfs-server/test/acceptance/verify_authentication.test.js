@@ -55,6 +55,39 @@ describe('[METL] Metadata Loader', function () {
       assert.strictEqual(metadata.canWrite(), true);
     });
   });
+
+  it('[U6F3] an aliased token reaches a series at its alias only; at the username it is an unknown token', async () => {
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const { fromCallback } = require('utils');
+    const usersRepository = await getUsersRepository();
+    const userId = await usersRepository.getUserIdForUsername(USER_NAME);
+    const alias = await usersRepository.mintAlias(USER_NAME, userId);
+    try {
+      await fromCallback((cb) => storageLayer.accesses.insertOne({ id: userId, username: USER_NAME }, {
+        type: 'app',
+        name: 'hf-aliased',
+        deviceName: 'u6f3',
+        token: 'a-aliased',
+        alias,
+        permissions: [{ streamId: 'something', level: 'contribute' }],
+      }, cb));
+      const atAlias = await loader.forSeries(alias, EVENT_ID, 'a-aliased');
+      assert.strictEqual(atAlias.canWrite(), true);
+      const refused = async (name, token) => {
+        try {
+          await loader.forSeries(name, EVENT_ID, token);
+        } catch (err) {
+          return { id: err.id, message: err.message };
+        }
+        return null;
+      };
+      const atName = await refused(USER_NAME, 'a-aliased');
+      assert.deepStrictEqual(atName, { id: 'invalid-access-token', message: 'Cannot find access from token.' });
+      assert.deepStrictEqual(atName, await refused(USER_NAME, 'no-such-token'));
+    } finally {
+      await usersRepository.releaseAlias(alias, userId);
+    }
+  });
 });
 describe('[METC] Metadata Cache', function () {
   let config;

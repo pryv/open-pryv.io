@@ -51,7 +51,8 @@
  *     entry on the same stream (no inheritance through the stream tree, a
  *     stream held at `none` is not held), a feature entry by the same entry
  *     (a `forbidden` one always passes). At most 1000 tokens, never a core
- *     token (`openid`, `offline_access`: the core adds them).
+ *     token (`openid`, `offline_access`: the core adds them). Its context
+ *     tells whether the subject is an alias (`aliased`).
  *
  * `entryLabels` (optional, display only, passed through to the consent UI
  * unchanged): keyed by `s|<streamId>|<level>` for a stream entry and
@@ -82,11 +83,12 @@ export type SynthOffer = {
   permissions: ExtPermission[];
   allowUserChoice?: boolean;
   /**
-   * The app asks for a pseudonym: the grant would get a routable alias as
-   * the subject the app sees. Pseudonymous subjects are not available on this
-   * core yet: such an offer (and any request of a `pairwise` client) is
-   * refused with `invalid_scope`. Absent / false: the subject is the user's
-   * stable internal id.
+   * The app asks for a pseudonym: the grant gets a routable alias (`r-` + 8
+   * characters, one per user and client), which is the subject the app sees;
+   * every session of the grant carries that alias and is used at it only
+   * (`https://<alias>.<domain>/`), and the account's username reaches the app
+   * in no answer. Always set by the core for a `pairwise` client. Absent /
+   * false: the subject is the user's stable internal id.
    */
   randomAlias?: boolean;
   title?: Record<string, string>;
@@ -103,14 +105,17 @@ export type ParseResult =
 /**
  * Context handed to the response hooks. `subject` is the user's stable
  * internal id (never the username; not routable: it does not address the
- * account). `scopeTokens` are the GRANTED tokens: the core tokens granted plus
- * the grammar's echo over the minted permissions (never what was requested
- * but not granted).
+ * account), or, for a pseudonymous grant (`aliased: true`), the grant's alias
+ * (routable: the session is used at it). `scopeTokens` are the GRANTED tokens:
+ * the core tokens granted plus the grammar's echo over the minted permissions
+ * (never what was requested but not granted).
  */
 export type HookCtx = {
   clientId: string;
   client: ClientView;
   subject: string | null;
+  /** Whether `subject` is the grant's alias (optional context field). */
+  aliased?: boolean;
   grantType: string;
   scopeTokens: string[];
   permissions: ExtPermission[];
@@ -127,9 +132,11 @@ export type OAuthExtension = {
      * hold, `requestedTokens` being the grammar tokens of the request. Parsed
      * again by `parse` as a request and checked against `permissions`: may
      * name unrequested tokens, may never claim reach not held (see the
-     * contract rules above).
+     * contract rules above). `aliased` (optional context field): the
+     * subject is the grant's alias, so the echo may name the grammar's
+     * pseudonym marker, e.g. for a `pairwise` client that did not ask for one.
      */
-    echo (ctx: { permissions: ExtPermission[]; requestedTokens: string[]; client: ClientView }): string[];
+    echo (ctx: { permissions: ExtPermission[]; requestedTokens: string[]; client: ClientView; aliased?: boolean }): string[];
     supported? (): string[];
   };
   tokenResponse? (ctx: HookCtx): object | Promise<object>;

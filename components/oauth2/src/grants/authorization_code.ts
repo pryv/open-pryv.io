@@ -327,6 +327,7 @@ export async function handleAuthorizationCode (
           grammarTokens: row.grammarTokens ?? [],
           permissions: sessionPermissions,
           subject: resolved.subject,
+          aliased: resolved.aliased,
           ...(row.nonce != null ? { nonce: row.nonce } : {}),
           ...(row.authTime != null ? { authTime: row.authTime } : {}),
         });
