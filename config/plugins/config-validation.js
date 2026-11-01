@@ -140,12 +140,12 @@ function checkRequiredWhen (config, problems) {
 // a config file (or a common stand-in) is as good as public, so it never boots;
 // in production a short value, or one published for development and tests, is
 // refused too.
-const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret', 'platform:piiHmacKey', 'oauth:stateKey'];
+const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret', 'platform:piiHmacKey', 'oauth:stateKey', 'sso:stateKey'];
 const { weakSecretReason, MIN_SECRET_LENGTH } = require('../../components/business/src/secretValues.ts');
 
 // Secrets that may be left empty (the feature then falls back or stays off)
 // but, once set, are held to the same rule as the required ones.
-const OPTIONAL_SECRET_PATHS = ['oauth:stateKey'];
+const OPTIONAL_SECRET_PATHS = ['oauth:stateKey', 'sso:stateKey'];
 
 /**
  * An optional secret that is set must be a real secret: a placeholder, an
@@ -784,11 +784,12 @@ function collectWarnings (config) {
   warnings.push(...revocationLagWarnings(config));
   warnings.push(...describeAutoDeletion(config).warnings);
   warnings.push(...oauthWarnings(config));
+  warnings.push(...ssoWarnings(config));
   return warnings;
 }
 
-/** Below this, an `oauth.stateKey` gets a boot warning. */
-const OAUTH_STATE_KEY_MIN_LENGTH = 32;
+/** Below this, an `oauth.stateKey` or `sso.stateKey` gets a boot warning. */
+const STATE_KEY_MIN_LENGTH = 32;
 /** Upper bound on `oauth.idTokenTTL`, seconds (same value as the oauth2 component's MAX_ID_TOKEN_TTL). */
 const OAUTH_MAX_ID_TOKEN_TTL = 3600;
 
@@ -806,13 +807,13 @@ function oauthWarnings (config) {
   // Only the authorization flow signs states, and it needs a consent page.
   if (!stateKeySet && typeof consentUrl === 'string' && consentUrl.length > 0) {
     warnings.push("'oauth.stateKey' is not set: OAuth consent states are signed with a key derived from 'auth.adminAccessKey'. " +
-      `Set 'oauth.stateKey' to a random value of at least ${OAUTH_STATE_KEY_MIN_LENGTH} characters (e.g. openssl rand -base64 32); ` +
+      `Set 'oauth.stateKey' to a random value of at least ${STATE_KEY_MIN_LENGTH} characters (e.g. openssl rand -base64 32); ` +
       'a later release will require it. Setting it cancels only the consent screens open at that moment.');
   }
   if (stateKeySet && stateKey === config.get('auth:adminAccessKey')) {
     warnings.push("'oauth.stateKey' equals 'auth.adminAccessKey': give it its own random value.");
-  } else if (stateKeySet && stateKey.length < OAUTH_STATE_KEY_MIN_LENGTH) {
-    warnings.push(`'oauth.stateKey' is shorter than ${OAUTH_STATE_KEY_MIN_LENGTH} characters: use a longer random value.`);
+  } else if (stateKeySet && stateKey.length < STATE_KEY_MIN_LENGTH) {
+    warnings.push(`'oauth.stateKey' is shorter than ${STATE_KEY_MIN_LENGTH} characters: use a longer random value.`);
   }
   if (config.get('oauth:audAllowList') != null) {
     warnings.push("'oauth.audAllowList' is no longer read and can be removed: the accepted 'aud' values are registered per client " +
@@ -831,6 +832,30 @@ function oauthWarnings (config) {
   if (Number.isFinite(retireGrace) && Number.isFinite(reuseGrace) && retireGrace < reuseGrace) {
     warnings.push(`'oauth.refreshRetireGraceSeconds' (${retireGrace}) is below 'oauth.refreshReuseGraceSeconds' (${reuseGrace}): ` +
       'a client retrying a refresh inside the reuse grace can be left with an expired access token. Keep it at or above.');
+  }
+  return warnings;
+}
+
+/**
+ * Third-party sign-in settings that work but should be changed: the
+ * state-cookie key still borrowed from the admin key (transitional), or a
+ * weak or shared one. Silent while sign-in is disabled.
+ */
+function ssoWarnings (config) {
+  const warnings = [];
+  if (config.get('sso:enabled') !== true) return warnings;
+  const stateKey = config.get('sso:stateKey');
+  const stateKeySet = typeof stateKey === 'string' && stateKey.length > 0;
+  if (!stateKeySet) {
+    warnings.push("'sso.stateKey' is not set: sign-in state cookies are signed with a key derived from 'auth.adminAccessKey'. " +
+      `Set 'sso.stateKey' to a random value of at least ${STATE_KEY_MIN_LENGTH} characters (e.g. openssl rand -base64 32); ` +
+      'a later release will require it. Setting it cancels only the sign-ins in progress at that moment.');
+  } else if (stateKey === config.get('auth:adminAccessKey')) {
+    warnings.push("'sso.stateKey' equals 'auth.adminAccessKey': give it its own random value.");
+  } else if (stateKey === config.get('oauth:stateKey')) {
+    warnings.push("'sso.stateKey' equals 'oauth.stateKey': give each its own random value.");
+  } else if (stateKey.length < STATE_KEY_MIN_LENGTH) {
+    warnings.push(`'sso.stateKey' is shorter than ${STATE_KEY_MIN_LENGTH} characters: use a longer random value.`);
   }
   return warnings;
 }

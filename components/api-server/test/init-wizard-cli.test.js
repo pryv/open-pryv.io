@@ -117,6 +117,19 @@ describe('[INWZ] bin/init.js generated files', function () {
     assert.ok(Object.hasOwn(defaults.oauth, 'stateKey'), 'default-config.yml declares oauth.stateKey');
   });
 
+  it('[INWZB] a sign-in state key of its own is generated, distinct from the admin and consent-state keys', () => {
+    const res = runWizard(configDir);
+    assert.strictEqual(res.status, 0, res.output);
+    const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
+    assert.ok(typeof config.sso.stateKey === 'string' && config.sso.stateKey.length >= 32, 'sso.stateKey generated');
+    assert.notStrictEqual(config.sso.stateKey, config.auth.adminAccessKey);
+    assert.notStrictEqual(config.sso.stateKey, config.oauth.stateKey);
+    // Sign-in stays off until the operator turns it on.
+    assert.notStrictEqual(config.sso.enabled, true);
+    const defaults = yaml.load(fs.readFileSync(path.join(REPO_ROOT, 'config/default-config.yml'), 'utf8'));
+    assert.ok(Object.hasOwn(defaults.sso, 'stateKey'), 'default-config.yml declares sso.stateKey');
+  });
+
   it('[INWZ7] dns-active: the default trustedApps include the register and access hosts', () => {
     const answers = ANSWERS.replace(/^dnsless:.*\n/m, 'dnsless: false\n')
       .replace(/^publicurl:.*\n/m, 'dnsdomain: example.invalid\npublicip: 192.0.2.10\n');

@@ -44,6 +44,15 @@
   release will require it. A set value that is a placeholder, an unexpanded `${…}` reference or a
   published example refuses the boot. Setting it only cancels the consent screens open at that moment;
   once set, a state signed with the admin-derived key is refused. The install wizard writes one.
+- **Operators: set `sso:stateKey` on every core where `sso:enabled` is true.** The third-party sign-in
+  state cookie (set by `/auth/sso/<provider>/start`, read back by the callback on the same core) is
+  now signed with its own secret, per core, used for nothing else and distinct from `oauth:stateKey`
+  (a random value of at least 32 characters, e.g. `openssl rand -base64 32`). While it is empty, the
+  key is still derived from `auth:adminAccessKey` and every boot with sign-in enabled logs a warning; a
+  later release will require it. A set value that is a placeholder, an unexpanded `${…}` reference or
+  a published example refuses the boot. Setting it only cancels the sign-ins in progress at that
+  moment (at most 10 minutes; the user starts again); once set, a cookie signed with the admin-derived
+  key is refused. The install wizard writes one.
 - **`oauth:audAllowList` is removed** (it was never enforced): the `aud` values a client may name are
   registered per client (`create-registry --audience`). A configuration that still sets it gets a boot
   warning.

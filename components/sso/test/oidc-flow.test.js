@@ -24,7 +24,7 @@ const require = createRequire(import.meta.url);
 
 const { registerRoutes } = require('../src/index.ts');
 
-const ADMIN_KEY = 'operator-admin-key-for-sso-tests';
+const STATE_KEY = 'sso-state-key-for-sso-tests';
 const CALLBACK_BASE = 'https://core.example.com';
 const LANDING = 'https://auth.example.com/sso-signin';
 
@@ -56,7 +56,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
     app = express();
     registerRoutes(app, {
       config,
-      adminKey: ADMIN_KEY,
+      stateKey: STATE_KEY,
       callbackBaseURL: CALLBACK_BASE,
       landingPageURL: LANDING,
       onIdentity: async (claims) => { lastIdentity = claims; return onIdentityImpl(claims); },
@@ -330,7 +330,7 @@ describe('[SSOC] SSO OIDC client flow', function () {
     const { signStateCookie, STATE_COOKIE_NAME } = require('../src/stateCookie.ts');
     const { callbackPath } = await startFlow('test', `?ssoReturn=${encodeURIComponent(RETURN_VALUE)}`);
     const staleValue = signStateCookie(
-      ADMIN_KEY,
+      STATE_KEY,
       { provider: 'test', state: 'st', nonce: 'nc', pkceVerifier: 'pk', returnState: RETURN_VALUE },
       Math.floor(Date.now() / 1000) - 700);
     const res = await request.get(callbackPath).set('Cookie', `${STATE_COOKIE_NAME}=${staleValue}`);
