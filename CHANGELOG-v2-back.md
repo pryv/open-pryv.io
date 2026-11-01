@@ -22,6 +22,13 @@
 - The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
   `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
 
+### Dependencies
+
+- `follow-redirects` 1.16.1 to 1.16.2 (lockfile only, transitive through `acme-client` > `axios`):
+  GHSA-mrwp-f3q8-3g9p (high; a `sensitiveHeaders` array built in another JS realm was ignored, so a
+  custom credential header could follow a cross-origin redirect). The production-dependency audit gate
+  is green again.
+
 ### OAuth: OpenID Connect, consent-state key
 
 - New oauth2 module `signingKeys.ts` (`loadSigningKeys`, validated at route mount, `hasSigningKeys`,
