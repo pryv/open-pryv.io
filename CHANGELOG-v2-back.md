@@ -35,8 +35,9 @@
 ### State keys: no admin-key fallback
 
 - `signedState.stateKeyFromConfig` and `sso`'s `ssoStateKeyFromConfig` return the configured
-  `oauth:stateKey` / `sso:stateKey` or `''`, never `auth:adminAccessKey`. With `''` the consent-flow
-  routes answer 500 and the sign-in routes are not mounted (fail-closed, as before).
+  `oauth:stateKey` / `sso:stateKey` or `''`, never `auth:adminAccessKey`. With `''` authorize, accept
+  and refuse answer 500, offer refuses the state (400), and the sign-in routes are not mounted
+  (fail-closed, as before).
 - `config-validation.js`: two `REQUIRED_WHEN` entries, `oauth:stateKey` when `oauth:consentUrl` is a
   non-empty string and `sso:stateKey` when `sso:enabled` is true (a non-string counts as missing; a
   set value goes through `weakSecretReason`, both being in `SECRET_PATHS`). `checkOptionalSecrets`
