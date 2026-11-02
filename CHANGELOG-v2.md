@@ -1,6 +1,16 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.70 - 2026-11-02
+
+> **Upgrade advice for operators.** Before deploying: (1) for every registry OAuth client whose
+> sessions create accesses, webhooks or CMC capability requests, run `node bin/oauth-client.js update
+> <clientId> --allow-feature accessCreation` (keep the features already allowed in the same command):
+> registry grants now forbid `accessCreation` by default; (2) re-register with a distinct `kid` on
+> every key any `private_key_jwt` client whose inline key set holds several keys without one: such a
+> client gets `invalid_client` until then (every core reports these rows at boot); (3) OAuth clients
+> that test for `invalid_request` on an audience refusal now get `invalid_target`. Schema migration:
+> PostgreSQL adds the column `accesses.last_login` at boot (automatic, idempotent); SQLite needs none.
+> See "BREAKING" in the entries below.
 
 ### OAuth client authentication and token lifetimes
 
