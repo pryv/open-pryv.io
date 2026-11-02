@@ -177,6 +177,13 @@
 
 ### Fixes
 
+- **Security: `GET` / `POST /oauth2/authorize` no longer spends super-linear time on a long `aud`.**
+  For a client registered with a list of audiences, the trailing-slash trim of `aud` used a regular
+  expression that is quadratic on a long run of slashes: one unauthenticated request with a ~100 kB
+  form body blocked a worker for several seconds. The trim is now a linear loop, and an `aud` /
+  `resource` value is size-capped before any comparison (at `/oauth2/authorize` and `/oauth2/token`).
+  Only clients with an audience list were reachable (registry clients created with `--audience`).
+
 - **A request authenticated by `private_key_jwt` no longer needs `client_id` in the body: it is taken
   from the assertion.** RFC 7521 § 4.2 and RFC 7523 § 3 make `client_id` optional next to a
   `client_assertion`, but `/oauth2/token` (every grant), `/oauth2/introspect` and `/oauth2/revoke`
