@@ -106,7 +106,7 @@ function assertWithinGrant (child, grant, label) {
 describe('[OSUB] OAuth registry clients: what sessions create follows the grant; [OACR] accessCreation', function () {
   this.timeout(90000);
 
-  let fixtures, restoreConfig, platformDB, openId, closedId, hooksOnlyId;
+  let fixtures, restoreConfig, platformDB, openId, closedId, hooksOnlyId, bothId;
 
   before(async function () {
     await initTests();
@@ -130,12 +130,14 @@ describe('[OSUB] OAuth registry clients: what sessions create follows the grant;
     await oauth2.persistClient(platformDB, { ...row, clientId: closedId });
     hooksOnlyId = 'SubH.' + cuid().slice(-10);
     await oauth2.persistClient(platformDB, { ...row, clientId: hooksOnlyId, allowFeatures: ['webhooks'] });
+    bothId = 'SubB.' + cuid().slice(-10);
+    await oauth2.persistClient(platformDB, { ...row, clientId: bothId, allowFeatures: ['accessCreation', 'webhooks'] });
   });
 
   after(async function () {
     oauth2.extension._resetForTests();
     if (restoreConfig != null) restoreConfig();
-    for (const id of [openId, closedId, hooksOnlyId]) {
+    for (const id of [openId, closedId, hooksOnlyId, bothId]) {
       try { await storage.deleteClient(platformDB, id); } catch (_) { /* best-effort */ }
     }
     if (fixtures != null) await fixtures.clean();
@@ -268,6 +270,8 @@ describe('[OSUB] OAuth registry clients: what sessions create follows the grant;
     assert.equal(app.status, 201, JSON.stringify(app.body));
     const child = await createChild(who, app.body.access.token, [{ streamId: 'a', level: 'contribute' }]);
     assert.equal(child.status, 201, JSON.stringify(child.body));
+    // An access a non-OAuth app creates is not bound to any grant.
+    assert.equal(child.body.access.clientData?.oauth, undefined);
     const forbid = await ownerUpdate(who, app.body.access, {
       permissions: app.body.access.permissions.concat([{ feature: 'accessCreation', setting: 'forbidden' }]),
     });
@@ -458,5 +462,104 @@ describe('[OSUB] OAuth registry clients: what sessions create follows the grant;
     // Then only `c`: nothing left for the child, it is deleted.
     await consentAndToken(who, 'read/c', { keep: (p) => p.streamId === 'c' || p.feature != null });
     assert.equal(await check('re-consent keeps c'), null);
+  });
+
+  it('[OACR4] a session forbidden accessCreation cannot request a capability (a minted access handed on)', async () => {
+    const who = await newUser();
+    const capabilityRequest = {
+      streamIds: ['a'],
+      type: 'consent/request-cmc',
+      content: {
+        to: null,
+        capabilityRequested: true,
+        request: {
+          title: { en: 'Example consent' },
+          description: { en: 'Share data.' },
+          consent: { en: 'I agree.' },
+          permissions: [{ streamId: 'a', level: 'read' }],
+        },
+      },
+    };
+    const closed = await consentAndToken(who, 'write/a', { cid: closedId });
+    const refused = await coreRequest.post('/' + who.username + '/events').set('Authorization', closed.access_token).send(capabilityRequest);
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
+    assert.match(refused.body.error.message, /accessCreation: forbidden/);
+    assert.equal((await accesses(who)).some((a) => String(a.name).startsWith('__cmc-cap-')), false);
+    // The same request without the capability is a plain event write.
+    const plain = await coreRequest.post('/' + who.username + '/events').set('Authorization', closed.access_token)
+      .send({ ...capabilityRequest, content: { ...capabilityRequest.content, capabilityRequested: false } });
+    assert.equal(plain.status, 201, JSON.stringify(plain.body));
+  });
+
+  it('[OSUB8] the grant\'s forbids reach an existing child; another grant\'s change leaves it alone', async () => {
+    const who = await newUser();
+    const t = await consentAndToken(who, 'read/a', { cid: bothId });
+    const child = await createChild(who, t.access_token, [{ streamId: 'a', level: 'read' }]);
+    assert.equal(child.status, 201, JSON.stringify(child.body));
+    assert.equal(featuresOf(child.body.access.permissions).includes('webhooks:forbidden'), false);
+    const before = await coreRequest.post('/' + who.username + '/webhooks').set('Authorization', child.body.access.token)
+      .send({ url: 'https://hooks.test/before' });
+    assert.equal(before.status, 201, JSON.stringify(before.body));
+    // Another client's grant of the same user changes: nothing happens to this child.
+    await consentAndToken(who, 'read/a read/b');
+    await ownerNarrow(who, (p) => p.streamId === 'a');
+    assert.deepEqual((await accessById(who, child.body.access.id)).permissions, child.body.access.permissions);
+    // The owner forbids webhooks and access creation on this child's grant.
+    const grant = await grantOf(who, bothId);
+    const upd = await ownerUpdate(who, grant, {
+      permissions: grant.permissions.concat([{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'accessCreation', setting: 'forbidden' }]),
+    });
+    assert.equal(upd.status, 200, JSON.stringify(upd.body));
+    const after = await accessById(who, child.body.access.id);
+    assert.ok(featuresOf(after.permissions).includes('webhooks:forbidden'), JSON.stringify(after.permissions));
+    assert.ok(featuresOf(after.permissions).includes('accessCreation:forbidden'), JSON.stringify(after.permissions));
+    assert.deepEqual(streamsOf(after.permissions), ['a:read']);
+    const refused = await coreRequest.post('/' + who.username + '/webhooks').set('Authorization', child.body.access.token)
+      .send({ url: 'https://hooks.test/after' });
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
+  });
+
+  it('[OSUB9] the session edits its child\'s clientData key by key, never wipes the binding; the child stays bound', async () => {
+    const who = await newUser();
+    const t = await consentAndToken(who, 'read/a read/b');
+    const grant = await grantOf(who);
+    const child = await createChild(who, t.access_token, [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }], { clientData: { app: 'v1' } });
+    assert.equal(child.status, 201, JSON.stringify(child.body));
+    const put = (body) => coreRequest.put('/' + who.username + '/accesses/' + encodeURIComponent(child.body.access.id))
+      .set('Authorization', t.access_token).send(body);
+    const wiped = await put({ clientData: null });
+    assert.equal(wiped.status, 403, JSON.stringify(wiped.body));
+    const edited = await put({ clientData: { app: 'v2' } });
+    assert.equal(edited.status, 200, JSON.stringify(edited.body));
+    const row = await accessById(who, child.body.access.id);
+    assert.deepEqual(row.clientData, { app: 'v2', oauth: { dataGrantId: baseOf(grant.id) } });
+    await ownerNarrow(who, (p) => p.streamId === 'a');
+    assert.deepEqual(streamsOf((await accessById(who, child.body.access.id)).permissions), ['a:read']);
+  });
+
+  it('[OSUB10] the webhooks of a narrowed session and of a narrowed child lose the scopes they no longer reach', async () => {
+    const who = await newUser();
+    const t = await consentAndToken(who, 'read/a read/b', { cid: bothId });
+    const scopes = { a: { kind: 'events', query: { streams: ['a'] } }, b: { kind: 'events', query: { streams: ['b'] } } };
+    const sessionHook = await coreRequest.post('/' + who.username + '/webhooks').set('Authorization', t.access_token)
+      .send({ url: 'https://hooks.test/session', scopes });
+    assert.equal(sessionHook.status, 201, JSON.stringify(sessionHook.body));
+    const child = await createChild(who, t.access_token, [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }]);
+    assert.equal(child.status, 201, JSON.stringify(child.body));
+    const childHook = await coreRequest.post('/' + who.username + '/webhooks').set('Authorization', child.body.access.token)
+      .send({ url: 'https://hooks.test/child', scopes: { b: scopes.b } });
+    assert.equal(childHook.status, 201, JSON.stringify(childHook.body));
+    await ownerNarrow(who, (p) => p.streamId === 'a', bothId);
+    const hookOf = async (id) => {
+      const res = await coreRequest.get('/' + who.username + '/webhooks/' + id).set('Authorization', who.token);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      return res.body.webhook;
+    };
+    const s = await hookOf(sessionHook.body.webhook.id);
+    assert.deepEqual(Object.keys(s.scopes), ['a']);
+    assert.equal(s.state, 'active');
+    const c = await hookOf(childHook.body.webhook.id);
+    assert.deepEqual(c.scopes, {});
+    assert.equal(c.state, 'inactive');
   });
 });

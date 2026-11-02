@@ -367,5 +367,18 @@ export async function computeGrantState (ctx: {
     logServerError(`oauth extension ${ext.name}: grantState refused`, e);
     throw e;
   }
-  return { name: ext.name, value: JSON.parse(json) };
+  return { name: ext.name, value: frozenGrantState(JSON.parse(json)) };
+}
+
+/**
+ * A grant state as the hooks get it: deeply frozen, so the echo and the
+ * hooks of one request all see the state as stored (one hook cannot change
+ * what the next one reads).
+ */
+export function frozenGrantState<T> (value: T): T {
+  if (value != null && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const v of Object.values(value as Record<string, unknown>)) frozenGrantState(v);
+    Object.freeze(value);
+  }
+  return value;
 }

@@ -271,6 +271,18 @@ owner may have narrowed the grant since the state was computed), the echo is
 checked against `permissions` only, and anything derived from the state must
 be intersected with them.
 
+- `permissions` in the `grantState` context are the WHOLE grant after the
+  consent (the composed re-consent, the kept restrictions and the client's
+  default forbids included), while `requestedTokens` are the grammar tokens of
+  THIS request only: derive the state from `permissions`.
+- `null` is a value (stored, handed back as `null`); `undefined` means no state
+  and removes a stored one.
+- An extension that drops the hook, or is renamed (the state is stored under
+  the extension's `name`), leaves every grant without a state until that
+  user's next consent; grants made before the hook existed have none either.
+  Hooks must handle `grantState === undefined`.
+- The state handed to the echo and the hooks is frozen.
+
 ### Scope rules the core enforces
 
 - A registry client's registered `scope` is its **maximum scope set**, parsed
@@ -510,7 +522,10 @@ never on the wording; render errors without one generically.
   reaches (through the stream tree), never widened; one left with no reach is
   deleted. Deleting the grant deletes them, whichever session created them and
   whether that session has expired or been retired since. Accesses a session
-  created before this binding existed are matched by their `createdBy`.
+  created before this binding existed are matched by their `createdBy`. A
+  stream the grant no longer reaches as a whole is dropped from such an access,
+  even when the grant keeps a stream below it. Its `clientData` can be edited
+  key by key, not wiped (`clientData: null` is `403`).
 - **`clientData.oauth` is server-owned.** OAuth session accesses
   (`name: "oauth:<clientId>"`, `createdBy: "system"`) carry
   `clientData.oauth = { dataGrantId, chain }`, the link to their grant and

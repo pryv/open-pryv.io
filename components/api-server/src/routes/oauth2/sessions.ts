@@ -38,7 +38,7 @@ import { withSessionSelfRevoke, accessesRepo } from './types.ts';
 import { notifyScopedAccessChange, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
-import { getExtension } from 'oauth2/src/extension.ts';
+import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
 import { isDeepStrictEqual } from 'node:util';
 
 export function createSessions (env: GlueEnv) {
@@ -234,7 +234,7 @@ export function createSessions (env: GlueEnv) {
     if (name == null) return undefined;
     const data = grant.clientData?.oauth?.extensionData;
     if (data == null || typeof data !== 'object' || !Object.prototype.hasOwnProperty.call(data, name)) return undefined;
-    return data[name];
+    return frozenGrantState(data[name]);
   }
 
   // ---------------------------------------------------------------------

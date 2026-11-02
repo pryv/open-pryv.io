@@ -6,7 +6,7 @@
  */
 import { MethodContext as MethodContextClass } from 'business/src/MethodContext.ts';
 import type { MethodContext } from 'business/src/MethodContext.ts';
-import { factory as errors } from 'errors';
+import { factory as errors, APIError } from 'errors';
 import { pubsub, WEBHOOKS_CREATE, WEBHOOKS_DELETE } from 'messages';
 import { prepareScopeQuery, prepareAccessScopeQuery } from './scopeQueryUtils.ts';
 
@@ -88,6 +88,16 @@ type WebhooksRepositoryLike = {
   _findAccess: (user: { id: string; username: string }, accessId: string) => Promise<{ deleted?: unknown; token?: string } | null>;
 };
 
+/** Reads the webhooks of one (non-personal) access. */
+type AccessWebhooksReader = {
+  get: (user: { id: string; username: string }, access: { id: string; isPersonal: () => boolean; isApp: () => boolean }) => Promise<Array<{
+    id: string;
+    scopes?: StoredScopes | null;
+    update: (u: Record<string, unknown>) => Promise<void>;
+    forApi: () => Record<string, unknown>;
+  }>>;
+};
+
 // One pass at a time per user; changes during a pass cost one more pass.
 const rescopeInFlight = new Map<string, { again: boolean; running: Promise<void> }>();
 
@@ -148,11 +158,44 @@ function canonical (value: unknown): string {
     : v);
 }
 
+/**
+ * Resolve the scopes of the webhooks OF one access again after that access's
+ * permissions changed: a scope now out of its reach is dropped (a webhook left
+ * with none is set inactive), the others are resolved against the narrower
+ * access. An access that can no longer be used keeps no scope. Throws on a
+ * storage failure (the caller logs it).
+ */
+async function rescopeWebhooksOfAccess (source: MethodContext['source'], user: { id: string; username: string },
+  access: { id: string; token?: string | null }, repository: AccessWebhooksReader, storageLayer: unknown): Promise<void> {
+  const hooks = (await repository.get(user, { id: access.id, isPersonal: () => false, isApp: () => false }))
+    .filter((w) => w.scopes != null && Object.keys(w.scopes).length > 0);
+  if (hooks.length === 0) return;
+  let accessContext: MethodContext | null = null;
+  if (typeof access.token === 'string') {
+    try {
+      accessContext = await contextForAccess(source, user.username, access.token, storageLayer);
+    } catch (err) {
+      // The access cannot be used any more: no scope is kept. Any other
+      // failure leaves the webhooks as they are (thrown to the caller).
+      if (!(err instanceof APIError)) throw err;
+      accessContext = null;
+    }
+  }
+  for (const hook of hooks) {
+    const scopes = accessContext == null ? {} : await reprepareWebhookScopes(accessContext, hook.scopes!);
+    const update: Record<string, unknown> = { scopes };
+    if (Object.keys(scopes).length === 0) update.state = 'inactive';
+    hook.scopes = scopes;
+    await hook.update(update);
+    reloadRunningWebhook(user.username, { ...hook.forApi(), id: hook.id });
+  }
+}
+
 /** Have the webhooks service drop its running copy of a webhook and load the stored one. */
 function reloadRunningWebhook (username: string, webhook: { id: string }): void {
   pubsub.webhooks.emit(WEBHOOKS_DELETE, { username, webhook: { id: webhook.id } });
   pubsub.webhooks.emit(WEBHOOKS_CREATE, { username, webhook });
 }
 
-export { prepareWebhookScopes, reprepareWebhookScopes, contextForAccess, reloadRunningWebhook, rescopeUserWebhooks };
+export { prepareWebhookScopes, reprepareWebhookScopes, contextForAccess, reloadRunningWebhook, rescopeUserWebhooks, rescopeWebhooksOfAccess };
 export type { StoredScopes };

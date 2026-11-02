@@ -366,6 +366,10 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     // A registry grant's state, replaced at every consent (computed by the
     // extension once the grant's permissions were final), written before the
     // session is minted. Server-owned: storage-direct, on the grant only.
+    // Window: if this write fails after the grant's permissions were written
+    // above, the grant keeps its previous state with the new permissions and
+    // the consent answers 500 with no session; the user's next consent
+    // computes and writes the state again (the hooks treat it as advisory).
     if (registry && grantState != null && typeof grantState.name === 'string') {
       await sessions.setGrantState(context.user.id, context.user.username, dataGrant.id, grantState.name, grantState.value);
     }

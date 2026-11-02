@@ -28,12 +28,24 @@
  * the grant as creator) belong to the grant too: after the sessions, each
  * live one is brought within the grant as it now stands. They only ever
  * narrow (their row is their consent: they have no chain to widen back to); one
- * left with no reach is deleted with what it manages; one that still reaches
- * something keeps working at the narrower reach.
+ * left with no reach is deleted; one that still reaches something keeps
+ * working at the narrower reach. A session deleted for lack of reach takes
+ * what it created with it (deleting a session deletes what it manages), even
+ * an access the grant would still reach. The unstamped ones are found through
+ * their creator's row, which a retired or expired session keeps (it is
+ * deleted, not purged, with the grant): a purge of expired accesses must stamp
+ * them first.
+ *
+ * Every rewritten row (session or created access) also has the scopes of its
+ * webhooks resolved again, as `accesses.update` does. A row that fails is
+ * logged and skipped; the others are still brought within the grant.
  *
  * Known window: a refresh that read the grant before an owner edit and
  * inserts its session after the re-cut listed the sessions mints one at the
- * old reach, until its next refresh or its expiry (`oauth:accessTokenTTL`).
+ * old reach, until its next refresh or its expiry (`oauth:accessTokenTTL`);
+ * an access that session creates meanwhile is created at the old reach and
+ * lives at most until the session's expiry (a created access never outlives
+ * its creator's expiry).
  */
 
 import cache from 'cache';
@@ -41,6 +53,9 @@ import timestamp from 'unix-timestamp';
 import { fromCallback } from 'utils';
 import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { getStorageLayer } from 'storage';
+import { getLogger } from '@pryv/boiler';
+import WebhooksRepository from 'business/src/webhooks/repository.ts';
+import { rescopeWebhooksOfAccess } from './webhookScopes.ts';
 import AccessLogic from 'business/src/accesses/AccessLogic.ts';
 import { mergeStreamPermissions, INHERITED_RESTRICTION_FEATURES } from 'business/src/accesses/permissionSet.ts';
 import { parseAccessRef, managingAccessBase } from 'business/src/accesses/refs.ts';
@@ -102,11 +117,11 @@ export async function effectiveSessionPermissions (
  * than the child: a grant widened since leaves it as it is.
  */
 export async function effectiveChildPermissions (
-  userId: string, grant: { permissions?: PermissionEntry[] } & Record<string, unknown>, childPermissions: PermissionEntry[]
+  userId: string, grant: { permissions?: PermissionEntry[] } & Record<string, unknown>, childPermissions: PermissionEntry[],
+  loadedGrantLogic?: InstanceType<typeof AccessLogic>
 ): Promise<{ permissions: PermissionEntry[]; hasReach: boolean }> {
   const grantPermissions = grant.permissions ?? [];
-  const grantLogic = new AccessLogic(userId, { ...grant, permissions: grantPermissions });
-  await grantLogic.loadPermissions();
+  const grantLogic = loadedGrantLogic ?? await loadGrantLogic(userId, grant);
   // The grant's reach at each stream the child names (its own entry, or the
   // one it reaches the stream with through the tree), as an entry the meet
   // compares; none: the child's entry is left out (a `none` mask is kept).
@@ -126,8 +141,15 @@ export async function effectiveChildPermissions (
   const effective = mergeStreamPermissions(childPermissions, against, 'meet').permissions as unknown as PermissionEntry[];
   const hasReach = effective.some((p) => typeof p.streamId === 'string' && p.level !== 'none');
   if (!hasReach) return { permissions: effective, hasReach };
-  await new AccessLogic(userId, grant).inheritCarveOuts({ permissions: effective as never });
+  await grantLogic.inheritCarveOuts({ permissions: effective as never });
   return { permissions: effective, hasReach };
+}
+
+/** The grant as an access, its permissions loaded: one per reconcile, shared by its created accesses. */
+async function loadGrantLogic (userId: string, grant: { permissions?: PermissionEntry[] } & Record<string, unknown>): Promise<InstanceType<typeof AccessLogic>> {
+  const logic = new AccessLogic(userId, { ...grant, permissions: grant.permissions ?? [] });
+  await logic.loadPermissions();
+  return logic;
 }
 
 /**
@@ -176,48 +198,75 @@ export async function reconcileSessionsOfGrant (user: SessionUser, grantId: stri
   const sessions = (all ?? []).filter((a) => isLiveSessionOf(a, base, now));
   let updated = 0;
   let deleted = 0;
-  for (const session of sessions) {
-    // The row's own permissions carry the session's selfRevoke override.
-    const current = (session.permissions ?? []).filter((p) => p?.feature !== 'selfRevoke');
-    // The chain's consent; a row minted before it was recorded falls back to
-    // the row (it expires within the access TTL; its next refresh records it).
-    const recorded = session.clientData?.oauth?.chain;
-    const chain = Array.isArray(recorded) ? recorded as PermissionEntry[] : current;
-    const eff = await effectiveSessionPermissions(user.id, grant as AccessRow & Record<string, unknown>, chain);
-    if (!eff.hasReach) {
-      await deleteAccessChain(user, { id: session.id });
-      deleted++;
-      continue;
+  const logger = getLogger('accesses:oauth-reconcile');
+  const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
+  // A rewritten row: cache bust, scoped notification, index, and the scopes
+  // of its webhooks resolved again against the narrower permissions.
+  async function afterRewrite (row: AccessRow, permissions: PermissionEntry[], modified: number): Promise<void> {
+    if (typeof row.token === 'string') cache.unsetAccessLogic(user.id, { id: row.id, token: row.token });
+    notifyScopedAccessChange(user.username, { id: row.id, type: row.type, permissions: permissions as Array<{ streamId?: string }> }, 'update');
+    await reindexAccessNonFatal(user.username, { id: row.id, type: row.type, expires: row.expires, modified });
+    try {
+      await rescopeWebhooksOfAccess({ name: 'http' }, user, { id: row.id, token: row.token }, webhooksRepository, storageLayer);
+    } catch (err) {
+      logger.error(`webhooks of access ${row.id} not re-scoped after the change of its grant ${base}: ${(err as Error).message}`);
     }
-    if (samePermissionKeys(current, eff.permissions.filter((p) => p.feature !== 'selfRevoke'))) continue;
-    const permissions = withSessionSelfRevoke(eff.permissions);
-    const modified = timestamp.now();
-    await fromCallback((cb: NodeCallback) =>
-      accessesRepository.updateOne(user, { id: session.id }, { permissions, modified }, cb));
-    if (typeof session.token === 'string') cache.unsetAccessLogic(user.id, { id: session.id, token: session.token });
-    notifyScopedAccessChange(user.username, { id: session.id, type: 'app', permissions: permissions as Array<{ streamId?: string }> }, 'update');
-    await reindexAccessNonFatal(user.username, { id: session.id, type: session.type, expires: session.expires, modified });
-    updated++;
   }
-  // Then what the sessions created (listed again: a session deleted above
-  // took its own with it).
-  const remaining = await fromCallback((cb: NodeCallback) => accessesRepository.find(user, {}, dbFindOptions, cb)) as AccessRow[];
-  for (const child of childrenOfGrant(remaining ?? [], base, timestamp.now())) {
-    const current = child.permissions ?? [];
-    const eff = await effectiveChildPermissions(user.id, grant as AccessRow & Record<string, unknown>, current);
-    if (!eff.hasReach) {
-      await deleteAccessChain(user, { id: child.id });
-      deleted++;
-      continue;
+  let sessionDeleted = false;
+  for (const session of sessions) {
+    try {
+      // The row's own permissions carry the session's selfRevoke override.
+      const current = (session.permissions ?? []).filter((p) => p?.feature !== 'selfRevoke');
+      // The chain's consent; a row minted before it was recorded falls back to
+      // the row (it expires within the access TTL; its next refresh records it).
+      const recorded = session.clientData?.oauth?.chain;
+      const chain = Array.isArray(recorded) ? recorded as PermissionEntry[] : current;
+      const eff = await effectiveSessionPermissions(user.id, grant as AccessRow & Record<string, unknown>, chain);
+      if (!eff.hasReach) {
+        await deleteAccessChain(user, { id: session.id });
+        deleted++;
+        sessionDeleted = true;
+        continue;
+      }
+      if (samePermissionKeys(current, eff.permissions.filter((p) => p.feature !== 'selfRevoke'))) continue;
+      const permissions = withSessionSelfRevoke(eff.permissions);
+      const modified = timestamp.now();
+      await fromCallback((cb: NodeCallback) =>
+        accessesRepository.updateOne(user, { id: session.id }, { permissions, modified }, cb));
+      await afterRewrite({ ...session, type: 'app' }, permissions, modified);
+      updated++;
+    } catch (err) {
+      // Its next refresh re-cuts it.
+      logger.error(`OAuth session ${session.id} not re-cut after the change of its grant ${base}: ${(err as Error).message}`);
     }
-    if (samePermissionKeys(current, eff.permissions)) continue;
-    const modified = timestamp.now();
-    await fromCallback((cb: NodeCallback) =>
-      accessesRepository.updateOne(user, { id: child.id }, { permissions: eff.permissions, modified }, cb));
-    if (typeof child.token === 'string') cache.unsetAccessLogic(user.id, { id: child.id, token: child.token });
-    notifyScopedAccessChange(user.username, { id: child.id, type: child.type, permissions: eff.permissions as Array<{ streamId?: string }> }, 'update');
-    await reindexAccessNonFatal(user.username, { id: child.id, type: child.type, expires: child.expires, modified });
-    updated++;
+  }
+  // Then what the sessions created (listed again only when a session was
+  // deleted above: it took its own with it). One grant view for all of them.
+  const remaining = sessionDeleted
+    ? await fromCallback((cb: NodeCallback) => accessesRepository.find(user, {}, dbFindOptions, cb)) as AccessRow[]
+    : all;
+  const children = childrenOfGrant(remaining ?? [], base, timestamp.now());
+  const grantLogic = children.length > 0 ? await loadGrantLogic(user.id, grant as AccessRow & Record<string, unknown>) : undefined;
+  for (const child of children) {
+    try {
+      const current = child.permissions ?? [];
+      const eff = await effectiveChildPermissions(user.id, grant as AccessRow & Record<string, unknown>, current, grantLogic);
+      if (!eff.hasReach) {
+        await deleteAccessChain(user, { id: child.id });
+        deleted++;
+        continue;
+      }
+      if (samePermissionKeys(current, eff.permissions)) continue;
+      const modified = timestamp.now();
+      await fromCallback((cb: NodeCallback) =>
+        accessesRepository.updateOne(user, { id: child.id }, { permissions: eff.permissions, modified }, cb));
+      await afterRewrite(child, eff.permissions, modified);
+      updated++;
+    } catch (err) {
+      // It has no refresh: it keeps its reach until the grant's next change
+      // or its expiry (at most its creating session's).
+      logger.error(`access ${child.id} created by an OAuth session not narrowed after the change of its grant ${base}: ${(err as Error).message}`);
+    }
   }
   if (updated > 0) pubsub.notifications.emit(user.username, USERNAME_BASED_ACCESSES_CHANGED);
   return { updated, deleted };
