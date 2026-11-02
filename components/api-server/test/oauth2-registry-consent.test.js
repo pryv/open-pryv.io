@@ -33,9 +33,14 @@ const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { featur
 
 // Toy grammar: `read/<s>`, `write/<s>`, `add/<s>` give one stream a level;
 // `must/<s>` reads it, mandatory; `ctx/choice` lets the user pick entries;
-// `ctx/locked` forbids secret sharing and webhooks.
+// `ctx/locked` forbids secret sharing and webhooks; `ctx/groups` groups the
+// entries for display (level-less keys, one naming a stream outside the request).
 const LEVEL_OF = { read: 'read', write: 'contribute', add: 'create-only', must: 'read' };
 let tokenHookOverride = null;
+const GROUPS = [
+  { key: 'first', label: { en: 'First streams' }, entries: ['s|a', 's|c'] },
+  { key: 'second', label: { en: 'Second stream' }, entries: ['s|b|read'] },
+];
 const toyExtension = {
   apiVersion: 1,
   name: 'toy-consent',
@@ -57,7 +62,8 @@ const toyExtension = {
         permissions.push({ feature: 'secretSharing', setting: 'forbidden', mandatory: true },
           { feature: 'webhooks', setting: 'forbidden', mandatory: true });
       }
-      return { ok: true, tokens, offer: { permissions, allowUserChoice: tokens.includes('ctx/choice'), entryLabels } };
+      const groups = tokens.includes('ctx/groups') ? { entryGroups: GROUPS } : {};
+      return { ok: true, tokens, offer: { permissions, allowUserChoice: tokens.includes('ctx/choice'), entryLabels, ...groups } };
     },
     echo ({ permissions, requestedTokens }) {
       const has = (s, levels) => permissions.some((p) => p.streamId === s && levels.includes(p.level));
@@ -675,5 +681,42 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.equal(t.status, 500, JSON.stringify(t.body));
     const row = await accessIndex.getAccessIndex(platformDB, baseOf(session.id));
     assert.ok(row != null && row.deleted != null, JSON.stringify(row));
+  });
+
+  it('[OSG7] the signed-out offer carries the grammar\'s entry groups unchanged', async () => {
+    const flow = await authorize('read/a read/b ctx/choice ctx/groups');
+    const o = await offer(flow.state);
+    assert.equal(o.status, 200, JSON.stringify(o.body));
+    assert.deepEqual(o.body.offer.entryGroups, GROUPS);
+    assert.deepEqual(o.body.offer.permissions.map((p) => p.streamId), ['a', 'b']);
+    const flat = await offer((await authorize('read/a read/b ctx/choice')).state);
+    assert.equal(flat.body.offer.entryGroups, undefined);
+  });
+
+  it('[OSG8] the composed offer carries the groups; its shownDigest differs from the same screen without them, entries unchanged', async () => {
+    const who = await newUser();
+    await consentAndToken(who, 'read/c');
+    const grouped = await offer((await authorize('read/a read/b ctx/choice ctx/groups')).state, who);
+    const flat = await offer((await authorize('read/a read/b ctx/choice')).state, who);
+    for (const o of [grouped, flat]) assert.equal(o.status, 200, JSON.stringify(o.body));
+    assert.equal(grouped.body.authenticated, true);
+    assert.deepEqual(grouped.body.offer.entryGroups, GROUPS);
+    assert.equal(flat.body.offer.entryGroups, undefined);
+    // The held stream c, outside the request, is on both screens with the
+    // same entries; placing it in a group is the consent UI's part.
+    assert.deepEqual(grouped.body.offer.permissions, flat.body.offer.permissions);
+    assert.deepEqual(grouped.body.offer.permissions.map((p) => p.streamId).sort(), ['a', 'b', 'c']);
+    assert.notEqual(grouped.body.shownDigest, flat.body.shownDigest);
+  });
+
+  it('[OSG9] a flat grantedPermissions accepted against a grouped screen mints as today; a partial choice narrows', async () => {
+    const who = await newUser();
+    const t = await consentAndToken(who, 'offline_access read/a read/b ctx/choice ctx/groups');
+    assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:read', 'b:read']);
+    assert.equal((await readStream(who, t.access_token, 'b')).status, 200);
+    const c = await consent(who, 'read/a read/b ctx/choice ctx/groups', { keep: (p) => p.streamId === 'a' });
+    assert.equal(c.accept.status, 200, JSON.stringify(c.accept.body));
+    assert.deepEqual(c.offer.offer.entryGroups, GROUPS);
+    assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:read']);
   });
 });

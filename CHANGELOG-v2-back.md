@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### OAuth extension: grouped consent entries, offer size bound
+
+- `SynthOffer.entryGroups` (optional offer member, `EntryGroup = { key, label, entries }`; extension
+  `apiVersion` stays 1). Checked in `callParse` (`scopeGrammar.ts`, every purpose: request, maximum
+  set, echo parse) by `typedEntryGroups` against `ENTRY_GROUP_BOUNDS`; the typed copy drops unknown
+  group members. A violation is a contract error (`invalid_scope` "scope could not be parsed",
+  detail through `logServerError`).
+- `MAX_SYNTH_OFFER_BYTES` (256 KiB): `Buffer.byteLength(canonicalJson(offer))` of the normalised offer,
+  checked once in `callParse` after the members are typed; also bounds what the per-state offer cache
+  holds. An offer that is not JSON (a BigInt, a cycle) is a contract error there too, so a bad
+  registered-scope offer no longer throws out of the boot pass over registry clients (the others are
+  still checked) nor out of `resolveRequestedScope`.
+- Digests and composition unchanged in code: `entryGroups` is an offer member, so it is already in
+  `offerDigest`, in the composed `shown` offer and in `shownDigest`. Contract doc in the `extension.ts`
+  header (entry keys incl. the level-less form, groups, bounds).
+
 ### OAuth extension: the grant state
 
 - New optional extension hook `scopeGrammar.grantState({ permissions, requestedTokens, client })`

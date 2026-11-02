@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### OAuth: grouped consent entries
+
+- **Added: `offer.entryGroups` on `POST /oauth2/authorize/offer` for registry clients** (signed-out and
+  composed answers), when the operator's OAuth extension emits it: an ordered array of `{ key, label,
+  entries }` grouping the consent screen's entries for display (`label` a localised text, `entries`
+  entry keys). Display only: it is part of the offer's digest and of `shownDigest`, a group may name
+  entries outside the offer, an entry no group names is shown ungrouped, and
+  `/oauth2/authorize/accept` still takes a flat `grantedPermissions`. A consent UI that ignores it
+  shows the flat list as before.
+- **Entry keys may be level-less** in `offer.entryLabels` and `offer.entryGroups`: `s|<streamId>` and
+  `f|<feature>` beside `s|<streamId>|<level>` and `f|<feature>|<setting>`; a consent UI looks up the
+  exact key first, then the level-less one.
+- **New bounds on a registry client's offer:** at most 256 KiB of JSON for the whole offer (labels and
+  texts included; `entryLabels` had no bound), and for `entryGroups` at most 64 groups, 1000 entry keys,
+  unique group keys of at most 64 characters, labels of at most 16 languages of 200 characters, entry
+  keys of at most 300 characters, no entry key in two groups. An offer breaking them answers
+  `invalid_scope` ("scope could not be parsed"), the detail logged on the server. **Upgrade note:**
+  the bounds hold on every parse of the extension's grammar, the client's registered scope included:
+  a registered scope whose parsed offer breaks them (for instance over 256 KiB with full label sets)
+  refuses every request of that client, and the boot check warns about it. On the echo's parse a
+  failure comes after the consent: the code exchange, a refresh and an introspection answer
+  `server_error`. An extension should emit no labels, groups or texts for the registered scope (never
+  shown) and measure that offer first.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

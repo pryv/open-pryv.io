@@ -68,10 +68,41 @@
  *     token (`openid`, `offline_access`: the core adds them). Its context
  *     tells whether the subject is an alias (`aliased`).
  *
+ * Entry keys name an entry of the consent screen: `s|<streamId>|<level>` for
+ * a stream entry and `f|<feature>|<setting>` for a feature entry, or the
+ * level-less `s|<streamId>` and `f|<feature>`, which name the entry whatever
+ * level or setting the screen shows it at (a held entry the composition
+ * joins to another level, or one outside the request). The consent UI looks
+ * up the exact key first, then the level-less one. The stream id is matched
+ * literally: use the spelling the grammar puts in its permissions.
+ *
  * `entryLabels` (optional, display only, passed through to the consent UI
- * unchanged): keyed by `s|<streamId>|<level>` for a stream entry and
- * `f|<feature>|<setting>` for a feature entry, each value a localised text
+ * unchanged): keyed by entry keys, each value a localised text
  * `{ [languageCode]: string }`.
+ *
+ * `entryGroups` (optional, display only; absent, not `null`): an ordered
+ * array of `{ key, label, entries }`, the order being the display order;
+ * `key` an opaque string of 1 to 64 characters, unique in the offer; `label`
+ * a localised text (at most 16 languages, each at most 200 characters);
+ * `entries` entry keys (each at most 300 characters). At most 64 groups and
+ * 1000 entry keys across them; an entry key in two groups (or twice in one)
+ * is a contract error. Keys may name entries that are not in the offer (a
+ * group lists its whole membership, so a held entry outside the request
+ * falls into it on a re-consent); an entry of the offer no group names is
+ * shown ungrouped. Other members of a group are dropped. Grouping is part
+ * of the digests; it never removes an entry from the screen, and the
+ * consent answer (`grantedPermissions`) stays a flat list.
+ *
+ * The whole offer (permissions, texts, labels, groups) is bounded to
+ * `MAX_SYNTH_OFFER_BYTES` (256 KiB) of canonical JSON; over it, or not JSON,
+ * a contract error. Character limits count UTF-16 code units.
+ *
+ * These checks run on EVERY parse: the request, the registered scope
+ * (`purpose: 'max'`: a failure refuses every request of the client, and the
+ * boot check warns) and the echo (a failure comes after the consent: the
+ * code exchange, a refresh or an introspection answers `server_error`). The
+ * `max` offer is never shown and is the largest: emit no display members
+ * (labels, groups, texts) for `purpose: 'max'`.
  *
  * Hooks that may be asynchronous are bounded by
  * `oauth:extensionHookTimeoutMs` (default 5000): a hook that does not settle
@@ -110,6 +141,16 @@ export type SynthOffer = {
   consent?: Record<string, string>;
   /** Display labels per entry, see the key format above. */
   entryLabels?: Record<string, Record<string, string>>;
+  /** Display groups of entries, in display order, see above. */
+  entryGroups?: EntryGroup[];
+};
+
+/** A display group of consent entries (see `entryGroups` above). */
+export type EntryGroup = {
+  key: string;
+  label: Record<string, string>;
+  /** Entry keys, see the key format above. */
+  entries: string[];
 };
 
 export type ParseResult =

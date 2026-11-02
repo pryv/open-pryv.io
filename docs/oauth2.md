@@ -289,9 +289,16 @@ be intersected with them.
   by the same grammar. A request beyond it answers `invalid_scope`.
 - Whatever the grammar answers, the core refuses (`invalid_scope`) account and
   system streams, every stream (`*`), the `manage` level, two permissions on
-  one stream in one offer, a token the client did not send, and an offer of
-  more than 1000 permissions. It removes `defaultName` / `name` from the offer:
-  a registry consent never creates a stream.
+  one stream in one offer, a token the client did not send, an offer of
+  more than 1000 permissions, an offer over 256 KiB of JSON (labels and texts
+  included) and malformed `entryGroups` (below). It removes `defaultName` /
+  `name` from the offer: a registry consent never creates a stream.
+- These offer checks hold on every parse: the registered scope's (a
+  registered scope over a bound refuses every request of the client, and the
+  boot check warns about it) and the echo's (a failure there comes after the
+  consent: the code exchange, a refresh and an introspection answer
+  `server_error`). The registered scope's offer is never shown: an extension
+  should emit no labels, groups or texts for it.
 - The core owns two scope tokens and never hands them to the grammar:
   `offline_access` asks for a refresh token (granted only when the client is
   registered for the `refresh_token` grant), `openid` asks for an `id_token`
@@ -437,14 +444,29 @@ no-store`):
 ```json
 {
   "client": { "clientId": "…", "clientName": "…", "logoUri": "…", "clientUri": "…", "policyUri": "…", "tosUri": "…" },
-  "offer": { "allowUserChoice": false, "permissions": [ … ], "randomAlias": false, "entryLabels": { … } },
+  "offer": { "allowUserChoice": false, "permissions": [ … ], "randomAlias": false, "entryLabels": { … }, "entryGroups": [ … ] },
   "scope": [ "…" ]
 }
 ```
 
-`offer.entryLabels` (display labels keyed `s|<streamId>|<level>` or
-`f|<feature>|<setting>`, values `{ [lang]: text }`) and the offer texts come
-from the grammar and are passed through unchanged. The signed-out offer is the
+`offer.entryLabels` (display labels, values `{ [lang]: text }`),
+`offer.entryGroups` and the offer texts come from the grammar and are passed
+through unchanged. Both name entries by **entry key**: `s|<streamId>|<level>`
+or `f|<feature>|<setting>`, or the level-less `s|<streamId>` / `f|<feature>`,
+which name the entry at whatever level the screen shows it (a consent UI
+looks up the exact key first, then the level-less one; the stream id is
+matched as spelled). `entryGroups` is an ordered array (the display order)
+of `{ "key": "…", "label": { "<lang>": "…" }, "entries": [ "<entry key>", … ] }`:
+at most 64 groups, a `key` of 1 to 64 characters unique in the offer, labels
+of at most 16 languages and 200 characters each, entry keys of at most 300
+characters, at most 1000 entry keys in all, none in two groups; the core
+refuses an offer that breaks these rules (`invalid_scope`, detail logged on
+the server). A group may name entries the offer does not hold (a stream the
+user's grant holds outside the request falls into its group on a
+re-consent); an entry no group names is shown ungrouped. Grouping is display
+only: it is part of the offer's digest and of `shownDigest`, never removes
+an entry from the screen, and `/oauth2/authorize/accept` still takes a flat
+`grantedPermissions`. The signed-out offer is the
 request as parsed; client defaults (forbidden features) and the current grant
 appear only on the signed-in composed offer, which is the authoritative screen
 (next section). `/offer` and `/oauth2/authorize/accept` re-derive the offer
