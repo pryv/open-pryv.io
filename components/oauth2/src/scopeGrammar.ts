@@ -301,19 +301,25 @@ export function canonicalJson (v: unknown): string {
  * that yields no entry claims nothing and passes. A violation is an extension
  * error (thrown, the caller answers `server_error`). Held reach the echo
  * leaves unnamed is logged, not refused.
+ *
+ * `opts.grantState`: the grant's state (see the extension contract), handed
+ * to the echo as context only; the bound above is checked against
+ * `permissions`, never against the state.
  */
 export function grantedScopeTokens (
   client: OAuthClient,
   coreTokens: string[],
   grammarTokens: string[],
   permissions: ExtPermission[],
-  opts: { aliased?: boolean } = {}
+  opts: { aliased?: boolean; grantState?: unknown } = {}
 ): string[] {
   const ext: OAuthExtension | null = getExtension();
   if (ext == null) throw new Error('no scope grammar registered on this core');
   // `aliased`: the subject is the grant's alias (a pseudonymous grant), so a
   // grammar can name its pseudonym marker for a client that did not ask for one.
-  const answer = ext.scopeGrammar.echo({ permissions, requestedTokens: grammarTokens, client: toClientView(client), aliased: opts.aliased === true });
+  const answer = ext.scopeGrammar.echo({
+    permissions, requestedTokens: grammarTokens, client: toClientView(client), aliased: opts.aliased === true, grantState: opts.grantState,
+  });
   if (!Array.isArray(answer) || answer.some((t) => typeof t !== 'string')) {
     throw new Error(`oauth extension ${ext.name}: scopeGrammar.echo must return an array of strings`);
   }

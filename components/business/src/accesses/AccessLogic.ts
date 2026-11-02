@@ -39,6 +39,12 @@ const { PermissionLevels, INHERITED_RESTRICTION_FEATURES } = require('./permissi
 const WEBHOOKS_FORBIDDEN_MESSAGE = 'Webhooks are not allowed with this access: it carries the feature permission "webhooks: forbidden".';
 
 /**
+ * Refusal message of accesses.create and webhooks.create for an access
+ * carrying `{ feature: 'accessCreation', setting: 'forbidden' }`.
+ */
+const ACCESS_CREATION_FORBIDDEN_MESSAGE = 'Creating accesses or webhooks is not allowed with this access: it carries the feature permission "accessCreation: forbidden".';
+
+/**
  * Reserved namespace holding one-time shared secrets, one substream per creating
  * access. Matched here as a literal rather than imported so the access layer
  * keeps no dependency on the plugin that owns it.
@@ -358,6 +364,9 @@ class AccessLogic {
       // -- Webhooks
       case 'webhooks.create':
         if (this.isPersonal()) return false;
+        // A webhook acts with this access's reach on the server's side, like
+        // an access it would create: `accessCreation: forbidden` bars it too.
+        if (!this.canCreateAccesses()) return ACCESS_CREATION_FORBIDDEN_MESSAGE;
         return this.canUseWebhooks() || WEBHOOKS_FORBIDDEN_MESSAGE;
       case 'webhooks.update':
       case 'webhooks.test':
@@ -448,6 +457,20 @@ class AccessLogic {
 
   async canCreateAccess (candidate: { permissions?: Permission[]; [k: string]: unknown }) {
     // The account owner can do everything.
+    if (this.isPersonal()) return true;
+    // An access carrying `accessCreation: forbidden` creates no access.
+    if (!this.canCreateAccesses()) return false;
+    return await this.canManageAsChild(candidate);
+  }
+
+  /**
+   * Whether `candidate` fits as an access this one manages: the scope rules
+   * of `canCreateAccess` without the `accessCreation` gate. Also what an
+   * update of a managed access, or of this access with the accesses it
+   * manages, is checked against: an access that may not create accesses any
+   * more still manages the ones it created before.
+   */
+  async canManageAsChild (candidate: { type?: unknown; permissions?: Permission[] }) {
     if (this.isPersonal()) return true;
     // Restrictions ride along before the permission set is judged, so they
     // survive both accesses.create and accesses.update.
@@ -747,6 +770,11 @@ class AccessLogic {
       return this.canUseWebhooks() ||
         featurePermission.setting === this.featurePermissionsMap.webhooks?.setting;
     }
+    if (featurePermission.feature === 'accessCreation') {
+      // Same rule as secretSharing.
+      return this.canCreateAccesses() ||
+        featurePermission.setting === this.featurePermissionsMap.accessCreation?.setting;
+    }
     if (featurePermission.feature === 'selfAudit') {
       // true if this acces has no setting for selfAudit or if requested setting is identical to this access
       return this.featurePermissionsMap.selfAudit == null || featurePermission.setting === this.featurePermissionsMap.selfAudit.setting;
@@ -783,6 +811,16 @@ class AccessLogic {
     return this._featureAllowed('webhooks');
   }
 
+  /**
+   * Whether this access may create accesses (and webhooks).
+   *
+   * Default allow: only an explicit `accessCreation: forbidden` bars it, for
+   * tokens that should act on the data and never hand a credential on.
+   */
+  canCreateAccesses () {
+    return this._featureAllowed('accessCreation');
+  }
+
   /** @private Default allow: false only for an explicit `forbidden` setting. */
   _featureAllowed (name: string) {
     // The map is absent on accesses built without a permission set (personal
@@ -792,7 +830,7 @@ class AccessLogic {
 }
 
 export default AccessLogic;
-export { AccessLogic, WEBHOOKS_FORBIDDEN_MESSAGE };
+export { AccessLogic, WEBHOOKS_FORBIDDEN_MESSAGE, ACCESS_CREATION_FORBIDDEN_MESSAGE };
 AccessLogic.PERMISSION_LEVEL_CONTRIBUTE = 'contribute';
 AccessLogic.PERMISSION_LEVEL_MANAGE = 'manage';
 AccessLogic.PERMISSION_LEVEL_READ = 'read';

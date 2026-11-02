@@ -222,8 +222,9 @@ module.exports = function (host) {
     name: 'my-extension',
     scopeGrammar: {
       parse (scopeString, { client, purpose }) { /* { ok: true, tokens, offer } or { ok: false, description } */ },
-      echo ({ permissions, requestedTokens, client }) { /* scope tokens naming what permissions hold */ },
-      supported () { /* optional */ }
+      echo ({ permissions, requestedTokens, client, grantState }) { /* scope tokens naming what permissions hold */ },
+      supported () { /* optional */ },
+      grantState ({ permissions, requestedTokens, client }) { /* optional: the grant's state, see below */ }
     },
     tokenResponse (ctx) { /* optional: extra fields of the token response */ },
     idTokenClaims (ctx) { /* optional: extra claims of the id_token */ },
@@ -251,6 +252,24 @@ is neither an object nor nothing (an array, a string or a number; `null` /
 core answers (§ 1). A token request that fails this way stores no refresh
 token, and a refresh that fails this way does not use up the refresh token:
 the app retries with the same one.
+
+### The grant's state
+
+`scopeGrammar.grantState` (optional) gives each registry grant a state: any
+JSON value (or `undefined`, no state) computed from the grant's permissions
+once a consent has settled them, at the first consent and at every
+re-authorization, where it **replaces** the previous one. It is not computed
+again at a refresh, nor when the account owner narrows the grant. The core
+stores it on the grant (`clientData.oauth`, which only the server writes: the
+owner's `accesses.update` cannot change it) and hands it back as `grantState`
+to `echo` and to every hook (`tokenResponse`, `idTokenClaims`,
+`introspectionClaims`). A state whose JSON exceeds 16 KiB, that is not
+JSON-serialisable, or a hook that throws or does not settle in time fails the
+consent with `500 server_error` and leaves the grant unchanged. **The state is
+advisory**: `permissions` in each context is what the session holds now (the
+owner may have narrowed the grant since the state was computed), the echo is
+checked against `permissions` only, and anything derived from the state must
+be intersected with them.
 
 ### Scope rules the core enforces
 
@@ -458,15 +477,19 @@ never on the wording; render errors without one generically.
   `oauth-grant:<clientId>` on the user's account (no expiry; one the owner let
   expire is replaced at the next consent). A grant withdrawn between consent
   and code exchange answers `invalid_grant` at `/oauth2/token`.
-- **Registry grants forbid the `webhooks` and `secretSharing` features by
-  default**, unless the client row allows the feature
+- **Registry grants forbid the `webhooks`, `secretSharing` and
+  `accessCreation` features by default**, unless the client row allows the
+  feature
   (`--allow-feature`, § 3b). The core applies these forbids at every consent
   and the sessions carry them. They are not part of the offer the grammar
   answers, so the signed-out offer does not show them; the signed-in composed
   screen shows one, locked, only when the request asks to allow that feature.
   Allowing a feature later does not lift the forbid on grants that already
   carry it: a forbid on a grant is kept by every re-consent, only the owner
-  can remove it.
+  can remove it. **`accessCreation` is forbidden by default since the release
+  that introduced it**: a client whose sessions create accesses or webhooks
+  must be updated with `--allow-feature accessCreation` BEFORE that release is
+  deployed, or each user's next consent locks the forbid onto their grant.
 - **In any consent offer, a forbidden feature is mandatory** (it cannot be
   unticked, whatever the offer says); one marked `optIn` is refused. This
   holds for OAuth and CMC offers and for the `consent` sidecar of an auth
@@ -479,10 +502,22 @@ never on the wording; render errors without one generically.
   beyond either). A session left with no reach is deleted; its chain's next
   refresh is then refused (`invalid_grant`) unless the owner widened the grant
   again before it.
+- **What a session creates belongs to the grant.** A shared access an OAuth
+  session creates (possible only when the grant allows `accessCreation`) is
+  stamped with the session's grant (`clientData.oauth.dataGrantId`; its
+  `createdBy` stays the session). When the grant's permissions change, after
+  the sessions, each live such access is narrowed to what the grant still
+  reaches (through the stream tree), never widened; one left with no reach is
+  deleted. Deleting the grant deletes them, whichever session created them and
+  whether that session has expired or been retired since. Accesses a session
+  created before this binding existed are matched by their `createdBy`.
 - **`clientData.oauth` is server-owned.** OAuth session accesses
   (`name: "oauth:<clientId>"`, `createdBy: "system"`) carry
   `clientData.oauth = { dataGrantId, chain }`, the link to their grant and
-  their chain's consent. `accesses.create` refuses an access carrying
+  their chain's consent; the accesses they create carry
+  `clientData.oauth = { dataGrantId }`; a registry grant carries
+  `clientData.oauth = { grantOf, extensionData? }` (its client, and the
+  grant's state under the extension's name). `accesses.create` refuses an access carrying
   `clientData.oauth`, and `accesses.update` refuses any change to it
   (`403 forbidden`); sending it back unchanged passes.
 
@@ -827,7 +862,7 @@ node bin/oauth-client.js create-registry <clientId> \
     [--jwks-file <path> | --jwks-json <json> | --jwks-uri <https-url>] [--signing-alg <alg> ...] \
     [--access-token-ttl <s>] [--refresh-token-ttl <s>] [--refresh-token-absolute-ttl <s>] \
     [--offline-access true|false] [--can-introspect] \
-    [--allow-insecure-redirect] [--allow-feature webhooks|secretSharing ...] \
+    [--allow-insecure-redirect] [--allow-feature webhooks|secretSharing|accessCreation ...] \
     [--extra <key>=<value> ...] [--grant-type <name> ...] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--policy-uri <s>] [--tos-uri <s>] \
     [--contact <s> ...] [--launch-type <s> ...]
@@ -853,9 +888,9 @@ Flags:
 - **`--allow-insecure-redirect`**: plain-http redirect URIs are refused unless
   their host is a loopback one (`127.0.0.1`, `[::1]`, `localhost`); this flag
   accepts them on other hosts. Such clients are reported at every core boot.
-- **`--allow-feature webhooks|secretSharing`** (repeatable): lifts the default
-  forbid of that feature on the client's grants (§ 1d). Only these two
-  features are accepted; `--allow-feature none` clears the list. `create-registry`
+- **`--allow-feature webhooks|secretSharing|accessCreation`** (repeatable):
+  lifts the default forbid of that feature on the client's grants (§ 1d). Only
+  these three features are accepted; `--allow-feature none` clears the list. `create-registry`
   and `show` print the features forbidden on the client's grants.
 - **`--auth-method`**: `none` (the default, a public client using PKCE only),
   `client_secret_basic` (a secret is minted and printed **once**), or

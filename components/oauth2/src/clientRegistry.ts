@@ -305,7 +305,7 @@ function validateRegistryClient (client: OAuthClient): void {
  * in `allowFeatures`: the core applies them after every consent (never shown
  * on the consent screen; a forbid always wins over an allow).
  */
-export const REGISTRY_DEFAULT_FORBIDDEN_FEATURES: readonly string[] = Object.freeze(['webhooks', 'secretSharing']);
+export const REGISTRY_DEFAULT_FORBIDDEN_FEATURES: readonly string[] = Object.freeze(['webhooks', 'secretSharing', 'accessCreation']);
 
 /** The default forbids that apply to this registry client. */
 export function defaultForbiddenFeatures (client: OAuthClient): string[] {

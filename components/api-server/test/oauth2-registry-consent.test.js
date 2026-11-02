@@ -28,7 +28,7 @@ const accessIndex = require('platform/src/accessIndex.ts');
 const REDIRECT_URI = 'https://app.consent.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
 const AUD = 'https://resource.test/base';
-const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }];
+const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }, { feature: 'accessCreation', setting: 'forbidden' }];
 
 // Toy grammar: `read/<s>`, `write/<s>`, `add/<s>` give one stream a level;
 // `must/<s>` reads it, mandatory; `ctx/choice` lets the user pick entries;
@@ -116,7 +116,7 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     clientId = 'Cmp.' + cuid().slice(-10);
     await oauth2.persistClient(platformDB, { ...row, clientId });
     openClientId = 'Opn.' + cuid().slice(-10);
-    await oauth2.persistClient(platformDB, { ...row, clientId: openClientId, allowFeatures: ['webhooks', 'secretSharing'] });
+    await oauth2.persistClient(platformDB, { ...row, clientId: openClientId, allowFeatures: ['webhooks', 'secretSharing', 'accessCreation'] });
   });
 
   after(async function () {
@@ -606,10 +606,10 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const grant = await grantOf(who);
     assert.deepEqual(streamsOf(grant.permissions), ['a:read']);
     assert.deepEqual(grant.permissions.filter((p) => p.feature != null).map((p) => p.feature + ':' + p.setting).sort(),
-      ['secretSharing:forbidden', 'webhooks:forbidden']);
+      ['accessCreation:forbidden', 'secretSharing:forbidden', 'webhooks:forbidden']);
     const session = (await accesses(who)).find((a) => a.name === 'oauth:' + clientId);
     assert.deepEqual(session.permissions.filter((p) => p.feature != null).map((p) => p.feature + ':' + p.setting).sort(),
-      ['secretSharing:forbidden', 'selfRevoke:allowed', 'webhooks:forbidden']);
+      ['accessCreation:forbidden', 'secretSharing:forbidden', 'selfRevoke:allowed', 'webhooks:forbidden']);
     const hook = await coreRequest.post('/' + who.username + '/webhooks').set('Authorization', t.body.access_token)
       .send({ url: 'https://hooks.test/notify' });
     assert.equal(hook.status, 403, JSON.stringify(hook.body));
@@ -622,7 +622,7 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.equal(featuresOnly.accept.status, 400, JSON.stringify(featuresOnly.accept.body));
     assert.equal(featuresOnly.accept.body.error, 'invalid_scope');
     assert.equal(featuresOnly.accept.body.reason, 'keep-one-stream');
-    // A client allowed both features: its grants carry no default forbid.
+    // A client allowed the three features: its grants carry no default forbid.
     await consentAndToken(who, 'read/a', { cid: openClientId });
     assert.deepEqual((await grantOf(who, openClientId)).permissions, [{ streamId: 'a', level: 'read' }]);
   });

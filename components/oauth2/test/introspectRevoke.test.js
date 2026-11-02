@@ -187,6 +187,21 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     }
   });
 
+  it('[OGS06] introspection hands the grant state to the echo and to introspectionClaims; the scope follows the permissions', async () => {
+    const toy = toyExtension();
+    const seen = [];
+    extension.setExtension({
+      ...toy,
+      scopeGrammar: { ...toy.scopeGrammar, echo (ctx) { seen.push(['echo', ctx.grantState]); return toy.scopeGrammar.echo(ctx); } },
+      introspectionClaims (ctx) { seen.push(['claims', ctx.grantState]); return {}; },
+    });
+    const state = { pack: 'v1', streams: ['a', 'b'] };
+    const res = await introspect(await seeded(), { session: { ...SESSION, grantState: state } });
+    assert.equal(res.statusCode, 200, res.raw);
+    assert.equal(res.body.scope, 'offline_access read/a ctx/patient');
+    assert.deepEqual(seen, [['echo', state], ['claims', state]]);
+  });
+
   it('[OXI02] unknown token, dead session, client revoked after the session, client suspended or gone: inactive', async () => {
     let platform = await seeded();
     assert.deepEqual((await introspect(platform, { token: 'nope' })).body, { active: false });

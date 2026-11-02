@@ -17,7 +17,7 @@
  * The module the operator points at exports a factory:
  *
  *   module.exports = function (host: { apiVersion, options, logger }) {
- *     return { apiVersion: 1, name, scopeGrammar: { parse, echo, supported? },
+ *     return { apiVersion: 1, name, scopeGrammar: { parse, echo, supported?, grantState? },
  *              tokenResponse?, idTokenClaims?, introspectionClaims?, claimsSupported? };
  *   };
  *
@@ -26,6 +26,20 @@
  * `claimsSupported` lists them in the OpenID Connect discovery document.
  * `introspectionClaims` adds members to the introspection answer of a
  * registry client's session (it may not set a member the core answers).
+ *
+ * `scopeGrammar.grantState` (optional) computes the grant's state: one
+ * JSON-serialisable value per grant (or `undefined` for none), computed at
+ * every consent (the first and each re-authorization) once the grant's
+ * permissions are final, and REPLACING the previous one; never recomputed at
+ * a refresh nor when the account owner narrows the grant. At most
+ * `GRANT_STATE_MAX_BYTES` (16 KiB) of JSON. Over the bound, unserialisable,
+ * throwing or not settling in time: an extension error, the consent answers
+ * `server_error` and the grant is left as it was. The core stores it on the
+ * grant (written by the server only) and hands it back as `grantState` to
+ * `echo` and to every response hook. It is advisory: `permissions` in each
+ * context is the live truth (the owner may have narrowed the grant since),
+ * so an echo or a claim derived from the state must be intersected with
+ * `permissions`; the echo is checked against `permissions` only.
  *
  * Versioning: an integer `apiVersion`. Adding an optional hook or an optional
  * context field does not bump it; changing a context field's meaning, a return
@@ -116,6 +130,12 @@ export type HookCtx = {
   subject: string | null;
   /** Whether `subject` is the grant's alias (optional context field). */
   aliased?: boolean;
+  /**
+   * The grant's state, as `scopeGrammar.grantState` computed it at the last
+   * consent (optional context field; `undefined` when there is none).
+   * Advisory: `permissions` is authoritative.
+   */
+  grantState?: unknown;
   grantType: string;
   scopeTokens: string[];
   permissions: ExtPermission[];
@@ -136,8 +156,14 @@ export type OAuthExtension = {
      * subject is the grant's alias, so the echo may name the grammar's
      * pseudonym marker, e.g. for a `pairwise` client that did not ask for one.
      */
-    echo (ctx: { permissions: ExtPermission[]; requestedTokens: string[]; client: ClientView; aliased?: boolean }): string[];
+    echo (ctx: { permissions: ExtPermission[]; requestedTokens: string[]; client: ClientView; aliased?: boolean; grantState?: unknown }): string[];
     supported? (): string[];
+    /**
+     * The grant's state after a consent: `permissions` are the grant's final
+     * permissions, `requestedTokens` the grammar tokens of the request. See
+     * the contract above (bound, replacement, advisory).
+     */
+    grantState? (ctx: { permissions: ExtPermission[]; requestedTokens: string[]; client: ClientView }): unknown;
   };
   tokenResponse? (ctx: HookCtx): object | Promise<object>;
   idTokenClaims? (ctx: HookCtx): object | Promise<object>;
@@ -180,6 +206,7 @@ export function validateExtension (ext: unknown): OAuthExtension {
   if (typeof g.parse !== 'function') throw new Error('oauth extension: scopeGrammar.parse must be a function');
   if (typeof g.echo !== 'function') throw new Error('oauth extension: scopeGrammar.echo must be a function');
   if (g.supported != null && typeof g.supported !== 'function') throw new Error('oauth extension: scopeGrammar.supported must be a function');
+  if (g.grantState != null && typeof g.grantState !== 'function') throw new Error('oauth extension: scopeGrammar.grantState must be a function');
   for (const h of HOOK_NAMES) {
     if (e[h] != null && typeof e[h] !== 'function') throw new Error(`oauth extension: ${h} must be a function`);
   }
@@ -291,4 +318,54 @@ export async function runHook (name: HookName, ctx: HookCtx): Promise<Record<str
     throw err;
   }
   return out as Record<string, unknown>;
+}
+
+/** Bound on a grant's state, in bytes of its JSON form. */
+export const GRANT_STATE_MAX_BYTES = 16 * 1024;
+
+/**
+ * The grant's state after a consent, from `scopeGrammar.grantState`:
+ * `{ name, value }`, `name` being the extension's (the key the state is
+ * stored under) and `value` the state as its JSON round trip gives it
+ * (`undefined`: no state). Without an extension or without the hook, no
+ * state. Throws (an extension error, the caller answers `server_error`) when
+ * the hook throws, does not settle within the hook timeout, or answers a
+ * value that is not JSON-serialisable or whose JSON exceeds
+ * `GRANT_STATE_MAX_BYTES`; the size is logged.
+ */
+export async function computeGrantState (ctx: {
+  permissions: ExtPermission[]; requestedTokens: string[]; client: ClientView;
+}): Promise<{ name: string | null; value: unknown }> {
+  const ext = current;
+  const hook = ext?.scopeGrammar.grantState;
+  if (ext == null) return { name: null, value: undefined };
+  if (typeof hook !== 'function') return { name: ext.name, value: undefined };
+  let out: unknown;
+  try {
+    out = await withHookTimeout('grantState', hook.call(ext.scopeGrammar, ctx));
+  } catch (err: unknown) {
+    logServerError(`oauth extension ${ext.name}: grantState failed`, err);
+    throw new Error('oauth extension hook grantState failed');
+  }
+  if (out === undefined) return { name: ext.name, value: undefined };
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(out);
+  } catch (err: unknown) {
+    const e = new Error(`oauth extension hook grantState answered a value that is not JSON-serialisable: ${(err as Error)?.message ?? String(err)}`);
+    logServerError(`oauth extension ${ext.name}: grantState refused`, e);
+    throw e;
+  }
+  if (typeof json !== 'string') {
+    const e = new Error(`oauth extension hook grantState answered a value that is not JSON-serialisable (${typeof out})`);
+    logServerError(`oauth extension ${ext.name}: grantState refused`, e);
+    throw e;
+  }
+  const size = Buffer.byteLength(json);
+  if (size > GRANT_STATE_MAX_BYTES) {
+    const e = new Error(`oauth extension hook grantState answered ${size} bytes of JSON, over the bound of ${GRANT_STATE_MAX_BYTES}`);
+    logServerError(`oauth extension ${ext.name}: grantState refused`, e);
+    throw e;
+  }
+  return { name: ext.name, value: JSON.parse(json) };
 }

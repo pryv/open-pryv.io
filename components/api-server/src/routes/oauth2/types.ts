@@ -64,7 +64,13 @@ export type DataGrant = {
   // Widened vs the narrow role/offer view: reuse-detection reads the CMC
   // counterparty back-channel address off the data-grant to notify the app.
   clientData?: {
-    oauth?: { grantOf?: string; dataGrantId?: string; chain?: Array<Record<string, unknown>> };
+    oauth?: {
+      grantOf?: string;
+      dataGrantId?: string;
+      chain?: Array<Record<string, unknown>>;
+      /** A registry grant's state, by extension name (written at each consent). */
+      extensionData?: Record<string, unknown>;
+    };
     dpop?: { jkt?: string };
     cmc?: {
       role?: string;

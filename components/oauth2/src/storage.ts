@@ -144,7 +144,7 @@ export interface OAuthClient {
   subjectType?: 'public' | 'pairwise';
   /**
    * Registry clients: features the operator lets this client's grants use.
-   * A registry grant forbids `webhooks` and `secretSharing` unless listed
+   * A registry grant forbids `webhooks`, `secretSharing` and `accessCreation` unless listed
    * here (applied by the core at every consent, never shown).
    */
   allowFeatures?: string[];

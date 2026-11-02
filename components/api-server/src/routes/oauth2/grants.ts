@@ -58,6 +58,7 @@ type SessionHelpers = {
     alias?: string | null;
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
+  setGrantState: (userId: string, username: string, grantId: string, name: string, value: unknown) => Promise<void>;
   storedSessionPermissions: (permissions: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
 };
 
@@ -312,7 +313,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // subset; the data-grant is the consent ceiling that revocation and
   // scope-update govern.
   // ---------------------------------------------------------------------
-  async function createAccess ({ session, clientId, expiresAt, offer, grantedPermissions, grantPermissions, subjectChange }: {
+  async function createAccess ({ session, clientId, expiresAt, offer, grantedPermissions, grantPermissions, subjectChange, grantState }: {
     session: { userId: string; username: string; _context?: Ctx };
     clientId: string;
     scope: string[];
@@ -321,6 +322,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     grantedPermissions?: Array<Record<string, unknown>>;
     grantPermissions?: Array<Record<string, unknown>>;
     subjectChange?: unknown;
+    grantState?: { name: string | null; value: unknown };
   }): Promise<{
     accessId: string;
     accessToken: string;
@@ -361,6 +363,12 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     const dataGrant = registry
       ? await registryGrantFor(context, clientId, (offer as { randomAlias?: boolean }).randomAlias === true, grantPermissions, subjectChange)
       : await ensureCmcGrant(context, clientId, offer as CmcOffer, grantedPermissions);
+    // A registry grant's state, replaced at every consent (computed by the
+    // extension once the grant's permissions were final), written before the
+    // session is minted. Server-owned: storage-direct, on the grant only.
+    if (registry && grantState != null && typeof grantState.name === 'string') {
+      await sessions.setGrantState(context.user.id, context.user.username, dataGrant.id, grantState.name, grantState.value);
+    }
 
     // The minted row additionally carries the session selfRevoke override
     // (see withSessionSelfRevoke); the CHAIN keeps the granted subset

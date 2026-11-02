@@ -133,6 +133,16 @@ function isSessionOfGrant (access: AccessRow, grantBaseId: string): boolean {
   return access?.type === 'app' && oauth?.dataGrantId === grantBaseId;
 }
 
+/**
+ * An access bound to the consent grant `grantBaseId`: one of its sessions, or
+ * an access one of its sessions created (stamped at its creation with the same
+ * `clientData.oauth.dataGrantId`).
+ */
+function isBoundToGrant (access: AccessRow, grantBaseId: string): boolean {
+  const oauth = access?.clientData?.oauth as { dataGrantId?: unknown } | undefined;
+  return oauth?.dataGrantId === grantBaseId;
+}
+
 /** An OAuth session access: it names its consent grant. */
 function isOAuthSession (access: AccessRow): boolean {
   const oauth = access?.clientData?.oauth as { dataGrantId?: unknown } | undefined;
@@ -172,12 +182,16 @@ async function endRefreshChainOf (sessionToken: string): Promise<void> {
 
 // Every session of the grant, expired ones included (as `revokeChain` does):
 // an expired session can no longer authenticate, but it still holds the
-// grant's alias, which is released only once no row carries it.
+// grant's alias, which is released only once no row carries it. Then what
+// they created: the live accesses stamped with the grant, and those a session
+// of the grant created before the stamp existed (matched by `createdBy`,
+// expired sessions included).
 function sessionsOfGrant (all: AccessRow[], grantBaseId: string, now: number, known: AccessRow[]): AccessRow[] {
   const seen = new Set<string>(known.map((a) => a.id).concat(grantBaseId));
   const sessions = all.filter((a) => !seen.has(a.id) && isSessionOfGrant(a, grantBaseId));
   for (const s of sessions) seen.add(s.id);
-  const created = sessions.flatMap((s) => managedAccessesOf(all, s.id, now)).filter((a) => {
+  const stamped = all.filter((a) => isBoundToGrant(a, grantBaseId) && !(a.expires != null && now > a.expires));
+  const created = sessions.flatMap((s) => managedAccessesOf(all, s.id, now)).concat(stamped).filter((a) => {
     if (seen.has(a.id)) return false;
     seen.add(a.id);
     return true;
@@ -350,7 +364,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     const deletedIds = new Set(idsToDelete.map((d) => d.id));
     const late = all.filter((a) => typeof a.id === 'string' && !deletedIds.has(a.id) &&
       !(a.expires != null && now > a.expires) &&
-      (isManagedBy(a, params.id) || isSessionOfGrant(a, grantBaseId) || sessionIds.some((id) => isManagedBy(a, id))));
+      (isManagedBy(a, params.id) || isBoundToGrant(a, grantBaseId) || sessionIds.some((id) => isManagedBy(a, id))));
     if (late.length > 0) {
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
       for (const a of late) {

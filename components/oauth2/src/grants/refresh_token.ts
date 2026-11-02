@@ -120,6 +120,8 @@ export type MintRefreshedAccess = (params: {
   subject?: string | null;
   /** Whether `subject` is the grant's alias (then the username is never sent). */
   aliased?: boolean;
+  /** The grant's state (registry clients), as the last consent left it. */
+  grantState?: unknown;
 }>;
 
 /**
@@ -471,6 +473,7 @@ export async function handleRefreshToken (
         permissions: access.permissions ?? row.permissions ?? [],
         subject: access.subject,
         aliased: access.aliased === true,
+        grantState: access.grantState,
       });
     } catch (err: unknown) {
       logServerError('refresh_token: registry token response failed', err);

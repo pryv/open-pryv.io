@@ -46,6 +46,8 @@ export type RegistryGrant = {
   subject: string;
   /** Whether `subject` is the grant's alias (a pseudonymous grant). */
   aliased: boolean;
+  /** The grant's state (advisory; see the extension contract), if any. */
+  grantState?: unknown;
   /** OpenID Connect `nonce` of the authorization request. */
   nonce?: string;
   /** When the consenting user signed in (seconds). */
@@ -67,12 +69,14 @@ export type RegistryResponseParts = {
  * is stored: a throwing (or timed-out) hook must leave no refresh row behind.
  */
 export async function prepareRegistryResponse (g: RegistryGrant): Promise<RegistryResponseParts> {
-  const scopeTokens: string[] = grantedScopeTokens(g.client, g.coreTokens, g.grammarTokens, g.permissions, { aliased: g.aliased });
+  const scopeTokens: string[] = grantedScopeTokens(g.client, g.coreTokens, g.grammarTokens, g.permissions,
+    { aliased: g.aliased, grantState: g.grantState });
   const ctx: HookCtx = {
     clientId: g.client.clientId,
     client: toClientView(g.client),
     subject: g.subject,
     aliased: g.aliased,
+    grantState: g.grantState,
     grantType: g.grantType,
     scopeTokens,
     permissions: g.permissions,

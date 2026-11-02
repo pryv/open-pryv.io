@@ -73,6 +73,7 @@ const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
 const { grantedScopeTokens } = require('../scopeGrammar.ts');
+const { computeGrantState, toClientView } = require('../extension.ts');
 const { indexSession } = require('../sessionIndex.ts');
 const { audit } = require('../audit.ts');
 const { logServerError, logServerWarning } = require('../serverLog.ts');
@@ -143,6 +144,12 @@ export type CreateAccess = (params: {
   grantPermissions?: Array<Record<string, unknown>>;
   /** Registry client: the acknowledged change of subject mode, if any. */
   subjectChange?: SubjectChange | null;
+  /**
+   * Registry client: the grant's state after this consent, stored on the
+   * grant under the extension's name (replacing the previous one; `value`
+   * undefined removes it).
+   */
+  grantState?: { name: string | null; value: unknown };
 }) => Promise<{
   accessId: string;
   accessToken: string;
@@ -357,6 +364,7 @@ export function handleAccept (deps: AcceptDeps) {
     let offeredForMint: Array<Record<string, unknown>>;
     let grantPermissions: Array<Record<string, unknown>> | undefined;
     let subjectChange: SubjectChange | null = null;
+    let grantState: { name: string | null; value: unknown } | undefined;
     if (synthesised == null) {
       const refused = consentRefusal(grantedPermissions,
         { permissions: payload.offer!.permissions, allowUserChoice: payload.offer!.allowUserChoice === true });
@@ -416,6 +424,16 @@ export function handleAccept (deps: AcceptDeps) {
         return sendJson(res, r.status, r.body);
       }
       offeredForMint = normalizePermissions(offered.permissions);
+      // The grant's state, once its permissions are final and before anything
+      // is written: an extension failure leaves the grant as it was.
+      try {
+        grantState = await computeGrantState({
+          permissions: grantPermissions!, requestedTokens: synthesised.grammarTokens, client: toClientView(registryClient!),
+        });
+      } catch (err: unknown) {
+        logServerError('accept: the grant state of a registry consent could not be computed', err);
+        return sendJson(res, 500, { error: 'server_error', error_description: 'failed to compute the grant state' });
+      }
     }
 
     // Mint the app access under the resolved user. The durable consent
@@ -435,7 +453,7 @@ export function handleAccept (deps: AcceptDeps) {
           ? { kind: 'synthesised', permissions: offeredForMint, randomAlias: synthesised.offer.randomAlias === true }
           : payload.offer!,
         grantedPermissions,
-        ...(grantPermissions != null ? { grantPermissions, subjectChange } : {}),
+        ...(grantPermissions != null ? { grantPermissions, subjectChange, grantState } : {}),
       });
     } catch (err: unknown) {
       // The effective-permission guard (hierarchical consent masking) runs
@@ -491,7 +509,8 @@ export function handleAccept (deps: AcceptDeps) {
     if (synthesised != null) {
       try {
         grantedTokens = grantedScopeTokens(registryClient!, synthesised.coreTokens, synthesised.grammarTokens,
-          access.sessionPermissions ?? access.permissions ?? grantedPermissions, { aliased: access.aliased === true });
+          access.sessionPermissions ?? access.permissions ?? grantedPermissions,
+          { aliased: access.aliased === true, grantState: grantState?.value });
       } catch (err: unknown) {
         logServerError('accept: granted scope of a registry consent could not be computed (the request is recorded)', err);
       }

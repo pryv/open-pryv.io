@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### OAuth extension: the grant state
+
+- New optional extension hook `scopeGrammar.grantState({ permissions, requestedTokens, client })`
+  (`apiVersion` stays 1: an optional hook and optional context fields). Called at every registry
+  consent once the grant's final permissions are known and before anything is written; its answer
+  (any JSON value, or `undefined` for none) replaces the grant's previous state, stored storage-direct
+  at `clientData.oauth.extensionData[<extension name>]` on the grant only (never on a session), and is
+  not recomputed at a refresh nor on the owner's narrowing. Bound: 16 KiB of JSON
+  (`Buffer.byteLength(JSON.stringify(state))`, `GRANT_STATE_MAX_BYTES`); over it, not
+  serialisable, throwing or past `oauth:extensionHookTimeoutMs`: `/oauth2/authorize/accept` answers
+  `500 server_error`, the size is logged, the grant is left unchanged.
+- The stored state is handed back as `grantState` to `scopeGrammar.echo` and to the `tokenResponse`,
+  `idTokenClaims` and `introspectionClaims` hooks (read with the grant's subject, at the code
+  exchange, at refresh and at introspection; at `/accept` the new state). Advisory: the echo's
+  coverage check is against the session's `permissions` only.
+
+### Accesses: `accessCreation` and the sub-accesses of OAuth sessions
+
+- `AccessLogic.canCreateAccess` refuses an access carrying `accessCreation: forbidden`; the scope
+  rules alone are `canManageAsChild`, which the update chain rules of `accesses.update` and the
+  access scope audit now use (a creator barred from creating still manages its accesses).
+  `accessCreation` joins `INHERITED_RESTRICTION_FEATURES`.
+- `accesses.create` by an OAuth session stamps `clientData.oauth.dataGrantId` (the session's grant)
+  on the new row, in the insert itself. `reconcileSessionsOfGrant` then brings those accesses, and
+  the unstamped ones whose `createdBy` names a session of the grant, within the grant
+  (`effectiveChildPermissions`: the meet with the grant's level at each stream through the tree,
+  the grant's carve-outs below, the grant's forbidden inherited restrictions); the grant's deletion
+  collects every live row stamped with it (`sessionsOfGrant`, and the final pass of
+  `deleteAccessChain`).
+
 ### Account transfer: the sweep, the record, the links
 
 - The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim

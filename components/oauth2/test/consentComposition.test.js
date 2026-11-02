@@ -166,11 +166,12 @@ describe('[OCMPU] composed consent of registry clients', () => {
       { streamId: 'm', level: 'none' },
       { feature: 'selfAudit', setting: 'forbidden' },
       { feature: 'secretSharing', setting: 'forbidden' },
+      { feature: 'accessCreation', setting: 'forbidden' },
     ]);
     const union = nextGrantPermissions({ granted, current, client: CLIENT, replace: false });
     assert.deepEqual(union.filter((p) => p.streamId != null).map((p) => p.streamId + ':' + p.level).sort(), ['a:read', 'b:contribute', 'm:none']);
     // Allowed on the row: no default forbid for that feature.
-    const allowed = nextGrantPermissions({ granted, current: null, client: { ...CLIENT, allowFeatures: ['webhooks', 'secretSharing'] }, replace: true });
+    const allowed = nextGrantPermissions({ granted, current: null, client: { ...CLIENT, allowFeatures: ['webhooks', 'secretSharing', 'accessCreation'] }, replace: true });
     assert.deepEqual(allowed, [{ streamId: 'a', level: 'read' }, { feature: 'webhooks', setting: 'allowed' }]);
     // Idempotent: applying the defaults again changes nothing.
     const twice = nextGrantPermissions({ granted: replace, current: null, client: CLIENT, replace: true });

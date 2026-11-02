@@ -99,6 +99,8 @@ describe('[OIR] OAuth sessions: introspection, revocation, chain end, retirement
       allowedAudiences: [AUD],
       subjectType: 'public',
       scope: SCOPE,
+      // Its sessions may create shared accesses (forbidden by default).
+      allowFeatures: ['accessCreation'],
     };
     appId = 'Lfc.' + cuid().slice(-10);
     await oauth2.persistClient(platformDB, { ...row, clientId: appId });

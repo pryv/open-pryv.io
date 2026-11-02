@@ -40,6 +40,7 @@ const { integrity } = require('business');
 const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBase, managedAccessesOf, isManagedBy } = require('business/src/accesses/refs.ts');
 const { withoutCredentialUrls } = require('business/src/accesses/credentialUrls.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
+const { ACCESS_CREATION_FORBIDDEN_MESSAGE } = require('business/src/accesses/AccessLogic.ts');
 
 // Scoped notifications (the structured access-change signal) and the
 // deletion of an access with its side effects: helpers/accessDeletion.ts,
@@ -407,6 +408,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
     }
     const access = context.access;
+    if (!access.isPersonal() && !access.canCreateAccesses()) {
+      return next(errors.forbidden(ACCESS_CREATION_FORBIDDEN_MESSAGE));
+    }
     if (!(await access.canCreateAccess(params))) {
       return next(errors.forbidden('Your access token has insufficient permissions ' +
                 'to create this new access.'));
@@ -576,6 +580,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     return typeof creator.alias === 'string' && creator.alias.length > 0 ? creator.alias : null;
   }
 
+  /** The consent grant an OAuth session access was minted under (base id), or null for any other access. */
+  function oauthGrantOfSession (creator: { type?: unknown; clientData?: unknown } | null | undefined): string | null {
+    if (creator?.type !== 'app') return null;
+    const oauth = (creator.clientData as { oauth?: { dataGrantId?: unknown } } | null | undefined)?.oauth;
+    return typeof oauth?.dataGrantId === 'string' && oauth.dataGrantId.length > 0 ? oauth.dataGrantId : null;
+  }
+
   async function createAccess (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     if (params.type === 'shared') params.deviceName = null;
@@ -606,6 +617,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // is used at it (alias-bound addressing). Not minted: given back only
       // once its last holder is deleted (accessDeletion.ts).
       params.alias = inheritedAlias(context.access)!;
+    }
+    // An access created by an OAuth session belongs to the session's consent
+    // grant, not to the session: it is stamped with the grant
+    // (`clientData.oauth.dataGrantId`, server-owned, refused from the body
+    // above), so a later change of the grant narrows it, and the grant's
+    // withdrawal deletes it, whichever session created it and whether that
+    // session still exists. `createdBy` stays the session.
+    const grantOfCreator = oauthGrantOfSession(context.access);
+    if (grantOfCreator != null) {
+      params.clientData = { ...(params.clientData ?? {}), oauth: { dataGrantId: grantOfCreator } };
     }
     accessesRepository.insertOne(context.user, params, async function (err: (Error & { isDuplicateIndex: (k: string) => boolean }) | null, newAccess: { id: string; [k: string]: unknown } | undefined) {
       if (err != null && usersRepository != null && params.alias != null) {
@@ -873,8 +894,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         }
         if (managingApp != null) {
           if (wantsPermChange) {
-            // canCreateAccess appends to this array, which is updates.permissions.
-            const fits = await managingApp.canCreateAccess({
+            // canManageAsChild appends to this array, which is updates.permissions.
+            // (The scope rules only: an app that may no longer create
+            // accesses still manages the ones it created.)
+            const fits = await managingApp.canManageAsChild({
               type: 'shared',
               permissions: after.permissions
             });
@@ -909,7 +932,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         const offendingChildren: string[] = [];
         for (const child of managed) {
           if (wantsPermChange) {
-            const fits = await wouldBe.canCreateAccess({
+            const fits = await wouldBe.canManageAsChild({
               type: 'shared',
               permissions: child.permissions || []
             });
