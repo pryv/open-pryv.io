@@ -25,8 +25,9 @@
  *
  * Whatever the grammar answers, the core refuses (both in the requested offer
  * and in the maximum set) account and system streams, every stream (`*`) and
- * the `manage` level, and two entries on one stream in a requested offer:
- * see `callParse`.
+ * the `manage` level, and two entries on one stream in a requested offer;
+ * it also checks the shape and bounds of `entryGroups` and bounds the whole
+ * offer (`MAX_SYNTH_OFFER_BYTES`): see `callParse`.
  *
  * The token response's `scope` is the grammar's echo over the minted
  * permissions, parsed again by the same grammar and checked against them:
@@ -35,7 +36,7 @@
 
 import crypto from 'node:crypto';
 import type { OAuthClient } from './storage.ts';
-import type { ExtPermission, SynthOffer, OAuthExtension } from './extension.ts';
+import type { ExtPermission, SynthOffer, OAuthExtension, EntryGroup } from './extension.ts';
 import type { Permission } from 'business/src/types/public.ts';
 import { getExtension, toClientView, extensionGeneration } from './extension.ts';
 import { logServerError, logServerWarning } from './serverLog.ts';
@@ -48,6 +49,20 @@ export const CORE_SCOPE_TOKENS = ['openid', 'offline_access'];
 
 /** Upper bound on the entries of a synthesised offer. */
 export const MAX_SYNTH_ENTRIES = 1000;
+
+/** Upper bound on a synthesised offer, in bytes of its canonical JSON. */
+export const MAX_SYNTH_OFFER_BYTES = 256 * 1024;
+
+/** Bounds on an offer's `entryGroups` (see the extension contract). */
+export const ENTRY_GROUP_BOUNDS = {
+  groups: 64,
+  keyLength: 64,
+  labelLanguages: 16,
+  labelLength: 200,
+  entryKeyLength: 300,
+  /** Entry keys across all groups. */
+  entryKeys: MAX_SYNTH_ENTRIES,
+};
 
 export type ResolvedScope = {
   ok: true;
@@ -216,7 +231,67 @@ function callParse (
     }
   }
   const offer: SynthOffer = { ...(r.offer as SynthOffer), permissions, randomAlias: (r.offer as SynthOffer).randomAlias === true };
+  if (offer.entryGroups !== undefined) {
+    const groups = typedEntryGroups(offer.entryGroups);
+    if (typeof groups === 'string') {
+      logServerError(`oauth extension ${ext.name}: contract error in scopeGrammar.parse (${purpose})`, new Error('entryGroups: ' + groups));
+      return { ok: false, description: 'scope could not be parsed' };
+    }
+    offer.entryGroups = groups;
+  }
+  // One bound on the whole offer (labels and texts included): it is what the
+  // per-state offer cache and the consent screen hold.
+  const size = Buffer.byteLength(canonicalJson(offer));
+  if (size > MAX_SYNTH_OFFER_BYTES) {
+    logServerError(`oauth extension ${ext.name}: contract error in scopeGrammar.parse (${purpose})`,
+      new Error(`the offer is ${size} bytes of JSON, over the bound of ${MAX_SYNTH_OFFER_BYTES}`));
+    return { ok: false, description: 'scope could not be parsed' };
+  }
   return { ok: true, tokens: r.tokens as string[], offer };
+}
+
+/**
+ * An offer's `entryGroups` as the core passes it on: an array of
+ * `{ key, label, entries }` (other members of a group are dropped), or the
+ * contract violation found. Entry keys are opaque here: one naming no entry
+ * of the offer is legitimate (a held entry outside the request), one named
+ * twice is not (the screen must be deterministic).
+ */
+function typedEntryGroups (raw: unknown): EntryGroup[] | string {
+  const B = ENTRY_GROUP_BOUNDS;
+  if (!Array.isArray(raw)) return 'must be an array';
+  if (raw.length > B.groups) return `more than ${B.groups} groups`;
+  const groupKeys = new Set<string>();
+  const entryKeys = new Set<string>();
+  let count = 0;
+  const out: EntryGroup[] = [];
+  for (const [i, g] of raw.entries()) {
+    if (g == null || typeof g !== 'object' || Array.isArray(g)) return `group ${i} is not an object`;
+    const { key, label, entries } = g as Record<string, unknown>;
+    if (typeof key !== 'string' || key.length === 0 || key.length > B.keyLength) {
+      return `group ${i}: key must be a string of 1 to ${B.keyLength} characters`;
+    }
+    if (groupKeys.has(key)) return `group key ${key} appears more than once`;
+    groupKeys.add(key);
+    if (label == null || typeof label !== 'object' || Array.isArray(label)) return `group ${key}: label must be an object`;
+    const languages = Object.entries(label as Record<string, unknown>);
+    if (languages.length > B.labelLanguages) return `group ${key}: label has more than ${B.labelLanguages} languages`;
+    if (languages.some(([, text]) => typeof text !== 'string' || text.length > B.labelLength)) {
+      return `group ${key}: label values must be strings of at most ${B.labelLength} characters`;
+    }
+    if (!Array.isArray(entries)) return `group ${key}: entries must be an array`;
+    count += entries.length;
+    if (count > B.entryKeys) return `more than ${B.entryKeys} entry keys across groups`;
+    for (const e of entries) {
+      if (typeof e !== 'string' || e.length === 0 || e.length > B.entryKeyLength) {
+        return `group ${key}: entry keys must be strings of 1 to ${B.entryKeyLength} characters`;
+      }
+      if (entryKeys.has(e)) return `entry key ${e.slice(0, 80)} appears in more than one group (or twice in one)`;
+      entryKeys.add(e);
+    }
+    out.push({ key, label: Object.fromEntries(languages) as Record<string, string>, entries: [...entries] as string[] });
+  }
+  return out;
 }
 
 /**
