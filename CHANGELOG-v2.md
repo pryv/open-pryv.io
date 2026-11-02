@@ -95,7 +95,9 @@
   already were (RFC 8252 § 7.3). The host string must match exactly: a registration for `127.0.0.1`
   does not admit `localhost` and the reverse, register each form the client sends; subdomains of
   `localhost`, `localhost.` and `https` are not relaxed. Native and CLI clients that pick an
-  ephemeral port on `localhost` now work with one registered URI per host form.
+  ephemeral port on `localhost` now work with one registered URI per host form. A row already
+  registered with `http://localhost:<port>/<path>` now accepts any port too. A presented redirect URI
+  containing a control character (tab, newline) is refused.
 
 ## 2.0.0-rc.70 - 2026-11-02
 

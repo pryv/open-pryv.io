@@ -237,6 +237,11 @@ describe('[OAUTH-CLIENT] client registry', () => {
         assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost@evil.com:51234/cb'), false);
         assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234@evil.com/cb'), false);
       });
+      it('[OXLH7] a presented URI with a tab, newline or other control character is refused', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://local\nhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234/c\tb'), false);
+        assert.equal(validateRedirectUri(['https://app.example.com/cb'], 'https://app.example.com/cb\r'), false);
+      });
     });
 
     describe('[OAUTH-REDIR-4] private-use schemes (RFC 8252 §7.1)', () => {

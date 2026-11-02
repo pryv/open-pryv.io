@@ -60,6 +60,12 @@ export function validateRedirectUri (registered: string[], presented: string): b
   // authorize gate too (registration already rejects it) — defense-in-depth so
   // a fragment URI can never be accepted even if one slipped into storage.
   if (presented.includes('#')) return false;
+  // The URL parser drops tabs and newlines, so such a URI could match and
+  // then fail as a Location header: refuse control characters outright.
+  for (let i = 0; i < presented.length; i++) {
+    const c = presented.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return false;
+  }
 
   for (const r of registered) {
     if (r === presented) return true;
