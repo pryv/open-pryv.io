@@ -251,8 +251,10 @@ export async function handleRefreshToken (
   }
   // RFC 8707 § 2.2: a resource named here must be the one the chain was
   // granted for (one per chain: there is nothing to narrow to). Refused on
-  // the same non-consuming read, so the token stays usable.
-  if (peek != null) {
+  // the same non-consuming read, so the token stays usable. A chain issued
+  // without an audience (any chain from before resource indicators) ignores
+  // `resource`: it stays unbound until the user authorizes again.
+  if (peek?.audience != null) {
     const resourceRefusal = checkTokenResource(params.resource, peek.audience);
     if (resourceRefusal != null) return resourceRefusal;
   }
@@ -384,7 +386,7 @@ export async function handleRefreshToken (
   // Defence for a peek/consume interleaving (checked on the peek above): a
   // wrong resource is the request's fault, not the chain's, so the row goes
   // back and the token stays usable.
-  const resourceRefusal = checkTokenResource(params.resource, row.audience);
+  const resourceRefusal = row.audience != null ? checkTokenResource(params.resource, row.audience) : null;
   if (resourceRefusal != null) {
     await undoConsume();
     return resourceRefusal;

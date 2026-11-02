@@ -28,9 +28,9 @@ import { verifyState } from '../src/signedState.ts';
 import { persistClient } from '../src/clientRegistry.ts';
 import { mintSecret } from '../src/clientSecret.ts';
 import { clearOfferCache } from '../src/offerResolver.ts';
-import { setRefresh, getRefresh } from '../src/storage.ts';
+import { setRefresh, getRefresh, getRefreshConsumed } from '../src/storage.ts';
 import { buildDiscoveryDocument, buildOpenIdConfiguration } from '../src/wellKnown.ts';
-import { isValidResource, MAX_RESOURCE_BYTES } from '../src/resourceIndicator.ts';
+import { isValidResource, sameResource, trimSlash, MAX_RESOURCE_BYTES } from '../src/resourceIndicator.ts';
 
 const ADMIN_KEY = 'admin-key-for-tests';
 const ISSUER = 'https://core.example.com';
@@ -366,6 +366,9 @@ describe('[ORI] OAuth2: RFC 8707 resource indicators', () => {
     const any = await seeded(ANY);
     const anyDiff = await authorize(any, authorizeQuery({ aud: AUD, resource: OTHER }));
     assert.equal(anyDiff.error.error, 'invalid_request');
+    // Equal on a client without a list: the `resource` spelling is stored.
+    const anySame = await authorize(any, authorizeQuery({ aud: OTHER + '/', resource: OTHER }));
+    assert.equal(stateAudience(anySame.signed), OTHER);
   });
 
   it('[ORI04] listed client: missing or unregistered resource is invalid_target, with no list in the description', async () => {
@@ -401,7 +404,9 @@ describe('[ORI] OAuth2: RFC 8707 resource indicators', () => {
     assert.equal(Buffer.byteLength(tooLong), MAX_RESOURCE_BYTES + 1);
     assert.equal(isValidResource(tooLong.slice(0, -1)), true);
     for (const bad of [OTHER + '#frag', OTHER + '#', 'http://resource.example.com/', 'http://192.168.1.10/', 'urn:example:x',
-      '/relative', 'https:other.example.com', 'https://', 'https://exa mple.com/', tooLong]) {
+      '/relative', 'https:other.example.com', 'https://', 'https://exa mple.com/', tooLong,
+      'https://user:secret@rs.example.com/', 'https://user@rs.example.com/', 'https://@rs.example.com/',
+      'https://good.example\\@evil.example/', 'https://rs.example.com\\path']) {
       for (const name of ['resource', 'aud']) {
         const r = await authorize(platform, authorizeQuery({ [name]: bad }));
         assert.equal(r.error?.error, 'invalid_target', name + '=' + bad + ' ' + JSON.stringify(r.error));
@@ -460,7 +465,7 @@ describe('[ORI] OAuth2: RFC 8707 resource indicators', () => {
     assert.equal(noAud.body.error, 'invalid_target');
   });
 
-  it('[ORI09] /token refresh grant: the same resource rotates, another one is refused and leaves the chain intact; client_credentials ignores it', async () => {
+  it('[ORI09] /token refresh grant: the same resource rotates, another one is refused and leaves the chain intact, a chain without audience ignores it; client_credentials ignores it', async () => {
     const platform = await seeded();
     await seedRefresh(platform, 'RT-1');
     const bad = await refresh(platform, 'RT-1', { resource: OTHER });
@@ -474,10 +479,18 @@ describe('[ORI] OAuth2: RFC 8707 resource indicators', () => {
     assert.equal(next.audience, AUD);
     assert.equal((await refresh(platform, ok.body.refresh_token)).statusCode, 200);
 
-    // A chain without audience takes no resource.
-    await seedRefresh(platform, 'RT-2', { audience: undefined });
-    assert.equal((await refresh(platform, 'RT-2', { resource: AUD })).body.error, 'invalid_target');
-    assert.ok(await getRefresh(platform, CORE_ID, 'RT-2'));
+    // A chain issued without an audience ignores `resource` (any value, even
+    // malformed or repeated) and stays unbound.
+    let token = 'RT-2';
+    await seedRefresh(platform, token, { audience: undefined });
+    for (const resource of [AUD, 'not a url', [AUD, OTHER]]) {
+      lastCtx = {};
+      const r = await refresh(platform, token, { resource });
+      assert.equal(r.statusCode, 200, JSON.stringify(resource) + ' ' + r.raw);
+      assert.equal('audience' in lastCtx.tokenResponse, false);
+      token = r.body.refresh_token;
+      assert.equal((await getRefresh(platform, CORE_ID, token)).audience, undefined);
+    }
 
     // client_credentials: the resource is not looked at.
     const cc = await mintSecret();
@@ -493,6 +506,84 @@ describe('[ORI] OAuth2: RFC 8707 resource indicators', () => {
       body: { grant_type: 'client_credentials', resource: OTHER },
     }, res);
     assert.equal(res.statusCode, 200, res.raw);
+  });
+
+  it('[ORI14] /token refresh grant: a refused resource writes nothing (checked on the non-consuming read)', async () => {
+    const platform = await seeded();
+    await seedRefresh(platform, 'RT-W');
+    const writes = [];
+    for (const m of ['setAccessState', 'setAccessStateIfAbsent', 'consumeAccessState', 'deleteAccessState']) {
+      const orig = platform[m].bind(platform);
+      platform[m] = async (k, ...rest) => { writes.push(m + ' ' + k); return orig(k, ...rest); };
+    }
+    const bad = await refresh(platform, 'RT-W', { resource: OTHER });
+    assert.equal(bad.body.error, 'invalid_target');
+    assert.deepEqual(writes, []);
+  });
+
+  it('[ORI15] /token refresh grant: a resource refused after the consume (peek missed) puts the row back', async () => {
+    const platform = await seeded();
+    await seedRefresh(platform, 'RT-3');
+    const live = await getRefresh(platform, CORE_ID, 'RT-3');
+    assert.ok(live);
+    // The non-consuming read misses once (a concurrent rotation's restore
+    // lands between it and the consume).
+    const getAccessState = platform.getAccessState.bind(platform);
+    let missed = false;
+    platform.getAccessState = async (k) => {
+      if (!missed && k.startsWith('oauth-rt/')) { missed = true; return null; }
+      return getAccessState(k);
+    };
+    const bad = await refresh(platform, 'RT-3', { resource: OTHER });
+    assert.equal(missed, true);
+    assert.deepEqual(bad.body, { error: 'invalid_target', error_description: 'resource is not the resource this authorization was granted for' });
+    assert.ok(await getRefresh(platform, CORE_ID, 'RT-3'), 'the row is back');
+    assert.equal(await getRefreshConsumed(platform, CORE_ID, 'RT-3'), null, 'the consumed marker is gone');
+    const ok = await refresh(platform, 'RT-3');
+    assert.equal(ok.statusCode, 200, ok.raw);
+  });
+
+  it('[ORI12] scheme and host compare case-insensitively, the path as written', async () => {
+    const platform = await seeded();
+    const upper = 'HTTPS://RESOURCE.EXAMPLE.COM/base';
+    assert.equal(stateAudience((await authorize(platform, authorizeQuery({ resource: upper }))).signed), AUD);
+    assert.equal(stateAudience((await authorize(platform, authorizeQuery({ aud: AUD, resource: upper + '/' }))).signed), AUD);
+    const path = await authorize(platform, authorizeQuery({ resource: 'https://resource.example.com/Base' }));
+    assert.equal(path.error?.error, 'invalid_target');
+    const ok = await exchange(platform, await codeFor(platform, { aud: AUD }), { resource: 'https://Resource.Example.com/base' });
+    assert.equal(ok.statusCode, 200, ok.raw);
+    const bad = await exchange(platform, await codeFor(platform, { aud: AUD }), { resource: 'https://resource.example.com/BASE' });
+    assert.equal(bad.body.error, 'invalid_target');
+    // An unlisted value is stored as given.
+    const any = await seeded(ANY);
+    assert.equal(stateAudience((await authorize(any, authorizeQuery({ resource: 'https://RS.example.com/X' }))).signed), 'https://RS.example.com/X');
+  });
+
+  it('[ORI13] a long run of slashes is answered at once (bounded, linear comparison)', async () => {
+    const huge = '/'.repeat(100000) + 'x';
+    assert.equal(trimSlash('a' + '/'.repeat(100000)), 'a');
+    for (const extra of [{}, ANY]) {
+      const platform = await seeded(extra);
+      for (const query of [{ aud: huge, resource: 'x' }, { resource: huge }, { aud: AUD, resource: huge + '/' }]) {
+        const t0 = process.hrtime.bigint();
+        const r = await authorize(platform, authorizeQuery(query));
+        const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+        assert.equal(r.error?.error, 'invalid_target', JSON.stringify(r.error));
+        assert.ok(ms < 200, 'took ' + ms + ' ms');
+      }
+    }
+    const platform = await seeded();
+    await seedRefresh(platform, 'RT-S');
+    let t0 = process.hrtime.bigint();
+    assert.equal((await refresh(platform, 'RT-S', { resource: huge })).body.error, 'invalid_target');
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 200);
+    t0 = process.hrtime.bigint();
+    assert.equal((await exchange(platform, await codeFor(platform, { aud: AUD }), { resource: AUD + huge })).body.error, 'invalid_target');
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 200);
+    // The comparison itself is linear even without the cap.
+    t0 = process.hrtime.bigint();
+    assert.equal(sameResource(huge, huge + '/'), true);
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 200);
   });
 
   it('[ORI10] response hooks receive the audience; the id_token aud stays the client id', async () => {

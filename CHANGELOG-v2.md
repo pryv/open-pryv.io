@@ -157,16 +157,20 @@
 
 - **`/oauth2/authorize` accepts RFC 8707 `resource` as a synonym of `aud`** (GET and POST): one value
   per authorization, validated against the client's registered audiences; `aud` and `resource`
-  together must name the same resource (`invalid_request` otherwise). Clients registered for any
-  audience, and clients without an audience list, now get the named resource stored and answered as
-  `aud` by `/oauth2/introspect` (it must be an absolute https URL without fragment, at most 512
-  bytes, http only on a loopback host).
+  together must name the same resource (`invalid_request` otherwise); a trailing slash and the case
+  of the scheme and host are ignored when comparing. Clients registered for any audience, and
+  clients without an audience list, now get the named resource stored and answered as `aud` by
+  `/oauth2/introspect` (it must be an absolute ASCII https URL without fragment or user information,
+  at most 512 bytes, http only on a loopback host).
 - **BREAKING (OAuth clients): refusals about the audience answer `invalid_target` (RFC 8707) instead
   of `invalid_request`**: missing on a client with registered audiences, not registered, malformed.
+  A malformed `aud` sent by a client registered for any audience, or by a client without an audience
+  list, used to be ignored and is now refused with `invalid_target`.
 - **`/oauth2/token` accepts `resource` (RFC 8707 § 2.2) on the authorization-code and refresh-token
   grants**: it must be the resource the authorization named, else `invalid_target`; the code is
-  consumed like any other binding failure, a refresh token stays usable. `client_credentials` ignores
-  it.
+  consumed like any other binding failure, a refresh token stays usable. A refresh token issued
+  without an audience (any chain from before this release) ignores `resource` and stays unbound
+  until the user re-authorizes. `client_credentials` ignores it.
 - OAuth extension: the response hooks (`tokenResponse`, `idTokenClaims`, `introspectionClaims`)
   receive `ctx.audience`, the resource the authorization named (optional context field, no contract
   version change).

@@ -302,7 +302,8 @@ be intersected with them.
   before the code or refresh token is used).
 - A client registered with audiences (`--audience`) must name one of them in
   the `aud` parameter of `/oauth2/authorize`, or in its RFC 8707 spelling
-  `resource` (a trailing slash is ignored), else `invalid_target`.
+  `resource` (a trailing slash and the case of the scheme and host are
+  ignored), else `invalid_target`.
 
 ### Resource indicators (`aud` / `resource`)
 
@@ -314,27 +315,34 @@ needs tokens for two resource servers runs two authorizations. `aud` and
 `resource` given together must name the same resource (else
 `invalid_request`). Every audience refusal answers `invalid_target`: missing
 on a client registered with audiences, not one of them, or malformed. The
-description never lists the client's audiences.
+description never lists the client's audiences. Two values name the same
+resource when they are equal once a trailing slash is removed and the scheme
+and host are lower-cased (RFC 3986 § 6.2.2.1); the path and query compare as
+written (`/Mcp` is not `/mcp`), and no other normalisation applies (no
+percent-decoding, no default port).
 
 - **Client with registered audiences** (`--audience`): the value must be one
   of them; the registered spelling is stored.
 - **Client registered for any audience** (`--any-audience`), and an
   application-account client (no audience list): a value is optional; when
-  given it must be an absolute `https` URL without fragment (`http` only on
-  a loopback host: `localhost`, `127.0.0.1`, `[::1]`), at most 512 bytes, and
-  is stored as given. The audience is then chosen by the client: only the
-  resource server's own check of introspection `aud` protects it. The
-  registered list is the recommended setting.
+  given it must be an absolute ASCII `https` URL (an internationalised host
+  in its punycode form) without fragment, user information or backslash
+  (`http` only on a loopback host: `localhost`, `127.0.0.1`, `[::1]`), at
+  most 512 bytes, and is stored as given. The audience is then chosen by the
+  client: only the resource server's own check of introspection `aud`
+  protects it. The registered list is the recommended setting.
 
 The chosen value is answered as `aud` by `/oauth2/introspect` (a resource
 server checks it names itself) and handed to the extension's hooks as
 `ctx.audience`; the token response carries no `aud`, and the id_token `aud`
 stays the client id. `/oauth2/token` accepts `resource` (RFC 8707 § 2.2) on
 the authorization-code and refresh-token grants: it must name the resource
-the authorization named (trailing slash ignored), else `invalid_target`; on
-the code grant the code is then used up like any other binding failure, on
-the refresh grant the refresh token stays usable. A code or chain without an
-audience takes no `resource`. `client_credentials` ignores `resource`.
+the authorization named (compared as above), else `invalid_target`; on the
+code grant the code is then used up like any other binding failure, on the
+refresh grant the refresh token stays usable. A code without an audience
+takes no `resource`. A refresh token issued without an audience (any chain
+from before this release) ignores `resource` and stays unbound until the
+user re-authorizes. `client_credentials` ignores `resource`.
 Nothing is added to the discovery document (RFC 8707 registers no metadata).
 
 ### The token response `scope` (the echo)

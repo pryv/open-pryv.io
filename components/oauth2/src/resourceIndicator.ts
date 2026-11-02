@@ -15,36 +15,68 @@
  * refresh-token grants; any other value is refused with `invalid_target`.
  */
 
+// The loopback hosts on which a plain-http resource is accepted (local
+// development): the same list as for plain-http redirect URIs.
+import { LOOPBACK_HOSTS } from './clientRegistry.ts';
+
 /**
  * Upper bound on a resource indicator a client names without a registered
  * list, in bytes (it rides in the signed state and the consent redirect).
  */
 export const MAX_RESOURCE_BYTES = 512;
 
-// The loopback hosts on which a plain-http resource is accepted (local
-// development): the same list as for plain-http redirect URIs.
-const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost'];
-
-/** Two resource indicators name the same resource (a trailing slash is ignored). */
-export function sameResource (a: string, b: string): boolean {
-  return trimSlash(a) === trimSlash(b);
+/**
+ * Whether a presented value is short enough to be compared at all: at most
+ * `MAX_RESOURCE_BYTES`, or the longest of the values it may match (a
+ * registered audience, a stored one). Checked before any comparison, so the
+ * work spent on a client-chosen value stays bounded.
+ */
+export function withinResourceCap (value: string, known: readonly string[] = []): boolean {
+  let cap = MAX_RESOURCE_BYTES;
+  for (const k of known) if (typeof k === 'string' && k.length > cap) cap = k.length;
+  // UTF-16 length never exceeds the UTF-8 byte length.
+  return value.length <= cap && Buffer.byteLength(value, 'utf8') <= cap;
 }
 
+/**
+ * Two resource indicators name the same resource: a trailing slash and the
+ * case of the scheme and host (RFC 3986 § 6.2.2.1) are ignored; the path and
+ * query compare as written.
+ */
+export function sameResource (a: string, b: string): boolean {
+  return comparable(a) === comparable(b);
+}
+
+/** Without its trailing slashes (a linear scan: the value is client input). */
 export function trimSlash (s: string): string {
-  return s.replace(/\/+$/, '');
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 0x2f) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+
+// `scheme://authority`, as written (anchored, so matched in linear time).
+const SCHEME_AUTHORITY_RE = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i;
+
+function comparable (s: string): string {
+  const t = trimSlash(s);
+  const m = SCHEME_AUTHORITY_RE.exec(t);
+  return m == null ? t : m[0].toLowerCase() + t.slice(m[0].length);
 }
 
 /**
  * A resource indicator no registered list vouches for (RFC 8707 § 2): an
  * absolute URL of visible ASCII characters, `https` (or `http` on a loopback
- * host), without fragment, at most `MAX_RESOURCE_BYTES` bytes.
+ * host), without fragment, user information or backslash, at most
+ * `MAX_RESOURCE_BYTES` bytes.
  */
 export function isValidResource (value: string): boolean {
-  if (Buffer.byteLength(value, 'utf8') > MAX_RESOURCE_BYTES) return false;
-  if (!/^[\x21-\x7e]+$/.test(value) || value.includes('#')) return false;
-  if (!/^https?:\/\/[^/]/i.test(value)) return false;
+  if (!withinResourceCap(value)) return false;
+  if (!/^[\x21-\x7e]+$/.test(value) || value.includes('#') || value.includes('\\')) return false;
+  const authority = SCHEME_AUTHORITY_RE.exec(value)?.[0];
+  if (authority == null || !/^https?:\/\/[^/]/i.test(authority) || authority.includes('@')) return false;
   let u: URL;
   try { u = new URL(value); } catch { return false; }
+  if (u.username !== '' || u.password !== '') return false;
   if (u.protocol === 'https:') return u.hostname !== '';
   return u.protocol === 'http:' && LOOPBACK_HOSTS.includes(u.hostname);
 }
@@ -61,7 +93,7 @@ export function checkTokenResource (resource: unknown, audience: string | undefi
   if (typeof resource !== 'string') {
     return { ok: false, status: 400, error: 'invalid_target', description: 'one resource per request' };
   }
-  if (audience == null || !sameResource(resource, audience)) {
+  if (audience == null || !withinResourceCap(resource, [audience]) || !sameResource(resource, audience)) {
     return { ok: false, status: 400, error: 'invalid_target', description: 'resource is not the resource this authorization was granted for' };
   }
   return null;
