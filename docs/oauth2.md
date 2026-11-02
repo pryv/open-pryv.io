@@ -499,8 +499,8 @@ never on the wording; render errors without one generically.
   Allowing a feature later does not lift the forbid on grants that already
   carry it: a forbid on a grant is kept by every re-consent, only the owner
   can remove it. **`accessCreation` is forbidden by default since the release
-  that introduced it**: a client whose sessions create accesses or webhooks
-  must be updated with `--allow-feature accessCreation` BEFORE that release is
+  that introduced it**: a client whose sessions create accesses, webhooks or
+  CMC capability requests (invites) must be updated with `--allow-feature accessCreation` BEFORE that release is
   deployed, or each user's next consent locks the forbid onto their grant.
 - **In any consent offer, a forbidden feature is mandatory** (it cannot be
   unticked, whatever the offer says); one marked `optIn` is refused. This

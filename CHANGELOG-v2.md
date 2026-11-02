@@ -120,19 +120,21 @@
 
 - **New feature permission `accessCreation`** (`{ feature: 'accessCreation', setting: 'forbidden' |
   'allowed' }`, default allowed, additive). An access carrying `accessCreation: forbidden` cannot
-  create accesses (`accesses.create`, `403 forbidden`) nor webhooks (`webhooks.create`, `403`); it
+  create accesses (`accesses.create`, `403 forbidden`), webhooks (`webhooks.create`, `403`) nor CMC
+  capability requests (invites: `events.create` of a `consent/request-cmc` event with
+  `capabilityRequested: true`, `403`); it
   still manages, updates and deletes the accesses it created before, and the owner can still update
   it. Like `webhooks` and `secretSharing`, the restriction is handed down to every access it reaches
   (an access it updates carries it).
-- **BREAKING (registry clients whose sessions create accesses or webhooks): registry grants forbid
+- **BREAKING (registry clients whose sessions create accesses, webhooks or CMC capability requests): registry grants forbid
   `accessCreation` by default**, with `webhooks` and `secretSharing`, unless the client row allows it
   (`bin/oauth-client.js --allow-feature accessCreation`; `show` and `create-registry` list it among
   the forbidden features). Applied at each consent, like the other defaults: a grant made before this
   release gets it at the user's next consent, and from then on that grant's sessions are refused
-  `accesses.create` and `webhooks.create` (`403`). The forbid then sticks: every later re-consent
+  `accesses.create`, `webhooks.create` and CMC capability requests (`403`). The forbid then sticks: every later re-consent
   keeps it, allowing the feature on the client row afterwards does not lift it, only the account
   owner can remove it from each grant. **Operator action BEFORE deploying:** for every registry
-  client whose sessions create accesses or webhooks, run `node bin/oauth-client.js update <clientId>
+  client whose sessions create accesses, webhooks or CMC capability requests, run `node bin/oauth-client.js update <clientId>
   --allow-feature accessCreation` (keep any feature already allowed on the row in the same command,
   the flag replaces the list).
 - **An access an OAuth session creates belongs to the session's grant.** It carries
