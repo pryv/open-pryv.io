@@ -31,6 +31,13 @@
   `http.trustedProxies`, else `Host`), the host the per-user issuer reads: behind a trusted proxy
   that rewrites `Host`, a request for an account of another core is now answered `421` there too.
 
+### Audit of streamed calls cut by the client
+
+- A streamed call (`events.get` and other calls answered as a stream) whose client closes the
+  connection before the response is complete is now audited as an error (`audit-log/pryv-api-error`,
+  error id `client-closed-request`) instead of as a successful call. The id is new; it is never sent
+  to a client, since nobody is left to read it.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

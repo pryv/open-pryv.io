@@ -19,6 +19,7 @@ import { ErrorMessages } from './ErrorMessages.ts';
 interface ErrorFactory {
   unsupportedOperation: (message: string) => APIErrorT;
   apiUnavailable: (message: string) => APIErrorT;
+  clientClosedRequest: () => APIErrorT;
   corruptedData: (message: string, innerError?: Error) => APIErrorT;
   forbidden: (message?: string, data?: unknown) => APIErrorT;
   invalidAccessToken: (message: string, status?: number) => APIErrorT;
@@ -78,6 +79,14 @@ factory.unsupportedOperation = (message: string) => {
 factory.apiUnavailable = (message: string) => {
   return new APIError(ErrorIds.ApiUnavailable, message, {
     httpStatus: 503
+  });
+};
+
+// 499 is the conventional "client closed request" status (no response is
+// sent with it): it counts as a client-side outcome, not a server fault.
+factory.clientClosedRequest = () => {
+  return new APIError(ErrorIds.ClientClosedRequest, 'The client closed the connection before the response was complete.', {
+    httpStatus: 499
   });
 };
 

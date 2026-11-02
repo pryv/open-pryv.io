@@ -214,6 +214,13 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
     const abortGrew = await countGrewFrom(beforeAbort);
 
     assert.ok(abortGrew, 'the aborted call must still have produced an audit record');
+    // ...recorded as what happened: the client left, the call did not succeed.
+    const latest = await audit.storage.db.query(
+      `SELECT type, content FROM audit_events
+       WHERE user_id = $1 AND eventid NOT LIKE 'auab-%'
+       ORDER BY created DESC LIMIT 1`, [userId]);
+    assert.strictEqual(latest.rows[0].type, 'audit-log/pryv-api-error');
+    assert.strictEqual(latest.rows[0].content.id, 'client-closed-request');
   });
 
   // The reason the pools are split. A streamed read holds its connection for as
