@@ -361,6 +361,13 @@ function getMochaHooks (isParallelMode = false) {
           const { getUsersLocalIndex } = require('storage');
           const idx = await getUsersLocalIndex();
           await idx.init();
+          // With the index wiped, no user directory is reachable any more:
+          // remove them all, or the integrity check reports their rows as
+          // orphans and opens the files of every leftover on each test.
+          await userLocalDirectory.init();
+          for (const userId of await userLocalDirectory.listUserIds()) {
+            await userLocalDirectory.deleteUserDirectory(userId);
+          }
           await idx.deleteAll();
         } catch (_e) {
           // not configured for this component — nothing to wipe.

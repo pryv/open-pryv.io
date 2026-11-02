@@ -36,7 +36,7 @@ type StorageLayer = {
   webhooks?: unknown;
   events?: { exportAll: (u: UserOrId, cb: (err: Error | null, items?: EventRow[]) => void) => unknown; exportAllStreamed?: (u: UserOrId) => AsyncGenerator<unknown>; importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
   iterateAllEvents?: () => AsyncIterableIterator<unknown>;
-  getAllUserIdsFromCollection?: (col: string) => Promise<string[]>;
+  getAllUserIdsFromCollections?: (cols: string[]) => Promise<Record<string, string[]>>;
   clearCollection?: (col: string) => Promise<void>;
 };
 type InitOptions = {
@@ -181,9 +181,13 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
     }
   };
 
-  storageLayer.getAllUserIdsFromCollection = async function (collectionName: string): Promise<string[]> {
-    const res = await connection.query(`SELECT DISTINCT user_id FROM ${collectionName}`);
-    return res.rows.map((r: Record<string, unknown>) => r.user_id as string);
+  storageLayer.getAllUserIdsFromCollections = async function (collectionNames: string[]): Promise<Record<string, string[]>> {
+    const res: Record<string, string[]> = {};
+    for (const collectionName of collectionNames) {
+      const rows = await connection.query(`SELECT DISTINCT user_id FROM ${collectionName}`);
+      res[collectionName] = rows.rows.map((r: Record<string, unknown>) => r.user_id as string);
+    }
+    return res;
   };
 
   storageLayer.clearCollection = async function (collectionName: string): Promise<void> {

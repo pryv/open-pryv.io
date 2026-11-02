@@ -410,10 +410,14 @@
   reported anything: it compared an unawaited promise to `null`, so a user id holding rows in
   `events`, `streams`, `accesses`, `profile` or `webhooks` that no account of the index owns (rows an
   account deletion left behind) passed. It now reads the index once and reports each such id
-  (`User id "<id>" in "<collection>" is unknown in the user index DB`). Test `[UIIX1]`. On the
-  SQLite engine the check lists the users of a collection from the index itself (per-user files),
-  so it cannot see such rows there. An account whose erasure stalled after its index entry was
-  removed (see the resumable erasure) is reported there until the erasure completes.
+  (`User id "<id>" in "<collection>" is unknown in the user index DB`). Tests `[UIIX1]` (accesses)
+  and `[UIIX3]` (events), on both engines. On the SQLite engine, where rows live in per-user files,
+  the check walks the user directories on disk once and looks into the files of the ids the index
+  lacks (storage-layer method `getAllUserIdsFromCollections(names)`, batched, replacing the
+  per-collection `getAllUserIdsFromCollection`); indexed ids are counted without opening their
+  files, and a file that cannot be read is reported under its user id (`[UIIX4]`) rather than
+  failing the check. An account whose erasure stalled after its index entry was removed (see the
+  resumable erasure) is reported there until the erasure completes.
 - `usersRepository.deleteOne` removes the account's accesses, profile and webhooks too (events and
   streams already went with the mall). The account deletion flow (`auth.delete` and the other
   erasure paths) removed them itself, so production deletions left nothing; any other caller of

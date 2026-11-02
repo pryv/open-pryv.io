@@ -92,6 +92,11 @@ class UserBaseStorageDb {
     return inst;
   }
 
+  /** The database file path, without creating its directory. */
+  static existingPathForUser (userId: string): string {
+    return path.join(_internals.userLocalDirectory.getPathForUser(userId), `baseStorage-${VERSION}.sqlite`);
+  }
+
   static evict (userId: string): void {
     UserBaseStorageDb.cache.delete(userId);
   }
