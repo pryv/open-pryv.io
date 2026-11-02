@@ -33,6 +33,7 @@
 import type { AutoDeletionConfig } from './config.ts';
 import type { Setting, Bookkeeping, Mode, Action } from './state.ts';
 import type { AccountActivity } from '../accesses/accountActivity.ts';
+import { ACTIVITY_CLOCK_SKEW_SECONDS } from '../accesses/accountActivity.ts';
 
 export const DAY_SECONDS = 24 * 60 * 60;
 
@@ -119,7 +120,11 @@ export function evaluate (input: EvaluateInput): Evaluation {
   const restart = prev == null || isShrink(prev.appliedPolicy, policy) || resumed;
   const policyAppliedAt = restart ? now : prev.policyAppliedAt;
 
-  const floor = prev?.lastActivity?.max ?? null;
+  // A recorded activity past now (plus the clock-skew allowance) is no
+  // floor: it can only come from a planted use time recorded before account
+  // activity learnt to ignore it, and would hold the deadline there forever.
+  const prevMax = prev?.lastActivity?.max ?? null;
+  const floor = prevMax != null && prevMax <= now + ACTIVITY_CLOCK_SKEW_SECONDS ? prevMax : null;
   const max = activity.at == null ? floor : (floor == null ? activity.at : Math.max(floor, activity.at));
   const lastActivity = { personal: activity.personal, app: activity.app, delegate: activity.delegate, max, by: activity.by };
 

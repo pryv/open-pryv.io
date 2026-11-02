@@ -43,7 +43,9 @@
   check refuses it). `business/src/accesses/accountActivity.ts` skips a `lastUsed` later than now plus
   `ACTIVITY_CLOCK_SKEW_SECONDS` (3600); `activityOf` / `getActivity` take an optional `now`, and the
   auto-deletion sweep passes its own clock (`loadAccountFacts` and `readActivity`), so a test clock
-  ahead of the wall clock still sees the use it plants.
+  ahead of the wall clock still sees the use it plants. The schedule's activity floor
+  (`autoDeletion/deadline.ts`, the latest activity recorded by earlier passes) is bounded the same way, so
+  a future use time recorded before this fix no longer holds the deadline.
 - Not guarded: `system.getUserInfo`'s `lastAccess` (an operator report over every access) still takes
   the latest stored `lastUsed`; storage-direct writers (backup restore, migration import) store the
   value they are given.

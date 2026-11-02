@@ -87,14 +87,20 @@ describe('[ACIN] accesses input checks', function () {
   // the server only: a caller-supplied one would make the account look in use
   // until any date it likes.
   it('[ACLU1] `lastUsed` is refused at creation', async function () {
+    const before = await getAccesses({});
+    assert.strictEqual(before.status, 200, before.text);
+    const names = [];
     for (const type of ['app', 'shared']) {
+      const name = 'lu ' + cuid();
+      names.push(name);
       const res = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
-        .send({ name: 'lu ' + cuid(), type, permissions: [{ streamId: 'acin', level: 'read' }], lastUsed: 4102444800 });
+        .send({ name, type, permissions: [{ streamId: 'acin', level: 'read' }], lastUsed: 4102444800 });
       assert.strictEqual(res.status, 400, type + ' ' + res.text);
       assert.strictEqual(res.body.error.id, 'invalid-parameters-format', res.text);
     }
-    const list = await getAccesses({});
-    assert.ok(!list.body.accesses.some((a) => a.lastUsed === 4102444800), 'nothing stored');
+    const after = await getAccesses({});
+    assert.strictEqual(after.body.accesses.length, before.body.accesses.length, 'no access created');
+    assert.ok(!after.body.accesses.some((a) => names.includes(a.name)), 'no access created');
   });
 
   it('[ACLU2] `lastUsed` is refused at update', async function () {
