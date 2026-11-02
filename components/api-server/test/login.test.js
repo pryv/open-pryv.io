@@ -41,7 +41,12 @@ describe('[AUTH] auth', function () {
     userAccountStorage = await getUserAccountStorage();
   });
 
+  // Starting (or restarting) the child test server boots storages and runs
+  // migrations: more than the 5 s each test gets on a loaded machine.
+  const SERVER_START_TIMEOUT = 20000;
+
   before(function (done) {
+    this.timeout(SERVER_START_TIMEOUT);
     async.series([
       server.ensureStarted.bind(server, helpers.dependencies.settings),
       testData.resetUsers
@@ -443,13 +448,15 @@ describe('[AUTH] auth', function () {
       const maxAge = helpers.passwordRules.settingsOverride.auth.passwordAgeMaxDays;
       const minAge = 1;
 
-      before(async () => {
+      before(async function () {
+        this.timeout(SERVER_START_TIMEOUT);
         await testData.resetUsers();
         settings.auth.passwordAgeMinDays = minAge;
         await server.ensureStartedAsync(settings);
       });
 
-      after(async () => {
+      after(async function () {
+        this.timeout(SERVER_START_TIMEOUT);
         // restore server with original config
         await server.ensureStartedAsync(helpers.dependencies.settings);
       });
