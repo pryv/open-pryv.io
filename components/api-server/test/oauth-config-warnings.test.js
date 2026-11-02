@@ -84,6 +84,27 @@ describe('[CVOA] OAuth boot warnings', () => {
     }
   });
 
+  it('[CVOA10] logoHosts: a malformed list, or entries that never match a logo URL, are reported; plain hosts and host:port are silent', () => {
+    for (const logoHosts of ['logos.example.com', [''], [42]]) {
+      assert.match(oauthWarnings({ oauth: { logoHosts } })[0] ?? '', /'oauth\.logoHosts' must be a list of host names/, JSON.stringify(logoHosts));
+    }
+    const w = oauthWarnings({ oauth: { logoHosts: ['logos.example.com:443', 'https://logos.example.com', 'logos.example.com/img', 'logos.example.com.', 'lögos.example.com'] } });
+    assert.equal(w.length, 1, JSON.stringify(w));
+    for (const h of ['logos.example.com:443', 'https://logos.example.com', 'logos.example.com/img', 'logos.example.com.', 'lögos.example.com']) assert.ok(w[0].includes(JSON.stringify(h)), h);
+    assert.deepEqual(oauthWarnings({ oauth: { logoHosts: ['logos.example.com', 'cdn.example.com:8443', 'xn--lgos-5qa.example.com'] } }), []);
+  });
+
+  it('[CVOA9] the removed requireAppAccountMfa key is reported when present, true or false; the shipped default sets none', () => {
+    for (const requireAppAccountMfa of [true, false]) {
+      const w = oauthWarnings({ oauth: { requireAppAccountMfa } });
+      assert.equal(w.length, 1, JSON.stringify(w));
+      assert.match(w[0], /'oauth\.requireAppAccountMfa' is no longer read and can be removed: it was never enforced/);
+    }
+    const yaml = require('fs').readFileSync(require('path').resolve(import.meta.dirname, '../../../config/default-config.yml'), 'utf8');
+    assert.doesNotMatch(yaml, /requireAppAccountMfa/);
+    assert.match(yaml, /^ {2}logoHosts: \[\]$/m);
+  });
+
   it('[CVOA4] an id_token lifetime that is not a positive integer is reported; the shipped default is silent', () => {
     for (const idTokenTTL of [0, -5, 'abc', 1.5]) {
       assert.match(oauthWarnings({ oauth: { idTokenTTL } })[0], /'oauth\.idTokenTTL' is .*300 is used/, String(idTokenTTL));

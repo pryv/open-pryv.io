@@ -65,7 +65,7 @@ const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
 const { composeShownOffer, nextGrantPermissions } = require('../consentComposition.ts');
-const { getClient } = require('../clientRegistry.ts');
+const { getClient, clientUnavailable } = require('../clientRegistry.ts');
 const { clientLifetimes } = require('../clientLifetimes.ts');
 
 const { generateToken } = require('../secureToken.ts');
@@ -268,11 +268,12 @@ export function handleAccept (deps: AcceptDeps) {
       });
     }
     const payload = verified.payload;
-    // A client suspended since /authorize consents to nothing, whatever its
-    // kind (no grant, no consent record, no session).
+    // A client suspended or put under review since /authorize consents to
+    // nothing, whatever its kind (no grant, no consent record, no session).
     const stateClient = await getClient(deps.platform, payload.clientId);
-    if (stateClient?.status === 'suspended') {
-      return sendJson(res, 403, { error: 'access_denied', error_description: 'this client is suspended' });
+    const unavailable = stateClient != null ? clientUnavailable(stateClient, deps.config) : null;
+    if (unavailable != null) {
+      return sendJson(res, 403, { error: 'access_denied', error_description: unavailable.description });
     }
 
     // Consent contract (selected by the signed state, never the

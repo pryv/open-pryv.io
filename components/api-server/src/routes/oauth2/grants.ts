@@ -33,17 +33,13 @@ import { parseAccessRef } from 'business/src/accesses/refs.ts';
 // transient data-grant about to be rolled back on a peer refusal is never
 // observed as a success. See consentPoll.ts.
 import { awaitConsentOutcome } from '../consentPoll.ts';
-import { withSessionSelfRevoke, samePermissionKeys } from './types.ts';
+import { withSessionSelfRevoke, samePermissionKeys, REGISTRY_GRANT_PREFIX, REGISTRY_GRANT_DEVICE } from './types.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import * as storages from 'storages';
 import { getRevokedAt } from 'oauth2/src/storage.ts';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
-
-/** Registry clients: identity of the durable consent record (one per user and client). */
-const REGISTRY_GRANT_PREFIX = 'oauth-grant:';
-const REGISTRY_GRANT_DEVICE = 'oauth-grant';
 
 /** The session-side helpers the grants need (see sessions.ts). */
 type SessionHelpers = {

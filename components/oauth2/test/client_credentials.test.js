@@ -355,6 +355,25 @@ describe('[OAUTH-TKN-CC] /oauth2/token — client_credentials grant', () => {
       }, res);
       assert.equal(res.body.error, 'invalid_scope');
     });
+
+    it('[OTC-S3] a suspended client, or one under review, gets no token (400 unauthorized_client), nothing minted', async () => {
+      for (const status of ['suspended', 'review']) {
+        const c = await makeClient({ status });
+        const platform = fakePlatform({ myapp: c.meta });
+        let minted = 0;
+        const handler = handleToken({
+          config: fakeConfig(),
+          platform,
+          mintClientAccess: async (p) => { minted++; return MINT_CLIENT_FAKE(p); },
+          resolveAccountUserId: RESOLVE_ACCOUNT_FAKE,
+        });
+        const res = fakeRes();
+        await handler({ body: { grant_type: 'client_credentials' }, headers: { authorization: basicAuth('myapp', c.secret) } }, res);
+        assert.equal(res.statusCode, 400, status);
+        assert.equal(res.body.error, 'unauthorized_client', status);
+        assert.equal(minted, 0, status);
+      }
+    });
   });
 
   describe('[OAUTH-TKN-CC-RESOLVE] account-username resolution', () => {

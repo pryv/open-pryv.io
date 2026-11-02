@@ -805,10 +805,14 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const any = fakePlatform(); await seed(any, { allowedAudiences: [], anyAudience: true });
       assert.ok((await authorize({ config: fakeConfig(), platform: any }, authorizeQuery({ aud: undefined }))).signed);
     });
-    it('[OXA04] a suspended client is refused', async () => {
+    it('[OXA04] a suspended client is refused with an HTML 400, before the redirect URI is even looked at', async () => {
       const platform = fakePlatform(); await seed(platform, { status: 'suspended' });
-      const { res } = await authorize({ config: fakeConfig(), platform }, authorizeQuery());
-      assert.match(res.headers.location, /error=access_denied/);
+      for (const redirect of [REDIRECT, 'https://unregistered.example.com/cb']) {
+        const { res } = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ redirect_uri: redirect, response_type: 'token' }));
+        assert.equal(res.statusCode, 400);
+        assert.equal(res.headers.location, undefined);
+        assert.match(res.raw, /this client is suspended/);
+      }
     });
     it('[OXA05] POST with a form body works like GET; JSON and repeated parameters are refused', async () => {
       const platform = fakePlatform(); await seed(platform);
@@ -1737,6 +1741,179 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       res = await refresh(platform, 'RT-ADV2', mint);
       assert.equal(res.statusCode, 500, res.raw);
       assert.equal(res.body.error, 'server_error');
+    });
+  });
+
+  describe('[ORFLD] registry fields: vetting status, entry ceiling, regions, display texts, logo hosts', () => {
+    const HOSTINGS = {
+      regions: {
+        eu: { zones: { z1: { hostings: { 'eu-h1': {} } } } },
+        us: { zones: { z2: { hostings: { 'us-h1': {} } } } },
+      },
+    };
+
+    it('[ORF1] a client under review is refused at /authorize, /offer, /accept, the code exchange and refresh; the refresh token is not used up', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const config = fakeConfig();
+      const deps = { config, platform };
+      // A consent started before the change, and a code issued before it.
+      const pending = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const a = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const acc = await accept(acceptDeps(deps, []), a.signed, [{ streamId: 'a', level: 'read' }]);
+      assert.equal(acc.statusCode, 200, acc.raw);
+      const code = new URL(acc.body.redirectTo).searchParams.get('code');
+      await seedRefresh(platform, 'RT-REVIEW');
+      await persistClient(platform, { ...REGISTRY_CLIENT, status: 'review' });
+
+      // No redirect of any kind (an invalid request included): the redirect
+      // URIs on file may be the change awaiting approval.
+      for (const query of [authorizeQuery(), authorizeQuery({ response_type: 'token', state: undefined })]) {
+        const { res } = await authorize(deps, query);
+        assert.equal(res.statusCode, 400);
+        assert.equal(res.headers.location, undefined);
+        assert.match(res.raw, /this client is under review/);
+      }
+      const calls = [];
+      for (const r of [await postOffer(deps, pending.signed), await accept(acceptDeps(deps, calls), pending.signed, [{ streamId: 'a', level: 'read' }])]) {
+        assert.equal(r.statusCode, 403, r.raw);
+        assert.deepEqual(r.body, { error: 'access_denied', error_description: 'this client is under review' });
+      }
+      assert.equal(calls.length, 0);
+      const tok = await exchange(tokenDeps(platform, config), code);
+      assert.equal(tok.statusCode, 400, tok.raw);
+      assert.equal(tok.body.error, 'unauthorized_client');
+      const ref = await refresh(platform, 'RT-REVIEW', refreshedMint());
+      assert.equal(ref.statusCode, 400, ref.raw);
+      assert.equal(ref.body.error, 'unauthorized_client');
+      // Approved again: the same refresh token works (it was not consumed).
+      await persistClient(platform, { ...REGISTRY_CLIENT, status: 'active' });
+      assert.equal((await refresh(platform, 'RT-REVIEW', refreshedMint())).statusCode, 200);
+    });
+
+    it('[ORF2] the entry ceiling: a request above the client\'s maxEntries is refused at /authorize; the bound is checked on write', async () => {
+      const platform = fakePlatform(); await seed(platform, { maxEntries: 1 });
+      const deps = { config: fakeConfig(), platform };
+      const { res } = await authorize(deps, authorizeQuery({ scope: 'data/*.read' }));
+      assert.deepEqual(redirectError(res), { error: 'invalid_scope', description: 'the requested scope expands to more than 1 permissions' });
+      assert.ok((await authorize(deps, authorizeQuery({ scope: 'data/a.read' }))).signed);
+      assert.equal(scopeGrammar.entryCeiling({ maxEntries: 5000 }), scopeGrammar.MAX_SYNTH_ENTRIES);
+      assert.equal(scopeGrammar.entryCeiling({}), scopeGrammar.MAX_SYNTH_ENTRIES);
+      for (const maxEntries of [0, -1, 1.5, 1001, '10']) {
+        await assert.rejects(persistClient(fakePlatform(), { ...REGISTRY_CLIENT, maxEntries }), /maxEntries must be an integer from 1 to 1000/, String(maxEntries));
+      }
+    });
+
+    it('[ORF3] regions: served only by the cores of a listed region; a hosting outside the hierarchy is refused; no hierarchy is the default region', async () => {
+      const platform = fakePlatform(); await seed(platform, { regions: ['eu'] });
+      const at = (overrides) => authorize({ config: fakeConfig(overrides), platform }, authorizeQuery({ scope: 'data/a.read' }));
+      assert.ok((await at({ hostings: HOSTINGS, 'core:hosting': 'eu-h1' })).signed);
+      for (const overrides of [{ hostings: HOSTINGS, 'core:hosting': 'us-h1' }, { hostings: HOSTINGS, 'core:hosting': 'elsewhere' }, {}]) {
+        const { res } = await at(overrides);
+        assert.deepEqual(redirectError(res), { error: 'unauthorized_client', description: 'this client is not available in this region' }, JSON.stringify(overrides));
+      }
+      const anywhere = fakePlatform(); await seed(anywhere, { regions: ['default'] });
+      assert.ok((await authorize({ config: fakeConfig(), platform: anywhere }, authorizeQuery({ scope: 'data/a.read' }))).signed);
+      // At the token endpoint too: a refresh on a core of another region is refused.
+      await seedRefresh(platform, 'RT-REGION');
+      const res = fakeRes();
+      await handleToken(tokenDeps(platform, fakeConfig({ hostings: HOSTINGS, 'core:hosting': 'us-h1' }), { mintRefreshedAccess: refreshedMint() }))({
+        headers: {}, body: { grant_type: 'refresh_token', refresh_token: 'RT-REGION', client_id: 'reg-app' },
+      }, res);
+      assert.equal(res.statusCode, 400, res.raw);
+      assert.equal(res.body.error, 'unauthorized_client');
+      await assert.rejects(persistClient(fakePlatform(), { ...REGISTRY_CLIENT, regions: ['eu', 'eu'] }), /regions lists a region twice/);
+      await assert.rejects(persistClient(fakePlatform(), { ...REGISTRY_CLIENT, regions: ['bad region'] }), /regions must be a list/);
+    });
+
+    it('[ORF4] /offer serves the localized name and description, and the logo only when https on an allowed host', async () => {
+      const platform = fakePlatform();
+      await seed(platform, {
+        name: { en: 'Health app', fr: 'App santé' },
+        description: 'Reads your measurements.',
+        softwareId: 'health-app',
+        logoUri: 'https://logos.example.com/app.png',
+      });
+      const offerAs = async (config) => {
+        const deps = { config, platform };
+        const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+        const res = await postOffer(deps, signed);
+        assert.equal(res.statusCode, 200, res.raw);
+        return res.body.client;
+      };
+      const allowed = await offerAs(fakeConfig({ 'oauth:logoHosts': ['LOGOS.example.com'] }));
+      assert.deepEqual(allowed, {
+        clientId: 'reg-app',
+        clientName: 'Registry app',
+        name: { en: 'Health app', fr: 'App santé' },
+        description: 'Reads your measurements.',
+        logoUri: 'https://logos.example.com/app.png',
+      });
+      // Not (any more) on the list, or no list: no logo.
+      assert.equal((await offerAs(fakeConfig({ 'oauth:logoHosts': ['other.example.com'] }))).logoUri, undefined);
+      assert.equal((await offerAs(fakeConfig())).logoUri, undefined);
+      // A stored http logo (a row written before the rule) is never served.
+      await setClient(platform, { ...(await platform.getPlatformKv('oauth-client/reg-app').then(JSON.parse)), logoUri: 'http://logos.example.com/app.png', updatedAt: Date.now() });
+      assert.equal((await offerAs(fakeConfig({ 'oauth:logoHosts': ['logos.example.com'] }))).logoUri, undefined);
+    });
+
+    it('[ORF5] display, vetting and logo fields are checked on write', async () => {
+      const bad = [
+        [{ status: 'pending' }, /status must be one of active, suspended, review/],
+        [{ name: '' }, /name: a non-empty text/],
+        [{ name: 'Two\nlines' }, /name: a non-empty text/],
+        [{ name: {} }, /name: 1 to 32 languages/],
+        [{ name: { english: 'x' } }, /"english" is not a language code/],
+        [{ name: { en: 'x'.repeat(129) } }, /the "en" text must be non-empty, at most 128/],
+        [{ description: ['x'] }, /description: a text, or a map/],
+        [{ description: 'x'.repeat(1025) }, /description: a non-empty text of at most 1024/],
+        [{ softwareId: '' }, /softwareId must be 1 to 256 printable characters/],
+        [{ logoUri: 'http://logos.example.com/a.png' }, /logoUri: .* must be an https URL/],
+        [{ logoUri: 'https://u:p@logos.example.com/a.png' }, /no user information/],
+        [{ statusLog: 'x' }, /statusLog must be a list/],
+      ];
+      for (const [extra, re] of bad) {
+        await assert.rejects(persistClient(fakePlatform(), { ...REGISTRY_CLIENT, ...extra }), re, JSON.stringify(extra));
+      }
+      const platform = fakePlatform();
+      await persistClient(platform, {
+        ...REGISTRY_CLIENT,
+        status: 'review',
+        name: { en: 'App', 'de-CH': 'App' },
+        description: { en: 'Line one\nline two' },
+        softwareId: 'sw-1',
+        regions: ['eu'],
+        maxEntries: 10,
+        statusLog: [{ at: 1, by: 'op', from: 'active', to: 'review', reason: 'review', fields: ['scope'] }],
+      });
+      // The operator trail never reaches the extension.
+      assert.equal(extension.toClientView(JSON.parse(await platform.getPlatformKv('oauth-client/reg-app'))).statusLog, undefined);
+    });
+
+    it('[ORF6] the ceiling bounds the grant a re-consent would leave: the signed-in /offer answers grant-too-large', async () => {
+      const platform = fakePlatform(); await seed(platform, { maxEntries: 1 });
+      const config = fakeConfig();
+      let current = { permissions: [{ streamId: 'b', level: 'read' }], aliased: false };
+      const deps = {
+        config,
+        platform,
+        resolveUser: async () => ({ userId: USER_ID, username: 'alice', personal: true }),
+        readRegistryGrant: async () => current,
+      };
+      const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const signedIn = async () => {
+        const res = fakeRes();
+        await handleOffer(deps)({ body: { state: signed, username: 'alice', userToken: 'personal' } }, res);
+        return res;
+      };
+      let res = await signedIn();
+      assert.equal(res.statusCode, 400, res.raw);
+      assert.deepEqual(res.body, { error: 'invalid_scope', error_description: 'the grant would hold more than 1 permissions; request fewer', reason: 'grant-too-large' });
+      // Signed out (no grant known), or no current grant: within the ceiling.
+      assert.equal((await postOffer(deps, signed)).statusCode, 200);
+      current = null;
+      res = await signedIn();
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.equal(res.body.authenticated, true);
     });
   });
 });

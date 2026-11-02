@@ -735,7 +735,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         seen = grants.map((a) => ({ id: a.id, offerEventId: a.clientData.cmc.offerEventId }));
         // This offer's grant when it records the offer, else any grant that has
         // the endpoint (the account may hold one per offer).
-        dataGrant = grants.find((a) => a.clientData.cmc.offerEventId === mainOfferEventId) ?? grants[0];
+        dataGrant = grants.find((a) => a.clientData.cmc.appCode === 'oauth-e2e') ?? grants[0];
         if (dataGrant != null) break;
         await new Promise((resolve) => setTimeout(resolve, 150));
       }
@@ -1531,6 +1531,78 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.deepEqual(res.body.dpop_signing_alg_values_supported, ['ES256']);
       assert.ok(res.body.scopes_supported.includes('cmc:*'),
         'discovery must advertise the cmc namespace: ' + JSON.stringify(res.body.scopes_supported));
+    });
+  });
+
+  describe('[OAUTH-E2E-PURGE] the operator purge of an app-account client', function () {
+    it('[OE37] purge-grants deletes the CMC data-grant its sessions name, the sessions, the client_credentials token and the chains; another client keeps its grant', async function () {
+      const { mintSecret } = require('oauth2/src/clientSecret.ts');
+      const { purgeClientGrants } = require('../src/methods/helpers/oauthGrantPurge.ts');
+      const platformDB = require('storages').platformDB;
+      // Its own offer (a data-grant of its own) and its own client.
+      await ensureStream('/' + appUsername + '/streams', appToken, { id: ':_cmc:apps:e2e-purge', parentId: ':_cmc:apps', name: 'OAuth e2e purge offers' });
+      const offerRes = await coreRequest.post('/' + appUsername + '/events').set('Authorization', appToken).send({
+        streamIds: [':_cmc:apps:e2e-purge'],
+        type: 'consent/request-cmc',
+        content: {
+          to: null,
+          capabilityRequested: true,
+          capability: { mode: 'open-link' },
+          request: { title: { en: 'Purge offer' }, description: { en: 'd' }, consent: { en: 'c' }, permissions: OFFER_PERMISSIONS, allowUserChoice: true },
+          requesterMeta: { displayName: 'OAuth E2E Purge App', appId: 'oauth-e2e-purge' },
+        },
+      });
+      assert.equal(offerRes.status, 201, JSON.stringify(offerRes.body));
+      const secret = await mintSecret();
+      const appUserId = await (await require('storage').getUsersLocalIndex()).getUserId(appUsername);
+      const purgedId = 'app-purge-' + cuid();
+      await storage.setClient(platformDB, {
+        clientId: purgedId,
+        redirectUris: [REDIRECT_URI],
+        scope: ['cmc:' + OFFER_NAME],
+        cmcOffers: { [OFFER_NAME]: { capabilityUrl: offerRes.body.event.content.capabilityUrl } },
+        grantTypes: ['authorization_code', 'client_credentials'],
+        accountUserId: appUserId,
+        updatedAt: Date.now(),
+      });
+      // The main client's grant, which must survive.
+      assert.equal((await runFullFlow()).tokenRes.status, 200);
+      const mainClientId = clientId;
+      let flow;
+      try {
+        clientId = purgedId;
+        flow = await runFullFlow();
+      } finally {
+        clientId = mainClientId;
+      }
+      assert.equal(flow.tokenRes.status, 200, describeRes(flow.tokenRes));
+      // A secret now (a public client exchanged its code without one): its client_credentials token.
+      await storage.setClient(platformDB, { ...(await storage.getClient(platformDB, purgedId)), clientSecretHash: secret.hash, updatedAt: Date.now() });
+      const cc = await coreRequest.post('/oauth2/token').type('form')
+        .set('Authorization', 'Basic ' + Buffer.from(purgedId + ':' + secret.plaintext).toString('base64'))
+        .send({ grant_type: 'client_credentials' });
+      assert.equal(cc.status, 200, describeRes(cc));
+      // Public again, so its refresh token is presented as issued.
+      const { clientSecretHash: _hash, ...publicRow } = await storage.getClient(platformDB, purgedId);
+      await storage.setClient(platformDB, { ...publicRow, updatedAt: Date.now() });
+      const grantsOf = async () => ((await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken)).body.accesses ?? [])
+        .filter((a) => a.clientData?.cmc?.role === 'counterparty');
+      const before = await grantsOf();
+      assert.ok(before.some((a) => a.clientData.cmc.appCode === 'oauth-e2e-purge'), 'its data-grant: ' + JSON.stringify(before.map((a) => a.clientData.cmc)));
+
+      const counts = await purgeClientGrants(purgedId);
+      assert.deepEqual({ grants: counts.grants, sessions: counts.sessions, accounts: counts.accounts }, { grants: 1, sessions: 2, accounts: 2 });
+      const left = await grantsOf();
+      assert.equal(left.some((a) => a.clientData.cmc.appCode === 'oauth-e2e-purge'), false, 'data-grant deleted');
+      assert.ok(left.some((a) => a.clientData.cmc.appCode === 'oauth-e2e'), 'the other client\'s data-grant kept');
+      const read = await coreRequest.get('/' + username + '/events').set('Authorization', flow.tokenRes.body.access_token);
+      assert.equal(read.status, 403);
+      const refreshed = await coreRequest.post('/oauth2/token').type('form')
+        .send({ grant_type: 'refresh_token', refresh_token: flow.tokenRes.body.refresh_token, client_id: purgedId });
+      assert.equal(refreshed.body.error, 'invalid_grant');
+      const ccRead = await coreRequest.get('/' + appUsername + '/events').set('Authorization', cc.body.access_token);
+      assert.equal(ccRead.status, 403);
+      await storage.deleteClient(platformDB, purgedId);
     });
   });
 

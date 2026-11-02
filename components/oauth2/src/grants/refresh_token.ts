@@ -10,7 +10,7 @@
  *
  * Exchange flow:
  *   1. Authenticate the client (Basic / `client_id` consistency, secret or
- *      assertion, not suspended) and check, on a NON-consuming read of the
+ *      assertion, active) and check, on a NON-consuming read of the
  *      row, that the token was issued to it. None of these refusals consumes
  *      the token: a presenter holding only a leaked refresh token cannot burn
  *      it (which would make the legitimate client's next refresh a "reuse"
@@ -75,7 +75,7 @@ const { generateToken } = require('../secureToken.ts');
 const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
 const { logServerError } = require('../serverLog.ts');
-const { getClient, isRegistryClient } = require('../clientRegistry.ts');
+const { getClient, isRegistryClient, clientUnavailable } = require('../clientRegistry.ts');
 const { authenticateClient } = require('../clientSecret.ts');
 const { tokenEndpointAudiences, issuerFromConfig } = require('../issuer.ts');
 const { prepareRegistryResponse } = require('../responseHooks.ts');
@@ -220,11 +220,12 @@ export async function handleRefreshToken (
     return { ok: false, status: 401, error: 'invalid_client', description: 'client_id mismatch between request and Basic authorization' };
   }
   const client = await getClient(deps.platform, params.client_id);
-  // Suspension is reversible (`resume`): refused without touching the token,
-  // so the app's retry after the resume is a plain refresh. Nothing is
-  // learned that the client does not already know.
-  if (client?.status === 'suspended') {
-    return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
+  // Suspension and review are reversible (`resume`, `update --approve`):
+  // refused without touching the token, so the app's retry afterwards is a
+  // plain refresh. Nothing is learned that the client does not already know.
+  const unavailable = client != null ? clientUnavailable(client, deps.config) : null;
+  if (unavailable != null) {
+    return { ok: false, status: 400, error: 'unauthorized_client', description: unavailable.description };
   }
   const auth = await authenticateClient({
     client,

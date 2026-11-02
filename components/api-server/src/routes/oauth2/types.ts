@@ -13,6 +13,12 @@
 import type { Permission } from 'business/src/types/public.ts';
 import { permissionKey } from 'business/src/accesses/permissionSet.ts';
 
+/** Registry clients: identity of the durable consent record (one per user and client). */
+export const REGISTRY_GRANT_PREFIX = 'oauth-grant:';
+export const REGISTRY_GRANT_DEVICE = 'oauth-grant';
+/** The name of every access minted for a client (sessions, client_credentials): this prefix and the client id. */
+export const SESSION_NAME_PREFIX = 'oauth:';
+
 /**
  * Structural view of the members this module touches on a business
  * MethodContext (the runtime value comes from `require('business')`, which

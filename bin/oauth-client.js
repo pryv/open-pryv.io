@@ -28,6 +28,7 @@
 //   node bin/oauth-client.js unrevoke-key <jkt> --yes
 //   node bin/oauth-client.js list-revoked-keys
 //   node bin/oauth-client.js list-keys [<clientId>]
+//   node bin/oauth-client.js purge-grants <clientId> --yes
 
 const path = require('path');
 
@@ -114,6 +115,9 @@ async function run () {
       case 'suspend':
       case 'resume':
         await runSetStatus(platform, args, getClient, persistClient);
+        break;
+      case 'purge-grants':
+        await runPurgeGrants(platform, args, cliEnv.purgeClientGrants);
         break;
       default:
         console.error('Unknown command: ' + args.command);
@@ -217,6 +221,8 @@ async function runCreate (platform, args, persistClient, getClient) {
     throw new Error('create: --signing-alg needs a key set (--jwks-file, --jwks-json or --jwks-uri)');
   }
   const lifetimes = definedOnly(lifetimeFieldsFromFlags(args, 'create'));
+  const logoUri = await logoUriFromFlags(args, 'create');
+  const regions = await regionsFromFlags(args, 'create');
 
   await persistClient(platform, {
     clientId,
@@ -228,7 +234,8 @@ async function runCreate (platform, args, persistClient, getClient) {
     // the better default; an operator naming the app passes --name.
     clientName: args.flagsScalar['name'] ?? (givenId != null ? clientId : username),
     clientUri: args.flagsScalar['client-uri'],
-    logoUri: args.flagsScalar['logo-uri'],
+    logoUri: logoUri ?? undefined,
+    ...(regions != null && regions.length > 0 ? { regions } : {}),
     grantTypes,
     applicationType: args.flagsScalar['application-type'] === 'native' ? 'native' : 'web',
     accountUserId,
@@ -250,6 +257,7 @@ async function runCreate (platform, args, persistClient, getClient) {
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log('     account:       ' + username + ' (user id ' + accountUserId + ')');
+  if (regions != null && regions.length > 0) console.log('     regions:       ' + regions.join(', '));
 }
 
 // A registry client has no app account: the operator registers it directly,
@@ -289,6 +297,9 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   }
   const lifetimes = definedOnly(lifetimeFieldsFromFlags(args, 'create-registry'));
   const fields = registryFieldsFromFlags(args, 'create-registry');
+  const profile = definedOnly(profileFieldsFromFlags(args, 'create-registry'));
+  const logoUri = await logoUriFromFlags(args, 'create-registry');
+  const regions = await regionsFromFlags(args, 'create-registry');
   let secret = null;
   if (authMethod === 'client_secret_basic') {
     const { mintSecret } = require('oauth2/src/clientSecret.ts');
@@ -325,7 +336,9 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     scope: scopeTokens(args.flags.scope),
     clientName: args.flagsScalar.name ?? clientId,
     clientUri: args.flagsScalar['client-uri'],
-    logoUri: args.flagsScalar['logo-uri'],
+    logoUri: logoUri ?? undefined,
+    ...profile,
+    ...(regions != null && regions.length > 0 ? { regions } : {}),
     policyUri: fields.policyUri,
     tosUri: fields.tosUri,
     contacts: fields.contacts ?? [],
@@ -358,6 +371,8 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
       '; algorithms: ' + (signingAlgs != null && signingAlgs.length > 0 ? signingAlgs.join(', ') : '(any that fits the keys)'));
   }
   printLifetimes(lifetimes);
+  printCeilings(profile);
+  if (regions != null && regions.length > 0) console.log('     regions:       ' + regions.join(', '));
   console.log('     audiences:     ' + (anyAudience ? '(any audience)' : audiences.join(', ')));
   console.log('     subject type:  ' + describeSubjectType(subjectType));
   printDefaultForbids({ allowFeatures: allowFeatures ?? [] });
@@ -374,11 +389,82 @@ async function runSetStatus (platform, args, getClient, persistClient) {
   const existing = await getClient(platform, clientId);
   if (existing == null) throw new Error(args.command + ': no client "' + clientId + '"');
   const status = args.command === 'suspend' ? 'suspended' : 'active';
-  // Only the status changes: written as is, without the registration rules
-  // (a row registered before a newer rule must stay suspendable).
-  await oauthStorage().setClient(platform, { ...existing, status, updatedAt: Date.now() });
-  console.log('OK   client ' + clientId + ' is ' + status);
+  const from = existing.status ?? 'active';
+  // Approving a change is a decision of its own: resume does not take it.
+  if (args.command === 'resume' && from === 'review') {
+    throw new Error('resume: client "' + clientId + '" is under review (its redirect URIs, keys or scope changed); ' +
+      'approve it with update ' + clientId + ' --approve');
+  }
+  // A change made while suspended goes live only once approved.
+  const unapproved = args.command === 'resume' && from === 'suspended' && existing.kind === 'registry' ? unapprovedChanges(existing) : null;
+  if (unapproved != null) {
+    throw new Error('resume: changes to ' + (unapproved.length > 0 ? unapproved.join(', ') : 'vetted fields') + ' of "' + clientId +
+      '" were not approved; approve them with update ' + clientId + ' --approve, then resume');
+  }
+  if (from === status) {
+    console.log('OK   client ' + clientId + ' is ' + status + ' (unchanged)');
+  } else {
+    // Only the status changes: written as is, without the registration rules
+    // (a row registered before a newer rule must stay suspendable).
+    const row = withStatusChange({ ...existing, status, updatedAt: Date.now() }, { from, to: status, reason: args.command });
+    await oauthStorage().setClient(platform, row);
+    console.log('OK   client ' + clientId + ' is ' + status);
+  }
+  if (status === 'suspended') printPurgeHint(clientId);
 }
+
+// The grants of a client outlive its suspension or revocation (each is
+// deleted lazily at the user's next consent): the operator's step to end them now.
+function printPurgeHint (clientId) {
+  console.log();
+  console.log('NEXT: to end the grants, sessions and refresh chains this client holds now (each');
+  console.log('      user then consents afresh), run on EACH core of the platform:');
+  console.log('        node bin/oauth-client.js purge-grants ' + clientId + ' --yes');
+}
+
+/**
+ * A registry row written before the https rule may carry a logo the write
+ * rules now refuse (and the consent screen never shows): it is removed so
+ * the row stays writable. Returns the removed URI, or null.
+ */
+function dropUnservableLogo (row) {
+  if (row.kind !== 'registry' || row.logoUri == null) return null;
+  const { logoUriProblem } = require('oauth2/src/clientRegistry.ts');
+  if (logoUriProblem(row.logoUri) == null) return null;
+  const dropped = row.logoUri;
+  delete row.logoUri;
+  return dropped;
+}
+
+/** A status change appended to the row's trail (bounded, oldest out). */
+function withStatusChange (row, change) {
+  const { MAX_STATUS_LOG } = require('oauth2/src/clientRegistry.ts');
+  const log = [...(Array.isArray(row.statusLog) ? row.statusLog : []), { at: Date.now(), by: process.env.USER ?? 'operator', ...change }];
+  return { ...row, statusLog: log.slice(-MAX_STATUS_LOG) };
+}
+
+async function runPurgeGrants (platform, args, purgeClientGrants) {
+  checkFlags(args, 'purge-grants', PURGE_FLAGS);
+  const clientId = args.positional[0];
+  if (!clientId) throw new Error('purge-grants: <clientId> required');
+  if (!isYes(args)) {
+    throw new Error('purge-grants: refuses to run without --yes (it deletes every grant, session and refresh chain of "' +
+      clientId + '" on this core; each user must consent again)');
+  }
+  const counts = await purgeClientGrants(clientId);
+  console.log('OK   purged on this core: ' + clientId);
+  console.log('     grants deleted:        ' + counts.grants);
+  console.log('     sessions deleted:      ' + counts.sessions);
+  console.log('     accesses deleted:      ' + counts.accesses + ' (grants, sessions and what they created)');
+  console.log('     accounts concerned:    ' + counts.accounts);
+  // The chains of the deleted sessions end with them; these had no session left.
+  console.log('     other refresh tokens ended:  ' + counts.refreshTokens);
+  console.log();
+  console.log('NOTE: this core only; run it on every core of the platform. A deleted CMC data-grant');
+  console.log('      sends its counterparty no revoke notice (its reach ends all the same).');
+}
+
+const PURGE_FLAGS = { values: [], booleans: ['yes'], own: [] };
 
 async function runShow (platform, args, getClient, computeThumbprint) {
   const clientId = args.positional[0];
@@ -419,7 +505,27 @@ async function runShow (platform, args, getClient, computeThumbprint) {
       : 'any of ES256, ES384, RS384 that fits a key of the set'));
   }
   printLifetimes(client, '');
+  if (client.status === 'review') {
+    const last = (Array.isArray(client.statusLog) ? client.statusLog : []).filter((e) => e?.to === 'review').pop();
+    let since = '';
+    if (last != null) {
+      since = ' since ' + new Date(last.at).toISOString();
+      if (Array.isArray(last.fields)) since += ' (' + last.fields.join(', ') + ' changed)';
+    }
+    console.log('status: review' + since + ': refused at /authorize, the consent, /token and introspection; ' +
+      'approve it with update ' + clientId + ' --approve');
+  }
+  if (Array.isArray(client.regions) && client.regions.length > 0) {
+    console.log('regions: ' + client.regions.join(', ') + ' (refused on the cores of any other region)');
+  }
+  if (client.logoUri != null) {
+    const { logoAllowed } = require('oauth2/src/clientRegistry.ts');
+    if (!logoAllowed(client.logoUri, await cliEnv.logoHosts())) {
+      console.log('logoUri: not served (not an https URL on a host of oauth.logoHosts)');
+    }
+  }
   if (client.kind === 'registry') {
+    printCeilings(client, '');
     if (client.subjectType == null) {
       console.log('subjectType: unset, reads as public (set it with update --subject-type)');
     }
@@ -509,11 +615,14 @@ function parseBooleanFlag (args, name, command) {
 // Anything else is refused: a mistyped flag must not report success.
 const COMMON_VALUES = [
   'redirect-uri', 'scope', 'grant-type', 'name', 'client-uri', 'logo-uri', 'jwks-file', 'jwks-json', 'jwks-uri', 'signing-alg',
-  'access-token-ttl', 'refresh-token-ttl', 'refresh-token-absolute-ttl',
+  'access-token-ttl', 'refresh-token-ttl', 'refresh-token-absolute-ttl', 'region',
 ];
 const COMMON_BOOLEANS = ['offline-access'];
 const APP_ACCOUNT_VALUES = ['application-type', 'cmc-offer'];
-const REGISTRY_VALUES = ['audience', 'policy-uri', 'tos-uri', 'contact', 'extra', 'launch-type', 'auth-method'];
+const REGISTRY_VALUES = [
+  'audience', 'policy-uri', 'tos-uri', 'contact', 'extra', 'launch-type', 'auth-method',
+  'localized-name', 'description', 'localized-description', 'software-id', 'max-entries',
+];
 const CREATE_FLAGS = {
   values: [...COMMON_VALUES, ...APP_ACCOUNT_VALUES],
   booleans: [...COMMON_BOOLEANS],
@@ -526,11 +635,11 @@ const CREATE_REGISTRY_FLAGS = {
 };
 const UPDATE_FLAGS = {
   values: [...COMMON_VALUES, ...REGISTRY_VALUES, ...APP_ACCOUNT_VALUES],
-  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'yes', 'can-introspect'],
+  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'yes', 'can-introspect', 'approve'],
   own: ['subject-type', 'allow-feature', 'client-id'],
 };
 // Flags that only mean something on a registry row.
-const REGISTRY_ONLY_FLAGS = [...REGISTRY_VALUES, 'any-audience', 'allow-insecure-redirect', 'subject-type', 'allow-feature'];
+const REGISTRY_ONLY_FLAGS = [...REGISTRY_VALUES, 'any-audience', 'allow-insecure-redirect', 'subject-type', 'allow-feature', 'approve'];
 
 function checkFlags (args, command, known) {
   for (const name of [...Object.keys(args.flags), ...Object.keys(args.flagsScalar)]) {
@@ -592,6 +701,97 @@ function registryFieldsFromFlags (args, command) {
   return fields;
 }
 
+/**
+ * The registry profile from the flags (create-registry and update; absent
+ * flags left out, `none` maps to undefined, which clears on update):
+ * localized name, description (a text, or one per language), software id,
+ * entry ceiling. Shapes are checked again on write.
+ */
+function profileFieldsFromFlags (args, command) {
+  const fields = {};
+  const isClear = (values) => values.length === 1 && values[0] === 'none';
+  const names = args.flags['localized-name'];
+  if (names != null) fields.name = isClear(names) ? undefined : parseLocalized(names, 'localized-name', command);
+  const description = args.flagsScalar.description;
+  const descriptions = args.flags['localized-description'];
+  if (description != null && descriptions != null) {
+    throw new Error(command + ': --description and --localized-description exclude each other');
+  }
+  if (description != null) fields.description = description === 'none' ? undefined : description;
+  if (descriptions != null) fields.description = isClear(descriptions) ? undefined : parseLocalized(descriptions, 'localized-description', command);
+  const softwareId = args.flagsScalar['software-id'];
+  if (softwareId != null) fields.softwareId = softwareId === 'none' ? undefined : softwareId;
+  const maxEntries = args.flagsScalar['max-entries'];
+  if (maxEntries != null) {
+    if (maxEntries === 'none') {
+      fields.maxEntries = undefined;
+    } else {
+      if (!/^[1-9][0-9]*$/.test(maxEntries)) throw new Error(command + ': --max-entries takes a positive number, or none');
+      fields.maxEntries = Number(maxEntries);
+    }
+  }
+  return fields;
+}
+
+// `<lang>=<text>` values → `{ <lang>: text }` (a language given twice is refused).
+function parseLocalized (values, flag, command) {
+  const texts = {};
+  for (const v of values) {
+    const eq = v.indexOf('=');
+    if (eq <= 0) throw new Error(command + ': --' + flag + ' expects <language>=<text>, got "' + v + '"');
+    const lang = v.slice(0, eq);
+    if (Object.hasOwn(texts, lang)) throw new Error(command + ': --' + flag + ' gives "' + lang + '" twice');
+    texts[lang] = v.slice(eq + 1);
+  }
+  return texts;
+}
+
+/**
+ * `--logo-uri`: undefined when absent, null for `none` (cleared on update),
+ * else the URI, which must be https on a host of `oauth.logoHosts` (the
+ * consent screen shows no other logo).
+ */
+async function logoUriFromFlags (args, command) {
+  const v = args.flagsScalar['logo-uri'];
+  if (v == null) return undefined;
+  if (v === 'none') return null;
+  const { logoUriProblem, logoAllowed } = require('oauth2/src/clientRegistry.ts');
+  const problem = logoUriProblem(v);
+  if (problem != null) throw new Error(command + ': --logo-uri: ' + problem);
+  const hosts = await cliEnv.logoHosts();
+  if (!logoAllowed(v, hosts)) {
+    throw new Error(command + ': --logo-uri: host "' + new URL(v).host + '" is not in oauth.logoHosts (' +
+      (hosts.length > 0 ? hosts.join(', ') : 'empty: no logo is accepted') + ')');
+  }
+  return v;
+}
+
+/**
+ * `--region <key>` (repeatable): null when absent, [] for `none`. A region
+ * this platform's `hostings` does not declare is refused (the client would
+ * be refused on every core).
+ */
+async function regionsFromFlags (args, command) {
+  const values = args.flags.region;
+  if (values == null) return null;
+  if (values.length === 1 && values[0] === 'none') return [];
+  const regions = [...new Set(values)];
+  const known = await cliEnv.platformRegions();
+  const unknown = regions.filter((r) => !known.includes(r));
+  if (unknown.length > 0) {
+    throw new Error(command + ': --region ' + unknown.join(', ') + ': not a region of this platform (' + known.join(', ') + ')');
+  }
+  return regions;
+}
+
+// The entry ceiling of a registry client (own, or the platform bound).
+function printCeilings (row, indent = '     ') {
+  const { MAX_SYNTH_ENTRIES } = require('oauth2/src/scopeGrammar.ts');
+  console.log(indent + 'max entries:   ' + (row.maxEntries != null
+    ? row.maxEntries + ' per authorization'
+    : MAX_SYNTH_ENTRIES + ' per authorization (platform bound)'));
+}
+
 // A copy with object keys in sorted order and undefined members dropped (for comparison).
 function sortedKeys (v) {
   if (Array.isArray(v)) return v.map(sortedKeys);
@@ -629,7 +829,6 @@ async function runUpdate (platform, args, getClient, persistClient) {
     scope: args.flags.scope != null ? scopeTokens(args.flags.scope) : existing.scope,
     clientName: args.flagsScalar['name'] ?? existing.clientName,
     clientUri: args.flagsScalar['client-uri'] ?? existing.clientUri,
-    logoUri: args.flagsScalar['logo-uri'] ?? existing.logoUri,
     grantTypes: args.flags['grant-type'] ?? existing.grantTypes,
     applicationType: args.flagsScalar['application-type'] === 'native'
       ? 'native'
@@ -638,9 +837,20 @@ async function runUpdate (platform, args, getClient, persistClient) {
       ? parseCmcOffers(args.flags['cmc-offer'])
       : existing.cmcOffers,
   };
-  for (const [key, value] of Object.entries(registryFieldsFromFlags(args, 'update'))) {
+  const profileFields = profileFieldsFromFlags(args, 'update');
+  for (const [key, value] of Object.entries({ ...registryFieldsFromFlags(args, 'update'), ...profileFields })) {
     if (value === undefined) delete merged[key];
     else merged[key] = value;
+  }
+  // `--logo-uri none` clears the logo.
+  const logoUri = await logoUriFromFlags(args, 'update');
+  if (logoUri === null) delete merged.logoUri;
+  else if (logoUri !== undefined) merged.logoUri = logoUri;
+  const droppedLogo = dropUnservableLogo(merged);
+  const regions = await regionsFromFlags(args, 'update');
+  if (regions != null) {
+    if (regions.length > 0) merged.regions = regions;
+    else delete merged.regions;
   }
   // The subject type: a legacy registry row without one is repaired on its
   // first update; changing the mode a client's grants see needs --yes.
@@ -728,16 +938,21 @@ async function runUpdate (platform, args, getClient, persistClient) {
   // core (same operation as the master-boot migration), so this whole-row write
   // does not re-install the old field after the boot converted it.
   const row = (await oauthStorage().convertClientAccount(merged, localUserId)) ?? merged;
+  // The vetting: a change of what the client was vetted on puts it under review.
+  const vetting = vettingChange(existing, row, args);
+  if (vetting != null && vetting.to !== (existing.status ?? 'active')) row.status = vetting.to;
   // Nothing changed (e.g. the same --subject-type again): no write, so the
   // row's version (and every consent in flight for it) stays as it is.
   const { updatedAt: _before, ...existingRest } = existing;
   const { updatedAt: _after, ...rowRest } = row;
-  if (JSON.stringify(sortedKeys(existingRest)) === JSON.stringify(sortedKeys(rowRest))) {
+  if (vetting?.entry == null && JSON.stringify(sortedKeys(existingRest)) === JSON.stringify(sortedKeys(rowRest))) {
     console.log('OK   client unchanged: ' + clientId);
     return;
   }
-  await persistClient(platform, row);
+  await persistClient(platform, vetting?.entry != null ? withStatusChange(row, vetting.entry) : row);
   console.log('OK   client updated: ' + clientId);
+  if (droppedLogo != null) console.log('     logoUri cleared: ' + droppedLogo + ' (not https: never served)');
+  if (vetting?.entry != null) printVetting(clientId, vetting);
   if (row !== merged) console.log('     converted the account reference to the user id');
   if (existing.kind === 'registry' && wantedSubject != null) {
     console.log('     subject type:  ' + describeSubjectType(merged.subjectType));
@@ -762,6 +977,8 @@ async function runUpdate (platform, args, getClient, persistClient) {
   }
   if (args.flags['allow-feature'] != null) printDefaultForbids(row);
   if (Object.keys(lifetimeFields).length > 0) printLifetimes(row);
+  if (Object.hasOwn(profileFields, 'maxEntries')) printCeilings(row);
+  if (regions != null) console.log('     regions:       ' + (regions.length > 0 ? regions.join(', ') : '(every region)'));
   if (secret != null) {
     console.log('     client_secret: ' + secret.plaintext);
     console.log('     (shown once: store it now)');
@@ -771,6 +988,64 @@ async function runUpdate (platform, args, getClient, persistClient) {
     console.log('NOTE: existing grants keep their current subject and their sessions keep');
     console.log('      working; each user sees the change of identity mode, and must');
     console.log('      acknowledge it, at their next consent (' + subjectNote.from + ' to ' + subjectNote.to + ').');
+  }
+}
+
+/**
+ * The vetting outcome of an update of a registry client, or null (other
+ * kinds). A change of a vetted field (`VETTED_FIELDS`: where its codes and
+ * tokens land, how it authenticates, what it reaches, for how long) moves an
+ * active client to `review` (refused everywhere until approved) unless the
+ * operator approves it in the same command (`--approve`); `--approve` alone
+ * approves a client under review. A suspended client stays suspended: its
+ * trail records the change, which `resume` refuses until `--approve`
+ * approves it (the client staying suspended). Each such change is an entry
+ * of the row's status trail.
+ */
+function vettingChange (existing, row, args) {
+  if (existing.kind !== 'registry') return null;
+  const { changedVettedFields } = require('oauth2/src/clientRegistry.ts');
+  const approve = parseBooleanFlag(args, 'approve', 'update') === true;
+  const fields = changedVettedFields(existing, row);
+  const from = existing.status ?? 'active';
+  const withFields = fields.length > 0 ? { fields } : {};
+  if (approve) {
+    // A suspended client stays suspended: the approval covers the changes
+    // recorded meanwhile, so that `resume` may put it back.
+    if (from === 'suspended') {
+      if (fields.length === 0 && unapprovedChanges(existing) == null) return { to: from, entry: null };
+      return { to: from, entry: { from, to: from, reason: 'approve', ...withFields } };
+    }
+    if (from === 'active' && fields.length === 0) return { to: from, entry: null };
+    return { to: 'active', entry: { from, to: 'active', reason: 'approve', ...withFields } };
+  }
+  if (fields.length === 0) return { to: from, entry: null };
+  const to = from === 'active' ? 'review' : from;
+  return { to, entry: { from, to, reason: 'review', ...withFields } };
+}
+
+/**
+ * The vetted fields changed and not approved since (the `review` entries of
+ * the trail after its last `approve`), or null when there are none.
+ */
+function unapprovedChanges (row) {
+  const log = Array.isArray(row.statusLog) ? row.statusLog : [];
+  const lastApprove = log.findLastIndex((e) => e?.reason === 'approve');
+  const pending = log.slice(lastApprove + 1).filter((e) => e?.reason === 'review');
+  if (pending.length === 0) return null;
+  return [...new Set(pending.flatMap((e) => (Array.isArray(e.fields) ? e.fields : [])))];
+}
+
+function printVetting (clientId, vetting) {
+  const fields = vetting.entry.fields ?? [];
+  const what = fields.length > 0 ? fields.join(', ') + ' changed' : 'no change';
+  if (vetting.entry.reason === 'approve') {
+    console.log('     status:        ' + vetting.to + ' (approved; ' + what + ')' + (vetting.to === 'suspended' ? ': resume it to put it back in service' : ''));
+  } else if (vetting.to === 'review') {
+    console.log('     status:        review (' + what + '): /authorize, the consent, /token and introspection');
+    console.log('                    refuse this client until approved: update ' + clientId + ' --approve');
+  } else {
+    console.log('     status:        ' + vetting.to + ' (' + what + '; recorded' + (vetting.to === 'suspended' ? ': approve it with update ' + clientId + ' --approve before resume' : '') + ')');
   }
 }
 
@@ -850,6 +1125,7 @@ async function runRevoke (platform, args, removeClient) {
   console.log('      Re-registering the same client id does NOT clear the tombstone:');
   console.log('      tokens minted before the revoke stay dead, tokens of the new');
   console.log('      registration are honoured.');
+  printPurgeHint(clientId);
 }
 
 // --- Operator revoke-by-DPoP-key (RFC 9449 sender-constrained tokens) --- //
@@ -951,9 +1227,11 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
     row.previousSecretHash = existing.clientSecretHash;
     row.previousSecretExpiresAt = Date.now() + windowSeconds * 1000;
   }
+  const droppedLogo = dropUnservableLogo(row);
   await persistClient(platform, row);
 
   console.log('OK   client_secret rotated for: ' + clientId);
+  if (droppedLogo != null) console.log('     logoUri cleared: ' + droppedLogo + ' (not https: never served)');
   console.log();
   console.log('client_id:     ' + clientId);
   console.log('client_secret: ' + plaintext);
@@ -1139,7 +1417,8 @@ async function hostingCoreOf (username) {
 function parseArgs (argv) {
   // Declared here, not at module level: parseArgs runs from the async block
   // at the top of the file, before module-level constants are initialized.
-  const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type', 'allow-feature', 'signing-alg'];
+  const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type', 'allow-feature', 'signing-alg',
+    'region', 'localized-name', 'localized-description'];
   const result = { command: null, positional: [], flags: {}, flagsScalar: {} };
   let i = 0;
   result.command = argv[i++] ?? null;
@@ -1182,7 +1461,22 @@ function printUsage (stream) {
     '  node bin/oauth-client.js rotate-secret <clientId> [--previous-valid-for <seconds>]\n' +
     '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise\n' +
     '      (--audience <url> | --any-audience) [flags]\n' +
-    '  node bin/oauth-client.js suspend|resume <clientId>\n\n' +
+    '  node bin/oauth-client.js suspend|resume <clientId>\n' +
+    '  node bin/oauth-client.js purge-grants <clientId> --yes\n\n' +
+    'Status: active, suspended (suspend / resume) or review. On update, a change of\n' +
+    'a registry client\'s vetted fields (--redirect-uri, --scope, the key set, --auth-method,\n' +
+    '--signing-alg, --grant-type, --audience, --any-audience, --allow-feature,\n' +
+    '--can-introspect, the lifetimes, --offline-access) moves an active client to\n' +
+    'review, unless --approve is given; "update <id> --approve" approves a client\n' +
+    'under review, or the changes made to a suspended one (resume refuses until then).\n' +
+    'A client suspended or under review gets no redirect from /authorize (HTML 400) and\n' +
+    'is refused at the consent, /token, introspection and the data API.\n' +
+    'Every change is kept in its statusLog.\n' +
+    'purge-grants deletes, on THIS core, every grant of the client (CMC data-grants of\n' +
+    'an app-account client included) with its sessions, what they created, their\n' +
+    'aliases and refresh chains (each user consents again); run it on each core,\n' +
+    'e.g. after revoke or suspend. It reads every refresh token row of this core:\n' +
+    'it may take a while on a large platform.\n\n' +
     'Flags (create-registry; on update too, registry clients only): a client with\n' +
     'no app account; --scope is its maximum scope set in the grammar of the\n' +
     'installed OAuth extension. On update, a repeatable flag replaces the stored\n' +
@@ -1217,7 +1511,18 @@ function printUsage (stream) {
     '                            (each forbidden on its grants otherwise)\n' +
     '  --can-introspect          (also on update, any client; "false" withdraws it) the\n' +
     '                            resource-server role: may call /oauth2/introspect.\n' +
-    '                            Confidential clients only (a secret or a key set)\n\n' +
+    '                            Confidential clients only (a secret or a key set)\n' +
+    '  --localized-name <lang>=<text>   (multi; "none" clears) the name per language\n' +
+    '                            (--name stays the plain fallback); shown on the\n' +
+    '                            consent screen, before sign-in too\n' +
+    '  --description <text> | --localized-description <lang>=<text> (multi)\n' +
+    '                            what the app does, one text or one per language\n' +
+    '                            ("none" clears)\n' +
+    '  --software-id <s>         the software this registration is of (RFC 7591)\n' +
+    '  --max-entries <n>         ceiling on the permission entries one authorization\n' +
+    '                            may request (default and maximum: 1000)\n' +
+    '  --approve                 (update only) approve the change made in the same\n' +
+    '                            command, or a client under review\n\n' +
     'Flags (create / update):\n' +
     '  --client-id <opaque-id>   (create only) the client_id to register, instead of\n' +
     '                            the account username. 4-64 chars of A-Z a-z 0-9 . ~ -\n' +
@@ -1229,7 +1534,11 @@ function printUsage (stream) {
     '  --grant-type <name>       (multi-valued; default authorization_code,refresh_token)\n' +
     '  --name <human-name>       client_name shown on the consent screen\n' +
     '  --client-uri <uri>        client_uri shown on the consent screen\n' +
-    '  --logo-uri <uri>          logo_uri shown on the consent screen\n' +
+    '  --logo-uri <uri>          logo_uri shown on the consent screen: https, on a host\n' +
+    '                            listed in oauth.logoHosts ("none" clears on update)\n' +
+    '  --region <key>            (multi; "none" clears on update) the regions of this\n' +
+    '                            platform (hostings) whose cores serve the client;\n' +
+    '                            refused on the cores of any other (default: all)\n' +
     '  --application-type web|native\n' +
     '  --jwks-file <path>        inline public JWK Set (private_key_jwt client auth):\n' +
     '                            EC P-256 (ES256), EC P-384 (ES384) or RSA of 2048 bits\n' +
@@ -1269,10 +1578,34 @@ function printUsage (stream) {
   );
 }
 
-// Account-name lookups, replaceable by tests (no users index there).
+// The logo allow-list (`oauth.logoHosts`) and the regions of this platform
+// (`hostings`; `default` when it declares none), from the config.
+async function configLogoHosts () {
+  const { getConfig } = require('@pryv/boiler');
+  const { logoHostsFromConfig } = require('oauth2/src/clientRegistry.ts');
+  return logoHostsFromConfig(await getConfig());
+}
+
+async function configRegions () {
+  const { getConfig } = require('@pryv/boiler');
+  const regions = (await getConfig()).get('hostings')?.regions;
+  return regions != null && typeof regions === 'object' ? Object.keys(regions) : ['default'];
+}
+
+// The purge runs this core's account teardown (api-server), loaded on use.
+async function purgeOnThisCore (clientId) {
+  const { purgeClientGrants } = require('api-server/src/methods/helpers/oauthGrantPurge.ts');
+  return await purgeClientGrants(clientId);
+}
+
+// Account-name lookups, config reads and the purge, replaceable by tests (no
+// users index nor config there).
 const cliEnv = {
   localUserId: (u) => localUserId(u),
   hostingCoreOf: (u) => hostingCoreOf(u),
+  logoHosts: () => configLogoHosts(),
+  platformRegions: () => configRegions(),
+  purgeClientGrants: (clientId) => purgeOnThisCore(clientId),
 };
 
 module.exports = {
@@ -1284,6 +1617,8 @@ module.exports = {
   runList,
   runSetStatus,
   runRotateSecret,
+  runRevoke,
+  runPurgeGrants,
   cliEnv,
 };
 

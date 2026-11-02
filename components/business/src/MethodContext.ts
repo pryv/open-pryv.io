@@ -532,7 +532,8 @@ class MethodContext {
    * Reject an OAuth-session access (`name = 'oauth:<clientId>'`) whose client
    * an operator has revoked — so a `revoke` reaches live tokens within the
    * cache TTL, instead of waiting out the ~1 h access-token TTL.
-   * Non-oauth accesses and non-revoked clients pass untouched.
+   * Non-oauth accesses and non-revoked clients pass untouched, unless the
+   * client is suspended or under review (`checkClientActive`).
    *
    * ⚠️ TRANSPORT COVERAGE: this runs on every REQUEST-authenticated call
    * (HTTP, batch, readToken-attachment). It does NOT cover a socket.io
@@ -564,15 +565,38 @@ class MethodContext {
     } catch { /* config not booted (unit contexts) — keep the default */ }
     const { getRevokedAt } = require('oauth2/src/revokedClientsCache.ts');
     const revokedAt = await getRevokedAt(platform, clientId, ttlSeconds);
-    if (revokedAt == null) return;
     // Token epoch: a revoke kills tokens minted BEFORE `revokedAt`; tokens
     // minted after (e.g. after a re-registration) survive. `created` is unix
     // SECONDS; `revokedAt` is ms. When `created` is missing (shouldn't happen
     // for a minted oauth access), fail safe = treat as revoked.
-    const createdMs = typeof access?.created === 'number' ? access.created * 1000 : 0;
-    if (createdMs < revokedAt) {
-      throw errors.invalidAccessToken('The application access has been revoked.', 403);
+    if (revokedAt != null) {
+      const createdMs = typeof access?.created === 'number' ? access.created * 1000 : 0;
+      if (createdMs < revokedAt) {
+        throw errors.invalidAccessToken('The application access has been revoked.', 403);
+      }
     }
+    // Suspended or under review: refused while so, within the same TTL.
+    await this.checkClientActive(clientId, ttlSeconds);
+  }
+
+  /**
+   * Reject an OAuth-session access whose client is suspended or under review
+   * (`bin/oauth-client.js suspend`, a vetted change not approved): within the
+   * same TTL as a revoke (`oauth:clientRevokeCheckSeconds`), one platform
+   * read per client and TTL. Both states are reversible: the session is not
+   * ended, it works again once the client is active. A client without a row
+   * passes here (a revoke is `checkClientNotRevoked`'s). Same transport
+   * coverage and fail-open rule as `checkClientNotRevoked`.
+   */
+  async checkClientActive (clientId: string, ttlSeconds: number) {
+    const platform = require('storages').platformDB;
+    if (platform == null) return;
+    const { getClientStatus } = require('oauth2/src/revokedClientsCache.ts');
+    const status = await getClientStatus(platform, clientId, ttlSeconds);
+    if (status == null || status === 'active') return;
+    throw errors.invalidAccessToken(status === 'suspended'
+      ? 'The application access is suspended.'
+      : 'The application access is under review.', 403);
   }
 
   /**
