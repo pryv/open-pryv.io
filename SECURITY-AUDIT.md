@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 11 (2026-11-02), covering releases 2.0.0-rc.40 to 2.0.0-rc.69.
+**Report revision:** 12 (2026-11-02), covering releases 2.0.0-rc.40 to 2.0.0-rc.70.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -46,7 +46,10 @@ added those fixed in 2.0.0-rc.66, and a review of the OAuth2 consent flow, made 
 alongside the work on OAuth2 clients registered by the operator, added the lower-severity fixes of
 2.0.0-rc.68, and a review of the OAuth2 refresh chain and of pseudonymous access aliases, made in
 October and November 2026 alongside the work on token introspection, revocation and pseudonymous
-OAuth2 subjects, added those fixed in 2.0.0-rc.69; they were fixed under the same rules (tests that
+OAuth2 subjects, added those fixed in 2.0.0-rc.69, and a review of OAuth2 client authentication,
+of what an OAuth2 session may create and of the authorization request's audience, made in November
+2026 alongside the work on client key sets, grant state and resource indicators, added those fixed
+in 2.0.0-rc.70; they were fixed under the same rules (tests that
 fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
@@ -57,7 +60,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 62 findings, each rated and described individually in
+The review and its follow-ups recorded 64 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -65,9 +68,9 @@ items reported through the public issue tracker, are described but not counted:
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
-| Medium | 33 | 0 | 0 |
+| Medium | 35 | 0 | 0 |
 | Low | 1 | 0 | 0 |
-| **Total** | **62** | **0** | **0** |
+| **Total** | **64** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -111,6 +114,7 @@ its applicability is stated with it.
 | 2.0.0-rc.67 | 2026-10-30 | none (not an audit release: the 2.0.0-rc.66 server, with the Docker image that release lacked) | yes (with rc.68) |
 | 2.0.0-rc.68 | 2026-10-30 | lower-severity fixes, completion steps of earlier findings | yes (2026-10-30) |
 | 2.0.0-rc.69 | 2026-11-02 | 2 Medium, lower-severity fixes; dependency update, not an audit finding: `follow-redirects` 1.16.2 (GHSA-mrwp-f3q8-3g9p, high: a custom credential header could follow a cross-origin redirect; reached through the ACME certificate client); operator action: set the two new per-core state keys (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
+| 2.0.0-rc.70 | 2026-11-02 | 2 Medium, lower-severity fixes, completion step of an earlier finding (the state keys are required; the admin-key fallback is removed); operator action: set both state keys where their feature is on, allow `accessCreation` on the registry OAuth2 clients whose sessions create accesses, webhooks or CMC capability requests, give a distinct `kid` to every key of a multi-key inline client key set (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1613,6 +1617,91 @@ made alongside them found the following in earlier releases.
   cancels the consent screens or sign-ins open at that moment. 2.0.0-rc.70 requires `oauth.stateKey`
   when `oauth.consentUrl` is set and `sso.stateKey` when `sso.enabled` is true.
 
+### Fixed in 2.0.0-rc.70 (deployed)
+
+2.0.0-rc.70 adds key sets by reference (`jwks_uri`) and RS384 / ES384 for `private_key_jwt`
+client authentication, per-client token lifetimes, a client secret rotation window, the extension's
+grant state and RFC 8707 resource indicators. These are new features, described in
+`CHANGELOG-v2.md`, not fixes. The review made alongside them found the following in earlier
+releases.
+
+#### A long audience value could hold an API worker at the authorization endpoint
+
+- **Severity:** Medium (deployments with an OAuth2 client registered with a list of audiences,
+  `bin/oauth-client.js create-registry --audience`). Unauthenticated: it needs only that client's
+  id, which is public; the gain is a loss of availability, not data, bounded to the deployments
+  that register such a client. Affected: 2.0.0-rc.68 and rc.69.
+- **What could happen:** before comparing the `aud` of an authorization request with the client's
+  registered audiences, `GET` / `POST /oauth2/authorize` removed its trailing slashes with a regular
+  expression whose running time grows with the square of a run of slashes. One request with a form
+  body of about 100 kB held an API worker for several seconds; repeated requests could keep a core's
+  workers busy.
+- **What changed:** the trim is a linear loop, and an `aud` or `resource` value is size-capped
+  (512 bytes, or the longest registered audience) before any comparison, at `/oauth2/authorize` and
+  at `/oauth2/token`.
+- **Operator action:** none beyond the upgrade. Deployments without a client registered with
+  audiences were not reachable. A reverse proxy with a request-body limit (section 5) also bounds it.
+
+#### Accesses created by an OAuth2 session kept their reach when the consent was narrowed
+
+- **Severity:** Medium (deployments that serve OAuth2 clients whose sessions create accesses). It
+  needs a session of the app, before the user narrows the consent; the gain is continued access to
+  data the user withdrew from the app.
+- **What could happen:** an access created by an OAuth2 session (a shared access, a child access)
+  was deleted with the consent grant since 2.0.0-rc.64, but a narrowing of the grant (a re-consent
+  with fewer permissions, the owner's update of the grant, a CMC scope update) reached the sessions
+  only. An access the app had created before the narrowing kept its earlier permissions, so the app
+  could go on reading or writing what the user had just withdrawn from it.
+- **What changed:** such an access is bound to the session's consent grant (`clientData.oauth`,
+  written by the server and not removable by `accesses.update`) and, when the grant changes, is
+  narrowed to what the grant still reaches, stream by stream, or deleted when nothing is left; the
+  webhooks of the narrowed accesses and sessions are rescoped with them. Accesses created before
+  this release are matched by their creator (a session of the grant, expired ones included).
+- **Operator action:** none.
+
+#### Lower-severity fixes in 2.0.0-rc.70
+
+- **The state keys are required; the admin-key fallback is removed** (completion step of the
+  2.0.0-rc.69 hardening): a core refuses to boot when `oauth.consentUrl` is set without
+  `oauth.stateKey`, or `sso.enabled` is true without `sso.stateKey` (an empty, placeholder or
+  unexpanded value, in production also one shorter than 16 characters); `bin/check-config.js`
+  reports the same. A consent state or a sign-in state cookie signed with the admin-derived key is
+  refused, so the admin key no longer opens anything a browser flow trusts.
+- **What an OAuth2 session may create** (hardening): a new feature permission, `accessCreation`,
+  forbids creating accesses, webhooks and CMC capability requests (invitations). The grants of
+  clients registered by the operator forbid it by default (with `webhooks` and `secretSharing`),
+  unless the client's row allows it, so an app reached through such a grant no longer mints
+  credentials or outgoing calls from the user's account by default. The forbid is handed down to
+  every access it reaches.
+- **Reuse detection kept after a session is deleted during the refresh grace** (hardening): deleting
+  the session a refresh had just replaced (the account lists both for a minute) erased the record
+  that the replaced refresh token had been used, so its replay was no longer detected as reuse. The
+  record now survives that deletion.
+- **`private_key_jwt` client authentication** (hardening): an assertion is verified only with a key
+  of its algorithm's type, and with the client's pinned algorithms when set; a key set of more than
+  one key needs a distinct `kid` on every key, and an assertion against such a set must name its key
+  (before, an assertion without `kid` was tried against every key). A key set by reference
+  (`jwks_uri`) is fetched as an outgoing call to a counterparty: `https` only, no redirect, a size
+  and time limit, and loopback, private and link-local addresses refused before any connection.
+  The reason of every refused assertion is in the server log; the answer stays uniform.
+- **Client secret rotation** (hardening): `rotate-secret --previous-valid-for` keeps the replaced
+  secret valid for a bounded window (at most 30 days); without it the replaced secret is refused at
+  once, as before. A second rotation or a change of authentication method ends it.
+- **Scope cap** (hardening): `/oauth2/authorize` refuses a `scope` longer than 8192 bytes; every
+  scope token travels in the signed state and the consent redirect.
+- Not security fixes, listed for operators: `accesses.create` refuses `lastUsed` (it was stored as
+  given, so an account holder could keep the account looking in use past its inactivity deletion
+  date), and the inactivity schedule ignores a use time more than an hour in the future; the
+  id_token `auth_time` is the user's last completed sign-in; a `private_key_jwt` request no longer
+  needs `client_id` next to the assertion.
+- **Operator action:** before deploying, (1) set `oauth.stateKey` on every core where
+  `oauth.consentUrl` is set and `sso.stateKey` on every core where `sso.enabled` is true, if not done
+  for 2.0.0-rc.69 (a core whose rc.69 boot log showed no state-key warning has them); (2) allow
+  `accessCreation` on every registry client whose sessions create accesses, webhooks or CMC
+  capability requests (`node bin/oauth-client.js update <clientId> --allow-feature
+  accessCreation`, keeping the features already allowed); (3) give a distinct `kid` to every key of
+  an inline client key set holding several keys (every core reports such rows at boot).
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1709,3 +1798,4 @@ This report is updated with every release that carries a security fix:
 | 9 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.66 | Adds 2.0.0-rc.66 (follow-up review of access aliases and username changes, and of how consent grants and refreshed OAuth2 sessions combine permissions): 3 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.47 HF series item; section 4.1 adds the alias check, section 5 updates the HF series item. Deployed on the maintainers' platforms (2026-10-30). |
 | 10 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.68 | Adds 2.0.0-rc.67 (no security fix: the 2.0.0-rc.66 server with its Docker image) and 2.0.0-rc.68 (review of the OAuth2 consent flow alongside the OAuth2 clients registered by the operator): lower-severity fixes and the completion steps of the 2.0.0-rc.64 and rc.66 consent items; counts unchanged. Deployed on the maintainers' platforms (2026-10-30). |
 | 11 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.69 | Adds 2.0.0-rc.69 (review of the OAuth2 refresh chain and of pseudonymous access aliases alongside token introspection, revocation and pseudonymous OAuth2 subjects): 2 Medium findings and lower-severity fixes, plus the `follow-redirects` 1.16.2 dependency update (high advisory, not an audit finding); section 4.1 updates the alias check. Deployed on the maintainers' platforms (2026-11-02). |
+| 12 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.70 | Adds 2.0.0-rc.70 (review of OAuth2 client authentication, of what an OAuth2 session may create and of the authorization request's audience, alongside client key sets, grant state and resource indicators): 2 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.69 state-key item (the admin-key fallback removed). Deployed on the maintainers' platforms (2026-11-02). |
