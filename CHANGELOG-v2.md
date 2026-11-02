@@ -64,6 +64,48 @@
   the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
   templates set`.
 
+### OAuth client authentication and token lifetimes
+
+- **`private_key_jwt` accepts ES384 and RS384 assertions, as well as ES256.** A client's key set may
+  hold EC P-256 (ES256), EC P-384 (ES384) and RSA keys of 2048 bits or more (RS384); each algorithm is
+  verified only with a key of its own type, so an assertion naming an RSA algorithm and an EC key (or
+  the reverse) is refused. `token_endpoint_auth_signing_alg_values_supported` lists `ES256`, `ES384`,
+  `RS384`. A key may carry `alg` (then it verifies that algorithm only) and `use` (`sig` only). A set of
+  more than one key needs a distinct `kid` on every key (refused at registration otherwise), and an
+  assertion verified against such a set must name its key in the `kid` header. Existing clients keep
+  working: a client with one ES256 key and no pinned list authenticates as before (a multi-key set
+  registered without `kid`s must add them).
+- **Pinned algorithms per client: `tokenEndpointAuthSigningAlgs`** (operator CLI `--signing-alg`,
+  repeatable). When set, an assertion signed with another algorithm is refused, even one the server
+  supports (an RS384 assertion against a client pinned to ES384). Absent: any supported algorithm that
+  fits a key of the client's set. Every pinned algorithm must fit a key of an inline set.
+- **`jwks_uri`: a client's key set by reference** (CLI `--jwks-uri <https-url>`, excludes an inline
+  set). The core fetches it as a counterparty call: `https` only, no redirect followed, a 200 answer
+  of at most 64 KiB, loopback / private / link-local addresses refused before any connection (the
+  `cmc.allowedPrivateHosts` exceptions apply), a 5 second timeout. A fetched set is cached 5 minutes
+  per core; an assertion naming a `kid` the cached set lacks fetches it again (at most every 30
+  seconds); a failed fetch is remembered 30 seconds. Unusable keys of a fetched set (encryption keys,
+  other types) are skipped; a key carrying private members refuses the whole set. Every failure is
+  the uniform `invalid_client`.
+- **Per-client token lifetimes**: `accessTokenTTL`, `refreshTokenTTL`, `refreshTokenAbsoluteTTL`
+  (seconds; CLI `--access-token-ttl`, `--refresh-token-ttl`, `--refresh-token-absolute-ttl`, `none`
+  clears). The `oauth:` settings of the same names are the platform's values and caps: a client's
+  longer value is clamped to them at use. They apply to the session minted at consent, the code
+  exchange, refresh and `client_credentials`; `expires_in` follows. **`offlineAccessAllowed: false`**
+  (CLI `--offline-access false`) withholds refresh tokens from a client: `offline_access` is dropped
+  from a registry client's request, the code exchange issues no `refresh_token`, and a refresh token
+  issued before is refused (`unauthorized_client`) without being used up.
+- **Secret rotation with a window: `bin/oauth-client.js rotate-secret <clientId> --previous-valid-for
+  <seconds>`** (at most 30 days) keeps the replaced secret valid at client authentication until then
+  (`previousSecretHash`, `previousSecretExpiresAt` on the client; `show` prints `(set)` and the end of
+  the window). Without the flag the replaced secret is refused at once, as before. A second rotation
+  ends the older secret; changing the client's authentication method drops it.
+- **`/oauth2/authorize` refuses a `scope` longer than 8192 bytes** (`invalid_scope`, redirected to the
+  client): every scope token travels in the signed state and the consent redirect.
+- Operator CLI: `create`, `create-registry` and `update` take `--jwks-uri`, `--signing-alg`, the
+  lifetime flags and `--offline-access`; `show` lists each key's `kid`, `kty`, `crv`, `alg` and
+  thumbprint (RSA keys included), the pinned algorithms and the client's lifetimes.
+
 ### Fixes
 
 - **A request authenticated by `private_key_jwt` no longer needs `client_id` in the body: it is taken

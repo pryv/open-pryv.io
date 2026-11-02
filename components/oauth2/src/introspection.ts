@@ -36,7 +36,7 @@ import type { HookCtx, ExtPermission } from './extension.ts';
 import * as storage from './storage.ts';
 import { getClient, isRegistryClient } from './clientRegistry.ts';
 import { authenticateClient } from './clientSecret.ts';
-import { decodeBasicAuth, clientIdFromAssertion } from './clientAuth.ts';
+import { decodeBasicAuth, clientIdFromAssertion, isConfidentialClient as isConfidential } from './clientAuth.ts';
 import { issuerFromConfig } from './issuer.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
 import { runHook, toClientView } from './extension.ts';
@@ -68,11 +68,9 @@ export type IntrospectDeps = {
 
 const INACTIVE = { active: false };
 
-/** A client that authenticates (secret or key on file). */
+/** A client that authenticates (secret or key set on file). */
 export function isConfidentialClient (client: OAuthClient | null | undefined): boolean {
-  return client != null && (
-    (typeof client.clientSecretHash === 'string' && client.clientSecretHash.length > 0) ||
-    (client.jwks != null && Array.isArray(client.jwks.keys) && client.jwks.keys.length > 0));
+  return isConfidential(client);
 }
 
 export function handleIntrospect (deps: IntrospectDeps) {

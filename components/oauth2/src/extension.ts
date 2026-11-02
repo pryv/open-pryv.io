@@ -76,7 +76,7 @@ export const HOST_API_VERSION = 1;
 export type ExtPermission = Record<string, unknown>;
 
 /** A client as the extension sees it: nothing secret crosses over. */
-export type ClientView = Omit<OAuthClient, 'clientSecretHash' | 'jwks'>;
+export type ClientView = Omit<OAuthClient, 'clientSecretHash' | 'previousSecretHash' | 'jwks'>;
 
 /** Consent offer synthesised by the grammar from a scope string. */
 export type SynthOffer = {
@@ -259,7 +259,7 @@ async function withHookTimeout (name: string, value: unknown): Promise<unknown> 
 
 /** The client as handed to the extension: secrets removed. */
 export function toClientView (client: OAuthClient): ClientView {
-  const { clientSecretHash: _secret, jwks: _jwks, ...view } = client;
+  const { clientSecretHash: _secret, previousSecretHash: _previous, jwks: _jwks, ...view } = client;
   return view;
 }
 

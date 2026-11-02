@@ -98,7 +98,7 @@ The discovery document advertises:
   "response_modes_supported": ["query"],
   "grant_types_supported": ["authorization_code"],
   "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
-  "token_endpoint_auth_signing_alg_values_supported": ["ES256"],
+  "token_endpoint_auth_signing_alg_values_supported": ["ES256", "ES384", "RS384"],
   "code_challenge_methods_supported": ["S256"],
   "authorization_response_iss_parameter_supported": true,
   "dpop_signing_alg_values_supported": ["ES256"],
@@ -115,8 +115,8 @@ introspection and revocation members appear only when those endpoints are
 mounted (with the authorization-code flow); `jwks_uri` only when
 `oauth.signingKeys` lists a key (§ 2). A client with a secret may send it
 as HTTP Basic (`client_secret_basic`) or in the form body (`client_secret_post`).
-`private_key_jwt` is RFC 7523 client authentication with an ES256 assertion
-(`aud` = the issuer or the token-endpoint URL; `/oauth2/introspect` and
+`private_key_jwt` is RFC 7523 client authentication with an ES256, ES384 or RS384 assertion
+(see § 3c for keys, pinned algorithms and `jwks_uri`; `aud` = the issuer or the token-endpoint URL; `/oauth2/introspect` and
 `/oauth2/revoke` also accept their own URL as `aud`). With an assertion, `client_id` may be left
 out of the request (RFC 7523 § 3): the client is the assertion's `iss`, which must equal its `sub`;
 a `client_id` that is given must equal `iss`. `dpop_signing_alg_values_supported`
@@ -668,6 +668,11 @@ A configuration that still sets the key gets a boot warning; remove it.
 long the access token a refresh replaces keeps working; keep it at or above
 `refreshReuseGraceSeconds`.
 
+These three lifetimes are also **caps**: a client registered with its own
+(`--access-token-ttl`, `--refresh-token-ttl`, `--refresh-token-absolute-ttl`,
+§ 3c) gets the shorter of its value and the platform's. Lowering a setting
+lowers every client at its next token.
+
 ### ⚑ Per-deployment config agreement (multi-core)
 
 On a multi-core deployment each core serves its own discovery document, whose
@@ -737,11 +742,13 @@ node bin/oauth-client.js create <username> [--client-id <opaque-id>] \
     --redirect-uri <uri> [--redirect-uri <uri> ...] \
     [--scope cmc:<name>] [--cmc-offer <name>=<capabilityUrl>] [--grant-type <name> ...] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native] \
-    [--jwks-file <path> | --jwks-json <json>]
+    [--jwks-file <path> | --jwks-json <json> | --jwks-uri <https-url>] [--signing-alg <alg> ...] \
+    [--access-token-ttl <s>] [--refresh-token-ttl <s>] [--refresh-token-absolute-ttl <s>] \
+    [--offline-access true|false]
 node bin/oauth-client.js list
 node bin/oauth-client.js show   <clientId>
 node bin/oauth-client.js update <clientId> [--redirect-uri <uri> ...] [--scope <s>] ...
-node bin/oauth-client.js rotate-secret <clientId>
+node bin/oauth-client.js rotate-secret <clientId> [--previous-valid-for <seconds>]
 node bin/oauth-client.js revoke <clientId> --yes
 node bin/oauth-client.js list-keys [<clientId>]
 node bin/oauth-client.js revoke-key <jkt> --yes
@@ -772,13 +779,16 @@ Notes:
   case for browser apps. It does not mint a `client_secret`.
 - **`rotate-secret <clientId>`** mints a `client_secret`, promoting the client to
   **confidential** (for server-side apps). The plaintext is printed **once** and
-  only its bcrypt hash is stored — re-run to rotate (which invalidates the old
-  secret). On a registry client it works only for `client_secret_basic`; one
+  only its bcrypt hash is stored; re-run to rotate. The old secret is refused
+  at once, unless `--previous-valid-for <seconds>` (30 days at most) keeps it
+  valid that long while the app switches (§ 3c). On a registry client it works
+  only for `client_secret_basic`; one
   registered with `none` or `private_key_jwt` is refused, nothing written
   (switch it with `update <clientId> --auth-method client_secret_basic`).
-- **`show <clientId>`** prints the client secret as `"clientSecretHash":
-  "(set)"` when the client has one, never the hash, and JWK Sets as `kid` and
-  thumbprint only.
+- **`show <clientId>`** prints the client secret (and a rotated one) as
+  `"(set)"` when the client has one, never the hash, and JWK Sets as `kid`,
+  `kty`, `crv`, `alg` and thumbprint only; then the pinned algorithms, the
+  client's lifetimes and the end of a rotated secret's window.
 - **DPoP keys.** `list-keys [<clientId>]` lists the DPoP key thumbprints
   (`jkt`) seen bound to a client's tokens, most recently used first, flagged
   `REVOKED` where revoked. `revoke-key <jkt> --yes` revokes one key across the
@@ -813,7 +823,9 @@ node bin/oauth-client.js create-registry <clientId> \
     --subject-type public|pairwise \
     (--audience <url> [--audience <url> ...] | --any-audience) \
     [--auth-method none|client_secret_basic|private_key_jwt] \
-    [--jwks-file <path> | --jwks-json <json>] [--can-introspect] \
+    [--jwks-file <path> | --jwks-json <json> | --jwks-uri <https-url>] [--signing-alg <alg> ...] \
+    [--access-token-ttl <s>] [--refresh-token-ttl <s>] [--refresh-token-absolute-ttl <s>] \
+    [--offline-access true|false] [--can-introspect] \
     [--allow-insecure-redirect] [--allow-feature webhooks|secretSharing ...] \
     [--extra <key>=<value> ...] [--grant-type <name> ...] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--policy-uri <s>] [--tos-uri <s>] \
@@ -846,9 +858,9 @@ Flags:
   and `show` print the features forbidden on the client's grants.
 - **`--auth-method`**: `none` (the default, a public client using PKCE only),
   `client_secret_basic` (a secret is minted and printed **once**), or
-  `private_key_jwt` (needs `--jwks-file` or `--jwks-json`, EC P-256 public
-  keys only). `--jwks-file` / `--jwks-json` go with `private_key_jwt` only:
-  with another method they are refused, nothing written.
+  `private_key_jwt` (needs `--jwks-file`, `--jwks-json` or `--jwks-uri`, § 3c).
+  The key flags and `--signing-alg` go with `private_key_jwt` only: with
+  another method they are refused, nothing written.
 - **`--can-introspect`**: the resource-server role, the client may call
   `/oauth2/introspect` (§ 1). Confidential clients only (`client_secret_basic`
   or `private_key_jwt`); refused with `--auth-method none`.
@@ -877,7 +889,9 @@ refused refresh consumes nothing, so the app's refresh token works again after
 `revoke` to stop them.
 
 **`update <clientId>`** takes `--redirect-uri`, `--scope`, `--grant-type`,
-`--name`, `--logo-uri`, `--client-uri`, `--jwks-file` / `--jwks-json` and
+`--name`, `--logo-uri`, `--client-uri`, `--jwks-file` / `--jwks-json` /
+`--jwks-uri` (one replaces the other), `--signing-alg`, the lifetime flags,
+`--offline-access` and
 `--can-introspect` (`false` withdraws it; a confidential client only) on both
 kinds; on an app-account client also `--application-type` and `--cmc-offer`;
 on a registry client also `--audience`, `--any-audience`,
@@ -916,6 +930,71 @@ the features forbidden on the client's grants.
 client has a secret, never the hash; JWK Sets as `kid` and thumbprint only),
 then a note when the subject type is unset and the features forbidden on its
 grants.
+
+---
+
+## 3c. Client keys, algorithms, lifetimes and secret rotation
+
+These flags work on both client kinds (`create`, `create-registry`, `update`).
+
+**Key set (`private_key_jwt`).** `--jwks-file <path>` or `--jwks-json <json>`
+registers an inline public JWK Set; `--jwks-uri <https-url>` registers it by
+reference instead (one excludes the other; on `update` the one given replaces
+the other). Accepted keys: EC P-256 (ES256), EC P-384 (ES384), RSA of 2048 bits
+or more (RS384). A key with private members is refused; a key may carry `kid`,
+`alg` (it then verifies that algorithm only) and `use` (`sig` only). A set of
+more than one key needs a distinct `kid` on every key, and an assertion must
+then name its key in its `kid` header. An algorithm is verified only with a key
+of its type: an RS384 header naming an EC key is refused.
+
+`--jwks-uri` is fetched by the core like any counterparty call: `https` only,
+no redirect followed, a `200` answer of at most 64 KiB, a 5 second timeout,
+loopback / private / link-local addresses refused before any connection
+(`cmc.allowedPrivateHosts` lists the exceptions). Each core caches a fetched set
+for 5 minutes; an assertion naming a `kid` the cached set lacks fetches it
+again (at most every 30 seconds), so a client adding a key just signs with it;
+a failed fetch is remembered for 30 seconds. A client removing a key should
+expect it to verify up to 5 minutes longer. Every failure answers the uniform
+`invalid_client` (the reason is in the server log).
+
+**Pinned algorithms.** `--signing-alg <alg>` (repeatable: `ES256`, `ES384`,
+`RS384`; `none` clears on `update`) stores `tokenEndpointAuthSigningAlgs`: an
+assertion with another algorithm is refused. Without it, any supported
+algorithm that fits a key of the set is accepted. Each pinned algorithm must
+fit a key of an inline set.
+
+Example: one client with an RS384 and an ES384 key, both algorithms pinned:
+
+```
+node bin/oauth-client.js create-registry my-backend \
+    --redirect-uri https://app.example.com/callback --scope <scope> \
+    --subject-type public --audience https://resource.example.com/ \
+    --auth-method private_key_jwt --jwks-file ./jwks.json \
+    --signing-alg RS384 --signing-alg ES384
+```
+
+with `jwks.json` holding `{ "keys": [ { "kty": "RSA", "kid": "rsa-1", "n": …,
+"e": "AQAB" }, { "kty": "EC", "crv": "P-384", "kid": "ec-1", "x": …, "y": … } ] }`.
+The assertion: `iss` = `sub` = the client id, `aud` = the token-endpoint URL
+(or the issuer), a single-use `jti`, `exp` at most 5 minutes ahead.
+
+**Lifetimes.** `--access-token-ttl`, `--refresh-token-ttl` and
+`--refresh-token-absolute-ttl` (seconds; `none` clears on `update`) set the
+client's own lifetimes, each capped by the `oauth:` setting of the same name
+(§ 2): the session minted at consent, the code exchange, refresh and
+`client_credentials` use them, and `expires_in` follows. A lower absolute
+lifetime applies to chains started after the change.
+`--offline-access false` withholds refresh tokens: `offline_access` is dropped
+from a registry client's request, the code exchange issues no refresh token,
+and a refresh token issued before is refused (`unauthorized_client`) without
+being used up (`--offline-access true` restores the default).
+
+**Secret rotation.** `rotate-secret <clientId> --previous-valid-for <seconds>`
+mints a new secret and keeps the one it replaces valid for that long (30 days at
+most): both authenticate until then, the old one is refused after. Without the
+flag (or with `0`) the old secret is refused at once: the right choice after a
+leak. A second rotation ends the older secret; changing the client's
+authentication method drops it.
 
 ---
 
@@ -992,7 +1071,9 @@ single-use, so a reuse means either a broken client or a stolen code.
 
 - **Rotate `client_secret`s** periodically and immediately on suspected
   compromise: `bin/oauth-client.js rotate-secret <clientId>`. The old secret
-  stops working as soon as the new one is minted.
+  stops working as soon as the new one is minted; for a planned rotation,
+  `--previous-valid-for <seconds>` keeps it valid while the app switches
+  (never after a leak).
 - **Protect app accounts like admin credentials.** An app account can request
   consent from any user on the deployment. Enrol MFA on it: the
   `requireAppAccountMfa` key does not enforce that yet (§2).

@@ -304,16 +304,16 @@ describe('[OCLI] operator CLI: registry clients', () => {
     // create-registry: a key set goes with private_key_jwt only, nothing written otherwise.
     for (const method of ['none', 'client_secret_basic']) {
       const c = await run(cli.runCreateRegistry, platform, createArgs('Cli.auth.k', ['--subject-type', 'public', '--auth-method', method, '--jwks-json', jwks]));
-      assert.equal(c.error?.message, 'create-registry: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses ' + method + ')');
+      assert.equal(c.error?.message, 'create-registry: --jwks-file / --jwks-json / --jwks-uri go with --auth-method private_key_jwt (this client uses ' + method + ')');
       assert.doesNotMatch(c.out, /client_secret:/);
       assert.equal(await getClient(platform, 'Cli.auth.k'), null);
     }
     await run(cli.runCreateRegistry, platform, createArgs('Cli.auth', ['--subject-type', 'public']));
     // A key set goes with private_key_jwt only.
     const stray = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--jwks-json', jwks]);
-    assert.equal(stray.error?.message, 'update: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses none)');
+    assert.equal(stray.error?.message, 'update: --jwks-file / --jwks-json / --jwks-uri go with --auth-method private_key_jwt (this client uses none)');
     const noKeys = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'private_key_jwt']);
-    assert.equal(noKeys.error?.message, 'update: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
+    assert.equal(noKeys.error?.message, 'update: --auth-method private_key_jwt needs --jwks-file, --jwks-json or --jwks-uri');
     const badMethod = await run(cli.runUpdate, platform, ['update', 'Cli.auth', '--auth-method', 'client_secret_post']);
     assert.equal(badMethod.error?.message, 'update: --auth-method must be none, client_secret_basic or private_key_jwt');
     // none -> client_secret_basic: a secret minted, printed once, its hash stored.
@@ -451,5 +451,97 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.match(toNone.out, /WARN introspection role kept on a public client/);
     const silent = await run(cli.runUpdate, platform, ['update', 'Cli.rs', '--can-introspect', 'false']);
     assert.doesNotMatch(silent.out, /WARN introspection/);
+  });
+
+  it('[OCLI17] private_key_jwt: a two-key file (RS384 + ES384) with both algorithms pinned, lifetimes, offline access; show and update', async () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const { generateKeyPairSync } = require('node:crypto');
+    const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({ format: 'jwk' });
+    const ec = generateKeyPairSync('ec', { namedCurve: 'P-384' }).publicKey.export({ format: 'jwk' });
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ocli17-')), 'jwks.json');
+    fs.writeFileSync(file, JSON.stringify({ keys: [{ ...rsa, kid: 'rsa-1', alg: 'RS384', use: 'sig' }, { ...ec, kid: 'ec-1', alg: 'ES384' }] }));
+    const platform = fakePlatform();
+    const c = await run(cli.runCreateRegistry, platform, createArgs('Cli.pkj', [
+      '--subject-type', 'public', '--auth-method', 'private_key_jwt', '--jwks-file', file,
+      '--signing-alg', 'RS384', '--signing-alg', 'ES384', '--access-token-ttl', '300', '--refresh-token-ttl', '3600', '--offline-access', 'true',
+    ]));
+    assert.equal(c.error, null, c.error?.message);
+    assert.match(c.out, /keys: {10}inline, 2 key\(s\); algorithms: RS384, ES384/);
+    assert.match(c.out, /lifetimes: {5}access token ttl 300 s, refresh token ttl 3600 s/);
+    let row = await getClient(platform, 'Cli.pkj');
+    assert.deepEqual(row.tokenEndpointAuthSigningAlgs, ['RS384', 'ES384']);
+    assert.deepEqual(row.jwks.keys.map((k) => [k.kid, k.kty, k.alg]), [['rsa-1', 'RSA', 'RS384'], ['ec-1', 'EC', 'ES384']]);
+    assert.equal(row.accessTokenTTL, 300);
+    assert.equal(row.offlineAccessAllowed, undefined, 'true is the default: not stored');
+    const shown = await run((p, a) => cli.runShow(p, a, getClient, () => 'TP'), platform, ['show', 'Cli.pkj']);
+    assert.match(shown.out, /"kid": "rsa-1",\n\s+"kty": "RSA",\n\s+"alg": "RS384",\n\s+"thumbprint": "TP"/);
+    assert.match(shown.out, /"tokenEndpointAuthSigningAlgs"/);
+    assert.match(shown.out, /assertion algorithms: RS384, ES384 \(pinned\)/);
+    assert.doesNotMatch(shown.out, new RegExp(rsa.n.slice(0, 40)));
+    // Refused: a pinned alg with no key, an unknown alg, a key set by reference over plain http, two key sources.
+    const noKey = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--signing-alg', 'ES256']);
+    assert.match(noKey.error?.message ?? '', /no key of the jwks fits ES256/);
+    const unknown = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--signing-alg', 'RS256']);
+    assert.match(unknown.error?.message ?? '', /--signing-alg must be one of ES256, ES384, RS384/);
+    const http = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--jwks-uri', 'http://keys.example.com/jwks']);
+    assert.match(http.error?.message ?? '', /https/);
+    const both = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--jwks-uri', 'https://keys.example.com/jwks', '--jwks-file', file]);
+    assert.match(both.error?.message ?? '', /--jwks-uri excludes/);
+    // By reference: the inline set goes; then the pin, a lifetime, and offline access change.
+    const byRef = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--jwks-uri', 'https://keys.example.com/jwks', '--signing-alg', 'none',
+      '--access-token-ttl', 'none', '--offline-access', 'false']);
+    assert.equal(byRef.error, null, byRef.error?.message);
+    assert.match(byRef.out, /offline access: withheld/);
+    row = await getClient(platform, 'Cli.pkj');
+    assert.equal(row.jwksUri, 'https://keys.example.com/jwks');
+    assert.equal(row.jwks, undefined);
+    assert.equal(row.tokenEndpointAuthSigningAlgs, undefined);
+    assert.equal(row.accessTokenTTL, undefined);
+    assert.equal(row.refreshTokenTTL, 3600);
+    assert.equal(row.offlineAccessAllowed, false);
+    // Moving to a secret drops the key reference.
+    const toSecret = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--auth-method', 'client_secret_basic']);
+    assert.equal(toSecret.error, null, toSecret.error?.message);
+    row = await getClient(platform, 'Cli.pkj');
+    assert.equal(row.jwksUri, undefined);
+    // Lifetimes: refused unless positive integers.
+    const bad = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--access-token-ttl', '-5']);
+    assert.match(bad.error?.message ?? '', /--access-token-ttl takes a positive number of seconds/);
+    // A key set given to a non-private_key_jwt registration is refused.
+    const stray = await run(cli.runCreateRegistry, platform, createArgs('Cli.pkj2', ['--subject-type', 'public', '--signing-alg', 'ES384']));
+    assert.match(stray.error?.message ?? '', /--signing-alg goes with --auth-method private_key_jwt/);
+  });
+
+  it('[OCLI18] rotate-secret --previous-valid-for: the replaced secret stays valid for the window, at most 30 days; without it, refused at once', async () => {
+    const platform = fakePlatform();
+    await run(cli.runCreateRegistry, platform, createArgs('Cli.rot', ['--subject-type', 'public', '--auth-method', 'client_secret_basic']));
+    const first = (await getClient(platform, 'Cli.rot')).clientSecretHash;
+    const tooLong = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.rot', '--previous-valid-for', String(31 * 24 * 3600)]);
+    assert.match(tooLong.error?.message ?? '', /30 days/);
+    const bad = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.rot', '--previous-valid-for', '1h']);
+    assert.match(bad.error?.message ?? '', /number of seconds/);
+    const typo = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.rot', '--grace', '60']);
+    assert.match(typo.error?.message ?? '', /unknown flag --grace/);
+    assert.equal((await getClient(platform, 'Cli.rot')).clientSecretHash, first, 'nothing written');
+    const before = Date.now();
+    const kept = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.rot', '--previous-valid-for', '86400']);
+    assert.equal(kept.error, null, kept.error?.message);
+    assert.match(kept.out, /previous secret is still accepted until/);
+    let row = await getClient(platform, 'Cli.rot');
+    assert.equal(row.previousSecretHash, first);
+    assert.ok(row.previousSecretExpiresAt >= before + 86400 * 1000 && row.previousSecretExpiresAt <= Date.now() + 86400 * 1000);
+    const shown = await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.rot']);
+    assert.match(shown.out, /"previousSecretHash": "\(set\)"/);
+    assert.match(shown.out, /previous secret: accepted until/);
+    assert.doesNotMatch(shown.out, /\$2[aby]\$/);
+    // Without the flag: no window, the replaced secret (and the older one) refused at once.
+    const now = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.rot']);
+    assert.equal(now.error, null, now.error?.message);
+    assert.match(now.out, /previous secret is refused from now on/);
+    row = await getClient(platform, 'Cli.rot');
+    assert.equal(row.previousSecretHash, undefined);
+    assert.equal(row.previousSecretExpiresAt, undefined);
   });
 });

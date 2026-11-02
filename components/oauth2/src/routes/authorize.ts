@@ -51,6 +51,9 @@ const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 /** An S256 code_challenge: base64url (no padding) of a SHA-256 digest. */
 const PKCE_S256_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 
+/** Upper bound on the `scope` parameter, in bytes (UTF-8). */
+export const MAX_SCOPE_BYTES = 8192;
+
 /** Shape of the inputs the host app injects. */
 export type AuthorizeDeps = {
   config: { get (key: string): unknown };
@@ -133,6 +136,10 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     }
     if (client.status === 'suspended') {
       return redirectError('access_denied', 'this client is suspended');
+    }
+    // Every scope token travels in the signed state and the consent redirect.
+    if (typeof q.scope === 'string' && Buffer.byteLength(q.scope, 'utf8') > MAX_SCOPE_BYTES) {
+      return redirectError('invalid_scope', `scope is longer than ${MAX_SCOPE_BYTES} bytes`);
     }
 
     // Resource indicator: a client registered with a list of audiences must

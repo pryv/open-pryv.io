@@ -76,8 +76,9 @@ export interface OAuthClient {
   jwksRef?: string;
   /**
    * Inline PUBLIC JWK Set used to verify `private_key_jwt` client-auth
-   * assertions (RFC 7521/7523). EC P-256 (ES256) public keys ONLY;
-   * validated on write (any key carrying a private `d` is rejected).
+   * assertions (RFC 7521/7523). EC P-256 / P-384 and RSA (2048 bits or
+   * more) public keys; validated on write (private material is rejected,
+   * a set of several keys needs a distinct `kid` on each).
    * A client with a jwks on file is CONFIDENTIAL — private_key_jwt
    * satisfies client authentication wherever client_secret_basic does.
    * Public keys, so cluster-wide caching is safe by design. Distinct
@@ -152,12 +153,28 @@ export interface OAuthClient {
    * clients only: a secret or a key set on file).
    */
   canIntrospect?: boolean;
-  // Reserved, not read yet: per-client key reference, algorithms and lifetimes.
+  /**
+   * The secret the last `rotate-secret` replaced (bcrypt hash), accepted at
+   * client authentication until `previousSecretExpiresAt` (ms since epoch).
+   */
+  previousSecretHash?: string;
+  previousSecretExpiresAt?: number;
+  /**
+   * `private_key_jwt` by reference: an https URL where the client publishes
+   * its public JWK Set (fetched with the counterparty-call guards, cached 5
+   * minutes). Excludes an inline `jwks`.
+   */
   jwksUri?: string;
+  /**
+   * The JWS algorithms this client's assertions may use (pinned); absent:
+   * any supported algorithm that fits a key of its set.
+   */
   tokenEndpointAuthSigningAlgs?: string[];
+  /** Token lifetimes of this client (seconds), clamped to the platform's. */
   accessTokenTTL?: number;
   refreshTokenTTL?: number;
   refreshTokenAbsoluteTTL?: number;
+  /** `false`: no refresh token is issued to, or redeemed by, this client. */
   offlineAccessAllowed?: boolean;
   dpopBoundAccessTokens?: boolean;
   updatedAt: number;
@@ -266,6 +283,12 @@ export interface OAuthRefresh {
  * the client, or refused for good after the consume). A replay of it is not
  * theft evidence: it is refused without collapsing the chain, and a rotation
  * in flight never puts the row back.
+ *
+ * `rotated`: the rotation completed (the new refresh row and its session
+ * index row are durable). Ending the session the token backed (its index row
+ * names this token) then leaves the marker as it is: the token was already
+ * replaced, so a replay of it is still reuse evidence. A bare marker (no
+ * `rotated`) is a rotation in flight: ending it turns it `revoked`.
  */
 export interface OAuthRefreshUsed {
   clientId: string;
@@ -273,6 +296,7 @@ export interface OAuthRefreshUsed {
   dataGrantAccessId?: string;
   consumedAt: number; // Date.now() at rotation — drives the grace window
   revoked?: true;
+  rotated?: true;
 }
 
 const PREFIX_CLIENT = 'oauth-client/';
@@ -624,6 +648,17 @@ export async function markRefreshConsumed (
 }
 
 /**
+ * Record that the rotation of a consumed refresh token completed: the marker
+ * is rewritten `rotated` (same `consumedAt`, same expiry), so ending the
+ * session it backed no longer turns it `revoked` (see `revokeRefreshByHash`).
+ */
+export async function markRefreshRotated (
+  platform: PlatformDB, coreId: string, token: string, payload: OAuthRefreshUsed, expiresAt: number
+): Promise<void> {
+  await platform.setAccessState(refreshUsedKey(coreId, token), { ...payload, rotated: true }, expiresAt);
+}
+
+/**
  * Undo a consume whose rotation did not happen (a server-side failure after
  * the consume): the row is put back and the consumed marker removed, so the
  * client's retry is a plain refresh, not a reuse. Only while the marker is
@@ -638,7 +673,7 @@ export async function restoreConsumedRefresh (
   const usedKey = refreshUsedKey(coreId, token);
   const stillOurs = async (): Promise<boolean> => {
     const marker = (await platform.getAccessState(usedKey))?.value as OAuthRefreshUsed | undefined;
-    return marker != null && marker.revoked !== true && marker.consumedAt === consumedAt;
+    return marker != null && marker.revoked !== true && marker.rotated !== true && marker.consumedAt === consumedAt;
   };
   if (consumedAt == null || !(await stillOurs())) return false;
   await setRefresh(platform, coreId, token, row);
@@ -654,9 +689,12 @@ export async function restoreConsumedRefresh (
 /**
  * End a refresh token on purpose, by the SHA-256 of the token (the form a
  * session's index row holds): the row is removed and a `revoked` marker takes
- * its place; a token already consumed (only its marker left) has the marker
- * turned `revoked`, so a rotation of it still in flight never puts the row
- * back. Resolves to the removed row, or null when the token was not live.
+ * its place; a token consumed by a rotation still in flight (a bare marker)
+ * has the marker turned `revoked`, so that rotation never puts the row back
+ * and ends what it minted. A token whose rotation completed (a `rotated`
+ * marker) is left as it is: it was replaced, not ended, and its replay stays
+ * reuse evidence. Resolves to the removed row, or null when the token was not
+ * live.
  */
 export async function revokeRefreshByHash (
   platform: PlatformDB, coreId: string, tokenHash: string
@@ -676,7 +714,8 @@ export async function revokeRefreshByHash (
     return row;
   }
   const used = await platform.getAccessState(usedKey);
-  if (used != null && (used.value as OAuthRefreshUsed).revoked !== true) {
+  const marker = used?.value as OAuthRefreshUsed | undefined;
+  if (used != null && marker != null && marker.revoked !== true && marker.rotated !== true) {
     await platform.setAccessState(usedKey, { ...(used.value as OAuthRefreshUsed), revoked: true }, used.expiresAt);
   }
   return null;

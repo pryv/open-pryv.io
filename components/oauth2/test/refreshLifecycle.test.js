@@ -252,6 +252,52 @@ describe('[ORL] OAuth2: refresh chain lifecycle', () => {
     assert.equal((await getRefreshConsumed(platform, CORE_ID, 'RT-12')).revoked, true);
   });
 
+  it('[ORL13] a completed rotation marks the replaced token rotated; ending the replaced session then keeps reuse detection (chain collapse on replay)', async () => {
+    const platform = fakePlatform();
+    await seed(platform, 'RT-14', { accessId: 'acc-old' });
+    const ok = await refresh({ config: fakeConfig(), platform, mintRefreshedAccess: mint }, 'RT-14');
+    assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
+    const marker = await getRefreshConsumed(platform, CORE_ID, 'RT-14');
+    assert.equal(marker.rotated, true);
+    assert.equal(marker.revoked, undefined);
+    // The replaced session is deleted inside the retire grace: its index row
+    // names the replaced token, which is ended by hash.
+    assert.equal(await revokeRefreshByHash(platform, CORE_ID, hashSecret('RT-14')), null);
+    assert.deepEqual(await getRefreshConsumed(platform, CORE_ID, 'RT-14'), marker, 'a rotated marker is left as it is');
+    // A replay of the replaced token is still theft evidence.
+    let revoked = 0;
+    const replay = await refresh({ config: fakeConfig(), platform, mintRefreshedAccess: mint, revokeChain: async () => { revoked++; } }, 'RT-14');
+    assert.equal(replay.body.error, 'invalid_grant');
+    assert.equal(revoked, 1);
+    // The new token of the chain is untouched by the deletion.
+    assert.ok(await getRefresh(platform, CORE_ID, ok.body.refresh_token) != null);
+  });
+
+  it('[ORL14] an end that read the marker still bare and lands after the rotated write: the rotation sees it and ends what it minted', async () => {
+    const platform = fakePlatform();
+    await seed(platform, 'RT-15', { accessId: 'acc-old' });
+    const set = platform.setAccessState.bind(platform);
+    platform.setAccessState = async (k, v, e) => {
+      await set(k, v, e);
+      // The late end: a revoke that read the bare marker before this write.
+      if (k.startsWith('oauth-rt-used/') && v.rotated === true) await set(k, { ...v, rotated: undefined, revoked: true }, e);
+    };
+    const revokedLocal = [];
+    let retired = 0;
+    const res = await refresh({
+      config: fakeConfig(),
+      platform,
+      mintRefreshedAccess: mint,
+      revokeAccessLocal: async (p) => { revokedLocal.push(p.accessId); },
+      retireSession: async () => { retired++; return true; },
+    }, 'RT-15');
+    platform.setAccessState = set;
+    assert.deepEqual([res.statusCode, res.body.error], [400, 'invalid_grant'], JSON.stringify(res.body));
+    assert.equal(revokedLocal.length, 1);
+    assert.equal(retired, 0);
+    assert.deepEqual([...platform._state.keys()].filter((k) => k.startsWith('oauth-rt/')), []);
+  });
+
   it('[ORL12] audit rows name refresh tokens by a hash prefix, never by token characters', async () => {
     const platform = fakePlatform();
     await seed(platform, 'RT13-secretvalue');

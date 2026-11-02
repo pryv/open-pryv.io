@@ -39,6 +39,7 @@ import type { ExtPermission, SynthOffer, OAuthExtension } from './extension.ts';
 import type { Permission } from 'business/src/types/public.ts';
 import { getExtension, toClientView, extensionGeneration } from './extension.ts';
 import { logServerError, logServerWarning } from './serverLog.ts';
+import { offlineAccessAllowed } from './clientLifetimes.ts';
 import { normalizePermissions, isStreamPermission, levelCapabilityExcess, permissionKey } from 'business/src/accesses/permissionSet.ts';
 import { canonicalStreamId, parseStoreIdAndStoreItemId, AccountStoreId } from 'mall/src/helpers/storeDataUtils.ts';
 
@@ -92,8 +93,9 @@ export function resolveRequestedScope (
     if (t === 'openid' && opts.oidcEnabled !== true) {
       return { ok: false, description: 'openid is not available on this core (no signing key configured)' };
     }
-    // Refresh tokens only for clients registered for the refresh grant.
-    if (t === 'offline_access' && !(client.grantTypes ?? []).includes('refresh_token')) continue;
+    // Refresh tokens only for clients registered for the refresh grant, and
+    // not withheld from them.
+    if (t === 'offline_access' && (!(client.grantTypes ?? []).includes('refresh_token') || !offlineAccessAllowed(client))) continue;
     coreTokens.push(t);
   }
   const rest = requested.filter((t) => !CORE_SCOPE_TOKENS.includes(t));

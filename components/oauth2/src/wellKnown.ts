@@ -26,6 +26,7 @@
  */
 
 import type { Request, Response } from 'express';
+import { CLIENT_ASSERTION_ALGS } from './jwks.ts';
 
 /**
  * Inputs the discovery doc needs from the surrounding config. The
@@ -68,8 +69,8 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
     // A client with a secret may send it as Basic or in the form body.
     token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
     // RFC 7523 §2.2 — JWS algorithms accepted for a `private_key_jwt`
-    // client-authentication assertion. ES256 only (no alg confusion).
-    token_endpoint_auth_signing_alg_values_supported: ['ES256'],
+    // client-authentication assertion, each bound to one key type.
+    token_endpoint_auth_signing_alg_values_supported: [...CLIENT_ASSERTION_ALGS],
     code_challenge_methods_supported: ['S256'],
     // Per RFC 9700 §2.1: no plain, no implicit, no RoPC.
     // PKCE is mandatory for all clients.

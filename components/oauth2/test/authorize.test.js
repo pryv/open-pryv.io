@@ -250,6 +250,21 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       await handler(fakeReq({ ...VALID_QUERY, scope: 'noprefixhere' }), res);
       assert.match(res.headers.location, /error=invalid_scope/);
     });
+    it('[OA-E9] a scope over 8 KiB → invalid_scope before any parsing; exactly 8 KiB passes the cap', async () => {
+      const platform = fakePlatform({ myapp: VALID_CLIENT });
+      const handler = handleAuthorize({ config: fakeConfig(), platform });
+      const over = fakeRes();
+      await handler(fakeReq({ ...VALID_QUERY, scope: 'cmc:' + 'a'.repeat(8192 - 4 + 1) }), over);
+      assert.match(over.headers.location, /error=invalid_scope/);
+      assert.match(over.headers.location, /longer%20than%208192%20bytes/);
+      const at = fakeRes();
+      await handler(fakeReq({ ...VALID_QUERY, scope: 'cmc:' + 'a'.repeat(8192 - 4) }), at);
+      assert.doesNotMatch(at.headers.location ?? '', /longer%20than/);
+      // Multi-byte characters count in bytes.
+      const wide = fakeRes();
+      await handler(fakeReq({ ...VALID_QUERY, scope: 'cmc:' + 'é'.repeat(4095) }), wide);
+      assert.match(wide.headers.location, /longer%20than%208192%20bytes/);
+    });
     it('[OA-E6] scope not registered to client → invalid_scope', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });
       const handler = handleAuthorize({ config: fakeConfig(), platform });

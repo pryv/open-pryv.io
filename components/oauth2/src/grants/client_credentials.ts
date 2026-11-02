@@ -33,6 +33,8 @@ import { tokenEndpointAudiences } from '../issuer.ts';
 import { audit } from '../audit.ts';
 import { logServerError } from '../serverLog.ts';
 import { legacyAccountUsername } from '../storage.ts';
+import { hasKeySet } from '../clientAuth.ts';
+import { clientLifetimes } from '../clientLifetimes.ts';
 import type { UsernameResolver } from './authorization_code.ts';
 
 /** Callback shape — same as refresh's mintRefreshedAccess (storage-direct). */
@@ -72,12 +74,6 @@ export type ClientCredentialsParams = {
   client_assertion_type?: string;
 };
 
-function lifetimes (config: { get (key: string): unknown }) {
-  return {
-    accessTokenTTL: Number(config.get('oauth:accessTokenTTL') ?? 3600),
-  };
-}
-
 export async function handleClientCredentials (
   deps: ClientCredentialsDeps,
   params: ClientCredentialsParams
@@ -106,7 +102,7 @@ export async function handleClientCredentials (
   // use it. The client must be confidential — a client_secret OR an inline
   // JWKS (private_key_jwt) on file.
   const hasHash = typeof client.clientSecretHash === 'string' && client.clientSecretHash.length > 0;
-  const hasJwks = client.jwks != null && Array.isArray(client.jwks.keys) && client.jwks.keys.length > 0;
+  const hasJwks = hasKeySet(client);
   if (!hasHash && !hasJwks) {
     return { ok: false, status: 401, error: 'invalid_client', description: 'client has no client_secret configured — run `bin/oauth-client.js rotate-secret`' };
   }
@@ -175,7 +171,7 @@ export async function handleClientCredentials (
     return { ok: false, status: 500, error: 'server_error', description: 'the application account is not hosted on this core or no longer exists' };
   }
 
-  const { accessTokenTTL } = lifetimes(deps.config);
+  const { accessTokenTTL } = clientLifetimes(deps.config, client);
   const expiresAt = Date.now() + accessTokenTTL * 1000;
   let access;
   try {

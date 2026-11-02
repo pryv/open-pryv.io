@@ -50,6 +50,22 @@
   the latest stored `lastUsed`; storage-direct writers (backup restore, migration import) store the
   value they are given.
 
+### OAuth: client keys, lifetimes, rotated refresh marker
+
+- Consumed refresh markers gain `rotated`: once a rotation's new refresh row and session index row
+  are durable (and the chain was not ended meanwhile), the marker of the replaced token is rewritten
+  `{ consumedAt, rotated: true }` (`storage.markRefreshRotated`), then re-read so an end that read the
+  marker still bare and lands after the write is still seen. `revokeRefreshByHash` leaves a `rotated`
+  marker as it is and turns only a bare one (a rotation in flight) `revoked`: deleting the replaced
+  session inside the retire grace (the account lists both rows for a minute) no longer erases reuse
+  detection for the replaced token, whose replay still collapses the chain. One more replicated write
+  per refresh; best-effort (a failed write leaves the bare marker, as before).
+- New oauth2 modules `jwksUri.ts` (the `jwks_uri` fetch through `peerFetch`, with its cache) and
+  `clientLifetimes.ts` (a client's lifetimes clamped to the `oauth:` caps, `offlineAccessAllowed`);
+  `jwks.ts` validates EC P-256 / P-384 and RSA public keys (`usablePublicJwkSet` for fetched sets);
+  `clientAuth.ts` `hasKeySet` counts a `jwks_uri`, and its new `isConfidentialClient` (a secret or a
+  key set) serves introspection. `extension.ts` `toClientView` also drops `previousSecretHash`.
+
 ### Dependencies
 
 - `follow-redirects` 1.16.1 to 1.16.2 (lockfile only, transitive through `acme-client` > `axios`):
