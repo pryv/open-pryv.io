@@ -63,6 +63,20 @@ function generateRandomAlias (prefix: string): string {
 /** What a minted alias is for: the alias of an access, or an address alias of the account. */
 export type MintedAliasKind = 'access' | 'address';
 
+// How long reconcileUserCoreMap waits before deleting a row it found stale:
+// longer than a registration takes from claiming its row to indexing the user.
+const RECONCILE_SETTLE_MS = 10000;
+
+type UserCoreReconcileSummary = {
+  deleted: string[];
+  healed: string[];
+  inFlight: string[];
+  conflicts: Array<{ username: string; coreId: string }>;
+  scanned: number;
+  skippedOtherCore: number;
+  refusedEmptyLocal?: boolean;
+};
+
 /**
  * Repository of the users
  */
@@ -1025,43 +1039,38 @@ class UsersRepository {
    * single core got none before a release that wrote them (one-time repair).
    * Works in both piiModes: local names are hashed to the storage-form token
    * via `platform.hashFor` for comparison, exactly as user-core keys are stored.
-   * Idempotent. Healing uses the atomic claim, but stale deletion works from
-   * one snapshot of the local index: a registration in flight (its row
-   * claimed, its index entry not yet written) can lose its row. Run it with
-   * this core's API stopped, or run it again afterwards (a second run heals
-   * what the first deleted).
+   * Idempotent. Healing uses the atomic claim. A registration or an alias mint
+   * claims its row BEFORE it writes the local index, so one snapshot cannot
+   * tell a name in flight from an abandoned one: a stale row is deleted only
+   * if it is still this core's and still unowned after `settleMs` (default
+   * 10 s), on a fresh read of both. Rows that came alive in between are
+   * reported in `inFlight`. A name registered again in the instant between
+   * that second read and the delete can still lose its row; a second run
+   * heals it.
    * An empty local index facing self-rows is refused (`refusedEmptyLocal`,
    * nothing written, dry run included) unless `forceEmptyLocal`: it is more
    * likely a lost or wrong index (a partial restore, a wrong --config) than
    * a core whose every account is gone, and deleting would unroute them all.
    *
-   * @param dryRun when true, computes the summary without writing.
-   * @returns { deleted, healed, conflicts, scanned, skippedOtherCore, refusedEmptyLocal? } —
-   *   `deleted`/`healed` are the affected name TOKENS (storage form; opaque HMAC
-   *   in hashed mode). `conflicts` names each local user/alias whose routing row
+   * @param dryRun when true, computes the summary without writing (it settles
+   *   too, so the two agree).
+   * @returns { deleted, healed, inFlight, conflicts, scanned, skippedOtherCore, refusedEmptyLocal? } —
+   *   `deleted`/`healed`/`inFlight` are the affected name TOKENS (storage form;
+   *   opaque HMAC in hashed mode). `conflicts` names each local user/alias whose routing row
    *   points at ANOTHER core (owned locally but claimed elsewhere): the tool will
    *   NOT clobber it, so the operator must resolve it by hand. Reported in both
    *   dry-run and apply so the two agree (a conflict is never counted as a heal).
    */
-  async reconcileUserCoreMap (dryRun = false, options: { forceEmptyLocal?: boolean } = {}): Promise<{ deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number; refusedEmptyLocal?: boolean }> {
-    const summary: { deleted: string[]; healed: string[]; conflicts: Array<{ username: string; coreId: string }>; scanned: number; skippedOtherCore: number; refusedEmptyLocal?: boolean } =
-      { deleted: [], healed: [], conflicts: [], scanned: 0, skippedOtherCore: 0 };
+  async reconcileUserCoreMap (dryRun = false, options: { forceEmptyLocal?: boolean; settleMs?: number } = {}): Promise<UserCoreReconcileSummary> {
+    const summary: UserCoreReconcileSummary =
+      { deleted: [], healed: [], inFlight: [], conflicts: [], scanned: 0, skippedOtherCore: 0 };
     const selfCoreId = this.platform.coreId;
+    const settleMs = options.settleMs ?? RECONCILE_SETTLE_MS;
 
-    // Build this core's owned name tokens (canonical usernames + aliases) in the
-    // SAME storage form as `user-core/` keys (HMAC token in hashed mode).
-    const byUsername = await this.usersIndex.getAllByUsername(); // { username: userId }
-    const ownedTokens = new Set<string>();
-    for (const username of Object.keys(byUsername)) {
-      ownedTokens.add(this.platform.hashFor('username', username));
-    }
-    for (const userId of Object.values(byUsername)) {
-      for (const alias of await this.usersIndex.getAliasesForId(userId)) {
-        ownedTokens.add(this.platform.hashFor('username', alias));
-      }
-    }
+    const { byUsername, ownedTokens } = await this.#ownedNameTokens();
 
-    // (i) delete stale self-rows; heal missing self-rows in one pass over the map.
+    // (i) find stale self-rows (deleted below, once settled); collect what
+    //     is present for the heal pass.
     const allMappings = await this.platform.getAllUserCores(); // { username: token, coreId }
     if (Object.keys(byUsername).length === 0 && options.forceEmptyLocal !== true &&
         allMappings.some(({ coreId }) => coreId === selfCoreId)) {
@@ -1072,15 +1081,32 @@ class UsersRepository {
     }
     const presentSelfTokens = new Set<string>();
     const tokenToCore = new Map<string, string>(); // token -> owning coreId (any core)
+    const staleCandidates: string[] = [];
     for (const { username: token, coreId } of allMappings) {
       tokenToCore.set(token, coreId);
       summary.scanned++;
       if (coreId !== selfCoreId) { summary.skippedOtherCore++; continue; }
       presentSelfTokens.add(token);
-      if (!ownedTokens.has(token)) {
-        if (!dryRun) await this.platform.deleteUserCoreByPreHashedUsername(token);
-        summary.deleted.push(token);
+      if (!ownedTokens.has(token)) staleCandidates.push(token);
+    }
+    let stale = staleCandidates;
+    if (staleCandidates.length > 0 && settleMs > 0) {
+      await setTimeout(settleMs);
+      const { ownedTokens: ownedNow } = await this.#ownedNameTokens();
+      const selfNow = new Set<string>();
+      for (const { username: token, coreId } of await this.platform.getAllUserCores()) {
+        if (coreId === selfCoreId) selfNow.add(token);
       }
+      stale = [];
+      for (const token of staleCandidates) {
+        if (ownedNow.has(token)) summary.inFlight.push(token);
+        else if (selfNow.has(token)) stale.push(token);
+        // else: gone, or claimed by another core meanwhile: not ours to touch
+      }
+    }
+    for (const token of stale) {
+      if (!dryRun) await this.platform.deleteUserCoreByPreHashedUsername(token);
+      summary.deleted.push(token);
     }
 
     // (ii) recreate missing self-rows for every owned name (claim-or-confirm, so
@@ -1177,6 +1203,24 @@ class UsersRepository {
       }
     }
     return summary;
+  }
+
+  /**
+   * This core's owned name tokens (canonical usernames + aliases) in the SAME
+   * storage form as `user-core/` keys (HMAC token in hashed mode).
+   */
+  async #ownedNameTokens (): Promise<{ byUsername: Record<string, string>; ownedTokens: Set<string> }> {
+    const byUsername = await this.usersIndex.getAllByUsername(); // { username: userId }
+    const ownedTokens = new Set<string>();
+    for (const username of Object.keys(byUsername)) {
+      ownedTokens.add(this.platform.hashFor('username', username));
+    }
+    for (const userId of Object.values(byUsername)) {
+      for (const alias of await this.usersIndex.getAliasesForId(userId)) {
+        ownedTokens.add(this.platform.hashFor('username', alias));
+      }
+    }
+    return { byUsername, ownedTokens };
   }
 
   // -------------------- Password Management ------------------- //

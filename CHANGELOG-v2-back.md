@@ -784,6 +784,15 @@
 - Test cores spawned by the multi-core suites set a per-core `oauth:stateKey` with their consent
   page (`OAUTH_STATE_KEY` overrides it).
 
+### `reconcile-user-cores` keeps the routing rows of registrations in flight
+
+- A registration (or an alias mint) claims its name's routing row before it indexes the user, so a
+  run during a registration could see the row as stale and delete it, freeing the name for another
+  core for a moment. A row found stale is now deleted only if it is still this core's and still
+  unowned after a settle delay, on a fresh read of both (`--settle <seconds>`, default 10; `0` keeps
+  the former single snapshot); rows that came alive meanwhile are kept and counted in the summary
+  (`inFlight`). The tool no longer needs the API stopped.
+
 ### Account transfer: the sweep, the record, the links
 
 - The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim

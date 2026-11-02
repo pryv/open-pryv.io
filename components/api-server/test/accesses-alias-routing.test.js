@@ -128,18 +128,18 @@ describe('[ALRT] alias and renamed-name routing on a single core', function () {
     for (const name of [alias, newName, uname]) await platform.deleteUserCore(name);
     for (const name of [alias, newName, uname]) assert.strictEqual(await resolves(name), null, name + ' answers nothing');
 
-    const dry = await usersRepository.reconcileUserCoreMap(true);
+    const dry = await usersRepository.reconcileUserCoreMap(true, { settleMs: 0 });
     for (const name of [alias, newName, uname]) {
       assert.ok(dry.healed.includes(platform.hashFor('username', name)), name + ' reported by the dry run');
       assert.strictEqual(await platform.getUserCore(name), null, 'the dry run writes nothing');
     }
 
-    await usersRepository.reconcileUserCoreMap();
+    await usersRepository.reconcileUserCoreMap(false, { settleMs: 0 });
     for (const name of [alias, newName, uname]) {
       assert.strictEqual(await platform.getUserCore(name), platform.coreId, name + ' routes here again');
       assert.deepStrictEqual(await resolves(name), [CORE_IP], name + ' answers');
     }
-    const again = await usersRepository.reconcileUserCoreMap();
+    const again = await usersRepository.reconcileUserCoreMap(false, { settleMs: 0 });
     for (const name of [alias, newName, uname]) {
       assert.ok(!again.healed.includes(platform.hashFor('username', name)), name + ': nothing left to heal');
     }
@@ -152,12 +152,12 @@ describe('[ALRT] alias and renamed-name routing on a single core', function () {
     usersIndex.getAllByUsername = async () => ({}); // a lost index, or a wrong --config
     try {
       for (const dryRun of [true, false]) {
-        const s = await usersRepository.reconcileUserCoreMap(dryRun);
+        const s = await usersRepository.reconcileUserCoreMap(dryRun, { settleMs: 0 });
         assert.strictEqual(s.refusedEmptyLocal, true, 'refused, dryRun ' + dryRun);
         assert.deepStrictEqual(s.deleted, []);
         assert.strictEqual(await platform.getUserCore(uname), platform.coreId, 'nothing deleted, dryRun ' + dryRun);
       }
-      const forced = await usersRepository.reconcileUserCoreMap(true, { forceEmptyLocal: true });
+      const forced = await usersRepository.reconcileUserCoreMap(true, { forceEmptyLocal: true, settleMs: 0 });
       assert.strictEqual(forced.refusedEmptyLocal, undefined);
       assert.ok(forced.deleted.includes(platform.hashFor('username', uname)), 'forced: the row would be deleted');
     } finally {
