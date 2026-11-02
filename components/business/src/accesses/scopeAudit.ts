@@ -110,7 +110,9 @@ export async function auditAccessScope (userId: string, accesses: AccessRow[], d
     const logic = new AccessLogic(userId, structuredClone(creator));
     await logic.loadPermissions();
     const candidate = { type: 'shared', permissions: streamPerms.slice() };
-    const fits = await logic.canCreateAccess(candidate);
+    // The scope rules only: a creator that may no longer create accesses
+    // (`accessCreation: forbidden`) still manages the ones it created.
+    const fits = await logic.canManageAsChild(candidate);
     if (!fits) {
       result.findings.push({ accessId: child.id!, type: String(child.type), creatorId, reason: 'exceeds-level', missingEntries: 0 });
       continue;

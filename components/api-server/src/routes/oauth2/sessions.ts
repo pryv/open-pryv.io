@@ -38,6 +38,8 @@ import { withSessionSelfRevoke, accessesRepo } from './types.ts';
 import { notifyScopedAccessChange, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
+import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
+import { isDeepStrictEqual } from 'node:util';
 
 export function createSessions (env: GlueEnv) {
   const { storageLayer } = env;
@@ -177,26 +179,62 @@ export function createSessions (env: GlueEnv) {
   }
 
   // ---------------------------------------------------------------------
-  // setGrantOf: stamp `clientData.oauth.grantOf` on a registry client's
-  // consent grant. `clientData.oauth` is server-owned (accesses.create and
-  // accesses.update refuse it), so it is written storage-direct, merged into
-  // the rest of clientData, with the integrity hash recomputed.
+  // The server-owned `clientData.oauth` of a consent grant (accesses.create
+  // and accesses.update refuse it) is written storage-direct, merged into the
+  // rest of clientData, with the integrity hash recomputed. `change` returns
+  // the new `oauth` sub-object, or null to leave the row untouched.
   // ---------------------------------------------------------------------
-  async function setGrantOf (userId: string, username: string, grantId: string, clientId: string): Promise<void> {
-    const accessesRepository = accessesRepo(storageLayer, 'oauth2.setGrantOf');
+  async function updateGrantOauth (userId: string, username: string, grantId: string, caller: string,
+    change: (oauth: Record<string, unknown>) => Record<string, unknown> | null): Promise<void> {
+    const accessesRepository = accessesRepo(storageLayer, caller);
     const user = { id: userId, username };
     const base = parseAccessRef(grantId).base;
     const grant = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
       accessesRepository.findOne(user, { id: base }, null, cb));
-    if (grant == null) throw new Error('oauth2.setGrantOf: grant not found: ' + grantId);
+    if (grant == null) throw new Error(caller + ': grant not found: ' + grantId);
     const existing: Record<string, unknown> = (grant.clientData != null && typeof grant.clientData === 'object')
       ? { ...grant.clientData }
       : {};
-    const oauth = { ...((existing.oauth as Record<string, unknown> | undefined) ?? {}), grantOf: clientId };
+    const oauth = change({ ...((existing.oauth as Record<string, unknown> | undefined) ?? {}) });
+    if (oauth == null) return;
     await fromCallback((cb: (e: unknown, r?: unknown) => void) =>
       accessesRepository.updateOne(user, { id: base },
         { clientData: { ...existing, oauth }, modified: Date.now() / 1000 }, cb));
     cache.unsetUserData(userId);
+  }
+
+  // setGrantOf: stamp `clientData.oauth.grantOf` on a registry client's
+  // consent grant.
+  async function setGrantOf (userId: string, username: string, grantId: string, clientId: string): Promise<void> {
+    await updateGrantOauth(userId, username, grantId, 'oauth2.setGrantOf', (oauth) => ({ ...oauth, grantOf: clientId }));
+  }
+
+  // setGrantState: the grant's state after a consent, under the extension's
+  // name in `clientData.oauth.extensionData` (on the grant only, never on a
+  // session). Replaces the previous one; `undefined` removes it. Not written
+  // when unchanged.
+  async function setGrantState (userId: string, username: string, grantId: string, name: string, value: unknown): Promise<void> {
+    await updateGrantOauth(userId, username, grantId, 'oauth2.setGrantState', (oauth) => {
+      const current = (oauth.extensionData != null && typeof oauth.extensionData === 'object')
+        ? { ...(oauth.extensionData as Record<string, unknown>) }
+        : {};
+      if (isDeepStrictEqual(current[name], value)) return null;
+      if (value === undefined) delete current[name];
+      else current[name] = value;
+      const next = { ...oauth };
+      if (Object.keys(current).length === 0) delete next.extensionData;
+      else next.extensionData = current;
+      return next;
+    });
+  }
+
+  // The state the installed extension stored on `grant`, if any.
+  function grantStateOf (grant: DataGrant): unknown {
+    const name = getExtension()?.name;
+    if (name == null) return undefined;
+    const data = grant.clientData?.oauth?.extensionData;
+    if (data == null || typeof data !== 'object' || !Object.prototype.hasOwnProperty.call(data, name)) return undefined;
+    return frozenGrantState(data[name]);
   }
 
   // ---------------------------------------------------------------------
@@ -236,7 +274,7 @@ export function createSessions (env: GlueEnv) {
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
     jkt?: string;
-  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string; permissions: Array<Record<string, unknown>>; subject: string; aliased: boolean }> {
+  }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string; permissions: Array<Record<string, unknown>>; subject: string; aliased: boolean; grantState?: unknown }> {
     if (dataGrantAccessId == null || !Array.isArray(permissions) || permissions.length === 0) {
       const revoked = new Error('refresh chain carries no consent data-grant binding') as Error & { code: string };
       revoked.code = 'data-grant-revoked';
@@ -268,14 +306,16 @@ export function createSessions (env: GlueEnv) {
   // id (never the username), or the alias of the consent data-grant when the
   // grant is aliased. Null when the grant is gone.
   // ---------------------------------------------------------------------
-  function grantSubject (grant: DataGrant, userId: string): { subject: string; aliased: boolean } {
+  // With it, the grant's state (registry clients; advisory, see the oauth2
+  // extension contract).
+  function grantSubject (grant: DataGrant, userId: string): { subject: string; aliased: boolean; grantState?: unknown } {
     const aliased = typeof grant.alias === 'string' && grant.alias.length > 0;
-    return { subject: aliased ? grant.alias as string : userId, aliased };
+    return { subject: aliased ? grant.alias as string : userId, aliased, grantState: grantStateOf(grant) };
   }
 
   async function resolveGrantSubject ({ userId, username, dataGrantAccessId }: {
     userId: string; username: string; dataGrantAccessId: string;
-  }): Promise<{ subject: string; aliased: boolean } | null> {
+  }): Promise<{ subject: string; aliased: boolean; grantState?: unknown } | null> {
     try {
       const head = await readDataGrantHead(userId, username, dataGrantAccessId);
       return grantSubject(head, userId);
@@ -422,6 +462,7 @@ export function createSessions (env: GlueEnv) {
     sessionClientData,
     mintAccessDirect,
     setGrantOf,
+    setGrantState,
     resolveAccountUserId,
     resolveUsername,
     mintRefreshedAccess,

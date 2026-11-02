@@ -33,8 +33,25 @@ const { CmcErrorIds } = require('./errorIds.ts');
 
 type ErrorFactory = {
   invalidOperation: (message: string, details?: Record<string, unknown>) => Error;
+  forbidden?: (message: string) => Error;
   unexpectedError?: (err: unknown) => Error;
 };
+
+/**
+ * Refusal when the writing access carries `accessCreation: forbidden`: a
+ * capability is an access minted on the account and handed on (its link, then
+ * the counterparty's back-channel access), so an access barred from creating
+ * accesses may not request one.
+ */
+const ACCESS_CREATION_FORBIDDEN = 'Creating accesses is not allowed with this access: it carries the feature permission "accessCreation: forbidden", which also bars requesting a capability (capabilityRequested).';
+
+/** Whether the writing access may mint accesses (no `accessCreation: forbidden`). */
+function writerMayCreateAccesses (context: MwContext): boolean {
+  const access = context.access as { isPersonal?: () => boolean; canCreateAccesses?: () => boolean } | null | undefined;
+  if (access == null || typeof access.canCreateAccesses !== 'function') return true;
+  if (typeof access.isPersonal === 'function' && access.isPersonal()) return true;
+  return access.canCreateAccesses();
+}
 
 type Deps = {
   mall: MallLike;
@@ -121,6 +138,11 @@ function createCapabilityMintHook (deps: Deps): Middleware {
     if (event == null) return next();
     if (event.type !== C.ET_REQUEST) return next();
     if (event.content?.capabilityRequested !== true) return next();
+    if (!writerMayCreateAccesses(context)) {
+      return next(deps.errors.forbidden != null
+        ? deps.errors.forbidden(ACCESS_CREATION_FORBIDDEN)
+        : deps.errors.invalidOperation(ACCESS_CREATION_FORBIDDEN));
+    }
 
     const userId = context.user?.id;
     if (typeof userId !== 'string') {

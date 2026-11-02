@@ -1211,8 +1211,8 @@ function printUsage (stream) {
     '                            user and client; an aliased session is used at its\n' +
     '                            alias only\n' +
     '  --allow-feature <name>    (multi; also on update, "none" clears) a feature its\n' +
-    '                            grants may use: webhooks, secretSharing (both forbidden\n' +
-    '                            on its grants otherwise)\n' +
+    '                            grants may use: webhooks, secretSharing, accessCreation\n' +
+    '                            (each forbidden on its grants otherwise)\n' +
     '  --can-introspect          (also on update, any client; "false" withdraws it) the\n' +
     '                            resource-server role: may call /oauth2/introspect.\n' +
     '                            Confidential clients only (a secret or a key set)\n\n' +

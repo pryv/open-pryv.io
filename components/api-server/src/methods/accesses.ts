@@ -40,6 +40,7 @@ const { integrity } = require('business');
 const { parseAccessRef, serializeAccessRef, composeWireAccess, managingAccessBase, managedAccessesOf, isManagedBy } = require('business/src/accesses/refs.ts');
 const { withoutCredentialUrls } = require('business/src/accesses/credentialUrls.ts');
 const AccessLogic = require('business/src/accesses/AccessLogic.ts').default;
+const { ACCESS_CREATION_FORBIDDEN_MESSAGE } = require('business/src/accesses/AccessLogic.ts');
 
 // Scoped notifications (the structured access-change signal) and the
 // deletion of an access with its side effects: helpers/accessDeletion.ts,
@@ -57,7 +58,7 @@ const { setDeletionTeardownStep, trackTeardownDelivery } = require('business/src
 const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.ts');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { localFirstFetch } = require('./helpers/localDelivery.ts');
-const { contextForAccess, reprepareWebhookScopes, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
+const { rescopeWebhooksOfAccess } = require('./helpers/webhookScopes.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 
 // Breach-scope reverse-index population — see components/platform/src/accessIndex.ts.
@@ -79,7 +80,6 @@ type AccessLike = {
   [k: string]: unknown;
 };
 type MethodContext = BaseMethodContext;
-type StoredScopes = import('./helpers/webhookScopes.ts').StoredScopes;
 
 // Per-method param + result shapes mirroring components/api-server/src/schema/accessesMethods.ts.
 // Hand-authored (JSON Schema literals there aren't TS-derived yet). Keep these in sync
@@ -407,6 +407,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
     }
     const access = context.access;
+    // Checked again inside canCreateAccess; here for its own message.
+    if (!access.isPersonal() && !access.canCreateAccesses()) {
+      return next(errors.forbidden(ACCESS_CREATION_FORBIDDEN_MESSAGE));
+    }
     if (!(await access.canCreateAccess(params))) {
       return next(errors.forbidden('Your access token has insufficient permissions ' +
                 'to create this new access.'));
@@ -576,6 +580,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     return typeof creator.alias === 'string' && creator.alias.length > 0 ? creator.alias : null;
   }
 
+  /** The consent grant an OAuth session access was minted under (base id), or null for any other access. */
+  function oauthGrantOfSession (creator: { type?: unknown; clientData?: unknown } | null | undefined): string | null {
+    if (creator?.type !== 'app') return null;
+    const oauth = (creator.clientData as { oauth?: { dataGrantId?: unknown } } | null | undefined)?.oauth;
+    return typeof oauth?.dataGrantId === 'string' && oauth.dataGrantId.length > 0 ? oauth.dataGrantId : null;
+  }
+
   async function createAccess (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
     if (params.type === 'shared') params.deviceName = null;
@@ -606,6 +617,16 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // is used at it (alias-bound addressing). Not minted: given back only
       // once its last holder is deleted (accessDeletion.ts).
       params.alias = inheritedAlias(context.access)!;
+    }
+    // An access created by an OAuth session belongs to the session's consent
+    // grant, not to the session: it is stamped with the grant
+    // (`clientData.oauth.dataGrantId`, server-owned, refused from the body
+    // above), so a later change of the grant narrows it, and the grant's
+    // withdrawal deletes it, whichever session created it and whether that
+    // session still exists. `createdBy` stays the session.
+    const grantOfCreator = oauthGrantOfSession(context.access);
+    if (grantOfCreator != null) {
+      params.clientData = { ...(params.clientData ?? {}), oauth: { dataGrantId: grantOfCreator } };
     }
     accessesRepository.insertOne(context.user, params, async function (err: (Error & { isDuplicateIndex: (k: string) => boolean }) | null, newAccess: { id: string; [k: string]: unknown } | undefined) {
       if (err != null && usersRepository != null && params.alias != null) {
@@ -873,8 +894,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         }
         if (managingApp != null) {
           if (wantsPermChange) {
-            // canCreateAccess appends to this array, which is updates.permissions.
-            const fits = await managingApp.canCreateAccess({
+            // canManageAsChild appends to this array, which is updates.permissions.
+            // (The scope rules only: an app that may no longer create
+            // accesses still manages the ones it created.)
+            const fits = await managingApp.canManageAsChild({
               type: 'shared',
               permissions: after.permissions
             });
@@ -909,7 +932,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         const offendingChildren: string[] = [];
         for (const child of managed) {
           if (wantsPermChange) {
-            const fits = await wouldBe.canCreateAccess({
+            const fits = await wouldBe.canManageAsChild({
               type: 'shared',
               permissions: child.permissions || []
             });
@@ -994,8 +1017,11 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * An OAuth consent grant (registry client or CMC) whose permissions changed
    * re-cuts its live sessions at once: a narrowing reaches the apps now, not
    * at their next refresh. A session left with no reach is deleted, and its
-   * refresh chain with it. Accesses without sessions are untouched. Non-fatal:
-   * the update stands; a session not re-cut here is at the next refresh.
+   * refresh chain with it; then the accesses its sessions created are
+   * narrowed (or deleted when left with no reach). An access no session names
+   * as its grant is untouched. Non-fatal: the update stands; each row that
+   * fails is logged (a session is re-cut at its next refresh, a created
+   * access at the grant's next change or its expiry).
    */
   async function reconcileOAuthSessionsOfUpdatedAccess (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     const updated = params.update?.permissions;
@@ -1019,26 +1045,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   async function rescopeWebhooksOfUpdatedAccess (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
     const baseId = params.targetBase!;
     try {
-      const hooks = (await webhooksRepository.get(context.user, { id: baseId, isPersonal: () => false }))
-        .filter((w: { scopes?: StoredScopes | null }) => w.scopes != null && Object.keys(w.scopes).length > 0);
-      if (hooks.length === 0) return next();
-      let accessContext: MethodContext | null = null;
-      try {
-        accessContext = await contextForAccess(context.source, context.user.username, params.targetAccess!.token!, storageLayer);
-      } catch (err) {
-        // The access cannot be used any more: no scope is kept. Any other
-        // failure leaves the webhooks as they are (logged below).
-        if (!(err instanceof APIError)) throw err;
-        accessContext = null;
-      }
-      for (const hook of hooks) {
-        const scopes = accessContext == null ? {} : await reprepareWebhookScopes(accessContext, hook.scopes);
-        const update: Record<string, unknown> = { scopes };
-        if (Object.keys(scopes).length === 0) update.state = 'inactive';
-        hook.scopes = scopes;
-        await hook.update(update);
-        reloadRunningWebhook(context.user.username, hook.forApi());
-      }
+      await rescopeWebhooksOfAccess(context.source, context.user, { id: baseId, token: params.targetAccess!.token as string | undefined }, webhooksRepository, storageLayer);
     } catch (err) {
       getLogger('accesses').warn(`webhooks of access ${baseId} not re-scoped after its update: ${(err as Error).message}`);
     }

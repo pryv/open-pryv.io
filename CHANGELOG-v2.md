@@ -116,6 +116,43 @@
   lifetime flags and `--offline-access`; `show` lists each key's `kid`, `kty`, `crv`, `alg` and
   thumbprint (RSA keys included), the pinned algorithms and the client's lifetimes.
 
+### OAuth: what a session may create, and what happens to it when the grant changes
+
+- **New feature permission `accessCreation`** (`{ feature: 'accessCreation', setting: 'forbidden' |
+  'allowed' }`, default allowed, additive). An access carrying `accessCreation: forbidden` cannot
+  create accesses (`accesses.create`, `403 forbidden`), webhooks (`webhooks.create`, `403`) nor CMC
+  capability requests (invites: `events.create` of a `consent/request-cmc` event with
+  `capabilityRequested: true`, `403`); it
+  still manages, updates and deletes the accesses it created before, and the owner can still update
+  it. Like `webhooks` and `secretSharing`, the restriction is handed down to every access it reaches
+  (an access it updates carries it).
+- **BREAKING (registry clients whose sessions create accesses, webhooks or CMC capability requests): registry grants forbid
+  `accessCreation` by default**, with `webhooks` and `secretSharing`, unless the client row allows it
+  (`bin/oauth-client.js --allow-feature accessCreation`; `show` and `create-registry` list it among
+  the forbidden features). Applied at each consent, like the other defaults: a grant made before this
+  release gets it at the user's next consent, and from then on that grant's sessions are refused
+  `accesses.create`, `webhooks.create` and CMC capability requests (`403`). The forbid then sticks: every later re-consent
+  keeps it, allowing the feature on the client row afterwards does not lift it, only the account
+  owner can remove it from each grant. **Operator action BEFORE deploying:** for every registry
+  client whose sessions create accesses, webhooks or CMC capability requests, run `node bin/oauth-client.js update <clientId>
+  --allow-feature accessCreation` (keep any feature already allowed on the row in the same command,
+  the flag replaces the list).
+- **An access an OAuth session creates belongs to the session's grant.** It carries
+  `clientData.oauth = { dataGrantId }` (written by the server; its `createdBy` stays the session).
+  When the grant's permissions change (a re-consent, the owner's `accesses.update` on the grant, a CMC
+  consent scope update), after the sessions are re-cut, each live such access is narrowed to what the
+  grant still reaches (stream by stream, through the stream tree: one on a stream below a granted
+  one is kept at the level the grant reaches it with), never widened; one left with no reach is
+  deleted. The rewrite keeps its token and writes no history row; access-change
+  notifications are sent. Deleting the grant deletes them, whichever session created them and
+  whether that session has since expired or been retired by a refresh. Accesses a session created
+  before this release are matched by their `createdBy` (a session of the grant, expired ones
+  included). `accesses.create` refuses `clientData.oauth` from the body, as before.
+- **`accesses.update` on an access an OAuth session created refuses `clientData: null` and any change
+  to `clientData.oauth`** (`403 forbidden`, as on sessions and grants): the binding cannot be wiped.
+  Was accepted on such an access before this release. Per-key `clientData` edits (`{ k: 'v' }`,
+  `{ k: null }`) still work and keep the binding.
+
 ### Fixes
 
 - **A request authenticated by `private_key_jwt` no longer needs `client_id` in the body: it is taken

@@ -23,7 +23,7 @@ type SessionReads = {
   resolveUsername: (userId: string) => Promise<string | null>;
   findOAuthSessionAccess: (userId: string, username: string, accessId: string, clientId: string) => Promise<DataGrant | null>;
   readDataGrantHead: (userId: string, username: string, dataGrantAccessId: string) => Promise<DataGrant>;
-  grantSubject: (grant: DataGrant, userId: string) => { subject: string; aliased: boolean };
+  grantSubject: (grant: DataGrant, userId: string) => { subject: string; aliased: boolean; grantState?: unknown };
   storedSessionPermissions: (permissions: Array<Record<string, unknown>> | null | undefined) => Array<Record<string, unknown>>;
 };
 
@@ -36,6 +36,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
     expires: number;
     subject: string | null;
     aliased: boolean;
+    grantState?: unknown;
     apiBase: string;
     dpopJkt?: string;
   } | null> {
@@ -46,6 +47,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
     if (access == null || access.deleted != null || typeof access.expires !== 'number' || access.expires <= now) return null;
     let subject: string | null = null;
     let aliased = false;
+    let grantState: unknown;
     // The account's API base URL, without any credential: built on the
     // grant's alias when it has one, so an aliased grant never names the user.
     let apiBaseName = username;
@@ -55,6 +57,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
         const s = sessions.grantSubject(await sessions.readDataGrantHead(userId, username, grantId), userId);
         subject = s.subject;
         aliased = s.aliased;
+        grantState = s.grantState;
         if (s.aliased) apiBaseName = s.subject;
       } catch (err: unknown) {
         if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
@@ -69,6 +72,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
       expires: access.expires,
       subject,
       aliased,
+      grantState,
       apiBase: ApiEndpoint.build(apiBaseName, undefined),
       ...(typeof access.clientData?.dpop?.jkt === 'string' ? { dpopJkt: access.clientData.dpop.jkt } : {}),
     };

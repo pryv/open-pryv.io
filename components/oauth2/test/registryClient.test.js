@@ -1571,4 +1571,138 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(await checkRegistryClients(platform), 6);
     });
   });
+  describe('[OXGS] the grant state', () => {
+    /** The toy grammar with a grantState hook (`make`) and every context recorded. */
+    function withState (make) {
+      const toy = toyExtension();
+      lastCtx.echo = [];
+      extension.setExtension({
+        ...toy,
+        scopeGrammar: {
+          ...toy.scopeGrammar,
+          echo (ctx) { lastCtx.echo.push(ctx); return toy.scopeGrammar.echo(ctx); },
+          grantState (ctx) { lastCtx.grantState = ctx; return make(ctx); },
+        },
+        idTokenClaims (ctx) { lastCtx.idTokenClaims = ctx; return {}; },
+      });
+    }
+    const STATE = { pack: 'v1', streams: ['a', 'b'] };
+
+    it('[OGS01] computed at /accept from the grant\'s final permissions and the request; handed to createAccess as its JSON round trip', async () => {
+      withState(() => ({ ...STATE, at: new Date(0), skipped: undefined }));
+      const platform = fakePlatform(); await seed(platform);
+      const { calls, accept: acc } = await flow({ platform, config: fakeConfig() });
+      assert.equal(acc.statusCode, 200, acc.raw);
+      assert.deepEqual(calls[0].grantState, { name: 'toy', value: { ...STATE, at: '1970-01-01T00:00:00.000Z' } });
+      // The grant's final permissions: the consent plus the client's default forbids.
+      assert.deepEqual(lastCtx.grantState.permissions, calls[0].grantPermissions);
+      assert.ok(lastCtx.grantState.permissions.some((p) => p.feature === 'accessCreation' && p.setting === 'forbidden'));
+      assert.deepEqual(lastCtx.grantState.requestedTokens, ['data/*.read', 'ctx/patient', 'who']);
+      assert.equal(lastCtx.grantState.client.clientId, 'reg-app');
+      assert.equal(lastCtx.grantState.client.clientSecretHash, undefined);
+      // The granted scope recorded at /accept was echoed with the new state.
+      assert.deepEqual(lastCtx.echo[0].grantState, calls[0].grantState.value);
+    });
+
+    it('[OGS02] the bound is 16 KiB of JSON, in bytes: at the bound accepted, one byte over refused (500, nothing written)', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const deps = { config: fakeConfig(), platform };
+      const run = async () => {
+        const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+        const calls = [];
+        const res = await accept(acceptDeps(deps, calls), signed, [{ streamId: 'a', level: 'read' }]);
+        return { res, calls };
+      };
+      // JSON: the two quotes plus two bytes per character.
+      withState(() => 'é'.repeat(8191));
+      let r = await run();
+      assert.equal(r.res.statusCode, 200, r.res.raw);
+      assert.equal(Buffer.byteLength(JSON.stringify(r.calls[0].grantState.value)), extension.GRANT_STATE_MAX_BYTES);
+      // 8192 characters: 16386 bytes, though only 8194 characters of JSON.
+      withState(() => 'é'.repeat(8192));
+      r = await run();
+      assert.equal(r.res.statusCode, 500, r.res.raw);
+      assert.equal(r.res.body.error, 'server_error');
+      assert.equal(r.calls.length, 0);
+      await assert.rejects(extension.computeGrantState({ permissions: [], requestedTokens: [], client: {} }), /16386 bytes of JSON, over the bound of 16384/);
+    });
+
+    it('[OGS03] not serialisable, throwing or too slow: 500 at /accept and no grant written; undefined means no state', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const deps = { config: fakeConfig(), platform };
+      const circular = {}; circular.self = circular;
+      for (const make of [() => ({ n: 1n }), () => circular, () => () => 1, () => Symbol('s'), () => { throw new Error('boom'); }]) {
+        withState(make);
+        const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+        const calls = [];
+        const res = await accept(acceptDeps(deps, calls), signed, [{ streamId: 'a', level: 'read' }]);
+        assert.equal(res.statusCode, 500, res.raw);
+        assert.equal(res.body.error, 'server_error');
+        assert.equal(calls.length, 0);
+      }
+      withState(() => new Promise((resolve) => setTimeout(() => resolve(STATE), 200)));
+      extension.setExtension(extension.getExtension(), { hookTimeoutMs: 20 });
+      await assert.rejects(extension.computeGrantState({ permissions: [], requestedTokens: [], client: {} }), /grantState failed/);
+      withState(() => undefined);
+      const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const calls = [];
+      const res = await accept(acceptDeps(deps, calls), signed, [{ streamId: 'a', level: 'read' }]);
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.deepEqual(calls[0].grantState, { name: 'toy', value: undefined });
+      // Without the hook: no state either (the stored one is cleared).
+      assert.deepEqual(await extension.computeGrantState({ permissions: [], requestedTokens: [], client: {} }), { name: 'toy', value: undefined });
+      extension.setExtension(toyExtension());
+      assert.deepEqual(await extension.computeGrantState({ permissions: [], requestedTokens: [], client: {} }), { name: 'toy', value: undefined });
+      assert.throws(() => extension.validateExtension({ ...toyExtension(), scopeGrammar: { ...toyExtension().scopeGrammar, grantState: 'x' } }), /grantState must be a function/);
+    });
+
+    it('[OGS04] the stored state reaches the echo, tokenResponse and idTokenClaims at the exchange, and the echo and tokenResponse at refresh', async () => {
+      withState(() => STATE);
+      signingKeys._resetForTests();
+      const platform = fakePlatform(); await seed(platform);
+      const config = fakeConfig({ 'oauth:signingKeys': [{ kid: 'k', privateKeyPem: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) }] });
+      const { token } = await flow({
+        platform,
+        config,
+        query: { scope: 'openid offline_access data/*.read ctx/patient', nonce: 'n-gs' },
+        more: { resolveGrantSubject: async ({ userId }) => ({ subject: userId, aliased: false, grantState: STATE }) },
+      });
+      assert.equal(token.statusCode, 200, token.raw);
+      assert.equal(typeof token.body.id_token, 'string');
+      assert.deepEqual(lastCtx.tokenResponse.grantState, STATE);
+      assert.deepEqual(lastCtx.idTokenClaims.grantState, STATE);
+      assert.deepEqual(lastCtx.echo.at(-1).grantState, STATE);
+      signingKeys._resetForTests();
+
+      lastCtx.echo = [];
+      await seedRefresh(platform, 'RT-GS');
+      const mint = async () => ({ ...(await refreshedMint([{ streamId: 'a', level: 'read' }])()), grantState: { pack: 'v0' } });
+      const res = await refresh(platform, 'RT-GS', mint);
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.deepEqual(lastCtx.tokenResponse.grantState, { pack: 'v0' });
+      assert.deepEqual(lastCtx.echo.at(-1).grantState, { pack: 'v0' });
+    });
+
+    it('[OGS05] advisory: the scope answer follows the permissions, not the state; an echo that trusts the state over them is refused', async () => {
+      // The state names both streams, the session holds `a` only.
+      withState(() => STATE);
+      const platform = fakePlatform(); await seed(platform);
+      await seedRefresh(platform, 'RT-ADV');
+      const mint = async () => ({ ...(await refreshedMint([{ streamId: 'a', level: 'read' }])()), grantState: STATE });
+      let res = await refresh(platform, 'RT-ADV', mint);
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.deepEqual(res.body.scope.split(' ').sort(), ['ctx/patient', 'data/a.read', 'offline_access']);
+      assert.deepEqual(lastCtx.tokenResponse.permissions, [{ streamId: 'a', level: 'read' }]);
+      // A grammar echoing from the state claims `b`, which the session does not hold.
+      const toy = toyExtension();
+      extension.setExtension({
+        ...toy,
+        scopeGrammar: { ...toy.scopeGrammar, echo: ({ grantState }) => grantState.streams.map((s) => 'data/' + s + '.read') },
+      });
+      await seedRefresh(platform, 'RT-ADV2');
+      res = await refresh(platform, 'RT-ADV2', mint);
+      assert.equal(res.statusCode, 500, res.raw);
+      assert.equal(res.body.error, 'server_error');
+    });
+  });
 });

@@ -124,7 +124,7 @@ const twoLevelExtension = {
 };
 
 /** What a registry grant forbids unless the client row allows it. */
-const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }];
+const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }, { feature: 'accessCreation', setting: 'forbidden' }];
 
 /** The stream entries of a permission set, as sorted `id:level`. */
 function streamsOf (permissions) {

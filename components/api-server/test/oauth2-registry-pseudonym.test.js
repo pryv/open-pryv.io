@@ -83,6 +83,8 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
       allowedAudiences: [AUD],
       subjectType: 'public',
       scope: SCOPE,
+      // Its sessions may create shared accesses (forbidden by default).
+      allowFeatures: ['accessCreation'],
       ...extra,
     });
     clients.push(clientId);

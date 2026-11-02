@@ -65,7 +65,7 @@ const FEATURE_SETTING_VALUES: readonly string[] = Object.freeze(['forbidden', 'a
  * Feature permissions an access hands down to every access it creates when
  * it carries them as `forbidden` (see `AccessLogic.inheritRestrictions`).
  */
-const INHERITED_RESTRICTION_FEATURES: readonly string[] = Object.freeze(['secretSharing', 'webhooks']);
+const INHERITED_RESTRICTION_FEATURES: readonly string[] = Object.freeze(['secretSharing', 'webhooks', 'accessCreation']);
 
 /**
  * Whether a raw permission array carries `{ feature, setting: 'forbidden' }`.

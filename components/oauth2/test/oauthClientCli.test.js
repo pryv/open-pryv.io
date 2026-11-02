@@ -139,7 +139,7 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal((await getClient(platform, 'Cli.three')).subjectType, 'public');
     assert.match(r.out, /subject type: {2}public \(stable user id\)/);
     assert.doesNotMatch(r.out, /WARN/);
-    assert.match(r.out, /features forbidden on its grants: webhooks, secretSharing/);
+    assert.match(r.out, /features forbidden on its grants: webhooks, secretSharing, accessCreation/);
   });
 
   it('[OCLI4] pairwise: stored with no warning; /authorize serves it', async () => {
@@ -151,12 +151,12 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.deepEqual(row.allowFeatures, ['webhooks']);
     assert.match(r.out, /subject type: {2}pairwise \(always an alias\)/);
     assert.doesNotMatch(r.out, /WARN/);
-    assert.match(r.out, /features forbidden on its grants: secretSharing \(allowed: webhooks\)/);
+    assert.match(r.out, /features forbidden on its grants: secretSharing, accessCreation \(allowed: webhooks\)/);
     const loc = await authorizeAs(platform, 'Cli.four');
     assert.equal(loc.origin + loc.pathname, CONSENT_URL, loc.href);
     // An unknown feature is refused at registration.
-    const bad = await run(cli.runCreateRegistry, platform, createArgs('Cli.four2', ['--subject-type', 'public', '--allow-feature', 'accessCreation']));
-    assert.match(bad.error?.message ?? '', /allowFeatures may only list webhooks, secretSharing/);
+    const bad = await run(cli.runCreateRegistry, platform, createArgs('Cli.four2', ['--subject-type', 'public', '--allow-feature', 'selfAudit']));
+    assert.match(bad.error?.message ?? '', /allowFeatures may only list webhooks, secretSharing, accessCreation/);
   });
 
   it('[OCLI5] update --subject-type: same value a no-op, a change needs --yes, app-account refused', async () => {
@@ -391,7 +391,7 @@ describe('[OCLI] operator CLI: registry clients', () => {
     const withdrawn = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--allow-insecure-redirect', 'false']);
     assert.match(withdrawn.out, /plain-http redirect URIs refused on non-loopback hosts/);
     const feature = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--allow-feature', 'webhooks']);
-    assert.match(feature.out, /features forbidden on its grants: secretSharing \(allowed: webhooks\)/);
+    assert.match(feature.out, /features forbidden on its grants: secretSharing, accessCreation \(allowed: webhooks\)/);
     const back = await run(cli.runUpdate, platform, ['update', 'Cli.echo', '--audience', AUD]);
     assert.match(back.out, new RegExp('audiences: {5}' + AUD.replace(/[.]/g, '\\.')));
     // Flags not given are not echoed.

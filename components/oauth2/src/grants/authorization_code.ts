@@ -97,7 +97,7 @@ export type AuthCodeDeps = {
  */
 export type GrantSubjectResolver = (params: {
   userId: string; username: string; dataGrantAccessId: string;
-}) => Promise<{ subject: string; aliased: boolean } | null>;
+}) => Promise<{ subject: string; aliased: boolean; grantState?: unknown } | null>;
 
 /** Canonical username for a user id on this core, or null when absent. */
 export type UsernameResolver = (userId: string) => Promise<string | null>;
@@ -293,7 +293,7 @@ export async function handleAuthorizationCode (
       if (!isRegistryClient(client)) {
         return { ok: false, status: 400, error: 'invalid_grant', description: 'the client registration changed, restart the authorization flow' };
       }
-      let resolved: { subject: string; aliased: boolean } | null;
+      let resolved: { subject: string; aliased: boolean; grantState?: unknown } | null;
       try {
         resolved = row.dataGrantAccessId != null && typeof deps.resolveGrantSubject === 'function' && username != null
           ? await deps.resolveGrantSubject({ userId: row.userId, username, dataGrantAccessId: row.dataGrantAccessId })
@@ -320,6 +320,7 @@ export async function handleAuthorizationCode (
           permissions: sessionPermissions,
           subject: resolved.subject,
           aliased: resolved.aliased,
+          grantState: resolved.grantState,
           ...(row.nonce != null ? { nonce: row.nonce } : {}),
           ...(row.authTime != null ? { authTime: row.authTime } : {}),
         });

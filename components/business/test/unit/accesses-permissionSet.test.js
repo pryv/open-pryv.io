@@ -369,7 +369,7 @@ describe('[PSET] accesses permissionSet', () => {
       assert.equal(ps.isFeatureForbidden(null, 'webhooks'), false);
       assert.equal(ps.isFeatureForbidden({ feature: 'webhooks', setting: 'forbidden' }, 'webhooks'), false);
       assert.equal(ps.isFeatureForbidden([null, 'webhooks'], 'webhooks'), false);
-      assert.deepEqual([...ps.INHERITED_RESTRICTION_FEATURES], ['secretSharing', 'webhooks']);
+      assert.deepEqual([...ps.INHERITED_RESTRICTION_FEATURES], ['secretSharing', 'webhooks', 'accessCreation']);
     });
   });
 });
