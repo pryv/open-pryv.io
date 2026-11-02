@@ -467,6 +467,7 @@ CREATE TABLE IF NOT EXISTS accesses (
   modified_by_serial INTEGER,
   deleted DOUBLE PRECISION,
   alias TEXT,
+  last_login DOUBLE PRECISION,
   PRIMARY KEY (user_id, id)
 );
 -- Index predicates intentionally omit head_id here. SCHEMA_SQL is a

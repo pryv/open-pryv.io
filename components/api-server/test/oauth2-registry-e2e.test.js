@@ -144,7 +144,7 @@ function pkce () {
 describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)', function () {
   this.timeout(60000);
 
-  let username, personalToken, fixtures, restoreConfig, clientId, wideClientId, writerClientId, pairwiseClientId, twoLevelClientId, userId, platformDB;
+  let username, personalToken, fixtures, fixtureUser, restoreConfig, clientId, wideClientId, writerClientId, pairwiseClientId, twoLevelClientId, userId, platformDB;
 
   async function registry (id, extra) {
     await oauth2.persistClient(platformDB, {
@@ -171,7 +171,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
 
     username = cuid();
     personalToken = cuid();
-    const user = await fixtures.user(username);
+    const user = fixtureUser = await fixtures.user(username);
     userId = user.attrs.id;
     await user.access({ token: personalToken, type: 'personal' });
     await user.session(personalToken);
@@ -435,7 +435,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     assert.equal(info.body.user.username, grant.alias);
   });
 
-  it('[OREG10] a registered account: the subject is its internal id, distinct from the username; auth_time stays at the first sign-in across a second login', async () => {
+  it('[OREG10] a registered account: the subject is its internal id, distinct from the username; a second sign-in moves auth_time', async () => {
     const name = 'oreg' + cuid().toLowerCase().slice(1, 12);
     const reg = await coreRequest.post('/users').send({
       appId: 'pryv-test',
@@ -463,7 +463,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       assert.equal(idToken.sub, id);
       assert.notEqual(idToken.sub, name);
       assert.equal(Object.hasOwn(idToken, 'nonce'), false);
-      // auth_time is the creation of the personal access (its first sign-in).
+      // auth_time is the sign-in behind the consent.
       assert.ok(Math.abs(idToken.auth_time - Math.floor(Date.now() / 1000)) < 120, 'auth_time ' + idToken.auth_time);
       assert.ok(!JSON.stringify(idToken).includes(name), 'the username is in no claim');
       // A pairwise client of the same account: sub is the grant's alias, never the id nor the username.
@@ -474,19 +474,108 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       assert.ok(!JSON.stringify(pwToken).includes(name) && !JSON.stringify(pwToken).includes(id), JSON.stringify(pwToken));
       assert.ok(!JSON.stringify(pw.token).includes(name) && !JSON.stringify(pw.token).includes(id), JSON.stringify(pw.token));
 
-      // A later sign-in to the same app keeps that access (and its creation
-      // time): auth_time is a lower bound, unchanged by the second login.
+      // A later sign-in to the same app keeps that access (and its token, the
+      // session being reused) but moves auth_time to the new sign-in.
       await new Promise((resolve) => setTimeout(resolve, 1100));
+      const reloginStart = Math.floor(Date.now() / 1000);
       const relogin = await coreRequest.post('/' + name + '/auth/login').set('Origin', 'http://test.pryv.local')
         .send({ username: name, password: 'oreg-passw0rd', appId: 'pryv-test' });
       assert.equal(relogin.status, 200, JSON.stringify(relogin.body));
       const again = await runFlow('openid read/health ctx/user', clientId, { username: name, token: relogin.body.token });
       const idToken2 = await verifiedIdToken(again.token.id_token);
-      assert.equal(idToken2.auth_time, idToken.auth_time);
-      assert.ok(idToken2.iat > idToken2.auth_time, 'the second consent comes after the first sign-in');
+      assert.ok(idToken2.auth_time > idToken.auth_time, 'auth_time moved: ' + idToken.auth_time + ' then ' + idToken2.auth_time);
+      assert.ok(idToken2.auth_time >= reloginStart, 'auth_time is the second sign-in');
+      assert.ok(Math.abs(idToken2.auth_time - Math.floor(Date.now() / 1000)) < 120, 'auth_time ' + idToken2.auth_time);
+      assert.ok(idToken2.iat >= idToken2.auth_time, 'the consent does not precede the sign-in');
     } finally {
       await usersRepository.deleteOne(id, name);
     }
+  });
+
+  it('[OREG17] a sign-in with a second factor: auth_time is the time the factor was verified, not the password step', async () => {
+    const { _resetMFASingletons } = require('business/src/mfa/index.ts');
+    const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
+    const codeFor = (secret, offsetSteps) => totpCode(base32Decode(secret),
+      { time: Math.floor(Date.now() / 1000) + offsetSteps * 30, periodSeconds: 30, digits: 6 });
+    const restoreMfa = require('test-helpers').injectTestConfigSnapshot({
+      services: {
+        mfa: {
+          active: true,
+          defaultMethod: 'totp',
+          methods: { totp: { active: true, digits: 6, periodSeconds: 30, driftSteps: 1, secretsKey: crypto.randomBytes(32).toString('base64') }, sms: { active: false } },
+          sessions: { ttlSeconds: 1800 },
+        },
+      },
+    });
+    await _resetMFASingletons();
+    const name = 'oregm' + cuid().toLowerCase().slice(1, 12);
+    const password = 'oreg-passw0rd';
+    const reg = await coreRequest.post('/users').send({
+      appId: 'pryv-test',
+      username: name,
+      password,
+      email: name + '@oreg.example.com',
+      insurancenumber: String(Math.floor(Math.random() * 90000) + 10000),
+      language: 'en',
+    });
+    assert.equal(reg.status, 201, JSON.stringify(reg.body));
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const usersRepository = await getUsersRepository();
+    const id = await usersRepository.getUserIdForUsername(name);
+    const signIn = () => coreRequest.post('/' + name + '/auth/login').set('Origin', 'http://test.pryv.local')
+      .send({ username: name, password, appId: 'pryv-test' });
+    try {
+      const login = await signIn();
+      assert.equal(login.status, 200, JSON.stringify(login.body));
+      const act = await coreRequest.post('/' + name + '/mfa/activate').set('Authorization', login.body.token).send({ method: 'totp' });
+      assert.equal(act.status, 302, JSON.stringify(act.body));
+      // The confirm uses the previous step's code, leaving the current one to the verify.
+      const left = 30 - (Math.floor(Date.now() / 1000) % 30);
+      if (left < 5) await new Promise((resolve) => setTimeout(resolve, left * 1000 + 100));
+      const confirm = await coreRequest.post('/' + name + '/mfa/confirm').set('Authorization', act.body.mfaToken)
+        .send({ code: codeFor(act.body.secret, -1) });
+      assert.equal(confirm.status, 200, JSON.stringify(confirm.body));
+      const st = await coreRequest.post('/' + name + '/streams').set('Authorization', login.body.token).send({ id: 'health', name: 'health' });
+      assert.equal(st.status, 201, JSON.stringify(st.body));
+
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      const pending = await signIn();
+      assert.equal(pending.status, 200, JSON.stringify(pending.body));
+      assert.equal(typeof pending.body.mfaToken, 'string', 'the second factor is asked for');
+      const passwordStepEnd = Math.floor(Date.now() / 1000);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      const verifyStart = Math.floor(Date.now() / 1000);
+      const verify = await coreRequest.post('/' + name + '/mfa/verify').set('Authorization', pending.body.mfaToken)
+        .send({ code: codeFor(act.body.secret, 0) });
+      assert.equal(verify.status, 200, JSON.stringify(verify.body));
+      const r = await runFlow('openid read/health ctx/user', clientId, { username: name, token: verify.body.token });
+      const idToken = await verifiedIdToken(r.token.id_token);
+      assert.equal(idToken.sub, id);
+      assert.ok(idToken.auth_time >= verifyStart && idToken.auth_time > passwordStepEnd,
+        'auth_time ' + idToken.auth_time + ' (password step done at ' + passwordStepEnd + ', verify from ' + verifyStart + ')');
+    } finally {
+      await usersRepository.deleteOne(id, name);
+      restoreMfa();
+      await _resetMFASingletons();
+    }
+  });
+
+  it('[OREG18] a personal access never signed in since the upgrade: auth_time is its creation', async () => {
+    const legacyToken = cuid();
+    const created = Math.floor(Date.now() / 1000) - 3 * 24 * 3600 + 0.25;
+    await fixtureUser.access({
+      token: legacyToken,
+      type: 'personal',
+      name: 'legacy-' + cuid().slice(-8),
+      created,
+      createdBy: 'system',
+      modified: created,
+      modifiedBy: 'system',
+    });
+    await fixtureUser.session(legacyToken);
+    const r = await runFlow('openid read/health ctx/user', clientId, { username, token: legacyToken });
+    const idToken = await verifiedIdToken(r.token.id_token);
+    assert.equal(idToken.auth_time, Math.floor(created));
   });
 
   it('[OREG11] the grant withdrawn between consent and code exchange: 400 invalid_grant, the session is gone', async () => {

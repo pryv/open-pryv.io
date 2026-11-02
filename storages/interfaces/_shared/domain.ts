@@ -93,6 +93,8 @@ export type StoredAccess = {
   deviceName?: string | null;
   permissions?: StoredPermission[];
   lastUsed?: number | null;
+  /** Personal accesses: time of the last completed sign-in (seconds). */
+  lastLogin?: number | null;
   expireAfter?: number | null;
   expires?: number | null;
   deleted?: number | null;

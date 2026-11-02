@@ -22,6 +22,21 @@
 - The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
   `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
 
+### Accesses: last sign-in time
+
+- New access field `lastLogin` (seconds): PostgreSQL column `accesses.last_login DOUBLE PRECISION`
+  (fresh schemas get it from the table definition; existing ones from the idempotent migration
+  `20261102_120000_access_last_login.js`); SQLite stores it in the access JSON, no schema change.
+  No data migration: older rows keep it unset until their next sign-in.
+- Written by the login chain (`auth.login`, `auth.ssoLogin`) next to `lastUsed` when no second
+  factor is pending (whatever `accessTracking.isActive`), and by `mfa.verify` when it releases the
+  token (best-effort; a token rotated by another login matches no access). It is covered by the
+  access integrity hash (unlike `lastUsed`): every write carries `modified` / `modifiedBy`, so the
+  storage recomputes the hash.
+- The OAuth consent resolver reads the personal access from storage (not the access cache, which a
+  sign-in keeping its token does not refresh) and reports `lastLogin`, else `created`, as the
+  authentication time.
+
 ### Dependencies
 
 - `follow-redirects` 1.16.1 to 1.16.2 (lockfile only, transitive through `acme-client` > `axios`):

@@ -617,13 +617,15 @@ code exchange reusing one that already went into an id_token is refused.
 scope of registry clients only; `subject_types_supported` lists `public` and
 `pairwise`). Without keys, `openid` is refused (`invalid_scope`) and both documents answer 404.
 
-`auth_time` is a **lower bound**: the creation of the personal access the user
-consented with. A later sign-in to the same app (the consent UI) rotates that
-access's token and keeps its creation time, so `auth_time` may be much earlier
-than the authentication behind the consent, never later. `max_age`, `prompt`
+`auth_time` is the time of the last completed sign-in (password, password plus
+second factor, or identity provider) of the account on the app the user
+consented with (the consent UI's personal access, which reports it as
+`lastLogin`). A sign-in token the consent UI keeps from an earlier session keeps
+that earlier time. A personal access written before this was recorded reports
+its creation time, a lower bound, until its next sign-in. `max_age`, `prompt`
 (including `prompt=login`) and `at_hash` are **not supported**: `/oauth2/authorize`
 ignores `max_age` and `prompt`. A relying party that needs a fresh
-authentication must not rely on `auth_time` from this server.
+authentication applies its own `max_age` policy to `auth_time`.
 
 ```yaml
 oauth:

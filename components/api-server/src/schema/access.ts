@@ -50,6 +50,12 @@ function accessSchema (action: string): AccessSchemaShape {
     base.properties.calls = object({});
   }
 
+  // Time of the last completed sign-in on a personal access: written by the
+  // server at sign-in, read-only.
+  if (action === Action.READ || action === Action.STORE) {
+    base.properties.lastLogin = helpers.number();
+  }
+
   const personal = structuredClone(base);
   Object.assign(personal.properties, {
     type: string({ enum: ['personal'] })

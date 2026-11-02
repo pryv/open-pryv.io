@@ -242,8 +242,14 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       // access here. With MFA pending the token is not released yet: activity
       // then starts with the first call made with it, which the tracker records.
       // With access tracking off, no usage is recorded at all.
-      if (config.get('accessTracking:isActive') && (context.mfaLogin as MfaLoginState | undefined)?.mfaToken == null) {
-        accessData.lastUsed = timestamp.now();
+      // `lastLogin` is the time of the sign-in itself (the OpenID Connect
+      // `auth_time` of a consent made with this access), recorded whatever the
+      // tracking setting. With MFA pending it is recorded by mfa.verify instead,
+      // once the second factor is checked.
+      if ((context.mfaLogin as MfaLoginState | undefined)?.mfaToken == null) {
+        const now = timestamp.now();
+        accessData.lastLogin = now;
+        if (config.get('accessTracking:isActive')) accessData.lastUsed = now;
       }
       if (access != null) {
         // Access is already existing, updating it with new token (as we have updated the sessions with it earlier).

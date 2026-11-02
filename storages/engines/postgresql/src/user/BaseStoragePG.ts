@@ -54,6 +54,7 @@ const DEFAULT_COLUMN_MAP: Record<string, string> = {
   profileId: 'profile_id',
   integrityBatchCode: 'integrity_batch_code',
   lastUsed: 'last_used',
+  lastLogin: 'last_login',
   streamIds: 'stream_ids'
 };
 

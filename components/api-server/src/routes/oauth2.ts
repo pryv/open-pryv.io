@@ -72,6 +72,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       {},
       null
     );
+    // Read the access from storage, not from the access cache: a sign-in
+    // that kept its token updates the stored row (`lastLogin`, below) without
+    // invalidating the cached copy.
+    context.bypassAccessCache = true;
     try {
       await context.init();
       await context.retrieveExpandedAccess(storageLayer);
@@ -100,7 +104,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     // Only the account owner consents: the session and the grant are written
     // storage-direct or on this context, so the principal check is explicit
     // here rather than left to the access-creation rules downstream.
-    const access = context.access as { isPersonal?: () => boolean; created?: number } | null;
+    const access = context.access as { isPersonal?: () => boolean; created?: number; lastLogin?: number | null } | null;
     if (!(typeof access?.isPersonal === 'function' && access.isPersonal() === true)) {
       return { refused: true as const, description: 'only the account owner can grant OAuth access' };
     }
@@ -108,13 +112,19 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       userId: context.user.id,
       username: context.user.username,
       personal: true,
-      // The personal access is created at sign-in (a later sign-in for the
-      // same app rotates its token and keeps it): the OpenID Connect
-      // `auth_time`, never later than the real authentication.
-      ...(Number.isFinite(access.created) ? { authTime: Math.floor(access.created as number) } : {}),
+      // The OpenID Connect `auth_time`: the last completed sign-in recorded on
+      // this personal access (password, password plus second factor, or
+      // identity provider). An access written before that was recorded
+      // reports its creation, a lower bound, until its next sign-in.
+      ...authTimeOf(access),
       // Carry the live context through so createAccess can call api on it.
       _context: context,
     };
+  }
+
+  function authTimeOf (access: { created?: number; lastLogin?: number | null }): { authTime?: number } {
+    const at = Number.isFinite(access.lastLogin) ? access.lastLogin : access.created;
+    return Number.isFinite(at) ? { authTime: Math.floor(at as number) } : {};
   }
 
   // ---------------------------------------------------------------------
