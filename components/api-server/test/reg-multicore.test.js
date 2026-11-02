@@ -508,7 +508,7 @@ describe('[RGMC] register: multi-core', function () {
       const foreign = 'mcucforeign' + cuid.slug().toLowerCase();
       await platform.setUserCore(foreign, CORE_B);
 
-      const summary = await usersRepository.reconcileUserCoreMap();
+      const summary = await usersRepository.reconcileUserCoreMap(false, { settleMs: 0 });
 
       assert.strictEqual(await platform.getUserCore(stale), null, 'stale self-row deleted');
       assert.strictEqual(await platform.getUserCore(live), CORE_A, 'missing self-row healed');
@@ -532,7 +532,7 @@ describe('[RGMC] register: multi-core', function () {
       await platform.setUserCore(name, CORE_B); // owned locally, routed elsewhere
 
       // Dry-run: named as a conflict, NOT counted as a heal; nothing written.
-      const dry = await usersRepository.reconcileUserCoreMap(true);
+      const dry = await usersRepository.reconcileUserCoreMap(true, { settleMs: 0 });
       assert.ok(dry.conflicts.some((c) => c.username === name && c.coreId === CORE_B),
         'the conflict is named in the dry-run summary');
       assert.ok(!dry.healed.includes(platform.hashFor('username', name)),
@@ -540,11 +540,50 @@ describe('[RGMC] register: multi-core', function () {
       assert.strictEqual(await platform.getUserCore(name), CORE_B, 'dry-run wrote nothing');
 
       // Apply: still a conflict; the foreign claim is left intact.
-      const applied = await usersRepository.reconcileUserCoreMap();
+      const applied = await usersRepository.reconcileUserCoreMap(false, { settleMs: 0 });
       assert.ok(applied.conflicts.some((c) => c.username === name && c.coreId === CORE_B),
         'the conflict is named in the apply summary too');
       assert.strictEqual(await platform.getUserCore(name), CORE_B,
         'apply never overwrites another core\'s claim');
+    });
+
+    it('[MCUC9] reconcileUserCoreMap keeps the row of a registration that completes while it settles', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      // In flight: the routing row is claimed, the user is not indexed yet.
+      const inFlight = 'mcucflight' + cuid.slug().toLowerCase();
+      await platform.setUserCore(inFlight, CORE_A);
+      // Really stale: claimed, never registered.
+      const stale = 'mcucabandon' + cuid.slug().toLowerCase();
+      await platform.setUserCore(stale, CORE_A);
+
+      for (const dryRun of [true, false]) {
+        const run = usersRepository.reconcileUserCoreMap(dryRun, { settleMs: 400 });
+        if (!dryRun) {
+          // The registration indexes its user while the run settles.
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const user = new User({
+            username: inFlight,
+            email: charlatan.Internet.email(),
+            password: 'testpassword',
+            appId: 'test-app'
+          });
+          await usersRepository.insertOne(user, true);
+          createdUsers.push({ id: user.id, username: inFlight });
+        }
+        const summary = await run;
+        const inFlightToken = platform.hashFor('username', inFlight);
+        const staleToken = platform.hashFor('username', stale);
+        assert.ok(summary.deleted.includes(staleToken), 'the abandoned row is deleted, dryRun ' + dryRun);
+        if (dryRun) {
+          assert.ok(summary.deleted.includes(inFlightToken), 'still unowned when the dry run settled');
+        } else {
+          assert.ok(!summary.deleted.includes(inFlightToken), 'the row of the registration is not deleted');
+          assert.ok(summary.inFlight.includes(inFlightToken), 'and reported as kept');
+        }
+      }
+      assert.strictEqual(await platform.getUserCore(inFlight), CORE_A, 'the registered name keeps its routing');
+      assert.strictEqual(await platform.getUserCore(stale), null, 'the abandoned row is gone');
     });
 
     it('[MCUC8] a registration whose user insert fails after validation leaves no name claim behind', async function () {

@@ -28,9 +28,10 @@
 // (`randomAlias` accesses) and usernames taken by a username change on a single
 // core got no row before the release that writes them, so they answered
 // NXDOMAIN; run it once after upgrading such a core. Idempotent and safe to
-// re-run. Stale rows are deleted from one snapshot of the local index: a
-// registration in flight during the run can lose its row, so run it with this
-// core's API stopped, or run it again afterwards. An empty local index facing
+// re-run. A registration claims its row before it indexes the user, so a row
+// found stale is deleted only if it is still stale after a settle delay
+// (--settle, default 10 s): a registration in flight keeps its row, and the
+// tool can run with the API up. An empty local index facing
 // rows of this core is refused (exit 3, nothing written, dry run included)
 // unless --force-empty-local: it usually means a lost index or a wrong
 // --config, and deleting would unroute every name of the core.
@@ -148,7 +149,8 @@ require('@pryv/boiler').init({
       process.exit(0);
     }
 
-    const summary = await usersRepository.reconcileUserCoreMap(args.dryRun, { forceEmptyLocal: args.forceEmptyLocal });
+    const summary = await usersRepository.reconcileUserCoreMap(args.dryRun,
+      { forceEmptyLocal: args.forceEmptyLocal, settleMs: args.settleSeconds == null ? undefined : args.settleSeconds * 1000 });
 
     console.log('reconcile-user-cores: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
       ' on core "' + platform.coreId + '"');
@@ -156,6 +158,8 @@ require('@pryv/boiler').init({
     console.log('  other-core rows skipped ' + summary.skippedOtherCore);
     console.log('  self-rows (this core)   ' + (summary.scanned - summary.skippedOtherCore));
     console.log('  stale rows deleted      ' + summary.deleted.length);
+    console.log('  kept (registered while  ' + summary.inFlight.length);
+    console.log('        the run settled)');
     console.log('  missing rows healed     ' + summary.healed.length);
     console.log('  conflicts (unhealable)  ' + summary.conflicts.length);
     for (const c of summary.conflicts) {
@@ -178,13 +182,20 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { dryRun: false, extIds: false, oldPepper: null, forceEmptyLocal: false };
+  const args = { dryRun: false, extIds: false, oldPepper: null, forceEmptyLocal: false, settleSeconds: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--ext-ids') args.extIds = true;
     else if (a === '--force-empty-local') args.forceEmptyLocal = true;
-    else if (a === '--old-pepper') {
+    else if (a === '--settle') {
+      const value = argv[++i];
+      args.settleSeconds = Number(value);
+      if (value == null || !/^\d+$/.test(value)) {
+        console.error('--settle: expects a whole number of seconds');
+        process.exit(1);
+      }
+    } else if (a === '--old-pepper') {
       args.oldPepper = argv[++i];
       if (args.oldPepper == null || args.oldPepper.startsWith('-')) {
         console.error('--old-pepper: missing <BASE64>');
@@ -206,6 +217,9 @@ function printUsage (stream) {
     '  node bin/reconcile-user-cores.js --force-empty-local',
     '                                              # allow deleting this core\'s rows when its',
     '                                              # users index is empty (refused, exit 3, otherwise)',
+    '  node bin/reconcile-user-cores.js --settle <seconds>',
+    '                                              # how long a row must stay stale before it',
+    '                                              # is deleted (default 10; 0 = one snapshot)',
     '  node bin/reconcile-user-cores.js --ext-ids [--old-pepper <BASE64>] [--dry-run]',
     '                                              # reconcile this core\'s external ids',
     '                                              # (--old-pepper: the retired pepper, after',
@@ -219,8 +233,9 @@ function printUsage (stream) {
     '  node bin/reconcile-user-cores.js --config config/host-config.yml',
     '',
     'Run once PER CORE (touches only rows that point at the core it runs on).',
-    'Applies on a single core too. Safe to re-run; run it with the core\'s API',
-    'stopped, or run it again afterwards (a registration in flight can lose its row).',
+    'Applies on a single core too. Safe to re-run and to run with the API up: a',
+    'stale row is deleted only if it is still stale after the settle delay, so a',
+    'registration in flight keeps its row.',
     ''
   ].join('\n'));
 }
