@@ -100,7 +100,9 @@ describe('[STRE] streams', function () {
     });
 
     it('[RDD5] must include stream deletions (since the given time) when requested', function (done) {
-      const params = { includeDeletionsSince: timestamp.now('-45m') };
+      // Relative to the fixture deletion (stamped when the test data loads),
+      // not to the clock: a long suite reaches this test after any fixed window.
+      const params = { includeDeletionsSince: testData.streams[4].deleted - 60 };
       request.get(basePath).query(params).end(function (res) {
         res.body.streams = validation.removeAccountStreams(res.body.streams);
         validation.check(res, {

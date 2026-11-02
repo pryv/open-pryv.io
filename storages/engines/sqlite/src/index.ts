@@ -29,6 +29,7 @@ const require = createRequire(import.meta.url);
 
 const { _internals } = require('./_internals.ts');
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
+const integrityLogger = _internals.lazyLogger('sqlite-integrity');
 
 interface StorageLayerLike {
   connection?: unknown;
@@ -40,7 +41,7 @@ interface StorageLayerLike {
   webhooks?: unknown;
   events?: unknown;
   iterateAllEvents?: () => AsyncIterableIterator<unknown>;
-  getAllUserIdsFromCollection?: (name: string) => Promise<string[]>;
+  getAllUserIdsFromCollections?: (names: string[]) => Promise<Record<string, string[]>>;
   clearCollection?: (name: string) => Promise<void>;
   [k: string]: unknown;
 }
@@ -177,17 +178,68 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
     }
   }
 
-  storageLayer.getAllUserIdsFromCollection = async function (_collectionName: string): Promise<string[]> {
-    // The integrity check uses this to walk userIds with rows in a
-    // shared collection and verify each is also in the users-index.
-    // Under SQLite (per-user file) every userId-with-data is by
-    // construction also in the index (the index is the source-of-truth
-    // for known users — the per-user file is created lazily on first
-    // write only for indexed users). Returning all known userIds
-    // satisfies the integrity invariant without walking every per-user
-    // file's tables.
-    return await listKnownUserIdsForCleanup();
+  storageLayer.getAllUserIdsFromCollections = async function (collectionNames: string[]): Promise<Record<string, string[]>> {
+    // The integrity check uses this to find the user ids holding rows that
+    // the users index does not know (rows an account deletion left). Rows
+    // live in per-user files: walk the user directories on disk once and
+    // look in the files of the ids the index lacks. Indexed ids are listed
+    // for every collection without opening their files (the check runs
+    // around every test: opening each user's files there is too slow), so
+    // the per-collection counts are the index size plus the orphans.
+    const { getStorage } = require('./userSQLite/index.ts');
+    const { UserBaseStorageDb } = require('./userBaseStorage/UserBaseStorageDb.ts');
+    const eventsStorage = await getStorage('local');
+    const indexed = await listKnownUserIdsForCleanup();
+    const indexedSet = new Set(indexed);
+    const res: Record<string, string[]> = {};
+    for (const name of collectionNames) res[name] = [...indexed];
+    const baseTables = collectionNames.filter((name) => name !== 'events');
+    const eventsTables = collectionNames.filter((name) => name === 'events');
+    for (const userId of await _internals.userLocalDirectory.listUserIds()) {
+      if (indexedSet.has(userId)) continue;
+      const found = tablesWithRows(UserBaseStorageDb.existingPathForUser(userId), baseTables)
+        .concat(tablesWithRows(eventsStorage.existingPathForUser(userId), eventsTables));
+      for (const name of found) res[name].push(userId);
+    }
+    return res;
   };
+
+  /**
+   * The tables of the database file holding a row. Only reads: a missing
+   * file or table is no rows, and no file is created. A file that cannot be
+   * read (not a database, locked) counts as holding rows: the check then
+   * reports its user id rather than failing. Not opened read-only: a
+   * read-only connection cannot remove the `-wal` / `-shm` files of a WAL
+   * database on close and leaves them next to it (closing the last
+   * connection checkpoints the WAL into the file instead).
+   */
+  function tablesWithRows (dbPath: string, tables: string[]): string[] {
+    const fs = require('node:fs');
+    if (tables.length === 0 || !fs.existsSync(dbPath)) return [];
+    const SQLite3 = require('better-sqlite3');
+    let db: { prepare: (sql: string) => { get: () => unknown }; close: () => void };
+    try {
+      db = new SQLite3(dbPath, { fileMustExist: true, timeout: 1000 });
+    } catch (e) {
+      // Removed since `existsSync` (an account erasure in progress).
+      if ((e as { code?: string }).code === 'SQLITE_CANTOPEN') return [];
+      integrityLogger.warn('integrity: cannot open ' + dbPath + ': ' + (e as Error).message);
+      return tables;
+    }
+    try {
+      return tables.filter((table) => {
+        try {
+          return db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() != null;
+        } catch (e) {
+          if (/no such table/.test((e as Error).message)) return false;
+          integrityLogger.warn('integrity: cannot read ' + table + ' in ' + dbPath + ': ' + (e as Error).message);
+          return true;
+        }
+      });
+    } finally {
+      db.close();
+    }
+  }
 
   storageLayer.clearCollection = async function (collectionName: string): Promise<void> {
     // For each user known to the index, DELETE every row from the named

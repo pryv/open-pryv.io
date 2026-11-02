@@ -19,7 +19,7 @@ const fsSync = require('fs');
 
 const { getConfig } = require('@pryv/boiler');
 
-export { init, ensureUserDirectory, getPathForUser, deleteUserDirectory, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED };
+export { init, ensureUserDirectory, getPathForUser, listUserIds, deleteUserDirectory, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED };
 
 let config: ConfigLike;
 let basePath: string | undefined;
@@ -167,6 +167,39 @@ function getPathForUser (userId: string, extraPath = ''): string {
     throw new Error('Invalid local path for user: ' + JSON.stringify(userId));
   }
   return resultPath;
+}
+
+/**
+ * The user ids holding a directory under the base path, whether the users
+ * index knows them or not: `<base>/<shard>/<userId>/`, the shard being the
+ * last three characters of the id. The directories of the HF series
+ * namespaces (`user.<username>`, same layout) are not user ids and are left
+ * out.
+ */
+async function listUserIds (): Promise<string[]> {
+  const base = getBasePath();
+  let parents: string[][] = [[]];
+  for (let level = 0; level < 3; level++) {
+    const children = await Promise.all(parents.map(async (parent) =>
+      (await subdirectories(path.join(base, ...parent), true)).map((name) => parent.concat(name))));
+    parents = children.flat();
+  }
+  const userIds = await Promise.all(parents.map(async ([dir1, dir2, dir3]) =>
+    (await subdirectories(path.join(base, dir1, dir2, dir3), false))
+      .filter((userId) => userId.length >= 3 && userId.endsWith(dir3 + dir2 + dir1) && !userId.startsWith('user.'))));
+  return userIds.flat();
+}
+
+/** Names of the directories in `dir` (only one-character ones for a shard level). */
+async function subdirectories (dir: string, shard: boolean): Promise<string[]> {
+  let entries: Array<{ name: string; isDirectory: () => boolean }>;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+  return entries.filter((e) => e.isDirectory() && (!shard || e.name.length === 1)).map((e) => e.name);
 }
 
 /** True when `target` lies strictly below `base` (both resolved). */

@@ -52,16 +52,14 @@ class UsersLocalIndex {
   async checkIntegrity (): Promise<{ title: string; infos: Record<string, number>; errors: string[] }> {
     const errors: string[] = [];
     const infos: Record<string, number> = {};
-    const idsByCollection: Array<[string, string[]]> = [];
-    for (const collectionName of ['events', 'streams', 'accesses', 'profile', 'webhooks']) {
-      const userIds = await getAllKnownUserIdsFromDB(collectionName);
+    const idsByCollection = await getAllKnownUserIdsFromDB(['events', 'streams', 'accesses', 'profile', 'webhooks']);
+    for (const [collectionName, userIds] of Object.entries(idsByCollection)) {
       infos['userIdsCount-' + collectionName] = userIds.length;
-      idsByCollection.push([collectionName, userIds]);
     }
     // Read after the collections: an account registered meanwhile is known.
     const indexed = new Set(Object.values(await this.getAllByUsername()));
     const reported = new Set<string>();
-    for (const [collectionName, userIds] of idsByCollection) {
+    for (const [collectionName, userIds] of Object.entries(idsByCollection)) {
       for (const userId of userIds) {
         if (indexed.has(userId) || reported.has(userId)) continue;
         reported.add(userId);
@@ -187,10 +185,10 @@ class UsersLocalIndex {
   }
 }
 
-async function getAllKnownUserIdsFromDB (collectionName: string): Promise<string[]> {
+async function getAllKnownUserIdsFromDB (collectionNames: string[]): Promise<Record<string, string[]>> {
   const storage = require('storage'); // placed here to avoid some circular dependency
   const storageLayer = await storage.getStorageLayer();
-  return await storageLayer.getAllUserIdsFromCollection(collectionName);
+  return await storageLayer.getAllUserIdsFromCollections(collectionNames);
 }
 
 const usersLocalIndex = new UsersLocalIndex();
