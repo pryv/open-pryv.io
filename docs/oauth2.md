@@ -117,7 +117,9 @@ mounted (with the authorization-code flow); `jwks_uri` only when
 as HTTP Basic (`client_secret_basic`) or in the form body (`client_secret_post`).
 `private_key_jwt` is RFC 7523 client authentication with an ES256 assertion
 (`aud` = the issuer or the token-endpoint URL; `/oauth2/introspect` and
-`/oauth2/revoke` also accept their own URL as `aud`). `dpop_signing_alg_values_supported`
+`/oauth2/revoke` also accept their own URL as `aud`). With an assertion, `client_id` may be left
+out of the request (RFC 7523 § 3): the client is the assertion's `iss`, which must equal its `sub`;
+a `client_id` that is given must equal `iss`. `dpop_signing_alg_values_supported`
 means a client that sends an RFC 9449 DPoP proof to `/oauth2/token` receives a
 sender-constrained `DPoP` token instead of a `Bearer` one.
 

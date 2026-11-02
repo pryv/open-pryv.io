@@ -12,6 +12,8 @@
  */
 
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { CLIENT_ASSERTION_TYPE } from '../src/clientAssertion.ts';
 import * as extension from '../src/extension.ts';
 import * as scopeGrammar from '../src/scopeGrammar.ts';
 import { handleIntrospect } from '../src/introspection.ts';
@@ -342,5 +344,58 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     assert.equal(await getSessionIndex(platform, 'session-token-1'), null);
     assert.equal(await getRefresh(platform, CORE_ID, 'refresh-1'), null);
     assert.equal((await getRefreshConsumed(platform, CORE_ID, 'refresh-1')).revoked, true);
+  });
+
+  describe('[OXPKA] a private_key_jwt caller named by its assertion alone (no client_id)', () => {
+    const UNIFORM = { error: 'invalid_client', error_description: 'client authentication failed' };
+    let keyPair, publicJwk;
+    before(async () => {
+      keyPair = await crypto.webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+      const jwk = await crypto.webcrypto.subtle.exportKey('jwk', keyPair.publicKey);
+      publicJwk = { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y };
+    });
+    async function assertion (aud, over = {}) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const input = b64({ alg: 'ES256', typ: 'JWT' }) + '.' + b64({ iss: 'key-rs', sub: 'key-rs', aud, jti: crypto.randomUUID(), exp: nowSec + 120, iat: nowSec, ...over });
+      const sig = await crypto.webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keyPair.privateKey, Buffer.from(input, 'utf8'));
+      return input + '.' + Buffer.from(sig).toString('base64url');
+    }
+    async function withKeyClient () {
+      const platform = await seeded();
+      await persistClient(platform, { ...REGISTRY_CLIENT, clientId: 'key-rs', tokenEndpointAuthMethod: 'private_key_jwt', jwks: { keys: [publicJwk] }, canIntrospect: true });
+      await setSessionIndex(platform, 'key-rs-token', { userId: USER_ID, accessId: 'session-3', clientId: 'key-rs', coreId: CORE_ID, expiresAt: Date.now() + 1e6 });
+      return platform;
+    }
+    const assertionBody = (a) => ({ client_assertion: a, client_assertion_type: CLIENT_ASSERTION_TYPE });
+
+    it('[OXIA1] introspection authenticates the caller from the assertion; a malformed or unknown one is refused alike', async () => {
+      const platform = await withKeyClient();
+      const ok = await introspect(platform, { auth: null, body: assertionBody(await assertion(ISSUER + '/oauth2/introspect')) });
+      assert.equal(ok.statusCode, 200, ok.raw);
+      assert.equal(ok.body.active, true);
+      for (const bad of ['not-a-jwt', await assertion(ISSUER + '/oauth2/introspect', { iss: 'nobody', sub: 'nobody' }), await assertion(ISSUER + '/oauth2/introspect', { sub: 'other' })]) {
+        const res = await introspect(platform, { auth: null, body: assertionBody(bad) });
+        assert.equal(res.statusCode, 401);
+        assert.deepEqual(res.body, UNIFORM);
+      }
+      // A body client_id other than the assertion's iss.
+      const mismatch = await introspect(platform, { auth: null, body: { client_id: 'resource-srv', ...assertionBody(await assertion(ISSUER + '/oauth2/introspect')) } });
+      assert.equal(mismatch.statusCode, 401);
+      assert.deepEqual(mismatch.body, UNIFORM);
+    });
+
+    it('[ORVA1] revocation authenticates the caller from the assertion; a mismatching client_id or unknown iss is refused', async () => {
+      const platform = await withKeyClient();
+      const { res, calls } = await revoke(platform, { clientId: '', token: 'key-rs-token', body: assertionBody(await assertion(ISSUER + '/oauth2/revoke')) });
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.deepEqual(calls.sessions, [{ userId: USER_ID, accessId: 'session-3', clientId: 'key-rs' }]);
+      const mismatch = await revoke(platform, { clientId: 'reg-app', token: 'x', body: assertionBody(await assertion(ISSUER + '/oauth2/revoke')) });
+      assert.equal(mismatch.res.statusCode, 401);
+      assert.deepEqual(mismatch.res.body, UNIFORM);
+      const unknown = await revoke(platform, { clientId: '', token: 'x', body: assertionBody(await assertion(ISSUER + '/oauth2/revoke', { iss: 'nobody', sub: 'nobody' })) });
+      assert.equal(unknown.res.statusCode, 401);
+      assert.deepEqual(unknown.res.body, UNIFORM);
+    });
   });
 });

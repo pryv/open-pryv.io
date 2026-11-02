@@ -18,7 +18,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { webcrypto } = require('node:crypto');
 const { handleToken: rawHandleToken } = require('../src/routes/token.ts');
-const { setCode } = require('../src/storage.ts');
+const { setCode, setRefresh } = require('../src/storage.ts');
 const { mintSecret } = require('../src/clientSecret.ts');
 const { CLIENT_ASSERTION_TYPE } = require('../src/clientAssertion.ts');
 
@@ -307,6 +307,126 @@ describe('[OAUTH-TKN-PKJ] /oauth2/token — private_key_jwt client auth', () => 
       await handler({ body: { grant_type: 'client_credentials', client_id: CLIENT_ID, client_assertion: assertion, client_assertion_type: CLIENT_ASSERTION_TYPE } }, r2);
       assert.equal(r2.statusCode, 401);
       assert.equal(r2.body.error, 'invalid_client');
+    });
+  });
+  describe('[OAUTH-TKN-PKJ-ID] client named by the assertion alone (no client_id in the body)', () => {
+    function assertionOnly (body, assertion, type = CLIENT_ASSERTION_TYPE) {
+      const { client_id: _omitted, ...rest } = body;
+      return { ...rest, client_assertion: assertion, client_assertion_type: type };
+    }
+    async function seedRefreshFor (platform, token) {
+      const now = Date.now();
+      await setRefresh(platform, CORE_ID, token, {
+        clientId: CLIENT_ID,
+        userId: 'u-alice',
+        scope: ['pryv:read'],
+        issuedAt: now,
+        lastUsedAt: now,
+        expiresAt: now + 3600 * 1000,
+        absoluteExpiresAt: now + 7200 * 1000,
+      });
+    }
+    const MINT_REFRESHED = async ({ clientId, username }) => ({
+      accessId: 'acc-refreshed', accessToken: 'new-tok-' + clientId, apiEndpoint: 'https://' + username + '.pryv.me/',
+    });
+    const UNIFORM = { error: 'invalid_client', error_description: 'client authentication failed' };
+
+    it('[OTPA1] code exchange with only grant_type, code, redirect_uri, code_verifier and the assertion → 200', async () => {
+      const platform = fakePlatform();
+      await registerClient(platform, { jwks: { keys: [key.publicJwk] } });
+      await seedCode(platform, 'PKA-1');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const res = fakeRes();
+      const body = assertionOnly(codeBody('PKA-1'), await makeAssertion(key));
+      assert.deepEqual(Object.keys(body).sort(), ['client_assertion', 'client_assertion_type', 'code', 'code_verifier', 'grant_type', 'redirect_uri']);
+      await handler({ body }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.equal(res.body.token_type, 'Bearer');
+      assert.ok(typeof res.body.refresh_token === 'string');
+    });
+
+    it('[OTPA2] refresh with the assertion and no client_id → 200; client_credentials too', async () => {
+      const platform = fakePlatform();
+      await registerClient(platform, { jwks: { keys: [key.publicJwk] } });
+      await seedRefreshFor(platform, 'rt-pka-2');
+      const handler = handleToken({
+        config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED, mintClientAccess: MINT_CLIENT, resolveAccountUserId: RESOLVE_ACCOUNT,
+      });
+      const res = fakeRes();
+      await handler({ body: assertionOnly({ grant_type: 'refresh_token', refresh_token: 'rt-pka-2' }, await makeAssertion(key)) }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.equal(res.body.access_token, 'new-tok-' + CLIENT_ID);
+      const cc = fakeRes();
+      await handler({ body: assertionOnly({ grant_type: 'client_credentials' }, await makeAssertion(key)) }, cc);
+      assert.equal(cc.statusCode, 200, JSON.stringify(cc.body));
+      assert.equal(cc.body.access_token, 'cc-tok-' + CLIENT_ID);
+    });
+
+    it('[OTPA3] a body client_id or Basic id other than the assertion iss → 401 invalid_client', async () => {
+      const { plaintext, hash } = await mintSecret();
+      const platform = fakePlatform();
+      await registerClient(platform, { jwks: { keys: [key.publicJwk] }, clientSecretHash: hash });
+      await platform.setPlatformKv('oauth-client/other-app', JSON.stringify({
+        clientId: 'other-app', redirectUris: ['https://app.example/cb'], scope: ['pryv:read'], grantTypes: ['authorization_code'], jwks: { keys: [key.publicJwk] },
+      }));
+      await seedCode(platform, 'PKA-3a');
+      await seedCode(platform, 'PKA-3b');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const otherIss = { iss: 'other-app', sub: 'other-app' };
+      const r1 = fakeRes();
+      await handler({ body: codeBody('PKA-3a', await makeAssertion(key, otherIss)) }, r1);
+      assert.equal(r1.statusCode, 401);
+      assert.deepEqual(r1.body, UNIFORM);
+      const r2 = fakeRes();
+      const basicAuth = 'Basic ' + Buffer.from(CLIENT_ID + ':' + plaintext).toString('base64');
+      await handler({ headers: { authorization: basicAuth }, body: assertionOnly(codeBody('PKA-3b'), await makeAssertion(key, otherIss)) }, r2);
+      assert.equal(r2.statusCode, 401);
+      assert.equal(r2.body.error, 'invalid_client');
+    });
+
+    it('[OTPA4] iss and sub differ → 401 invalid_client and the code is not used up', async () => {
+      const platform = fakePlatform();
+      await registerClient(platform, { jwks: { keys: [key.publicJwk] } });
+      await seedCode(platform, 'PKA-4');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const r1 = fakeRes();
+      await handler({ body: assertionOnly(codeBody('PKA-4'), await makeAssertion(key, { sub: 'someone-else' })) }, r1);
+      assert.equal(r1.statusCode, 401);
+      assert.deepEqual(r1.body, UNIFORM);
+      const r2 = fakeRes();
+      await handler({ body: assertionOnly(codeBody('PKA-4'), await makeAssertion(key)) }, r2);
+      assert.equal(r2.statusCode, 200, JSON.stringify(r2.body));
+    });
+
+    it('[OTPA5] malformed assertions, an unknown iss, and a client without a key set all get the same 401 body', async () => {
+      const platform = fakePlatform();
+      await registerClient(platform, { jwks: { keys: [key.publicJwk] } });
+      const { hash } = await mintSecret();
+      await platform.setPlatformKv('oauth-client/secret-app', JSON.stringify({
+        clientId: 'secret-app', redirectUris: ['https://app.example/cb'], scope: ['pryv:read'], grantTypes: ['authorization_code'], clientSecretHash: hash,
+      }));
+      await seedCode(platform, 'PKA-5');
+      const handler = handleToken({ config: fakeConfig(), platform });
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const valid = await makeAssertion(key);
+      const cases = {
+        'not a JWT': ['not-a-jwt', CLIENT_ASSERTION_TYPE],
+        'payload not JSON': [b64({ alg: 'ES256' }) + '.bm90LWpzb24.c2ln', CLIENT_ASSERTION_TYPE],
+        'no iss': [b64({ alg: 'ES256' }) + '.' + b64({ sub: CLIENT_ID }) + '.c2ln', CLIENT_ASSERTION_TYPE],
+        'wrong assertion type': [valid, 'wrong-type'],
+        'unknown iss': [await makeAssertion(key, { iss: 'nobody', sub: 'nobody' }), CLIENT_ASSERTION_TYPE],
+        'client without a key set': [await makeAssertion(key, { iss: 'secret-app', sub: 'secret-app' }), CLIENT_ASSERTION_TYPE],
+      };
+      for (const [name, [assertion, type]] of Object.entries(cases)) {
+        const res = fakeRes();
+        await handler({ body: assertionOnly(codeBody('PKA-5'), assertion, type) }, res);
+        assert.equal(res.statusCode, 401, name);
+        assert.deepEqual(res.body, UNIFORM, name);
+      }
+      // None of them used the code up.
+      const ok = fakeRes();
+      await handler({ body: assertionOnly(codeBody('PKA-5'), valid) }, ok);
+      assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
     });
   });
 });
