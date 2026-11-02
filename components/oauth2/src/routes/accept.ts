@@ -66,6 +66,7 @@ const require = createRequire(import.meta.url);
 const { resolveStateOffer } = require('./offer.ts');
 const { composeShownOffer, nextGrantPermissions } = require('../consentComposition.ts');
 const { getClient } = require('../clientRegistry.ts');
+const { clientLifetimes } = require('../clientLifetimes.ts');
 
 const { generateToken } = require('../secureToken.ts');
 const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
@@ -238,7 +239,6 @@ export function handleAccept (deps: AcceptDeps) {
   return async function accept (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
     const stateKey = stateKeyFromConfig(deps.config);
-    const accessTokenTTL = Number(deps.config.get('oauth:accessTokenTTL') ?? 3600);
     if (!issuer || !stateKey) {
       return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or oauth:stateKey (auth:adminAccessKey) not configured' });
     }
@@ -422,7 +422,8 @@ export function handleAccept (deps: AcceptDeps) {
     // record (CMC data-grant, or the registry client's grant) is created or
     // updated first through the API on the user's behalf; the session is
     // then minted from it.
-    const accessExpiresAt = Date.now() + accessTokenTTL * 1000;
+    // The client's own access-token lifetime, clamped to the platform's.
+    const accessExpiresAt = Date.now() + clientLifetimes(deps.config, stateClient).accessTokenTTL * 1000;
     let access;
     try {
       access = await deps.createAccess({

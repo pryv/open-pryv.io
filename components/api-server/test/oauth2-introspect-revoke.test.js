@@ -535,5 +535,44 @@ describe('[OIR] OAuth sessions: introspection, revocation, chain end, retirement
       assert.equal(await grantOf(who), null);
       assert.equal((await readStream(who, r.body.access_token, 'a')).status, 403);
     });
+
+    it('[ORET9] deleting the replaced session inside the grace keeps reuse detection: a replay of the replaced token still revokes the chain', async () => {
+      const who = await newUser();
+      const t = await consentAndToken(who);
+      const r = await refresh(t.refresh_token);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const marker = await storage.getRefreshConsumed(platformDB, coreId(), t.refresh_token);
+      assert.equal(marker.rotated, true);
+      // The account still lists the replaced session (it expires after the grace): the user deletes it.
+      const old = (await sessions(who)).find((s) => s.token === t.access_token);
+      assert.ok(old != null, 'listed inside the grace');
+      assert.equal((await coreRequest.delete('/' + who.username + '/accesses/' + encodeURIComponent(old.id)).set('Authorization', who.token)).status, 200);
+      const after = await storage.getRefreshConsumed(platformDB, coreId(), t.refresh_token);
+      assert.equal(after.revoked, undefined, 'not turned revoked');
+      assert.equal(after.rotated, true);
+      // The chain goes on with its new session and token.
+      assert.equal((await readStream(who, r.body.access_token, 'a')).status, 200);
+      assert.ok(await storage.getRefresh(platformDB, coreId(), r.body.refresh_token) != null);
+      // A replay of the replaced token is theft evidence: the chain collapses.
+      await withInjectedConfig({ oauth: { consentUrl: CONSENT_URL, refreshReuseGraceSeconds: 0 } }, async () => {
+        assert.equal((await refresh(t.refresh_token)).body.error, 'invalid_grant');
+      });
+      assert.equal(await grantOf(who), null);
+      assert.equal((await readStream(who, r.body.access_token, 'a')).status, 403);
+    });
+
+    it('[ORET10] deleting the current session still ends the chain (its live token turns revoked, its replay collapses nothing)', async () => {
+      const who = await newUser();
+      const t = await consentAndToken(who);
+      const r = await refresh(t.refresh_token);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const current = (await sessions(who)).find((s) => s.token === r.body.access_token);
+      assert.equal((await coreRequest.delete('/' + who.username + '/accesses/' + encodeURIComponent(current.id)).set('Authorization', who.token)).status, 200);
+      assert.equal((await storage.getRefreshConsumed(platformDB, coreId(), r.body.refresh_token)).revoked, true);
+      await withInjectedConfig({ oauth: { consentUrl: CONSENT_URL, refreshReuseGraceSeconds: 0 } }, async () => {
+        assert.equal((await refresh(r.body.refresh_token)).body.error, 'invalid_grant');
+      });
+      assert.ok(await grantOf(who) != null, 'the grant is kept');
+    });
   });
 });

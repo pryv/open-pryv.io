@@ -28,7 +28,10 @@ import { createRequire } from 'node:module';
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from './storage.ts';
-import { validatePublicJwkSet } from './jwks.ts';
+import { validatePublicJwkSet, keyMatchesAlg, CLIENT_ASSERTION_ALGS } from './jwks.ts';
+import { jwksUriProblem } from './jwksUri.ts';
+import { isLifetime } from './clientLifetimes.ts';
+import { MAX_PREVIOUS_SECRET_WINDOW_MS } from './clientSecret.ts';
 const require = createRequire(import.meta.url);
 
 const storage = require('./storage.ts');
@@ -121,10 +124,10 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
     validateCmcOffers(client);
   }
   const validated = { ...client, updatedAt: Date.now() };
-  // Inline public JWK Set (private_key_jwt): validate on write — EC P-256
-  // public keys ONLY; any key carrying a private `d` is rejected outright,
-  // so the no-credentials-in-PlatformDB invariant holds. Store the
-  // sanitized set (only accepted members survive).
+  // Inline public JWK Set (private_key_jwt): validate on write; any key
+  // carrying private material is rejected outright, so the
+  // no-credentials-in-PlatformDB invariant holds. Store the sanitized set
+  // (only accepted members survive).
   if (validated.jwks != null) {
     try {
       validated.jwks = validatePublicJwkSet(validated.jwks);
@@ -132,7 +135,61 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
       throw new Error(`jwks: ${(err as Error).message}`);
     }
   }
+  // A rotated secret whose window ended is never accepted: not carried along.
+  if (typeof validated.previousSecretExpiresAt === 'number' && validated.previousSecretExpiresAt <= Date.now()) {
+    delete validated.previousSecretHash;
+    delete validated.previousSecretExpiresAt;
+  }
+  validateAuthAndLifetimes(validated);
   await storage.setClient(platform, validated);
+}
+
+/**
+ * Key reference, pinned algorithms, rotated secret and lifetimes: the same
+ * rules for every client kind.
+ */
+function validateAuthAndLifetimes (client: OAuthClient): void {
+  if (client.jwksUri != null) {
+    if (client.jwks != null) throw new Error('jwks and jwksUri exclude each other');
+    const problem = jwksUriProblem(client.jwksUri);
+    if (problem != null) throw new Error(problem);
+  }
+  const algs = client.tokenEndpointAuthSigningAlgs;
+  if (algs != null) {
+    if (!Array.isArray(algs) || algs.length === 0 || algs.some((a) => !CLIENT_ASSERTION_ALGS.includes(a))) {
+      throw new Error('tokenEndpointAuthSigningAlgs must be a non-empty list of ' + CLIENT_ASSERTION_ALGS.join(', '));
+    }
+    if (new Set(algs).size !== algs.length) throw new Error('tokenEndpointAuthSigningAlgs lists an algorithm twice');
+    if (client.jwks == null && client.jwksUri == null) {
+      throw new Error('tokenEndpointAuthSigningAlgs needs a key set (jwks or jwksUri)');
+    }
+    if (client.jwks != null) {
+      const unmatched = algs.filter((alg) => !client.jwks!.keys.some((k) => keyMatchesAlg(k, alg)));
+      if (unmatched.length > 0) throw new Error('tokenEndpointAuthSigningAlgs: no key of the jwks fits ' + unmatched.join(', '));
+    }
+  }
+  for (const key of ['accessTokenTTL', 'refreshTokenTTL', 'refreshTokenAbsoluteTTL'] as const) {
+    if (client[key] != null && !isLifetime(client[key])) throw new Error(key + ' must be a positive integer (seconds)');
+  }
+  if (client.refreshTokenTTL != null && client.refreshTokenAbsoluteTTL != null &&
+      client.refreshTokenTTL > client.refreshTokenAbsoluteTTL) {
+    throw new Error('refreshTokenTTL must not exceed refreshTokenAbsoluteTTL');
+  }
+  if (client.offlineAccessAllowed != null && typeof client.offlineAccessAllowed !== 'boolean') {
+    throw new Error('offlineAccessAllowed must be true or false');
+  }
+  if (client.previousSecretHash != null || client.previousSecretExpiresAt != null) {
+    if (typeof client.previousSecretHash !== 'string' || client.previousSecretHash.length === 0 ||
+        typeof client.previousSecretExpiresAt !== 'number' || !Number.isFinite(client.previousSecretExpiresAt)) {
+      throw new Error('previousSecretHash and previousSecretExpiresAt go together');
+    }
+    if (typeof client.clientSecretHash !== 'string' || client.clientSecretHash.length === 0) {
+      throw new Error('a previous secret needs a current one');
+    }
+    if (client.previousSecretExpiresAt > Date.now() + MAX_PREVIOUS_SECRET_WINDOW_MS) {
+      throw new Error('the previous secret may stay valid 30 days at most');
+    }
+  }
 }
 
 /**
@@ -193,8 +250,11 @@ function validateRegistryClient (client: OAuthClient): void {
   if (client.tokenEndpointAuthMethod === 'client_secret_basic' && client.clientSecretHash == null) {
     throw new Error('registry client: client_secret_basic needs a client secret');
   }
-  if (client.tokenEndpointAuthMethod === 'private_key_jwt' && client.jwks == null) {
-    throw new Error('registry client: private_key_jwt needs a jwks');
+  if (client.tokenEndpointAuthMethod === 'private_key_jwt' && client.jwks == null && client.jwksUri == null) {
+    throw new Error('registry client: private_key_jwt needs a jwks or a jwksUri');
+  }
+  if (client.tokenEndpointAuthMethod !== 'private_key_jwt' && (client.jwksUri != null || client.tokenEndpointAuthSigningAlgs != null)) {
+    throw new Error('registry client: jwksUri and tokenEndpointAuthSigningAlgs go with private_key_jwt only');
   }
   if (client.grantTypes.includes('client_credentials')) {
     throw new Error('registry client: client_credentials is not available (no app account)');

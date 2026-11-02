@@ -13,7 +13,7 @@
 
 import { CLIENT_ASSERTION_TYPE } from './clientAssertion.ts';
 
-/** Same bound as the assertion verifier: a legitimate ES256 JWT is <2 KB. */
+/** Same bound as the assertion verifier: a legitimate assertion is <2 KB. */
 const MAX_ASSERTION_LENGTH = 8192;
 
 /**
@@ -43,9 +43,15 @@ export function clientIdFromAssertion (assertion: unknown, assertionType: unknow
   return iss;
 }
 
-/** A client with a public key set on file (`private_key_jwt`). */
-export function hasKeySet (client: { jwks?: { keys: unknown[] } } | null | undefined): boolean {
-  return client?.jwks != null && Array.isArray(client.jwks.keys) && client.jwks.keys.length > 0;
+/** A client with a public key set on file, inline or by `jwks_uri` (`private_key_jwt`). */
+export function hasKeySet (client: { jwks?: { keys: unknown[] }; jwksUri?: unknown } | null | undefined): boolean {
+  return (client?.jwks != null && Array.isArray(client.jwks.keys) && client.jwks.keys.length > 0) ||
+    (typeof client?.jwksUri === 'string' && client.jwksUri.length > 0);
+}
+
+/** A client that authenticates: a secret or a key set on file. */
+export function isConfidentialClient (client: { clientSecretHash?: unknown; jwks?: { keys: unknown[] }; jwksUri?: unknown } | null | undefined): boolean {
+  return client != null && ((typeof client.clientSecretHash === 'string' && client.clientSecretHash.length > 0) || hasKeySet(client));
 }
 
 /**

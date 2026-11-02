@@ -24,8 +24,11 @@
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import { verifyClientAssertion, CLIENT_ASSERTION_TYPE } from './clientAssertion.ts';
+import { verifyClientAssertion, ClientAssertionError, CLIENT_ASSERTION_TYPE } from './clientAssertion.ts';
 import { markClientAssertionJtiUsed } from './storage.ts';
+import { hasKeySet } from './clientAuth.ts';
+import { getClientJwks, JwksFetchError } from './jwksUri.ts';
+import { logServerError, logServerWarning } from './serverLog.ts';
 // bcrypt ships no type declarations — keep it on the require shim so the
 // import does not trip noImplicitAny (real ESM import needs @types/bcrypt).
 const require = createRequire(import.meta.url);
@@ -80,14 +83,34 @@ const ASSERTION_FAIL: ClientAuthResult = {
   ok: false, status: 401, error: 'invalid_client', description: 'client authentication failed',
 };
 
-/** The client view authenticateClient needs — credentials on file (public keys / secret hash). */
-type ClientAuthView = { clientSecretHash?: unknown; jwks?: { keys: unknown[] } } | null | undefined;
+/** The client view authenticateClient needs: credentials on file (public keys / secret hashes). */
+type ClientAuthView = {
+  clientSecretHash?: unknown;
+  /** The secret replaced by the last rotation, accepted until `previousSecretExpiresAt` (ms). */
+  previousSecretHash?: unknown;
+  previousSecretExpiresAt?: unknown;
+  jwks?: { keys: unknown[] };
+  jwksUri?: unknown;
+  tokenEndpointAuthSigningAlgs?: unknown;
+} | null | undefined;
+
+/**
+ * Whether the secret replaced by the last rotation is still accepted: a hash
+ * and an expiry on file, the expiry not reached.
+ */
+export function previousSecretValid (client: ClientAuthView, now: number = Date.now()): boolean {
+  return typeof client?.previousSecretHash === 'string' && client.previousSecretHash.length > 0 &&
+    typeof client.previousSecretExpiresAt === 'number' && now < client.previousSecretExpiresAt;
+}
+
+/** The longest window a rotated secret may stay valid (30 days, ms). */
+export const MAX_PREVIOUS_SECRET_WINDOW_MS = 30 * 24 * 3600 * 1000;
 
 /**
  * Authenticate a client at the token endpoint per its confidentiality.
  *
  * A client is CONFIDENTIAL when it has a `clientSecretHash`
- * (`client_secret_basic` / `client_secret_post`) OR an inline `jwks`
+ * (`client_secret_basic` / `client_secret_post`) OR a key set (inline `jwks` or `jwks_uri`)
  * (`private_key_jwt`) on file. A confidential client MUST authenticate
  * via one of its registered mechanisms. A client with neither is PUBLIC:
  * PKCE is its sole protection and no client authentication is required
@@ -121,7 +144,7 @@ export async function authenticateClient (params: {
   const hash = params.client?.clientSecretHash;
   const hasHash = typeof hash === 'string' && hash.length > 0;
   const jwks = params.client?.jwks;
-  const hasJwks = jwks != null && Array.isArray(jwks.keys) && jwks.keys.length > 0;
+  const hasJwks = hasKeySet(params.client);
 
   // --- private_key_jwt (RFC 7521/7523) — takes precedence when presented. --- //
   if (typeof params.assertion === 'string' && params.assertion.length > 0) {
@@ -130,21 +153,50 @@ export async function authenticateClient (params: {
     if (params.platform == null || typeof params.clientId !== 'string' || params.clientId.length === 0) {
       return ASSERTION_FAIL;
     }
+    const algs = params.client?.tokenEndpointAuthSigningAlgs;
+    const jwksUri = jwks != null && Array.isArray(jwks.keys) && jwks.keys.length > 0
+      ? null
+      : params.client?.jwksUri as string;
     try {
-      const verified = await verifyClientAssertion(params.assertion, {
-        clientId: params.clientId,
-        jwks: jwks as { keys: unknown[] },
+      const verifyWith = async (keys: { keys: unknown[] }) => await verifyClientAssertion(params.assertion, {
+        clientId: params.clientId as string,
+        jwks: keys,
+        allowedAlgs: Array.isArray(algs) ? algs.filter((a): a is string => typeof a === 'string') : undefined,
         expectedAudiences: params.expectedAudiences ?? [],
         now: params.now,
       });
+      let verified;
+      if (jwksUri == null) {
+        verified = await verifyWith(jwks as { keys: unknown[] });
+      } else {
+        const now = params.now;
+        try {
+          verified = await verifyWith(await getClientJwks(jwksUri, { now }));
+        } catch (err: unknown) {
+          // A key the cached set does not hold: the client may have rotated it in.
+          if (!(err instanceof ClientAssertionError && err.unknownKid)) throw err;
+          verified = await verifyWith(await getClientJwks(jwksUri, { unknownKid: true, now }));
+        }
+      }
       // Burn the jti for its remaining lifetime — a replay within the window fails.
       const fresh = await markClientAssertionJtiUsed(
         params.platform, params.clientId, verified.jti, verified.exp * 1000
       );
-      if (!fresh) return ASSERTION_FAIL; // replayed
-    } catch {
+      if (!fresh) {
+        logServerWarning('client ' + params.clientId + ': client assertion refused: jti already used');
+        return ASSERTION_FAIL; // replayed
+      }
+    } catch (err: unknown) {
+      // The response stays uniform; the reason is the operator's (an unusable
+      // jwks_uri is logged by its fetch, once).
+      if (err instanceof ClientAssertionError) {
+        logServerWarning('client ' + params.clientId + ': client assertion refused: ' + err.reason);
+      } else if (!(err instanceof JwksFetchError)) {
+        logServerError('client ' + params.clientId + ': client assertion check failed', err);
+      }
       return ASSERTION_FAIL; // bad signature / claims — uniform
     }
+
     return { ok: true };
   }
 
@@ -153,7 +205,10 @@ export async function authenticateClient (params: {
     if (typeof params.presentedSecret !== 'string' || params.presentedSecret.length === 0) {
       return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication required' };
     }
-    const good = await verifySecret(params.presentedSecret, hash as string);
+    // The secret on file, or the one the last rotation replaced while its window lasts.
+    const good = await verifySecret(params.presentedSecret, hash as string) ||
+      (previousSecretValid(params.client, params.now ?? Date.now()) &&
+        await verifySecret(params.presentedSecret, params.client!.previousSecretHash as string));
     if (!good) {
       return { ok: false, status: 401, error: 'invalid_client', description: 'client authentication failed' };
     }

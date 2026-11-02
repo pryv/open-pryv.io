@@ -79,6 +79,7 @@ const { authenticateClient } = require('../clientSecret.ts');
 const { tokenEndpointAudiences, issuerFromConfig } = require('../issuer.ts');
 const { prepareRegistryResponse } = require('../responseHooks.ts');
 const { indexSession } = require('../sessionIndex.ts');
+const { clientLifetimes, offlineAccessAllowed } = require('../clientLifetimes.ts');
 
 /**
  * Mint a new app access for the resolved (userId, clientId, scope)
@@ -176,13 +177,6 @@ export type RefreshGrantParams = {
   client_assertion_type?: string;
 };
 
-function lifetimes (config: { get (key: string): unknown }) {
-  return {
-    accessTokenTTL: Number(config.get('oauth:accessTokenTTL') ?? 3600),
-    refreshTokenTTL: Number(config.get('oauth:refreshTokenTTL') ?? 30 * 24 * 3600),
-  };
-}
-
 /**
  * Run the grant. Returns the response body on success, or an OAuth
  * error object on failure. Caller (token.ts route) translates that
@@ -238,6 +232,11 @@ export async function handleRefreshToken (
   });
   if (!auth.ok) {
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
+  }
+  // Offline access withheld from the client (since this chain was issued):
+  // refused without touching the token, like a suspension.
+  if (!offlineAccessAllowed(client)) {
+    return { ok: false, status: 400, error: 'unauthorized_client', description: 'refresh tokens are not allowed for this client' };
   }
   // Non-consuming read: a token issued to another client is refused and left
   // live (the presenter learns nothing it does not hold: it has the token).
@@ -402,7 +401,7 @@ export async function handleRefreshToken (
   // cap-exceeded refresh (the access is minted, then the chain is
   // refused). The row is already consumed above (single-use); a client
   // past the ceiling must re-consent for a new chain.
-  const { accessTokenTTL, refreshTokenTTL } = lifetimes(deps.config);
+  const { accessTokenTTL, refreshTokenTTL } = clientLifetimes(deps.config, client);
   const now = Date.now();
   const newRefreshExpiresAt = Math.min(now + refreshTokenTTL * 1000, row.absoluteExpiresAt);
   if (newRefreshExpiresAt <= now) {
@@ -529,6 +528,24 @@ export async function handleRefreshToken (
       endedMeanwhile = (await storage.getRefreshConsumed(deps.platform, coreId, params.refresh_token))?.revoked === true;
     } catch (err: unknown) {
       logServerError('refresh_token: re-reading the consumed marker failed', err);
+    }
+    // Not ended: the rotation is complete. The marker says so (`rotated`), so
+    // ending the replaced session from now on (it is the one its index row
+    // names) keeps reuse detection for the replaced token. Re-read after the
+    // write: an end that read the marker still bare lands its `revoked` after
+    // it. Best-effort: a bare marker only costs that detection.
+    if (!endedMeanwhile) {
+      try {
+        await storage.markRefreshRotated(deps.platform, coreId, params.refresh_token, {
+          clientId: row.clientId,
+          userId: row.userId,
+          ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
+          consumedAt,
+        }, Math.min(row.expiresAt, row.absoluteExpiresAt));
+        endedMeanwhile = (await storage.getRefreshConsumed(deps.platform, coreId, params.refresh_token))?.revoked === true;
+      } catch (err: unknown) {
+        logServerError('refresh_token: marking the consumed token rotated failed (ending its session will not keep reuse detection)', err);
+      }
     }
     if (endedMeanwhile) {
       try {

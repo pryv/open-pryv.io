@@ -41,6 +41,7 @@ import { prepareRegistryResponse } from '../responseHooks.ts';
 import type { RegistryResponseParts } from '../responseHooks.ts';
 import { revokeOrphanAccess } from '../orphanAccess.ts';
 import { logServerError, logServerWarning } from '../serverLog.ts';
+import { clientLifetimes, offlineAccessAllowed } from '../clientLifetimes.ts';
 
 /** RFC 7636 §4.1 code_verifier: 43 to 128 unreserved characters. */
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
@@ -114,15 +115,6 @@ export type GrantParams = {
   client_assertion?: string;
   client_assertion_type?: string;
 };
-
-/** Lifetimes (seconds). Operator can override via oauth.* config. */
-function lifetimes (config: { get (key: string): unknown }) {
-  return {
-    accessTokenTTL: Number(config.get('oauth:accessTokenTTL') ?? 3600),
-    refreshTokenTTL: Number(config.get('oauth:refreshTokenTTL') ?? 30 * 24 * 3600),
-    refreshTokenAbsoluteTTL: Number(config.get('oauth:refreshTokenAbsoluteTTL') ?? 90 * 24 * 3600),
-  };
-}
 
 /**
  * Run the grant. Returns the response body on success, or an OAuth
@@ -362,11 +354,13 @@ export async function handleAuthorizationCode (
       }
     }
 
-    // Mint refresh token. Sliding TTL with absolute cap. A registry client
-    // gets one only when `offline_access` was granted.
-    const { accessTokenTTL, refreshTokenTTL, refreshTokenAbsoluteTTL } = lifetimes(deps.config);
+    // Mint refresh token. Sliding TTL with absolute cap (the client's own
+    // lifetimes, clamped to the platform's). A registry client gets one only
+    // when `offline_access` was granted; no client whose row withholds
+    // offline access gets one.
+    const { accessTokenTTL, refreshTokenTTL, refreshTokenAbsoluteTTL } = clientLifetimes(deps.config, client);
     const now = Date.now();
-    const refreshToken = registry == null || registry.refresh ? generateToken() : null;
+    const refreshToken = (registry == null || registry.refresh) && offlineAccessAllowed(client) ? generateToken() : null;
     if (refreshToken != null) {
       await storage.setRefresh(deps.platform, coreId, refreshToken, {
         clientId: row.clientId,
@@ -434,7 +428,7 @@ export async function handleAuthorizationCode (
         access_token: accessToken,
         token_type: dpopJkt != null ? 'DPoP' : 'Bearer',
         expires_in: accessTokenTTL,
-        refresh_token: refreshToken,
+        ...(refreshToken != null ? { refresh_token: refreshToken } : {}),
         scope: row.scope.join(' '),
         apiEndpoint,
       },

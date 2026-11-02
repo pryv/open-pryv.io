@@ -355,13 +355,13 @@ describe('[OAUTH-CLIENT] client registry', () => {
       await assert.rejects(persistClient(platform, { ...base, jwks: { keys: [] } }), /non-empty/);
       await assert.rejects(persistClient(platform, { ...base, jwks: {} }), /keys/);
     });
-    it('[OAUTH-CLIENT-5d] rejects a non-EC / non-P-256 key', async () => {
+    it('[OAUTH-CLIENT-5d] rejects a key type or curve outside EC P-256 / P-384 and RSA', async () => {
       const platform = fakePlatform();
       await assert.rejects(persistClient(platform, {
-        ...base, jwks: { keys: [{ ...publicJwk, kty: 'RSA' }] },
+        ...base, jwks: { keys: [{ ...publicJwk, kty: 'oct' }] },
       }), /kty/);
       await assert.rejects(persistClient(platform, {
-        ...base, jwks: { keys: [{ ...publicJwk, crv: 'P-384' }] },
+        ...base, jwks: { keys: [{ ...publicJwk, crv: 'P-521' }] },
       }), /crv/);
     });
   });

@@ -211,6 +211,12 @@ async function runCreate (platform, args, persistClient, getClient) {
     ? args.flags['grant-type']
     : ['authorization_code', 'refresh_token'];
   const jwks = resolveJwks(args); // undefined when neither --jwks-file nor --jwks-json given
+  const jwksUri = resolveJwksUri(args, jwks, 'create');
+  const signingAlgs = parseSigningAlgs(args);
+  if (signingAlgs != null && jwks == null && jwksUri == null) {
+    throw new Error('create: --signing-alg needs a key set (--jwks-file, --jwks-json or --jwks-uri)');
+  }
+  const lifetimes = definedOnly(lifetimeFieldsFromFlags(args, 'create'));
 
   await persistClient(platform, {
     clientId,
@@ -228,6 +234,9 @@ async function runCreate (platform, args, persistClient, getClient) {
     accountUserId,
     cmcOffers: parseCmcOffers(args.flags['cmc-offer']),
     ...(jwks != null ? { jwks } : {}),
+    ...(jwksUri != null ? { jwksUri } : {}),
+    ...(signingAlgs != null && signingAlgs.length > 0 ? { tokenEndpointAuthSigningAlgs: signingAlgs } : {}),
+    ...lifetimes,
   });
 
   console.log('OK   client created: ' + clientId);
@@ -266,13 +275,19 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   }
   const authMethod = authMethodFlag(args, 'create-registry') ?? 'none';
   const jwks = resolveJwks(args);
-  if (authMethod === 'private_key_jwt' && jwks == null) {
-    throw new Error('create-registry: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
+  const jwksUri = resolveJwksUri(args, jwks, 'create-registry');
+  if (authMethod === 'private_key_jwt' && jwks == null && jwksUri == null) {
+    throw new Error('create-registry: --auth-method private_key_jwt needs --jwks-file, --jwks-json or --jwks-uri');
   }
   // A key set is a credential at /token whatever the method says: only with private_key_jwt.
-  if (jwks != null && authMethod !== 'private_key_jwt') {
-    throw new Error('create-registry: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses ' + authMethod + ')');
+  if ((jwks != null || jwksUri != null) && authMethod !== 'private_key_jwt') {
+    throw new Error('create-registry: --jwks-file / --jwks-json / --jwks-uri go with --auth-method private_key_jwt (this client uses ' + authMethod + ')');
   }
+  const signingAlgs = parseSigningAlgs(args);
+  if (signingAlgs != null && authMethod !== 'private_key_jwt') {
+    throw new Error('create-registry: --signing-alg goes with --auth-method private_key_jwt');
+  }
+  const lifetimes = definedOnly(lifetimeFieldsFromFlags(args, 'create-registry'));
   const fields = registryFieldsFromFlags(args, 'create-registry');
   let secret = null;
   if (authMethod === 'client_secret_basic') {
@@ -329,12 +344,20 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     ...(canIntrospect ? { canIntrospect: true } : {}),
     ...(secret != null ? { clientSecretHash: secret.hash } : {}),
     ...(jwks != null ? { jwks } : {}),
+    ...(jwksUri != null ? { jwksUri } : {}),
+    ...(signingAlgs != null && signingAlgs.length > 0 ? { tokenEndpointAuthSigningAlgs: signingAlgs } : {}),
+    ...lifetimes,
   });
   console.log('OK   registry client created: ' + clientId);
   if (canIntrospect) console.log('     introspection: allowed (resource-server role)');
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log('     auth method:   ' + authMethod);
+  if (authMethod === 'private_key_jwt') {
+    console.log('     keys:          ' + (jwksUri != null ? jwksUri : 'inline, ' + jwks.keys.length + ' key(s)') +
+      '; algorithms: ' + (signingAlgs != null && signingAlgs.length > 0 ? signingAlgs.join(', ') : '(any that fits the keys)'));
+  }
+  printLifetimes(lifetimes);
   console.log('     audiences:     ' + (anyAudience ? '(any audience)' : audiences.join(', ')));
   console.log('     subject type:  ' + describeSubjectType(subjectType));
   printDefaultForbids({ allowFeatures: allowFeatures ?? [] });
@@ -372,15 +395,30 @@ async function runShow (platform, args, getClient, computeThumbprint) {
   const view = { ...client };
   // The secret's hash is offline-guessable: say only that one is set.
   if (client.clientSecretHash != null) view.clientSecretHash = '(set)';
+  if (client.previousSecretHash != null) view.previousSecretHash = '(set)';
   if (client.jwks != null && Array.isArray(client.jwks.keys)) {
     view.jwks = {
       keys: client.jwks.keys.map((k) => ({
         ...(k && k.kid != null ? { kid: k.kid } : {}),
+        ...(k && typeof k.kty === 'string' ? { kty: k.kty } : {}),
+        ...(k && typeof k.crv === 'string' ? { crv: k.crv } : {}),
+        ...(k && typeof k.alg === 'string' ? { alg: k.alg } : {}),
         thumbprint: safeThumbprint(computeThumbprint, k),
       })),
     };
   }
   console.log(JSON.stringify(view, null, 2));
+  if (typeof client.previousSecretExpiresAt === 'number') {
+    console.log('previous secret: ' + (client.previousSecretExpiresAt > Date.now()
+      ? 'accepted until ' + new Date(client.previousSecretExpiresAt).toISOString()
+      : 'expired ' + new Date(client.previousSecretExpiresAt).toISOString() + ' (refused)'));
+  }
+  if (client.tokenEndpointAuthMethod === 'private_key_jwt' || client.jwks != null || client.jwksUri != null) {
+    console.log('assertion algorithms: ' + (Array.isArray(client.tokenEndpointAuthSigningAlgs) && client.tokenEndpointAuthSigningAlgs.length > 0
+      ? client.tokenEndpointAuthSigningAlgs.join(', ') + ' (pinned)'
+      : 'any of ES256, ES384, RS384 that fits a key of the set'));
+  }
+  printLifetimes(client, '');
   if (client.kind === 'registry') {
     if (client.subjectType == null) {
       console.log('subjectType: unset, reads as public (set it with update --subject-type)');
@@ -400,10 +438,14 @@ async function runShow (platform, args, getClient, computeThumbprint) {
 
 // Compute a key's RFC 7638 thumbprint for display; never throw out of `show`.
 function safeThumbprint (computeThumbprint, jwk) {
+  let key;
   try {
-    if (jwk == null || jwk.kty !== 'EC' || jwk.crv !== 'P-256' ||
-        typeof jwk.x !== 'string' || typeof jwk.y !== 'string') return '(unrecognized key)';
-    return computeThumbprint({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y });
+    key = require('oauth2/src/jwks.ts').validatePublicJwk(jwk);
+  } catch (_e) {
+    return '(unrecognized key)';
+  }
+  try {
+    return computeThumbprint(key);
   } catch (_e) {
     return '(thumbprint error)';
   }
@@ -465,22 +507,26 @@ function parseBooleanFlag (args, name, command) {
 // The flags a command reads. `values` need a value (refused bare), `booleans`
 // take none (or true / false), `own` are checked by the command itself.
 // Anything else is refused: a mistyped flag must not report success.
-const COMMON_VALUES = ['redirect-uri', 'scope', 'grant-type', 'name', 'client-uri', 'logo-uri', 'jwks-file', 'jwks-json'];
+const COMMON_VALUES = [
+  'redirect-uri', 'scope', 'grant-type', 'name', 'client-uri', 'logo-uri', 'jwks-file', 'jwks-json', 'jwks-uri', 'signing-alg',
+  'access-token-ttl', 'refresh-token-ttl', 'refresh-token-absolute-ttl',
+];
+const COMMON_BOOLEANS = ['offline-access'];
 const APP_ACCOUNT_VALUES = ['application-type', 'cmc-offer'];
 const REGISTRY_VALUES = ['audience', 'policy-uri', 'tos-uri', 'contact', 'extra', 'launch-type', 'auth-method'];
 const CREATE_FLAGS = {
   values: [...COMMON_VALUES, ...APP_ACCOUNT_VALUES],
-  booleans: [],
+  booleans: [...COMMON_BOOLEANS],
   own: ['client-id'],
 };
 const CREATE_REGISTRY_FLAGS = {
   values: [...COMMON_VALUES, ...REGISTRY_VALUES],
-  booleans: ['any-audience', 'allow-insecure-redirect', 'can-introspect'],
+  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'can-introspect'],
   own: ['subject-type', 'allow-feature'],
 };
 const UPDATE_FLAGS = {
   values: [...COMMON_VALUES, ...REGISTRY_VALUES, ...APP_ACCOUNT_VALUES],
-  booleans: ['any-audience', 'allow-insecure-redirect', 'yes', 'can-introspect'],
+  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'yes', 'can-introspect'],
   own: ['subject-type', 'allow-feature', 'client-id'],
 };
 // Flags that only mean something on a registry row.
@@ -644,16 +690,35 @@ async function runUpdate (platform, args, getClient, persistClient) {
   }
   // Not read any more: apiEndpoint follows the grant (sent unless aliased).
   delete merged.omitApiEndpoint;
-  // Replace the inline JWK Set only when --jwks-file/--jwks-json is given;
-  // otherwise keep the existing set untouched.
+  // Replace the key set only when --jwks-file / --jwks-json / --jwks-uri is
+  // given (inline and by reference exclude each other); otherwise keep it.
   const jwks = resolveJwks(args);
-  if (jwks != null) merged.jwks = jwks;
-  const secret = existing.kind === 'registry' ? await updateAuthMethod(existing, merged, args, jwks != null) : null;
+  const jwksUri = resolveJwksUri(args, jwks, 'update');
+  if (jwks != null) {
+    merged.jwks = jwks;
+    delete merged.jwksUri;
+  }
+  if (jwksUri != null) {
+    merged.jwksUri = jwksUri;
+    delete merged.jwks;
+  }
+  const signingAlgs = parseSigningAlgs(args);
+  if (signingAlgs != null) {
+    if (signingAlgs.length > 0) merged.tokenEndpointAuthSigningAlgs = signingAlgs;
+    else delete merged.tokenEndpointAuthSigningAlgs;
+  }
+  const lifetimeFields = lifetimeFieldsFromFlags(args, 'update');
+  for (const [key, value] of Object.entries(lifetimeFields)) {
+    if (value === undefined) delete merged[key];
+    else merged[key] = value;
+  }
+  const secret = existing.kind === 'registry'
+    ? await updateAuthMethod(existing, merged, args, jwks != null || jwksUri != null, signingAlgs != null && signingAlgs.length > 0)
+    : null;
   // `--can-introspect` (bare / true / false): the resource-server role.
   const canIntrospect = parseBooleanFlag(args, 'can-introspect', 'update');
   if (canIntrospect === true) {
-    const confidential = (typeof merged.clientSecretHash === 'string' && merged.clientSecretHash.length > 0) ||
-      (merged.jwks != null && Array.isArray(merged.jwks.keys) && merged.jwks.keys.length > 0);
+    const confidential = (typeof merged.clientSecretHash === 'string' && merged.clientSecretHash.length > 0) || hasKeys(merged);
     if (!confidential) throw new Error('update: --can-introspect needs a confidential client (a secret or a key set on file)');
     merged.canIntrospect = true;
   } else if (canIntrospect === false) {
@@ -682,8 +747,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
   }
   // Introspection refuses a public caller at run time; say so rather than
   // leave a role that silently does nothing.
-  if (row.canIntrospect === true && !(typeof row.clientSecretHash === 'string' && row.clientSecretHash.length > 0) &&
-      !(row.jwks != null && Array.isArray(row.jwks.keys) && row.jwks.keys.length > 0)) {
+  if (row.canIntrospect === true && !(typeof row.clientSecretHash === 'string' && row.clientSecretHash.length > 0) && !hasKeys(row)) {
     console.log('     WARN introspection role kept on a public client: refused until it has a secret or a key set ' +
       '(--can-introspect false withdraws it)');
   }
@@ -697,6 +761,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
       : '     plain-http redirect URIs refused on non-loopback hosts');
   }
   if (args.flags['allow-feature'] != null) printDefaultForbids(row);
+  if (Object.keys(lifetimeFields).length > 0) printLifetimes(row);
   if (secret != null) {
     console.log('     client_secret: ' + secret.plaintext);
     console.log('     (shown once: store it now)');
@@ -715,11 +780,14 @@ async function runUpdate (platform, args, getClient, persistClient) {
  * of the old method. A new client_secret_basic mints a secret (returned, to be
  * printed once); a move to none needs --yes. Mutates `merged`.
  */
-async function updateAuthMethod (existing, merged, args, jwksGiven) {
+async function updateAuthMethod (existing, merged, args, keysGiven, algsGiven) {
   const from = existing.tokenEndpointAuthMethod ?? '(unset)';
   const to = authMethodFlag(args, 'update') ?? from;
-  if (jwksGiven && to !== 'private_key_jwt') {
-    throw new Error('update: --jwks-file / --jwks-json go with --auth-method private_key_jwt (this client uses ' + to + ')');
+  if (keysGiven && to !== 'private_key_jwt') {
+    throw new Error('update: --jwks-file / --jwks-json / --jwks-uri go with --auth-method private_key_jwt (this client uses ' + to + ')');
+  }
+  if (algsGiven && to !== 'private_key_jwt') {
+    throw new Error('update: --signing-alg goes with --auth-method private_key_jwt (this client uses ' + to + ')');
   }
   if (to === from) return null;
   merged.tokenEndpointAuthMethod = to;
@@ -728,20 +796,42 @@ async function updateAuthMethod (existing, merged, args, jwksGiven) {
       throw new Error('update: changing the client authentication of "' + existing.clientId + '" from ' + from +
         ' to none makes it a public client (its refresh tokens are then redeemed without client authentication); re-run with --yes');
     }
-    delete merged.clientSecretHash;
-    delete merged.jwks;
+    dropSecrets(merged);
+    dropKeys(merged);
     return null;
   }
   if (to === 'private_key_jwt') {
-    if (merged.jwks == null) throw new Error('update: --auth-method private_key_jwt needs --jwks-file or --jwks-json');
-    delete merged.clientSecretHash;
+    if (merged.jwks == null && merged.jwksUri == null) {
+      throw new Error('update: --auth-method private_key_jwt needs --jwks-file, --jwks-json or --jwks-uri');
+    }
+    dropSecrets(merged);
     return null;
   }
   const { mintSecret } = require('oauth2/src/clientSecret.ts');
   const secret = await mintSecret();
+  dropSecrets(merged);
   merged.clientSecretHash = secret.hash;
-  delete merged.jwks;
+  dropKeys(merged);
   return secret;
+}
+
+// The credentials of one method, dropped when the client moves to another.
+function dropSecrets (row) {
+  delete row.clientSecretHash;
+  delete row.previousSecretHash;
+  delete row.previousSecretExpiresAt;
+}
+
+function dropKeys (row) {
+  delete row.jwks;
+  delete row.jwksUri;
+  delete row.tokenEndpointAuthSigningAlgs;
+}
+
+// A key set on file, inline or by reference.
+function hasKeys (row) {
+  return (row.jwks != null && Array.isArray(row.jwks.keys) && row.jwks.keys.length > 0) ||
+    (typeof row.jwksUri === 'string' && row.jwksUri.length > 0);
 }
 
 async function runRevoke (platform, args, removeClient) {
@@ -835,6 +925,8 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
   if (args.flagsScalar['client-id'] != null) {
     throw new Error('rotate-secret: client_id cannot be changed here; name the client as the argument');
   }
+  checkFlags(args, 'rotate-secret', ROTATE_SECRET_FLAGS);
+  const windowSeconds = parsePreviousValidFor(args);
   const existing = await getClient(platform, clientId);
   if (!existing) throw new Error('rotate-secret: client "' + clientId + '" not found');
   // A secret on such a client would make it confidential by a method it is
@@ -848,7 +940,18 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
   const { mintSecret } = require('oauth2/src/clientSecret.ts');
   const { plaintext, hash } = await mintSecret();
 
-  await persistClient(platform, { ...existing, clientSecretHash: hash });
+  // The secret replaced stays valid for the window asked (none by default:
+  // a rotation after a leak must end the old secret at once). A second
+  // rotation within a window ends the older secret.
+  const row = { ...existing, clientSecretHash: hash };
+  delete row.previousSecretHash;
+  delete row.previousSecretExpiresAt;
+  const keepPrevious = windowSeconds > 0 && typeof existing.clientSecretHash === 'string' && existing.clientSecretHash.length > 0;
+  if (keepPrevious) {
+    row.previousSecretHash = existing.clientSecretHash;
+    row.previousSecretExpiresAt = Date.now() + windowSeconds * 1000;
+  }
+  await persistClient(platform, row);
 
   console.log('OK   client_secret rotated for: ' + clientId);
   console.log();
@@ -857,7 +960,25 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
   console.log();
   console.log('SHOWN ONCE. Store it now in the consuming app. The hash is');
   console.log('persisted; the plaintext is never written to disk or logs.');
-  console.log('Re-run this command to mint a new secret (invalidates the old one).');
+  if (keepPrevious) {
+    console.log('The previous secret is still accepted until ' + new Date(row.previousSecretExpiresAt).toISOString() +
+      ' (then refused).');
+  } else {
+    console.log('The previous secret is refused from now on. Re-run with --previous-valid-for <seconds>');
+    console.log('to keep the replaced secret valid while the app switches (30 days at most).');
+  }
+}
+
+const ROTATE_SECRET_FLAGS = { values: ['previous-valid-for'], booleans: [], own: [] };
+
+// `--previous-valid-for <seconds>`: 0 (the default) to 30 days.
+function parsePreviousValidFor (args) {
+  const v = args.flagsScalar['previous-valid-for'];
+  if (v == null) return 0;
+  if (!/^(0|[1-9][0-9]*)$/.test(v)) throw new Error('rotate-secret: --previous-valid-for takes a number of seconds');
+  const seconds = Number(v);
+  if (seconds > 30 * 24 * 3600) throw new Error('rotate-secret: --previous-valid-for is 30 days (2592000 seconds) at most');
+  return seconds;
 }
 
 // ---------------------------------------------------------------------------
@@ -890,8 +1011,8 @@ function parseCmcOffers (values) {
 
 // --jwks-file <path> | --jwks-json <json> → the inline public JWK Set object,
 // or undefined when neither is given. Mutually exclusive. Only parses JSON here;
-// deep validation (EC P-256 public keys only, no private `d`) happens in
-// persistClient → validatePublicJwkSet, which throws a clear error.
+// deep validation (EC P-256 / P-384 or RSA public keys, no private member, a kid
+// on each key of a set of several) happens in persistClient → validatePublicJwkSet.
 function resolveJwks (args) {
   const file = args.flagsScalar['jwks-file'];
   const json = args.flagsScalar['jwks-json'];
@@ -917,6 +1038,66 @@ function resolveJwks (args) {
   } catch (err) {
     throw new Error('--jwks-' + (hasFile ? 'file' : 'json') + ': not valid JSON: ' + (err.message ?? err));
   }
+}
+
+// --jwks-uri <https-url> → the key set by reference, or undefined. Excludes an
+// inline set given in the same command. Deep checks in persistClient.
+function resolveJwksUri (args, jwks, command) {
+  const uri = args.flagsScalar['jwks-uri'];
+  if (uri == null) return undefined;
+  if (jwks != null) throw new Error(command + ': --jwks-uri excludes --jwks-file / --jwks-json');
+  return uri;
+}
+
+// --signing-alg <alg> (multi) → the pinned algorithms, null when absent, []
+// for "none" (clears the list on update).
+function parseSigningAlgs (args) {
+  const values = args.flags['signing-alg'];
+  if (values == null) return null;
+  if (values.length === 1 && values[0] === 'none') return [];
+  const { CLIENT_ASSERTION_ALGS } = require('oauth2/src/jwks.ts');
+  const unknown = values.filter((a) => !CLIENT_ASSERTION_ALGS.includes(a));
+  if (unknown.length > 0) {
+    throw new Error('--signing-alg must be one of ' + CLIENT_ASSERTION_ALGS.join(', ') + ' (got ' + unknown.join(', ') + ')');
+  }
+  return [...new Set(values)];
+}
+
+const LIFETIME_FLAGS = [
+  ['access-token-ttl', 'accessTokenTTL'],
+  ['refresh-token-ttl', 'refreshTokenTTL'],
+  ['refresh-token-absolute-ttl', 'refreshTokenAbsoluteTTL'],
+];
+
+// The client's lifetimes and offline access from the flags: an absent flag is
+// left out, `none` (or `--offline-access true`, the default) maps to
+// undefined (the field is removed on update).
+function lifetimeFieldsFromFlags (args, command) {
+  const fields = {};
+  for (const [flag, key] of LIFETIME_FLAGS) {
+    const v = args.flagsScalar[flag];
+    if (v == null) continue;
+    if (v === 'none') {
+      fields[key] = undefined;
+      continue;
+    }
+    if (!/^[1-9][0-9]*$/.test(v)) throw new Error(command + ': --' + flag + ' takes a positive number of seconds, or none');
+    fields[key] = Number(v);
+  }
+  const offline = parseBooleanFlag(args, 'offline-access', command);
+  if (offline != null) fields.offlineAccessAllowed = offline ? undefined : false;
+  return fields;
+}
+
+function definedOnly (fields) {
+  return Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+}
+
+// The lifetimes a client row carries (each is clamped at use to the platform's).
+function printLifetimes (row, indent = '     ') {
+  const own = LIFETIME_FLAGS.filter(([, key]) => row[key] != null).map(([flag, key]) => flag.replace(/-/g, ' ') + ' ' + row[key] + ' s');
+  if (own.length > 0) console.log(indent + 'lifetimes:     ' + own.join(', ') + ' (each capped by this platform\'s oauth settings)');
+  if (row.offlineAccessAllowed === false) console.log(indent + 'offline access: withheld (no refresh token)');
 }
 
 // The oauth2 storage helpers (client row shape), loaded after boiler init.
@@ -958,7 +1139,7 @@ async function hostingCoreOf (username) {
 function parseArgs (argv) {
   // Declared here, not at module level: parseArgs runs from the async block
   // at the top of the file, before module-level constants are initialized.
-  const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type', 'allow-feature'];
+  const MULTI_FLAGS = ['redirect-uri', 'scope', 'grant-type', 'cmc-offer', 'audience', 'contact', 'extra', 'launch-type', 'allow-feature', 'signing-alg'];
   const result = { command: null, positional: [], flags: {}, flagsScalar: {} };
   let i = 0;
   result.command = argv[i++] ?? null;
@@ -998,7 +1179,7 @@ function printUsage (stream) {
     '  node bin/oauth-client.js unrevoke-key <jkt> --yes\n' +
     '  node bin/oauth-client.js list-revoked-keys\n' +
     '  node bin/oauth-client.js list-keys [<clientId>]\n' +
-    '  node bin/oauth-client.js rotate-secret <clientId>\n' +
+    '  node bin/oauth-client.js rotate-secret <clientId> [--previous-valid-for <seconds>]\n' +
     '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise\n' +
     '      (--audience <url> | --any-audience) [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n\n' +
@@ -1008,7 +1189,8 @@ function printUsage (stream) {
     'list, and "none" clears --extra, --contact, --launch-type, --policy-uri and\n' +
     '--tos-uri. An unknown flag is refused.\n' +
     '  --auth-method none|client_secret_basic|private_key_jwt   (default none;\n' +
-    '                            --jwks-file / --jwks-json go with private_key_jwt only; the\n' +
+    '                            --jwks-file / --jwks-json / --jwks-uri and --signing-alg\n' +
+    '                            go with private_key_jwt only; the\n' +
     '                            secret is printed once; on update, a change drops the\n' +
     '                            credentials of the old method, a new secret is minted\n' +
     '                            for client_secret_basic, and none needs --yes)\n' +
@@ -1047,11 +1229,24 @@ function printUsage (stream) {
     '  --client-uri <uri>        client_uri shown on the consent screen\n' +
     '  --logo-uri <uri>          logo_uri shown on the consent screen\n' +
     '  --application-type web|native\n' +
-    '  --jwks-file <path>        inline public JWK Set (private_key_jwt client auth);\n' +
-    '                            EC P-256 (ES256) PUBLIC keys only: a key with a\n' +
-    '                            private "d" member is rejected\n' +
+    '  --jwks-file <path>        inline public JWK Set (private_key_jwt client auth):\n' +
+    '                            EC P-256 (ES256), EC P-384 (ES384) or RSA of 2048 bits\n' +
+    '                            or more (RS384) PUBLIC keys; a key with private members\n' +
+    '                            is rejected; several keys need a distinct "kid" each\n' +
     '  --jwks-json <json>        same, as an inline JSON string (mutually exclusive\n' +
     '                            with --jwks-file)\n' +
+    '  --jwks-uri <https-url>    the key set by reference instead (excludes the two\n' +
+    '                            above): fetched by the core, https only, no redirect,\n' +
+    '                            private addresses refused, cached 5 minutes\n' +
+    '  --signing-alg <alg>       (multi; "none" clears on update) pin the algorithms\n' +
+    '                            the client\'s assertions may use: ES256, ES384, RS384\n' +
+    '                            (default: any that fits a key of its set)\n' +
+    '  --access-token-ttl <s>  --refresh-token-ttl <s>  --refresh-token-absolute-ttl <s>\n' +
+    '                            this client\'s token lifetimes in seconds ("none" clears\n' +
+    '                            on update); never longer than the oauth settings of the\n' +
+    '                            platform, which cap them at use\n' +
+    '  --offline-access true|false   false: no refresh token is issued to or redeemed\n' +
+    '                            by this client (default true)\n' +
     '  --cmc-offer <name>=<capabilityUrl>\n' +
     '                            (multi-valued) register a consent-offer reference for\n' +
     '                            granular scope: the app account publishes an open-link\n' +
@@ -1065,6 +1260,8 @@ function printUsage (stream) {
     '  - create, create-registry and update refuse an unknown flag.\n' +
     '  - rotate-secret is refused on a client whose auth method uses no secret\n' +
     '    (none, private_key_jwt): switch it with update --auth-method.\n' +
+    '  - rotate-secret --previous-valid-for <seconds> keeps the replaced secret valid\n' +
+    '    that long (30 days at most; default 0: refused at once, as after a leak).\n' +
     '  - show prints the client secret as "(set)", never its hash.\n' +
     '  - HTTP `POST /oauth2/register` (RFC 7591 mode:open) is intentionally deferred.\n'
   );

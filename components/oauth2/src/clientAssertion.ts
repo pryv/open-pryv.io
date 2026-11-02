@@ -8,20 +8,24 @@
 /**
  * OAuth2 — `private_key_jwt` client-authentication assertion verification
  * (RFC 7521 + RFC 7523). Pure module: no HTTP, no storage. Validates the
- * `client_assertion` (a compact JWS) against the client's registered
- * inline public JWK Set and the token-endpoint's expected audiences.
- * Replay accounting (`jti` single-use) is the CALLER's job — this module
- * only validates shape, signature and claims.
+ * `client_assertion` (a compact JWS) against the client's public JWK Set
+ * (inline, or fetched from its `jwks_uri` by the caller) and the
+ * token-endpoint's expected audiences. Replay accounting (`jti` single-use)
+ * is the CALLER's job: this module only validates shape, signature and claims.
  *
- * Deliberately ES256-only (EC P-256), verification-only, and
- * dependency-free on top of node:crypto webcrypto: the server never
- * signs, and accepting exactly one algorithm removes the JWS
- * alg-confusion surface (`none`, HMAC/RSA-with-EC-public-key) by
- * construction.
+ * Algorithms: ES256, ES384 and RS384, each bound to one key type (EC P-256,
+ * EC P-384, RSA). The header's `alg` must be one of them, among the client's
+ * pinned list when it has one, and the key used must be of that algorithm's
+ * type: `none`, HMAC and any key/algorithm mix are refused by construction.
+ * With more than one key in the set the header must name its key (`kid`).
+ * Verification-only, dependency-free on top of node:crypto webcrypto.
  */
 
 import { webcrypto } from 'node:crypto';
-import { validatePublicJwk, importVerifyKey, type EcP256PublicJwk } from './jwks.ts';
+import {
+  usablePublicJwkSet, importVerifyKey, keyMatchesAlg, verifyParams,
+  CLIENT_ASSERTION_ALGS, EC_SIGNATURE_BYTES, type ClientPublicJwk,
+} from './jwks.ts';
 
 const { subtle } = webcrypto;
 
@@ -31,7 +35,7 @@ const { subtle } = webcrypto;
  */
 export const CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 
-/** Upper bound on an acceptable assertion; a legitimate ES256 JWT is <2 KB. */
+/** Upper bound on an acceptable assertion; a legitimate one (RS384 included) is <2 KB. */
 const MAX_ASSERTION_LENGTH = 8192;
 
 /**
@@ -57,8 +61,13 @@ export interface VerifiedClientAssertion {
 export interface ClientAssertionVerifyOptions {
   /** The request's authenticated client_id — must equal iss and sub. */
   clientId: string;
-  /** The client's registered inline public JWK Set (raw; re-validated here). */
+  /** The client's public JWK Set (inline or fetched; re-validated here). */
   jwks: { keys: unknown[] } | null | undefined;
+  /**
+   * The client's pinned algorithms (`tokenEndpointAuthSigningAlgs`); absent
+   * or empty: any supported algorithm that fits a key of the set.
+   */
+  allowedAlgs?: string[] | undefined;
   /** Acceptable `aud` values — the token-endpoint URL and the issuer URL. */
   expectedAudiences: string[];
   /** Injectable clock for tests (ms since epoch). */
@@ -73,14 +82,17 @@ export interface ClientAssertionVerifyOptions {
 export class ClientAssertionError extends Error {
   readonly code = 'invalid_client';
   readonly reason: string;
-  constructor (reason: string) {
+  /** The header named a `kid` the set does not hold (a fetched set may be refreshed). */
+  readonly unknownKid: boolean;
+  constructor (reason: string, unknownKid: boolean = false) {
     super('client assertion verification failed');
     this.reason = reason;
+    this.unknownKid = unknownKid;
   }
 }
 
-function fail (reason: string): never {
-  throw new ClientAssertionError(reason);
+function fail (reason: string, unknownKid: boolean = false): never {
+  throw new ClientAssertionError(reason, unknownKid);
 }
 
 function b64urlDecode (segment: string): Buffer {
@@ -102,29 +114,34 @@ function parseJsonObject (buf: Buffer, what: string): Record<string, unknown> {
 }
 
 /**
- * Validate the client's JWK Set for verification and select candidate
- * keys. When the header names a `kid`, only the matching key is tried;
- * otherwise every registered key is a candidate.
+ * Validate the client's JWK Set and select the candidate keys for `alg`.
+ * A set of more than one key needs the header to name its key (`kid`); a
+ * named kid that matches nothing fails (no fall-through to every key). The
+ * key selected must be of the type `alg` names (an RS384 header naming an EC
+ * key fails), so no key is ever used with another algorithm than its own.
  */
-function selectCandidateKeys (jwksRaw: { keys: unknown[] } | null | undefined, kid: unknown): EcP256PublicJwk[] {
+function selectCandidateKeys (jwksRaw: { keys: unknown[] } | null | undefined, kid: unknown, alg: string): ClientPublicJwk[] {
   if (jwksRaw == null || typeof jwksRaw !== 'object' || !Array.isArray(jwksRaw.keys) || jwksRaw.keys.length === 0) {
     fail('no JWKS on file for client');
   }
-  let keys: EcP256PublicJwk[];
+  let keys: ClientPublicJwk[];
   try {
-    keys = jwksRaw.keys.map(validatePublicJwk);
+    keys = usablePublicJwkSet(jwksRaw).keys;
   } catch {
-    fail('registered JWKS is not a valid public EC P-256 set');
+    fail('the JWK Set holds no usable public key');
   }
-  if (typeof kid === 'string' && kid.length > 0) {
-    const matched = keys.filter((k) => k.kid === kid);
-    // A named kid that matches nothing is a failure — do NOT fall back to
-    // trying every key (that would let an attacker name a bogus kid and still
-    // brute the set).
-    if (matched.length === 0) fail('no registered key matches the assertion kid');
-    return matched;
+  let named: ClientPublicJwk[];
+  if (kid != null) {
+    if (typeof kid !== 'string' || kid.length === 0 || kid.length > 256) fail('header.kid is not a string of 1 to 256 characters');
+    named = keys.filter((k) => k.kid === kid);
+    if (named.length === 0) fail('no registered key matches the assertion kid', true);
+  } else {
+    if (keys.length > 1) fail('header.kid is required: the key set holds more than one key');
+    named = keys;
   }
-  return keys;
+  const fitting = named.filter((k) => keyMatchesAlg(k, alg));
+  if (fitting.length === 0) fail('the key named does not fit header.alg');
+  return fitting;
 }
 
 /**
@@ -146,22 +163,29 @@ export async function verifyClientAssertion (
   const [headerB64, payloadB64, signatureB64] = segments;
 
   const header = parseJsonObject(b64urlDecode(headerB64), 'JWS header');
-  // ES256 ONLY — rejects `none`, HS*, RS*, and any alg-confusion attempt.
-  if (header.alg !== 'ES256') fail('header.alg must be ES256');
+  // A supported algorithm only (rejects `none`, HS*, RS256, PS*, …), and one
+  // the client is pinned to when it has a list.
+  const alg = header.alg;
+  if (typeof alg !== 'string' || !CLIENT_ASSERTION_ALGS.includes(alg)) fail('header.alg is not a supported algorithm');
+  const pinned = Array.isArray(opts.allowedAlgs) && opts.allowedAlgs.length > 0 ? opts.allowedAlgs : null;
+  if (pinned != null && !pinned.includes(alg)) fail('header.alg is not one of the client\'s algorithms');
+  // No JWS extension is understood here (RFC 7515 §4.1.11).
+  if ('crit' in header) fail('header.crit is not supported');
 
-  const candidates = selectCandidateKeys(opts.jwks, header.kid);
+  const candidates = selectCandidateKeys(opts.jwks, header.kid, alg);
 
-  // ES256 JWS signatures are the raw 64-byte r||s concatenation — exactly
-  // the form webcrypto ECDSA verify expects.
+  // ES JWS signatures are the raw r||s concatenation, exactly the form
+  // webcrypto ECDSA verify expects; an RS384 signature is as long as the modulus.
   const signature = b64urlDecode(signatureB64);
-  if (signature.length !== 64) fail('signature is not a raw ES256 signature');
+  const ecBytes = EC_SIGNATURE_BYTES[alg];
+  if (ecBytes != null && signature.length !== ecBytes) fail('signature is not a raw ' + alg + ' signature');
   const signingInput = Buffer.from(`${headerB64}.${payloadB64}`, 'utf8');
 
   let valid = false;
   for (const jwk of candidates) {
     try {
-      const key = await importVerifyKey(jwk);
-      if (await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, signature, signingInput)) {
+      const key = await importVerifyKey(jwk, alg);
+      if (await subtle.verify(verifyParams(alg), key, signature, signingInput)) {
         valid = true;
         break;
       }

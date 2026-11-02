@@ -97,10 +97,12 @@ describe('[OAUTH-CASSERT] private_key_jwt client assertion', () => {
       const v = await verifyClientAssertion(a, opts(key, { jwks: { keys: [withKid] } }));
       assert.ok(v.jti);
     });
-    it('[OCA5] with no kid, every registered key is tried (signer is second in set)', async () => {
+    it('[OCA5] with more than one key on file, an assertion without kid is refused (the header must name its key)', async () => {
       const other = await makeKeyPair();
       const a = await makeAssertion(key);
-      const v = await verifyClientAssertion(a, opts(key, { jwks: { keys: [other.publicJwk, key.publicJwk] } }));
+      await assertRejected(verifyClientAssertion(a, opts(key, { jwks: { keys: [other.publicJwk, key.publicJwk] } })));
+      const named = await makeAssertion(key, { header: { kid: 'k2' } });
+      const v = await verifyClientAssertion(named, opts(key, { jwks: { keys: [{ ...other.publicJwk, kid: 'k1' }, { ...key.publicJwk, kid: 'k2' }] } }));
       assert.ok(v.jti);
     });
   });
@@ -213,10 +215,10 @@ describe('[OAUTH-CASSERT] private_key_jwt client assertion', () => {
       assert.throws(() => validatePublicJwk(key.privateJwk), /private key material/);
     });
     it('[OCA30] wrong kty is rejected', () => {
-      assert.throws(() => validatePublicJwk({ ...key.publicJwk, kty: 'RSA' }), /kty/);
+      assert.throws(() => validatePublicJwk({ ...key.publicJwk, kty: 'oct' }), /kty/);
     });
     it('[OCA31] wrong crv is rejected', () => {
-      assert.throws(() => validatePublicJwk({ ...key.publicJwk, crv: 'P-384' }), /crv/);
+      assert.throws(() => validatePublicJwk({ ...key.publicJwk, crv: 'P-521' }), /crv/);
     });
     it('[OCA32] a malformed coordinate is rejected', () => {
       assert.throws(() => validatePublicJwk({ ...key.publicJwk, x: 'short' }), /coordinate/);
