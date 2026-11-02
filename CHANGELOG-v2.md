@@ -85,6 +85,12 @@
 - **Personal accesses report `lastLogin`** (read-only, seconds) in `accesses.get` and
   `getAccessInfo`: the time of the last completed sign-in on that access. It cannot be set by
   `accesses.create` or `accesses.update`.
+- **`accesses.create` refuses `lastUsed`** (`invalid-parameters-format`, like any other read-only
+  property), as `accesses.update` already did (`forbidden`). It was stored as given, so an account
+  holder could create an app access with a `lastUsed` far in the future and keep the account looking
+  in use, past its inactivity auto-deletion or transfer date. A client that sent `lastUsed` on create
+  (it was never meant to be set) now gets an error and must drop it. Account activity, which drives
+  the inactivity schedule, also ignores a stored `lastUsed` more than one hour past the current time.
 
 ## 2.0.0-rc.69 - 2026-11-02
 

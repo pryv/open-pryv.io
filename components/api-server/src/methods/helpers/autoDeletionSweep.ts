@@ -100,13 +100,15 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
   const storageLayer = await getStorageLayer();
   const state = await getState();
   const deletion = new Deletion(null, storageLayer, config);
+  // Activity is read against the sweep's clock: a use time past it is not use.
+  const now = overrides.now ?? (() => timestamp.now());
   return createAutoDeletionSweep<AccountFacts>({
     getConfig: () => autoDeletionConfig(config),
     listAccounts: async () => await (await getUsersRepository()).getAllUsersIdAndName() as SweepAccount[],
     listPendingErasures: async () => await (await getErasuresLocal()).listAll(),
     state,
-    loadFacts: (account) => loadAccountFacts(config, account),
-    readActivity: (account) => getActivity(storageLayer.accesses as unknown as ActivityAccessesRepo, account),
+    loadFacts: (account) => loadAccountFacts(config, account, now()),
+    readActivity: (account) => getActivity(storageLayer.accesses as unknown as ActivityAccessesRepo, account, now()),
     sendReminder: (account, facts, notice) => sendScheduleMail(config, 'reminder', account, facts, notice),
     sendBlocked: (account, facts, notice) => sendScheduleMail(config, 'blocked', account, facts, notice),
     sendTransferMail: (account, facts, notice) => sendTransferMail(config, account, facts, notice),
@@ -137,7 +139,7 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
     },
     erase: (account, { trigger }) => deletion.eraseAccount(account, { teardown: true, trigger }),
     recordErasure: (account, record) => auditErasure(config, account, record),
-    now: () => timestamp.now(),
+    now,
     logger,
     ...overrides
   });

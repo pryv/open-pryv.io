@@ -37,6 +37,17 @@
   sign-in keeping its token does not refresh) and reports `lastLogin`, else `created`, as the
   authentication time.
 
+### Accesses: `lastUsed` is server-written only
+
+- `schema/access.ts` drops `lastUsed` from the create schema (kept on update, where the protected-field
+  check refuses it). `business/src/accesses/accountActivity.ts` skips a `lastUsed` later than now plus
+  `ACTIVITY_CLOCK_SKEW_SECONDS` (3600); `activityOf` / `getActivity` take an optional `now`, and the
+  auto-deletion sweep passes its own clock (`loadAccountFacts` and `readActivity`), so a test clock
+  ahead of the wall clock still sees the use it plants.
+- Not guarded: `system.getUserInfo`'s `lastAccess` (an operator report over every access) still takes
+  the latest stored `lastUsed`; storage-direct writers (backup restore, migration import) store the
+  value they are given.
+
 ### Dependencies
 
 - `follow-redirects` 1.16.1 to 1.16.2 (lockfile only, transitive through `acme-client` > `axios`):

@@ -87,7 +87,8 @@ async function hasActiveDelegate (userId: string): Promise<boolean> {
   }
 }
 
-export async function loadAccountFacts (config: ConfigLike, user: UserRef): Promise<AccountFacts> {
+/** `now` (pryv seconds) is the clock activity is read against; the sweep passes its own. */
+export async function loadAccountFacts (config: ConfigLike, user: UserRef, now?: number): Promise<AccountFacts> {
   const accesses = await findAccesses(user);
   const account = await (await getUsersRepository()).getUserById(user.id) as { email?: unknown; language?: unknown } | null;
   const email = typeof account?.email === 'string' && account.email !== '' ? account.email : null;
@@ -98,7 +99,7 @@ export async function loadAccountFacts (config: ConfigLike, user: UserRef): Prom
   const isControlled = await hasActiveDelegate(user.id);
   const notifiable = mail === 'available';
   return {
-    activity: activityOf(accesses),
+    activity: activityOf(accesses, now),
     email,
     language,
     mail,

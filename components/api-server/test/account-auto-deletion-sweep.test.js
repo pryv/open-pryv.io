@@ -242,6 +242,23 @@ describe('[ADSW] account auto-deletion sweep', function () {
     assert.deepEqual(leadsTo(s, u.username), [60, 60]);
   });
 
+  it('[ADSWF] a stored use time later than the sweep clock is not use: the account is still erased on time', async function () {
+    const u = await freshUser();
+    const app = await u.fu.access({ type: 'app', token: cuid(), name: 'acsw-app', permissions: [{ streamId: '*', level: 'read' }] });
+    await setLastUsed(u, u.personalAccessId, T0 - DAY);
+    await setLastUsed(u, app.attrs.id, T0 + 3000 * DAY);
+    await state.setSetting(u.id, inactivity(100), 'test');
+    const s = await sweepFor([u]);
+    await s.run(T0);
+    const b = await state.getBookkeeping(u.id);
+    assert.equal(b.lastActivity.app, null, 'the future use time is ignored: ' + JSON.stringify(b.lastActivity));
+    assert.equal(b.deadline, T0 + 100 * DAY);
+    for (const d of [40, 70, 93, 99]) await s.run(T0 + d * DAY);
+    const r = await s.run(T0 + 100 * DAY);
+    assert.equal(r.erased, 1, JSON.stringify(s.lines));
+    assert.equal(await exists(u), false);
+  });
+
   it('[ADSW5] shared-access use is ignored, a delegate\'s use counts and is reported', async function () {
     const sharedUser = await freshUser();
     const shared = await sharedUser.fu.access({ type: 'shared', token: cuid(), name: 'acsw-shared', permissions: [{ streamId: '*', level: 'read' }] });
@@ -777,7 +794,7 @@ describe('[ADSW] account auto-deletion sweep', function () {
     const s = await sweepFor([u], {
       readActivity: async (account) => {
         if (race) await setLastUsed(u, u.personalAccessId, s.clock.t);
-        return await getActivity(storageLayer.accesses, account);
+        return await getActivity(storageLayer.accesses, account, s.clock.t);
       }
     });
     for (const d of [0, 40, 70, 93, 99]) await s.run(T0 + d * DAY);
