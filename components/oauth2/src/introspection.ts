@@ -86,11 +86,13 @@ export function handleIntrospect (deps: IntrospectDeps) {
       ? bodyClientId
       : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
     // Uniform refusal: unknown, public, not allowed, not active, or bad credentials.
+    // The caller's regions are not checked: they say where its users are
+    // served, not where it may ask about a token (whose home core this is).
     const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
       { 'WWW-Authenticate': 'Basic realm="oauth2"' });
     if (clientId === '' || (basic != null && bodyClientId !== '' && bodyClientId !== basic.client_id)) return refuse();
     const caller = await getClient(deps.platform, clientId);
-    if (caller == null || !isConfidentialClient(caller) || caller.canIntrospect !== true || clientUnavailable(caller, deps.config) != null) {
+    if (caller == null || !isConfidentialClient(caller) || caller.canIntrospect !== true || clientUnavailable(caller, null) != null) {
       return refuse();
     }
     const issuer = issuerFromConfig(deps.config);

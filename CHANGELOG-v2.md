@@ -25,53 +25,77 @@
   failure comes after the consent: the code exchange, a refresh and an introspection answer
   `server_error`. An extension should emit no labels, groups or texts for the registered scope (never
   shown) and measure that offer first.
+
 ### OAuth registry clients: vetting status, profile, grant purge
 
 - **BREAKING (operators who change a registry client with `bin/oauth-client.js update`): a change of
-  its redirect URIs (`--redirect-uri`), key set (`--jwks-file`, `--jwks-json`, `--jwks-uri`, or an
-  `--auth-method` change that drops it) or scope (`--scope`) moves an active client to the new status
-  `review`, unless the same command carries `--approve`.** A client under review is refused like a
-  suspended one: `/oauth2/authorize` redirects `access_denied` ("this client is under review"),
-  `/oauth2/authorize/offer` and `/accept` answer 403 `access_denied`, `/oauth2/token` answers 400
-  `unauthorized_client` for every grant (a refresh token is not used up: the app retries once
-  approved), introspection answers `active: false` for its tokens and refuses it as a caller.
-  `update <clientId> --approve` approves it; `resume` does not. A change made while the client is
-  suspended is recorded and the status kept. Every status change (`suspend`, `resume`, the move to
-  `review`, an approval) is appended to the row's `statusLog` (time, operator, from, to, reason, the
-  fields that changed; the last 50), printed by `show` and never handed to the OAuth extension.
-  App-account clients have no review step.
+  where its codes and tokens land, how it authenticates, what it reaches or for how long moves an
+  active client to the new status `review`, unless the same command carries `--approve`.** The
+  vetted fields: redirect URIs (`--redirect-uri`), scope (`--scope`), key set (`--jwks-file`,
+  `--jwks-json`, `--jwks-uri`), auth method (`--auth-method`), assertion algorithms
+  (`--signing-alg`), grant types (`--grant-type`), audiences (`--audience`, `--any-audience`),
+  allowed features (`--allow-feature`), the introspection role (`--can-introspect`), the lifetimes
+  (`--access-token-ttl`, `--refresh-token-ttl`, `--refresh-token-absolute-ttl`) and
+  `--offline-access`; in any direction (a narrowing too), compared as stored (the same tokens in
+  another order are a change). Not vetted: `--subject-type` (its own `--yes`), the display and
+  contact fields, `--region`, `--max-entries`. A client under review is refused like a suspended
+  one: **`/oauth2/authorize` answers an HTML 400 and redirects nowhere** (the redirect URIs on file
+  may be the change awaiting approval; a suspended client gets the same), `/oauth2/authorize/offer`
+  and `/accept` answer 403 `access_denied`, `/oauth2/token` answers 400 `unauthorized_client` for
+  every grant (a refresh token is not used up: the app retries once approved), introspection answers
+  `active: false` for its tokens and refuses it as a caller, and **the data API refuses its live
+  access tokens** (403 `invalid-access-token`, "The application access is under review" /
+  "is suspended") within `oauth:clientRevokeCheckSeconds` (default 30 s), as for a revoke. The
+  sessions are not ended: they work again once the client is active. `update <clientId> --approve`
+  approves; `resume` does not. A change made while the client is suspended is recorded and the
+  status kept; `resume` then refuses until `update <clientId> --approve` approves it (the client
+  staying suspended). An `--approve` is an update like any other: every write rule applies. Every
+  status change (`suspend`, `resume`, the move to `review`, an approval) is appended to the row's
+  `statusLog` (time, the OS user the CLI ran as, from, to, reason, the fields that changed; the last
+  50), printed by `show` and never handed to the OAuth extension. It is a trail, not an identity
+  record. App-account clients have no review step. A `jwks_uri` client's published key set can
+  change without any update: the review step does not see it.
+- **BREAKING (operators with client logos): set `oauth:logoHosts` on every core BEFORE the
+  upgrade** (the hosts your `logoUri` values are on, identical everywhere), else no logo is served
+  and `--logo-uri` is refused. New setting `oauth:logoHosts` (list of `host`, or `host:port` for a
+  port other than 443; an international name in its `xn--` form; default empty). `--logo-uri`
+  (`create`, `create-registry`, `update`; `none` clears on update) must be an https URL without user
+  information or fragment on one of those hosts. The consent offer serves `client.logoUri` only when
+  it is https on a listed host. A malformed list, or an entry that can never match (`host:443`, a
+  scheme, a path), is reported at boot. A registry row stored with a non-https logo has it removed
+  (and printed) at its next `update` or `rotate-secret`.
 - **The `client_credentials` grant refuses a suspended client** (400 `unauthorized_client`), as the
   other grants already did.
 - **New registry profile fields** (`create-registry` and `update`; `none` clears): `--localized-name
   <lang>=<text>` (repeatable; `--name` stays the plain fallback, `clientName`), `--description <text>`
-  or `--localized-description <lang>=<text>` (repeatable), `--software-id <s>` (RFC 7591
-  `software_id`), `--max-entries <n>` (ceiling on the permission entries one authorization may
-  request, 1 to 1000, default the platform bound 1000; a larger request answers `invalid_scope` at
-  `/oauth2/authorize`). The per-client token lifetimes stay as they are (`--access-token-ttl` and
+  or `--localized-description <lang>=<text>` (repeatable; no control nor direction-override
+  characters), `--software-id <s>` (RFC 7591 `software_id`), `--max-entries <n>` (1 to 1000, default
+  the platform bound 1000): the ceiling on the permission entries one authorization may request (a
+  larger request answers `invalid_scope` at `/oauth2/authorize`) and on the grant a re-consent would
+  leave (the request joined with the current grant: the signed-in `POST /oauth2/authorize/offer`
+  answers 400 `invalid_scope` with `reason: 'grant-too-large'`). The platform bound now applies to
+  that composed grant too. The per-client token lifetimes stay as they are (`--access-token-ttl` and
   the others, capped by the platform's). Both answers of `POST /oauth2/authorize/offer` (signed out
   and signed in) carry `client.name` and `client.description`, each a text or a map of texts by
   language code, operator-registered only; `clientName` stays the string fallback.
 - **New `--region <key>`** (repeatable, any client kind; `none` clears): the regions of the
   platform's `hostings` hierarchy whose cores serve the client. A core of another region (its
   `core:hosting` in another region, or in none) refuses it at `/oauth2/authorize` (redirect
-  `unauthorized_client`), the consent, `/oauth2/token` and introspection; a platform without a
-  `hostings` hierarchy is the region `default`. The CLI refuses a region the platform does not
-  declare. Absent: every region, as before.
-- **Logos from allow-listed hosts only.** New setting `oauth:logoHosts` (list of `host` or
-  `host:port`, default empty). `--logo-uri` (`create`, `create-registry`, `update`; `none` clears on
-  update) must be an https URL without user information or fragment on one of those hosts, and a
-  registry row refuses a non-https one at registration and update. The consent offer serves `client.logoUri` only
-  when it is https on a listed host: **with the default empty list no logo is served** (list the
-  hosts your logos are on).
+  `unauthorized_client`), the consent, `/oauth2/token` and introspection of its tokens (a resource
+  server's own regions do not limit where it may introspect); a platform without a `hostings`
+  hierarchy is the region `default`. The CLI refuses a region the platform does not declare.
+  Absent: every region, as before.
 - **New command `node bin/oauth-client.js purge-grants <clientId> --yes`**: on THIS core, deletes
-  every registry grant of the client with its sessions, the accesses they created, their aliases and
-  refresh chains, then every other access minted for the client (an app-account client's sessions,
-  its `client_credentials` tokens) with its chain, and ends any refresh token of the client left in
-  this core's keyspace; it prints the counts. Each user's next authorization is a fresh consent. A
-  CMC data-grant (the consent record of an app-account client) is kept. `revoke` and `suspend` print
-  it as the next step, to run on each core. Rows are deleted as `accesses.delete` does (deletion
-  records, access index tombstones); an API worker that cached a deleted session drops it within the
-  access cache's lifetime (`caching:accessMaxAgeSeconds`).
+  every grant of the client (its registry grants, and the consent grants its sessions are bound to,
+  an app-account client's CMC data-grant included) with its sessions, the accesses they created,
+  their aliases and refresh chains, then every other access minted for the client (a
+  `client_credentials` token) with its chain, and ends any refresh token of the client left in this
+  core's keyspace; it prints the counts. Each user's next authorization is a fresh consent. `revoke`
+  and `suspend` print it as the next step, to run on each core. Rows are deleted as
+  `accesses.delete` does (deletion records, access index tombstones) but without its post-delete
+  hooks: the counterparty of a deleted CMC data-grant gets no revoke notice. Introspection answers
+  `active: false` at once; an API worker that cached a deleted session keeps honouring it up to the
+  access cache's lifetime, `caching:accessMaxAgeSeconds` (default 60 s), per worker.
 - **Removed: the setting `oauth:requireAppAccountMfa`.** It was never enforced; a core where it is
   still set logs a warning at boot.
 

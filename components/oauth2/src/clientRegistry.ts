@@ -339,9 +339,9 @@ const MAX_LOGO_URI_LENGTH = 2048;
 const LANGUAGE_CODE_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$/;
 const REGION_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 // eslint-disable-next-line no-control-regex
-const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+const CONTROL_RE = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/;
 // eslint-disable-next-line no-control-regex
-const CONTROL_BUT_NEWLINE_RE = /[\u0000-\u0009\u000b-\u001f\u007f]/;
+const CONTROL_BUT_NEWLINE_RE = /[\u0000-\u0009\u000b-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/;
 
 /**
  * Status, status trail, display texts, software id, regions and the entry
@@ -353,7 +353,8 @@ function validateVettingAndDisplay (client: OAuthClient): void {
   }
   if (client.statusLog != null) {
     if (!Array.isArray(client.statusLog) || client.statusLog.length > MAX_STATUS_LOG ||
-        client.statusLog.some((e) => e == null || typeof e !== 'object' || typeof e.at !== 'number' || typeof e.reason !== 'string')) {
+        client.statusLog.some((e) => e == null || typeof e !== 'object' || typeof e.at !== 'number' || typeof e.reason !== 'string' ||
+          typeof e.by !== 'string' || typeof e.from !== 'string' || typeof e.to !== 'string')) {
       throw new Error(`statusLog must be a list of at most ${MAX_STATUS_LOG} status changes`);
     }
   }

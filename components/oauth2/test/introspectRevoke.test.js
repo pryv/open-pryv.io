@@ -244,6 +244,16 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     assert.equal(res.body.error, 'invalid_client');
   });
 
+  it('[OXI08] regions: the caller may introspect from any region; a token of a client served elsewhere is inactive', async () => {
+    const platform = await seeded();
+    const caller = await getClient(platform, 'resource-srv');
+    await setClient(platform, { ...caller, regions: ['elsewhere'], updatedAt: Date.now() });
+    // This core is the region `default` (no hostings hierarchy).
+    assert.equal((await introspect(platform)).body.active, true);
+    await setClient(platform, { ...REGISTRY_CLIENT, regions: ['elsewhere'], updatedAt: Date.now() });
+    assert.deepEqual((await introspect(platform)).body, { active: false });
+  });
+
   it('[OXI04] a session indexed by another core answers 421 with that core\'s URL', async () => {
     const res = await introspect(await seeded(), { config: fakeConfig({ 'core:id': 'core-b' }) });
     assert.equal(res.statusCode, 421);

@@ -617,18 +617,48 @@ describe('[OCLI] operator CLI: registry clients', () => {
       const jwk = JSON.stringify({ keys: [crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' })] });
       r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--auth-method', 'private_key_jwt', '--jwks-json', jwk]);
       assert.equal(r.error, null, r.error?.message);
-      assert.deepEqual((await getClient(platform, 'Cli.vet')).statusLog.at(-1).fields, ['jwks']);
+      assert.deepEqual((await getClient(platform, 'Cli.vet')).statusLog.at(-1).fields, ['jwks', 'tokenEndpointAuthMethod']);
       assert.equal(await statusOf(platform, 'Cli.vet'), 'review');
-      // Suspended: --approve refused, a change recorded, the status kept; suspend prints the purge step.
+      // Other vetted fields: lifetimes, features, introspection, audiences.
+      for (const flags of [['--access-token-ttl', '600'], ['--allow-feature', 'webhooks'], ['--audience', AUD + '/2'], ['--offline-access', 'false']]) {
+        r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', ...flags, '--approve']);
+        assert.equal(r.error, null, flags.join(' ') + ': ' + r.error?.message);
+        assert.equal((await getClient(platform, 'Cli.vet')).statusLog.at(-1).reason, 'approve', flags.join(' '));
+      }
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--access-token-ttl', '300']);
+      assert.deepEqual((await getClient(platform, 'Cli.vet')).statusLog.at(-1).fields, ['accessTokenTTL']);
+      // Not vetted: the entry ceiling and the display texts.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--approve']);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'active');
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--max-entries', '5', '--description', 'x']);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'active');
+      // Suspended: a change is recorded, the status kept; resume refuses it
+      // until approved; the approval keeps the client suspended.
       r = await run(cli.runSetStatus, platform, ['suspend', 'Cli.vet']);
       assert.match(r.out, /purge-grants Cli\.vet --yes/);
-      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--approve']);
-      assert.match(r.error?.message ?? '', /is suspended; --approve applies/);
       r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--redirect-uri', REDIRECT]);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /approve it with update Cli\.vet --approve before resume/);
       assert.equal(await statusOf(platform, 'Cli.vet'), 'suspended');
-      assert.deepEqual((await getClient(platform, 'Cli.vet')).statusLog.slice(-2).map((e) => [e.from, e.to, e.reason]), [
-        ['review', 'suspended', 'suspend'], ['suspended', 'suspended', 'review'],
+      r = await run(cli.runSetStatus, platform, ['resume', 'Cli.vet']);
+      assert.match(r.error?.message ?? '', /changes to redirectUris of "Cli\.vet" were not approved/);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'suspended');
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--approve']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /status: {8}suspended \(approved; no change\): resume it/);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'suspended');
+      r = await run(cli.runSetStatus, platform, ['resume', 'Cli.vet']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'active');
+      assert.deepEqual((await getClient(platform, 'Cli.vet')).statusLog.slice(-4).map((e) => [e.from, e.to, e.reason]), [
+        ['active', 'suspended', 'suspend'], ['suspended', 'suspended', 'review'],
+        ['suspended', 'suspended', 'approve'], ['suspended', 'active', 'resume'],
       ]);
+      // A client suspended while under review stays unapproved after resume is asked.
+      await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--scope', 'read/b']);
+      await run(cli.runSetStatus, platform, ['suspend', 'Cli.vet']);
+      r = await run(cli.runSetStatus, platform, ['resume', 'Cli.vet']);
+      assert.match(r.error?.message ?? '', /changes to scope .* were not approved/);
       // App-account clients have no vetting status: --approve is refused.
       await persistClient(platform, { clientId: 'appacct', redirectUris: [REDIRECT], grantTypes: ['authorization_code'], scope: [] });
       r = await run(cli.runUpdate, platform, ['update', 'appacct', '--approve']);
@@ -698,6 +728,22 @@ describe('[OCLI] operator CLI: registry clients', () => {
       assert.deepEqual((await getClient(platform, 'appacct2')).regions, ['us']);
       r = await run(cli.runUpdate, platform, ['update', 'appacct2', '--software-id', 'x']);
       assert.equal(r.error?.message, 'update: --software-id applies to registry clients only');
+    });
+
+    it('[OCLI22] a registry row stored with an http logo stays writable: update and rotate-secret drop the logo and say so', async () => {
+      const platform = fakePlatform();
+      await run(cli.runCreateRegistry, platform, createArgs('Cli.oldlogo', ['--subject-type', 'public', '--auth-method', 'client_secret_basic']));
+      const row = await getClient(platform, 'Cli.oldlogo');
+      await setClient(platform, { ...row, logoUri: 'http://logos.example.com/old.png' });
+      let r = await run(cli.runUpdate, platform, ['update', 'Cli.oldlogo', '--name', 'Renamed']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /logoUri cleared: http:\/\/logos\.example\.com\/old\.png \(not https: never served\)/);
+      assert.equal((await getClient(platform, 'Cli.oldlogo')).logoUri, undefined);
+      await setClient(platform, { ...(await getClient(platform, 'Cli.oldlogo')), logoUri: 'http://logos.example.com/old.png' });
+      r = await run(cli.runRotateSecret, platform, ['rotate-secret', 'Cli.oldlogo']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /logoUri cleared/);
+      assert.equal((await getClient(platform, 'Cli.oldlogo')).logoUri, undefined);
     });
 
     it('[OCLI21] purge-grants needs --yes, runs this core\'s purge and prints the counts; revoke points to it', async () => {

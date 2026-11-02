@@ -17,28 +17,38 @@
 - Digests and composition unchanged in code: `entryGroups` is an offer member, so it is already in
   `offerDigest`, in the composed `shown` offer and in `shownDigest`. Contract doc in the `extension.ts`
   header (entry keys incl. the level-less form, groups, bounds).
+
 ### OAuth: registry fields, vetting status, grant purge
 
 - `clientRegistry.ts`: `clientUnavailable(client, config)` is the one check of a client's status
   (`active` or absent; `suspended`, `review` or any other value refused) and regions (`coreRegion`
-  from `core:hosting` and `hostings`), used by `/authorize`, `/offer`, `/accept`, the three grants
-  and introspection (caller and token). New write rules (every kind): `status` in `active |
-  suspended | review`, `statusLog` (at most 50), `name` / `description` (a text, or a map by
-  language code; 128 / 1024 characters, no control characters, newlines allowed in a description),
-  `softwareId`, `regions` (keys, unique, at most 32), `maxEntries` (1 to `MAX_SYNTH_ENTRIES`);
-  registry rows: `logoUri` https without user information or fragment. `logoAllowed` /
-  `servedLogoUri` against `oauth:logoHosts`; `changedVettedFields` (`redirectUris`, `scope`, `jwks`,
-  `jwksUri`).
-- `scopeGrammar.entryCeiling(client)` bounds the synthesised offer (`resolveRequestedScope`).
+  from `core:hosting` and `hostings`), used by `/authorize` (status first, as an HTML 400 before the
+  redirect URI is looked at; region after it, redirected), `/offer`, `/accept`, the three grants and
+  introspection (token's client with regions, caller status only). New write rules (every kind):
+  `status` in `active | suspended | review`, `statusLog` (at most 50 well-formed entries), `name` /
+  `description` (a text, or a map by language code; 128 / 1024 characters, no control or
+  direction-override characters, newlines allowed in a description), `softwareId`, `regions` (keys,
+  unique, at most 32), `maxEntries` (1 to `MAX_SYNTH_ENTRIES`); registry rows: `logoUri` https
+  without user information or fragment. `logoAllowed` / `servedLogoUri` against `oauth:logoHosts`;
+  `changedVettedFields` over `VETTED_FIELDS`.
+- `scopeGrammar.entryCeiling(client)` bounds the synthesised offer (`resolveRequestedScope`) and the
+  composed re-consent offer at the signed-in `/offer`.
 - `extension.toClientView` also drops `statusLog`.
+- Data API: `MethodContext.checkClientNotRevoked` also runs `checkClientActive`, a per-client status
+  read through `revokedClientsCache.getClientStatus` (one platform read per client and
+  `oauth:clientRevokeCheckSeconds`, bounded map, fail-open on a read error like the revoke epochs).
 - `storage.revokeClientRefreshTokens(platform, coreId, clientId)` ends a client's live refresh rows in
   one core's keyspace; api-server `methods/helpers/oauthGrantPurge.ts` (`purgeClientGrants`) runs the
-  purge over the core's local users through `deleteAccessChain`. `REGISTRY_GRANT_PREFIX`,
-  `REGISTRY_GRANT_DEVICE` and `SESSION_NAME_PREFIX` move to `routes/oauth2/types.ts`.
-- `bin/oauth-client.js`: `purge-grants`; `update --approve`; profile and region flags; `cliEnv`
+  purge over the core's local users through `deleteAccessChain`: registry grants, the grants the
+  client's sessions name (`clientData.oauth.dataGrantId`), then the remaining minted accesses.
+  `REGISTRY_GRANT_PREFIX`, `REGISTRY_GRANT_DEVICE` and `SESSION_NAME_PREFIX` move to
+  `routes/oauth2/types.ts`.
+- `bin/oauth-client.js`: `purge-grants`; `update --approve` (approves on a suspended client too);
+  `resume` refuses while the trail holds a `review` entry after its last `approve`; profile and
+  region flags; a stored non-https registry logo is dropped by `update` and `rotate-secret`; `cliEnv`
   gains `logoHosts`, `platformRegions` and `purgeClientGrants` (replaceable in tests).
 - `default-config.yml`: `oauth:requireAppAccountMfa` removed (boot warning when set), `oauth:logoHosts:
-  []` added; `bin/init.js` appendix names it.
+  []` added (boot warning when malformed); `bin/init.js` appendix names it.
 
 ### OAuth extension: the grant state
 

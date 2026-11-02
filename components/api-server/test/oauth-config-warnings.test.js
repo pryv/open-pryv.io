@@ -84,6 +84,16 @@ describe('[CVOA] OAuth boot warnings', () => {
     }
   });
 
+  it('[CVOA10] logoHosts: a malformed list, or entries that never match a logo URL, are reported; plain hosts and host:port are silent', () => {
+    for (const logoHosts of ['logos.example.com', [''], [42]]) {
+      assert.match(oauthWarnings({ oauth: { logoHosts } })[0] ?? '', /'oauth\.logoHosts' must be a list of host names/, JSON.stringify(logoHosts));
+    }
+    const w = oauthWarnings({ oauth: { logoHosts: ['logos.example.com:443', 'https://logos.example.com', 'logos.example.com/img', 'logos.example.com.', 'lögos.example.com'] } });
+    assert.equal(w.length, 1, JSON.stringify(w));
+    for (const h of ['logos.example.com:443', 'https://logos.example.com', 'logos.example.com/img', 'logos.example.com.', 'lögos.example.com']) assert.ok(w[0].includes(JSON.stringify(h)), h);
+    assert.deepEqual(oauthWarnings({ oauth: { logoHosts: ['logos.example.com', 'cdn.example.com:8443', 'xn--lgos-5qa.example.com'] } }), []);
+  });
+
   it('[CVOA9] the removed requireAppAccountMfa key is reported when present, true or false; the shipped default sets none', () => {
     for (const requireAppAccountMfa of [true, false]) {
       const w = oauthWarnings({ oauth: { requireAppAccountMfa } });

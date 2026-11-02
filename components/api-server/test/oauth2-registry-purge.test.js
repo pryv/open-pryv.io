@@ -286,4 +286,98 @@ describe('[ORGP] OAuth registry clients: purge, vetting, ceilings, display', fun
     const r = await runCli(cli.runUpdate, ['update', otherId, '--logo-uri', 'https://elsewhere.test/a.png'], getClient, persistClient);
     assert.match(r.error?.message ?? '', /host "elsewhere.test" is not in oauth.logoHosts \(logos.purge.test\)/);
   });
+
+  describe('[ORGPX] with a short access cache and revoke check', function () {
+    let restoreShort, rsId;
+    const rsSecret = {};
+    const cache = () => { const c = require('cache'); return c.default ?? c; };
+
+    before(async function () {
+      restoreShort = require('test-helpers').injectTestConfigSnapshot({
+        oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, logoHosts: ['logos.purge.test'], clientRevokeCheckSeconds: 1 },
+        caching: { accessMaxAgeSeconds: 2 },
+      });
+      await cache().loadConfiguration();
+      require('oauth2/src/revokedClientsCache.ts')._resetForTests();
+      // A resource server that may introspect.
+      const { mintSecret } = require('oauth2/src/clientSecret.ts');
+      Object.assign(rsSecret, await mintSecret());
+      rsId = 'PrgRs.' + cuid().slice(-10);
+      await registry(rsId, { tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, canIntrospect: true });
+    });
+
+    after(async function () {
+      if (restoreShort != null) restoreShort();
+      await cache().loadConfiguration();
+      require('oauth2/src/revokedClientsCache.ts')._resetForTests();
+      if (rsId != null) { try { await storage.deleteClient(platformDB, rsId); } catch (_) { /* best-effort */ } }
+    });
+
+    function introspect (token) {
+      return coreRequest.post('/oauth2/introspect').type('form')
+        .set('Authorization', 'Basic ' + Buffer.from(rsId + ':' + rsSecret.plaintext).toString('base64'))
+        .send({ token });
+    }
+
+    async function readsWith (who, token) {
+      return (await coreRequest.get('/' + who.username + '/events').set('Authorization', token)).status;
+    }
+
+    /** Poll a data read with `token` until it answers `status` (at most `ms`). */
+    async function untilReadAnswers (who, token, status, ms) {
+      const start = Date.now();
+      let last;
+      while (Date.now() - start < ms) {
+        last = await readsWith(who, token);
+        if (last === status) return Date.now() - start;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      assert.fail(`a read answered ${last}, not ${status}, after ${ms} ms`);
+    }
+
+    it('[ORGP4] purge-grants run by the real CLI (child process): counts printed, introspection inactive at once, the cached session refused within the cache lifetime', async () => {
+      const [alice] = people;
+      const id = 'PrgCli.' + cuid().slice(-10);
+      await registry(id);
+      const t = await runFlow('offline_access read/health', id, alice);
+      assert.equal(await readsWith(alice, t.token.access_token), 200); // now cached
+      assert.equal((await introspect(t.token.access_token)).body.active, true);
+
+      const path = require('node:path');
+      const { spawnSync } = require('node:child_process');
+      const { childStorageEngineEnv } = require('test-helpers');
+      const root = path.resolve(import.meta.dirname, '../../../');
+      const child = spawnSync('node', [path.join(root, 'bin/oauth-client.js'), 'purge-grants', id, '--yes'], {
+        cwd: root, env: { ...process.env, ...childStorageEngineEnv() }, encoding: 'utf8', timeout: 60000,
+      });
+      assert.equal(child.status, 0, child.stderr + child.stdout);
+      assert.match(child.stdout, /grants deleted: {8}1\n/);
+      assert.match(child.stdout, /sessions deleted: {6}1\n/);
+      assert.match(child.stdout, /accounts concerned: {4}1\n/);
+
+      assert.deepEqual((await introspect(t.token.access_token)).body, { active: false });
+      const waited = await untilReadAnswers(alice, t.token.access_token, 403, 10000);
+      assert.ok(waited <= 4000, 'refused after ' + waited + ' ms');
+      const res = await refresh(t.token.refresh_token, id);
+      assert.equal(res.body.error, 'invalid_grant');
+      await storage.deleteClient(platformDB, id);
+    });
+
+    it('[ORGP5] the data API refuses the live tokens of a suspended client, or one under review, within the revoke check; active again, they work', async () => {
+      const [alice] = people;
+      const id = 'PrgSus.' + cuid().slice(-10);
+      await registry(id);
+      const t = await runFlow('read/health', id, alice);
+      assert.equal(await readsWith(alice, t.token.access_token), 200);
+      for (const status of ['suspended', 'review']) {
+        await storage.setClient(platformDB, { ...(await getClient(platformDB, id)), status, updatedAt: Date.now() });
+        await untilReadAnswers(alice, t.token.access_token, 403, 5000);
+        const res = await coreRequest.get('/' + alice.username + '/events').set('Authorization', t.token.access_token);
+        assert.match(res.body.error?.message ?? '', status === 'suspended' ? /is suspended/ : /is under review/);
+        await storage.setClient(platformDB, { ...(await getClient(platformDB, id)), status: 'active', updatedAt: Date.now() });
+        await untilReadAnswers(alice, t.token.access_token, 200, 5000);
+      }
+      await storage.deleteClient(platformDB, id);
+    });
+  });
 });

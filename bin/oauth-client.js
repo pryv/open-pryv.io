@@ -422,6 +422,20 @@ function printPurgeHint (clientId) {
   console.log('        node bin/oauth-client.js purge-grants ' + clientId + ' --yes');
 }
 
+/**
+ * A registry row written before the https rule may carry a logo the write
+ * rules now refuse (and the consent screen never shows): it is removed so
+ * the row stays writable. Returns the removed URI, or null.
+ */
+function dropUnservableLogo (row) {
+  if (row.kind !== 'registry' || row.logoUri == null) return null;
+  const { logoUriProblem } = require('oauth2/src/clientRegistry.ts');
+  if (logoUriProblem(row.logoUri) == null) return null;
+  const dropped = row.logoUri;
+  delete row.logoUri;
+  return dropped;
+}
+
 /** A status change appended to the row's trail (bounded, oldest out). */
 function withStatusChange (row, change) {
   const { MAX_STATUS_LOG } = require('oauth2/src/clientRegistry.ts');
@@ -446,8 +460,8 @@ async function runPurgeGrants (platform, args, purgeClientGrants) {
   // The chains of the deleted sessions end with them; these had no session left.
   console.log('     other refresh tokens ended:  ' + counts.refreshTokens);
   console.log();
-  console.log('NOTE: this core only; run it on every core of the platform. A CMC data-grant');
-  console.log('      (app-account client) is kept: its sessions and refresh chains are ended.');
+  console.log('NOTE: this core only; run it on every core of the platform. A deleted CMC data-grant');
+  console.log('      sends its counterparty no revoke notice (its reach ends all the same).');
 }
 
 const PURGE_FLAGS = { values: [], booleans: ['yes'], own: [] };
@@ -832,6 +846,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
   const logoUri = await logoUriFromFlags(args, 'update');
   if (logoUri === null) delete merged.logoUri;
   else if (logoUri !== undefined) merged.logoUri = logoUri;
+  const droppedLogo = dropUnservableLogo(merged);
   const regions = await regionsFromFlags(args, 'update');
   if (regions != null) {
     if (regions.length > 0) merged.regions = regions;
@@ -936,6 +951,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
   }
   await persistClient(platform, vetting?.entry != null ? withStatusChange(row, vetting.entry) : row);
   console.log('OK   client updated: ' + clientId);
+  if (droppedLogo != null) console.log('     logoUri cleared: ' + droppedLogo + ' (not https: never served)');
   if (vetting?.entry != null) printVetting(clientId, vetting);
   if (row !== merged) console.log('     converted the account reference to the user id');
   if (existing.kind === 'registry' && wantedSubject != null) {
@@ -1211,9 +1227,11 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
     row.previousSecretHash = existing.clientSecretHash;
     row.previousSecretExpiresAt = Date.now() + windowSeconds * 1000;
   }
+  const droppedLogo = dropUnservableLogo(row);
   await persistClient(platform, row);
 
   console.log('OK   client_secret rotated for: ' + clientId);
+  if (droppedLogo != null) console.log('     logoUri cleared: ' + droppedLogo + ' (not https: never served)');
   console.log();
   console.log('client_id:     ' + clientId);
   console.log('client_secret: ' + plaintext);
@@ -1446,14 +1464,19 @@ function printUsage (stream) {
     '  node bin/oauth-client.js suspend|resume <clientId>\n' +
     '  node bin/oauth-client.js purge-grants <clientId> --yes\n\n' +
     'Status: active, suspended (suspend / resume) or review. On update, a change of\n' +
-    'a registry client\'s --redirect-uri, --scope or key set (--jwks-file, --jwks-json,\n' +
-    '--jwks-uri, or an --auth-method change that drops it) moves an active client to\n' +
+    'a registry client\'s vetted fields (--redirect-uri, --scope, the key set, --auth-method,\n' +
+    '--signing-alg, --grant-type, --audience, --any-audience, --allow-feature,\n' +
+    '--can-introspect, the lifetimes, --offline-access) moves an active client to\n' +
     'review, unless --approve is given; "update <id> --approve" approves a client\n' +
-    'under review. A client suspended or under review is refused at /authorize, the\n' +
-    'consent, /token and introspection. Every change is kept in its statusLog.\n' +
-    'purge-grants deletes, on THIS core, every grant of the client with its sessions,\n' +
-    'what they created, their aliases and refresh chains (each user consents again);\n' +
-    'run it on each core, e.g. after revoke or suspend.\n\n' +
+    'under review, or the changes made to a suspended one (resume refuses until then).\n' +
+    'A client suspended or under review gets no redirect from /authorize (HTML 400) and\n' +
+    'is refused at the consent, /token, introspection and the data API.\n' +
+    'Every change is kept in its statusLog.\n' +
+    'purge-grants deletes, on THIS core, every grant of the client (CMC data-grants of\n' +
+    'an app-account client included) with its sessions, what they created, their\n' +
+    'aliases and refresh chains (each user consents again); run it on each core,\n' +
+    'e.g. after revoke or suspend. It reads every refresh token row of this core:\n' +
+    'it may take a while on a large platform.\n\n' +
     'Flags (create-registry; on update too, registry clients only): a client with\n' +
     'no app account; --scope is its maximum scope set in the grammar of the\n' +
     'installed OAuth extension. On update, a repeatable flag replaces the stored\n' +

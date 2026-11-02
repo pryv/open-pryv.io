@@ -836,6 +836,17 @@ function oauthWarnings (config) {
     warnings.push("'oauth.audAllowList' is no longer read and can be removed: the accepted 'aud' values are registered per client " +
       '(bin/oauth-client.js create-registry --audience).');
   }
+  const logoHosts = config.get('oauth:logoHosts');
+  if (logoHosts != null && (!Array.isArray(logoHosts) || logoHosts.some((h) => typeof h !== 'string' || h.length === 0))) {
+    warnings.push("'oauth.logoHosts' must be a list of host names (e.g. logos.example.com): as it is, no client logo is served.");
+  } else if (Array.isArray(logoHosts)) {
+    const malformed = logoHosts.filter((h) => /[/:@\s]|[^\x21-\x7e]/.test(h.replace(/:[0-9]+$/, '')) || /:443$/.test(h) || h.endsWith('.'));
+    if (malformed.length > 0) {
+      warnings.push(`'oauth.logoHosts' entries ${malformed.map((h) => JSON.stringify(h)).join(', ')} never match a logo URL: ` +
+        'write the host alone, without scheme, path, trailing dot or the default port 443 ' +
+        '(another port as host:port; an international name in its xn-- form).');
+    }
+  }
   if (config.get('oauth:requireAppAccountMfa') != null) {
     warnings.push("'oauth.requireAppAccountMfa' is no longer read and can be removed: it was never enforced " +
       '(app accounts are not required to enrol MFA).');

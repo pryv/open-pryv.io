@@ -1888,5 +1888,32 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       // The operator trail never reaches the extension.
       assert.equal(extension.toClientView(JSON.parse(await platform.getPlatformKv('oauth-client/reg-app'))).statusLog, undefined);
     });
+
+    it('[ORF6] the ceiling bounds the grant a re-consent would leave: the signed-in /offer answers grant-too-large', async () => {
+      const platform = fakePlatform(); await seed(platform, { maxEntries: 1 });
+      const config = fakeConfig();
+      let current = { permissions: [{ streamId: 'b', level: 'read' }], aliased: false };
+      const deps = {
+        config,
+        platform,
+        resolveUser: async () => ({ userId: USER_ID, username: 'alice', personal: true }),
+        readRegistryGrant: async () => current,
+      };
+      const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const signedIn = async () => {
+        const res = fakeRes();
+        await handleOffer(deps)({ body: { state: signed, username: 'alice', userToken: 'personal' } }, res);
+        return res;
+      };
+      let res = await signedIn();
+      assert.equal(res.statusCode, 400, res.raw);
+      assert.deepEqual(res.body, { error: 'invalid_scope', error_description: 'the grant would hold more than 1 permissions; request fewer', reason: 'grant-too-large' });
+      // Signed out (no grant known), or no current grant: within the ceiling.
+      assert.equal((await postOffer(deps, signed)).statusCode, 200);
+      current = null;
+      res = await signedIn();
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.equal(res.body.authenticated, true);
+    });
   });
 });

@@ -37,7 +37,7 @@ import type { ResolvedScope } from '../scopeGrammar.ts';
 import { verifyState, stateKeyFromConfig } from '../signedState.ts';
 import { hasSigningKeys } from '../signingKeys.ts';
 import { getClient, isRegistryClient, clientUnavailable, servedLogoUri } from '../clientRegistry.ts';
-import { resolveRequestedScope } from '../scopeGrammar.ts';
+import { resolveRequestedScope, entryCeiling } from '../scopeGrammar.ts';
 import { extensionGeneration } from '../extension.ts';
 import type { CurrentGrant } from '../consentComposition.ts';
 import { composeShownOffer, subjectModeOf } from '../consentComposition.ts';
@@ -212,6 +212,17 @@ export function handleOffer (deps: OfferDeps) {
         error: 'invalid_scope',
         error_description: 'conflicting permission level on a requested resource: ' + composition.error.message,
         reason: 'permission-level-conflict',
+      });
+    }
+    // The grant the consent would leave (the request joined with the current
+    // grant) is bounded like a request: a client cannot grow a grant past its
+    // ceiling by asking a little at a time.
+    const ceiling = entryCeiling(c);
+    if (composition.shown.permissions.length > ceiling) {
+      return sendJson(res, 400, {
+        error: 'invalid_scope',
+        error_description: `the grant would hold more than ${ceiling} permissions; request fewer`,
+        reason: 'grant-too-large',
       });
     }
     return sendJson(res, 200, {

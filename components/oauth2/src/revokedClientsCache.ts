@@ -23,7 +23,7 @@
  */
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import { listRevokedClients } from './storage.ts';
+import { listRevokedClients, getClient } from './storage.ts';
 import { logServerError } from './serverLog.ts';
 
 // loadedAt === null ⇒ never loaded (force a cold load on first use, whatever
@@ -73,6 +73,36 @@ async function refresh (platform: PlatformDB, now: number): Promise<void> {
   return refreshing;
 }
 
+// The status of each client asked about, read from its row at most once per
+// TTL (bounded: cleared whole past the bound). Fail-open like the epochs: a
+// read error keeps the last known status.
+const MAX_STATUSES = 1000;
+let statuses = new Map<string, { status: string | null; loadedAt: number }>();
+
+/**
+ * The status of `clientId` (`active`, `suspended`, `review`, ...), or null
+ * when the client has no row (a revoke, answered by `getRevokedAt`), using a
+ * per-client entry refreshed from PlatformDB when older than `ttlSeconds`.
+ * A row without a status reads as `active`.
+ */
+export async function getClientStatus (
+  platform: PlatformDB, clientId: string, ttlSeconds: number, now: number = Date.now()
+): Promise<string | null> {
+  const known = statuses.get(clientId);
+  if (known != null && (now - known.loadedAt) <= ttlSeconds * 1000) return known.status;
+  let status: string | null;
+  try {
+    const row = await getClient(platform, clientId);
+    status = row == null ? null : (typeof row.status === 'string' ? row.status : 'active');
+  } catch (err: unknown) {
+    logServerError('client status read failed', err);
+    status = known?.status ?? null;
+  }
+  if (statuses.size >= MAX_STATUSES && !statuses.has(clientId)) statuses = new Map();
+  statuses.set(clientId, { status, loadedAt: now });
+  return status;
+}
+
 /**
  * Test seam: reset the cache so a suite starts cold.
  * @private
@@ -80,4 +110,5 @@ async function refresh (platform: PlatformDB, now: number): Promise<void> {
 export function _resetForTests (): void {
   cache = { loadedAt: null, epochs: new Map() };
   refreshing = null;
+  statuses = new Map();
 }
