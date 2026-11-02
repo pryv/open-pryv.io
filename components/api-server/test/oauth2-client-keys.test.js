@@ -28,6 +28,7 @@ import { getConfigUnsafe } from '@pryv/boiler';
 
 const REDIRECT_URI = 'https://app.keys.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
+const STATE_KEY = 'test-oauth-state-key-' + 'a1B2c3D4e5'.repeat(2);
 const AUD = 'https://resource.test/base';
 const ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 
@@ -85,7 +86,7 @@ describe('[OCKE] OAuth client keys, algorithms and lifetimes, end to end', funct
     await initTests();
     await initCore();
     fixtures = getNewFixture();
-    restoreConfig = injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL } });
+    restoreConfig = injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
     oauth2.extension.setExtension(toyExtension);
     platformDB = storages.platformDB;
     rs = makeKey('RS384', 'rsa-1');

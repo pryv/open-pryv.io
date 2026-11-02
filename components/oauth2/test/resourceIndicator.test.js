@@ -33,6 +33,7 @@ import { buildDiscoveryDocument, buildOpenIdConfiguration } from '../src/wellKno
 import { isValidResource, sameResource, trimSlash, MAX_RESOURCE_BYTES } from '../src/resourceIndicator.ts';
 
 const ADMIN_KEY = 'admin-key-for-tests';
+const STATE_KEY = 'state-key-for-tests-0123456789abcdef';
 const ISSUER = 'https://core.example.com';
 const CONSENT_URL = 'https://consent.example.com/authorize';
 const CORE_ID = 'core-a';
@@ -73,6 +74,7 @@ function fakeConfig (overrides = {}) {
   const m = {
     'service:api': ISSUER,
     'auth:adminAccessKey': ADMIN_KEY,
+    'oauth:stateKey': STATE_KEY,
     'oauth:consentUrl': CONSENT_URL,
     'core:id': CORE_ID,
     ...overrides,
@@ -199,7 +201,7 @@ async function authorize (platform, query, { method = 'GET', config = fakeConfig
 }
 
 function stateAudience (signed) {
-  const v = verifyState(ADMIN_KEY, signed);
+  const v = verifyState(STATE_KEY, signed);
   assert.equal(v.ok, true);
   return v.payload.audience;
 }
