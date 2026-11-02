@@ -53,9 +53,12 @@ export function jwksUriProblem (uri: unknown): string | null {
 /** A `jwks_uri` that could not be used; `reason` stays server-side. */
 export class JwksFetchError extends Error {
   readonly reason: string;
-  constructor (reason: string) {
+  /** Answered from the remembered failure (no fetch made now). */
+  readonly cached: boolean;
+  constructor (reason: string, cached: boolean = false) {
     super('client JWK Set unavailable');
     this.reason = reason;
+    this.cached = cached;
   }
 }
 
@@ -91,7 +94,7 @@ export async function getClientJwks (
     const refresh = opts.unknownKid === true && entry.keys != null && now - entry.fetchedAt >= JWKS_REFRESH_MIN_INTERVAL_MS;
     if (!refresh) {
       if (entry.keys != null) return entry.keys;
-      throw new JwksFetchError(entry.reason ?? 'fetch failed recently');
+      throw new JwksFetchError(entry.reason ?? 'fetch failed recently', true);
     }
   }
   let pending = inflight.get(uri);

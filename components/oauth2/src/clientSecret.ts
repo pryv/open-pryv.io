@@ -183,8 +183,8 @@ export async function authenticateClient (params: {
       );
       if (!fresh) return ASSERTION_FAIL; // replayed
     } catch (err: unknown) {
-      // An unusable key set URL is the operator's to know (rate-bounded by the cache).
-      if (err instanceof JwksFetchError) logServerWarning('client ' + params.clientId + ': jwks_uri unusable: ' + err.reason);
+      // An unusable key set URL is the operator's to know (once per fetch, not per request).
+      if (err instanceof JwksFetchError && !err.cached) logServerWarning('client ' + params.clientId + ': jwks_uri unusable: ' + err.reason);
       return ASSERTION_FAIL; // bad signature / claims — uniform
     }
     return { ok: true };

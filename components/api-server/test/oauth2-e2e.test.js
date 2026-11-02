@@ -390,7 +390,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
           assert.ok(!blob.includes(secret), 'platform row carries a credential: ' + storeKey);
         }
         // Fixture users have id === username, so check the field, not the string.
-        assert.ok(entry?.value == null || !('username' in entry.value), 'platform row carries a username: ' + storeKey);
+        assert.ok(entry?.value == null || typeof entry.value !== 'object' || !('username' in entry.value), 'platform row carries a username: ' + storeKey);
       }
     });
 
@@ -1557,7 +1557,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       for (const storeKey of await platformDB.listPlatformKvKeys('access-state/oauth')) {
         const entry = await platformDB.getAccessState(storeKey.slice('access-state/'.length));
         // Fixture users have id === username, so check the field, not the string.
-        assert.ok(entry?.value == null || !('username' in entry.value), 'platform row carries a username: ' + storeKey);
+        assert.ok(entry?.value == null || typeof entry.value !== 'object' || !('username' in entry.value), 'platform row carries a username: ' + storeKey);
       }
     });
   });
