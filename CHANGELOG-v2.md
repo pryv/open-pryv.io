@@ -76,7 +76,9 @@
 > every key any `private_key_jwt` client whose inline key set holds several keys without one: such a
 > client gets `invalid_client` until then (every core reports these rows at boot); (3) OAuth clients
 > that test for `invalid_request` on an audience refusal now get `invalid_target`. Schema migration:
-> PostgreSQL adds the column `accesses.last_login` at boot (automatic, idempotent); SQLite needs none.
+> PostgreSQL adds the column `accesses.last_login` (migration v4). It runs at boot when
+> `migrations.autoRunOnStart` is true (the default); with it false, run `node bin/migrate.js up` BEFORE
+> switching to 2.0.0-rc.70, or password sign-in fails until it has run. SQLite needs none.
 > See "BREAKING" in the entries below.
 
 ### BREAKING: the state keys are required
