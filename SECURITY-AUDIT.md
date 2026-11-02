@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 10 (2026-10-30), covering releases 2.0.0-rc.40 to 2.0.0-rc.68.
+**Report revision:** 11 (2026-11-02), covering releases 2.0.0-rc.40 to 2.0.0-rc.69.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -44,8 +44,10 @@ can carry on account fields, of the consent retry path and of deletion listings,
 of how consent grants and refreshed OAuth2 sessions combine permissions, made in October 2026,
 added those fixed in 2.0.0-rc.66, and a review of the OAuth2 consent flow, made in October 2026
 alongside the work on OAuth2 clients registered by the operator, added the lower-severity fixes of
-2.0.0-rc.68; they were fixed under the same rules (tests that fail without the fix, independent
-review before merge).
+2.0.0-rc.68, and a review of the OAuth2 refresh chain and of pseudonymous access aliases, made in
+October and November 2026 alongside the work on token introspection, revocation and pseudonymous
+OAuth2 subjects, added those fixed in 2.0.0-rc.69; they were fixed under the same rules (tests that
+fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -55,7 +57,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 60 findings, each rated and described individually in
+The review and its follow-ups recorded 62 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -63,9 +65,9 @@ items reported through the public issue tracker, are described but not counted:
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
-| Medium | 31 | 0 | 0 |
+| Medium | 33 | 0 | 0 |
 | Low | 1 | 0 | 0 |
-| **Total** | **60** | **0** | **0** |
+| **Total** | **62** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -108,6 +110,7 @@ its applicability is stated with it.
 | 2.0.0-rc.66 | 2026-10-30 | 3 Medium, lower-severity fixes, completion step of an earlier finding | yes (2026-10-30) |
 | 2.0.0-rc.67 | 2026-10-30 | none (not an audit release: the 2.0.0-rc.66 server, with the Docker image that release lacked) | yes (with rc.68) |
 | 2.0.0-rc.68 | 2026-10-30 | lower-severity fixes, completion steps of earlier findings | yes (2026-10-30) |
+| 2.0.0-rc.69 | 2026-11-02 | 2 Medium, lower-severity fixes; dependency update, not an audit finding: `follow-redirects` 1.16.2 (GHSA-mrwp-f3q8-3g9p, high: a custom credential header could follow a cross-origin redirect; reached through the ACME certificate client); operator action: set the two new per-core state keys (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -259,7 +262,9 @@ These are the main checks that held, summarised:
 - **Access aliases** (checked in the 2.0.0-rc.66 follow-up): an access created with `randomAlias`
   cannot obtain the account's username or former usernames through any account stream of the
   shipped configuration (for a custom account stream named after a server-managed field, only
-  since 2.0.0-rc.66: see that release below).
+  since 2.0.0-rc.66: see that release below); since 2.0.0-rc.69 it is used at its alias only, and
+  sign-in at an alias gives one answer, so neither confirms the account behind the alias (see that
+  release below).
 - **Access creation rules:** personal accesses cannot be created through the API; apps create shared
   accesses only; expiry is capped by the creator; tracking fields are set by the server.
 - **Token lookup** is scoped to the account named in the path; deleted and history rows are never
@@ -1518,6 +1523,96 @@ made alongside them found the following in earlier releases:
   bounds each extension hook; the operator CLI `bin/oauth-client.js create-registry` registers the
   new clients (`--subject-type` and at least one `--audience`, or `--any-audience`, are required).
 
+### Fixed in 2.0.0-rc.69 (deployed)
+
+2.0.0-rc.69 adds OAuth2 token introspection (RFC 7662) and revocation (RFC 7009), OpenID Connect
+for the clients registered by the operator, and pseudonymous OAuth2 subjects (the app knows the
+account by an alias only). These are new features, opt-in per client or per configuration and
+described in `CHANGELOG-v2.md`, not fixes. The review of the refresh chain and of access aliases
+made alongside them found the following in earlier releases.
+
+#### A refused refresh used up the refresh token and could end the user's consent
+
+- **Severity:** Medium (deployments that serve OAuth2 confidential clients). It needs a refresh
+  token of the client, without its secret or key, for example from a leaked log line; the gain is
+  a loss of availability, not data.
+- **What could happen:** the token endpoint used up the refresh token before it checked the
+  client's authentication and that the token was issued to the calling client. A request with the
+  right client id and a wrong secret, or with any other client id, was refused, but the token was
+  spent. The legitimate app's next refresh then looked like the reuse of a stolen token, which
+  ends the refresh chain and withdraws the user's consent grant on every device, with a theft
+  notice. A refresh token without its client's secret could thus end a user's consent at will.
+- **What changed:** the client's authentication, its suspension and the token's client binding
+  are checked before the token is used up, so a refused request leaves the token working for the
+  client it was issued to. A rotated refresh token presented by another client is refused without
+  ending the chain.
+- **Operator action:** none.
+
+#### An access alias could be linked to the account behind it
+
+- **Severity:** Medium (accounts holding accesses created with `randomAlias`; aliases are on by
+  default). It needs the alias, which the aliased access's own `apiEndpoint` carries, and for the
+  first path a guessed username; the gain is a confirmation of who is behind a pseudonym.
+- **What could happen:** two paths confirmed the account behind an alias. Sign-in addressed by the
+  alias (`POST /<alias>/auth/login`) answered differently when the username in the body was the
+  account's, before any password check, so wrong guesses were not counted and could be repeated
+  without limit; the matching guess was counted as a failed sign-in of the owner, so repeating it
+  could also delay the owner's sign-in. And a token of the account was accepted at any of its
+  names (username, former usernames, aliases), so the holders of two aliased accesses could learn
+  whether their aliases were one person. A password reset could also be requested at an alias,
+  sending reset mails to the owner.
+- **What changed:** sign-in and password reset addressed by an access alias are refused with one
+  fixed answer (`400 invalid-operation`), whatever the credentials, before any password check and
+  without counting a failed sign-in. An aliased access is used at its own alias only, and an access
+  without an alias at the account's username and former usernames only; any other use answers as an
+  unknown token (`403 invalid-access-token`). An access created by an aliased access carries the
+  creator's alias. Sign-in and password reset are unchanged at the username and at former
+  usernames, and the owner's personal token is accepted at every name of the account.
+- **Operator action:** none. BREAKING for a client that called the username, or another alias,
+  with an aliased token: it must use the access's own `apiEndpoint`. Accesses such an app created
+  before this release keep their username-based `apiEndpoint`.
+
+#### Lower-severity fixes in 2.0.0-rc.69
+
+- **The consent-flow state and the third-party sign-in state were keyed on the admin key**
+  (hardening): the state carried from `/oauth2/authorize` to the consent page and back, and the
+  state cookie of third-party sign-in, were signed with keys derived from `auth.adminAccessKey`.
+  Forging either needed that key, which already grants the platform's administration, but the
+  admin key lives in deployment tooling and operator shells, and its exposure should not also
+  open what a browser flow trusts. Each is now signed with its own per-core secret
+  (`oauth.stateKey`, `sso.stateKey`), used for nothing else; while one is empty the admin-derived
+  key is still used and every boot logs a warning. A set value that is a placeholder or a
+  published example refuses the boot.
+- **Deleting an OAuth2 session did not end its refresh chain** (hardening): a session the user
+  deleted from the account's access list was replaced at the app's next refresh (the consent
+  grant, the documented withdrawal, was enforced). Deleting a session now also ends the refresh token
+  issued with it. A refresh now also retires the access token it replaces, after
+  `oauth.refreshRetireGraceSeconds` (default `60`), instead of letting it live out
+  `oauth.accessTokenTTL`, and a refresh whose session was deleted while it ran ends the tokens it
+  had just issued. Sessions minted by earlier releases are not linked to their refresh token and
+  expire on their own, one session lifetime at most.
+- **Audit rows carried the first characters of refresh tokens** (Low): the refresh audit rows
+  identified a token by its first six characters, which is not enough to use or guess it but has
+  no place in a log. They now carry a short digest of the token (this also changes the format of
+  the existing refresh audit rows). The scope recorded for a consent of a registered client is the
+  scope granted, no longer the requested one.
+- **Operator CLI** (Low; operator side): `bin/oauth-client.js show` printed the client secret's
+  hash, an offline-guessable value in terminal scrollback; it now prints `(set)`.
+  `create-registry` stored a key set next to a client secret or with no authentication method,
+  which the token endpoint then accepted as a second credential; a key set is now accepted with
+  `private_key_jwt` only, and `update` applies the authentication method with its credentials,
+  dropping the previous ones.
+- Not security fixes, listed for operators: a refresh refused for good after its token was used no
+  longer makes a later replay look like theft; on a re-authorization of a registered client, an
+  entry the user declined before is offered unticked; the composed consent screen shows a feature
+  the client may not be given as the restriction it becomes. `oauth.audAllowList` is removed (it
+  was never enforced; the audiences a client may name are registered per client).
+- **Operator action:** set `oauth.stateKey` on every core, and `sso.stateKey` on every core where
+  `sso.enabled` is true: each a random value of at least 32 characters (for example
+  `openssl rand -base64 32`), distinct from each other and from the admin key. Setting one only
+  cancels the consent screens or sign-ins open at that moment. 2.0.0-rc.70 requires `oauth.stateKey`
+  when `oauth.consentUrl` is set and `sso.stateKey` when `sso.enabled` is true.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1613,3 +1708,4 @@ This report is updated with every release that carries a security fix:
 | 8 | 2026-10-29 | 2.0.0-rc.40 to 2.0.0-rc.65 | Adds 2.0.0-rc.65 (follow-up review of account-field permissions carried by consents and app accesses, of the consent retry path and of deletion listings): 3 Medium findings and lower-severity fixes; section 4.1 notes the deletion-record exception to the `*` scope. Deployed on the maintainers' platforms (2026-10-29). |
 | 9 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.66 | Adds 2.0.0-rc.66 (follow-up review of access aliases and username changes, and of how consent grants and refreshed OAuth2 sessions combine permissions): 3 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.47 HF series item; section 4.1 adds the alias check, section 5 updates the HF series item. Deployed on the maintainers' platforms (2026-10-30). |
 | 10 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.68 | Adds 2.0.0-rc.67 (no security fix: the 2.0.0-rc.66 server with its Docker image) and 2.0.0-rc.68 (review of the OAuth2 consent flow alongside the OAuth2 clients registered by the operator): lower-severity fixes and the completion steps of the 2.0.0-rc.64 and rc.66 consent items; counts unchanged. Deployed on the maintainers' platforms (2026-10-30). |
+| 11 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.69 | Adds 2.0.0-rc.69 (review of the OAuth2 refresh chain and of pseudonymous access aliases alongside token introspection, revocation and pseudonymous OAuth2 subjects): 2 Medium findings and lower-severity fixes, plus the `follow-redirects` 1.16.2 dependency update (high advisory, not an audit finding); section 4.1 updates the alias check. Deployed on pryv.me (2026-11-02). |
