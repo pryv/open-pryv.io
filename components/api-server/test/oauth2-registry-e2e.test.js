@@ -475,12 +475,16 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       assert.ok(!JSON.stringify(pw.token).includes(name) && !JSON.stringify(pw.token).includes(id), JSON.stringify(pw.token));
 
       // A later sign-in to the same app keeps that access (and its token, the
-      // session being reused) but moves auth_time to the new sign-in.
+      // session being reused) but moves auth_time to the new sign-in, even
+      // with the access cached by a call made before that sign-in.
+      const info = await coreRequest.get('/' + name + '/access-info').set('Authorization', login.body.token);
+      assert.equal(info.status, 200, JSON.stringify(info.body));
       await new Promise((resolve) => setTimeout(resolve, 1100));
       const reloginStart = Math.floor(Date.now() / 1000);
       const relogin = await coreRequest.post('/' + name + '/auth/login').set('Origin', 'http://test.pryv.local')
         .send({ username: name, password: 'oreg-passw0rd', appId: 'pryv-test' });
       assert.equal(relogin.status, 200, JSON.stringify(relogin.body));
+      assert.equal(relogin.body.token, login.body.token, 'the sign-in kept its token');
       const again = await runFlow('openid read/health ctx/user', clientId, { username: name, token: relogin.body.token });
       const idToken2 = await verifiedIdToken(again.token.id_token);
       assert.ok(idToken2.auth_time > idToken.auth_time, 'auth_time moved: ' + idToken.auth_time + ' then ' + idToken2.auth_time);
