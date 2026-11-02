@@ -240,8 +240,15 @@ function callParse (
     offer.entryGroups = groups;
   }
   // One bound on the whole offer (labels and texts included): it is what the
-  // per-state offer cache and the consent screen hold.
-  const size = Buffer.byteLength(canonicalJson(offer));
+  // per-state offer cache and the consent screen hold. An offer that is not
+  // JSON (a BigInt, a cycle) is a contract error too, never a throw.
+  let size: number;
+  try {
+    size = Buffer.byteLength(canonicalJson(offer));
+  } catch (err: unknown) {
+    logServerError(`oauth extension ${ext.name}: contract error in scopeGrammar.parse (${purpose}): the offer is not JSON`, err);
+    return { ok: false, description: 'scope could not be parsed' };
+  }
   if (size > MAX_SYNTH_OFFER_BYTES) {
     logServerError(`oauth extension ${ext.name}: contract error in scopeGrammar.parse (${purpose})`,
       new Error(`the offer is ${size} bytes of JSON, over the bound of ${MAX_SYNTH_OFFER_BYTES}`));
@@ -274,8 +281,12 @@ function typedEntryGroups (raw: unknown): EntryGroup[] | string {
     if (groupKeys.has(key)) return `group key ${key} appears more than once`;
     groupKeys.add(key);
     if (label == null || typeof label !== 'object' || Array.isArray(label)) return `group ${key}: label must be an object`;
+    // Counted before the entries are materialised.
+    let languageCount = 0;
+    for (const lang in label) {
+      if (Object.hasOwn(label, lang) && ++languageCount > B.labelLanguages) return `group ${key}: label has more than ${B.labelLanguages} languages`;
+    }
     const languages = Object.entries(label as Record<string, unknown>);
-    if (languages.length > B.labelLanguages) return `group ${key}: label has more than ${B.labelLanguages} languages`;
     if (languages.some(([, text]) => typeof text !== 'string' || text.length > B.labelLength)) {
       return `group ${key}: label values must be strings of at most ${B.labelLength} characters`;
     }

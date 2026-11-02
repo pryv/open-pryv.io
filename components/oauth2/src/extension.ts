@@ -80,10 +80,10 @@
  * unchanged): keyed by entry keys, each value a localised text
  * `{ [languageCode]: string }`.
  *
- * `entryGroups` (optional, display only): an ordered array of
- * `{ key, label, entries }`, the order being the display order; `key` an
- * opaque string of 1 to 64 characters, unique in the offer; `label` a
- * localised text (at most 16 languages, each at most 200 characters);
+ * `entryGroups` (optional, display only; absent, not `null`): an ordered
+ * array of `{ key, label, entries }`, the order being the display order;
+ * `key` an opaque string of 1 to 64 characters, unique in the offer; `label`
+ * a localised text (at most 16 languages, each at most 200 characters);
  * `entries` entry keys (each at most 300 characters). At most 64 groups and
  * 1000 entry keys across them; an entry key in two groups (or twice in one)
  * is a contract error. Keys may name entries that are not in the offer (a
@@ -94,8 +94,15 @@
  * consent answer (`grantedPermissions`) stays a flat list.
  *
  * The whole offer (permissions, texts, labels, groups) is bounded to
- * `MAX_SYNTH_OFFER_BYTES` (256 KiB) of canonical JSON; over it, a contract
- * error.
+ * `MAX_SYNTH_OFFER_BYTES` (256 KiB) of canonical JSON; over it, or not JSON,
+ * a contract error. Character limits count UTF-16 code units.
+ *
+ * These checks run on EVERY parse: the request, the registered scope
+ * (`purpose: 'max'`: a failure refuses every request of the client, and the
+ * boot check warns) and the echo (a failure comes after the consent: the
+ * code exchange, a refresh or an introspection answers `server_error`). The
+ * `max` offer is never shown and is the largest: emit no display members
+ * (labels, groups, texts) for `purpose: 'max'`.
  *
  * Hooks that may be asynchronous are bounded by
  * `oauth:extensionHookTimeoutMs` (default 5000): a hook that does not settle

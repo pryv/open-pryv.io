@@ -17,6 +17,8 @@
 import assert from 'node:assert/strict';
 import * as extension from '../src/extension.ts';
 import * as scopeGrammar from '../src/scopeGrammar.ts';
+import { checkRegistryClients } from '../src/registryBootCheck.ts';
+import { setClient } from '../src/storage.ts';
 
 const CLIENT = {
   clientId: 'grp-app',
@@ -122,7 +124,11 @@ describe('[OSG] OAuth2: grouped consent entries and the offer size bound', () =>
     extra = { entryGroups: [] };
     assert.deepEqual(resolve().r.offer.entryGroups, []);
     extra = { entryGroups: [{ ...GROUPS[0], color: 'red' }] };
-    assert.deepEqual(resolve().r.offer.entryGroups, [GROUPS[0]]);
+    const stray = resolve().r;
+    assert.deepEqual(stray.offer.entryGroups, [GROUPS[0]]);
+    // Typed before the digest: a dropped member never changes it.
+    extra = { entryGroups: [GROUPS[0]] };
+    assert.equal(resolve().r.digest, stray.digest);
   });
 
   it('[OSG2] more than 64 groups are refused', () => {
@@ -162,7 +168,9 @@ describe('[OSG] OAuth2: grouped consent entries and the offer size bound', () =>
       extra = offer;
       assertContractError(resolve(), detail);
     }
-    // Bounds hold on the maximum set's parse too.
+    // Bounds hold on the maximum set's parse too (fresh caches: the cases
+    // above must not have memoised a maximum set).
+    scopeGrammar._resetForTests();
     target = 'max';
     extra = { entryGroups: manyGroups(65) };
     const { r } = resolve();
@@ -190,5 +198,67 @@ describe('[OSG] OAuth2: grouped consent entries and the offer size bound', () =>
     // Counted in bytes, not characters.
     extra = { description: { en: 'é'.repeat(Math.ceil(room / 2) + 50) } };
     assertContractError(resolve(), /over the bound of 262144/);
+  });
+
+  it('[OSG10] an offer that is not JSON is a contract error, never a throw: a bad registered scope at the boot check leaves the other clients checked', async () => {
+    extra = { consent: { en: 1n } };
+    assertContractError(resolve(), /the offer is not JSON/);
+    const cyclic = {};
+    cyclic.self = cyclic;
+    extra = { entryLabels: cyclic };
+    assertContractError(resolve(), /the offer is not JSON/);
+
+    // A cyclic member in one client's maximum-set offer.
+    const toy = grammar();
+    extension.setExtension({
+      ...toy,
+      scopeGrammar: {
+        ...toy.scopeGrammar,
+        parse (s, ctx) {
+          const out = toy.scopeGrammar.parse(s, ctx);
+          if (out.ok && ctx.purpose === 'max' && ctx.client.clientId === 'a-cyc') out.offer.consent = cyclic;
+          return out;
+        },
+      },
+    });
+    const kv = new Map();
+    const platform = {
+      async setPlatformKv (k, v) { kv.set(k, v); },
+      async getPlatformKv (k) { return kv.has(k) ? kv.get(k) : null; },
+      async listPlatformKvKeys (prefix) { return [...kv.keys()].filter((k) => k.startsWith(prefix)); },
+    };
+    await setClient(platform, { ...CLIENT, clientId: 'a-cyc' });
+    await setClient(platform, { ...CLIENT, clientId: 'b-bad', scope: ['nope'] });
+    await setClient(platform, { ...CLIENT, clientId: 'c-good' });
+    const warnings = [];
+    const origWarn = console.warn;
+    const origError = console.error;
+    console.warn = (...a) => warnings.push(a.join(' '));
+    console.error = () => {};
+    let count;
+    try {
+      count = await checkRegistryClients(platform);
+    } finally {
+      console.warn = origWarn;
+      console.error = origError;
+    }
+    assert.equal(count, 2, warnings.join('\n'));
+    assert.match(warnings[0], /client a-cyc: its registered scope is refused: scope could not be parsed/);
+    assert.match(warnings[1], /client b-bad: its registered scope is refused/);
+  });
+
+  it('[OSG11] the echo is parsed with the same checks: invalid groups in its parse fail the token response', () => {
+    const held = [{ streamId: 'a', level: 'read' }];
+    assert.deepEqual(scopeGrammar.grantedScopeTokens(CLIENT, [], ['read/a'], held), ['read/a']);
+    scopeGrammar._resetForTests(); // the echo's parse is memoised
+    extra = { entryGroups: manyGroups(65) };
+    const orig = console.error;
+    console.error = () => {};
+    try {
+      assert.throws(() => scopeGrammar.grantedScopeTokens(CLIENT, [], ['read/a'], held),
+        /scopeGrammar\.echo answered a scope its parse refuses: scope could not be parsed/);
+    } finally {
+      console.error = orig;
+    }
   });
 });

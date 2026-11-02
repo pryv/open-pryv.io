@@ -702,8 +702,8 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.equal(grouped.body.authenticated, true);
     assert.deepEqual(grouped.body.offer.entryGroups, GROUPS);
     assert.equal(flat.body.offer.entryGroups, undefined);
-    // The held stream c, outside the request, is on both screens (the
-    // groups name it: it falls into its group).
+    // The held stream c, outside the request, is on both screens with the
+    // same entries; placing it in a group is the consent UI's part.
     assert.deepEqual(grouped.body.offer.permissions, flat.body.offer.permissions);
     assert.deepEqual(grouped.body.offer.permissions.map((p) => p.streamId).sort(), ['a', 'b', 'c']);
     assert.notEqual(grouped.body.shownDigest, flat.body.shownDigest);

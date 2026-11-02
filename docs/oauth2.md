@@ -293,6 +293,12 @@ be intersected with them.
   more than 1000 permissions, an offer over 256 KiB of JSON (labels and texts
   included) and malformed `entryGroups` (below). It removes `defaultName` /
   `name` from the offer: a registry consent never creates a stream.
+- These offer checks hold on every parse: the registered scope's (a
+  registered scope over a bound refuses every request of the client, and the
+  boot check warns about it) and the echo's (a failure there comes after the
+  consent: the code exchange, a refresh and an introspection answer
+  `server_error`). The registered scope's offer is never shown: an extension
+  should emit no labels, groups or texts for it.
 - The core owns two scope tokens and never hands them to the grammar:
   `offline_access` asks for a refresh token (granted only when the client is
   registered for the `refresh_token` grant), `openid` asks for an `id_token`

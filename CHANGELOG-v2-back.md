@@ -11,7 +11,9 @@
   detail through `logServerError`).
 - `MAX_SYNTH_OFFER_BYTES` (256 KiB): `Buffer.byteLength(canonicalJson(offer))` of the normalised offer,
   checked once in `callParse` after the members are typed; also bounds what the per-state offer cache
-  holds.
+  holds. An offer that is not JSON (a BigInt, a cycle) is a contract error there too, so a bad
+  registered-scope offer no longer throws out of the boot pass over registry clients (the others are
+  still checked) nor out of `resolveRequestedScope`.
 - Digests and composition unchanged in code: `entryGroups` is an offer member, so it is already in
   `offerDigest`, in the composed `shown` offer and in `shownDigest`. Contract doc in the `extension.ts`
   header (entry keys incl. the level-less form, groups, bounds).

@@ -18,7 +18,13 @@
   texts included; `entryLabels` had no bound), and for `entryGroups` at most 64 groups, 1000 entry keys,
   unique group keys of at most 64 characters, labels of at most 16 languages of 200 characters, entry
   keys of at most 300 characters, no entry key in two groups. An offer breaking them answers
-  `invalid_scope` ("scope could not be parsed"), the detail logged on the server.
+  `invalid_scope` ("scope could not be parsed"), the detail logged on the server. **Upgrade note:**
+  the bounds hold on every parse of the extension's grammar, the client's registered scope included:
+  a registered scope whose parsed offer breaks them (for instance over 256 KiB with full label sets)
+  refuses every request of that client, and the boot check warns about it. On the echo's parse a
+  failure comes after the consent: the code exchange, a refresh and an introspection answer
+  `server_error`. An extension should emit no labels, groups or texts for the registered scope (never
+  shown) and measure that offer first.
 
 ### Account transfer to a beneficiary
 
