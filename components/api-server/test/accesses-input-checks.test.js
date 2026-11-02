@@ -83,6 +83,39 @@ describe('[ACIN] accesses input checks', function () {
     assert.strictEqual(res.body.error.id, 'invalid-operation');
   });
 
+  // `lastUsed` is the time of the last call made with the access, written by
+  // the server only: a caller-supplied one would make the account look in use
+  // until any date it likes.
+  it('[ACLU1] `lastUsed` is refused at creation', async function () {
+    const before = await getAccesses({});
+    assert.strictEqual(before.status, 200, before.text);
+    const names = [];
+    for (const type of ['app', 'shared']) {
+      const name = 'lu ' + cuid();
+      names.push(name);
+      const res = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+        .send({ name, type, permissions: [{ streamId: 'acin', level: 'read' }], lastUsed: 4102444800 });
+      assert.strictEqual(res.status, 400, type + ' ' + res.text);
+      assert.strictEqual(res.body.error.id, 'invalid-parameters-format', res.text);
+    }
+    const after = await getAccesses({});
+    assert.strictEqual(after.body.accesses.length, before.body.accesses.length, 'no access created');
+    assert.ok(!after.body.accesses.some((a) => names.includes(a.name)), 'no access created');
+  });
+
+  it('[ACLU2] `lastUsed` is refused at update', async function () {
+    const created = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+      .send({ name: 'lu update', type: 'app', permissions: [{ streamId: 'acin', level: 'read' }] });
+    assert.strictEqual(created.status, 201, created.text);
+    const res = await coreRequest.put('/' + username + '/accesses/' + created.body.access.id).set('Authorization', token)
+      .send({ lastUsed: 4102444800 });
+    assert.strictEqual(res.status, 403, res.text);
+    assert.strictEqual(res.body.error.id, 'forbidden', res.text);
+    const list = await getAccesses({});
+    const stored = list.body.accesses.find((a) => a.id === created.body.access.id);
+    assert.notStrictEqual(stored.lastUsed, 4102444800);
+  });
+
   // An access holds one level per stream: two entries for the same stream
   // would silently keep only one of them, depending on their order.
   const duplicates = [

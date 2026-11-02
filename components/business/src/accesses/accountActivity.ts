@@ -16,6 +16,13 @@
  * as `by: 'delegate'`: an account a delegate looks after every day is in use.
  * Deleted accesses are not consulted; a caller that needs a value that never
  * moves backwards keeps its own maximum.
+ *
+ * A `lastUsed` later than now (plus `ACTIVITY_CLOCK_SKEW_SECONDS`) is not
+ * use: the server only ever writes the time of the call, so such a value was
+ * planted (storage-direct, an imported archive) and would otherwise keep the
+ * account looking active until that date. The allowance covers a clock
+ * stepped back after the value was written; it is far below the shortest
+ * inactivity period, so it buys nothing.
  */
 
 import type { Callback } from 'storages/interfaces/_shared/types.ts';
@@ -46,16 +53,25 @@ export const ACTIVITY_ACCESS_TYPES: readonly string[] = Object.freeze(['personal
 
 const DELEGATE_KINDS: readonly unknown[] = Object.freeze([CLIENTDATA_KIND.DELEGATE_PAT, CLIENTDATA_KIND.DELEGATED_CHILD]);
 
+/** How far past `now` a `lastUsed` may be and still count as use, in seconds. */
+export const ACTIVITY_CLOCK_SKEW_SECONDS = 3600;
+
 function later (a: number | null, b: number): number {
   return a == null || b > a ? b : a;
 }
 
-export function activityOf (accesses: AccessRow[]): AccountActivity {
+function nowSeconds (): number {
+  return Date.now() / 1000;
+}
+
+/** `now` in pryv seconds; the auto-deletion sweep passes its own clock. */
+export function activityOf (accesses: AccessRow[], now: number = nowSeconds()): AccountActivity {
   const res: AccountActivity = { at: null, by: null, personal: null, app: null, delegate: null };
+  const latest = now + ACTIVITY_CLOCK_SKEW_SECONDS;
   for (const access of accesses) {
     if (access == null || !ACTIVITY_ACCESS_TYPES.includes(access.type as string)) continue;
     const used = access.lastUsed;
-    if (typeof used !== 'number' || !Number.isFinite(used)) continue;
+    if (typeof used !== 'number' || !Number.isFinite(used) || used > latest) continue;
     const byDelegate = DELEGATE_KINDS.includes(access.clientData?.delegation?.kind);
     if (byDelegate) {
       res.delegate = later(res.delegate, used);
@@ -73,19 +89,19 @@ export function activityOf (accesses: AccessRow[]): AccountActivity {
 }
 
 /** Latest activity in pryv seconds, or null when no qualifying access was ever used. */
-export function lastActivityOf (accesses: AccessRow[]): number | null {
-  return activityOf(accesses).at;
+export function lastActivityOf (accesses: AccessRow[], now: number = nowSeconds()): number | null {
+  return activityOf(accesses, now).at;
 }
 
-export function getActivity (repo: ActivityAccessesRepo, user: UserRef): Promise<AccountActivity> {
+export function getActivity (repo: ActivityAccessesRepo, user: UserRef, now: number = nowSeconds()): Promise<AccountActivity> {
   return new Promise((resolve, reject) => {
     repo.find(user, {}, null, (err, accesses) => {
       if (err != null) return reject(err);
-      resolve(activityOf(accesses ?? []));
+      resolve(activityOf(accesses ?? [], now));
     });
   });
 }
 
-export async function getLastActivity (repo: ActivityAccessesRepo, user: UserRef): Promise<number | null> {
-  return (await getActivity(repo, user)).at;
+export async function getLastActivity (repo: ActivityAccessesRepo, user: UserRef, now: number = nowSeconds()): Promise<number | null> {
+  return (await getActivity(repo, user, now)).at;
 }

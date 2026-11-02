@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
-const { lastActivityOf, activityOf, getActivity, getLastActivity } = require('../../src/accesses/accountActivity.ts');
+const { lastActivityOf, activityOf, getActivity, getLastActivity, ACTIVITY_CLOCK_SKEW_SECONDS } = require('../../src/accesses/accountActivity.ts');
 
 describe('[ACAC] account activity', function () {
   it('[ACAC1] is the latest lastUsed among personal and app accesses', function () {
@@ -82,5 +82,22 @@ describe('[ACAC] account activity', function () {
   it('[ACAC10] getActivity returns the breakdown', async function () {
     const repo = { find (user, query, options, cb) { cb(null, [{ type: 'app', lastUsed: 42 }]); } };
     assert.deepEqual(await getActivity(repo, { id: 'u1' }), { at: 42, by: 'owner', personal: null, app: 42, delegate: null });
+  });
+
+  it('[ACAC11] a use time later than now, past the clock-skew allowance, is not use', function () {
+    const now = 1_000_000;
+    const skew = ACTIVITY_CLOCK_SKEW_SECONDS;
+    assert.deepEqual(activityOf([
+      { type: 'personal', lastUsed: now - 10 },
+      { type: 'app', lastUsed: now + skew + 1 },
+      { type: 'personal', lastUsed: now + skew + 1, clientData: { delegation: { kind: 'delegate-pat' } } }
+    ], now), { at: now - 10, by: 'owner', personal: now - 10, app: null, delegate: null });
+    assert.equal(lastActivityOf([{ type: 'app', lastUsed: now + skew }], now), now + skew, 'within the allowance it counts');
+    assert.equal(lastActivityOf([{ type: 'app', lastUsed: 4102444800 }]), null, 'against the real clock by default');
+    const repo = { find (user, query, options, cb) { cb(null, [{ type: 'app', lastUsed: now + 2 * skew }]); } };
+    return Promise.all([
+      getLastActivity(repo, { id: 'u1' }, now).then((at) => assert.equal(at, null)),
+      getLastActivity(repo, { id: 'u1' }, now + skew).then((at) => assert.equal(at, now + 2 * skew))
+    ]);
   });
 });

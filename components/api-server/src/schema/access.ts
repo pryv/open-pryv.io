@@ -30,7 +30,6 @@ function accessSchema (action: string): AccessSchemaShape {
     apiEndpoint: string({ minLength: 1 }),
     name: string({ minLength: 1 }),
     permissions: permissions(action),
-    lastUsed: helpers.number(),
     // Routable de-identifying alias substituted for the username in this
     // access's apiEndpoint and access-info. Read-only (set via randomAlias).
     alias: string({ minLength: 1, nullable: true }),
@@ -43,6 +42,13 @@ function accessSchema (action: string): AccessSchemaShape {
   // explicitly forbid 'id' on create
   if (action !== Action.CREATE) {
     base.properties.id = string();
+  }
+
+  // Time of the last call made with the access: written by the server only.
+  // Refused on create (unknown property); on update it is in the schema so
+  // the protected-field check refuses it with a clear message, like 'id'.
+  if (action !== Action.CREATE) {
+    base.properties.lastUsed = helpers.number();
   }
 
   // explicitly forbid 'calls' on anything but store (purely internal)
