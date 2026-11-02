@@ -65,6 +65,7 @@ import { createRequire } from 'node:module';
 
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { UsernameResolver, AuthCodeAccessRevoker } from './authorization_code.ts';
+import { checkTokenResource } from '../resourceIndicator.ts';
 const require = createRequire(import.meta.url);
 
 // Kept on the require shim: a typed `storage` import surfaces a pre-existing
@@ -177,6 +178,8 @@ export type RefreshGrantParams = {
   /** Confidential-client auth (private_key_jwt, RFC 7521/7523). */
   client_assertion?: string;
   client_assertion_type?: string;
+  /** RFC 8707 resource indicator: when given, the one the chain was granted for. */
+  resource?: unknown;
 };
 
 /**
@@ -245,6 +248,13 @@ export async function handleRefreshToken (
   const peek = await storage.getRefresh(deps.platform, coreId, params.refresh_token);
   if (peek != null && peek.clientId !== params.client_id) {
     return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };
+  }
+  // RFC 8707 § 2.2: a resource named here must be the one the chain was
+  // granted for (one per chain: there is nothing to narrow to). Refused on
+  // the same non-consuming read, so the token stays usable.
+  if (peek != null) {
+    const resourceRefusal = checkTokenResource(params.resource, peek.audience);
+    if (resourceRefusal != null) return resourceRefusal;
   }
 
   // ATOMIC single-use: consume deletes-and-returns in one linearized op, so
@@ -371,6 +381,15 @@ export async function handleRefreshToken (
     return { ok: false as const, status: 500, error: 'server_error', description };
   };
 
+  // Defence for a peek/consume interleaving (checked on the peek above): a
+  // wrong resource is the request's fault, not the chain's, so the row goes
+  // back and the token stays usable.
+  const resourceRefusal = checkTokenResource(params.resource, row.audience);
+  if (resourceRefusal != null) {
+    await undoConsume();
+    return resourceRefusal;
+  }
+
   if (row.kind === 'registry' && !isRegistryClient(client)) {
     await endChain();
     return { ok: false, status: 400, error: 'invalid_grant', description: 'the client registration changed, re-authorize' };
@@ -474,6 +493,7 @@ export async function handleRefreshToken (
         subject: access.subject,
         aliased: access.aliased === true,
         grantState: access.grantState,
+        ...(row.audience != null ? { audience: row.audience } : {}),
       });
     } catch (err: unknown) {
       logServerError('refresh_token: registry token response failed', err);

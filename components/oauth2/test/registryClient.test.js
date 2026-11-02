@@ -795,7 +795,7 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const deps = { config: fakeConfig(), platform };
       for (const aud of [undefined, 'https://other.example.com/base']) {
         const { res } = await authorize(deps, authorizeQuery({ aud }));
-        assert.ok(res.headers.location.startsWith(REDIRECT + '?error=invalid_request'), res.headers.location);
+        assert.ok(res.headers.location.startsWith(REDIRECT + '?error=invalid_target'), res.headers.location);
       }
       const { signed } = await authorize(deps, authorizeQuery({ aud: AUD + '/' }));
       assert.equal(verifyState(ADMIN_KEY, signed).payload.audience, AUD);

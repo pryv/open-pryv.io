@@ -169,6 +169,7 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
         scopeTokens,
         permissions,
         issuer,
+        ...(row.audience != null ? { audience: row.audience } : {}),
       };
       extra = await runHook('introspectionClaims', ctx);
     } catch (err: unknown) {

@@ -76,7 +76,7 @@ export type SignedStatePayload = {
    * re-derived from `scope` at /accept and must match this digest.
    */
   offerRef?: { kind: 'synthesised'; digest: string };
-  /** The `aud` value the request named (registry clients with an audience list). */
+  /** The `aud` / `resource` value the request named (the registered spelling when the client has a list). */
   audience?: string;
   /** OpenID Connect `nonce` of the authorization request (registry clients). */
   nonce?: string;

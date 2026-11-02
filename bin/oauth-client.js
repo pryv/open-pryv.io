@@ -1195,9 +1195,11 @@ function printUsage (stream) {
     '                            credentials of the old method, a new secret is minted\n' +
     '                            for client_secret_basic, and none needs --yes)\n' +
     '  --audience <url>          (multi; also on update) resource values the client may\n' +
-    '                            request (aud); at least one, unless --any-audience\n' +
+    '                            request (aud or resource; else invalid_target); at least\n' +
+    '                            one, unless --any-audience\n' +
     '  --any-audience            (also on update) register the client explicitly for any\n' +
-    '                            audience (no aud check)\n' +
+    '                            audience (no list check: a well-formed aud / resource is\n' +
+    '                            stored and answered as introspection aud)\n' +
     '  --allow-insecure-redirect (also on update; "false" withdraws it) accept plain-http\n' +
     '                            redirect URIs on a non-loopback host (refused otherwise;\n' +
     '                            reported at every core boot)\n' +

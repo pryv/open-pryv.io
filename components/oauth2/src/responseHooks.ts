@@ -52,6 +52,8 @@ export type RegistryGrant = {
   nonce?: string;
   /** When the consenting user signed in (seconds). */
   authTime?: number;
+  /** The resource server the authorization named (`aud` / `resource`), if any. */
+  audience?: string;
 };
 
 export type RegistryResponseParts = {
@@ -81,6 +83,7 @@ export async function prepareRegistryResponse (g: RegistryGrant): Promise<Regist
     scopeTokens,
     permissions: g.permissions,
     issuer: g.issuer,
+    ...(g.audience != null ? { audience: g.audience } : {}),
   };
   const staticExtras = { ...(g.client.tokenResponseExtras ?? {}) } as Record<string, unknown>;
   for (const k of RESERVED_KEYS.tokenResponse) delete staticExtras[k];

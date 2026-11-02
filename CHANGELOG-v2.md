@@ -153,6 +153,24 @@
   Was accepted on such an access before this release. Per-key `clientData` edits (`{ k: 'v' }`,
   `{ k: null }`) still work and keep the binding.
 
+### OAuth resource indicators (RFC 8707)
+
+- **`/oauth2/authorize` accepts RFC 8707 `resource` as a synonym of `aud`** (GET and POST): one value
+  per authorization, validated against the client's registered audiences; `aud` and `resource`
+  together must name the same resource (`invalid_request` otherwise). Clients registered for any
+  audience, and clients without an audience list, now get the named resource stored and answered as
+  `aud` by `/oauth2/introspect` (it must be an absolute https URL without fragment, at most 512
+  bytes, http only on a loopback host).
+- **BREAKING (OAuth clients): refusals about the audience answer `invalid_target` (RFC 8707) instead
+  of `invalid_request`**: missing on a client with registered audiences, not registered, malformed.
+- **`/oauth2/token` accepts `resource` (RFC 8707 § 2.2) on the authorization-code and refresh-token
+  grants**: it must be the resource the authorization named, else `invalid_target`; the code is
+  consumed like any other binding failure, a refresh token stays usable. `client_credentials` ignores
+  it.
+- OAuth extension: the response hooks (`tokenResponse`, `idTokenClaims`, `introspectionClaims`)
+  receive `ctx.audience`, the resource the authorization named (optional context field, no contract
+  version change).
+
 ### Fixes
 
 - **A request authenticated by `private_key_jwt` no longer needs `client_id` in the body: it is taken
