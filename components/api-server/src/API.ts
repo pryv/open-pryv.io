@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { ResultOutcome } from './Result.ts';
 const require = createRequire(import.meta.url);
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
@@ -14,7 +15,7 @@ const observability = require('business/src/observability/index.ts');
 
 const logger = getLogger('api');
 
-type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void> };
+type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void>; errorApiCall (ctx: unknown, error: unknown): Promise<void> };
 type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; resultArrayLimit?: number; [k: string]: unknown };
 
 let audit: AuditModule, throwIfMethodIsNotDeclared: (id: string) => void, isAuditActive: boolean;
@@ -25,6 +26,13 @@ const RESULT_TO_OBJECT_MAX_ARRAY_SIZE = 100000;
 
 // The string used as wildcard for method id filters. Must be 1-character long.
 const WILDCARD = '*';
+
+/** The error a settled result is counted with, if any. */
+function outcomeError (outcome: ResultOutcome): unknown {
+  if (outcome.status === 'success') return undefined;
+  if (outcome.status === 'aborted') return errors.clientClosedRequest();
+  return outcome.error instanceof APIError ? outcome.error : errors.unexpectedError(outcome.error);
+}
 
 // Result is imported as a value (require().default); MethodContext
 // was a JSDoc-only namespaced reference. `any` for both at the type level:
@@ -268,9 +276,21 @@ class API {
         observability.recordApiCall(methodId, Date.now() - startedAtMs, apiError);
         return callback(apiError);
       }
-      observability.recordApiCall(methodId, Date.now() - startedAtMs);
+      if (result.isStreamResult()) {
+        // Nothing has been read yet: the store can still fail on its first
+        // row, and the client can still leave. Count the call once it ends.
+        result.onSettled(function (outcome: ResultOutcome) {
+          observability.recordApiCall(methodId, Date.now() - startedAtMs, outcomeError(outcome));
+        });
+      } else {
+        observability.recordApiCall(methodId, Date.now() - startedAtMs);
+      }
       if (isAuditActive) {
-        result.onEnd(async function () {
+        result.onEnd(async function (outcome: ResultOutcome) {
+          if (outcome.status === 'aborted') {
+            await audit.errorApiCall(context, errors.clientClosedRequest());
+            return;
+          }
           await audit.validApiCall(context, result);
         });
       }

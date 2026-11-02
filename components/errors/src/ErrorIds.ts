@@ -10,6 +10,12 @@
  */
 const ErrorIds = {
   ApiUnavailable: 'api-unavailable',
+  /**
+   * The client closed the connection before a streamed response was complete.
+   * Never sent (nobody is left to read it): recorded in the audit trail and the
+   * call telemetry only.
+   */
+  ClientClosedRequest: 'client-closed-request',
   CorruptedData: 'corrupted-data',
   Forbidden: 'forbidden',
   InvalidAccessToken: 'invalid-access-token',

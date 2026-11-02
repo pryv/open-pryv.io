@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Call telemetry follows how a streamed call ended
+
+- The call counter and duration of a streamed result are recorded when the result ends (fully
+  written, failed while read, or cut by the client), no longer when its method returns, before any
+  row is read. A store failing on its first row now counts as `5xx` `unexpected-error` instead of a
+  success, a client leaving as `4xx` `client-closed-request` (status 499, not reported as a server
+  fault), and the duration covers the streaming. The same holds on the socket and batch paths
+  (`Result.toObject`). `Result` gains `onSettled(outcome)`, and `onEnd` now receives the outcome
+  (`success` or `aborted`; a failure stays with the error handler).
+
 ### Account transfer: the sweep, the record, the links
 
 - The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim

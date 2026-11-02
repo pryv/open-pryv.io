@@ -104,6 +104,8 @@ class Result {
       isStreamResult: false,
       streamsArray: [],
       onEndCallback: null,
+      onSettledCallback: null,
+      streamError: null,
       streamsConcatArrays: {},
       tracing: params?.tracing || new DummyTracing(),
       tracingId: null
@@ -177,10 +179,34 @@ class Result {
     this._private.streamsConcatArrays = {};
   }
 
-  // Execute the following when result has been fully sent
-  // If already sent callback is called right away
-  onEnd (callback: () => void) {
+  // Execute the following when the result has been written to an HTTP
+  // response, with how it ended: 'success', or 'aborted' when the client left
+  // before a streamed response was complete. A stream that fails while read is
+  // not reported here: the error handler it is handed to takes it over.
+  onEnd (callback: (outcome: ResultOutcome) => void) {
     this._private.onEndCallback = callback;
+  }
+
+  /**
+   * Execute the following once the result is consumed, however it is (an HTTP
+   * response or `toObject`), with how it really ended. For a streamed result
+   * that is only known at the end: storage can fail on the first row read, and
+   * the client can leave half-way.
+   */
+  onSettled (callback: (outcome: ResultOutcome) => void) {
+    this._private.onSettledCallback = callback;
+  }
+
+  // Hands the settled callback over once: every later consumer gets a no-op, so
+  // one result reports one outcome. Captured up front because `writeSingle` and
+  // `toObjectSingle` delete `_private`.
+  takeSettle (): (outcome: ResultOutcome) => void {
+    const callback = this._private.onSettledCallback;
+    this._private.onSettledCallback = null;
+    return (outcome: ResultOutcome) => {
+      if (callback == null) return;
+      try { callback(outcome); } catch (err) { logger.error('result onSettled callback threw', err); }
+    };
   }
 
   // Sends the content of Result to the HttpResponse stream passed in parameters.
@@ -194,6 +220,7 @@ class Result {
    */
   writeToHttpResponse (res: Response, successCode: number, onStreamError?: (err: Error) => void) {
     const rawOnEnd = this._private.onEndCallback;
+    const settle = this.takeSettle();
     // The end-callback is async (it writes the audit record) and its result was
     // dropped on the floor, so a rejection inside it became an unhandled
     // rejection — which on current Node defaults takes the process down, after
@@ -201,9 +228,9 @@ class Result {
     // fatal: this runs on the success path of every audited request.
     const onEndCallBack = rawOnEnd == null
       ? null
-      : () => {
+      : (outcome: ResultOutcome) => {
           try {
-            const returned = rawOnEnd() as unknown;
+            const returned = rawOnEnd(outcome) as unknown;
             if (returned != null && typeof (returned as PromiseLike<unknown>).then === 'function') {
               Promise.resolve(returned).then(null, (err: unknown) => {
                 logger.error('result onEnd callback failed', err);
@@ -220,26 +247,35 @@ class Result {
       // and run the callback by hand instead.
       if (res.destroyed) {
         destroyRegisteredSources(this._private.streamsArray);
-        if (onEndCallBack) { onEndCallBack(); }
+        settle({ status: 'aborted' });
+        if (onEndCallBack) { onEndCallBack({ status: 'aborted' }); }
         this.closeTracing();
         return;
       }
       const writeTracingId = this._private.tracing.startSpan('writeToHttpResponse', {}, this._private.tracingId!);
-      let failed = false;
+      let failure: Error | null = null;
       const onError = onStreamError == null
         ? undefined
-        : (err: Error) => { failed = true; onStreamError(err); };
+        : (err: Error) => { failure = err; onStreamError(err); };
       const stream = this.writeStreams(res, successCode, onError);
       stream.on('close', () => {
+        // Checked first: the error handler cuts a response it can no longer
+        // answer, which would otherwise read as the client leaving.
+        const error = failure ?? this._private.streamError;
+        const outcome: ResultOutcome = error != null
+          ? { status: 'failed', error }
+          : res.writableFinished ? { status: 'success' } : { status: 'aborted' };
+        settle(outcome);
         // A failed call is audited by the error handler it was handed to.
-        if (onEndCallBack && !failed) { onEndCallBack(); }
+        if (onEndCallBack && outcome.status !== 'failed') { onEndCallBack(outcome); }
         this._private.tracing.finishSpan(writeTracingId);
         this.closeTracing();
       });
     } else {
       this.closeTracing();
       this.writeSingle(res, successCode);
-      if (onEndCallBack) { onEndCallBack(); }
+      settle({ status: 'success' });
+      if (onEndCallBack) { onEndCallBack({ status: 'success' }); }
     }
   }
 
@@ -298,6 +334,7 @@ class Result {
         logger.debug('streamed response ended early (client went away)', err.code);
         return;
       }
+      this._private.streamError = err;
       logger.warn('streamed response failed', err);
     });
     return res;
@@ -313,10 +350,15 @@ class Result {
   //
   toObject (callback: ToObjectCallback) {
     this.closeTracing();
+    const settle = this.takeSettle();
+    const settledCallback: ToObjectCallback = (err, res) => {
+      settle(err != null ? { status: 'failed', error: err } : { status: 'success' });
+      return callback(err, res);
+    };
     if (this.isStreamResult()) {
-      this.toObjectStream(callback);
+      this.toObjectStream(settledCallback);
     } else {
-      this.toObjectSingle(callback);
+      this.toObjectSingle(settledCallback);
     }
   }
 
@@ -397,6 +439,7 @@ class ResultStream extends Transform {
 }
 export default Result;
 export { Result };
+export type { ResultOutcome };
 /**
  * A factory-mode MultiStream that also tears down the streams still WAITING to
  * become current.
@@ -511,9 +554,17 @@ interface ResultPrivate {
   arrayLimit: number;
   isStreamResult: boolean;
   streamsArray: StreamDescriptor[];
-  onEndCallback: (() => void) | null;
+  onEndCallback: ((outcome: ResultOutcome) => void) | null;
+  onSettledCallback: ((outcome: ResultOutcome) => void) | null;
+  // a failure of the streamed response when no error handler was given
+  streamError: Error | null;
   streamsConcatArrays: Record<string, StreamConcatArray>;
   tracing: Tracing;
   tracingId: string | null;
 }
+/** How a consumed result ended. */
+type ResultOutcome =
+  | { status: 'success' }
+  | { status: 'failed'; error: unknown }
+  | { status: 'aborted' };
 type ToObjectCallback = (err?: Error | null, res?: APIResult | null) => unknown;
