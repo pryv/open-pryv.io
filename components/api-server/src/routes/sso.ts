@@ -68,7 +68,7 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   const config = app.config;
   const logger = getLogger('routes:sso');
   const landingPageURL = config.get('sso:landingPageURL');
-  // `sso:stateKey`, else (transitional, warned at boot) `auth:adminAccessKey`.
+  // `sso:stateKey`, required at boot while `sso:enabled` is true.
   const stateKey = ssoStateKeyFromConfig(config);
 
   // Promisified api dispatch: the dispatcher reads methodId off the context

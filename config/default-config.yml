@@ -213,12 +213,11 @@ sso:
                                  # must be registered VERBATIM at each IdP.
   # Secret the sign-in state cookie (carried from /auth/sso/<id>/start to the
   # IdP and back to the callback) is keyed on; used for nothing else. Per core
-  # (the cookie is set and read on one core). Set it on every core where
-  # enabled is true, to a random value of at least 32 characters, e.g.
-  # `openssl rand -base64 32` (a placeholder or `${…}` value refuses the
-  # boot). While it is empty, the key is derived from auth.adminAccessKey and
-  # a warning is logged at every boot; a later release will require it.
-  # Changing it only cancels the sign-ins in progress at that moment.
+  # (the cookie is set and read on one core). REQUIRED on every core where
+  # enabled is true (the boot refuses an empty one): a random value of at
+  # least 32 characters, e.g. `openssl rand -base64 32` (a placeholder or
+  # `${…}` value refuses the boot too). Changing it only cancels the sign-ins
+  # in progress at that moment.
   stateKey: ''
   providers: {}                  # operator IdP allow-list, default EMPTY
   # providers:
@@ -1141,12 +1140,11 @@ oauth:
   requireAppAccountMfa: true
   # Secret the consent-flow state (the signed parameter carried from
   # /oauth2/authorize to the consent page and back) is keyed on; used for
-  # nothing else. Per core (a consent flow runs on one core). Set it to a random
-  # value of at least 32 characters, e.g. `openssl rand -base64 32` (a
-  # placeholder or `${…}` value refuses the boot). While it is
-  # empty, the key is derived from auth.adminAccessKey and a warning is logged
-  # at every boot; a later release will require it. Changing it only cancels
-  # the consent screens open at that moment.
+  # nothing else. Per core (a consent flow runs on one core). REQUIRED when
+  # consentUrl is set (the boot refuses an empty one): a random value of at
+  # least 32 characters, e.g. `openssl rand -base64 32` (a placeholder or
+  # `${…}` value refuses the boot too). Changing it only cancels the consent
+  # screens open at that moment.
   stateKey: ''
   # OpenID Connect (id_token, /.well-known/openid-configuration, /oauth2/jwks)
   # for registry clients: on when at least one signing key is listed, off

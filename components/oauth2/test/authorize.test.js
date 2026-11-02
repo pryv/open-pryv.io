@@ -21,6 +21,7 @@ const { verifyState } = require('../src/signedState.ts');
 const { clearOfferCache } = require('../src/offerResolver.ts');
 
 const ADMIN_KEY = 'admin-key-for-tests';
+const STATE_KEY = 'state-key-for-tests-0123456789abcdef';
 const ISSUER = 'https://reg.pryv.me';
 const CONSENT_URL = 'https://auth.pryv.me/oauth2-authorize';
 
@@ -28,6 +29,7 @@ function fakeConfig (overrides = {}) {
   const m = {
     'service:api': ISSUER,
     'auth:adminAccessKey': ADMIN_KEY,
+    'oauth:stateKey': STATE_KEY,
     'oauth:consentUrl': CONSENT_URL,
     ...overrides,
   };
@@ -127,7 +129,7 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       assert.ok(loc.startsWith(CONSENT_URL + '?state='));
       assert.match(loc, /&pryvApi=https%3A%2F%2Freg\.pryv\.me/);
       const stateParam = decodeURIComponent(loc.split('state=')[1].split('&')[0]);
-      const v = verifyState(ADMIN_KEY, stateParam);
+      const v = verifyState(STATE_KEY, stateParam);
       assert.equal(v.ok, true);
       assert.equal(v.payload.clientId, 'myapp');
       assert.equal(v.payload.redirectUri, 'https://app.example/cb');
@@ -140,7 +142,7 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       const handler = handleAuthorize({ config: fakeConfig(), platform, offerFetch: defaultOfferFetch() });
       const res = fakeRes();
       await handler(fakeReq({ ...VALID_QUERY, login_hint: 'alice' }), res);
-      const v = verifyState(ADMIN_KEY, decodeURIComponent(res.headers.location.split('state=')[1].split('&')[0]));
+      const v = verifyState(STATE_KEY, decodeURIComponent(res.headers.location.split('state=')[1].split('&')[0]));
       assert.equal(v.payload.userIdHint, 'alice');
     });
     it('[OA-OK3] response is cache-control: no-store', async () => {
@@ -306,12 +308,15 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       await handler(fakeReq(VALID_QUERY), res);
       assert.equal(res.statusCode, 500);
     });
-    it('[OA-C3] missing auth:adminAccessKey → 500', async () => {
+    it('[OA-C3] missing oauth:stateKey → 500, the admin key does not stand in', async () => {
       const platform = fakePlatform({ myapp: VALID_CLIENT });
-      const handler = handleAuthorize({ config: fakeConfig({ 'auth:adminAccessKey': null }), platform });
-      const res = fakeRes();
-      await handler(fakeReq(VALID_QUERY), res);
-      assert.equal(res.statusCode, 500);
+      for (const stateKey of [null, '']) {
+        const handler = handleAuthorize({ config: fakeConfig({ 'oauth:stateKey': stateKey }), platform });
+        const res = fakeRes();
+        await handler(fakeReq(VALID_QUERY), res);
+        assert.equal(res.statusCode, 500);
+        assert.equal(res.headers.location, undefined);
+      }
     });
   });
 
@@ -368,7 +373,7 @@ describe('[OAUTH-AUTH] /oauth2/authorize handler', () => {
       // The read went through the capability URL with the token as auth.
       assert.equal(fetchFn.calls.length, 1);
       assert.match(fetchFn.calls[0].url, /^https:\/\/myapp\.example\.com\//);
-      const v = verifyState(ADMIN_KEY, decodeURIComponent(res.headers.location.split('state=')[1].split('&')[0]));
+      const v = verifyState(STATE_KEY, decodeURIComponent(res.headers.location.split('state=')[1].split('&')[0]));
       assert.equal(v.ok, true);
       assert.deepEqual(v.payload.scope, ['cmc:study-A']);
       assert.equal(v.payload.offer.offerName, 'study-A');

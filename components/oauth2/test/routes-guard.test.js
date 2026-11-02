@@ -20,12 +20,14 @@ const { registerRoutes } = require('../src/routes.ts');
 const { signState } = require('../src/signedState.ts');
 
 const ADMIN_KEY = 'admin-key-tests';
+const STATE_KEY = 'state-key-for-tests-0123456789abcdef';
 const ISSUER = 'https://reg.pryv.me';
 
 function fakeConfig () {
   const m = {
     'service:api': ISSUER,
     'auth:adminAccessKey': ADMIN_KEY,
+    'oauth:stateKey': STATE_KEY,
     'core:id': 'core-a',
     'oauth:accessTokenTTL': 3600,
   };
@@ -87,7 +89,7 @@ describe('[OAUTH-ROUTES-GUARD] route mount error guard', () => {
     let nextCalled = false;
     await routes['POST /oauth2/authorize/accept']({
       body: {
-        state: signState(ADMIN_KEY, SAMPLE_PAYLOAD),
+        state: signState(STATE_KEY, SAMPLE_PAYLOAD),
         username: 'alice',
         userToken: 'alice-token',
         grantedPermissions: [{ streamId: 'health', level: 'read' }],
@@ -102,7 +104,7 @@ describe('[OAUTH-ROUTES-GUARD] route mount error guard', () => {
   it('[ORG-2] a malformed signature on the mounted refuse route answers 400 and the handler resolves', async () => {
     const routes = mount();
     const res = fakeRes();
-    const [body] = signState(ADMIN_KEY, SAMPLE_PAYLOAD).split('.');
+    const [body] = signState(STATE_KEY, SAMPLE_PAYLOAD).split('.');
     await routes['POST /oauth2/authorize/refuse']({ body: { state: body + '.' + 'é' + 'a'.repeat(42) } }, res, () => {});
     assert.equal(res.statusCode, 400);
     assert.match(res.body.error_description, /bad_signature/);

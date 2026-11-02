@@ -169,30 +169,31 @@ for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
   }
 }
 
-// oauth.stateKey, sso.stateKey: optional (empty = derived from
-// auth.adminAccessKey, with a boot warning when the feature is on), but a set
-// value is a secret held to the same rule (mirrors checkOptionalSecrets and
-// collectWarnings in config/plugins/config-validation.js).
-function checkOptionalStateKey (key, featureOn, unsetWarning) {
+// oauth.stateKey, sso.stateKey: required while their feature is on
+// (oauth.consentUrl set, sso.enabled true), optional otherwise; a set value is
+// a secret held to the same rule either way (mirrors the REQUIRED_WHEN entries
+// and checkOptionalSecrets in config/plugins/config-validation.js).
+function checkStateKey (key, featureOn, featureHint) {
   const value = get(key);
+  const orOff = featureOn ? `, or ${featureHint}` : ', or leave it empty';
   if (value == null || value === '') {
-    if (featureOn) warnings.push(`${key} not set: ${unsetWarning}; set a random value of at least 32 characters (a later release requires it)`);
+    if (featureOn) problems.push(`${key} is required: set it to a random value of at least 32 characters (e.g. openssl rand -base64 32)${orOff}`);
   } else if (typeof value !== 'string') {
     problems.push(`${key} must be a string`);
   } else if (isMissingOrSentinel(value)) {
-    problems.push(`${key} is a placeholder value: set a long random value of your own, or leave it empty`);
+    problems.push(`${key} is a placeholder value: set a long random value of your own${orOff}`);
   } else if (weakSecretReason(value) != null) {
-    problems.push(`${key} ${weakSecretReason(value)}: set a long random value of your own, or leave it empty`);
+    problems.push(`${key} ${weakSecretReason(value)}: set a long random value of your own${orOff}`);
   } else if (weakSecretReason(value, { production: true }) != null) {
     warnings.push(`${key} ${weakSecretReason(value, { production: true })}: a production core refuses to boot with it`);
   }
 }
-checkOptionalStateKey('oauth.stateKey',
+checkStateKey('oauth.stateKey',
   typeof get('oauth.consentUrl') === 'string' && get('oauth.consentUrl') !== '',
-  'consent states are signed with a key derived from auth.adminAccessKey');
-checkOptionalStateKey('sso.stateKey',
+  'leave oauth.consentUrl empty to turn the authorization flow off');
+checkStateKey('sso.stateKey',
   get('sso.enabled') === true,
-  'sign-in state cookies are signed with a key derived from auth.adminAccessKey');
+  'set sso.enabled: false');
 
 // auth.trustedApps — required at boot, every entry must parse (same parser as
 // the server).

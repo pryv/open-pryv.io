@@ -25,8 +25,8 @@
  *   - the session re-read behind token introspection (`oauth2/introspect.ts`);
  *   - the operator's OAuth extension, loaded here at mount.
  *
- * If `service:api`, the state key (`oauth:stateKey`, or `auth:adminAccessKey`
- * while it is unset), or `oauth:consentUrl` is missing, the oauth2 module
+ * If `service:api`, `oauth:consentUrl` or the state key `oauth:stateKey`
+ * (required at boot once `oauth:consentUrl` is set) is missing, the oauth2 module
  * soft-degrades: see its routes.ts. A malformed `oauth:signingKeys` entry
  * fails the mount (and so the boot), like a broken extension.
  */
