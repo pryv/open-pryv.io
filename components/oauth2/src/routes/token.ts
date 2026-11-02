@@ -87,13 +87,20 @@ export function handleToken (deps: TokenDeps) {
     // unverified here). The grant authenticates that client exactly as it
     // would a body client_id. An assertion that names no client, or names one
     // without a key set on file, is refused here with the uniform answer,
-    // before anything is used up (a code, a DPoP proof jti).
+    // before anything is used up (a code, a DPoP proof jti). A known client
+    // named this way then runs the grant as with a body client_id, so on the
+    // code grant a bad code answers 400 invalid_grant where an unknown iss
+    // answers 401: that tells whether a client id exists. Accepted: client ids
+    // are public (every authorization URL carries one), and the refresh and
+    // client_credentials grants already tell it apart for a body client_id.
+    let assertedClient: Awaited<ReturnType<typeof getClient>> | undefined;
     if (basic == null && noBodyClientId && typeof rawBody.client_assertion === 'string' && rawBody.client_assertion !== '') {
       const assertedId = clientIdFromAssertion(rawBody.client_assertion, rawBody.client_assertion_type);
       const asserted = assertedId != null ? await getClient(deps.platform, assertedId) : null;
       if (assertedId == null || !hasKeySet(asserted)) {
         outcome = { ok: false as const, status: 401, error: 'invalid_client', description: 'client authentication failed' };
       } else {
+        assertedClient = asserted;
         body = { ...rawBody, client_id: assertedId };
       }
     }
@@ -113,7 +120,7 @@ export function handleToken (deps: TokenDeps) {
     if (outcome != null) {
       // refused above: the request names no client that can authenticate
     } else if (dpopHeader != null && typeof body.client_id === 'string' && body.client_id !== '' &&
-        isRegistryClient(await getClient(deps.platform, body.client_id))) {
+        isRegistryClient(assertedClient ?? await getClient(deps.platform, body.client_id))) {
       outcome = { ok: false as const, status: 400, error: 'invalid_request', description: 'DPoP is not available for this client' };
     } else if (dpopHeader != null) {
       const clockSkewSeconds = Number(deps.config.get('oauth:dpop:clockSkewSeconds') ?? 120);

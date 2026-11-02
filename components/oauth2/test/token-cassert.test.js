@@ -428,5 +428,28 @@ describe('[OAUTH-TKN-PKJ] /oauth2/token — private_key_jwt client auth', () => 
       await handler({ body: assertionOnly(codeBody('PKA-5'), valid) }, ok);
       assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
     });
+
+    it('[OTPA6] a refused assertion-only request leaves its DPoP proof unused: the same proof then binds a valid exchange', async () => {
+      const platform = fakePlatform();
+      await registerClient(platform, { jwks: { keys: [key.publicJwk] } });
+      await seedCode(platform, 'PKA-6');
+      const bound = [];
+      const handler = handleToken({ config: fakeConfig(), platform, bindAccessDpop: async (p) => { bound.push(p.jkt); } });
+      const dpopKey = await makeKeyPair();
+      const h = b64url(JSON.stringify({ typ: 'dpop+jwt', alg: 'ES256', jwk: dpopKey.publicJwk }));
+      const p = b64url(JSON.stringify({ jti: 'dpop-' + crypto.randomUUID(), htm: 'POST', htu: 'http://api.example.com/oauth2/token', iat: Math.floor(Date.now() / 1000) }));
+      const sig = await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, dpopKey.pair.privateKey, Buffer.from(`${h}.${p}`, 'utf8'));
+      const proof = `${h}.${p}.${b64url(sig)}`;
+      const req = (body) => ({ body, originalUrl: '/oauth2/token', url: '/oauth2/token', headers: { host: 'api.example.com', dpop: proof } });
+      const refused = fakeRes();
+      await handler(req(assertionOnly(codeBody('PKA-6'), await makeAssertion(key, { iss: 'nobody', sub: 'nobody' }))), refused);
+      assert.equal(refused.statusCode, 401);
+      assert.deepEqual(refused.body, UNIFORM);
+      const ok = fakeRes();
+      await handler(req(assertionOnly(codeBody('PKA-6'), await makeAssertion(key))), ok);
+      assert.equal(ok.statusCode, 200, JSON.stringify(ok.body));
+      assert.equal(ok.body.token_type, 'DPoP');
+      assert.equal(bound.length, 1);
+    });
   });
 });

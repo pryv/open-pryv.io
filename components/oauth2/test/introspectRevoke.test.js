@@ -374,7 +374,14 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
       const ok = await introspect(platform, { auth: null, body: assertionBody(await assertion(ISSUER + '/oauth2/introspect')) });
       assert.equal(ok.statusCode, 200, ok.raw);
       assert.equal(ok.body.active, true);
-      for (const bad of ['not-a-jwt', await assertion(ISSUER + '/oauth2/introspect', { iss: 'nobody', sub: 'nobody' }), await assertion(ISSUER + '/oauth2/introspect', { sub: 'other' })]) {
+      const bads = [
+        'not-a-jwt',
+        await assertion(ISSUER + '/oauth2/introspect', { iss: 'nobody', sub: 'nobody' }),
+        await assertion(ISSUER + '/oauth2/introspect', { sub: 'other' }),
+        // A secret-only caller allowed to introspect, named by iss: no key set to verify against.
+        await assertion(ISSUER + '/oauth2/introspect', { iss: 'resource-srv', sub: 'resource-srv' }),
+      ];
+      for (const bad of bads) {
         const res = await introspect(platform, { auth: null, body: assertionBody(bad) });
         assert.equal(res.statusCode, 401);
         assert.deepEqual(res.body, UNIFORM);
