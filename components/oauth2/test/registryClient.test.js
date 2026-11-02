@@ -850,6 +850,27 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const { res } = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'dup.local' }));
       assert.deepEqual(redirectError(res), { error: 'invalid_scope', description: 'conflicting permissions on a requested resource' });
     });
+    it('[OXLH6] a native client on an ephemeral localhost port: accepted only when http://localhost is registered', async () => {
+      const presented = 'http://localhost:51234/callback';
+      const loopbackIps = ['http://127.0.0.1/callback', 'http://[::1]/callback'];
+      const withLocalhost = fakePlatform();
+      await seed(withLocalhost, { redirectUris: [...loopbackIps, 'http://localhost/callback'] });
+      const ok = await authorize({ config: fakeConfig(), platform: withLocalhost }, authorizeQuery({ redirect_uri: presented }));
+      assert.equal(ok.res.statusCode, 302);
+      const v = verifyState(STATE_KEY, ok.signed);
+      assert.equal(v.ok, true);
+      assert.equal(v.payload.redirectUri, presented);
+      // The IP literals keep their own port carve-out on the same row.
+      const ip = await authorize({ config: fakeConfig(), platform: withLocalhost }, authorizeQuery({ redirect_uri: 'http://127.0.0.1:51234/callback' }));
+      assert.equal(verifyState(STATE_KEY, ip.signed).ok, true);
+      // The same row without the localhost entry: refused, never redirected.
+      const ipsOnly = fakePlatform();
+      await seed(ipsOnly, { redirectUris: loopbackIps });
+      const refused = await authorize({ config: fakeConfig(), platform: ipsOnly }, authorizeQuery({ redirect_uri: presented }));
+      assert.equal(refused.res.statusCode, 400);
+      assert.equal(refused.signed, null);
+      assert.match(refused.res.raw, /redirect_uri does not match/);
+    });
   });
 
   describe('[OXOFR] offer endpoint and /accept', () => {

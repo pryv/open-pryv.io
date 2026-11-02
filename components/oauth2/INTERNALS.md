@@ -73,7 +73,7 @@ The `coreId` (in the refresh key, in the code row) lets a core recognise a row i
 
 ## Redirect-URI matching
 
-`matchRedirectUri(presented, registered)` is exact-string match with ONE carve-out: loopback addresses may vary port.
+`matchRedirectUri(presented, registered)` is exact-string match with ONE carve-out: on plain `http`, the loopback hosts `127.0.0.1`, `[::1]` and `localhost` may vary port (RFC 8252 §7.3; the port is ignored on both sides). Everything else stays exact: scheme, userinfo, path, query, and the host string itself. The three hosts are not interchangeable: a `127.0.0.1` registration does not admit `localhost` and the reverse, so a client registers each form it may send. Subdomains of `localhost`, `localhost.` and `https://localhost` are not relaxed. Both sides go through the WHATWG URL parser, which normalises the host before the comparison (lowercasing, percent-decoding, numeric IPv4 forms such as `127.1`, long IPv6 forms), so `LOCALHOST` matches `localhost` and `[0:0:0:0:0:0:0:1]` matches `[::1]`; the browser follows the same parsing, so it still lands on loopback. A presented URI with a control character is refused before parsing (the parser would drop it, the `Location` header would not).
 
 ```
 registered = "https://app.example.com/cb"
@@ -85,6 +85,13 @@ presented  = "https://app.example.com:443/cb"      → NO MATCH (explicit port)
 registered = "http://127.0.0.1/cb"
 presented  = "http://127.0.0.1:8742/cb"            → MATCH (loopback carve-out)
 presented  = "http://127.0.0.1:8742/cb/"           → NO MATCH (trailing slash even on loopback)
+presented  = "http://localhost:8742/cb"            → NO MATCH (host string differs, no cross-match)
+
+registered = "http://localhost/cb"
+presented  = "http://localhost:51234/cb"           → MATCH (loopback carve-out)
+presented  = "http://127.0.0.1:51234/cb"           → NO MATCH (host string differs, no cross-match)
+presented  = "http://foo.localhost:51234/cb"       → NO MATCH (subdomain)
+presented  = "https://localhost:51234/cb"          → NO MATCH (carve-out is http only)
 
 registered = "com.example.app:/cb"
 presented  = "com.example.app:/cb"                 → MATCH (private-use URI scheme)

@@ -47,7 +47,8 @@ export async function getClient (platform: PlatformDB, clientId: string): Promis
 /**
  * Validate a presented redirect_uri against a client's registered set.
  * RFC 9700 §2.1 + RFC 8252 §7.5: exact string match, ONE carve-out:
- * loopback addresses (`127.0.0.1`, `[::1]`) may vary port.
+ * on plain-http URIs whose host is one of `LOOPBACK_HOSTS` (`127.0.0.1`,
+ * `[::1]`, `localhost`) the port may vary.
  *
  * No regex, no prefix matching, no scheme normalization. Phishers
  * exploit lax matching.
@@ -59,6 +60,12 @@ export function validateRedirectUri (registered: string[], presented: string): b
   // authorize gate too (registration already rejects it) — defense-in-depth so
   // a fragment URI can never be accepted even if one slipped into storage.
   if (presented.includes('#')) return false;
+  // The URL parser drops tabs and newlines, so such a URI could match and
+  // then fail as a Location header: refuse control characters outright.
+  for (let i = 0; i < presented.length; i++) {
+    const c = presented.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return false;
+  }
 
   for (const r of registered) {
     if (r === presented) return true;
@@ -68,10 +75,12 @@ export function validateRedirectUri (registered: string[], presented: string): b
 }
 
 /**
- * Loopback carve-out — `http://127.0.0.1/cb` registered matches
- * `http://127.0.0.1:<any-port>/cb` presented. Same for `[::1]`.
+ * Loopback carve-out: `http://127.0.0.1/cb` registered matches
+ * `http://127.0.0.1:<any-port>/cb` presented. Same for `[::1]` and
+ * `localhost`. The host string must be the same on both sides (a
+ * `127.0.0.1` registration does not admit `localhost`, nor the reverse).
  * Exact match on everything else (scheme, host, userinfo, path,
- * query, fragment) — RFC 8252 §7.3 relaxes ONLY the port.
+ * query, fragment): RFC 8252 §7.3 relaxes ONLY the port.
  */
 function matchLoopback (registered: string, presented: string): boolean {
   let r: URL; let p: URL;
@@ -79,7 +88,7 @@ function matchLoopback (registered: string, presented: string): boolean {
   if (r.protocol !== 'http:') return false; // loopback carve-out is HTTP only (RFC 8252 §7.3)
   if (r.protocol !== p.protocol) return false;
   if (r.hostname !== p.hostname) return false;
-  if (r.hostname !== '127.0.0.1' && r.hostname !== '[::1]') return false;
+  if (!LOOPBACK_HOSTS.includes(r.hostname)) return false;
   // port may differ — that's the carve-out.
   if (r.username !== p.username) return false;
   if (r.password !== p.password) return false;
@@ -313,11 +322,12 @@ export function defaultForbiddenFeatures (client: OAuthClient): string[] {
   return REGISTRY_DEFAULT_FORBIDDEN_FEATURES.filter((f) => !allowed.includes(f));
 }
 
-// `localhost` counts here (RFC 6761 reserves it for loopback): this list only
-// decides which plain-http redirect URIs need an explicit registration. The
-// port carve-out of `validateRedirectUri` is stricter (RFC 8252 § 8.3 does not
-// recommend `localhost`) and is unchanged. Resource indicators use the same
-// list for their plain-http carve-out.
+// The loopback host strings (`localhost` counts: RFC 6761 reserves it for
+// loopback, and browsers resolve it to the loopback interface without a DNS
+// lookup). One list, one rule: on plain http these hosts need no explicit
+// insecure-redirect registration, and `validateRedirectUri` lets their port
+// vary (RFC 8252 § 7.3), host string compared exactly. Resource indicators
+// use the same list for their plain-http carve-out.
 export const LOOPBACK_HOSTS = ['127.0.0.1', '[::1]', 'localhost'];
 
 /**

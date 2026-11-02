@@ -127,5 +127,5 @@ The App account IS the OAuth2 client. Its `:_app:*` streams carry RFC 7591 metad
 
 - **Do not store `client_secret` plaintext anywhere.** The CLI hashes it with bcrypt at creation time; only the hash leaves the operator's terminal.
 - **Do not extend `oauth-client/<clientId>` with credentials.** By design, that keyspace is metadata-only. `client_secret_hash` IS permitted (one-way; not a usable credential by itself); plaintexts and reversible encryption are not.
-- **Do not match `redirect_uri` with regex or prefix.** Exact match only, with the loopback carve-out (`127.0.0.1` / `[::1]` may vary port). See `INTERNALS.md` for the matcher rules.
+- **Do not match `redirect_uri` with regex or prefix.** Exact match only, with the loopback carve-out (on plain `http`, `127.0.0.1` / `[::1]` / `localhost` may vary port; the host string must match exactly, so register each loopback form your client may send: they are not interchangeable). See `INTERNALS.md` for the matcher rules.
 - **Do not redirect back to a supplied `redirect_uri` on validation failure.** Render an HTML 400 instead — defends against open-redirector phishing.

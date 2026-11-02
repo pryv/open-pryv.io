@@ -882,7 +882,11 @@ Notes:
   The registry flags (`--auth-method`, `--audience`, …) are unknown to
   `create`.
 - **`--redirect-uri` is repeatable and required** — pass the flag once per URI.
-  At least one is mandatory on `create`.
+  At least one is mandatory on `create`. Matching is exact, except that on a
+  plain-`http` loopback host (`127.0.0.1`, `[::1]`, `localhost`) any port is
+  accepted: register `http://localhost/callback` for a native or CLI client
+  that listens on an ephemeral port. The three host forms are not
+  interchangeable; register each one the client may send.
 - **`--scope` is repeatable**; one value may hold several space-separated
   tokens, which are split (on `create`, `update` and `create-registry`).
 - **`--cmc-offer <name>=<capabilityUrl>` is repeatable** — registers the

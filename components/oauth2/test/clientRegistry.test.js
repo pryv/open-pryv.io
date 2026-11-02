@@ -168,9 +168,10 @@ describe('[OAUTH-CLIENT] client registry', () => {
         assert.equal(validateRedirectUri(['http://127.0.0.1:8080/cb'], 'http://127.0.0.1:9999/cb'), true);
         assert.equal(validateRedirectUri(['http://127.0.0.1:8080/cb'], 'http://127.0.0.1/cb'), true);
       });
-      it('[OAUTH-REDIR-3b] localhost hostname is NOT carved out (resolvable ≠ loopback literal)', () => {
-        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:8742/cb'), false);
+      it('[OAUTH-REDIR-3b] localhost hostname is carved out like the loopback literals (port may vary)', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:8742/cb'), true);
         assert.equal(validateRedirectUri(['http://localhost:8742/cb'], 'http://localhost:8742/cb'), true);
+        assert.equal(validateRedirectUri(['http://localhost:8742/cb'], 'http://localhost:9999/cb'), true);
       });
       it('[OAUTH-REDIR-3c] other 127.0.0.0/8 literals are NOT carved out', () => {
         assert.equal(validateRedirectUri(['http://127.0.0.2/cb'], 'http://127.0.0.2:8742/cb'), false);
@@ -194,6 +195,52 @@ describe('[OAUTH-CLIENT] client registry', () => {
       });
       it('[OAUTH-REDIR-3h] IPv6 loopback long form canonicalizes to [::1] — still loopback, accepted', () => {
         assert.equal(validateRedirectUri(['http://[::1]/cb'], 'http://[0:0:0:0:0:0:0:1]:8742/cb'), true);
+      });
+    });
+
+    describe('[OXLH] localhost loopback: port relaxed, host string exact', () => {
+      it('[OXLH1] registered http://localhost/cb matches any port or none; a registered port is ignored', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234/cb'), true);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost/cb'), true);
+        assert.equal(validateRedirectUri(['http://localhost:8080/cb'], 'http://localhost:51234/cb'), true);
+        assert.equal(validateRedirectUri(['http://localhost:8080/cb'], 'http://localhost/cb'), true);
+      });
+      it('[OXLH2] no cross-match between localhost and the IP literals, either way', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://127.0.0.1:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://[::1]:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://127.0.0.1/cb'], 'http://localhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://[::1]/cb'], 'http://localhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://127.0.0.1/cb', 'http://[::1]/cb'], 'http://localhost:51234/cb'), false);
+      });
+      it('[OXLH3] subdomains, lookalikes and the trailing-dot form are refused', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://foo.localhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost.evil.com:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost.:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost.localdomain:51234/cb'), false);
+        // A registration for a subdomain or the trailing-dot form gets no port relaxation either.
+        assert.equal(validateRedirectUri(['http://foo.localhost/cb'], 'http://foo.localhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost./cb'], 'http://localhost.:51234/cb'), false);
+      });
+      it('[OXLH4] https, and path / query / fragment / userinfo mismatches are refused', () => {
+        assert.equal(validateRedirectUri(['https://localhost/cb'], 'https://localhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'https://localhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234/cb/'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234/other'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb?a=1'], 'http://localhost:51234/cb?a=2'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234/cb?a=1'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234/cb#f'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://user@localhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://user@localhost/cb'], 'http://user@localhost:51234/cb'), true);
+      });
+      it('[OXLH5] the parser lowercases the host (LOCALHOST matches); localhost as userinfo of another host is refused', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://LOCALHOST:51234/cb'), true);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost@evil.com:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234@evil.com/cb'), false);
+      });
+      it('[OXLH7] a presented URI with a tab, newline or other control character is refused', () => {
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://local\nhost:51234/cb'), false);
+        assert.equal(validateRedirectUri(['http://localhost/cb'], 'http://localhost:51234/c\tb'), false);
+        assert.equal(validateRedirectUri(['https://app.example.com/cb'], 'https://app.example.com/cb\r'), false);
       });
     });
 

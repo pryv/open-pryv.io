@@ -88,6 +88,17 @@
   the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
   templates set`.
 
+### OAuth2
+
+- **OAuth2 redirect URIs: `http://localhost` is a loopback host.** A client registered with
+  `http://localhost/<path>` is accepted with any port at `/authorize`, as `127.0.0.1` and `[::1]`
+  already were (RFC 8252 § 7.3). The host string must match exactly: a registration for `127.0.0.1`
+  does not admit `localhost` and the reverse, register each form the client sends; subdomains of
+  `localhost`, `localhost.` and `https` are not relaxed. Native and CLI clients that pick an
+  ephemeral port on `localhost` now work with one registered URI per host form. A row already
+  registered with `http://localhost:<port>/<path>` now accepts any port too. A presented redirect URI
+  containing a control character (tab, newline) is refused.
+
 ## 2.0.0-rc.70 - 2026-11-02
 
 > **Upgrade advice for operators.** Before deploying: (0) set `oauth:stateKey` on every core where
