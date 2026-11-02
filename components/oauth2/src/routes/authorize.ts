@@ -68,10 +68,10 @@ export function handleAuthorize (deps: AuthorizeDeps) {
   return async function authorize (req: Request, res: Response): Promise<void> {
     const issuer = issuerFromConfig(deps.config);
     if (!issuer) return sendServerError(res, 'service:api not configured');
-    const stateKey = stateKeyFromConfig(deps.config);
-    if (!stateKey) return sendServerError(res, 'oauth:stateKey (or auth:adminAccessKey) not configured');
     const consentUrl = String(deps.config.get('oauth:consentUrl') ?? '').replace(/\/$/, '');
     if (!consentUrl) return sendServerError(res, 'oauth:consentUrl not configured');
+    const stateKey = stateKeyFromConfig(deps.config);
+    if (!stateKey) return sendServerError(res, 'oauth:stateKey not configured');
 
     // GET reads the query, POST a form body (OpenID Connect Core §3.1.2.1).
     // A parameter given twice (or a structured value) is refused on both,

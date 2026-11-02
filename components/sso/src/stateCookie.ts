@@ -19,10 +19,9 @@
  * navigation, which `Strict` would strip the cookie from. The signing key is
  * derived (HMAC-SHA256, fixed label distinct from the oauth2 signed state)
  * from `sso.stateKey`, a per-core secret used for nothing else: the cookie is
- * set and read on one core's origin, so no other core ever verifies it. While
- * `sso.stateKey` is not set, the key is derived from `auth.adminAccessKey`
- * instead, with a boot warning; once it is set, a cookie signed with the
- * admin-derived key no longer verifies. Changing either key only cancels the
+ * set and read on one core's origin, so no other core ever verifies it. It is
+ * required at boot when `sso.enabled` is true, and no other key is ever used:
+ * without it no sign-in route is mounted. Changing it only cancels the
  * sign-ins in flight (at most the cookie TTL). See `ssoStateKeyFromConfig`.
  *
  * The cookie carries the PKCE `code_verifier`: signing gives integrity, and
@@ -79,15 +78,12 @@ export type StateCookiePayload = {
 };
 
 /**
- * The secret the state cookie is keyed on: `sso:stateKey` when set,
- * otherwise (transitional fallback, reported at boot) `auth:adminAccessKey`.
- * Empty string when neither is configured.
+ * The secret the state cookie is keyed on: `sso:stateKey`. Empty string
+ * when it is not configured (no sign-in route is then mounted).
  */
 export function ssoStateKeyFromConfig (config: { get (key: string): unknown }): string {
   const stateKey = config.get('sso:stateKey');
-  if (typeof stateKey === 'string' && stateKey.length > 0) return stateKey;
-  const adminKey = config.get('auth:adminAccessKey');
-  return typeof adminKey === 'string' ? adminKey : '';
+  return typeof stateKey === 'string' ? stateKey : '';
 }
 
 /**

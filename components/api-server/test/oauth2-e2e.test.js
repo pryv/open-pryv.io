@@ -41,6 +41,7 @@ const { buildFetchShim } = require('./cmc-fetch-shim.cjs');
 
 const REDIRECT_URI = 'https://app.example/cb';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
+const STATE_KEY = 'test-oauth-state-key-' + 'a1B2c3D4e5'.repeat(2);
 const OFFER_NAME = 'e2e';
 
 /**
@@ -108,7 +109,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
     await initCore();
     fixtures = getNewFixture();
 
-    restoreConsentUrl = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL } });
+    restoreConsentUrl = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
 
     // Outbound HTTP (offer resolution via capability URL + CMC
     // delivery) routes through the in-process server.

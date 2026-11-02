@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### State keys: no admin-key fallback
+
+- `signedState.stateKeyFromConfig` and `sso`'s `ssoStateKeyFromConfig` return the configured
+  `oauth:stateKey` / `sso:stateKey` or `''`, never `auth:adminAccessKey`. With `''` authorize, accept
+  and refuse answer 500, offer refuses the state (400), and the sign-in routes are not mounted
+  (fail-closed, as before).
+- `config-validation.js`: two `REQUIRED_WHEN` entries, `oauth:stateKey` when `oauth:consentUrl` is a
+  non-empty string and `sso:stateKey` when `sso:enabled` is true (a non-string counts as missing; a
+  set value goes through `weakSecretReason`, both being in `SECRET_PATHS`). `checkOptionalSecrets`
+  skips a path whose `REQUIRED_WHEN` condition holds, so one bad key gives one problem. The boot
+  warnings for an unset key are removed (the equal-to-another-key and shorter-than-32 warnings stay).
+- `bin/check-config.js`: `checkOptionalStateKey` becomes `checkStateKey`, an unset key under its
+  condition is a problem instead of a warning.
+- `/oauth2/authorize` checks `oauth:consentUrl` before the state key, so a core without a consent
+  page reports the missing page rather than the missing key.
+- Test cores spawned by the multi-core suites set a per-core `oauth:stateKey` with their consent
+  page (`OAUTH_STATE_KEY` overrides it).
+
 ### OAuth extension: the grant state
 
 - New optional extension hook `scopeGrammar.grantState({ permissions, requestedTokens, client })`

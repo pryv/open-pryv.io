@@ -33,6 +33,7 @@ const REQUIRED_SERVICE_FIELDS = ['name', 'serial', 'home', 'support', 'terms', '
 // the tree. REQUIRED_WHEN adds detection for keys that are simply absent
 // (no entry to descend into) when the feature gating says they ought to
 // be there.
+const STATE_KEY_HINT = 'set it on this core to a random value of at least 32 characters (e.g. `openssl rand -base64 32`)';
 const REQUIRED_WHEN = [
   // `services.email.enabled` is an object `{ welcome, resetPassword }`
   // in the default config — mirror the gating logic from
@@ -92,8 +93,28 @@ const REQUIRED_WHEN = [
       const providers = c.get('sso:providers');
       return providers != null && typeof providers === 'object' && Object.keys(providers).length > 0;
     }
+  },
+  // State keys: per-core secrets signing the browser round-trips, used for
+  // nothing else and never replaced by another key. The OAuth consent state is
+  // signed whenever a consent page is configured; the sign-in state cookie
+  // whenever third-party sign-in is on.
+  {
+    path: 'oauth:stateKey',
+    when: c => isNonEmptyString(c.get('oauth:consentUrl')),
+    isMissing: v => typeof v !== 'string' || isMissingOrSentinel(v),
+    hint: STATE_KEY_HINT + ' (it signs the consent-flow state), or leave oauth.consentUrl empty to turn the authorization flow off.'
+  },
+  {
+    path: 'sso:stateKey',
+    when: c => c.get('sso:enabled') === true,
+    isMissing: v => typeof v !== 'string' || isMissingOrSentinel(v),
+    hint: STATE_KEY_HINT + ' (it signs the sign-in state cookie), or set sso.enabled: false.'
   }
 ];
+
+function isNonEmptyString (value) {
+  return typeof value === 'string' && value.length > 0;
+}
 
 // A value is treated as "missing / unset" if it would render the feature
 // non-functional. Includes `null`/`undefined`, empty strings, and the two
@@ -143,17 +164,20 @@ function checkRequiredWhen (config, problems) {
 const SECRET_PATHS = ['auth:adminAccessKey', 'auth:filesReadTokenSecret', 'platform:piiHmacKey', 'oauth:stateKey', 'sso:stateKey'];
 const { weakSecretReason, MIN_SECRET_LENGTH } = require('../../components/business/src/secretValues.ts');
 
-// Secrets that may be left empty (the feature then falls back or stays off)
-// but, once set, are held to the same rule as the required ones.
+// Secrets that may be left empty while their feature is off (REQUIRED_WHEN
+// makes them required once it is on) but, once set, are held to the same rule
+// as the required ones.
 const OPTIONAL_SECRET_PATHS = ['oauth:stateKey', 'sso:stateKey'];
 
 /**
  * An optional secret that is set must be a real secret: a placeholder, an
  * unexpanded `${…}` reference or (in production) a short or published value
- * refuses the boot, as for the required secrets.
+ * refuses the boot, as for the required secrets. A path whose REQUIRED_WHEN
+ * condition holds is left to `checkRequiredWhen` (one problem, not two).
  */
 function checkOptionalSecrets (config, problems) {
   for (const path of OPTIONAL_SECRET_PATHS) {
+    if (REQUIRED_WHEN.some(r => r.path === path && r.when(config))) continue;
     const value = config.get(path);
     if (value == null || value === '') continue;
     let reason;
@@ -794,22 +818,15 @@ const STATE_KEY_MIN_LENGTH = 32;
 const OAUTH_MAX_ID_TOKEN_TTL = 3600;
 
 /**
- * OAuth settings that work but should be changed: the consent-state key still
- * borrowed from the admin key (transitional), a weak or shared state key, a
- * removed key still set, an unusable id_token lifetime, a refresh retire grace
- * shorter than the refresh reuse grace.
+ * OAuth settings that work but should be changed: a weak or shared state key
+ * (an unset one is a boot problem when a consent page is set, see
+ * REQUIRED_WHEN), a removed key still set, an unusable id_token lifetime, a
+ * refresh retire grace shorter than the refresh reuse grace.
  */
 function oauthWarnings (config) {
   const warnings = [];
-  const consentUrl = config.get('oauth:consentUrl');
   const stateKey = config.get('oauth:stateKey');
   const stateKeySet = typeof stateKey === 'string' && stateKey.length > 0;
-  // Only the authorization flow signs states, and it needs a consent page.
-  if (!stateKeySet && typeof consentUrl === 'string' && consentUrl.length > 0) {
-    warnings.push("'oauth.stateKey' is not set: OAuth consent states are signed with a key derived from 'auth.adminAccessKey'. " +
-      `Set 'oauth.stateKey' to a random value of at least ${STATE_KEY_MIN_LENGTH} characters (e.g. openssl rand -base64 32); ` +
-      'a later release will require it. Setting it cancels only the consent screens open at that moment.');
-  }
   if (stateKeySet && stateKey === config.get('auth:adminAccessKey')) {
     warnings.push("'oauth.stateKey' equals 'auth.adminAccessKey': give it its own random value.");
   } else if (stateKeySet && stateKey.length < STATE_KEY_MIN_LENGTH) {
@@ -837,20 +854,16 @@ function oauthWarnings (config) {
 }
 
 /**
- * Third-party sign-in settings that work but should be changed: the
- * state-cookie key still borrowed from the admin key (transitional), or a
- * weak or shared one. Silent while sign-in is disabled.
+ * Third-party sign-in settings that work but should be changed: a weak or
+ * shared state-cookie key (an unset one is a boot problem, see
+ * REQUIRED_WHEN). Silent while sign-in is disabled.
  */
 function ssoWarnings (config) {
   const warnings = [];
   if (config.get('sso:enabled') !== true) return warnings;
   const stateKey = config.get('sso:stateKey');
-  const stateKeySet = typeof stateKey === 'string' && stateKey.length > 0;
-  if (!stateKeySet) {
-    warnings.push("'sso.stateKey' is not set: sign-in state cookies are signed with a key derived from 'auth.adminAccessKey'. " +
-      `Set 'sso.stateKey' to a random value of at least ${STATE_KEY_MIN_LENGTH} characters (e.g. openssl rand -base64 32); ` +
-      'a later release will require it. Setting it cancels only the sign-ins in progress at that moment.');
-  } else if (stateKey === config.get('auth:adminAccessKey')) {
+  if (typeof stateKey !== 'string' || stateKey.length === 0) return warnings;
+  if (stateKey === config.get('auth:adminAccessKey')) {
     warnings.push("'sso.stateKey' equals 'auth.adminAccessKey': give it its own random value.");
   } else if (stateKey === config.get('oauth:stateKey')) {
     warnings.push("'sso.stateKey' equals 'oauth.stateKey': give each its own random value.");

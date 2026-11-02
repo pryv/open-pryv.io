@@ -103,6 +103,9 @@ oauth:
   # Consent page of your account app; GET /oauth2/authorize redirects there.
   # Without it the OAuth authorization flow answers 500.
   consentUrl: https://your-account-app.example.com/oauth2-authorize
+  # Signs the consent-flow state; REQUIRED when consentUrl is set (the core refuses
+  # to start without it). Per core, distinct from every other key: openssl rand -base64 32
+  stateKey: <random-32-char-string>
 
 platform:
   # PlatformDB PII is hashed by default: the core refuses to start without the key.
@@ -170,7 +173,7 @@ storages:
 
 On stop (SIGTERM / SIGINT), the master stops its workers, then stops rqlited and waits for it to exit before exiting itself: rqlited snapshots the platform DB when it closes, and must not be killed during that snapshot. Give the master that time: a supervisor stop timeout of at least 30 s (systemd `TimeoutStopSec=30s`; Docker's default is 10 s: `docker stop -t 30` or `docker run --stop-timeout 30` (the launcher the `init` wizard writes sets it), or `stop_grace_period: 30s` in Compose; the master's own deadline is 28 s, rqlited is killed after 20 s, with an `ERROR` in the log).
 
-`config/production-config.yml` (the layer the Docker image adds) carries only deployment-neutral values. `auth.adminAccessKey`, `auth.filesReadTokenSecret`, `platform.piiHmacKey`, `auth.trustedApps`, `auth.passwordResetPageURL`, `auth.emailVerificationPageURL` and `services.email` must come from your own config: the core refuses to start when the secrets (`platform.piiHmacKey` unless `platform.piiMode: cleartext`), `auth.trustedApps` or (with password-reset mail on, the default) `auth.passwordResetPageURL` are missing.
+`config/production-config.yml` (the layer the Docker image adds) carries only deployment-neutral values. `auth.adminAccessKey`, `auth.filesReadTokenSecret`, `platform.piiHmacKey`, `auth.trustedApps`, `auth.passwordResetPageURL`, `auth.emailVerificationPageURL`, `services.email`, `oauth.stateKey` and `sso.stateKey` must come from your own config: the core refuses to start when the secrets (`platform.piiHmacKey` unless `platform.piiMode: cleartext`; `oauth.stateKey` when `oauth.consentUrl` is set; `sso.stateKey` when `sso.enabled`), `auth.trustedApps` or (with password-reset mail on, the default) `auth.passwordResetPageURL` are missing.
 
 ### Trusted apps
 

@@ -2,7 +2,10 @@
 
 ## 2.0.0-rc.70 - 2026-11-02
 
-> **Upgrade advice for operators.** Before deploying: (1) for every registry OAuth client whose
+> **Upgrade advice for operators.** Before deploying: (0) set `oauth:stateKey` on every core where
+> `oauth:consentUrl` is set and `sso:stateKey` on every core where `sso:enabled` is true: the boot now
+> refuses a missing one (a core whose 2.0.0-rc.69 boot log showed no `stateKey` warning has them);
+> (1) for every registry OAuth client whose
 > sessions create accesses, webhooks or CMC capability requests, run `node bin/oauth-client.js update
 > <clientId> --allow-feature accessCreation` (keep the features already allowed in the same command):
 > registry grants now forbid `accessCreation` by default; (2) re-register with a distinct `kid` on
@@ -11,6 +14,18 @@
 > that test for `invalid_request` on an audience refusal now get `invalid_target`. Schema migration:
 > PostgreSQL adds the column `accesses.last_login` at boot (automatic, idempotent); SQLite needs none.
 > See "BREAKING" in the entries below.
+
+### BREAKING: the state keys are required
+
+- **BREAKING (configuration): `oauth:stateKey` is required on every core where `oauth:consentUrl` is
+  set, and `sso:stateKey` on every core where `sso:enabled` is true.** The boot now refuses an empty,
+  placeholder or unexpanded `${…}` value (in production also one shorter than 16 characters), naming
+  the key; `bin/check-config.js` reports the same problem. The fallback on `auth:adminAccessKey` is
+  removed: a consent state or a sign-in state cookie signed with the admin-derived key is refused. To
+  generate a key: `openssl rand -base64 32` (44 characters; at least 32 are expected, a shorter key
+  gets a boot warning), one per key and per core, distinct from each other and from
+  `auth:adminAccessKey`. A core whose boot log showed no `stateKey` warning on 2.0.0-rc.69 already
+  has what it needs. Setting a key only cancels the consent screens or sign-ins open at that moment.
 
 ### OAuth client authentication and token lifetimes
 

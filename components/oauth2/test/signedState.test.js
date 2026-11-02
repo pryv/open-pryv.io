@@ -152,10 +152,11 @@ describe('[OAUTH-SIGSTATE] signed URL-parameter state', () => {
 
   describe('[OAUTH-SIGSTATE-KEY] key selection', () => {
     const cfg = (m) => ({ get: (k) => m[k] });
-    it('[OSS-K1] oauth:stateKey when set, else auth:adminAccessKey, else empty', () => {
+    it('[OSS-K1] oauth:stateKey only: the admin key never stands in', () => {
       assert.equal(stateKeyFromConfig(cfg({ 'oauth:stateKey': 'own', 'auth:adminAccessKey': 'adm' })), 'own');
-      assert.equal(stateKeyFromConfig(cfg({ 'oauth:stateKey': '', 'auth:adminAccessKey': 'adm' })), 'adm');
-      assert.equal(stateKeyFromConfig(cfg({ 'auth:adminAccessKey': 'adm' })), 'adm');
+      assert.equal(stateKeyFromConfig(cfg({ 'oauth:stateKey': '', 'auth:adminAccessKey': 'adm' })), '');
+      assert.equal(stateKeyFromConfig(cfg({ 'auth:adminAccessKey': 'adm' })), '');
+      assert.equal(stateKeyFromConfig(cfg({ 'oauth:stateKey': 42, 'auth:adminAccessKey': 'adm' })), '');
       assert.equal(stateKeyFromConfig(cfg({})), '');
     });
     it('[OSS-K2] a state signed with one key does not verify with the other', () => {

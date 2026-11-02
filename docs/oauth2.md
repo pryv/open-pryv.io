@@ -599,7 +599,7 @@ oauth:
   clientRegistration:
     mode: curated                  # ONLY supported value (see below)
   requireAppAccountMfa: true       # NOT ENFORCED yet (see below)
-  stateKey: ''                     # SET IT: consent-state signing secret (see below)
+  stateKey: ''                     # REQUIRED with consentUrl: consent-state signing secret (see below)
   signingKeys: []                  # OpenID Connect id_token keys; empty = OIDC off (see below)
   idTokenTTL: 300                  # id_token lifetime, seconds
   grantTypesSupported:             # advertised in the discovery document
@@ -676,19 +676,19 @@ value, an app account without MFA is not refused. A later release will either
 enforce it or remove it. Until then, protect app accounts by other means (MFA
 enrolled by the operator, strong credentials, curated registration).
 
-### `stateKey` (set it)
+### `stateKey` (required with `consentUrl`)
 
 The secret the consent-flow state is signed with (the parameter carried from
 `/oauth2/authorize` to the consent page and back to `/oauth2/authorize/accept`).
 It is used for nothing else and is per core: a consent flow runs on one core.
-Set a random value of at least 32 characters (`openssl rand -base64 32`). A
-placeholder, an unexpanded `${…}` reference or a value published as an example
-refuses the boot (like the `auth.*` secrets); one equal to `auth.adminAccessKey`
-or shorter than 32 characters is reported at boot. While it is empty, the key
-is derived from `auth.adminAccessKey` and every boot of a core with
-`consentUrl` set logs a warning (as does `bin/check-config.js` there); a later
-release will require it. Setting or changing it only
-cancels the consent screens open at that moment (a state lives 5 minutes).
+It is required on every core where `consentUrl` is set: the boot refuses an
+empty one (as does `bin/check-config.js`). Set a random value of at least 32
+characters (`openssl rand -base64 32`). A placeholder, an unexpanded `${…}`
+reference or a value published as an example refuses the boot (like the
+`auth.*` secrets); one equal to `auth.adminAccessKey` or shorter than 32
+characters is reported at boot. No other key ever stands in for it: a state
+signed with any other key is refused. Setting or changing it only cancels the
+consent screens open at that moment (a state lives 5 minutes).
 
 ### `signingKeys`, `idTokenTTL` (OpenID Connect)
 

@@ -40,6 +40,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const ADMIN_KEY = 'admin-key-for-tests';
+const STATE_KEY = 'state-key-for-tests-0123456789abcdef';
 const ISSUER = 'https://core.example.com';
 const CONSENT_URL = 'https://consent.example.com/authorize';
 const CORE_ID = 'core-a';
@@ -134,6 +135,7 @@ function fakeConfig (overrides = {}) {
   const m = {
     'service:api': ISSUER,
     'auth:adminAccessKey': ADMIN_KEY,
+    'oauth:stateKey': STATE_KEY,
     'oauth:consentUrl': CONSENT_URL,
     'core:id': CORE_ID,
     ...overrides,
@@ -776,7 +778,7 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
     it('[OXA01] the state carries the offer by reference only, bounded in size', async () => {
       const platform = fakePlatform(); await seed(platform);
       const { signed } = await authorize({ config: fakeConfig(), platform }, authorizeQuery());
-      const v = verifyState(ADMIN_KEY, signed);
+      const v = verifyState(STATE_KEY, signed);
       assert.equal(v.ok, true);
       assert.equal(v.payload.offer, undefined);
       assert.equal(v.payload.offerRef.kind, 'synthesised');
@@ -798,7 +800,7 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
         assert.ok(res.headers.location.startsWith(REDIRECT + '?error=invalid_target'), res.headers.location);
       }
       const { signed } = await authorize(deps, authorizeQuery({ aud: AUD + '/' }));
-      assert.equal(verifyState(ADMIN_KEY, signed).payload.audience, AUD);
+      assert.equal(verifyState(STATE_KEY, signed).payload.audience, AUD);
       // A client registered for any audience needs none.
       const any = fakePlatform(); await seed(any, { allowedAudiences: [], anyAudience: true });
       assert.ok((await authorize({ config: fakeConfig(), platform: any }, authorizeQuery({ aud: undefined }))).signed);
@@ -838,10 +840,10 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
     it('[OXA07] a pseudonym request, and a pairwise client, go to the consent screen like any other', async () => {
       const platform = fakePlatform(); await seed(platform, { scope: [...REGISTRY_CLIENT.scope, 'pseudo'] });
       const { signed } = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'data/a.read pseudo' }));
-      assert.equal(verifyState(ADMIN_KEY, signed).ok, true);
+      assert.equal(verifyState(STATE_KEY, signed).ok, true);
       const pw = fakePlatform(); await seed(pw, { subjectType: 'pairwise' });
       const r2 = await authorize({ config: fakeConfig(), platform: pw }, authorizeQuery({ scope: 'data/a.read' }));
-      assert.equal(verifyState(ADMIN_KEY, r2.signed).ok, true);
+      assert.equal(verifyState(STATE_KEY, r2.signed).ok, true);
     });
     it('[OXA08] a grammar duplicate reaches the app as a generic description', async () => {
       const platform = fakePlatform(); await seed(platform, { scope: [...REGISTRY_CLIENT.scope, 'dup.local'] });
@@ -1299,7 +1301,7 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(token.body.id_token, undefined);
       // The nonce of a request without openid is not even carried.
       const { signed } = await authorize({ config, platform }, authorizeQuery({ scope: 'data/a.read', nonce: 'n-x' }));
-      assert.equal(verifyState(ADMIN_KEY, signed).payload.nonce, undefined);
+      assert.equal(verifyState(STATE_KEY, signed).payload.nonce, undefined);
       // A chain granted openid refreshes without an id_token.
       await seedRefresh(platform, 'RT-O', { coreTokens: ['openid', 'offline_access'] });
       const res = fakeRes();
@@ -1317,7 +1319,7 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(off.signed, null);
       assert.deepEqual(redirectError(off.res), { error: 'invalid_scope', description: 'openid is not available on this core (no signing key configured)' });
       const on = await authorize({ config: oidcConfig(), platform }, authorizeQuery({ scope: 'openid data/a.read', nonce: 'n-2' }));
-      assert.equal(verifyState(ADMIN_KEY, on.signed).payload.nonce, 'n-2');
+      assert.equal(verifyState(STATE_KEY, on.signed).payload.nonce, 'n-2');
       // Keys removed between /authorize and the consent: /offer and /accept refuse it too.
       const offRes = await postOffer({ config: fakeConfig(), platform }, on.signed);
       const accRes = await accept(acceptDeps({ config: fakeConfig(), platform }), on.signed, [{ streamId: 'a', level: 'read' }]);
@@ -1472,34 +1474,45 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.throws(() => registerRoutes({ get () {}, post () {} }, { config: oidcConfig({ 'oauth:signingKeys': [{ kid: 'a', privateKeyPem: 'garbage' }] }) }), /cannot be read/);
     });
 
-    it('[OXSK1] the state is keyed on oauth:stateKey; until it is set, on the admin key; once set, an admin-keyed state is refused', async () => {
-      const STATE_KEY = 's'.repeat(40);
+    it('[OXSK1] the state is keyed on oauth:stateKey only: an admin-keyed state is refused everywhere', async () => {
       const platform = fakePlatform(); await seed(platform);
-      // Fallback: no state key, the admin-derived key signs and verifies.
-      const fallback = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'data/a.read' }));
-      assert.equal(verifyState(ADMIN_KEY, fallback.signed).ok, true);
-      // Set: states are signed with it, not with the admin key.
-      const config = fakeConfig({ 'oauth:stateKey': STATE_KEY });
+      const config = fakeConfig();
       const deps = { config, platform };
       const fresh = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
       assert.equal(verifyState(STATE_KEY, fresh.signed).ok, true);
       assert.deepEqual(verifyState(ADMIN_KEY, fresh.signed), { ok: false, reason: 'bad_signature' });
       assert.equal((await postOffer(deps, fresh.signed)).statusCode, 200);
-      // The state issued before the key was set no longer verifies anywhere.
-      const offerRes = await postOffer(deps, fallback.signed);
-      const acceptRes = await accept(acceptDeps(deps), fallback.signed, [{ streamId: 'a', level: 'read' }]);
+      // The same payload signed with the admin key verifies nowhere.
+      const forged = signState(ADMIN_KEY, verifyState(STATE_KEY, fresh.signed).payload);
+      const offerRes = await postOffer(deps, forged);
+      const acceptRes = await accept(acceptDeps(deps), forged, [{ streamId: 'a', level: 'read' }]);
       const refuseRes = fakeRes();
-      await handleRefuse({ config })({ body: { state: fallback.signed } }, refuseRes);
+      await handleRefuse({ config })({ body: { state: forged } }, refuseRes);
       for (const res of [offerRes, acceptRes, refuseRes]) {
         assert.equal(res.statusCode, 400, res.raw);
         assert.equal(res.body.error_description, 'signed state bad_signature');
       }
-      // A forged state signed with the admin key is refused the same way.
-      const forged = signState(ADMIN_KEY, verifyState(STATE_KEY, fresh.signed).payload);
-      assert.equal((await postOffer(deps, forged)).statusCode, 400);
       // The flow completes with the state key.
       const acc = await accept(acceptDeps(deps), fresh.signed, [{ streamId: 'a', level: 'read' }]);
       assert.equal(acc.statusCode, 200, acc.raw);
+    });
+
+    it('[OXSK2] without oauth:stateKey the admin key does not stand in: nothing is signed or verified', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      const config = fakeConfig({ 'oauth:stateKey': '' });
+      const deps = { config, platform };
+      const a = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      assert.equal(a.signed, null);
+      assert.equal(a.res.statusCode, 500, a.res.raw);
+      const adminSigned = signState(ADMIN_KEY, verifyState(STATE_KEY,
+        (await authorize({ config: fakeConfig(), platform }, authorizeQuery({ scope: 'data/a.read' }))).signed).payload);
+      const offerRes = await postOffer(deps, adminSigned);
+      assert.equal(offerRes.statusCode, 400, offerRes.raw);
+      const acceptRes = await accept(acceptDeps(deps), adminSigned, [{ streamId: 'a', level: 'read' }]);
+      assert.equal(acceptRes.statusCode, 500, acceptRes.raw);
+      const refuseRes = fakeRes();
+      await handleRefuse({ config })({ body: { state: adminSigned } }, refuseRes);
+      assert.equal(refuseRes.statusCode, 500, refuseRes.raw);
     });
   });
 
