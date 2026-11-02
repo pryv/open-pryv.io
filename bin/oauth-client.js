@@ -395,6 +395,12 @@ async function runSetStatus (platform, args, getClient, persistClient) {
     throw new Error('resume: client "' + clientId + '" is under review (its redirect URIs, keys or scope changed); ' +
       'approve it with update ' + clientId + ' --approve');
   }
+  // A change made while suspended goes live only once approved.
+  const unapproved = args.command === 'resume' && from === 'suspended' && existing.kind === 'registry' ? unapprovedChanges(existing) : null;
+  if (unapproved != null) {
+    throw new Error('resume: changes to ' + (unapproved.length > 0 ? unapproved.join(', ') : 'vetted fields') + ' of "' + clientId +
+      '" were not approved; approve them with update ' + clientId + ' --approve, then resume');
+  }
   if (from === status) {
     console.log('OK   client ' + clientId + ' is ' + status + ' (unchanged)');
   } else {
@@ -924,7 +930,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
   // row's version (and every consent in flight for it) stays as it is.
   const { updatedAt: _before, ...existingRest } = existing;
   const { updatedAt: _after, ...rowRest } = row;
-  if (JSON.stringify(sortedKeys(existingRest)) === JSON.stringify(sortedKeys(rowRest))) {
+  if (vetting?.entry == null && JSON.stringify(sortedKeys(existingRest)) === JSON.stringify(sortedKeys(rowRest))) {
     console.log('OK   client unchanged: ' + clientId);
     return;
   }
@@ -971,12 +977,14 @@ async function runUpdate (platform, args, getClient, persistClient) {
 
 /**
  * The vetting outcome of an update of a registry client, or null (other
- * kinds). A change of its redirect URIs, key set (inline or by reference) or
- * scope moves an active client to `review` (refused everywhere until
- * approved) unless the operator approves it in the same command
- * (`--approve`); `--approve` alone approves a client under review. A
- * suspended client stays suspended (its trail records the change). Each
- * such change is an entry of the row's status trail.
+ * kinds). A change of a vetted field (`VETTED_FIELDS`: where its codes and
+ * tokens land, how it authenticates, what it reaches, for how long) moves an
+ * active client to `review` (refused everywhere until approved) unless the
+ * operator approves it in the same command (`--approve`); `--approve` alone
+ * approves a client under review. A suspended client stays suspended: its
+ * trail records the change, which `resume` refuses until `--approve`
+ * approves it (the client staying suspended). Each such change is an entry
+ * of the row's status trail.
  */
 function vettingChange (existing, row, args) {
   if (existing.kind !== 'registry') return null;
@@ -986,9 +994,11 @@ function vettingChange (existing, row, args) {
   const from = existing.status ?? 'active';
   const withFields = fields.length > 0 ? { fields } : {};
   if (approve) {
+    // A suspended client stays suspended: the approval covers the changes
+    // recorded meanwhile, so that `resume` may put it back.
     if (from === 'suspended') {
-      throw new Error('update: client "' + existing.clientId + '" is suspended; --approve applies to an active client or one under ' +
-        'review (resume it first)');
+      if (fields.length === 0 && unapprovedChanges(existing) == null) return { to: from, entry: null };
+      return { to: from, entry: { from, to: from, reason: 'approve', ...withFields } };
     }
     if (from === 'active' && fields.length === 0) return { to: from, entry: null };
     return { to: 'active', entry: { from, to: 'active', reason: 'approve', ...withFields } };
@@ -998,16 +1008,28 @@ function vettingChange (existing, row, args) {
   return { to, entry: { from, to, reason: 'review', ...withFields } };
 }
 
+/**
+ * The vetted fields changed and not approved since (the `review` entries of
+ * the trail after its last `approve`), or null when there are none.
+ */
+function unapprovedChanges (row) {
+  const log = Array.isArray(row.statusLog) ? row.statusLog : [];
+  const lastApprove = log.findLastIndex((e) => e?.reason === 'approve');
+  const pending = log.slice(lastApprove + 1).filter((e) => e?.reason === 'review');
+  if (pending.length === 0) return null;
+  return [...new Set(pending.flatMap((e) => (Array.isArray(e.fields) ? e.fields : [])))];
+}
+
 function printVetting (clientId, vetting) {
   const fields = vetting.entry.fields ?? [];
   const what = fields.length > 0 ? fields.join(', ') + ' changed' : 'no change';
   if (vetting.entry.reason === 'approve') {
-    console.log('     status:        active (approved; ' + what + ')');
+    console.log('     status:        ' + vetting.to + ' (approved; ' + what + ')' + (vetting.to === 'suspended' ? ': resume it to put it back in service' : ''));
   } else if (vetting.to === 'review') {
     console.log('     status:        review (' + what + '): /authorize, the consent, /token and introspection');
     console.log('                    refuse this client until approved: update ' + clientId + ' --approve');
   } else {
-    console.log('     status:        ' + vetting.to + ' (' + what + '; recorded)');
+    console.log('     status:        ' + vetting.to + ' (' + what + '; recorded' + (vetting.to === 'suspended' ? ': approve it with update ' + clientId + ' --approve before resume' : '') + ')');
   }
 }
 

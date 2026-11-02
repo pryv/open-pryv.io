@@ -805,10 +805,14 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       const any = fakePlatform(); await seed(any, { allowedAudiences: [], anyAudience: true });
       assert.ok((await authorize({ config: fakeConfig(), platform: any }, authorizeQuery({ aud: undefined }))).signed);
     });
-    it('[OXA04] a suspended client is refused', async () => {
+    it('[OXA04] a suspended client is refused with an HTML 400, before the redirect URI is even looked at', async () => {
       const platform = fakePlatform(); await seed(platform, { status: 'suspended' });
-      const { res } = await authorize({ config: fakeConfig(), platform }, authorizeQuery());
-      assert.match(res.headers.location, /error=access_denied/);
+      for (const redirect of [REDIRECT, 'https://unregistered.example.com/cb']) {
+        const { res } = await authorize({ config: fakeConfig(), platform }, authorizeQuery({ redirect_uri: redirect, response_type: 'token' }));
+        assert.equal(res.statusCode, 400);
+        assert.equal(res.headers.location, undefined);
+        assert.match(res.raw, /this client is suspended/);
+      }
     });
     it('[OXA05] POST with a form body works like GET; JSON and repeated parameters are refused', async () => {
       const platform = fakePlatform(); await seed(platform);
@@ -1761,8 +1765,14 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       await seedRefresh(platform, 'RT-REVIEW');
       await persistClient(platform, { ...REGISTRY_CLIENT, status: 'review' });
 
-      const { res } = await authorize(deps, authorizeQuery());
-      assert.deepEqual(redirectError(res), { error: 'access_denied', description: 'this client is under review' });
+      // No redirect of any kind (an invalid request included): the redirect
+      // URIs on file may be the change awaiting approval.
+      for (const query of [authorizeQuery(), authorizeQuery({ response_type: 'token', state: undefined })]) {
+        const { res } = await authorize(deps, query);
+        assert.equal(res.statusCode, 400);
+        assert.equal(res.headers.location, undefined);
+        assert.match(res.raw, /this client is under review/);
+      }
       const calls = [];
       for (const r of [await postOffer(deps, pending.signed), await accept(acceptDeps(deps, calls), pending.signed, [{ streamId: 'a', level: 'read' }])]) {
         assert.equal(r.statusCode, 403, r.raw);

@@ -85,7 +85,12 @@ function createArgs (id, extra = []) {
 }
 
 async function authorizeAs (platform, clientId) {
-  const res = { statusCode: 200, headers: {}, setHeader (k, v) { this.headers[k.toLowerCase()] = v; }, end () {} };
+  return new URL((await authorizeRes(platform, clientId)).headers.location);
+}
+
+/** The raw /authorize answer (status, headers, body). */
+async function authorizeRes (platform, clientId) {
+  const res = { statusCode: 200, headers: {}, body: '', setHeader (k, v) { this.headers[k.toLowerCase()] = v; }, end (b) { this.body = b ?? ''; } };
   await handleAuthorize({ config: fakeConfig(), platform })({
     method: 'GET',
     query: {
@@ -99,7 +104,7 @@ async function authorizeAs (platform, clientId) {
       aud: AUD,
     },
   }, res);
-  return new URL(res.headers.location);
+  return res;
 }
 
 describe('[OCLI] operator CLI: registry clients', () => {
@@ -574,9 +579,11 @@ describe('[OCLI] operator CLI: registry clients', () => {
       assert.equal(row.status, 'review');
       assert.deepEqual(row.statusLog.map((e) => [e.from, e.to, e.reason, e.fields]), [['active', 'review', 'review', ['redirectUris']]]);
       assert.equal(typeof row.statusLog[0].by, 'string');
-      const loc = await authorizeAs(platform, 'Cli.vet');
-      assert.equal(loc.searchParams.get('error'), 'access_denied');
-      assert.equal(loc.searchParams.get('error_description'), 'this client is under review');
+      // Never redirected: the registered redirect URIs are the unvetted change.
+      const refused = await authorizeRes(platform, 'Cli.vet');
+      assert.equal(refused.statusCode, 400);
+      assert.equal(refused.headers.location, undefined);
+      assert.match(refused.body, /this client is under review/);
       const shown = await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.vet']);
       assert.match(shown.out, /status: review since .* \(redirectUris changed\): refused at \/authorize/);
       // resume does not approve.

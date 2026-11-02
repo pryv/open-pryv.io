@@ -471,8 +471,18 @@ export function clientUnavailable (client: OAuthClient, config?: { get (key: str
   return null;
 }
 
-/** The fields whose change moves an active registry client to review. */
-export const VETTED_FIELDS = ['redirectUris', 'scope', 'jwks', 'jwksUri'] as const;
+/**
+ * The fields whose change (in any direction) moves an active registry client
+ * to review: where its codes and tokens land, how it proves who it is, what
+ * it may reach and for how long. Not the subject type (its own confirmation
+ * and the user's acknowledgement), the display texts, regions nor the entry
+ * ceiling.
+ */
+export const VETTED_FIELDS = [
+  'redirectUris', 'scope', 'jwks', 'jwksUri', 'tokenEndpointAuthMethod', 'tokenEndpointAuthSigningAlgs', 'grantTypes',
+  'allowedAudiences', 'anyAudience', 'allowFeatures', 'canIntrospect',
+  'accessTokenTTL', 'refreshTokenTTL', 'refreshTokenAbsoluteTTL', 'offlineAccessAllowed',
+] as const;
 
 /** The vetted fields that differ between two versions of a row. */
 export function changedVettedFields (before: OAuthClient, after: OAuthClient): string[] {

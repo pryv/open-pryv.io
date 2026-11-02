@@ -106,6 +106,13 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     if (client == null) {
       return sendHtmlError(res, 400, `Unknown client_id: ${q.client_id}`);
     }
+    // Suspended or under review: no redirect at all. Under review, the
+    // registered redirect URIs may be the very change awaiting approval, so
+    // nothing may bounce the user-agent there (not even an error).
+    const notActive = clientUnavailable(client, null);
+    if (notActive != null) {
+      return sendHtmlError(res, 400, notActive.description);
+    }
     if (!validateRedirectUri(client.redirectUris, q.redirect_uri)) {
       return sendHtmlError(res, 400,
         'redirect_uri does not match any registered URI for this client.');
@@ -135,10 +142,10 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     if (!isNonEmptyString(q.state)) {
       return redirectError('invalid_request', 'state parameter is required (CSRF defense)');
     }
-    // Suspended, under review, or not served in this core's region.
+    // Not served in this core's region (the status was checked above).
     const unavailable = clientUnavailable(client, deps.config);
     if (unavailable != null) {
-      return redirectError(unavailable.reason === 'region' ? 'unauthorized_client' : 'access_denied', unavailable.description);
+      return redirectError('unauthorized_client', unavailable.description);
     }
     // Every scope token travels in the signed state and the consent redirect.
     if (typeof q.scope === 'string' && Buffer.byteLength(q.scope, 'utf8') > MAX_SCOPE_BYTES) {

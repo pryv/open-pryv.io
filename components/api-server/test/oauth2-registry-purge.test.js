@@ -251,7 +251,11 @@ describe('[ORGP] OAuth registry clients: purge, vetting, ceilings, display', fun
     let r = await runCli(cli.runUpdate, ['update', otherId, '--redirect-uri', REDIRECT_URI, '--redirect-uri', REDIRECT_URI + '/2'], getClient, persistClient);
     assert.equal(r.error, null, r.error?.stack);
     assert.equal((await getClient(platformDB, otherId)).status, 'review');
-    assert.deepEqual(redirectedError(await authorize('read/health', otherId)), { error: 'access_denied', description: 'this client is under review' });
+    // No redirect to the (unvetted) redirect URIs: an HTML 400.
+    const refused = await authorize('read/health', otherId);
+    assert.equal(refused.status, 400, refused.text);
+    assert.equal(refused.headers.location, undefined);
+    assert.match(refused.text, /this client is under review/);
     let res = await refresh(t.token.refresh_token, otherId);
     assert.equal(res.status, 400, JSON.stringify(res.body));
     assert.equal(res.body.error, 'unauthorized_client');
