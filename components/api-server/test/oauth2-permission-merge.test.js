@@ -36,6 +36,7 @@ const { buildFetchShim } = require('./cmc-fetch-shim.cjs');
 
 const REDIRECT_URI = 'https://app.example/cb';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
+const STATE_KEY = 'test-oauth-state-key-' + 'a1B2c3D4e5'.repeat(2);
 
 function base64url (buf) {
   return buf.toString('base64').replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -93,7 +94,7 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     await initTests();
     await initCore();
     fixtures = getNewFixture();
-    restoreConsentUrl = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL } });
+    restoreConsentUrl = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
     originalFetch = globalThis.fetch;
     globalThis.fetch = buildFetchShim(originalFetch, global.coreServer);
 

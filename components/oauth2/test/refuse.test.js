@@ -19,12 +19,14 @@ const { handleRefuse } = require('../src/routes/refuse.ts');
 const { signState } = require('../src/signedState.ts');
 
 const ADMIN_KEY = 'admin-key-tests';
+const STATE_KEY = 'state-key-for-tests-0123456789abcdef';
 const ISSUER = 'https://reg.pryv.me';
 
 function fakeConfig (overrides = {}) {
   const m = {
     'service:api': ISSUER,
     'auth:adminAccessKey': ADMIN_KEY,
+    'oauth:stateKey': STATE_KEY,
     ...overrides,
   };
   return { get: (k) => m[k] };
@@ -53,7 +55,7 @@ describe('[OAUTH-REFUSE] /oauth2/authorize/refuse handler', () => {
   it('[ORF-OK1] valid state → 200 + redirectTo with error=access_denied + state + iss', async () => {
     const handler = handleRefuse({ config: fakeConfig() });
     const res = fakeRes();
-    await handler({ body: { state: signState(ADMIN_KEY, SAMPLE_PAYLOAD) } }, res);
+    await handler({ body: { state: signState(STATE_KEY, SAMPLE_PAYLOAD) } }, res);
     assert.equal(res.statusCode, 200);
     assert.ok(res.body.redirectTo.startsWith('https://app.example/cb?error=access_denied'));
     assert.match(res.body.redirectTo, /&state=csrf-1/);
@@ -65,7 +67,7 @@ describe('[OAUTH-REFUSE] /oauth2/authorize/refuse handler', () => {
     const res = fakeRes();
     await handler({
       body: {
-        state: signState(ADMIN_KEY, { ...SAMPLE_PAYLOAD, redirectUri: 'https://app.example/cb?x=1' }),
+        state: signState(STATE_KEY, { ...SAMPLE_PAYLOAD, redirectUri: 'https://app.example/cb?x=1' }),
       }
     }, res);
     assert.equal(res.statusCode, 200);
@@ -83,7 +85,7 @@ describe('[OAUTH-REFUSE] /oauth2/authorize/refuse handler', () => {
   it('[ORF-S2] tampered state → 400 invalid_request bad_signature', async () => {
     const handler = handleRefuse({ config: fakeConfig() });
     const res = fakeRes();
-    const good = signState(ADMIN_KEY, SAMPLE_PAYLOAD);
+    const good = signState(STATE_KEY, SAMPLE_PAYLOAD);
     const [body, mac] = good.split('.');
     const tampered = body.slice(0, -1) + (body.at(-1) === 'A' ? 'B' : 'A') + '.' + mac;
     await handler({ body: { state: tampered } }, res);
@@ -94,7 +96,7 @@ describe('[OAUTH-REFUSE] /oauth2/authorize/refuse handler', () => {
   it('[ORF-S4] signature with a non-ASCII character → 400 bad_signature, the handler resolves', async () => {
     const handler = handleRefuse({ config: fakeConfig() });
     const res = fakeRes();
-    const [body] = signState(ADMIN_KEY, SAMPLE_PAYLOAD).split('.');
+    const [body] = signState(STATE_KEY, SAMPLE_PAYLOAD).split('.');
     await handler({ body: { state: body + '.' + 'é' + 'a'.repeat(42) } }, res);
     assert.equal(res.statusCode, 400);
     assert.equal(res.body.error, 'invalid_request');
@@ -104,7 +106,7 @@ describe('[OAUTH-REFUSE] /oauth2/authorize/refuse handler', () => {
   it('[ORF-S3] expired state → 400 invalid_request expired', async () => {
     const handler = handleRefuse({ config: fakeConfig() });
     const res = fakeRes();
-    const old = signState(ADMIN_KEY, SAMPLE_PAYLOAD, Math.floor(Date.now() / 1000) - 10_000);
+    const old = signState(STATE_KEY, SAMPLE_PAYLOAD, Math.floor(Date.now() / 1000) - 10_000);
     await handler({ body: { state: old } }, res);
     assert.equal(res.statusCode, 400);
     assert.match(res.body.error_description, /expired/);
@@ -113,12 +115,12 @@ describe('[OAUTH-REFUSE] /oauth2/authorize/refuse handler', () => {
   it('[ORF-C1] missing service:api → 500 server_error', async () => {
     const handler = handleRefuse({ config: fakeConfig({ 'service:api': null }) });
     const res = fakeRes();
-    await handler({ body: { state: signState(ADMIN_KEY, SAMPLE_PAYLOAD) } }, res);
+    await handler({ body: { state: signState(STATE_KEY, SAMPLE_PAYLOAD) } }, res);
     assert.equal(res.statusCode, 500);
   });
 
-  it('[ORF-C2] missing auth:adminAccessKey → 500 server_error', async () => {
-    const handler = handleRefuse({ config: fakeConfig({ 'auth:adminAccessKey': null }) });
+  it('[ORF-C2] missing oauth:stateKey → 500 server_error, even for an admin-keyed state', async () => {
+    const handler = handleRefuse({ config: fakeConfig({ 'oauth:stateKey': '' }) });
     const res = fakeRes();
     await handler({ body: { state: signState(ADMIN_KEY, SAMPLE_PAYLOAD) } }, res);
     assert.equal(res.statusCode, 500);

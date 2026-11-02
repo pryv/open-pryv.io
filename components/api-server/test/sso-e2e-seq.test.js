@@ -477,18 +477,19 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(hashParams(accepted.headers.location).ssoError, 'no-account');
   });
 
-  it('[SSOE12] while sso.stateKey is empty, the state cookie is keyed on the admin key', async function () {
+  it('[SSOE12] without sso.stateKey the admin key does not stand in: no sign-in route is mounted', async function () {
+    const first = await startFlow();
     const restore = injectTestConfigSnapshot({ sso: { stateKey: '' } });
     try {
-      const fallbackApp = express();
-      require('../src/routes/sso.ts').default(fallbackApp, global.app);
-      const fallbackRequest = await listeningAgent(fallbackApp);
-      const res = await fallbackRequest.get(`/auth/sso/${PROVIDER}/start`);
-      assert.strictEqual(res.status, 302, JSON.stringify(res.body));
-      const cookie = res.headers['set-cookie'][0].split(';')[0];
-      const value = cookie.slice(cookie.indexOf('=') + 1);
-      assert.strictEqual(verifyStateCookie(ADMIN_KEY, value).ok, true);
-      assert.strictEqual(verifyStateCookie(STATE_KEY, value).ok, false);
+      const unkeyedApp = express();
+      require('../src/routes/sso.ts').default(unkeyedApp, global.app);
+      const unkeyedRequest = await listeningAgent(unkeyedApp);
+      const start = await unkeyedRequest.get(`/auth/sso/${PROVIDER}/start`);
+      assert.strictEqual(start.status, 404);
+      assert.strictEqual(start.headers['set-cookie'], undefined);
+      const forged = signStateCookie(ADMIN_KEY, roundTripFields(first.cookie));
+      const callback = await unkeyedRequest.get(first.callbackPath).set('Cookie', `${STATE_COOKIE_NAME}=${forged}`);
+      assert.strictEqual(callback.status, 404);
     } finally {
       restore();
     }

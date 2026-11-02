@@ -57,26 +57,26 @@ describe('[SSOSC] SSO state cookie', () => {
     assert.equal(res.reason, 'bad_signature');
   });
 
-  it('[SSOSC13] the key is sso:stateKey when set, else auth:adminAccessKey, else empty', () => {
+  it('[SSOSC13] the key is sso:stateKey only: neither the admin key nor oauth:stateKey stands in', () => {
     const cfg = (values) => ({ get: (key) => values[key] });
     assert.equal(ssoStateKeyFromConfig(cfg({ 'sso:stateKey': 'own', 'auth:adminAccessKey': 'adm', 'oauth:stateKey': 'oa' })), 'own');
-    assert.equal(ssoStateKeyFromConfig(cfg({ 'sso:stateKey': '', 'auth:adminAccessKey': 'adm', 'oauth:stateKey': 'oa' })), 'adm');
-    assert.equal(ssoStateKeyFromConfig(cfg({ 'auth:adminAccessKey': 'adm' })), 'adm');
-    assert.equal(ssoStateKeyFromConfig(cfg({ 'sso:stateKey': 42, 'auth:adminAccessKey': 'adm' })), 'adm');
+    assert.equal(ssoStateKeyFromConfig(cfg({ 'sso:stateKey': '', 'auth:adminAccessKey': 'adm', 'oauth:stateKey': 'oa' })), '');
+    assert.equal(ssoStateKeyFromConfig(cfg({ 'auth:adminAccessKey': 'adm' })), '');
+    assert.equal(ssoStateKeyFromConfig(cfg({ 'sso:stateKey': 42, 'auth:adminAccessKey': 'adm' })), '');
     assert.equal(ssoStateKeyFromConfig(cfg({})), '');
   });
 
-  it('[SSOSC14] once sso:stateKey is set, a cookie signed with the admin key is refused; until then it verifies', () => {
+  it('[SSOSC14] a cookie signed with the admin key is refused, with or without sso:stateKey', () => {
     const now = 1_000_000;
     const adminKey = 'operator-admin-key-abc123';
     const adminSigned = signStateCookie(adminKey, payload, now);
-    const fallback = ssoStateKeyFromConfig({ get: (key) => ({ 'auth:adminAccessKey': adminKey })[key] });
-    assert.equal(verifyStateCookie(fallback, adminSigned, now + 5).ok, true);
     const own = ssoStateKeyFromConfig({ get: (key) => ({ 'sso:stateKey': STATE_KEY, 'auth:adminAccessKey': adminKey })[key] });
     const res = verifyStateCookie(own, adminSigned, now + 5);
     assert.equal(res.ok, false);
     assert.equal(res.reason, 'bad_signature');
     assert.equal(verifyStateCookie(own, signStateCookie(STATE_KEY, payload, now), now + 5).ok, true);
+    const unset = ssoStateKeyFromConfig({ get: (key) => ({ 'auth:adminAccessKey': adminKey })[key] });
+    assert.equal(verifyStateCookie(unset, adminSigned, now + 5).ok, false);
   });
 
   it('[SSOSC15] an empty secret signs nothing and verifies nothing', () => {

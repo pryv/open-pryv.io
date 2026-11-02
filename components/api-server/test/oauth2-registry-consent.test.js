@@ -27,6 +27,7 @@ const accessIndex = require('platform/src/accessIndex.ts');
 
 const REDIRECT_URI = 'https://app.consent.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
+const STATE_KEY = 'test-oauth-state-key-' + 'a1B2c3D4e5'.repeat(2);
 const AUD = 'https://resource.test/base';
 const DEFAULT_FORBIDS = [{ feature: 'webhooks', setting: 'forbidden' }, { feature: 'secretSharing', setting: 'forbidden' }, { feature: 'accessCreation', setting: 'forbidden' }];
 
@@ -101,7 +102,7 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     await initTests();
     await initCore();
     fixtures = getNewFixture();
-    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL } });
+    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
     oauth2.extension.setExtension(toyExtension);
     platformDB = require('storages').platformDB;
     const row = {

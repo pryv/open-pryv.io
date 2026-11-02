@@ -247,7 +247,7 @@ export function handleAccept (deps: AcceptDeps) {
     const issuer = issuerFromConfig(deps.config);
     const stateKey = stateKeyFromConfig(deps.config);
     if (!issuer || !stateKey) {
-      return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or oauth:stateKey (auth:adminAccessKey) not configured' });
+      return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or oauth:stateKey not configured' });
     }
 
     const body = req.body ?? {};

@@ -45,7 +45,7 @@ function fakePlatform () {
 }
 
 function fakeConfig () {
-  const m = { 'service:api': 'https://core.example.com', 'auth:adminAccessKey': 'admin-key', 'oauth:consentUrl': CONSENT_URL, 'core:id': 'core-a' };
+  const m = { 'service:api': 'https://core.example.com', 'auth:adminAccessKey': 'admin-key', 'oauth:consentUrl': CONSENT_URL, 'oauth:stateKey': 'cli-test-state-key-0123456789abcdef', 'core:id': 'core-a' };
   return { get: (k) => m[k] };
 }
 

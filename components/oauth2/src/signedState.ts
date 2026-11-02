@@ -26,11 +26,11 @@
  * `code_verifier` (which never leaves the client).
  *
  * The signing key is derived (HMAC-SHA256, fixed label) from
- * `oauth.stateKey`, a secret used for nothing else. While it is not set,
- * the key is derived from `auth.adminAccessKey` instead, with a boot
- * warning; once it is set, a state signed with the admin-derived key no
- * longer verifies. Changing either key only invalidates the states in
- * flight (a few minutes of consent screens). See `stateKeyFromConfig`.
+ * `oauth.stateKey`, a per-core secret used for nothing else, required at
+ * boot when `oauth.consentUrl` is set. No other key is ever used: without
+ * it nothing is signed and nothing verifies. Changing it only invalidates
+ * the states in flight (a few minutes of consent screens). See
+ * `stateKeyFromConfig`.
  */
 
 import crypto from 'node:crypto';
@@ -87,15 +87,12 @@ export type SignedStatePayload = {
 const SIGNING_LABEL = Buffer.from('pryv-oauth2-signed-state-v1');
 
 /**
- * The secret the signed state is keyed on: `oauth:stateKey` when set,
- * otherwise (transitional fallback, reported at boot) `auth:adminAccessKey`.
- * Empty string when neither is configured.
+ * The secret the signed state is keyed on: `oauth:stateKey`. Empty string
+ * when it is not configured (the consent-flow routes then answer 500).
  */
 export function stateKeyFromConfig (config: { get (key: string): unknown }): string {
   const stateKey = config.get('oauth:stateKey');
-  if (typeof stateKey === 'string' && stateKey.length > 0) return stateKey;
-  const adminKey = config.get('auth:adminAccessKey');
-  return typeof adminKey === 'string' ? adminKey : '';
+  return typeof stateKey === 'string' ? stateKey : '';
 }
 
 /**

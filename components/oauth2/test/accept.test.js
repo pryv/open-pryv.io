@@ -21,6 +21,7 @@ const { signState } = require('../src/signedState.ts');
 const { getCode } = require('../src/storage.ts');
 
 const ADMIN_KEY = 'admin-key-tests';
+const STATE_KEY = 'state-key-for-tests-0123456789abcdef';
 const ISSUER = 'https://reg.pryv.me';
 const CORE_ID = 'core-a';
 
@@ -28,6 +29,7 @@ function fakeConfig (overrides = {}) {
   const m = {
     'service:api': ISSUER,
     'auth:adminAccessKey': ADMIN_KEY,
+    'oauth:stateKey': STATE_KEY,
     'core:id': CORE_ID,
     'oauth:accessTokenTTL': 3600,
     ...overrides,
@@ -112,7 +114,7 @@ function fakeRes () {
 
 function validBody (overrides = {}) {
   return {
-    state: signState(ADMIN_KEY, SAMPLE_PAYLOAD),
+    state: signState(STATE_KEY, SAMPLE_PAYLOAD),
     username: 'alice',
     userToken: 'alice-token',
     grantedPermissions: [
@@ -223,7 +225,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       const handler = mkHandler();
       const res = fakeRes();
       const { offer: _, ...payloadNoOffer } = SAMPLE_PAYLOAD;
-      await handler({ body: validBody({ state: signState(ADMIN_KEY, payloadNoOffer) }) }, res);
+      await handler({ body: validBody({ state: signState(STATE_KEY, payloadNoOffer) }) }, res);
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'invalid_request');
       assert.match(res.body.error_description, /no consent offer/);
@@ -231,7 +233,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
     it('[OAC-S2] tampered state → 400 invalid_request', async () => {
       const handler = mkHandler();
       const res = fakeRes();
-      const good = signState(ADMIN_KEY, SAMPLE_PAYLOAD);
+      const good = signState(STATE_KEY, SAMPLE_PAYLOAD);
       const [body, mac] = good.split('.');
       const tampered = body.slice(0, -1) + (body.at(-1) === 'A' ? 'B' : 'A') + '.' + mac;
       await handler({ body: validBody({ state: tampered }) }, res);
@@ -241,7 +243,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
     it('[OAC-S5] signature with a non-ASCII character → 400 bad_signature, the handler resolves', async () => {
       const handler = mkHandler();
       const res = fakeRes();
-      const [body] = signState(ADMIN_KEY, SAMPLE_PAYLOAD).split('.');
+      const [body] = signState(STATE_KEY, SAMPLE_PAYLOAD).split('.');
       await handler({ body: validBody({ state: body + '.' + 'é' + 'a'.repeat(42) }) }, res);
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'invalid_request');
@@ -250,7 +252,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
     it('[OAC-S3] expired state → 400 (signed state past its ttl)', async () => {
       const handler = mkHandler();
       const res = fakeRes();
-      const old = signState(ADMIN_KEY, SAMPLE_PAYLOAD, Math.floor(Date.now() / 1000) - 10_000);
+      const old = signState(STATE_KEY, SAMPLE_PAYLOAD, Math.floor(Date.now() / 1000) - 10_000);
       await handler({ body: validBody({ state: old }) }, res);
       assert.equal(res.statusCode, 400);
       assert.match(res.body.error_description, /expired/);
@@ -340,14 +342,14 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       const payload = { ...SAMPLE_PAYLOAD, offer: offerNoChoice };
       const handler = mkHandler();
       const res = fakeRes();
-      await handler({ body: validBody({ state: signState(ADMIN_KEY, payload) }) }, res); // partial grant
+      await handler({ body: validBody({ state: signState(STATE_KEY, payload) }) }, res); // partial grant
       assert.equal(res.statusCode, 400);
       assert.equal(res.body.error, 'invalid_scope');
       assert.match(res.body.error_description, /all-or-nothing/);
       const res2 = fakeRes();
       await handler({
         body: validBody({
-          state: signState(ADMIN_KEY, payload),
+          state: signState(STATE_KEY, payload),
           grantedPermissions: [
             { streamId: 'health', level: 'read' },
             { streamId: 'diary', level: 'contribute' },
@@ -391,7 +393,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       const ticked = fakeRes();
       await handler({
         body: validBody({
-          state: signState(ADMIN_KEY, OPTIN_OFFER),
+          state: signState(STATE_KEY, OPTIN_OFFER),
           grantedPermissions: [
             { streamId: 'health', level: 'read' },
             { streamId: 'location', level: 'read' },
@@ -403,7 +405,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       const unticked = fakeRes();
       await handler({
         body: validBody({
-          state: signState(ADMIN_KEY, OPTIN_OFFER),
+          state: signState(STATE_KEY, OPTIN_OFFER),
           grantedPermissions: [{ streamId: 'health', level: 'read' }],
         }),
       }, unticked);
@@ -425,7 +427,7 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       const res = fakeRes();
       await handler({
         body: validBody({
-          state: signState(ADMIN_KEY, contradictory),
+          state: signState(STATE_KEY, contradictory),
           grantedPermissions: [{ streamId: 'health', level: 'read' }],
         }),
       }, res);

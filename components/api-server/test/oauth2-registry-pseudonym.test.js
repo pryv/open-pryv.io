@@ -25,6 +25,7 @@ const { mintSecret } = require('oauth2/src/clientSecret.ts');
 
 const REDIRECT_URI = 'https://app.pseudo.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
+const STATE_KEY = 'test-oauth-state-key-' + 'a1B2c3D4e5'.repeat(2);
 const AUD = 'https://resource.test/base';
 
 // Toy grammar: `read/<s>` reads one stream; `ctx/user` asks for the subject
@@ -94,7 +95,7 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
   before(async function () {
     await initTests();
     await initCore();
-    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL } });
+    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
     oauth2.extension.setExtension(toyExtension);
     platformDB = require('storages').platformDB;
     usersRepository = await require('business/src/users/index.ts').getUsersRepository();

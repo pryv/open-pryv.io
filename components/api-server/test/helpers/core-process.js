@@ -32,7 +32,8 @@
  *                     the same engines as the test process.
  *   OAUTH_TOY_EXTENSION: optional '1': the core serves registry OAuth
  *                     clients with the toy extension of oauth-toy-extension.cjs
- *                     (consent page OAUTH_CONSENT_URL when set).
+ *                     (consent page OAUTH_CONSENT_URL when set, consent-state
+ *                     key OAUTH_STATE_KEY when set, else one per core id).
  *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
  *                     runs the DNS topology (dnsLess off, sites matched by Host),
  *                     applies the same boot checks as the api-server (exit 1 on
@@ -163,6 +164,8 @@ const http = require('node:http');
   const oauthToy = process.env.OAUTH_TOY_EXTENSION === '1';
   if (oauthToy) {
     config.set('oauth:consentUrl', process.env.OAUTH_CONSENT_URL || 'https://auth.test/oauth2-authorize');
+    // Required with a consent page; per core, like on a real cluster.
+    config.set('oauth:stateKey', process.env.OAUTH_STATE_KEY || 'test-oauth-state-key-' + coreId + '-0123456789abcdef');
     config.set('oauth:clientRevokeCheckSeconds', 1);
   }
   config.set('audit:active', false);
