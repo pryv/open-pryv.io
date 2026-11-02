@@ -32,6 +32,7 @@ import { createRequire } from 'node:module';
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { ParsedScope } from '../scopeRegistry.ts';
+import { MAX_RESOURCE_BYTES, isValidResource, sameResource, withinResourceCap } from '../resourceIndicator.ts';
 const require = createRequire(import.meta.url);
 
 // Kept on the require shim: converting these to typed ESM imports surfaces
@@ -142,18 +143,43 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       return redirectError('invalid_scope', `scope is longer than ${MAX_SCOPE_BYTES} bytes`);
     }
 
-    // Resource indicator: a client registered with a list of audiences must
-    // name one of them (trailing slash ignored); no code otherwise.
+    // Resource indicator: `aud`, or its RFC 8707 spelling `resource`, names
+    // the one resource server the authorization is for. Both given must name
+    // the same one (trailing slash ignored). A client registered with a list
+    // of audiences must name one of them; any other client may name one that
+    // is well-formed. Every audience refusal is `invalid_target` (RFC 8707
+    // § 2), and its description never lists the registered audiences.
+    const listed: string[] | null = Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0
+      ? client.allowedAudiences
+      : null;
+    const notListed = (name: string): void =>
+      redirectError('invalid_target', `${name} is not a resource this client may access`);
+    const malformed = (name: string): void =>
+      redirectError('invalid_target', `${name} must be an absolute https URL without fragment or user ` +
+        `information (http on a loopback host only), at most ${MAX_RESOURCE_BYTES} bytes`);
+    const audParam = isNonEmptyString(q.aud) ? String(q.aud) : undefined;
+    const resourceParam = isNonEmptyString(q.resource) ? String(q.resource) : undefined;
+    // Bounded before any comparison: the value is client input.
+    for (const [name, value] of [['aud', audParam], ['resource', resourceParam]] as const) {
+      if (value != null && !withinResourceCap(value, listed ?? [])) {
+        return listed != null ? notListed(name) : malformed(name);
+      }
+    }
+    if (audParam != null && resourceParam != null && !sameResource(audParam, resourceParam)) {
+      return redirectError('invalid_request', 'aud and resource name different resources');
+    }
+    const requested = resourceParam ?? audParam;
+    const requestedName = resourceParam != null ? 'resource' : 'aud';
     let audience: string | undefined;
-    if (Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0) {
-      if (!isNonEmptyString(q.aud)) {
-        return redirectError('invalid_request', 'aud is required for this client');
+    if (listed != null) {
+      if (requested == null) {
+        return redirectError('invalid_target', 'aud or resource is required for this client');
       }
-      const wanted = trimSlash(String(q.aud));
-      audience = client.allowedAudiences.find((a: string) => trimSlash(a) === wanted);
-      if (audience == null) {
-        return redirectError('invalid_request', 'aud is not a resource this client may access');
-      }
+      audience = listed.find((a: string) => sameResource(a, requested));
+      if (audience == null) return notListed(requestedName);
+    } else if (requested != null) {
+      if (!isValidResource(requested)) return malformed(requestedName);
+      audience = requested;
     }
 
     if (isRegistryClient(client)) {
@@ -297,10 +323,6 @@ export function handleAuthorize (deps: AuthorizeDeps) {
 
 /** Upper bound on the OpenID Connect `nonce` (it rides in the signed state). */
 const MAX_NONCE_LENGTH = 512;
-
-function trimSlash (s: string): string {
-  return s.replace(/\/+$/, '');
-}
 
 function isNonEmptyString (v: unknown): boolean {
   return typeof v === 'string' && v.length > 0;

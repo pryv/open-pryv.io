@@ -120,11 +120,11 @@ export interface OAuthClient {
   /** `suspended` refuses /authorize and /token for this client, cluster-wide. */
   status?: 'active' | 'suspended';
   tokenEndpointAuthMethod?: 'none' | 'client_secret_basic' | 'private_key_jwt';
-  /** Resource (`aud`) values the client may request; non-empty means `aud` is required. */
+  /** Resource (`aud` / `resource`) values the client may request; non-empty means one is required. */
   allowedAudiences?: string[];
   /**
    * Registry clients: registered explicitly without an audience list (any
-   * `aud`, or none, accepted). A registry row needs one or the other.
+   * well-formed `aud` / `resource`, or none, accepted). A registry row needs one or the other.
    */
   anyAudience?: boolean;
   /**
@@ -211,7 +211,7 @@ export interface OAuthCode {
   kind?: 'registry';
   coreTokens?: string[];
   grammarTokens?: string[];
-  /** The `aud` value the request named (checked against the client's list). */
+  /** The `aud` / `resource` value the request named (the registered spelling when the client has a list). */
   audience?: string;
   /** OpenID Connect `nonce` of the authorization request, for the id_token. */
   nonce?: string;

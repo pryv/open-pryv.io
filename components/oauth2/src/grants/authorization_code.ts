@@ -42,6 +42,7 @@ import type { RegistryResponseParts } from '../responseHooks.ts';
 import { revokeOrphanAccess } from '../orphanAccess.ts';
 import { logServerError, logServerWarning } from '../serverLog.ts';
 import { clientLifetimes, offlineAccessAllowed } from '../clientLifetimes.ts';
+import { checkTokenResource } from '../resourceIndicator.ts';
 
 /** RFC 7636 §4.1 code_verifier: 43 to 128 unreserved characters. */
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
@@ -114,6 +115,8 @@ export type GrantParams = {
   /** Confidential-client auth (private_key_jwt, RFC 7521/7523). */
   client_assertion?: string;
   client_assertion_type?: string;
+  /** RFC 8707 resource indicator: when given, the one the authorization named. */
+  resource?: unknown;
 };
 
 /**
@@ -224,6 +227,10 @@ export async function handleAuthorizationCode (
     if (params.redirect_uri !== row.redirectUri) {
       return { ok: false, status: 400, error: 'invalid_grant', description: 'redirect_uri mismatch' };
     }
+    // RFC 8707 § 2.2: a resource named here must be the one the code was
+    // issued for; a refusal consumes the code like the other bindings.
+    const resourceRefusal = checkTokenResource(params.resource, row.audience);
+    if (resourceRefusal != null) return resourceRefusal;
 
     // Confidential-client authentication (RFC 6749 §4.1.3): a client that
     // has a client_secret on file MUST present it. Discovery advertises
@@ -323,6 +330,7 @@ export async function handleAuthorizationCode (
           grantState: resolved.grantState,
           ...(row.nonce != null ? { nonce: row.nonce } : {}),
           ...(row.authTime != null ? { authTime: row.authTime } : {}),
+          ...(row.audience != null ? { audience: row.audience } : {}),
         });
       } catch (err) {
         logServerError('authorization_code: registry token response failed', err);

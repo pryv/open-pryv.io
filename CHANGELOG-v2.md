@@ -153,7 +153,36 @@
   Was accepted on such an access before this release. Per-key `clientData` edits (`{ k: 'v' }`,
   `{ k: null }`) still work and keep the binding.
 
+### OAuth resource indicators (RFC 8707)
+
+- **`/oauth2/authorize` accepts RFC 8707 `resource` as a synonym of `aud`** (GET and POST): one value
+  per authorization, validated against the client's registered audiences; `aud` and `resource`
+  together must name the same resource (`invalid_request` otherwise); a trailing slash and the case
+  of the scheme and host are ignored when comparing. Clients registered for any audience, and
+  clients without an audience list, now get the named resource stored and answered as `aud` by
+  `/oauth2/introspect` (it must be an absolute ASCII https URL without fragment or user information,
+  at most 512 bytes, http only on a loopback host).
+- **BREAKING (OAuth clients): refusals about the audience answer `invalid_target` (RFC 8707) instead
+  of `invalid_request`**: missing on a client with registered audiences, not registered, malformed.
+  A malformed `aud` sent by a client registered for any audience, or by a client without an audience
+  list, used to be ignored and is now refused with `invalid_target`.
+- **`/oauth2/token` accepts `resource` (RFC 8707 § 2.2) on the authorization-code and refresh-token
+  grants**: it must be the resource the authorization named, else `invalid_target`; the code is
+  consumed like any other binding failure, a refresh token stays usable. A refresh token issued
+  without an audience (any chain from before this release) ignores `resource` and stays unbound
+  until the user re-authorizes. `client_credentials` ignores it.
+- OAuth extension: the response hooks (`tokenResponse`, `idTokenClaims`, `introspectionClaims`)
+  receive `ctx.audience`, the resource the authorization named (optional context field, no contract
+  version change).
+
 ### Fixes
+
+- **Security: `GET` / `POST /oauth2/authorize` no longer spends super-linear time on a long `aud`.**
+  For a client registered with a list of audiences, the trailing-slash trim of `aud` used a regular
+  expression that is quadratic on a long run of slashes: one unauthenticated request with a ~100 kB
+  form body blocked a worker for several seconds. The trim is now a linear loop, and an `aud` /
+  `resource` value is size-capped before any comparison (at `/oauth2/authorize` and `/oauth2/token`).
+  Only clients with an audience list were reachable (registry clients created with `--audience`).
 
 - **A request authenticated by `private_key_jwt` no longer needs `client_id` in the body: it is taken
   from the assertion.** RFC 7521 § 4.2 and RFC 7523 § 3 make `client_id` optional next to a

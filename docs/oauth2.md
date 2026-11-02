@@ -301,8 +301,49 @@ be intersected with them.
   clients (a DPoP proof at `/oauth2/token` is refused with `invalid_request`
   before the code or refresh token is used).
 - A client registered with audiences (`--audience`) must name one of them in
-  the `aud` parameter of `/oauth2/authorize` (a trailing slash is ignored),
-  else `invalid_request`.
+  the `aud` parameter of `/oauth2/authorize`, or in its RFC 8707 spelling
+  `resource` (a trailing slash and the case of the scheme and host are
+  ignored), else `invalid_target`.
+
+### Resource indicators (`aud` / `resource`)
+
+`/oauth2/authorize` (GET and POST) takes the resource server a session is
+for as `aud` or as `resource` (RFC 8707): one parameter with two spellings,
+the same rules, the same stored value. **One resource per authorization**:
+the parameter given twice is refused (HTML 400, no redirect); a client that
+needs tokens for two resource servers runs two authorizations. `aud` and
+`resource` given together must name the same resource (else
+`invalid_request`). Every audience refusal answers `invalid_target`: missing
+on a client registered with audiences, not one of them, or malformed. The
+description never lists the client's audiences. Two values name the same
+resource when they are equal once a trailing slash is removed and the scheme
+and host are lower-cased (RFC 3986 § 6.2.2.1); the path and query compare as
+written (`/Mcp` is not `/mcp`), and no other normalisation applies (no
+percent-decoding, no default port).
+
+- **Client with registered audiences** (`--audience`): the value must be one
+  of them; the registered spelling is stored.
+- **Client registered for any audience** (`--any-audience`), and an
+  application-account client (no audience list): a value is optional; when
+  given it must be an absolute ASCII `https` URL (an internationalised host
+  in its punycode form) without fragment, user information or backslash
+  (`http` only on a loopback host: `localhost`, `127.0.0.1`, `[::1]`), at
+  most 512 bytes, and is stored as given. The audience is then chosen by the
+  client: only the resource server's own check of introspection `aud`
+  protects it. The registered list is the recommended setting.
+
+The chosen value is answered as `aud` by `/oauth2/introspect` (a resource
+server checks it names itself) and handed to the extension's hooks as
+`ctx.audience`; the token response carries no `aud`, and the id_token `aud`
+stays the client id. `/oauth2/token` accepts `resource` (RFC 8707 § 2.2) on
+the authorization-code and refresh-token grants: it must name the resource
+the authorization named (compared as above), else `invalid_target`; on the
+code grant the code is then used up like any other binding failure, on the
+refresh grant the refresh token stays usable. A code without an audience
+takes no `resource`. A refresh token issued without an audience (any chain
+from before this release) ignores `resource` and stays unbound until the
+user re-authorizes. `client_credentials` ignores `resource`.
+Nothing is added to the discovery document (RFC 8707 registers no metadata).
 
 ### The token response `scope` (the echo)
 
@@ -897,9 +938,11 @@ Flags:
   per user and client, at which the app addresses the account (§ 1c,
   pseudonymous subjects).
 - **`--audience <url>`** (repeatable): the absolute `https` resource URLs the
-  client may name in the `aud` parameter of `/oauth2/authorize`. At least one
-  is required, unless **`--any-audience`** registers the client explicitly for
-  any audience (no `aud` check). The two exclude each other.
+  client may name in the `aud` or `resource` parameter of `/oauth2/authorize`
+  (refusal: `invalid_target`). At least one is required, unless
+  **`--any-audience`** registers the client explicitly for any audience (no
+  list check: a well-formed `aud` / `resource` is stored and answered as
+  introspection `aud`, § 1c). The two exclude each other.
 - **`--allow-insecure-redirect`**: plain-http redirect URIs are refused unless
   their host is a loopback one (`127.0.0.1`, `[::1]`, `localhost`); this flag
   accepts them on other hosts. Such clients are reported at every core boot.
@@ -1118,7 +1161,8 @@ single-use, so a reuse means either a broken client or a stolen code.
 | registry client: `/oauth2/authorize` → `invalid_scope` "no scope grammar registered on this core" | no OAuth extension installed (`customExtensions:oauthExtension`, § 2) |
 | a pseudonymous session's token is refused like an unknown token | the request addressed the account by its username (or another name) instead of the session's alias: use the alias the app received as its subject (§ 1c, alias-bound addressing) |
 | registry client: `/oauth2/authorize` → `invalid_scope` "openid is not available on this core (no signing key configured)" | no `oauth.signingKeys` on this core (§ 2) |
-| registry client: `/oauth2/authorize` → `invalid_request` about `aud` | the client has audiences and the request named none of them (§ 3b) |
+| `/oauth2/authorize` → `invalid_target` | the client has audiences and the request named none of them in `aud` / `resource`, or a value no list vouches for is not an absolute https URL without fragment (§ 1c, resource indicators; § 3b) |
+| `/oauth2/token` → `invalid_target` | the `resource` given is not the one the authorization named (§ 1c, resource indicators) |
 | registry client: `/oauth2/token` → `500 server_error` "failed to build the token response" | the extension's hook failed or timed out, or its echo claimed reach the session does not hold; see the server log (§ 1c) |
 | consent UI: `400 invalid_request` with `reason: consent-out-of-date` | the grant, the client or the extension changed while the screen was shown: restart the flow (§ 1d) |
 | `access_denied` / `unauthorized_client` "this client is suspended" | the client was suspended (`resume <clientId>`, § 3b) |

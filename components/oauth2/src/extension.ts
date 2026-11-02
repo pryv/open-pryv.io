@@ -140,6 +140,11 @@ export type HookCtx = {
   scopeTokens: string[];
   permissions: ExtPermission[];
   issuer: string;
+  /**
+   * The resource server the authorization named (`aud`, or its RFC 8707
+   * spelling `resource`); absent when none (optional context field).
+   */
+  audience?: string;
 };
 
 export type OAuthExtension = {
