@@ -203,3 +203,17 @@ export function nextGrantPermissions ({ granted, current, client, replace }: {
   const defaults = defaultForbiddenFeatures(client).map((feature) => ({ feature, setting: 'forbidden' }));
   return mergeStreamPermissions(base, defaults, 'join').permissions;
 }
+
+/**
+ * The entries of a grant counted against the client's entry ceiling. The
+ * restrictions the core keeps on its own are left out: exclusion masks
+ * (level `none`) and the client's default forbids. So a grant never counts
+ * more than the composed consent screen that led to it, and a consent the
+ * signed-in /offer allowed is never refused at /accept.
+ */
+export function grantEntryCount (permissions: readonly unknown[], client: OAuthClient): number {
+  const defaults = new Set<string>(defaultForbiddenFeatures(client));
+  return permissions.filter((p) =>
+    !(isStreamPermission(p) && p.level === 'none') &&
+    !(isFeaturePermission(p) && p.setting === 'forbidden' && defaults.has(p.feature))).length;
+}

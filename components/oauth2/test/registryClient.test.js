@@ -1915,5 +1915,51 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(res.statusCode, 200, res.raw);
       assert.equal(res.body.authenticated, true);
     });
+
+    it('[OGBD1] /accept without shownDigest is bounded too: a consent joined past the ceiling is refused and nothing is minted; exclusion masks and the default forbids do not count', async () => {
+      const platform = fakePlatform(); await seed(platform, { maxEntries: 1 });
+      const config = fakeConfig();
+      let current = { permissions: [{ streamId: 'b', level: 'read' }], aliased: false };
+      const calls = [];
+      const deps = acceptDeps({ config, platform, readRegistryGrant: async () => current }, calls);
+      const a = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      let res = await accept(deps, a.signed, [{ streamId: 'a', level: 'read' }]);
+      assert.equal(res.statusCode, 400, res.raw);
+      assert.deepEqual(res.body, { error: 'invalid_scope', error_description: 'the grant would hold more than 1 permissions; request fewer', reason: 'grant-too-large' });
+      assert.equal(calls.length, 0, 'no grant written, no session minted');
+      // A current grant holding restrictions only: the grant left holds one
+      // permission (plus the mask and the client's default forbids).
+      current = { permissions: [{ streamId: 'b', level: 'none' }, { feature: 'webhooks', setting: 'forbidden' }], aliased: false };
+      const b = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      res = await accept(deps, b.signed, [{ streamId: 'a', level: 'read' }]);
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.equal(calls.length, 1);
+      const written = calls[0].grantPermissions;
+      assert.ok(written.some((p) => p.streamId === 'b' && p.level === 'none'), JSON.stringify(written));
+      assert.ok(written.filter((p) => p.setting === 'forbidden').length >= 3, JSON.stringify(written));
+      // No current grant: the request alone, within the ceiling.
+      current = null;
+      const c = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      assert.equal((await accept(deps, c.signed, [{ streamId: 'a', level: 'read' }])).statusCode, 200);
+    });
+
+    it('[OGBD2] with shownDigest, a consent the signed-in /offer allowed passes /accept: the kept exclusion masks do not count', async () => {
+      const platform = fakePlatform(); await seed(platform, { maxEntries: 1 });
+      const config = fakeConfig();
+      const current = { permissions: [{ streamId: 'b', level: 'none' }], aliased: false };
+      const calls = [];
+      const deps = acceptDeps({ config, platform, readRegistryGrant: async () => current }, calls);
+      const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const o = fakeRes();
+      await handleOffer(deps)({ body: { state: signed, username: 'alice', userToken: 'personal' } }, o);
+      assert.equal(o.statusCode, 200, o.raw);
+      const res = fakeRes();
+      await handleAccept(deps)({
+        body: { state: signed, username: 'alice', userToken: 'personal', grantedPermissions: [{ streamId: 'a', level: 'read' }], shownDigest: o.body.shownDigest },
+      }, res);
+      assert.equal(res.statusCode, 200, res.raw);
+      assert.equal(calls.length, 1);
+      assert.ok(calls[0].grantPermissions.some((p) => p.streamId === 'b' && p.level === 'none'), JSON.stringify(calls[0].grantPermissions));
+    });
   });
 });

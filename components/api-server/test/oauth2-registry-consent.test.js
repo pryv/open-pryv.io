@@ -719,4 +719,45 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.deepEqual(c.offer.offer.entryGroups, GROUPS);
     assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:read']);
   });
+
+  it('[OGBD3] a consent UI posting no shownDigest cannot grow a grant past the client\'s entry ceiling: 400 grant-too-large, grant and sessions unchanged', async () => {
+    const capId = 'Cap.' + cuid().slice(-10);
+    await oauth2.persistClient(platformDB, {
+      kind: 'registry',
+      clientId: capId,
+      redirectUris: [REDIRECT_URI],
+      grantTypes: ['authorization_code', 'refresh_token'],
+      tokenEndpointAuthMethod: 'none',
+      allowedAudiences: [AUD],
+      subjectType: 'public',
+      scope: SCOPE,
+      maxEntries: 2,
+    });
+    try {
+      const who = await newUser();
+      // Two permissions held (the default forbids the grant carries do not count).
+      await consentAndToken(who, 'read/a', { composed: false, cid: capId });
+      await consentAndToken(who, 'read/b', { composed: false, cid: capId });
+      const before = await grantOf(who, capId);
+      assert.deepEqual(streamsOf(before.permissions), ['a:read', 'b:read']);
+      assert.deepEqual(before.permissions.filter((p) => p.feature != null).map((p) => p.feature).sort(), DEFAULT_FORBIDS.map((p) => p.feature).sort());
+      const accessesBefore = (await accesses(who)).map((a) => a.id).sort();
+
+      const c = await consent(who, 'read/c', { composed: false, cid: capId });
+      assert.equal(c.accept.status, 400, JSON.stringify(c.accept.body));
+      assert.deepEqual(c.accept.body, { error: 'invalid_scope', error_description: 'the grant would hold more than 2 permissions; request fewer', reason: 'grant-too-large' });
+      assert.deepEqual(await grantOf(who, capId), before);
+      assert.deepEqual((await accesses(who)).map((a) => a.id).sort(), accessesBefore);
+
+      // The composed screen of the same request is refused the same way at /offer.
+      const o = await offer((await authorize('read/c', capId)).state, who);
+      assert.equal(o.status, 400, JSON.stringify(o.body));
+      assert.equal(o.body.reason, 'grant-too-large');
+      // Within the ceiling, a consent without shownDigest still joins.
+      await consentAndToken(who, 'read/a', { composed: false, cid: capId });
+      assert.deepEqual(streamsOf((await grantOf(who, capId)).permissions), ['a:read', 'b:read']);
+    } finally {
+      try { await storage.deleteClient(platformDB, capId); } catch (_) { /* best-effort */ }
+    }
+  });
 });

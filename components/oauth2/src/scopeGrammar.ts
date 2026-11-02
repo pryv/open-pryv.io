@@ -69,6 +69,15 @@ export function entryCeiling (client: OAuthClient): number {
   return typeof own === 'number' && Number.isInteger(own) && own > 0 ? Math.min(own, MAX_SYNTH_ENTRIES) : MAX_SYNTH_ENTRIES;
 }
 
+/** The refusal of a consent that would leave a grant above the client's entry ceiling (`/offer`, `/accept`). */
+export function grantTooLarge (ceiling: number): { error: string; error_description: string; reason: string } {
+  return {
+    error: 'invalid_scope',
+    error_description: `the grant would hold more than ${ceiling} permissions; request fewer`,
+    reason: 'grant-too-large',
+  };
+}
+
 export type ResolvedScope = {
   ok: true;
   /** The request's tokens, de-duplicated, as presented (the signed state carries these). */
