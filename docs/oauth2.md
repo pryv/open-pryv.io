@@ -671,7 +671,8 @@ long the access token a refresh replaces keeps working; keep it at or above
 These three lifetimes are also **caps**: a client registered with its own
 (`--access-token-ttl`, `--refresh-token-ttl`, `--refresh-token-absolute-ttl`,
 § 3c) gets the shorter of its value and the platform's. Lowering a setting
-lowers every client at its next token.
+lowers every client at its next token, except the absolute lifetime of a
+refresh chain already started (fixed when the chain began).
 
 ### ⚑ Per-deployment config agreement (multi-core)
 
@@ -942,26 +943,33 @@ registers an inline public JWK Set; `--jwks-uri <https-url>` registers it by
 reference instead (one excludes the other; on `update` the one given replaces
 the other). Accepted keys: EC P-256 (ES256), EC P-384 (ES384), RSA of 2048 bits
 or more (RS384). A key with private members is refused; a key may carry `kid`,
-`alg` (it then verifies that algorithm only) and `use` (`sig` only). A set of
-more than one key needs a distinct `kid` on every key, and an assertion must
+`alg` (it then verifies that algorithm only), `use` (`sig` only) and `key_ops`
+(must include `verify`). A set of more than one key needs a distinct `kid` on every key, and an assertion must
 then name its key in its `kid` header. An algorithm is verified only with a key
 of its type: an RS384 header naming an EC key is refused.
 
 `--jwks-uri` is fetched by the core like any counterparty call: `https` only,
-no redirect followed, a `200` answer of at most 64 KiB, a 5 second timeout,
-loopback / private / link-local addresses refused before any connection
-(`cmc.allowedPrivateHosts` lists the exceptions). Each core caches a fetched set
-for 5 minutes; an assertion naming a `kid` the cached set lacks fetches it
-again (at most every 30 seconds), so a client adding a key just signs with it;
-a failed fetch is remembered for 30 seconds. A client removing a key should
-expect it to verify up to 5 minutes longer. Every failure answers the uniform
-`invalid_client` (the reason is in the server log).
+no redirect followed, a `200` answer of at most 64 KiB (up to 100 keys), a 5
+second timeout, loopback / private / link-local addresses refused before any
+connection. `cmc.allowedPrivateHosts` widens what a `jwks_uri` may reach, and
+the platform's own host names (`core.url`'s host, `dns.domain` and below, the
+`service.api` host) are trusted by name, without the address check, as for
+every counterparty call. Each core caches a fetched set for 5 minutes; an
+assertion naming a `kid` the cached set lacks fetches it again (at most every
+30 seconds), so a client adding a key just signs with it. While the URL
+answers, a key the client withdraws stops verifying within 5 minutes; while it
+does not, the last set fetched stays in use and the URL is retried every 30
+seconds. A URL never fetched successfully is refused for 30 seconds after a
+failure. Every failure answers the uniform `invalid_client`; the reason (a
+refused assertion, an unusable `jwks_uri`) is in the server log as a warning.
 
 **Pinned algorithms.** `--signing-alg <alg>` (repeatable: `ES256`, `ES384`,
 `RS384`; `none` clears on `update`) stores `tokenEndpointAuthSigningAlgs`: an
 assertion with another algorithm is refused. Without it, any supported
 algorithm that fits a key of the set is accepted. Each pinned algorithm must
-fit a key of an inline set.
+fit a key of an inline set. The list is the stored form of the registration
+metadata `token_endpoint_auth_signing_alg` (one value in RFC 7591 registration,
+a list here so that one client may use two algorithms).
 
 Example: one client with an RS384 and an ES384 key, both algorithms pinned:
 

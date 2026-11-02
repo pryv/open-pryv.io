@@ -1011,8 +1011,8 @@ function parseCmcOffers (values) {
 
 // --jwks-file <path> | --jwks-json <json> → the inline public JWK Set object,
 // or undefined when neither is given. Mutually exclusive. Only parses JSON here;
-// deep validation (EC P-256 public keys only, no private `d`) happens in
-// persistClient → validatePublicJwkSet, which throws a clear error.
+// deep validation (EC P-256 / P-384 or RSA public keys, no private member, a kid
+// on each key of a set of several) happens in persistClient → validatePublicJwkSet.
 function resolveJwks (args) {
   const file = args.flagsScalar['jwks-file'];
   const json = args.flagsScalar['jwks-json'];

@@ -75,12 +75,23 @@ const ALG_KEY: Record<string, { kty: 'EC' | 'RSA'; crv?: 'P-256' | 'P-384'; hash
   RS384: { kty: 'RSA', hash: 'SHA-384' },
 };
 
-/** RSA modulus bounds, bytes: 2048 to 8192 bits. */
-const RSA_MIN_BYTES = 256;
-const RSA_MAX_BYTES = 1024;
+/** RSA modulus bounds, bits. */
+const RSA_MIN_BITS = 2048;
+const RSA_MAX_BITS = 8192;
 
-/** Upper bound on keys in one set. */
+/** Bit length of a big-endian unsigned integer (leading zero bytes and bits not counted). */
+function modulusBits (n: Buffer): number {
+  let i = 0;
+  while (i < n.length && n[i] === 0) i++;
+  if (i === n.length) return 0;
+  return (n.length - i - 1) * 8 + (32 - Math.clz32(n[i]));
+}
+
+/** Upper bound on keys in a set registered inline. */
 export const MAX_JWKS_KEYS = 20;
+
+/** Upper bound on keys in a set published at a `jwks_uri`. */
+export const MAX_PUBLISHED_JWKS_KEYS = 100;
 
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -113,6 +124,9 @@ export function validatePublicJwk (jwk: unknown): ClientPublicJwk {
     throw new Error(`jwk carries private key material ("${leaked.join('", "')}"): public keys only`);
   }
   if (k.use != null && k.use !== 'sig') throw new Error('jwk.use must be "sig" when present');
+  if (k.key_ops != null && (!Array.isArray(k.key_ops) || !k.key_ops.includes('verify'))) {
+    throw new Error('jwk.key_ops must include "verify" when present');
+  }
   let out: ClientPublicJwk;
   if (k.kty === 'EC') {
     if (k.crv !== 'P-256' && k.crv !== 'P-384') throw new Error('jwk.crv must be "P-256" (ES256) or "P-384" (ES384)');
@@ -127,8 +141,8 @@ export function validatePublicJwk (jwk: unknown): ClientPublicJwk {
   } else if (k.kty === 'RSA') {
     if (typeof k.n !== 'string' || !B64URL_RE.test(k.n)) throw new Error('jwk.n must be base64url');
     const n = Buffer.from(k.n, 'base64url');
-    const bytes = n.length - (n[0] === 0 ? 1 : 0);
-    if (bytes < RSA_MIN_BYTES || bytes > RSA_MAX_BYTES) throw new Error('jwk.n must be an RSA modulus of 2048 to 8192 bits');
+    const bits = modulusBits(n);
+    if (bits < RSA_MIN_BITS || bits > RSA_MAX_BITS) throw new Error('jwk.n must be an RSA modulus of 2048 to 8192 bits');
     if (typeof k.e !== 'string' || !B64URL_RE.test(k.e)) throw new Error('jwk.e must be base64url');
     const e = Buffer.from(k.e, 'base64url');
     if (e.length === 0 || e.length > 4 || (e[e.length - 1] & 1) === 0 || e.readUIntBE(0, e.length) < 3) {
@@ -173,9 +187,11 @@ export function validatePublicJwkSet (jwks: unknown): PublicJwkSet {
  * A JWK Set as published by a client at its `jwks_uri`: keys this server
  * cannot use (encryption keys, other key types) are skipped; a key carrying
  * private material refuses the whole set; at least one usable key remains.
+ * Every usable key is kept, up to `MAX_PUBLISHED_JWKS_KEYS` keys in the set
+ * (verification only tries the keys the assertion names).
  */
 export function usablePublicJwkSet (jwks: unknown): PublicJwkSet {
-  const keys = rawKeys(jwks, 100);
+  const keys = rawKeys(jwks, MAX_PUBLISHED_JWKS_KEYS);
   const out: ClientPublicJwk[] = [];
   for (const raw of keys) {
     if (raw != null && typeof raw === 'object' && PRIVATE_MEMBERS.some((m) => m in (raw as object))) {
@@ -184,7 +200,7 @@ export function usablePublicJwkSet (jwks: unknown): PublicJwkSet {
     try { out.push(validatePublicJwk(raw)); } catch { /* not usable here: skipped */ }
   }
   if (out.length === 0) throw new Error('jwks: no usable signature key');
-  return { keys: out.slice(0, MAX_JWKS_KEYS) };
+  return { keys: out };
 }
 
 function rawKeys (jwks: unknown, max: number = MAX_JWKS_KEYS): unknown[] {

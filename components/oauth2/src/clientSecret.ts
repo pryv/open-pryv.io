@@ -28,7 +28,7 @@ import { verifyClientAssertion, ClientAssertionError, CLIENT_ASSERTION_TYPE } fr
 import { markClientAssertionJtiUsed } from './storage.ts';
 import { hasKeySet } from './clientAuth.ts';
 import { getClientJwks, JwksFetchError } from './jwksUri.ts';
-import { logServerWarning } from './serverLog.ts';
+import { logServerError, logServerWarning } from './serverLog.ts';
 // bcrypt ships no type declarations — keep it on the require shim so the
 // import does not trip noImplicitAny (real ESM import needs @types/bcrypt).
 const require = createRequire(import.meta.url);
@@ -169,24 +169,34 @@ export async function authenticateClient (params: {
       if (jwksUri == null) {
         verified = await verifyWith(jwks as { keys: unknown[] });
       } else {
+        const now = params.now;
         try {
-          verified = await verifyWith(await getClientJwks(jwksUri));
+          verified = await verifyWith(await getClientJwks(jwksUri, { now }));
         } catch (err: unknown) {
           // A key the cached set does not hold: the client may have rotated it in.
           if (!(err instanceof ClientAssertionError && err.unknownKid)) throw err;
-          verified = await verifyWith(await getClientJwks(jwksUri, { unknownKid: true }));
+          verified = await verifyWith(await getClientJwks(jwksUri, { unknownKid: true, now }));
         }
       }
       // Burn the jti for its remaining lifetime — a replay within the window fails.
       const fresh = await markClientAssertionJtiUsed(
         params.platform, params.clientId, verified.jti, verified.exp * 1000
       );
-      if (!fresh) return ASSERTION_FAIL; // replayed
+      if (!fresh) {
+        logServerWarning('client ' + params.clientId + ': client assertion refused: jti already used');
+        return ASSERTION_FAIL; // replayed
+      }
     } catch (err: unknown) {
-      // An unusable key set URL is the operator's to know (once per fetch, not per request).
-      if (err instanceof JwksFetchError && !err.cached) logServerWarning('client ' + params.clientId + ': jwks_uri unusable: ' + err.reason);
+      // The response stays uniform; the reason is the operator's (an unusable
+      // jwks_uri is logged by its fetch, once).
+      if (err instanceof ClientAssertionError) {
+        logServerWarning('client ' + params.clientId + ': client assertion refused: ' + err.reason);
+      } else if (!(err instanceof JwksFetchError)) {
+        logServerError('client ' + params.clientId + ': client assertion check failed', err);
+      }
       return ASSERTION_FAIL; // bad signature / claims — uniform
     }
+
     return { ok: true };
   }
 

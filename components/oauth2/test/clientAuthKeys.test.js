@@ -137,6 +137,18 @@ function stubTransport (answer) {
   });
   return calls;
 }
+/** The server-log warnings written while `body` runs (the oauth2 log falls back to console.warn here). */
+async function captureWarnings (body) {
+  const warned = [];
+  const orig = console.warn;
+  console.warn = (...a) => warned.push(a.join(' '));
+  try {
+    await body();
+  } finally {
+    console.warn = orig;
+  }
+  return warned;
+}
 const jsonAnswer = (body, status = 200) => async () => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 describe('[OCAK] client authentication keys, rotation and lifetimes', function () {
@@ -220,6 +232,13 @@ describe('[OCAK] client authentication keys, rotation and lifetimes', function (
       assert.throws(() => validatePublicJwk({ ...es.publicJwk, use: 'enc' }), /use/);
       assert.match(computeThumbprint(validatePublicJwk(rs.publicJwk)), /^[A-Za-z0-9_-]{43}$/);
       assert.match(computeThumbprint(validatePublicJwk(es.publicJwk)), /^[A-Za-z0-9_-]{43}$/);
+      // The RSA bound counts bits: a 2047-bit modulus (256 bytes) is refused.
+      const n2047 = Buffer.from(rs.publicJwk.n, 'base64url');
+      n2047[0] = 0x7f;
+      assert.throws(() => validatePublicJwk({ kty: 'RSA', n: n2047.toString('base64url'), e: 'AQAB' }), /2048/);
+      // key_ops, when present, must allow verification.
+      assert.throws(() => validatePublicJwk({ ...es.publicJwk, key_ops: ['encrypt'] }), /key_ops/);
+      assert.equal(validatePublicJwk({ ...es.publicJwk, key_ops: ['verify'] }).kty, 'EC');
     });
 
     it('[OCAK8] registration rules: a pinned alg with no fitting key, an unknown alg, jwks with jwksUri, an http jwksUri: refused', async () => {
@@ -252,6 +271,8 @@ describe('[OCAK] client authentication keys, rotation and lifetimes', function (
       assert.equal(calls.length, 2, 'fetched again after the cache lifetime');
     });
 
+    // IP literals only here: a host name resolving to a private address is refused by
+    // the guarded transport's checked lookup (business peerFetch tests, [PFR2]).
     it('[OCAK10] SSRF: private, loopback, link-local addresses and plain http are refused before any call', async () => {
       const calls = stubTransport(jsonAnswer({ keys: [es.publicJwk] }));
       for (const uri of [
@@ -311,6 +332,106 @@ describe('[OCAK] client authentication keys, rotation and lifetimes', function (
       assert.equal(calls.length, 2);
       assert.equal(fresh.keys.length, 2);
     });
+
+    /** An assertion dated at `atMs` (the injected clock), signed by `key`. */
+    const at = (key, atMs, opts = {}) => assertion(key, { ...opts, payload: { iat: Math.floor(atMs / 1000), exp: Math.floor(atMs / 1000) + 120 } });
+
+    it('[OCAK19] a failed re-fetch keeps the last set fetched: at expiry the URL answers 503, a cached key still verifies; then the new set is used', async () => {
+      let answer = jsonAnswer({ keys: [es.publicJwk] });
+      const calls = stubTransport(async (url, init) => await answer(url, init));
+      const platform = fakePlatform();
+      const client = { ...base, jwksUri: JWKS_URI };
+      const t0 = Date.now();
+      assert.equal((await auth(platform, client, at(es, t0), { now: t0 })).ok, true);
+      answer = jsonAnswer({ error: 'down' }, 503);
+      const t1 = t0 + JWKS_CACHE_TTL_MS + 1000;
+      const warned = await captureWarnings(async () => {
+        assert.equal((await auth(platform, client, at(es, t1), { now: t1 })).ok, true, 'the cached key still verifies');
+      });
+      assert.equal(calls.length, 2);
+      assert.equal(warned.filter((w) => /jwks_uri .* unusable: HTTP status 503; the last key set fetched stays in use/.test(w)).length, 1, warned.join('\n'));
+      // Retried no sooner than 30 s later.
+      assert.equal((await auth(platform, client, at(es, t1 + 1000), { now: t1 + 1000 })).ok, true);
+      assert.equal(calls.length, 2);
+      answer = jsonAnswer({ keys: [rs.publicJwk] });
+      const t2 = t1 + JWKS_FAILURE_TTL_MS + 1000;
+      assert.equal((await auth(platform, client, at(rs, t2), { now: t2 })).ok, true, 'the new set is in use');
+      assert.equal(calls.length, 3);
+      assert.equal((await auth(platform, client, at(es, t2 + 1000), { now: t2 + 1000 })).ok, false, 'the withdrawn key is gone');
+    });
+
+    it('[OCAK20] an unknown-kid probe answered by a failure does not lock the client out (the cached set stays in use)', async () => {
+      let answer = jsonAnswer({ keys: [es.publicJwk] });
+      const calls = stubTransport(async (url, init) => await answer(url, init));
+      const platform = fakePlatform();
+      const client = { ...base, jwksUri: JWKS_URI };
+      const t0 = Date.now();
+      assert.equal((await auth(platform, client, at(es, t0), { now: t0 })).ok, true);
+      answer = async () => new Response('', { status: 504 });
+      const t1 = t0 + 31000;
+      // Anyone may name a kid: the probe triggers a re-fetch, which fails.
+      await captureWarnings(async () => {
+        assert.equal((await auth(platform, client, at(es, t1, { kid: 'probe' }), { now: t1 })).ok, false);
+      });
+      assert.equal(calls.length, 2);
+      assert.equal((await auth(platform, client, at(es, t1 + 1000), { now: t1 + 1000 })).ok, true, 'still accepted');
+    });
+
+    it('[OCAK21] through client authentication, an unknown kid refreshes the set once it is 30 s old (the client rotated its key in)', async () => {
+      let published = { keys: [es.publicJwk] };
+      const calls = stubTransport(async () => new Response(JSON.stringify(published), { status: 200 }));
+      const platform = fakePlatform();
+      const client = { ...base, jwksUri: JWKS_URI };
+      const t0 = Date.now();
+      assert.equal((await auth(platform, client, at(es, t0), { now: t0 })).ok, true);
+      published = { keys: [es.publicJwk, rs.publicJwk] };
+      assert.equal((await auth(platform, client, at(rs, t0 + 1000), { now: t0 + 1000 })).ok, false, 'too soon to refresh');
+      assert.equal(calls.length, 1);
+      assert.equal((await auth(platform, client, at(rs, t0 + 31000), { now: t0 + 31000 })).ok, true, 'refreshed, then verified');
+      assert.equal(calls.length, 2);
+      // A wrong key naming the new kid: refused, and no third fetch (the kid is known now).
+      const other = makeKey('RS384', 'rsa-1');
+      assert.equal((await auth(platform, client, at(other, t0 + 32000), { now: t0 + 32000 })).ok, false);
+      assert.equal(calls.length, 2);
+    });
+
+    it('[OCAK22] a published set keeps every usable key (25 keys, the 22nd signs); an inline set holds 20 keys at most', async () => {
+      const keys = Array.from({ length: 25 }, (_, i) => makeKey('ES384', 'k' + i));
+      stubTransport(jsonAnswer({ keys: keys.map((k) => k.publicJwk) }));
+      const platform = fakePlatform();
+      assert.equal((await auth(platform, { ...base, jwksUri: JWKS_URI }, assertion(keys[21]))).ok, true);
+      await assert.rejects(persistClient(platform, { ...base, jwks: { keys: keys.slice(0, 21).map((k) => k.publicJwk) } }), /more than 20 keys/);
+      await persistClient(platform, { ...base, jwks: { keys: keys.slice(0, 20).map((k) => k.publicJwk) } });
+    });
+  });
+
+  describe('[OCAK-LOG] refusal reasons and boot report', () => {
+    it('[OCAK23] every refused assertion logs its reason server-side; the answer stays uniform', async () => {
+      const platform = fakePlatform();
+      await persistClient(platform, { ...base, jwks: { keys: [rs.publicJwk, es.publicJwk] }, tokenEndpointAuthSigningAlgs: ['ES384'] });
+      const client = await storedClient(platform, CLIENT_ID);
+      const UNIFORM = { ok: false, status: 401, error: 'invalid_client', description: 'client authentication failed' };
+      const replayed = assertion(es);
+      assert.equal((await auth(platform, client, replayed)).ok, true);
+      const warned = await captureWarnings(async () => {
+        assert.deepEqual(await auth(platform, client, assertion(rs)), UNIFORM);
+        assert.deepEqual(await auth(platform, client, assertion(es, { kid: null })), UNIFORM);
+        assert.deepEqual(await auth(platform, client, replayed), UNIFORM);
+      });
+      assert.equal(warned.length, 3, warned.join('\n'));
+      assert.match(warned[0], new RegExp('client ' + CLIENT_ID + ': client assertion refused: header.alg is not one of the client\'s algorithms'));
+      assert.match(warned[1], /header.kid is required/);
+      assert.match(warned[2], /jti already used/);
+    });
+
+    it('[OCAK24] a row whose inline set breaks the key rules (several keys without kid) is reported at boot', async () => {
+      const { checkRegistryClients } = require('../src/registryBootCheck.ts');
+      const { setClient } = require('../src/storage.ts');
+      const platform = fakePlatform();
+      await setClient(platform, { ...base, jwks: { keys: [{ ...rs.publicJwk, kid: undefined }, { ...es.publicJwk, kid: undefined }] }, updatedAt: 0 });
+      const warned = await captureWarnings(async () => { assert.equal(await checkRegistryClients(platform), 1); });
+      assert.match(warned.join('\n'), new RegExp('oauth client ' + CLIENT_ID + ': inline key set refused \\(jwks: every key needs a "kid"'));
+    });
   });
 
   describe('[OCAK-SEC] secret rotation window', () => {
@@ -337,6 +458,11 @@ describe('[OCAK] client authentication keys, rotation and lifetimes', function (
       await assert.rejects(persistClient(platform, {
         ...base, clientSecretHash: s.hash, previousSecretHash: s.hash, previousSecretExpiresAt: Date.now() + 31 * 24 * 3600 * 1000,
       }), /30 days/);
+      // A window already over is not carried along on write.
+      await persistClient(platform, { ...base, clientSecretHash: s.hash, previousSecretHash: s.hash, previousSecretExpiresAt: Date.now() - 1 });
+      const row = await storedClient(platform, CLIENT_ID);
+      assert.equal(row.previousSecretHash, undefined);
+      assert.equal(row.previousSecretExpiresAt, undefined);
     });
   });
 
@@ -433,6 +559,25 @@ describe('[OCAK] client authentication keys, rotation and lifetimes', function (
       assert.equal(r.statusCode, 400);
       assert.equal(r.body.error, 'unauthorized_client');
       assert.notEqual(await getRefresh(platform, CORE_ID, 'RT-OFF'), null, 'not used up');
+    });
+
+    it('[OCAK25] client_credentials by an RS384 client: the access lives the client\'s lifetime, clamped', async () => {
+      const platform = fakePlatform();
+      await persistClient(platform, { ...base, jwks: { keys: [rs.publicJwk] }, accessTokenTTL: 120 });
+      let mintedExpiry = null;
+      const h = rawHandleToken({
+        config: fakeConfig(),
+        platform,
+        resolveUsername: async (userId) => (userId === 'u-' + CLIENT_ID ? CLIENT_ID : null),
+        resolveAccountUserId: async (username) => (username === CLIENT_ID ? 'u-' + CLIENT_ID : null),
+        mintClientAccess: async ({ expiresAt }) => { mintedExpiry = expiresAt; return { accessId: 'acc-cc', accessToken: 'tok-cc', apiEndpoint: 'https://x.pryv.me/' }; },
+      });
+      const before = Date.now();
+      const res = fakeRes();
+      await h({ body: { grant_type: 'client_credentials', client_id: CLIENT_ID, client_assertion: assertion(rs), client_assertion_type: CLIENT_ASSERTION_TYPE } }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+      assert.equal(res.body.expires_in, 120);
+      assert.ok(mintedExpiry >= before + 120_000 && mintedExpiry <= Date.now() + 120_000);
     });
   });
 });

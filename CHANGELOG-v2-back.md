@@ -65,6 +65,11 @@
   `jwks.ts` validates EC P-256 / P-384 and RSA public keys (`usablePublicJwkSet` for fetched sets);
   `clientAuth.ts` `hasKeySet` counts a `jwks_uri`, and its new `isConfidentialClient` (a secret or a
   key set) serves introspection. `extension.ts` `toClientView` also drops `previousSecretHash`.
+- Server log: every refused client assertion is a warning naming the client and the reason (the
+  answer stays the uniform `invalid_client`); an unusable `jwks_uri` is a warning once per fetch. The
+  boot pass over the clients (`registryBootCheck.ts`) now also warns, for every client kind, about an
+  inline key set that fails the key rules (several keys without a distinct `kid`). `persistClient`
+  drops a rotated secret whose window is over.
 
 ### Dependencies
 

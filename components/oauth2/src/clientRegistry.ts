@@ -135,6 +135,11 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
       throw new Error(`jwks: ${(err as Error).message}`);
     }
   }
+  // A rotated secret whose window ended is never accepted: not carried along.
+  if (typeof validated.previousSecretExpiresAt === 'number' && validated.previousSecretExpiresAt <= Date.now()) {
+    delete validated.previousSecretHash;
+    delete validated.previousSecretExpiresAt;
+  }
   validateAuthAndLifetimes(validated);
   await storage.setClient(platform, validated);
 }

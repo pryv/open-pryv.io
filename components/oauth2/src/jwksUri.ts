@@ -16,19 +16,25 @@
  * resolved with a checked lookup pinned to the connection, redirects are not
  * followed. On top of that: `https:` only (whatever
  * `cluster.allowInsecurePeerUrl` says), a 200 answer only, a 64 KiB body cap,
- * a 5 second timeout.
+ * a 5 second timeout. As for every counterparty call, the platform's own host
+ * names (`core.url`'s host, `dns.domain` and below, the `service.api` host)
+ * are trusted by name, without the address check.
  *
  * Cache, per URL, in memory on each core: a fetched set is used for 5
- * minutes (a key the client withdraws stops verifying within that time); a
- * failed fetch is remembered for 30 seconds, so assertions naming a client
- * whose URL fails cannot make this core call it on every request; concurrent
- * misses share one fetch; at most 256 URLs are kept (oldest dropped). An
- * assertion naming a `kid` the cached set does not hold refreshes the set
- * once, at most every 30 seconds per URL (a client rotating its key).
+ * minutes (while the URL answers, a key the client withdraws stops verifying
+ * within that time); concurrent misses share one fetch; at most 256 URLs are
+ * kept (oldest dropped). An assertion naming a `kid` the cached set does not
+ * hold refreshes the set once, at most every 30 seconds per URL (a client
+ * rotating its key). A failed fetch never drops a set already fetched: the
+ * last set stays in use and the URL is retried 30 seconds later. Only a URL
+ * never fetched (or fallen out of the cache) is refused while it fails, and
+ * that failure is remembered for 30 seconds, so assertions naming the client
+ * cannot make this core call it on every request.
  */
 
 import { peerFetch } from 'business/src/outbound/peerFetch.ts';
 import { usablePublicJwkSet, type PublicJwkSet } from './jwks.ts';
+import { logServerWarning } from './serverLog.ts';
 
 export const JWKS_CACHE_TTL_MS = 5 * 60 * 1000;
 export const JWKS_FAILURE_TTL_MS = 30 * 1000;
@@ -53,12 +59,9 @@ export function jwksUriProblem (uri: unknown): string | null {
 /** A `jwks_uri` that could not be used; `reason` stays server-side. */
 export class JwksFetchError extends Error {
   readonly reason: string;
-  /** Answered from the remembered failure (no fetch made now). */
-  readonly cached: boolean;
-  constructor (reason: string, cached: boolean = false) {
+  constructor (reason: string) {
     super('client JWK Set unavailable');
     this.reason = reason;
-    this.cached = cached;
   }
 }
 
@@ -80,8 +83,10 @@ function remember (uri: string, entry: CacheEntry): void {
 /**
  * The usable public keys published at `uri`, from the cache when fresh.
  * `unknownKid`: the caller's assertion named a key the set does not hold;
- * the set is fetched again when the cached one is old enough. Throws
- * JwksFetchError.
+ * the set is fetched again when the cached one is old enough. A failed fetch
+ * keeps the last set fetched, if any (retried 30 seconds later); throws
+ * JwksFetchError only when no set was ever fetched (or it fell out of the
+ * cache).
  */
 export async function getClientJwks (
   uri: string, opts: { unknownKid?: boolean; now?: number } = {}
@@ -94,7 +99,7 @@ export async function getClientJwks (
     const refresh = opts.unknownKid === true && entry.keys != null && now - entry.fetchedAt >= JWKS_REFRESH_MIN_INTERVAL_MS;
     if (!refresh) {
       if (entry.keys != null) return entry.keys;
-      throw new JwksFetchError(entry.reason ?? 'fetch failed recently', true);
+      throw new JwksFetchError(entry.reason ?? 'fetch failed recently');
     }
   }
   let pending = inflight.get(uri);
@@ -106,6 +111,16 @@ export async function getClientJwks (
       },
       (err: unknown) => {
         const reason = err instanceof JwksFetchError ? err.reason : String((err as Error)?.message ?? err);
+        // Logged here, once per fetch (concurrent callers share this promise).
+        const last = cache.get(uri)?.keys ?? null;
+        if (last != null) {
+          // A failed re-fetch (expiry, or a probe naming an unknown kid) must
+          // not lock the client out: the last set fetched stays in use.
+          logServerWarning(`jwks_uri ${uri} unusable: ${reason}; the last key set fetched stays in use, retried in 30 s`);
+          remember(uri, { keys: last, reason: null, fetchedAt: now, expiresAt: now + JWKS_FAILURE_TTL_MS });
+          return last;
+        }
+        logServerWarning(`jwks_uri ${uri} unusable: ${reason}`);
         remember(uri, { keys: null, reason, fetchedAt: now, expiresAt: now + JWKS_FAILURE_TTL_MS });
         throw err instanceof JwksFetchError ? err : new JwksFetchError(reason);
       }
