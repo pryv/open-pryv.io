@@ -64,6 +64,18 @@
   the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
   templates set`.
 
+### Fixes
+
+- **A request authenticated by `private_key_jwt` no longer needs `client_id` in the body: it is taken
+  from the assertion.** RFC 7521 § 4.2 and RFC 7523 § 3 make `client_id` optional next to a
+  `client_assertion`, but `/oauth2/token` (every grant), `/oauth2/introspect` and `/oauth2/revoke`
+  answered `invalid_request` ("client_id is required") or `invalid_client` without it, which refused
+  every client sending only the assertion. The client is now the assertion's `iss` (which must equal
+  its `sub`), authenticated as before (its key set, `aud`, `exp`, single-use `jti`). A `client_id` in
+  the body or in HTTP Basic that differs from `iss` is still refused, and an assertion that names no
+  client, an unknown one or one without a key set gets the same `invalid_client` answer, before an
+  authorization code is used up.
+
 ## 2.0.0-rc.69 - 2026-11-02
 
 > **Upgrade advice for operators.** Two new per-core secrets: set `oauth:stateKey` on every core

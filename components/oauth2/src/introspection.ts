@@ -36,7 +36,7 @@ import type { HookCtx, ExtPermission } from './extension.ts';
 import * as storage from './storage.ts';
 import { getClient, isRegistryClient } from './clientRegistry.ts';
 import { authenticateClient } from './clientSecret.ts';
-import { decodeBasicAuth } from './clientAuth.ts';
+import { decodeBasicAuth, clientIdFromAssertion } from './clientAuth.ts';
 import { issuerFromConfig } from './issuer.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
 import { runHook, toClientView } from './extension.ts';
@@ -80,7 +80,11 @@ export function handleIntrospect (deps: IntrospectDeps) {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const basic = decodeBasicAuth(req.headers?.authorization);
     const bodyClientId = typeof body.client_id === 'string' ? body.client_id : '';
-    const clientId = basic?.client_id ?? bodyClientId;
+    // Next to a client_assertion, client_id is optional (RFC 7523 §3): the
+    // assertion's iss names the client, authenticated below as any other.
+    const clientId = basic?.client_id ?? (bodyClientId !== ''
+      ? bodyClientId
+      : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
     // Uniform refusal: unknown, public, not allowed, suspended, or bad credentials.
     const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
       { 'WWW-Authenticate': 'Basic realm="oauth2"' });

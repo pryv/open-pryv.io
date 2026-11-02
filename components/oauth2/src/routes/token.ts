@@ -30,7 +30,7 @@ import { externalRequestUri } from '../externalUri.ts';
 import { markDPoPJtiUsed, getDpopKeyRevokedAt, recordDpopKeySeen } from '../storage.ts';
 import { logServerError } from '../serverLog.ts';
 import { getClient, isRegistryClient } from '../clientRegistry.ts';
-import { decodeBasicAuth } from '../clientAuth.ts';
+import { decodeBasicAuth, clientIdFromAssertion, hasKeySet } from '../clientAuth.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -75,12 +75,35 @@ export function handleToken (deps: TokenDeps) {
     // identified by it, so client_id in the body is optional then. When both
     // are given and differ, the grant refuses the request (invalid_client).
     const rawBody = req.body ?? {};
-    const body = basic != null && (typeof rawBody.client_id !== 'string' || rawBody.client_id === '')
+    const noBodyClientId = typeof rawBody.client_id !== 'string' || rawBody.client_id === '';
+    let body = basic != null && noBodyClientId
       ? { ...rawBody, client_id: basic.client_id }
       : rawBody;
     const grantType = typeof body.grant_type === 'string' ? body.grant_type : '';
 
     let outcome;
+    // RFC 7521 §4.2 / RFC 7523 §3: next to a client_assertion, client_id is
+    // optional; the client is then the one the assertion names (its iss, read
+    // unverified here). The grant authenticates that client exactly as it
+    // would a body client_id. An assertion that names no client, or names one
+    // without a key set on file, is refused here with the uniform answer,
+    // before anything is used up (a code, a DPoP proof jti). A known client
+    // named this way then runs the grant as with a body client_id, so on the
+    // code grant a bad code answers 400 invalid_grant where an unknown iss
+    // answers 401: that tells whether a client id exists. Accepted: client ids
+    // are public (every authorization URL carries one), and the refresh and
+    // client_credentials grants already tell it apart for a body client_id.
+    let assertedClient: Awaited<ReturnType<typeof getClient>> | undefined;
+    if (basic == null && noBodyClientId && typeof rawBody.client_assertion === 'string' && rawBody.client_assertion !== '') {
+      const assertedId = clientIdFromAssertion(rawBody.client_assertion, rawBody.client_assertion_type);
+      const asserted = assertedId != null ? await getClient(deps.platform, assertedId) : null;
+      if (assertedId == null || !hasKeySet(asserted)) {
+        outcome = { ok: false as const, status: 401, error: 'invalid_client', description: 'client authentication failed' };
+      } else {
+        assertedClient = asserted;
+        body = { ...rawBody, client_id: assertedId };
+      }
+    }
     // DPoP (RFC 9449 §5): a proof on the token request opts this
     // issuance into key binding. Verified BEFORE any grant runs, so a
     // bad proof burns nothing (no code/refresh consumed). The proof
@@ -94,8 +117,10 @@ export function handleToken (deps: TokenDeps) {
     // any grant runs (the code or refresh token is not consumed). The proof
     // itself is not at fault, so this is invalid_request, as for
     // client_credentials below, not invalid_dpop_proof.
-    if (dpopHeader != null && typeof body.client_id === 'string' && body.client_id !== '' &&
-        isRegistryClient(await getClient(deps.platform, body.client_id))) {
+    if (outcome != null) {
+      // refused above: the request names no client that can authenticate
+    } else if (dpopHeader != null && typeof body.client_id === 'string' && body.client_id !== '' &&
+        isRegistryClient(assertedClient ?? await getClient(deps.platform, body.client_id))) {
       outcome = { ok: false as const, status: 400, error: 'invalid_request', description: 'DPoP is not available for this client' };
     } else if (dpopHeader != null) {
       const clockSkewSeconds = Number(deps.config.get('oauth:dpop:clockSkewSeconds') ?? 120);
