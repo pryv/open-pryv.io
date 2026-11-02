@@ -1,6 +1,14 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.69 - 2026-11-02
+
+> **Upgrade advice for operators.** Two new per-core secrets: set `oauth:stateKey` on every core
+> and `sso:stateKey` on every core where `sso:enabled` is true (each a random value of at least 32
+> characters, distinct from each other). Until set, both are derived from `auth:adminAccessKey` and
+> the boot logs a warning; 2.0.0-rc.70 requires `oauth:stateKey` when `oauth:consentUrl` is set and
+> `sso:stateKey` when `sso:enabled` is true.
+> `oauth:audAllowList` is removed (it was never enforced; a configuration that still sets it gets a
+> boot warning). No migration. See "Changed" below.
 
 ### OpenID Connect for registry clients (new, opt-in)
 
