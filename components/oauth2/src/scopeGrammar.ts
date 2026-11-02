@@ -63,6 +63,11 @@ export const ENTRY_GROUP_BOUNDS = {
   /** Entry keys across all groups. */
   entryKeys: MAX_SYNTH_ENTRIES,
 };
+/** The entries one authorization of this client may request: its own ceiling, never above the platform bound. */
+export function entryCeiling (client: OAuthClient): number {
+  const own = client.maxEntries;
+  return typeof own === 'number' && Number.isInteger(own) && own > 0 ? Math.min(own, MAX_SYNTH_ENTRIES) : MAX_SYNTH_ENTRIES;
+}
 
 export type ResolvedScope = {
   ok: true;
@@ -126,8 +131,9 @@ export function resolveRequestedScope (
   if (offer.permissions.length === 0) {
     return { ok: false, description: 'the requested scope grants no data access' };
   }
-  if (offer.permissions.length > MAX_SYNTH_ENTRIES) {
-    return { ok: false, description: `the requested scope expands to more than ${MAX_SYNTH_ENTRIES} permissions` };
+  const ceiling = entryCeiling(client);
+  if (offer.permissions.length > ceiling) {
+    return { ok: false, description: `the requested scope expands to more than ${ceiling} permissions` };
   }
 
   const max = maxSet(ext, client);

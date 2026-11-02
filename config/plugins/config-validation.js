@@ -836,6 +836,10 @@ function oauthWarnings (config) {
     warnings.push("'oauth.audAllowList' is no longer read and can be removed: the accepted 'aud' values are registered per client " +
       '(bin/oauth-client.js create-registry --audience).');
   }
+  if (config.get('oauth:requireAppAccountMfa') != null) {
+    warnings.push("'oauth.requireAppAccountMfa' is no longer read and can be removed: it was never enforced " +
+      '(app accounts are not required to enrol MFA).');
+  }
   const idTokenTTL = config.get('oauth:idTokenTTL');
   if (idTokenTTL != null && !(Number.isInteger(Number(idTokenTTL)) && Number(idTokenTTL) > 0)) {
     warnings.push(`'oauth.idTokenTTL' is ${JSON.stringify(idTokenTTL)}: a positive number of seconds is expected; 300 is used.`);

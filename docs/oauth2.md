@@ -620,7 +620,7 @@ oauth:
   clientRevokeCheckSeconds: 30     # revoke <clientId> reaches live access tokens within this, seconds
   clientRegistration:
     mode: curated                  # ONLY supported value (see below)
-  requireAppAccountMfa: true       # NOT ENFORCED yet (see below)
+  logoHosts: []                    # hosts client logos may be served from (see below)
   stateKey: ''                     # REQUIRED with consentUrl: consent-state signing secret (see below)
   signingKeys: []                  # OpenID Connect id_token keys; empty = OIDC off (see below)
   idTokenTTL: 300                  # id_token lifetime, seconds
@@ -690,13 +690,20 @@ rejected at boot. Application accounts are created out-of-band by an operator
 with the CLI (§3). This is deliberate: on a self-hosted deployment the operator
 is the trust anchor for which apps may request user consent.
 
-### `requireAppAccountMfa` (not enforced yet)
+### `logoHosts`
 
-Intended to require an application account to have MFA enrolled before it can
-drive any `/oauth2/*` write. **No code reads this key today**: whatever its
-value, an app account without MFA is not refused. A later release will either
-enforce it or remove it. Until then, protect app accounts by other means (MFA
-enrolled by the operator, strong credentials, curated registration).
+The hosts (`host`, or `host:port` for a port other than 443) a client's logo
+may come from. `--logo-uri` must be an https URL on one of them (the CLI
+refuses any other), and the consent offer leaves out a stored logo that is not
+https on a listed host (a host removed from the list stops being served at
+once). Empty, the default: no logo is shown. Platform-wide, like the client
+registry: keep the list identical on every core.
+
+### `requireAppAccountMfa` (removed)
+
+The key was never enforced and is no longer read; a core where it is still set
+logs a warning at boot. Protect app accounts by other means (MFA enrolled by
+the operator, strong credentials, curated registration).
 
 ### `stateKey` (required with `consentUrl`)
 
@@ -947,9 +954,13 @@ node bin/oauth-client.js create-registry <clientId> \
     [--allow-insecure-redirect] [--allow-feature webhooks|secretSharing|accessCreation ...] \
     [--extra <key>=<value> ...] [--grant-type <name> ...] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--policy-uri <s>] [--tos-uri <s>] \
-    [--contact <s> ...] [--launch-type <s> ...]
+    [--contact <s> ...] [--launch-type <s> ...] \
+    [--localized-name <lang>=<text> ...] [--description <text> | --localized-description <lang>=<text> ...] \
+    [--software-id <s>] [--max-entries <n>] [--region <key> ...]
 node bin/oauth-client.js suspend <clientId>
 node bin/oauth-client.js resume  <clientId>
+node bin/oauth-client.js update  <clientId> [flags] [--approve]
+node bin/oauth-client.js purge-grants <clientId> --yes
 ```
 
 Flags:
@@ -1043,6 +1054,54 @@ unaffected (their offer travels in the state). After `OK   client updated: <id>`
 given changed: the subject type, the auth method (`<new> (was <old>)`), the
 new `client_secret` (once), the audiences, the plain-http redirect setting and
 the features forbidden on the client's grants.
+
+### Vetting status, profile, regions, purge
+
+**Status.** A client is `active`, `suspended` or `review`. On a registry
+client, an `update` that changes its redirect URIs, its key set (`--jwks-file`,
+`--jwks-json`, `--jwks-uri`, or an `--auth-method` change that drops it) or
+its scope moves an active client to `review`, unless the same command carries
+**`--approve`**: the client is then refused like a suspended one ("this client
+is under review"; a refused refresh consumes nothing; introspection answers
+`active: false` for its tokens and refuses it as a caller) until
+`update <clientId> --approve`. `resume` does not approve. A change made while
+the client is suspended is recorded and the status kept. Each change of status
+(and each approved change) is kept in the row's `statusLog` (time, operator
+account, from, to, reason, fields; the last 50), printed by `show`, never handed
+to the extension. App-account clients have no review step.
+
+**Profile** (registry clients; `none` clears on `update`, none of these puts
+the client under review): `--localized-name <lang>=<text>` (repeatable; the
+name per language, `--name` staying the plain fallback), `--description
+<text>` or `--localized-description <lang>=<text>` (repeatable), both returned
+by `/oauth2/authorize/offer` as `client.name` / `client.description` (a text,
+or a map by language code), before sign-in too; `--software-id <s>` (RFC 7591
+`software_id`); `--max-entries <n>`, the ceiling on the permission entries one
+authorization may request (1 to 1000; default the platform bound, 1000; above
+it `/oauth2/authorize` answers `invalid_scope`). Token lifetimes are set with
+the lifetime flags (§ 3c). `--logo-uri` must be https on a host of
+`oauth:logoHosts` (§ 2).
+
+**Regions** (`--region <key>`, repeatable, any client kind): the regions of
+the platform's `hostings` hierarchy whose cores serve the client. A core whose
+`core:hosting` lies in another region (or in none) refuses it at
+`/oauth2/authorize` (`unauthorized_client`), the consent, `/oauth2/token` and
+introspection. Without a `hostings` hierarchy the platform has one region,
+`default`. The CLI refuses a region the platform does not declare. Without
+`--region`: every region.
+
+**`purge-grants <clientId> --yes`**: grants are not swept when a client is
+revoked or suspended (each is deleted at the user's next consent). This
+command deletes them now, on **this core**: every registry grant of the client
+with its sessions, the accesses they created, their aliases and refresh
+chains, then every other access minted for the client (an app-account
+client's sessions, its `client_credentials` tokens), and any refresh token of
+the client left in this core's keyspace; it prints the counts. Run it on each
+core of the platform (`revoke` and `suspend` print it as the next step), or
+after a change of subject type to make every user consent afresh. A CMC
+data-grant (the consent record of an app-account client) is kept: the user, or
+the CMC teardown, ends it. An API worker that cached a deleted session drops it
+within `caching:accessMaxAgeSeconds`.
 
 **`list`** prints one line per client, `<clientId>  <kind>  <status>
 <subjectType|->`, so `list | grep public` lists the public registry clients.
@@ -1203,8 +1262,8 @@ single-use, so a reuse means either a broken client or a stolen code.
   `--previous-valid-for <seconds>` keeps it valid while the app switches
   (never after a leak).
 - **Protect app accounts like admin credentials.** An app account can request
-  consent from any user on the deployment. Enrol MFA on it: the
-  `requireAppAccountMfa` key does not enforce that yet (§2).
+  consent from any user on the deployment. Enrol MFA on it (the core does not
+  require it).
 - **Rate-limit at the proxy** (§4) — the layer relies on the operator for this.
 - **Monitor the audit stream** (§5), especially `oauth.code.reused` and bursts
   of `oauth.consent.refused` / `invalid_client`.

@@ -120,8 +120,8 @@ export const HOST_API_VERSION = 1;
 /** A granular permission entry (accesses.create lexicon, consent annotations allowed). */
 export type ExtPermission = Record<string, unknown>;
 
-/** A client as the extension sees it: nothing secret crosses over. */
-export type ClientView = Omit<OAuthClient, 'clientSecretHash' | 'previousSecretHash' | 'jwks'>;
+/** A client as the extension sees it: nothing secret crosses over, nor the operator trail. */
+export type ClientView = Omit<OAuthClient, 'clientSecretHash' | 'previousSecretHash' | 'jwks' | 'statusLog'>;
 
 /** Consent offer synthesised by the grammar from a scope string. */
 export type SynthOffer = {
@@ -332,7 +332,7 @@ async function withHookTimeout (name: string, value: unknown): Promise<unknown> 
 
 /** The client as handed to the extension: secrets removed. */
 export function toClientView (client: OAuthClient): ClientView {
-  const { clientSecretHash: _secret, previousSecretHash: _previous, jwks: _jwks, ...view } = client;
+  const { clientSecretHash: _secret, previousSecretHash: _previous, jwks: _jwks, statusLog: _log, ...view } = client;
   return view;
 }
 

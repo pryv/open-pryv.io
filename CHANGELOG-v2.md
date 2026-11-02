@@ -25,6 +25,55 @@
   failure comes after the consent: the code exchange, a refresh and an introspection answer
   `server_error`. An extension should emit no labels, groups or texts for the registered scope (never
   shown) and measure that offer first.
+### OAuth registry clients: vetting status, profile, grant purge
+
+- **BREAKING (operators who change a registry client with `bin/oauth-client.js update`): a change of
+  its redirect URIs (`--redirect-uri`), key set (`--jwks-file`, `--jwks-json`, `--jwks-uri`, or an
+  `--auth-method` change that drops it) or scope (`--scope`) moves an active client to the new status
+  `review`, unless the same command carries `--approve`.** A client under review is refused like a
+  suspended one: `/oauth2/authorize` redirects `access_denied` ("this client is under review"),
+  `/oauth2/authorize/offer` and `/accept` answer 403 `access_denied`, `/oauth2/token` answers 400
+  `unauthorized_client` for every grant (a refresh token is not used up: the app retries once
+  approved), introspection answers `active: false` for its tokens and refuses it as a caller.
+  `update <clientId> --approve` approves it; `resume` does not. A change made while the client is
+  suspended is recorded and the status kept. Every status change (`suspend`, `resume`, the move to
+  `review`, an approval) is appended to the row's `statusLog` (time, operator, from, to, reason, the
+  fields that changed; the last 50), printed by `show` and never handed to the OAuth extension.
+  App-account clients have no review step.
+- **The `client_credentials` grant refuses a suspended client** (400 `unauthorized_client`), as the
+  other grants already did.
+- **New registry profile fields** (`create-registry` and `update`; `none` clears): `--localized-name
+  <lang>=<text>` (repeatable; `--name` stays the plain fallback, `clientName`), `--description <text>`
+  or `--localized-description <lang>=<text>` (repeatable), `--software-id <s>` (RFC 7591
+  `software_id`), `--max-entries <n>` (ceiling on the permission entries one authorization may
+  request, 1 to 1000, default the platform bound 1000; a larger request answers `invalid_scope` at
+  `/oauth2/authorize`). The per-client token lifetimes stay as they are (`--access-token-ttl` and
+  the others, capped by the platform's). Both answers of `POST /oauth2/authorize/offer` (signed out
+  and signed in) carry `client.name` and `client.description`, each a text or a map of texts by
+  language code, operator-registered only; `clientName` stays the string fallback.
+- **New `--region <key>`** (repeatable, any client kind; `none` clears): the regions of the
+  platform's `hostings` hierarchy whose cores serve the client. A core of another region (its
+  `core:hosting` in another region, or in none) refuses it at `/oauth2/authorize` (redirect
+  `unauthorized_client`), the consent, `/oauth2/token` and introspection; a platform without a
+  `hostings` hierarchy is the region `default`. The CLI refuses a region the platform does not
+  declare. Absent: every region, as before.
+- **Logos from allow-listed hosts only.** New setting `oauth:logoHosts` (list of `host` or
+  `host:port`, default empty). `--logo-uri` (`create`, `create-registry`, `update`; `none` clears on
+  update) must be an https URL without user information or fragment on one of those hosts, and a
+  registry row refuses a non-https one at registration and update. The consent offer serves `client.logoUri` only
+  when it is https on a listed host: **with the default empty list no logo is served** (list the
+  hosts your logos are on).
+- **New command `node bin/oauth-client.js purge-grants <clientId> --yes`**: on THIS core, deletes
+  every registry grant of the client with its sessions, the accesses they created, their aliases and
+  refresh chains, then every other access minted for the client (an app-account client's sessions,
+  its `client_credentials` tokens) with its chain, and ends any refresh token of the client left in
+  this core's keyspace; it prints the counts. Each user's next authorization is a fresh consent. A
+  CMC data-grant (the consent record of an app-account client) is kept. `revoke` and `suspend` print
+  it as the next step, to run on each core. Rows are deleted as `accesses.delete` does (deletion
+  records, access index tombstones); an API worker that cached a deleted session drops it within the
+  access cache's lifetime (`caching:accessMaxAgeSeconds`).
+- **Removed: the setting `oauth:requireAppAccountMfa`.** It was never enforced; a core where it is
+  still set logs a warning at boot.
 
 ### Account transfer to a beneficiary
 

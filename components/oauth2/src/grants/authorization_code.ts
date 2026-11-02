@@ -34,7 +34,7 @@ import { generateToken } from '../secureToken.ts';
 import * as storage from '../storage.ts';
 import type { OAuthCode, LegacyOAuthCode } from '../storage.ts';
 import { audit } from '../audit.ts';
-import { getClient, isRegistryClient } from '../clientRegistry.ts';
+import { getClient, isRegistryClient, clientUnavailable } from '../clientRegistry.ts';
 import { authenticateClient } from '../clientSecret.ts';
 import { tokenEndpointAudiences, issuerFromConfig } from '../issuer.ts';
 import { prepareRegistryResponse } from '../responseHooks.ts';
@@ -254,8 +254,9 @@ export async function handleAuthorizationCode (
     if (!auth.ok) {
       return { ok: false, status: auth.status, error: auth.error, description: auth.description };
     }
-    if (client?.status === 'suspended') {
-      return { ok: false, status: 400, error: 'unauthorized_client', description: 'this client is suspended' };
+    const unavailable = client != null ? clientUnavailable(client, deps.config) : null;
+    if (unavailable != null) {
+      return { ok: false, status: 400, error: 'unauthorized_client', description: unavailable.description };
     }
 
     if (!row.accessId) {

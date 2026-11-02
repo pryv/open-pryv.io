@@ -11,11 +11,11 @@
  * Every OAuth session token is indexed at mint time (`oauth-at/<sha256>`,
  * replicated, no token / username / alias in the row, see sessionIndex.ts),
  * so a resource server can ask any core whether a token is active. The caller
- * is a CONFIDENTIAL client registered with `canIntrospect` and not suspended;
+ * is a CONFIDENTIAL client registered with `canIntrospect` and active;
  * any other caller is refused with one uniform 401. A token whose session
  * lives on another core answers 421 with that core's URL (no forwarding). The
  * home core re-reads the session: deleted, expired, client revoked after the
- * session was minted, client suspended or gone, or consent grant gone, means
+ * session was minted, client suspended, under review or gone, or consent grant gone, means
  * `active: false`.
  *
  * The answer's `scope` is the scope tokens granted to a registry client's
@@ -34,7 +34,7 @@ import type { PlatformDB } from '../../../storages/interfaces/platformStorage/Pl
 import type { OAuthClient, OAuthSessionIndex } from './storage.ts';
 import type { HookCtx, ExtPermission } from './extension.ts';
 import * as storage from './storage.ts';
-import { getClient, isRegistryClient } from './clientRegistry.ts';
+import { getClient, isRegistryClient, clientUnavailable } from './clientRegistry.ts';
 import { authenticateClient } from './clientSecret.ts';
 import { decodeBasicAuth, clientIdFromAssertion, isConfidentialClient as isConfidential } from './clientAuth.ts';
 import { issuerFromConfig } from './issuer.ts';
@@ -85,12 +85,12 @@ export function handleIntrospect (deps: IntrospectDeps) {
     const clientId = basic?.client_id ?? (bodyClientId !== ''
       ? bodyClientId
       : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
-    // Uniform refusal: unknown, public, not allowed, suspended, or bad credentials.
+    // Uniform refusal: unknown, public, not allowed, not active, or bad credentials.
     const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
       { 'WWW-Authenticate': 'Basic realm="oauth2"' });
     if (clientId === '' || (basic != null && bodyClientId !== '' && bodyClientId !== basic.client_id)) return refuse();
     const caller = await getClient(deps.platform, clientId);
-    if (caller == null || !isConfidentialClient(caller) || caller.canIntrospect !== true || caller.status === 'suspended') {
+    if (caller == null || !isConfidentialClient(caller) || caller.canIntrospect !== true || clientUnavailable(caller, deps.config) != null) {
       return refuse();
     }
     const issuer = issuerFromConfig(deps.config);
@@ -143,7 +143,7 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
   const revokedAt = await storage.getRevokedAt(deps.platform, row.clientId);
   if (revokedAt != null && session.created * 1000 <= revokedAt) return { status: 200, body: INACTIVE };
   const client = await getClient(deps.platform, row.clientId);
-  if (client == null || client.status === 'suspended') return { status: 200, body: INACTIVE };
+  if (client == null || clientUnavailable(client, deps.config) != null) return { status: 200, body: INACTIVE };
 
   // The stored session permissions without the session-only selfRevoke
   // override (the glue strips it): the scope answer is computed over them, as

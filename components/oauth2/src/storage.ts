@@ -57,6 +57,26 @@ export interface GrantPermission {
   level: string;
 }
 
+/** A client's vetting status. */
+export type ClientStatus = 'active' | 'suspended' | 'review';
+
+/** One change of a client's status (the operator trail). */
+export type ClientStatusLogEntry = {
+  /** ms since epoch. */
+  at: number;
+  /** The operator account the CLI ran under. */
+  by: string;
+  from: ClientStatus;
+  to: ClientStatus;
+  /** `suspend`, `resume`, `review` (a vetted field changed), `approve`. */
+  reason: string;
+  /** The vetted fields the change was about (`redirectUris`, `scope`, `jwks`, `jwksUri`). */
+  fields?: string[];
+};
+
+/** A display text: one string for every language, or one per language code. */
+export type LocalizedText = string | Record<string, string>;
+
 /** App-account-metadata cache row (cluster-wide, indefinite). */
 export interface OAuthClient {
   clientId: string;
@@ -117,8 +137,38 @@ export interface OAuthClient {
   contacts?: string[];
   registeredBy?: string;
   registeredAt?: number;
-  /** `suspended` refuses /authorize and /token for this client, cluster-wide. */
-  status?: 'active' | 'suspended';
+  /**
+   * Vetting status (absent reads as `active`). `suspended` (the operator's
+   * `suspend`) and `review` (a registry client whose redirect URIs, keys or
+   * scope changed without the operator's approval) refuse /authorize, the
+   * consent, /token and introspection for this client, cluster-wide.
+   */
+  status?: ClientStatus;
+  /**
+   * The status changes of the row, oldest first (who, when, why, which
+   * fields), at most `MAX_STATUS_LOG` entries: the operator trail of the
+   * vetting. Written by the operator CLI only; never shown to the extension.
+   */
+  statusLog?: ClientStatusLogEntry[];
+  /**
+   * Display texts registered by the operator: a string (every language) or a
+   * map `{ <language code>: text }`. `clientName` stays the plain fallback.
+   * Served on the consent offer, never taken from a request.
+   */
+  name?: LocalizedText;
+  description?: LocalizedText;
+  /** RFC 7591 `software_id`: the same software across its registrations. */
+  softwareId?: string;
+  /**
+   * Regions (keys of the platform's `hostings` hierarchy) whose cores may
+   * serve this client; absent or empty: every region.
+   */
+  regions?: string[];
+  /**
+   * Ceiling on the permission entries one authorization of this client may
+   * request (never above the platform bound, `MAX_SYNTH_ENTRIES`).
+   */
+  maxEntries?: number;
   tokenEndpointAuthMethod?: 'none' | 'client_secret_basic' | 'private_key_jwt';
   /** Resource (`aud` / `resource`) values the client may request; non-empty means one is required. */
   allowedAudiences?: string[];
@@ -719,6 +769,26 @@ export async function revokeRefreshByHash (
     await platform.setAccessState(usedKey, { ...(used.value as OAuthRefreshUsed), revoked: true }, used.expiresAt);
   }
   return null;
+}
+
+/**
+ * End every live refresh token of `clientId` in this core's keyspace (each as
+ * `revokeRefreshByHash` does): the operator's purge of a client. Resolves to
+ * the number of tokens ended.
+ */
+export async function revokeClientRefreshTokens (platform: PlatformDB, coreId: string, clientId: string): Promise<number> {
+  const NS = 'access-state/';
+  // Filter by core here, as in rekeyLegacyRefreshTokens (`_` in a core id).
+  const self = PREFIX_REFRESH + coreId + '/';
+  let ended = 0;
+  for (const storeKey of await platform.listPlatformKvKeys(NS + PREFIX_REFRESH)) {
+    const key = storeKey.slice(NS.length);
+    if (!key.startsWith(self)) continue;
+    const entry = await platform.getAccessState(key); // null when expired (and dropped)
+    if ((entry?.value as OAuthRefresh | undefined)?.clientId !== clientId) continue;
+    if (await revokeRefreshByHash(platform, coreId, key.slice(self.length)) != null) ended++;
+  }
+  return ended;
 }
 
 /** `revokeRefreshByHash` for a token at hand. */

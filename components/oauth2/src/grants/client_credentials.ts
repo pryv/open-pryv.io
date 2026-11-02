@@ -28,7 +28,7 @@
 
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { authenticateClient } from '../clientSecret.ts';
-import { getClient } from '../clientRegistry.ts';
+import { getClient, clientUnavailable } from '../clientRegistry.ts';
 import { tokenEndpointAudiences } from '../issuer.ts';
 import { audit } from '../audit.ts';
 import { logServerError } from '../serverLog.ts';
@@ -124,6 +124,11 @@ export async function handleClientCredentials (
   });
   if (!auth.ok) {
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
+  }
+  // A suspended client (or one under review) gets no token, as at the other grants.
+  const unavailable = clientUnavailable(client, deps.config);
+  if (unavailable != null) {
+    return { ok: false, status: 400, error: 'unauthorized_client', description: unavailable.description };
   }
 
   const accountUserId = typeof client.accountUserId === 'string' && client.accountUserId.length > 0

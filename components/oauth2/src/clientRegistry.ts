@@ -27,7 +27,8 @@
 import { createRequire } from 'node:module';
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import type { OAuthClient } from './storage.ts';
+import type { OAuthClient, ClientStatus } from './storage.ts';
+import { MAX_SYNTH_ENTRIES, canonicalJson } from './scopeGrammar.ts';
 import { validatePublicJwkSet, keyMatchesAlg, CLIENT_ASSERTION_ALGS } from './jwks.ts';
 import { jwksUriProblem } from './jwksUri.ts';
 import { isLifetime } from './clientLifetimes.ts';
@@ -132,6 +133,7 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
   } else {
     validateCmcOffers(client);
   }
+  validateVettingAndDisplay(client);
   const validated = { ...client, updatedAt: Date.now() };
   // Inline public JWK Set (private_key_jwt): validate on write; any key
   // carrying private material is rejected outright, so the
@@ -298,8 +300,9 @@ function validateRegistryClient (client: OAuthClient): void {
   for (const [k, v] of Object.entries(client.tokenResponseExtras ?? {})) {
     if (!['string', 'boolean', 'number'].includes(typeof v)) throw new Error(`tokenResponseExtras["${k}"] must be a string, boolean or number`);
   }
-  if (client.status != null && client.status !== 'active' && client.status !== 'suspended') {
-    throw new Error('status must be active or suspended');
+  if (client.logoUri != null) {
+    const problem = logoUriProblem(client.logoUri);
+    if (problem != null) throw new Error('logoUri: ' + problem);
   }
   if (client.allowFeatures != null) {
     if (!Array.isArray(client.allowFeatures) ||
@@ -320,6 +323,160 @@ export const REGISTRY_DEFAULT_FORBIDDEN_FEATURES: readonly string[] = Object.fre
 export function defaultForbiddenFeatures (client: OAuthClient): string[] {
   const allowed = Array.isArray(client.allowFeatures) ? client.allowFeatures : [];
   return REGISTRY_DEFAULT_FORBIDDEN_FEATURES.filter((f) => !allowed.includes(f));
+}
+
+/** The vetting statuses of a client row (absent reads as `active`). */
+export const CLIENT_STATUSES: readonly ClientStatus[] = Object.freeze(['active', 'suspended', 'review']);
+/** Bound on a row's status trail (oldest entries go first). */
+export const MAX_STATUS_LOG = 50;
+/** Bounds on the operator-registered display and vetting fields. */
+const MAX_NAME_LENGTH = 128;
+const MAX_DESCRIPTION_LENGTH = 1024;
+const MAX_LANGUAGES = 32;
+const MAX_SOFTWARE_ID_LENGTH = 256;
+const MAX_REGIONS = 32;
+const MAX_LOGO_URI_LENGTH = 2048;
+const LANGUAGE_CODE_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{1,8})*$/;
+const REGION_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+// eslint-disable-next-line no-control-regex
+const CONTROL_BUT_NEWLINE_RE = /[\u0000-\u0009\u000b-\u001f\u007f]/;
+
+/**
+ * Status, status trail, display texts, software id, regions and the entry
+ * ceiling: the same rules for every client kind (each field optional).
+ */
+function validateVettingAndDisplay (client: OAuthClient): void {
+  if (client.status != null && !CLIENT_STATUSES.includes(client.status)) {
+    throw new Error('status must be one of ' + CLIENT_STATUSES.join(', '));
+  }
+  if (client.statusLog != null) {
+    if (!Array.isArray(client.statusLog) || client.statusLog.length > MAX_STATUS_LOG ||
+        client.statusLog.some((e) => e == null || typeof e !== 'object' || typeof e.at !== 'number' || typeof e.reason !== 'string')) {
+      throw new Error(`statusLog must be a list of at most ${MAX_STATUS_LOG} status changes`);
+    }
+  }
+  if (client.name != null) {
+    const problem = localizedTextProblem(client.name, MAX_NAME_LENGTH, false);
+    if (problem != null) throw new Error('name: ' + problem);
+  }
+  if (client.description != null) {
+    const problem = localizedTextProblem(client.description, MAX_DESCRIPTION_LENGTH, true);
+    if (problem != null) throw new Error('description: ' + problem);
+  }
+  if (client.softwareId != null && (typeof client.softwareId !== 'string' || client.softwareId.length === 0 ||
+      client.softwareId.length > MAX_SOFTWARE_ID_LENGTH || CONTROL_RE.test(client.softwareId))) {
+    throw new Error(`softwareId must be 1 to ${MAX_SOFTWARE_ID_LENGTH} printable characters`);
+  }
+  if (client.regions != null) {
+    if (!Array.isArray(client.regions) || client.regions.length > MAX_REGIONS ||
+        client.regions.some((r) => typeof r !== 'string' || !REGION_KEY_RE.test(r))) {
+      throw new Error(`regions must be a list of at most ${MAX_REGIONS} region keys (letters, digits, ".", "_", "-")`);
+    }
+    if (new Set(client.regions).size !== client.regions.length) throw new Error('regions lists a region twice');
+  }
+  if (client.maxEntries != null && !(Number.isInteger(client.maxEntries) && client.maxEntries > 0 && client.maxEntries <= MAX_SYNTH_ENTRIES)) {
+    throw new Error(`maxEntries must be an integer from 1 to ${MAX_SYNTH_ENTRIES}`);
+  }
+}
+
+/**
+ * Why a display text is refused, or null: a non-empty string of at most
+ * `maxLength` characters without control characters (newlines allowed in a
+ * description), or a non-empty map of such strings keyed by language code.
+ */
+export function localizedTextProblem (v: unknown, maxLength: number, newlines: boolean): string | null {
+  const re = newlines ? CONTROL_BUT_NEWLINE_RE : CONTROL_RE;
+  const textOk = (t: unknown): boolean => typeof t === 'string' && t.trim().length > 0 && t.length <= maxLength && !re.test(t);
+  if (typeof v === 'string') return textOk(v) ? null : `a non-empty text of at most ${maxLength} characters, no control characters`;
+  if (v == null || typeof v !== 'object' || Array.isArray(v)) return 'a text, or a map of texts by language code';
+  const entries = Object.entries(v as Record<string, unknown>);
+  if (entries.length === 0 || entries.length > MAX_LANGUAGES) return `1 to ${MAX_LANGUAGES} languages`;
+  for (const [lang, text] of entries) {
+    if (!LANGUAGE_CODE_RE.test(lang)) return `"${lang}" is not a language code (e.g. en, fr, de-CH)`;
+    if (!textOk(text)) return `the "${lang}" text must be non-empty, at most ${maxLength} characters, no control characters`;
+  }
+  return null;
+}
+
+/** Why a logo URI is refused, or null: an absolute https URL, no user information, no fragment. */
+export function logoUriProblem (uri: unknown): string | null {
+  if (typeof uri !== 'string' || uri.length === 0 || uri.length > MAX_LOGO_URI_LENGTH) {
+    return `an https URL of at most ${MAX_LOGO_URI_LENGTH} characters is expected`;
+  }
+  let u: URL;
+  try { u = new URL(uri); } catch { return `"${uri}" is not a valid URL`; }
+  if (u.protocol !== 'https:') return `"${uri}" must be an https URL`;
+  if (u.username !== '' || u.password !== '' || u.hash !== '') return `"${uri}" must carry no user information and no fragment`;
+  return null;
+}
+
+/**
+ * The `oauth:logoHosts` allow-list (hosts, `host:port` for another port than
+ * 443), lower-cased; empty when unset or malformed: no logo is accepted.
+ */
+export function logoHostsFromConfig (config: { get (key: string): unknown }): string[] {
+  const hosts = config.get('oauth:logoHosts');
+  if (!Array.isArray(hosts)) return [];
+  return hosts.filter((h): h is string => typeof h === 'string' && h.length > 0).map((h) => h.toLowerCase());
+}
+
+/** Whether a logo URI is https and on the allow-list. */
+export function logoAllowed (uri: unknown, hosts: string[]): boolean {
+  if (logoUriProblem(uri) != null) return false;
+  return hosts.includes(new URL(uri as string).host.toLowerCase());
+}
+
+/** The logo a consent screen may show for this client, or undefined. */
+export function servedLogoUri (client: OAuthClient, config: { get (key: string): unknown }): string | undefined {
+  return logoAllowed(client.logoUri, logoHostsFromConfig(config)) ? client.logoUri : undefined;
+}
+
+/**
+ * The region of this core: the key of the `hostings` region holding its
+ * `core:hosting` (`default` when the platform declares no hierarchy), or null
+ * when the hierarchy does not list its hosting.
+ */
+export function coreRegion (config: { get (key: string): unknown }): string | null {
+  const hosting = String(config.get('core:hosting') || 'default');
+  const regions = (config.get('hostings') as { regions?: unknown } | null | undefined)?.regions;
+  if (regions == null || typeof regions !== 'object') return 'default';
+  for (const [key, region] of Object.entries(regions as Record<string, { zones?: Record<string, { hostings?: Record<string, unknown> }> }>)) {
+    for (const zone of Object.values(region?.zones ?? {})) {
+      if (zone?.hostings != null && Object.hasOwn(zone.hostings, hosting)) return key;
+    }
+  }
+  return null;
+}
+
+/** Why a client may not be used here and now, or null when it may. */
+export type ClientRefusal = { reason: 'suspended' | 'review' | 'region'; description: string };
+
+/**
+ * Whether this client may be served: its status is `active` (absent reads as
+ * active; suspended, under review or any other value is refused) and, when
+ * it lists regions, this core's region is one of them (`config` given).
+ */
+export function clientUnavailable (client: OAuthClient, config?: { get (key: string): unknown } | null): ClientRefusal | null {
+  const status = client.status ?? 'active';
+  if (status === 'suspended') return { reason: 'suspended', description: 'this client is suspended' };
+  if (status !== 'active') return { reason: 'review', description: 'this client is under review' };
+  if (config != null && Array.isArray(client.regions) && client.regions.length > 0) {
+    const region = coreRegion(config);
+    if (region == null || !client.regions.includes(region)) {
+      return { reason: 'region', description: 'this client is not available in this region' };
+    }
+  }
+  return null;
+}
+
+/** The fields whose change moves an active registry client to review. */
+export const VETTED_FIELDS = ['redirectUris', 'scope', 'jwks', 'jwksUri'] as const;
+
+/** The vetted fields that differ between two versions of a row. */
+export function changedVettedFields (before: OAuthClient, after: OAuthClient): string[] {
+  return VETTED_FIELDS.filter((k) => canonicalJson(before[k] ?? null) !== canonicalJson(after[k] ?? null));
 }
 
 // The loopback host strings (`localhost` counts: RFC 6761 reserves it for

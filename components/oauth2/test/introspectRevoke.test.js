@@ -19,7 +19,7 @@ import * as scopeGrammar from '../src/scopeGrammar.ts';
 import { handleIntrospect } from '../src/introspection.ts';
 import { handleRevoke } from '../src/revocation.ts';
 import { buildDiscoveryDocument } from '../src/wellKnown.ts';
-import { persistClient } from '../src/clientRegistry.ts';
+import { persistClient, getClient } from '../src/clientRegistry.ts';
 import { mintSecret } from '../src/clientSecret.ts';
 import { setSessionIndex, setRefresh, getRefresh, getRefreshConsumed, getSessionIndex, hashSecret, setClient } from '../src/storage.ts';
 
@@ -231,6 +231,17 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     const post = await introspect(platform, { auth: null, body: { client_id: 'resource-srv', client_secret: rsSecret.plaintext } });
     assert.equal(post.statusCode, 200);
     assert.equal(post.body.active, true);
+  });
+
+  it('[OXI07] a client under review: its tokens introspect inactive, and it may not introspect (401)', async () => {
+    const platform = await seeded();
+    await setClient(platform, { ...REGISTRY_CLIENT, status: 'review', updatedAt: Date.now() });
+    assert.deepEqual((await introspect(platform)).body, { active: false });
+    const caller = await getClient(platform, 'resource-srv');
+    await setClient(platform, { ...caller, status: 'review', updatedAt: Date.now() });
+    const res = await introspect(platform);
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.body.error, 'invalid_client');
   });
 
   it('[OXI04] a session indexed by another core answers 421 with that core\'s URL', async () => {

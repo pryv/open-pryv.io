@@ -17,6 +17,28 @@
 - Digests and composition unchanged in code: `entryGroups` is an offer member, so it is already in
   `offerDigest`, in the composed `shown` offer and in `shownDigest`. Contract doc in the `extension.ts`
   header (entry keys incl. the level-less form, groups, bounds).
+### OAuth: registry fields, vetting status, grant purge
+
+- `clientRegistry.ts`: `clientUnavailable(client, config)` is the one check of a client's status
+  (`active` or absent; `suspended`, `review` or any other value refused) and regions (`coreRegion`
+  from `core:hosting` and `hostings`), used by `/authorize`, `/offer`, `/accept`, the three grants
+  and introspection (caller and token). New write rules (every kind): `status` in `active |
+  suspended | review`, `statusLog` (at most 50), `name` / `description` (a text, or a map by
+  language code; 128 / 1024 characters, no control characters, newlines allowed in a description),
+  `softwareId`, `regions` (keys, unique, at most 32), `maxEntries` (1 to `MAX_SYNTH_ENTRIES`);
+  registry rows: `logoUri` https without user information or fragment. `logoAllowed` /
+  `servedLogoUri` against `oauth:logoHosts`; `changedVettedFields` (`redirectUris`, `scope`, `jwks`,
+  `jwksUri`).
+- `scopeGrammar.entryCeiling(client)` bounds the synthesised offer (`resolveRequestedScope`).
+- `extension.toClientView` also drops `statusLog`.
+- `storage.revokeClientRefreshTokens(platform, coreId, clientId)` ends a client's live refresh rows in
+  one core's keyspace; api-server `methods/helpers/oauthGrantPurge.ts` (`purgeClientGrants`) runs the
+  purge over the core's local users through `deleteAccessChain`. `REGISTRY_GRANT_PREFIX`,
+  `REGISTRY_GRANT_DEVICE` and `SESSION_NAME_PREFIX` move to `routes/oauth2/types.ts`.
+- `bin/oauth-client.js`: `purge-grants`; `update --approve`; profile and region flags; `cliEnv`
+  gains `logoHosts`, `platformRegions` and `purgeClientGrants` (replaceable in tests).
+- `default-config.yml`: `oauth:requireAppAccountMfa` removed (boot warning when set), `oauth:logoHosts:
+  []` added; `bin/init.js` appendix names it.
 
 ### OAuth extension: the grant state
 

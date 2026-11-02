@@ -38,7 +38,7 @@ const require = createRequire(import.meta.url);
 // Kept on the require shim: converting these to typed ESM imports surfaces
 // pre-existing cross-module type gaps (the cmc ParsedScope extension, nullable
 // offer.capabilityId) that belong to the TS-migration track, not here.
-const { getClient, validateRedirectUri, isRegistryClient } = require('../clientRegistry.ts');
+const { getClient, validateRedirectUri, isRegistryClient, clientUnavailable } = require('../clientRegistry.ts');
 const { resolveRequestedScope } = require('../scopeGrammar.ts');
 const { mapError } = require('../errorMap.ts');
 const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
@@ -135,8 +135,10 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     if (!isNonEmptyString(q.state)) {
       return redirectError('invalid_request', 'state parameter is required (CSRF defense)');
     }
-    if (client.status === 'suspended') {
-      return redirectError('access_denied', 'this client is suspended');
+    // Suspended, under review, or not served in this core's region.
+    const unavailable = clientUnavailable(client, deps.config);
+    if (unavailable != null) {
+      return redirectError(unavailable.reason === 'region' ? 'unauthorized_client' : 'access_denied', unavailable.description);
     }
     // Every scope token travels in the signed state and the consent redirect.
     if (typeof q.scope === 'string' && Buffer.byteLength(q.scope, 'utf8') > MAX_SCOPE_BYTES) {

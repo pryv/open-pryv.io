@@ -36,7 +36,7 @@ import type { SignedStatePayload } from '../signedState.ts';
 import type { ResolvedScope } from '../scopeGrammar.ts';
 import { verifyState, stateKeyFromConfig } from '../signedState.ts';
 import { hasSigningKeys } from '../signingKeys.ts';
-import { getClient, isRegistryClient } from '../clientRegistry.ts';
+import { getClient, isRegistryClient, clientUnavailable, servedLogoUri } from '../clientRegistry.ts';
 import { resolveRequestedScope } from '../scopeGrammar.ts';
 import { extensionGeneration } from '../extension.ts';
 import type { CurrentGrant } from '../consentComposition.ts';
@@ -105,8 +105,9 @@ function cacheSet (key: string, resolved: ResolvedScope, expiresAt: number): voi
 }
 
 /**
- * Re-derive the synthesised offer a state points at. Refuses a suspended or
- * unknown client and a digest mismatch (the client or the grammar changed
+ * Re-derive the synthesised offer a state points at. Refuses an unknown
+ * client, one not usable here (suspended, under review, another region) and
+ * a digest mismatch (the client or the grammar changed
  * since /authorize: the user must restart).
  */
 export async function resolveStateOffer (
@@ -119,8 +120,9 @@ export async function resolveStateOffer (
   if (client == null || !isRegistryClient(client)) {
     return { ok: false, status: 400, error: 'invalid_request', description: 'unknown client' };
   }
-  if (client.status === 'suspended') {
-    return { ok: false, status: 403, error: 'access_denied', description: 'this client is suspended' };
+  const unavailable = clientUnavailable(client, deps.config);
+  if (unavailable != null) {
+    return { ok: false, status: 403, error: 'access_denied', description: unavailable.description };
   }
   const oidcEnabled = hasSigningKeys(deps.config);
   const key = cacheKey(payload, client, oidcEnabled);
@@ -178,10 +180,15 @@ export function handleOffer (deps: OfferDeps) {
     if (!r.ok) return sendJson(res, r.status, { error: r.error, error_description: r.description });
     const c = r.client;
     const answer: Record<string, unknown> = {
+      // Operator-registered display fields only. `name` / `description`: a
+      // text or a map by language code (`clientName`, the plain fallback);
+      // the logo only when https and on the `oauth:logoHosts` allow-list.
       client: {
         clientId: c.clientId,
         clientName: c.clientName,
-        logoUri: c.logoUri,
+        name: c.name,
+        description: c.description,
+        logoUri: servedLogoUri(c, deps.config),
         clientUri: c.clientUri,
         policyUri: c.policyUri,
         tosUri: c.tosUri,

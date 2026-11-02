@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const cli = require('../../../bin/oauth-client.js');
 const extension = require('../src/extension.ts');
 const scopeGrammar = require('../src/scopeGrammar.ts');
@@ -543,5 +544,186 @@ describe('[OCLI] operator CLI: registry clients', () => {
     row = await getClient(platform, 'Cli.rot');
     assert.equal(row.previousSecretHash, undefined);
     assert.equal(row.previousSecretExpiresAt, undefined);
+  });
+
+  describe('[OCLIV] vetting status, registry profile, purge', () => {
+    let saved;
+    before(() => {
+      saved = { ...cli.cliEnv };
+      cli.cliEnv.logoHosts = async () => ['logos.example.com'];
+      cli.cliEnv.platformRegions = async () => ['eu', 'us'];
+    });
+    after(() => { Object.assign(cli.cliEnv, saved); });
+
+    const statusOf = async (platform, id) => (await getClient(platform, id)).status;
+
+    it('[OCLI19] a change of redirect URIs, keys or scope moves an active registry client to review; --approve approves; the trail records each step', async () => {
+      const platform = fakePlatform();
+      await run(cli.runCreateRegistry, platform, createArgs('Cli.vet', ['--subject-type', 'public']));
+      // A change the client was not vetted on: no review.
+      let r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--name', 'Renamed']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'active');
+      assert.equal((await getClient(platform, 'Cli.vet')).statusLog, undefined);
+      // A new redirect URI: review, refused at /authorize.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--redirect-uri', REDIRECT, '--redirect-uri', REDIRECT + '2']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /status: {8}review \(redirectUris changed\)/);
+      assert.match(r.out, /update Cli\.vet --approve/);
+      let row = await getClient(platform, 'Cli.vet');
+      assert.equal(row.status, 'review');
+      assert.deepEqual(row.statusLog.map((e) => [e.from, e.to, e.reason, e.fields]), [['active', 'review', 'review', ['redirectUris']]]);
+      assert.equal(typeof row.statusLog[0].by, 'string');
+      const loc = await authorizeAs(platform, 'Cli.vet');
+      assert.equal(loc.searchParams.get('error'), 'access_denied');
+      assert.equal(loc.searchParams.get('error_description'), 'this client is under review');
+      const shown = await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.vet']);
+      assert.match(shown.out, /status: review since .* \(redirectUris changed\): refused at \/authorize/);
+      // resume does not approve.
+      r = await run(cli.runSetStatus, platform, ['resume', 'Cli.vet']);
+      assert.match(r.error?.message ?? '', /under review .* update Cli\.vet --approve/);
+      // A further change while under review is recorded, the status stays.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--scope', 'read/a read/b']);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'review');
+      // Approved.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--approve']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /status: {8}active \(approved; no change\)/);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'active');
+      const ok = await authorizeAs(platform, 'Cli.vet');
+      assert.equal(ok.origin + ok.pathname, CONSENT_URL, ok.href);
+      // A change approved in the same command: stays active, recorded.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--scope', 'read/a', '--approve']);
+      assert.equal(r.error, null, r.error?.message);
+      row = await getClient(platform, 'Cli.vet');
+      assert.equal(row.status, 'active');
+      assert.deepEqual(row.statusLog.map((e) => [e.from, e.to, e.reason, e.fields ?? null]), [
+        ['active', 'review', 'review', ['redirectUris']],
+        ['review', 'review', 'review', ['scope']],
+        ['review', 'active', 'approve', null],
+        ['active', 'active', 'approve', ['scope']],
+      ]);
+      // --approve with nothing to approve: no write.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--approve']);
+      assert.match(r.out, /client unchanged/);
+      // A key set change (auth method switch) counts too.
+      const jwk = JSON.stringify({ keys: [crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' })] });
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--auth-method', 'private_key_jwt', '--jwks-json', jwk]);
+      assert.equal(r.error, null, r.error?.message);
+      assert.deepEqual((await getClient(platform, 'Cli.vet')).statusLog.at(-1).fields, ['jwks']);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'review');
+      // Suspended: --approve refused, a change recorded, the status kept; suspend prints the purge step.
+      r = await run(cli.runSetStatus, platform, ['suspend', 'Cli.vet']);
+      assert.match(r.out, /purge-grants Cli\.vet --yes/);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--approve']);
+      assert.match(r.error?.message ?? '', /is suspended; --approve applies/);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.vet', '--redirect-uri', REDIRECT]);
+      assert.equal(await statusOf(platform, 'Cli.vet'), 'suspended');
+      assert.deepEqual((await getClient(platform, 'Cli.vet')).statusLog.slice(-2).map((e) => [e.from, e.to, e.reason]), [
+        ['review', 'suspended', 'suspend'], ['suspended', 'suspended', 'review'],
+      ]);
+      // App-account clients have no vetting status: --approve is refused.
+      await persistClient(platform, { clientId: 'appacct', redirectUris: [REDIRECT], grantTypes: ['authorization_code'], scope: [] });
+      r = await run(cli.runUpdate, platform, ['update', 'appacct', '--approve']);
+      assert.equal(r.error?.message, 'update: --approve applies to registry clients only');
+      r = await run(cli.runUpdate, platform, ['update', 'appacct', '--redirect-uri', REDIRECT + '3']);
+      assert.equal(await statusOf(platform, 'appacct'), undefined);
+    });
+
+    it('[OCLI20] the registry profile: localized name, description, software id, entry ceiling, regions, logo on an allowed host; show; none clears', async () => {
+      const platform = fakePlatform();
+      let r = await run(cli.runCreateRegistry, platform, createArgs('Cli.prof', [
+        '--subject-type', 'public', '--localized-name', 'en=Health app', '--localized-name', 'fr=App santé',
+        '--description', 'Reads your measurements.', '--software-id', 'health-app', '--max-entries', '50',
+        '--region', 'eu', '--logo-uri', 'https://logos.example.com/app.png',
+      ]));
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /max entries: {3}50 per authorization/);
+      assert.match(r.out, /regions: {7}eu/);
+      let row = await getClient(platform, 'Cli.prof');
+      assert.deepEqual(row.name, { en: 'Health app', fr: 'App santé' });
+      assert.equal(row.description, 'Reads your measurements.');
+      assert.equal(row.softwareId, 'health-app');
+      assert.equal(row.maxEntries, 50);
+      assert.deepEqual(row.regions, ['eu']);
+      assert.equal(row.logoUri, 'https://logos.example.com/app.png');
+      assert.equal(row.status, 'active');
+      const shown = await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.prof']);
+      assert.match(shown.out, /regions: eu \(refused on the cores of any other region\)/);
+      assert.match(shown.out, /max entries: {3}50 per authorization/);
+      assert.doesNotMatch(shown.out, /logoUri: not served/);
+      // Update: a localized description replaces the text; none clears.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.prof', '--localized-description', 'en=Reads.', '--localized-description', 'de=Liest.',
+        '--max-entries', 'none', '--region', 'none', '--software-id', 'none', '--logo-uri', 'none', '--localized-name', 'none']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /max entries: {3}1000 per authorization \(platform bound\)/);
+      row = await getClient(platform, 'Cli.prof');
+      assert.deepEqual(row.description, { en: 'Reads.', de: 'Liest.' });
+      for (const k of ['maxEntries', 'regions', 'softwareId', 'logoUri', 'name']) assert.equal(row[k], undefined, k);
+      // None of these is vetted: still active.
+      assert.equal(row.status, 'active');
+      // A logo the allow-list no longer names: show says it is not served.
+      await setClient(platform, { ...row, logoUri: 'https://old.example.com/a.png' });
+      assert.match((await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.prof'])).out, /logoUri: not served/);
+      // Refusals, nothing written.
+      const refused = [
+        [['--logo-uri', 'https://evil.example.com/a.png'], /--logo-uri: host "evil.example.com" is not in oauth.logoHosts \(logos.example.com\)/],
+        [['--logo-uri', 'http://logos.example.com/a.png'], /--logo-uri: .* must be an https URL/],
+        [['--region', 'mars'], /--region mars: not a region of this platform \(eu, us\)/],
+        [['--description', 'x', '--localized-description', 'en=x'], /exclude each other/],
+        [['--max-entries', '0'], /--max-entries takes a positive number/],
+        [['--max-entries', '5000'], /maxEntries must be an integer from 1 to 1000/],
+        [['--localized-name', 'en=a', '--localized-name', 'en=b'], /gives "en" twice/],
+        [['--localized-name', 'english'], /expects <language>=<text>/],
+        [['--localized-name', 'english=x'], /"english" is not a language code/],
+        [['--region'], /--region requires a value/],
+      ];
+      const before = JSON.stringify(await getClient(platform, 'Cli.prof'));
+      for (const [flags, re] of refused) {
+        r = await run(cli.runUpdate, platform, ['update', 'Cli.prof', ...flags]);
+        assert.match(r.error?.message ?? '(no error)', re, flags.join(' '));
+      }
+      assert.equal(JSON.stringify(await getClient(platform, 'Cli.prof')), before, 'nothing written');
+      // App-account clients: regions and an allowed logo, no registry profile.
+      await persistClient(platform, { clientId: 'appacct2', redirectUris: [REDIRECT], grantTypes: ['authorization_code'], scope: [] });
+      r = await run(cli.runUpdate, platform, ['update', 'appacct2', '--region', 'us', '--logo-uri', 'https://logos.example.com/b.png']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.deepEqual((await getClient(platform, 'appacct2')).regions, ['us']);
+      r = await run(cli.runUpdate, platform, ['update', 'appacct2', '--software-id', 'x']);
+      assert.equal(r.error?.message, 'update: --software-id applies to registry clients only');
+    });
+
+    it('[OCLI21] purge-grants needs --yes, runs this core\'s purge and prints the counts; revoke points to it', async () => {
+      const platform = fakePlatform();
+      const asked = [];
+      const purge = async (id) => { asked.push(id); return { accounts: 2, grants: 2, sessions: 3, accesses: 6, refreshTokens: 1 }; };
+      const exec = async (argv) => {
+        const args = cli.parseArgs(argv);
+        const lines = [];
+        const log = console.log;
+        console.log = (...a) => { lines.push(a.join(' ')); };
+        try { await cli.runPurgeGrants(platform, args, purge); return { out: lines.join('\n'), error: null }; } catch (error) { return { out: lines.join('\n'), error }; } finally { console.log = log; }
+      };
+      let r = await exec(['purge-grants', 'Cli.gone']);
+      assert.match(r.error?.message ?? '', /refuses to run without --yes/);
+      r = await exec(['purge-grants', 'Cli.gone', '--yes', '--all']);
+      assert.match(r.error?.message ?? '', /unknown flag --all/);
+      r = await exec(['purge-grants', '--yes']);
+      assert.match(r.error?.message ?? '', /<clientId> required/);
+      assert.deepEqual(asked, []);
+      r = await exec(['purge-grants', 'Cli.gone', '--yes']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.deepEqual(asked, ['Cli.gone']);
+      assert.match(r.out, /grants deleted: {8}2/);
+      assert.match(r.out, /sessions deleted: {6}3/);
+      assert.match(r.out, /refresh tokens ended: {2}1/);
+      assert.match(r.out, /run it on every core/);
+      await run(cli.runCreateRegistry, platform, createArgs('Cli.rev', ['--subject-type', 'public']));
+      const lines = [];
+      const log = console.log;
+      console.log = (...a) => { lines.push(a.join(' ')); };
+      try { await cli.runRevoke(platform, cli.parseArgs(['revoke', 'Cli.rev', '--yes']), async () => {}); } finally { console.log = log; }
+      assert.match(lines.join('\n'), /purge-grants Cli\.rev --yes/);
+    });
   });
 });

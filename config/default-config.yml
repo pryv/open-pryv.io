@@ -1135,9 +1135,11 @@ oauth:
   clientRevokeCheckSeconds: 30     # seconds
   clientRegistration:
     mode: curated                  # ONLY supported value; "open" is rejected
-  # NOT ENFORCED: no code reads this key yet (app accounts are not required to
-  # enrol MFA); a later release will either enforce it or remove it.
-  requireAppAccountMfa: true
+  # Hosts the consent screen may load a client's logo from (`logo_uri`, https
+  # only; `host` or `host:port`). Registration refuses a logo elsewhere and the
+  # consent offer leaves out a stored one that is not (any more) listed. Empty:
+  # no logo is shown. Platform-wide, like the client registry.
+  logoHosts: []
   # Secret the consent-flow state (the signed parameter carried from
   # /oauth2/authorize to the consent page and back) is keyed on; used for
   # nothing else. Per core (a consent flow runs on one core). REQUIRED when

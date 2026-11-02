@@ -757,6 +757,11 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #       privateKeyFile: /path/to/oidc-signing-key.pem
 # #   idTokenTTL: 300
 
+# # Logos of OAuth clients on the consent screen: https only, from these hosts
+# # (none shown while the list is empty). Under the oauth: block above.
+# #   logoHosts:
+# #     - logos.example.com
+
 # # hostedSites: a reserved name that serves a static folder (e.g. an auth /
 # # account UI bundle) or proxies a fixed upstream, instead of a user account.
 # # ${dnsLess ? 'dnsLess: served under <publicUrl>/<name>/, same origin as the API (build the bundle with that base).' : 'Served on <name>.<dns.domain>, its own origin. Deploy the folder on every core listing it.'}
