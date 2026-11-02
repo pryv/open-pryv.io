@@ -23,6 +23,8 @@ export type Ctx = {
   methodId: string | null;
   user: { id: string; username: string };
   access: unknown;
+  /** Read the access from storage rather than from the access cache. */
+  bypassAccessCache?: boolean;
   init: () => Promise<void>;
   retrieveExpandedAccess: (storage: unknown) => Promise<void>;
 };

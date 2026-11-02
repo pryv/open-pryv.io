@@ -64,6 +64,7 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
       'deviceName',
       'permissions',
       'lastUsed',
+      'lastLogin',
       'expires',
       'deleted',
       'clientData',

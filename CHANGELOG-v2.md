@@ -75,6 +75,16 @@
   the body or in HTTP Basic that differs from `iss` is still refused, and an assertion that names no
   client, an unknown one or one without a key set gets the same `invalid_client` answer, before an
   authorization code is used up.
+- **The id_token `auth_time` is the time of the user's last completed sign-in, not the creation of
+  the sign-in access.** It was the creation of the personal access the user consented with, which a
+  later sign-in to the same app keeps, so `auth_time` could be days older than the authentication
+  behind the consent. Each completed sign-in (password, password plus second factor once the factor
+  is verified, or identity provider) is now recorded on that personal access, and `auth_time` is that
+  time. A personal access not signed in since the upgrade reports its creation time until its next
+  sign-in. `max_age` and `prompt` are still not honoured.
+- **Personal accesses report `lastLogin`** (read-only, seconds) in `accesses.get` and
+  `getAccessInfo`: the time of the last completed sign-in on that access. It cannot be set by
+  `accesses.create` or `accesses.update`.
 
 ## 2.0.0-rc.69 - 2026-11-02
 

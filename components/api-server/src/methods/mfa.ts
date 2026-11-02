@@ -48,7 +48,8 @@ const { getStorageLayer } = require('storage');
 const { ready, getLogger } = require('@pryv/boiler');
 const mfaLogger = getLogger('methods:mfa');
 const { normalizeMfaConfig, normalizeAttempts, getMFAMethod, getMFAMethodForProfile, getMFASessionStore, Profile, enrolmentFingerprint } = require('business/src/mfa/index.ts');
-const { getUsersRepository } = require('business/src/users/index.ts');
+const { getUsersRepository, UserRepositoryOptions } = require('business/src/users/index.ts');
+const timestamp = require('unix-timestamp');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
 const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrottle.ts') as typeof import('./helpers/accountAttemptThrottle.ts');
@@ -58,6 +59,7 @@ const PROFILE_ID = 'private';
 export default async function (api: { register: (...args: unknown[]) => void }) {
   const storageLayer = await getStorageLayer();
   const userProfileStorage = storageLayer.profile;
+  const userAccessesStorage = storageLayer.accesses;
   const config = await ready();
 
   // Read + normalize the MFA config block per-invocation so
@@ -505,6 +507,24 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     }
   );
 
+  /**
+   * The sign-in completes with the second factor: record its time on the
+   * personal access holding the released token (the login flow left it unset
+   * while the factor was pending). Written with the tracking properties so the
+   * access integrity is recomputed. Best-effort: a sign-in is not refused for
+   * it, and a token rotated meanwhile by another login matches no access.
+   */
+  async function recordLogin (user: UserRef, token: unknown): Promise<void> {
+    const now = timestamp.now();
+    const update = { lastLogin: now, modified: now, modifiedBy: UserRepositoryOptions.SYSTEM_USER_ACCESS_ID };
+    try {
+      const updated = await fromCallback((cb: Cb) => userAccessesStorage.updateOne(user, { token, type: 'personal' }, update, cb));
+      if (updated == null) mfaLogger.debug(`mfa.verify: no personal access holds the released token of user "${user.username}" (rotated by another login)`);
+    } catch (err) {
+      mfaLogger.warn(`mfa.verify: could not record the sign-in time of user "${user.username}"`, err);
+    }
+  }
+
   // ----------------------------------------------------------------------
   // mfa.verify — finishes a login-with-MFA flow; returns the real Pryv access token
   // ----------------------------------------------------------------------
@@ -574,6 +594,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // A real second factor succeeded: drop any accrued failures so an
         // earlier mistyped code cannot count toward a future delay.
         await clearThrottleIfAny(user);
+        await recordLogin(user, session.context.token);
         // session.context.token is the real access token stashed by the login flow
         // (presence already checked above, before any side effect).
         result.token = session.context.token;
