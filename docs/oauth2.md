@@ -683,13 +683,13 @@ configured`). app-web-user-account is the reference consent UI (its
 
 ### `issuer` (optional)
 
-The RFC 8414 issuer — the concrete base URL clients fetch the discovery
-document from and call `/oauth2/*` on — is derived automatically from your
+The RFC 8414 issuer (the concrete base URL clients fetch the discovery
+document from and call `/oauth2/*` on) is derived automatically from your
 deployment's public URL (`dnsLess.publicUrl` for single-URL deployments; the
 core's own URL for multi-core). If the OAuth surface fails to mount with
 `service:api not configured`, or your **public** URL differs from the
 internally configured one (a reverse proxy or TLS terminator in front of the
-core), set `oauth.issuer` explicitly to the public base URL — it overrides the
+core), set `oauth.issuer` explicitly to the public base URL: it overrides the
 automatic derivation. On a multi-core deployment the issuer is **per core**:
 set each core's override to that core's own public URL, never one shared
 load-balancer URL. The code exchange at `/oauth2/token` must reach the core
@@ -698,14 +698,20 @@ another core answers `invalid_grant`).
 
 When `oauth.issuer` names a different host than the core (a vanity URL served
 by a reverse proxy in front of it), the proxy must forward `/.well-known/`,
-`/oauth2/` and `/reg/service/info` to the core: the issuer is also the
-`pryvApi` handed to the consent UI, which signs the user in through
-`{pryvApi}/reg/service/info`. A consent UI with an origin allowlist (the
-`trustedOrigins` of app-web-user-account) must list the issuer URL. Keep the
-client's Host header or send `X-Forwarded-Host` / `X-Forwarded-Proto` (with
-`http.trustedProxies` covering the proxy): DPoP proofs are checked against the
-URL the request reached. `apiEndpoint` in token responses and `api_base` in
-introspection keep naming the core's API URL, the resource server.
+`/oauth2/` and `/reg/service/info` to the core, `OPTIONS` preflights included
+(the consent UI calls them from the browser): the issuer is also the
+`pryvApi` handed to the consent UI, which reads `{pryvApi}/reg/service/info`
+to find the API it signs the user in at. A consent UI with an origin allowlist
+must list the issuer's origin (app-web-user-account: `trustedApiOrigins` in
+its `settings.json`, or `VITE_OAUTH_TRUSTED_API_ORIGINS` at build time; not
+`returnPolicy.trustedOrigins`, which is about return addresses). Make the
+core see the client-facing scheme and host: either keep the client's Host
+header and reach the core over the same scheme as the public URL, or send
+`X-Forwarded-Host` and `X-Forwarded-Proto` from a proxy address listed in
+`http.trustedProxies` (from any other address those headers are ignored).
+DPoP proofs are checked against the URL the request reached: a mismatch
+answers `invalid_dpop_proof`. `apiEndpoint` in token responses and `api_base`
+in introspection keep naming the core's API URL, the resource server.
 
 ### `clientRegistration.mode` is `curated`
 
