@@ -22,6 +22,8 @@
 
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
+import { pollUntil } from 'test-helpers';
+
 async function ensureStream (path, token, params) {
   const res = await coreRequest.post(path).set('Authorization', token).send(params);
   if (res.status !== 201 && res.body?.error?.id !== 'item-already-exists') {
@@ -67,9 +69,36 @@ describe('[CMCAUTH] cmc accept access gate (events.create integration)', functio
   });
 
   after(async function () {
+    // The triggers that pass the gate are orchestrated after the 201: the
+    // accept and refuse fetch the placeholder capability URL, then a failed
+    // attempt is queued as a retry record (a new event on alice's account)
+    // before the trigger is stamped `failed`. Cleaning before that settles
+    // lets the record land for a user that no longer exists, and the next
+    // suite's integrity check fails. So wait until no trigger is still in
+    // flight: a terminal stamp means the retry record is already written.
+    // 20 s covers the 15 s timeout of the capability fetch.
+    let settleError;
+    if (alice != null) {
+      try {
+        const inFlight = (events) => events.filter((e) => ['pending', 'delivered'].includes(e.content?.status));
+        const events = await pollUntil(async () => {
+          const res = await coreRequest.get(alice.eventsPath)
+            .set('Authorization', alice.personalToken)
+            .query({ streams: [':_cmc:apps:my-app'], limit: 100 });
+          if (res.status !== 200) throw new Error('events.get failed: ' + res.status + ' ' + JSON.stringify(res.body));
+          return res.body.events;
+        }, (list) => inFlight(list).length === 0, { timeoutMs: 20_000, intervalMs: 100 });
+        const left = inFlight(events);
+        if (left.length > 0) {
+          settleError = new Error('cmc triggers still in flight after 20 s: ' +
+            left.map((e) => e.type + ' ' + e.content.status).join(', '));
+        }
+      } catch (err) { settleError = err; }
+    }
     if (fixtures != null) {
       try { await fixtures.clean(); } catch (_e) { /* best-effort */ }
     }
+    if (settleError != null) throw settleError;
   });
 
   // Each gated trigger is exercised against (a) an app token, (b) a
