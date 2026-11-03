@@ -33,6 +33,8 @@ The module exports a factory `(host: { apiVersion, options, logger }) => { apiVe
 - **Pure and deterministic** in (scope string, client). The offer is not carried in the signed state: it is re-derived at `/oauth2/authorize/offer` and `/accept` and pinned by a digest, so a grammar that answers differently between calls makes every consent fail as out of date.
 - `tokens` are the request tokens the grammar recognised; reporting a token the client did not send is refused.
 - **One permission entry per stream** after canonicalisation (`a` and `:local:a` are one stream), at most 1000 entries. Account and system streams, every stream (`*`) and the `manage` level are refused whatever the grammar answers. `defaultName` / `name` are removed and logged: a registry consent never creates a stream.
+- **A permission may name a stream the account does not have yet.** It is granted as is and applies once a stream with that id is created (a Pryv property, not an extension one: the core does not check that the stream exists). The grammar's stream ids are therefore a contract with the data model: an id the model later creates under another name is never reached, and one created later by someone else under a granted id is. Label such entries (`entryLabels`): the consent UI has no stream name to show for them.
+- Stream entries grant positive access only: a `level: 'none'` entry (an exclusion mask) in an offer is a contract error (`invalid_scope` "scope could not be parsed", detail logged), and `/accept` refuses one in any consent offer ("consent offer is invalid"). Masks on a grant come from the account owner's own edits, never from a consent.
 - A forbidden feature in an offer is always mandatory; one marked `optIn` is refused.
 - `allowUserChoice` is the grammar's choice (core default `false`, all-or-nothing). Set it to let the user untick entries; mark entries the app cannot run without `mandatory`.
 - `randomAlias: true` asks for a pseudonymous subject: the grant then carries an alias (one per user and client), every session of it is used at that alias only, and the app never sees the username. Every request of a `pairwise` client gets one whatever the offer says (the core sets `randomAlias` before the digest, so the consent shows it).
@@ -121,7 +123,9 @@ The App account IS the OAuth2 client. Its `:_app:*` streams carry RFC 7591 metad
 
 **Registry clients** (`kind: 'registry'`, written by `create-registry`) have no app account: the `oauth-client/<clientId>` row is the whole registration (validated by `persistClient` in `src/clientRegistry.ts`). Their durable consent record is an app access `oauth-grant:<clientId>` on the user's account; their default forbidden features are `REGISTRY_DEFAULT_FORBIDDEN_FEATURES` minus the row's `allowFeatures`.
 
-**`clientData.oauth` is server-owned** on every OAuth access (a session's `{ dataGrantId, chain }`, a registry grant's client): `accesses.create` refuses it and `accesses.update` refuses any change to it. Write it storage-direct from the OAuth flow only.
+**`clientData.oauth` is server-owned** on every OAuth access (a session's `{ dataGrantId, chain }`, an access a session created `{ dataGrantId }`, a registry grant's `{ grantOf, extensionData? }`): `accesses.create` refuses it and `accesses.update` refuses any change to it. Write it storage-direct from the OAuth flow only.
+
+The core-side internals (consent composition, the grant bound, client status checks, the purge) are in [`INTERNALS.md`](INTERNALS.md); the operator guide is [`docs/oauth2.md`](../../docs/oauth2.md).
 
 ## What NOT to do here
 

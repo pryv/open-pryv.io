@@ -10,7 +10,8 @@
   entry keys). Display only: it is part of the offer's digest and of `shownDigest`, a group may name
   entries outside the offer, an entry no group names is shown ungrouped, and
   `/oauth2/authorize/accept` still takes a flat `grantedPermissions`. A consent UI that ignores it
-  shows the flat list as before.
+  shows the flat list as before. The signed-out answer stays the request as parsed (never composed
+  with the user's grant); only the signed-in answer is the composed screen.
 - **Entry keys may be level-less** in `offer.entryLabels` and `offer.entryGroups`: `s|<streamId>` and
   `f|<feature>` beside `s|<streamId>|<level>` and `f|<feature>|<setting>`; a consent UI looks up the
   exact key first, then the level-less one.
@@ -78,10 +79,12 @@
   `shownDigest`, so a consent UI that never calls the signed-in `/offer` cannot grow a grant past it
   by repeated consents: the same 400 `grant-too-large`, the grant left unchanged. `/accept` counts the
   grant's permissions once the consent is applied (replaced or joined), without its exclusion masks
-  (level `none`) and the client's default forbids. The per-client token lifetimes stay as they are
-  (`--access-token-ttl` and the others, capped by the platform's). Both answers of `POST /oauth2/authorize/offer` (signed out
-  and signed in) carry `client.name` and `client.description`, each a text or a map of texts by
-  language code, operator-registered only; `clientName` stays the string fallback.
+  (level `none`, which never come from a consent: only from the account owner's own edits of the
+  grant) and the client's default forbids. The per-client token lifetimes stay as they are
+  (`--access-token-ttl` and the others, capped by the platform's). Both answers of `POST
+  /oauth2/authorize/offer` (signed out and signed in) carry `client.name` and `client.description`,
+  each a text or a map of texts by language code, operator-registered only; `clientName` stays the
+  string fallback.
 - **New `--region <key>`** (repeatable, any client kind; `none` clears): the regions of the
   platform's `hostings` hierarchy whose cores serve the client. A core of another region (its
   `core:hosting` in another region, or in none) refuses it at `/oauth2/authorize` (redirect
@@ -97,11 +100,26 @@
   core's keyspace; it prints the counts. Each user's next authorization is a fresh consent. `revoke`
   and `suspend` print it as the next step, to run on each core. Rows are deleted as
   `accesses.delete` does (deletion records, access index tombstones) but without its post-delete
-  hooks: the counterparty of a deleted CMC data-grant gets no revoke notice. Introspection answers
-  `active: false` at once; an API worker that cached a deleted session keeps honouring it up to the
-  access cache's lifetime, `caching:accessMaxAgeSeconds` (default 60 s), per worker.
+  hooks: the counterparty of a deleted CMC data-grant gets no revoke notice (the app side's stale
+  relationship record clears at its next failing call). The data-grants purged are those a session of
+  the client is bound to; two app-account clients registered on the same offer share the user's
+  data-grant, so purging either deletes it for both (both re-consent). Introspection answers
+  `active: false` at once; the CLI sends no cache invalidation, so an API worker that cached a deleted
+  session keeps honouring it up to the access cache's lifetime, `caching:accessMaxAgeSeconds` (default
+  60 s), per worker.
 - **Removed: the setting `oauth:requireAppAccountMfa`.** It was never enforced; a core where it is
   still set logs a warning at boot.
+
+### OAuth2 redirect URIs
+
+- **`http://localhost` is a loopback host.** A client registered with
+  `http://localhost/<path>` is accepted with any port at `/authorize`, as `127.0.0.1` and `[::1]`
+  already were (RFC 8252 § 7.3). The host string must match exactly: a registration for `127.0.0.1`
+  does not admit `localhost` and the reverse, register each form the client sends; subdomains of
+  `localhost`, `localhost.` and `https` are not relaxed. Native and CLI clients that pick an
+  ephemeral port on `localhost` now work with one registered URI per host form. A row already
+  registered with `http://localhost:<port>/<path>` now accepts any port too. A presented redirect URI
+  containing a control character (tab, newline) is refused.
 
 ### Account transfer to a beneficiary
 
@@ -164,17 +182,6 @@
   **Existing platforms:** the seeder fills an empty template store only: add the six templates (and
   the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
   templates set`.
-
-### OAuth2
-
-- **OAuth2 redirect URIs: `http://localhost` is a loopback host.** A client registered with
-  `http://localhost/<path>` is accepted with any port at `/authorize`, as `127.0.0.1` and `[::1]`
-  already were (RFC 8252 § 7.3). The host string must match exactly: a registration for `127.0.0.1`
-  does not admit `localhost` and the reverse, register each form the client sends; subdomains of
-  `localhost`, `localhost.` and `https` are not relaxed. Native and CLI clients that pick an
-  ephemeral port on `localhost` now work with one registered URI per host form. A row already
-  registered with `http://localhost:<port>/<path>` now accepts any port too. A presented redirect URI
-  containing a control character (tab, newline) is refused.
 
 ## 2.0.0-rc.70 - 2026-11-02
 
