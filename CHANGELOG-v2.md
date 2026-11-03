@@ -16,6 +16,15 @@
   in about a millisecond. Above 20,000 events modified since the bound, pages read as before. Same
   results, same order.
 
+### Store streams carry the properties the stream schema requires
+
+- **Fixed: streams of a data store other than the local one could lack `created`, `createdBy`,
+  `modified` and `modifiedBy`** (the audit store's `accesses` / `actions` streams and their
+  `access-…` / `action-…` children, read with `streams.get` and `parentId`), so a client validating
+  `streams.get` against the published stream schema rejected them. Missing values are now filled
+  with the data store defaults (`created` / `modified` `10000000.00000001`, `createdBy` /
+  `modifiedBy` `'unknown'`), as already done for the account streams.
+
 ### CMC: the chat stream of an ended relationship can be deleted
 
 - **Fixed: `streams.delete` on a `…:chats:<slug>` or `…:collectors:<slug>` stream once its

@@ -16,6 +16,7 @@ const streamsUtils = require('./helpers/streamsUtils.ts');
 const { treeUtils } = require('utils');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const errorFactory = require('errors').factory;
+const { defaults: dataStoreDefaults } = require('@pryv/datastore');
 
 /** Mall-level stream: the stored shape, plus pass-through of store-specific
  *  extra fields. */
@@ -167,6 +168,9 @@ class MallUserStreams implements MallStreams {
       res = performExclusion(res, excludedIds);
     }
     if (storeId !== storeDataUtils.LocalStoreId) {
+      // A store may leave out the tracking properties the stream schema
+      // requires (the audit store did): fill the datastore defaults.
+      dataStoreDefaults.applyOnStreams(res);
       // add Prefix
       streamsUtils.addStoreIdPrefixToStreams(storeId, res);
       if (streamId === '*') {
