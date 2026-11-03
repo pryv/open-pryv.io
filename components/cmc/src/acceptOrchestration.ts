@@ -273,6 +273,7 @@ function buildDataGrantPayload (params: {
 }): Record<string, unknown> {
   const { offerEvent, counterparty, accessName, features, extraPermissions, grantedPermissions, acceptEventId, scopeStreamId, membership } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
+  const memberName = membership != null ? memberDisplayName(meta.displayName) : null;
   const computedName = accessName ??
     ((membership != null ? 'cmc-member:' : 'cmc:') + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
   const offeredPerms = permissionsFromOffer(offerEvent); // consent form (mandatory preserved)
@@ -347,8 +348,8 @@ function buildDataGrantPayload (params: {
         scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
         // A member's name as they gave it when asking to join: the group
         // account reads its members from these accesses.
-        counterparty: membership != null && memberDisplayName(meta.displayName) != null
-          ? { ...counterparty, displayName: memberDisplayName(meta.displayName) }
+        counterparty: membership != null && memberName != null
+          ? { ...counterparty, displayName: memberName }
           : counterparty,
         offerEventId: offerEvent.id,
         acceptEventId: acceptEventId ?? null,
@@ -371,7 +372,7 @@ const MEMBER_DISPLAY_NAME_MAX = 200;
 function memberDisplayName (value: unknown): string | null {
   if (typeof value !== 'string') return null;
   // eslint-disable-next-line no-control-regex
-  const cleaned = value.replace(/[\u0000-\u001F\u007F-\u009F‪-‮⁦-⁩]/g, '').trim();
+  const cleaned = value.replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/g, '').trim();
   if (cleaned === '') return null;
   return Array.from(cleaned).slice(0, MEMBER_DISPLAY_NAME_MAX).join('');
 }
