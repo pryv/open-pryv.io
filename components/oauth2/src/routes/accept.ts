@@ -45,8 +45,10 @@
  * `invalid_request` with a machine-readable `reason`
  * (`consent-out-of-date`, `subject-change-unacknowledged`). Other refusals
  * the consent UI tells apart carry one too: `permission-level-conflict`,
- * `keep-one-stream`, `consent-widens-offer`. Both fields are ignored for
- * app-account clients.
+ * `keep-one-stream`, `consent-widens-offer`, and `grant-too-large` (the
+ * grant the consent would leave is above the client's entry ceiling, with
+ * or without `shownDigest`). Both fields are ignored for app-account
+ * clients.
  *
  * Refuse path: when the user declines, the consent UI does NOT call
  * this endpoint — it calls `POST /oauth2/authorize/refuse` (see
@@ -64,7 +66,7 @@ import type { CurrentGrant, Composition, SubjectChange } from '../consentComposi
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
-const { composeShownOffer, nextGrantPermissions } = require('../consentComposition.ts');
+const { composeShownOffer, nextGrantPermissions, grantEntryCount } = require('../consentComposition.ts');
 const { getClient, clientUnavailable } = require('../clientRegistry.ts');
 const { clientLifetimes } = require('../clientLifetimes.ts');
 
@@ -72,7 +74,7 @@ const { generateToken } = require('../secureToken.ts');
 const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
-const { grantedScopeTokens } = require('../scopeGrammar.ts');
+const { grantedScopeTokens, entryCeiling, grantTooLarge } = require('../scopeGrammar.ts');
 const { computeGrantState, toClientView } = require('../extension.ts');
 const { indexSession } = require('../sessionIndex.ts');
 const { audit } = require('../audit.ts');
@@ -423,6 +425,14 @@ export function handleAccept (deps: AcceptDeps) {
         if ((err as { code?: string } | null)?.code !== 'permission-level-conflict') throw err;
         const r = await levelConflictRefusal(err, payload);
         return sendJson(res, r.status, r.body);
+      }
+      // The grant this consent leaves is bounded like the composed offer at
+      // /offer: a consent UI that never asked for the composition (no
+      // shownDigest) cannot grow a grant past the client's ceiling a little
+      // at a time either. Refused before anything is written.
+      const ceiling = entryCeiling(registryClient!);
+      if (grantEntryCount(grantPermissions!, registryClient!) > ceiling) {
+        return sendJson(res, 400, grantTooLarge(ceiling));
       }
       offeredForMint = normalizePermissions(offered.permissions);
       // The grant's state, once its permissions are final and before anything

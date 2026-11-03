@@ -74,8 +74,12 @@
   larger request answers `invalid_scope` at `/oauth2/authorize`) and on the grant a re-consent would
   leave (the request joined with the current grant: the signed-in `POST /oauth2/authorize/offer`
   answers 400 `invalid_scope` with `reason: 'grant-too-large'`). The platform bound now applies to
-  that composed grant too. The per-client token lifetimes stay as they are (`--access-token-ttl` and
-  the others, capped by the platform's). Both answers of `POST /oauth2/authorize/offer` (signed out
+  that composed grant too. `POST /oauth2/authorize/accept` enforces the same ceiling, with or without
+  `shownDigest`, so a consent UI that never calls the signed-in `/offer` cannot grow a grant past it
+  by repeated consents: the same 400 `grant-too-large`, the grant left unchanged. `/accept` counts the
+  grant's permissions once the consent is applied (replaced or joined), without its exclusion masks
+  (level `none`) and the client's default forbids. The per-client token lifetimes stay as they are
+  (`--access-token-ttl` and the others, capped by the platform's). Both answers of `POST /oauth2/authorize/offer` (signed out
   and signed in) carry `client.name` and `client.description`, each a text or a map of texts by
   language code, operator-registered only; `clientName` stays the string fallback.
 - **New `--region <key>`** (repeatable, any client kind; `none` clears): the regions of the

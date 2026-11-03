@@ -545,6 +545,7 @@ never on the wording; render errors without one generically.
 | `permission-level-conflict` | a requested level conflicts with the grant's (`/offer` and `/accept`) |
 | `keep-one-stream` | a registry consent kept no stream |
 | `consent-widens-offer` | the kept subset would widen the offer through the stream hierarchy |
+| `grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (`/offer` and `/accept`) |
 
 ### Registry grants and their sessions
 
@@ -1100,9 +1101,11 @@ or a map by language code), before sign-in too; `--software-id <s>` (RFC 7591
 `software_id`); `--max-entries <n>`, the ceiling on the permission entries of
 one authorization request (above it `/oauth2/authorize` answers
 `invalid_scope`) and of the grant a re-consent would leave (the signed-in
-`/offer` answers 400 `invalid_scope`, `reason: 'grant-too-large'`): 1 to 1000,
-default the platform bound, 1000. Token lifetimes are set with the lifetime
-flags (§ 3c). `--logo-uri` must be https on a host of `oauth:logoHosts` (§ 2);
+`/offer` and `/accept` answer 400 `invalid_scope`, `reason: 'grant-too-large'`;
+`/accept` counts the grant after the consent is applied, without its
+exclusion masks and the client's default forbids, and leaves it unchanged
+when refusing): 1 to 1000, default the platform bound, 1000. Token lifetimes
+are set with the lifetime flags (§ 3c). `--logo-uri` must be https on a host of `oauth:logoHosts` (§ 2);
 a stored non-https logo is removed (and printed) by the next `update` or
 `rotate-secret` of a registry client.
 
