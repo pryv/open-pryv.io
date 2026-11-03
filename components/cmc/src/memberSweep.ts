@@ -52,6 +52,7 @@
 import * as C from './constants.ts';
 import * as ledger from './memberLedger.ts';
 import { revokeRecords, deleteChildThroughGrant } from './handleMemberRevoke.ts';
+import { isAccountGoneError } from './accountWriteGuard.ts';
 import type { CmcAccessLike, CmcLogger, MallLike, OutboundDeps } from './_types.ts';
 import type { StoredLedgerRecord } from './memberLedger.ts';
 
@@ -140,9 +141,10 @@ function createMemberSweep (deps: SweepDeps) {
         const created = await deps.mall.events.create(userId, { ...event, time: now() });
         event = { ...event, id: created?.id };
       } catch (err: unknown) {
-        deps.logger?.warn?.('cmc/memberSweep: could not write the sweep record; sweeping without one', {
-          userId, membershipAccessId, error: String((err as Error)?.message || err),
-        });
+        const fields = { userId, membershipAccessId, error: String((err as Error)?.message || err) };
+        // Expected when the account was erased meanwhile (the guard logged it).
+        if (isAccountGoneError(err)) deps.logger?.info?.('cmc/memberSweep: could not write the sweep record, the account is erased', fields);
+        else deps.logger?.warn?.('cmc/memberSweep: could not write the sweep record; sweeping without one', fields);
       }
     }
     const dispatched = await deps.dispatch({

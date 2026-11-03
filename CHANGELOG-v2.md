@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### CMC: nothing is written for an account erased while a consent operation runs
+
+- **Fixed: an account erased while one of its CMC operations was still running could leave a record
+  behind.** An accept or a refuse reads the requester's offer for up to 15 seconds after its `201`;
+  when the account was erased during that read, the plugin wrote afterwards for the erased account a
+  retry record holding the trigger's content, the requester's invite URL with its token included. The
+  record was invisible through the API, never processed and never removed. On PostgreSQL it is an
+  `events` row; on SQLite with `audit.onUserDelete: keep` it re-created an events database in the
+  user directory the erasure kept for the audit. The work that runs after a request (dispatch of a trigger, retry loop, member sweep, the
+  follow-ups of `accesses.update`, `accesses.delete`, a delegation detach and a stream deletion) now
+  writes nothing for an account that no longer exists or whose erasure has started: the write is
+  dropped and logged (operation, record id, never its content). A grant that cannot be stored is not
+  announced to the requester. Known residue on SQLite with `audit.onUserDelete: keep`: the reads such
+  late work still makes can re-open empty databases (no row) in the kept directory. A revoke notice that the requester could not take and that the erased account's own queue now refuses
+  goes to the core's deletion outbox, like the notices of the erasure itself.
+- **An erasure that stopped half way now pauses the account's CMC background work.** While an erasure
+  record exists for an account that still exists (an erasure under way, or one that failed at a step
+  and waits to be completed), its CMC background writes are refused and the retry loop and member
+  ledger pass skip it. For such an account the API is unchanged but its consent operations stop
+  progressing (an accept stays `delivered`, nothing is delivered to the counterparty) until the
+  erasure is completed; the first refusal per account is logged at warn ("an erasure of this account
+  has started and is not finished"). For every other live account nothing changes, neither in the API
+  nor in what a counterparty receives.
+- **Records left by earlier erasures are not removed by this fix** (no automatic purge, no migration:
+  a damaged or partially restored users index would make one delete live data). On PostgreSQL an
+  operator finds them with
+  `SELECT user_id, id FROM events WHERE type = 'cmc-internal/retry-cmc' AND user_id NOT IN (SELECT user_id FROM users_index) AND user_id NOT IN (SELECT user_id FROM account_erasures);`
+  and may delete those rows. Each holds a requester's invite URL with its token (the requester can
+  also invalidate the invite). On SQLite with `audit.onUserDelete: keep`, the files of an erased
+  account's directory other than its `audit-*` files are leftovers (an events database holding such a
+  record, or empty databases) and may be removed.
+
 ### CMC: the chat stream of an ended relationship can be deleted
 
 - **Fixed: `streams.delete` on a `…:chats:<slug>` or `…:collectors:<slug>` stream once its
