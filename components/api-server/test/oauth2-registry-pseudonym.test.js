@@ -194,6 +194,19 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     return await exchange(flow, a);
   }
 
+  /**
+   * A consent to `cid` and the session it mints: { token, refresh, alias, sessionId }.
+   * Each test that needs a grant makes its own, so it also passes when run alone
+   * (a `--grep` selecting it without the tests before it).
+   */
+  async function consent (cid, scope = 'read/health') {
+    const t = await runFlow(scope, cid);
+    const grant = await grantOf(cid);
+    const session = (await sessionsOf(cid)).find((s) => s.token === t.access_token);
+    assert.ok(session != null, 'the session of the new token is listed');
+    return { token: t.access_token, refresh: t.refresh_token, alias: grant.alias, sessionId: session.id };
+  }
+
   function refresh (refreshToken, cid) {
     return coreRequest.post('/oauth2/token').type('form').send({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: cid });
   }
@@ -246,8 +259,6 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
 
   // --- tests ---
 
-  let first; // the first pairwise session: { token, alias }
-
   it('[OPSE1] a pairwise consent: grant and session carry one alias; the username is in no answer the app gets', async () => {
     const before = await aliases();
     const flow = await authorize('offline_access read/health ctx/user', pairwiseClient);
@@ -260,7 +271,6 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     const [session] = await sessionsOf(pairwiseClient);
     assert.equal(session.alias, grant.alias, 'the session carries the grant\'s alias');
     assert.deepEqual(await aliases(), [...before, grant.alias].sort(), 'one alias minted');
-    first = { token: t.access_token, refresh: t.refresh_token, alias: grant.alias, sessionId: session.id };
 
     // Token response: the subject is the alias, no apiEndpoint; the echo was
     // told the subject is an alias (its marker, though the app did not ask).
@@ -301,23 +311,25 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     assert.equal(r.body.apiEndpoint, undefined);
     assert.ok(r.body.scope.split(' ').includes('ctx/pseudo'), 'the echo knows the subject is an alias at refresh: ' + r.body.scope);
     assertNoUsername('refresh response', r.body);
-    first.token = r.body.access_token;
-    first.refresh = r.body.refresh_token;
   });
 
   it('[OPSE2] a refreshed session carries the same alias, and its apiEndpoint is the alias one', async () => {
+    const first = await consent(pairwiseClient, 'offline_access read/health');
+    const r = await refresh(first.refresh, pairwiseClient);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
     const sessions = await sessionsOf(pairwiseClient);
     assert.ok(sessions.length >= 2);
     for (const s of sessions) {
       assert.equal(s.alias, first.alias);
       assert.ok(s.apiEndpoint.includes(first.alias) && !s.apiEndpoint.includes(who.username), s.apiEndpoint);
     }
-    const info = await coreRequest.get('/' + first.alias + '/access-info').set('Authorization', first.token);
+    const info = await coreRequest.get('/' + first.alias + '/access-info').set('Authorization', r.body.access_token);
     assert.equal(info.status, 200, JSON.stringify(info.body));
     assert.equal(info.body.user.username, first.alias);
   });
 
   it('[OPSE3] a re-authorization, at the same and at a wider scope, keeps the grant and its alias', async () => {
+    await consent(pairwiseClient);
     const before = await grantOf(pairwiseClient);
     await runFlow('read/health', pairwiseClient);
     const wider = await runFlow('read/health read/diary ctx/user', pairwiseClient);
@@ -329,6 +341,7 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
   });
 
   it('[OPSE4] a second client of the same user gets another alias', async () => {
+    const first = await consent(pairwiseClient);
     const t = await runFlow('read/health ctx/user', otherPairwiseClient);
     const grant = await grantOf(otherPairwiseClient);
     assert.match(grant.alias, /^r-[a-z0-9]{8}$/);
@@ -337,8 +350,9 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
   });
 
   it('[OPSE5] a session is used at its alias only: at the username, at another alias, it answers like an unknown token', async () => {
-    const other = await grantOf(otherPairwiseClient);
+    const first = await consent(pairwiseClient);
     const otherToken = (await runFlow('read/health', otherPairwiseClient)).access_token;
+    const other = await grantOf(otherPairwiseClient);
     // At the username.
     const atName = '/' + who.username + '/access-info';
     await assertLikeUnknownToken(await coreRequest.get(atName).set('Authorization', first.token), atName);
@@ -362,20 +376,21 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
   });
 
   it('[OPSE6] deleting one session keeps the alias (the grant and the other sessions hold it)', async () => {
-    const sessions = await sessionsOf(pairwiseClient);
-    assert.ok(sessions.length >= 2);
-    const doomed = sessions.find((s) => s.id !== baseOf(first.sessionId)) ?? sessions[0];
-    const del = await ownerDelete(doomed.id);
+    const kept = await consent(pairwiseClient);
+    const doomed = await consent(pairwiseClient);
+    assert.equal(doomed.alias, kept.alias);
+    const del = await ownerDelete(doomed.sessionId);
     assert.equal(del.status, 200, JSON.stringify(del.body));
-    assert.ok((await aliases()).includes(first.alias), 'the alias is still held');
-    const live = (await sessionsOf(pairwiseClient)).find((s) => s.id !== doomed.id);
-    const info = await coreRequest.get('/' + first.alias + '/access-info').set('Authorization', live.token);
+    assert.ok((await aliases()).includes(kept.alias), 'the alias is still held');
+    const info = await coreRequest.get('/' + kept.alias + '/access-info').set('Authorization', kept.token);
     assert.equal(info.status, 200, JSON.stringify(info.body));
   });
 
   it('[OPSE7] deleting the grant deletes its sessions (an expired one included) and releases the alias once; the next consent gets a new one', async () => {
+    await consent(pairwiseClient);
+    const probe = await consent(pairwiseClient);
     const grant = await grantOf(pairwiseClient);
-    const sessions = await sessionsOf(pairwiseClient);
+    const sessions = (await sessionsOf(pairwiseClient)).filter((s) => s.id !== probe.sessionId);
     // One session expired: it can no longer authenticate but still carries the alias.
     const user = { id: userId, username: who.username };
     await new Promise((resolve, reject) => storageLayer.accesses.updateOne(user, { id: baseOf(sessions[0].id) },
@@ -386,7 +401,7 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     const all = await coreRequest.get('/' + who.username + '/accesses').query({ includeExpired: true }).set('Authorization', who.token);
     assert.equal(all.body.accesses.some((a) => a.alias === grant.alias), false, 'no row holds the alias any more');
     assert.equal((await aliases()).includes(grant.alias), false, 'the alias is released');
-    const gone = await coreRequest.get('/' + grant.alias + '/access-info').set('Authorization', first.token);
+    const gone = await coreRequest.get('/' + grant.alias + '/access-info').set('Authorization', probe.token);
     assert.equal(gone.status, 404, JSON.stringify(gone.body));
     const t = await runFlow('read/health ctx/user', pairwiseClient);
     const fresh = await grantOf(pairwiseClient);
