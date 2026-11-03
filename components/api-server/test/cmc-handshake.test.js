@@ -2526,6 +2526,185 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.equal(arrival.content.acceptEventId, grantCmc.acceptEventId,
         'CN39: acceptEventId must match the accepter\'s own grant');
     });
+
+    // streams.delete trashes first, then deletes: two calls.
+    async function deleteStreamTwice (actor, streamId, query = { mergeEventsWithParent: false }) {
+      const path = actor.streamsPath + '/' + encodeURIComponent(streamId);
+      const trash = await coreRequest.delete(path).set('Authorization', actor.token).query(query);
+      if (trash.status !== 200) return trash;
+      return await coreRequest.delete(path).set('Authorization', actor.token).query(query);
+    }
+
+    async function streamExists (actor, streamId) {
+      const res = await coreRequest.get(actor.streamsPath)
+        .set('Authorization', actor.token).query({ state: 'all' });
+      const walk = (list) => (list || []).some((s) => s.id === streamId || walk(s.children));
+      return walk(res.body?.streams);
+    }
+
+    async function pollAccessGone (owner, accessId, label) {
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        if (!await accessExists(owner, accessId)) return;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.fail(label + ': access ' + accessId + ' still on ' + owner.username);
+    }
+
+    async function postChat (actor, streamId, text) {
+      const res = await coreRequest.post(actor.eventsPath)
+        .set('Authorization', actor.token)
+        .send({ streamIds: [streamId], type: 'message/chat-cmc', content: { content: text } });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    }
+
+    async function assertEventGone (actor, type, predicate, label) {
+      const res = await coreRequest.get(actor.eventsPath)
+        .set('Authorization', actor.token).query({ types: [type], state: 'all', limit: 1000 });
+      assert.strictEqual(res.status, 200, label + ': ' + JSON.stringify(res.body));
+      assert.equal((res.body.events || []).some(predicate), false, label + ': the event must be gone');
+    }
+
+    function assertUndeletable (res, label) {
+      assert.strictEqual(res.status, 400, label + ': ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream-undeletable', label);
+    }
+
+    it('[CN106] accepter withdraws: both sides may then delete their chat stream with its messages, not before', async function () {
+      const h = await runFreshHandshake('cd-a', 'cd-app-a', { mode: 'open-link' });
+      const bc = await backChannelFor(alice, h.triggerStreamId);
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      await postChat(alice, h.aliceChatStreamId, 'CN106 message');
+      await pollStreamFor(bob.eventsPath, bob.token, h.bobChatStreamId, 'message/chat-cmc',
+        (e) => e.content?.content === 'CN106 message');
+
+      // A live relationship keeps its chat stream.
+      assertUndeletable(await deleteStreamTwice(alice, h.aliceChatStreamId), 'CN106 live (requester)');
+      assertUndeletable(await deleteStreamTwice(bob, h.bobChatStreamId), 'CN106 live (accepter)');
+
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN106 accepter withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+      await pollAccessGone(bob, dataGrant.id, 'CN106 accepter');
+      await pollAccessGone(alice, bc.id, 'CN106 requester');
+
+      // Merging would move the messages into the plugin's chats parent.
+      assertUndeletable(await deleteStreamTwice(alice, h.aliceChatStreamId, { mergeEventsWithParent: true }),
+        'CN106 merge refused');
+
+      for (const [actor, streamId, side] of [[alice, h.aliceChatStreamId, 'requester'], [bob, h.bobChatStreamId, 'accepter']]) {
+        const res = await deleteStreamTwice(actor, streamId);
+        assert.strictEqual(res.status, 200, 'CN106 ' + side + ': ' + JSON.stringify(res.body));
+        assert.equal(await streamExists(actor, streamId), false, 'CN106 ' + side + ': the chat stream must be gone');
+        await assertEventGone(actor, 'message/chat-cmc', (e) => e.content?.content === 'CN106 message', 'CN106 ' + side + ' message');
+      }
+      // The plugin's own regions stay protected.
+      assertUndeletable(await deleteStreamTwice(alice, h.triggerStreamId + ':chats'), 'CN106 chats parent');
+    });
+
+    it('[CN107] requester withdraws: both sides may then delete their chat stream', async function () {
+      const h = await runFreshHandshake('cd-b', 'cd-app-b', { mode: 'open-link' });
+      const bc = await backChannelFor(alice, h.triggerStreamId);
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+      await postChat(bob, h.bobChatStreamId, 'CN107 message');
+      await pollStreamFor(alice.eventsPath, alice.token, h.aliceChatStreamId, 'message/chat-cmc',
+        (e) => e.content?.content === 'CN107 message');
+
+      const revRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.aliceCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: bc.id, reason: { en: 'CN107 requester withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+      await pollAccessGone(alice, bc.id, 'CN107 requester');
+      await pollAccessGone(bob, dataGrant.id, 'CN107 accepter');
+
+      for (const [actor, streamId, side] of [[bob, h.bobChatStreamId, 'accepter'], [alice, h.aliceChatStreamId, 'requester']]) {
+        const res = await deleteStreamTwice(actor, streamId);
+        assert.strictEqual(res.status, 200, 'CN107 ' + side + ': ' + JSON.stringify(res.body));
+        assert.equal(await streamExists(actor, streamId), false, 'CN107 ' + side + ': the chat stream must be gone');
+        await assertEventGone(actor, 'message/chat-cmc', (e) => e.content?.content === 'CN107 message', 'CN107 ' + side + ' message');
+      }
+
+      // The collector stream goes the same way, with the revoke record posted on it.
+      await pollStreamFor(alice.eventsPath, alice.token, h.aliceCollectorStreamId, 'consent/revoke-cmc',
+        (e) => e.content?.reason?.en === 'CN107 requester withdraw');
+      const res = await deleteStreamTwice(alice, h.aliceCollectorStreamId);
+      assert.strictEqual(res.status, 200, 'CN107 collector: ' + JSON.stringify(res.body));
+      assert.equal(await streamExists(alice, h.aliceCollectorStreamId), false, 'CN107: the collector stream must be gone');
+      await assertEventGone(alice, 'consent/revoke-cmc', (e) => e.content?.reason?.en === 'CN107 requester withdraw', 'CN107 revoke record');
+    });
+
+    async function findStream (actor, streamId) {
+      const res = await coreRequest.get(actor.streamsPath)
+        .set('Authorization', actor.token).query({ state: 'all' });
+      const walk = (list) => {
+        for (const s of list || []) {
+          if (s.id === streamId) return s;
+          const hit = walk(s.children);
+          if (hit != null) return hit;
+        }
+        return null;
+      };
+      return walk(res.body?.streams);
+    }
+
+    async function pollUntrashed (actor, streamId, label) {
+      const t0 = Date.now();
+      let stream = null;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS) {
+        stream = await findStream(actor, streamId);
+        if (stream != null && stream.trashed !== true) return;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.fail(label + ': ' + streamId + ' still trashed: ' + JSON.stringify(stream));
+    }
+
+    it('[CN108] a chat stream trashed after the revoke is taken back when the same peer accepts again', async function () {
+      const h = await runFreshHandshake('cd-c', 'cd-app-c', { mode: 'open-link' });
+      const bc = await backChannelFor(alice, h.triggerStreamId);
+      const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      const revRes = await coreRequest.post(bob.eventsPath)
+        .set('Authorization', bob.token)
+        .send({
+          streamIds: [h.bobCollectorStreamId],
+          type: 'consent/revoke-cmc',
+          content: { accessId: dataGrant.id, reason: { en: 'CN108 accepter withdraw' } },
+        });
+      assert.strictEqual(revRes.status, 201, JSON.stringify(revRes.body));
+      await pollAccessGone(bob, dataGrant.id, 'CN108 accepter');
+      await pollAccessGone(alice, bc.id, 'CN108 requester');
+
+      // The first streams.delete call only trashes; the owner stops there.
+      for (const [actor, streamId, side] of [[alice, h.aliceChatStreamId, 'requester'], [bob, h.bobChatStreamId, 'accepter']]) {
+        const res = await coreRequest.delete(actor.streamsPath + '/' + encodeURIComponent(streamId))
+          .set('Authorization', actor.token).query({ mergeEventsWithParent: false });
+        assert.strictEqual(res.status, 200, 'CN108 trash ' + side + ': ' + JSON.stringify(res.body));
+        assert.strictEqual((await findStream(actor, streamId))?.trashed, true, 'CN108 premise: ' + side + ' chat stream trashed');
+      }
+
+      await postAcceptUnder(bob, 'cd-app-c', h.capabilityUrl, 'cd-c-again');
+      await pollAcceptedByLocal(alice, h.capabilityId, bob.username, true, 'CN108 re-accept');
+      await pollUntrashed(bob, h.bobChatStreamId, 'CN108 accepter');
+      await pollUntrashed(alice, h.aliceChatStreamId, 'CN108 requester');
+      await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
+
+      // Messages flow again, both ways.
+      await postChat(alice, h.aliceChatStreamId, 'CN108 to bob');
+      await pollStreamFor(bob.eventsPath, bob.token, h.bobChatStreamId, 'message/chat-cmc',
+        (e) => e.content?.content === 'CN108 to bob');
+      await postChat(bob, h.bobChatStreamId, 'CN108 to alice');
+      await pollStreamFor(alice.eventsPath, alice.token, h.aliceChatStreamId, 'message/chat-cmc',
+        (e) => e.content?.content === 'CN108 to alice');
+    });
   });
 
   describe('[CMCHS-WD] the withdrawal is recorded on the accepter\'s own accept event', function () {

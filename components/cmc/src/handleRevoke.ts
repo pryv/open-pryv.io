@@ -646,29 +646,10 @@ async function deliverRevokeWithRetry (params: {
 
 /**
  * Parse either a chats or collectors stream-id. Returns null if neither.
+ * The scope it returns is the relationship's identity: a revoke that
+ * discarded it could resolve a sibling relationship's access.
  */
-function parseChatsOrCollectorsStreamId (streamId: string): {
-  appCode: string;
-  scopeStreamId: string;
-  counterparty: { username: string; hostSlug: string };
-} | null {
-  if (typeof streamId !== 'string') return null;
-  const m = streamId.match(/^(:_cmc:apps:([^:]+)(?::[^:]+)*):(?:chats|collectors):([a-z0-9-]+--[a-z0-9-]+)$/);
-  if (m == null) return null;
-  // Group 1 is the per-request scope — the relationship's identity. It was
-  // always captured here and always discarded, which is why a revoke on one
-  // relationship could resolve a sibling relationship's access.
-  const scopeStreamId = m[1];
-  const appCode = m[2];
-  const slug = m[3];
-  let counterparty;
-  try {
-    counterparty = slugMod.parseCounterpartySlug(slug);
-  } catch (_e) {
-    return null;
-  }
-  return { appCode, scopeStreamId, counterparty };
-}
+const parseChatsOrCollectorsStreamId: typeof relationshipKey.parseChannelStream = relationshipKey.parseChannelStream;
 
 function findCounterpartyAccess (
   accesses: AccessLike[],

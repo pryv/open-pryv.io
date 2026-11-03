@@ -429,6 +429,90 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, {}, {}, {});
       assert.equal(err, undefined);
     });
+
+    // The relationship access serving `:_cmc:apps:my-app:study-A` with alice@example.com.
+    const liveAccess = {
+      id: 'acc-1',
+      clientData: { cmc: { role: 'counterparty', appCode: 'my-app', scopeStreamId: ':_cmc:apps:my-app:study-A', counterparty: { username: 'alice', host: 'example.com' } } },
+    };
+    const chatOfAlice = ':_cmc:apps:my-app:study-A:chats:alice--example-com';
+    function mallWith (accesses) {
+      return { accesses: { get: async () => accesses } };
+    }
+    const context = { user: { id: 'u1' }, access: { isPersonal: () => true } };
+
+    it('[CSD08] a chat / collector stream whose relationship has ended may be deleted, not one still in use', async () => {
+      const { factory } = fakeErrors();
+      const ended = createStreamDeleteReservedRootHook({ errors: factory, mall: mallWith([]) });
+      for (const id of [chatOfAlice, ':_cmc:apps:my-app:study-A:collectors:alice--example-com']) {
+        assert.equal(await runMiddleware(ended, context, { id }, {}), undefined, 'expected passthrough for ' + id);
+      }
+      const live = createStreamDeleteReservedRootHook({ errors: factory, mall: mallWith([liveAccess]) });
+      const err = await runMiddleware(live, context, { id: chatOfAlice }, {});
+      assert.equal(err?.details?.id, 'cmc-reserved-stream-undeletable');
+      // Another relationship with the same peer (other scope) does not keep it.
+      const other = { ...liveAccess, clientData: { cmc: { ...liveAccess.clientData.cmc, scopeStreamId: ':_cmc:apps:my-app:study-B' } } };
+      const otherScope = createStreamDeleteReservedRootHook({ errors: factory, mall: mallWith([other]) });
+      assert.equal(await runMiddleware(otherScope, context, { id: chatOfAlice }, {}), undefined);
+    });
+
+    it('[CSD09] an ended relationship\'s chat stream refuses mergeEventsWithParent: true; the chats parent stays protected', async () => {
+      const { factory } = fakeErrors();
+      const mw = createStreamDeleteReservedRootHook({ errors: factory, mall: mallWith([]) });
+      const merge = await runMiddleware(mw, context, { id: chatOfAlice, mergeEventsWithParent: true }, {});
+      assert.equal(merge?.details?.id, 'cmc-reserved-stream-undeletable');
+      const parent = await runMiddleware(mw, context, { id: ':_cmc:apps:my-app:study-A:chats' }, {});
+      assert.equal(parent?.details?.id, 'cmc-reserved-stream-undeletable');
+    });
+
+    it('[CSD10] the chat stream stays protected when the accesses cannot be read or no user is known', async () => {
+      const { factory } = fakeErrors();
+      const failing = createStreamDeleteReservedRootHook({
+        errors: factory, mall: { accesses: { get: async () => { throw new Error('db down'); } } },
+      });
+      assert.equal((await runMiddleware(failing, context, { id: chatOfAlice }, {}))?.details?.id, 'cmc-reserved-stream-undeletable');
+      const noUser = createStreamDeleteReservedRootHook({ errors: factory, mall: mallWith([]) });
+      assert.equal((await runMiddleware(noUser, { access: context.access }, { id: chatOfAlice }, {}))?.details?.id, 'cmc-reserved-stream-undeletable');
+    });
+
+    it('[CSD11] a token that may not manage the stream gets the same refusal, live or ended, without the accesses being read', async () => {
+      const { factory } = fakeErrors();
+      let reads = 0;
+      const mw = createStreamDeleteReservedRootHook({ errors: factory, mall: { accesses: { get: async () => { reads++; return []; } } } });
+      const asked = [];
+      const appToken = { isPersonal: () => false, canDeleteStream: async (id) => { asked.push(id); return false; } };
+      const err = await runMiddleware(mw, { user: { id: 'u1' }, access: appToken }, { id: chatOfAlice }, {});
+      assert.equal(err?.details?.id, 'cmc-reserved-stream-undeletable');
+      assert.deepEqual(asked, [chatOfAlice]);
+      assert.equal(reads, 0);
+      assert.equal((await runMiddleware(mw, { user: { id: 'u1' } }, { id: chatOfAlice }, {}))?.details?.id, 'cmc-reserved-stream-undeletable', 'no access: refused');
+      // A manage token is let through like a personal one.
+      const manage = { isPersonal: () => false, canDeleteStream: async () => true };
+      assert.equal(await runMiddleware(mw, { user: { id: 'u1' }, access: manage }, { id: chatOfAlice }, {}), undefined);
+    });
+
+    it('[CSD12] a member access keeps its collector stream; an access outside the relationship roles does not', async () => {
+      const { factory } = fakeErrors();
+      const collectorOfAlice = ':_cmc:apps:my-app:study-A:collectors:alice--example-com';
+      const withRole = (role) => ({ ...liveAccess, clientData: { cmc: { ...liveAccess.clientData.cmc, role } } });
+      const member = createStreamDeleteReservedRootHook({ errors: factory, mall: mallWith([withRole('member')]) });
+      assert.equal((await runMiddleware(member, context, { id: collectorOfAlice }, {}))?.details?.id, 'cmc-reserved-stream-undeletable');
+      const dataGrant = createStreamDeleteReservedRootHook({ errors: factory, mall: mallWith([withRole('data-grant')]) });
+      assert.equal(await runMiddleware(dataGrant, context, { id: collectorOfAlice }, {}), undefined);
+    });
+
+    it('[CSD13] streams.update may trash the chat stream of an ended relationship, as streams.delete may', async () => {
+      const { factory } = fakeErrors();
+      const trash = { id: chatOfAlice, update: { trashed: true } };
+      const ended = createStreamUpdateReservedRootHook({ errors: factory, mall: mallWith([]) });
+      assert.equal(await runMiddleware(ended, context, trash, {}), undefined);
+      const live = createStreamUpdateReservedRootHook({ errors: factory, mall: mallWith([liveAccess]) });
+      assert.equal((await runMiddleware(live, context, trash, {}))?.details?.id, 'cmc-reserved-stream');
+      const noManage = { user: { id: 'u1' }, access: { isPersonal: () => false, canUpdateStream: async () => false } };
+      assert.equal((await runMiddleware(ended, noManage, trash, {}))?.details?.id, 'cmc-reserved-stream');
+      // The plugin's own parents stay refused.
+      assert.equal((await runMiddleware(ended, context, { id: ':_cmc:apps:my-app:study-A:chats', update: { trashed: true } }, {}))?.details?.id, 'cmc-reserved-stream');
+    });
   });
 
   describe('[CMCHOOK-PR] createEnsureReservedParentsHook', () => {

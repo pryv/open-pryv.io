@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import type { CmcLogger, CmcAccessLike as AccessLike } from './_types.ts';
-import { slugifyHost } from './slug.ts';
+import { slugifyHost, parseCounterpartySlug } from './slug.ts';
 
 /**
  * CMC plugin — which relationship does this event belong to?
@@ -36,13 +36,35 @@ import { slugifyHost } from './slug.ts';
  * remember.
  */
 
-// `<scope>:chats:<slug>` / `<scope>:collectors:<slug>` — captures the scope.
-const CHANNEL_STREAM_RE = /^(:_cmc:apps:[^:]+(?::[^:]+)*):(?:chats|collectors):[a-z0-9-]+--[a-z0-9-]+$/;
+// `<scope>:chats:<slug>` / `<scope>:collectors:<slug>` — captures the scope,
+// its app code and the counterparty slug.
+const CHANNEL_STREAM_RE = /^(:_cmc:apps:([^:]+)(?::[^:]+)*):(?:chats|collectors):([a-z0-9-]+--[a-z0-9-]+)$/;
 
 function scopeOfChannelStream (streamId: unknown): string | null {
   if (typeof streamId !== 'string') return null;
   const m = streamId.match(CHANNEL_STREAM_RE);
   return m == null ? null : m[1];
+}
+
+/**
+ * Parse a chats or collectors stream id: the relationship's scope, its app
+ * code and the counterparty. Null for any other stream id.
+ */
+function parseChannelStream (streamId: unknown): {
+  appCode: string;
+  scopeStreamId: string;
+  counterparty: { username: string; hostSlug: string };
+} | null {
+  if (typeof streamId !== 'string') return null;
+  const m = streamId.match(CHANNEL_STREAM_RE);
+  if (m == null) return null;
+  let counterparty;
+  try {
+    counterparty = parseCounterpartySlug(m[3]);
+  } catch (_e) {
+    return null;
+  }
+  return { appCode: m[2], scopeStreamId: m[1], counterparty };
 }
 
 /**
@@ -222,5 +244,6 @@ function selectRelationshipAccess (params: SelectParams): AccessLike | null {
 export {
   scopeOfAccess,
   scopeOfChannelStream,
+  parseChannelStream,
   selectRelationshipAccess,
 };

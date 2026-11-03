@@ -1656,7 +1656,7 @@ The group-account ids (`cmc-member-*`, `cmc-membership-permissions-invalid`) are
 - ~~`cmc-capability-ttl-out-of-range`~~, shipped (capability mint validates `expiresAt` against the per-mode bounds).
 - ~~`cmc-chat-disabled` / `cmc-system-messaging-disabled`~~, shipped (feature-gating enforced at send time on both `handleChat` + `handleSystem`).
 - ~~`cmc-clientdata-cmc-forbidden`~~, shipped (route-level forge prevention on `accesses.create` + `accesses.update`).
-- ~~`cmc-reserved-stream-undeletable`~~, shipped (route-level immutability guard on `streams.delete` for the five reserved CMC parents + `:_cmc:_internal:*` + plugin-managed `chats`/`collectors` segments).
+- ~~`cmc-reserved-stream-undeletable`~~, shipped (route-level immutability guard on `streams.delete` for the five reserved CMC parents + `:_cmc:_internal:*` + plugin-managed `chats`/`collectors` segments; a `chats:<slug>` / `collectors:<slug>` stream becomes deletable once its relationship has ended).
 
 ---
 

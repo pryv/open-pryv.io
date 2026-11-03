@@ -121,6 +121,21 @@
   registered with `http://localhost:<port>/<path>` now accepts any port too. A presented redirect URI
   containing a control character (tab, newline) is refused.
 
+### CMC: the chat stream of an ended relationship can be deleted
+
+- **Fixed: `streams.delete` on a `…:chats:<slug>` or `…:collectors:<slug>` stream once its
+  relationship has ended** (open-pryv.io#166). A revoke, from either side, leaves the chat and
+  collector streams and their events in place; deleting them answered `400 invalid-operation`
+  (`cmc-reserved-stream-undeletable`) for every token, so the former counterparty's slug and messages
+  could never be erased. They may now be deleted (trash, then delete, with `mergeEventsWithParent:
+  false`), or trashed with `streams.update`, by a token that may manage them once no relationship
+  access serves their scope and counterparty; an expired relationship access still counts, delete it
+  first. The collector stream also holds the owner's own alerts, scope requests and, when posted there,
+  the revoke record: deleting it erases those too. A stream trashed this way is restored if the same
+  peer accepts again under the same scope. Unchanged: while the relationship lasts they stay
+  undeletable, `mergeEventsWithParent: true` is refused (it would move the messages into the plugin's
+  `chats` / `collectors` parent), and the parents themselves stay reserved.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
