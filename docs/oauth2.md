@@ -457,7 +457,9 @@ through unchanged. Both name entries by **entry key**: `s|<streamId>|<level>`
 or `f|<feature>|<setting>`, or the level-less `s|<streamId>` / `f|<feature>`,
 which name the entry at whatever level the screen shows it (a consent UI
 looks up the exact key first, then the level-less one; the stream id is
-matched as spelled). `entryGroups` is an ordered array (the display order)
+matched as spelled). `entryGroups` is an ordered array (the display order of
+the groups; inside a group the entries are shown in the order of the offer's
+`permissions`, not of `entries`)
 of `{ "key": "…", "label": { "<lang>": "…" }, "entries": [ "<entry key>", … ] }`:
 at most 64 groups, a `key` of 1 to 64 characters unique in the offer, labels
 of at most 16 languages and 200 characters each, entry keys of at most 300

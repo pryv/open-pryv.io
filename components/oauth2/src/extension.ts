@@ -81,7 +81,9 @@
  * `{ [languageCode]: string }`.
  *
  * `entryGroups` (optional, display only; absent, not `null`): an ordered
- * array of `{ key, label, entries }`, the order being the display order;
+ * array of `{ key, label, entries }`, the order being the display order of
+ * the groups (inside a group, entries are shown in the order of the offer's
+ * `permissions`, not of `entries`);
  * `key` an opaque string of 1 to 64 characters, unique in the offer; `label`
  * a localised text (at most 16 languages, each at most 200 characters);
  * `entries` entry keys (each at most 300 characters). At most 64 groups and
