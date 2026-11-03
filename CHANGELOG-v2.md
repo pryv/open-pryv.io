@@ -34,6 +34,29 @@
   direction-override characters are removed, spaces trimmed, and it is cut at 200 characters.
   Memberships accepted earlier keep no name.
 
+### Backup restore: a restored account is no longer erased again
+
+- **Fixed: restoring an account that still had an erasure record kept that record.** Such a record
+  stays when an erasure stopped at a step (it waits to be completed) or when its removal failed after
+  the last step. After a restore of that account with `bin/backup.js --restore`, the auto-deletion
+  sweep (which completes unfinished erasures, also with `account.autoDeletion.enabled: false`)
+  completed the erasure on the restored account: for an erasure that had stopped half way, the
+  account and the data just restored were erased again. Until then, its CMC background work
+  (consent exchanges) was refused as for an account being erased. A restore now withdraws the erasure
+  record of each account it restores, before writing its data, and logs a warning naming the
+  withdrawn erasure (start, trigger, steps done). The records of accounts the restore does not
+  restore are kept and their erasures are completed as before.
+- **A restore of an account whose erasure is running at that moment is refused** (its record was
+  updated less than 15 minutes ago): nothing is restored; restore once that erasure has ended.
+- **The sweep no longer starts an erasure when the record it listed is gone at the account's turn**
+  (withdrawn by a restore meanwhile): it logs "nothing to complete" at info and leaves the account.
+- Accounts restored before this fix and still holding a record: on PostgreSQL,
+  `SELECT user_id, username, started_at, done_steps FROM account_erasures WHERE user_id IN (SELECT user_id FROM users_index);`
+  lists the records of accounts that exist (on SQLite, the `account_erasures` table of
+  `account-erasures.db` next to the users index). Such a record is either an erasure that stopped
+  and is still to be completed, or a restored account: deleting the row of a restored account keeps
+  it.
+
 ### CMC: nothing is written for an account erased while a consent operation runs
 
 - **Fixed: an account erased while one of its CMC operations was still running could leave a record

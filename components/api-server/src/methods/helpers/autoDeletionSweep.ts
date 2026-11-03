@@ -137,7 +137,7 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
       const guard = typeof first.data?.guard === 'string' ? first.data.guard : undefined;
       return { reason: objected.length > 0 ? 'deletion-guard' : 'guard-unavailable', message, guard };
     },
-    erase: (account, { trigger }) => deletion.eraseAccount(account, { teardown: true, trigger }),
+    erase: (account, { trigger, resume }) => deletion.eraseAccount(account, resume === true ? { teardown: true, resumeOnly: true } : { teardown: true, trigger }),
     recordErasure: (account, record) => auditErasure(config, account, record),
     now,
     logger,

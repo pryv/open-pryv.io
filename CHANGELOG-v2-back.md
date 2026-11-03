@@ -22,6 +22,27 @@
   without it; logged when over 1 s) and refilled after `deleteEvents`, so terms without rows drop out
   as before. The `'instance'` vocabulary with a skip-scan was tried: no faster. Test `[SQQP10]`.
 
+### Restore withdraws the erasure record of the accounts it restores
+
+- `RestoreOrchestrator`: `erasures` / `staleErasureMs` (set in `init()` from `getErasuresLocal()` /
+  `STALE_ERASURE_MS`; not set: not consulted). `_assertNoRunningErasure` refuses the whole restore
+  (`restoreAllUsers`: every user not skipped as a conflict; `restoreUser`: the target id) before any
+  write when a record is fresher than `STALE_ERASURE_MS`. `_withdrawStoppedErasure`, first thing in
+  `_restoreSingleUser`, takes the target id's record over with `claim` (compare-and-set) and deletes
+  it, warn line; a lost `claim` (an erasure resumed meanwhile) fails that account's restore. Only the
+  target id is touched (with `remapUserId`, the target, not the source).
+- `Deletion.eraseAccount(account, { resumeOnly })` now returns a boolean: with `resumeOnly`,
+  `openErasureRecord` finds no record of that id and username and the call returns false without
+  running a step (no new record, no heartbeat). The sweep's `completeErasures` calls
+  `erase(account, { resume: true })` and counts a false neither completed nor failed. Restore and a
+  completion race through the record: the restore's `claim` makes it fresh (the completion's
+  `openErasureRecord` answers "in progress"), the completion's `claim` makes the restore fail, a
+  withdrawn record makes the completion a no-op.
+- Not changed: the record is per core (never replicated). An account restored onto another core than
+  the one holding a stopped erasure of the same id is not covered: the record stays on that core,
+  whose sweep still completes the erasure there (when not done yet, its `deleteUser` step removes the
+  account's platform-wide rows), so withdraw such a record by hand before restoring elsewhere.
+
 ### CMC: background writes check the account first
 
 - `cmc/src/accountWriteGuard.ts`: `guardAccountWrites(mall, { accountStatus, logger })` wraps a mall

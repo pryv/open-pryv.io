@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 import type { PlatformDB, PlatformEntry } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { ExternalIdsService, ExternalIdRestoreSummary } from '../external-ids/service.ts';
+import type { ErasuresLocalDB } from '../../../../storages/interfaces/baseStorage/ErasuresLocalDB.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
@@ -82,6 +83,10 @@ class RestoreOrchestrator {
   usersRepository: { restoreAliases (username: string, userId: string, aliases: string[]): Promise<string[]> } | null = null;
   /** How long a restore waits for an attachment it does not restore to close (default 10 s; tests). */
   discardTimeoutMs: number | null = null;
+  /** The core's record of account erasures in progress (not set: not consulted). */
+  erasures: ErasureRecordsLike | null = null;
+  /** How long an erasure record stays untouched before its erasure counts as stopped (set with `erasures`). */
+  staleErasureMs = 0;
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -96,6 +101,9 @@ class RestoreOrchestrator {
     this.seriesConnection = storages.seriesConnection;
     const { getExternalIdsService } = await import('business/src/external-ids/service.ts');
     this.externalIds = await getExternalIdsService();
+    const { getErasuresLocal, STALE_ERASURE_MS } = await import('business/src/auth/erasures.ts');
+    this.erasures = await getErasuresLocal();
+    this.staleErasureMs = STALE_ERASURE_MS;
     const { getLogger } = require('@pryv/boiler');
     this.logger = getLogger('restore');
     await accountStreams.init();
@@ -147,6 +155,7 @@ class RestoreOrchestrator {
     }
 
     const conflictUserIds = new Set(conflicts.map(c => c.userId));
+    await this._assertNoRunningErasure(manifest.users.filter((u: UserManifest) => !conflictUserIds.has(u.userId)));
 
     for (const userManifest of manifest.users) {
       const { userId, username } = userManifest;
@@ -212,6 +221,7 @@ class RestoreOrchestrator {
     if (conflicts.length > 0 && !opts.overwrite) {
       throw new Error(`User ${username} conflicts with existing data: ${conflicts[0].reason}. Use --overwrite to replace.`);
     }
+    await this._assertNoRunningErasure([{ userId: targetUserId, username }]);
     const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
 
     const pendingExternalIds = await this._restoreSingleUser(reader, userId, username, opts, targetUserId);
@@ -276,6 +286,10 @@ class RestoreOrchestrator {
     targetUserId = targetUserId || userId;
 
     this.logger.info(`Restoring user: ${username} (${userId}${targetUserId !== userId ? ' -> ' + targetUserId : ''})`);
+
+    // Before anything is written: the auto-deletion sweep must not complete
+    // the account's erasure on what the restore brings back.
+    await this._withdrawStoppedErasure(targetUserId, username);
 
     // Ensure user exists in local index
     try {
@@ -431,6 +445,45 @@ class RestoreOrchestrator {
 
     this.logger.info(`User restored: ${username} (${targetUserId})`);
     return { userId: targetUserId, entries: externalIds };
+  }
+
+  /**
+   * Refuses the restore (nothing written) when an erasure of one of `users`
+   * is running now: its next steps would remove what the restore writes.
+   */
+  async _assertNoRunningErasure (users: Array<{ userId: string; username: string }>): Promise<void> {
+    if (this.erasures == null) return;
+    const running: string[] = [];
+    for (const { userId, username } of users) {
+      const record = await this.erasures.get(userId);
+      if (record != null && Date.now() - record.updatedAt < this.staleErasureMs) running.push(`${username} (${userId})`);
+    }
+    if (running.length > 0) {
+      throw new Error(`Restore aborted: an erasure of the account is running now for ${running.join(', ')}; restore once it ended. Nothing was restored.`);
+    }
+  }
+
+  /**
+   * Withdraw the record of an erasure of `userId` that stopped unfinished: a
+   * restored account is not an account to erase. Left in place, the
+   * auto-deletion sweep would complete that erasure on the restored account
+   * and its CMC background work would stay refused. The record is taken over
+   * first (compare-and-set on its last update), so an erasure resumed
+   * meanwhile is not cut short: the restore of the account then fails. Only
+   * the record of the account restored here is touched.
+   */
+  async _withdrawStoppedErasure (userId: string, username: string): Promise<void> {
+    if (this.erasures == null) return;
+    const record = await this.erasures.get(userId);
+    if (record == null) return;
+    const now = Date.now();
+    if (now - record.updatedAt < this.staleErasureMs || !(await this.erasures.claim(userId, record.updatedAt, now))) {
+      throw new Error(`User ${username} (${userId}) cannot be restored: an erasure of this account is running now; restore it once that erasure ended.`);
+    }
+    await this.erasures.delete(userId);
+    this.logger.warn(`Restoring user ${username} (${userId}): the erasure of this account that stopped unfinished ` +
+      `(started ${new Date(record.startedAt).toISOString()}, trigger ${record.trigger ?? 'unknown'}, steps done: ${record.doneSteps.join(', ') || 'none'}) ` +
+      'is withdrawn, the restored account is kept');
   }
 
   /**
@@ -823,6 +876,7 @@ type AuditStorageLike = {
   forUser (userId: string): Promise<{ importAllEvents (events: unknown[]): Promise<unknown> }>;
   deleteUser (userId: string): Promise<unknown>;
 };
+type ErasureRecordsLike = Pick<ErasuresLocalDB, 'get' | 'claim' | 'delete'>;
 type SeriesConnectionLike = {
   importDatabase (namespace: string, data: { measurements: unknown[] }): Promise<unknown>;
   dropDatabase (namespace: string): Promise<unknown>;

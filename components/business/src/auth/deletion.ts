@@ -35,6 +35,11 @@ type MethodContext = {
   erasureTrigger?: string;
   // The record of the erasure in progress (openErasureRecord).
   erasure?: AccountErasureRow;
+  // Set by eraseAccount({ resumeOnly }): complete an unfinished erasure, never
+  // start one. openErasureRecord sets `erasureNothingToResume` when there is
+  // no record of one any more (the account was restored meanwhile).
+  erasureResumeOnly?: boolean;
+  erasureNothingToResume?: boolean;
   // Names of the account that another account holds since an earlier attempt
   // freed them (a resumed erasure): their series and rows are not this one's.
   foreignNames?: Set<string>;
@@ -359,16 +364,21 @@ class Deletion {
    * record is still there) is completed instead: the steps it recorded as done
    * are skipped. `trigger` names what decided the erasure (e.g. an
    * auto-deletion's `date` or `inactivity`), kept in its record.
+   * `resumeOnly`: only complete an unfinished erasure; when the account has
+   * no record of one (any more), nothing is erased and the result is false.
    */
-  async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean; trigger?: string } = {}): Promise<void> {
+  async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean; trigger?: string; resumeOnly?: boolean } = {}): Promise<boolean> {
     const context: MethodContext = { user: { id: account.id, username: account.username } };
     context.erasureTrigger = options.trigger ?? 'system';
+    context.erasureResumeOnly = options.resumeOnly === true;
     const result: ResultBag = {};
     for (const step of this.erasureSteps(options)) {
       await new Promise<void>((resolve, reject) => {
         step(context, {}, result, (err?: unknown) => err != null ? reject(err) : resolve());
       });
+      if (context.erasureNothingToResume === true) return false;
     }
+    return true;
   }
 
   // The record of this erasure, in the core's storage the erasure does not
@@ -387,6 +397,12 @@ class Deletion {
       const now = Date.now();
       const existing = await store.get(context.user.id);
       let record: AccountErasureRow;
+      if (context.erasureResumeOnly === true && (existing == null || existing.username !== context.user.username)) {
+        // The unfinished erasure was withdrawn (its account restored) or
+        // completed meanwhile: never start a new one from here.
+        context.erasureNothingToResume = true;
+        return next();
+      }
       if (existing != null && existing.username === context.user.username) {
         if (now - existing.updatedAt < STALE_ERASURE_MS || !(await store.claim(context.user.id, existing.updatedAt, now))) {
           return next(inProgress());

@@ -146,8 +146,12 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   withdrawInvite: (account: SweepAccount, claimedBy: ClaimedBy) => Promise<void>;
   /** The deletion guards' objection, or null. Throws when the erasure cannot be attempted (an operator problem). */
   checkErasable: (account: SweepAccount) => Promise<Objection | null>;
-  /** Erases the account, or completes its unfinished erasure. */
-  erase: (account: SweepAccount, options: { trigger?: Trigger }) => Promise<void>;
+  /**
+   * Erases the account, or completes its unfinished erasure. With `resume`,
+   * only completes one: false when the account has no record of an
+   * unfinished erasure any more (nothing erased).
+   */
+  erase: (account: SweepAccount, options: { trigger?: Trigger; resume?: boolean }) => Promise<boolean | void>;
   /** Durable record of the erasure (an audit row that outlives the account), written before it starts. */
   recordErasure?: (account: SweepAccount, record: ErasureRecord) => Promise<void>;
   /** Pryv seconds. */
@@ -314,7 +318,12 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       const record = { username: p.username, userId: p.userId, trigger: p.trigger };
       logger.warn(`auto-deletion: completing the unfinished erasure of account "${p.username}" (${p.userId}), trigger ${p.trigger ?? 'unknown'}`, record);
       try {
-        await deps.erase(account, {});
+        // Never a new erasure: the record may have gone since it was listed
+        // (the account restored from a backup).
+        if (await deps.erase(account, { resume: true }) === false) {
+          logger.info(`auto-deletion: the unfinished erasure of account "${p.username}" (${p.userId}) is no longer recorded (the account was restored, or the erasure completed elsewhere): nothing to complete`);
+          continue;
+        }
       } catch (err) {
         ctx.result.failed++;
         logger.error(`auto-deletion: the erasure of account "${p.username}" (${p.userId}) failed again, completed on a later pass: ${errorText(err)}`);
