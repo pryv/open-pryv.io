@@ -51,9 +51,13 @@
   import, a later account failing in a whole-backup restore, or an account rolled back by
   `--verify-integrity`): the record returns with every step to run again and its former last
   update, and an error line names it. The account is left partly restored; the next sweep pass
-  completes the erasure, unless you run the restore again first (it is not refused as a running
-  erasure). In a whole-backup restore every erasure the run withdrew is put back, also for the
-  accounts restored before the failure (named in an error line).
+  (within `account.autoDeletion.sweepIntervalMs`, 6 hours by default, the first pass 10 minutes
+  after a start; sooner when a pass is due) completes the erasure, unless you run the restore again
+  first (it is not refused as a running erasure). In a whole-backup restore, an account restored
+  before the failure keeps its withdrawal: it is restored and is not erased (named in an error
+  line); only the account whose restore failed gets its record back. A restore killed before it can
+  report (process killed, out of memory, power loss) leaves the record withdrawn: run it again, or
+  erase the account.
 - **A restore without `--overwrite` of an account that still exists on this core is refused before
   its erasure record is touched** (as before, nothing is restored for it; its erasure is still
   completed).

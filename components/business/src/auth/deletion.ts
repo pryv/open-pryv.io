@@ -552,8 +552,8 @@ class Deletion {
           // Withdrawn or taken over meanwhile: no further step runs here.
           this.#stopHeartbeat(context);
           this.logger.error(`the erasure of account "${context.user.username}" (${context.user.id}) stops after step ${name}: ` +
-            'its record was withdrawn (the account restored) or taken over by another erasure meanwhile');
-          next(errors.invalidOperation('The erasure of this account was withdrawn or taken over meanwhile: stopped.', { userId: context.user.id }));
+            'its record was withdrawn (the account restored) or taken over by another erasure meanwhile, or could not be refreshed');
+          next(errors.invalidOperation('The erasure of this account was withdrawn or taken over meanwhile, or its record could not be refreshed: stopped.', { userId: context.user.id }));
         }, (e: unknown) => {
           // A step not recorded as done is run again on a resume, on data
           // already gone: every step accepts that.

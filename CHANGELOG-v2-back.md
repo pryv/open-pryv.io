@@ -36,13 +36,15 @@
 - `restoreAllUsers`: `_assertNoRunningErasure` checks every account it would restore before any
   write, and a running erasure refuses the whole run (nothing restored, nothing withdrawn); it does
   not skip that account and go on. Per-account failures after that point stop the run as before.
-- A failed restore puts the withdrawn records back: `restoreUser` / `restoreAllUsers` collect them
-  (`report.erasuresWithdrawn`, full rows) and, on any throw after the first withdrawal (an account,
-  the platform rows, external ids, aliases), call `rearmWithdrawnErasures(records, reason)`:
-  `insertIfAbsent` (a newer record is kept) of `{ ...record, doneSteps: [], lastError }` with the
-  original `updatedAt` (stale: the sweep completes it at its next pass, and a retried restore is not
-  refused for 15 minutes), error line per record. `doneSteps: []` because the restore wrote back
-  what the done steps had removed (a resume skips done steps); the teardown runs again too.
+- A failed account restore puts its withdrawn record back: `_restoreSingleUser` withdraws, then
+  imports the account (`_importUser`); on a throw there it calls
+  `rearmWithdrawnErasures([record], reason)`: `insertIfAbsent` (a newer record is kept) of
+  `{ ...record, doneSteps: [], lastError }` with the original `updatedAt` (stale: the sweep
+  completes it at its next pass, and a retried restore is not refused for 15 minutes), error line.
+  `doneSteps: []` because the restore wrote back what the done steps had removed (a resume skips
+  done steps); the teardown runs again too. Only an account whose import completed is added to
+  `report.erasuresWithdrawn` (full rows); its withdrawal stands when a later step of the run fails
+  (another account, the platform rows, external ids, aliases): it is restored and is not erased.
   `bin/backup.js --verify-integrity` calls it for the accounts it rolls back and drops them from the
   report's withdrawn list; the rollback now passes the username to `_clearUserData`, so the series
   of a rolled-back account are dropped too (they were left in place).
@@ -54,9 +56,10 @@
   "completing" warn line) and counts it neither completed nor failed. Restore and a completion race
   through the record: the restore's `claim` makes it fresh (the completion is a no-op), the
   completion's `claim` makes the restore fail, a withdrawn record makes the completion a no-op.
-- Record writes of a running erasure are conditional (`Deletion#updateRecord`): each step update,
-  the failure update and the heartbeat first `claim` the record on the `updatedAt` this erasure last
-  wrote, then `put`, one at a time per erasure (promise chain shared with the heartbeat). A lost
+- Record writes of a running erasure are conditional (`Deletion#updateRecord`): each step update
+  and the failure update first `claim` the record on the `updatedAt` this erasure last wrote, then
+  `put` the change; the heartbeat only claims. One at a time per erasure (promise chain shared with
+  the heartbeat). A lost
   `claim` sets `erasureLost`: the step stops the erasure with an `invalid-operation` error and an
   error line, and `closeErasureRecord` leaves the record alone. Before, an erasure frozen past
   `STALE_ERASURE_MS` that woke up after a takeover or a restore withdrawal wrote its record back

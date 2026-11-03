@@ -181,10 +181,9 @@ class RestoreOrchestrator {
       report.aliases = await this._restoreAliases(pendingAliases);
     } catch (err) {
       if (report.restored.length > 0) {
-        this.logger.error(`Restore stopped by a failure: the ${report.restored.length} account(s) restored before it are kept: ` +
+        this.logger.error(`Restore stopped by a failure: the ${report.restored.length} account(s) restored before it are kept (their withdrawn erasures, if any, stay withdrawn): ` +
           report.restored.map((u) => `${u.username} (${u.userId})`).join(', '));
       }
-      await this.rearmWithdrawnErasures(report.erasuresWithdrawn, errorMessage(err));
       throw err;
     }
 
@@ -235,20 +234,13 @@ class RestoreOrchestrator {
     const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
 
     const erasuresWithdrawn: AccountErasureRow[] = [];
-    let externalIds: ExternalIdRestoreSummary;
-    let aliases: AliasRestoreSummary;
-    try {
-      const pendingExternalIds = await this._restoreSingleUser(reader, userId, username, opts, targetUserId, erasuresWithdrawn);
+    const pendingExternalIds = await this._restoreSingleUser(reader, userId, username, opts, targetUserId, erasuresWithdrawn);
 
-      if (platformRead != null) {
-        await this._writePlatform(platformRead);
-      }
-      externalIds = await this._restoreExternalIds([pendingExternalIds]);
-      aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
-    } catch (err) {
-      await this.rearmWithdrawnErasures(erasuresWithdrawn, errorMessage(err));
-      throw err;
+    if (platformRead != null) {
+      await this._writePlatform(platformRead);
     }
+    const externalIds = await this._restoreExternalIds([pendingExternalIds]);
+    const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
 
     this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
     return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts, externalIds, aliases, erasuresWithdrawn };
@@ -312,11 +304,26 @@ class RestoreOrchestrator {
     }
 
     // Before anything is written: the auto-deletion sweep must not complete
-    // the account's erasure on what the restore brings back. The caller puts
-    // the record back if the restore fails (rearmWithdrawnErasures).
+    // the account's erasure on what the restore brings back. Put back if this
+    // account's restore fails; it stands once the account is restored, even
+    // when a later step of the run fails.
     const withdrawn = await this._withdrawStoppedErasure(targetUserId, username);
+    let pending: PendingExternalIds;
+    try {
+      pending = await this._importUser(reader, userId, username, opts, targetUserId);
+    } catch (err) {
+      if (withdrawn != null) await this.rearmWithdrawnErasures([withdrawn], errorMessage(err));
+      throw err;
+    }
     if (withdrawn != null) erasuresWithdrawn.push(withdrawn);
+    return pending;
+  }
 
+  /**
+   * Write one account's data from the backup (index entry, data, attachments,
+   * account fields, audit, series) and read its external ids.
+   */
+  async _importUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId: string): Promise<PendingExternalIds> {
     // Ensure user exists in local index
     try {
       await this.usersLocalIndex.addUser(username, targetUserId);
@@ -513,8 +520,9 @@ class RestoreOrchestrator {
   }
 
   /**
-   * Put back the erasure records a restore withdrew, once that restore failed
-   * or was rolled back (`reason`): the account is left partly restored, and
+   * Put back the erasure records a restore withdrew, once the restore of
+   * their account failed or was rolled back (`reason`): the account is left
+   * partly restored, and
    * the erasure decided for it must still complete. Every step runs again
    * (the restore wrote files, series and attachments back) and the record
    * keeps its last update, so the auto-deletion sweep completes it at its

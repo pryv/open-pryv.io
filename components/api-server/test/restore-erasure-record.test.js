@@ -458,13 +458,12 @@ describe('[RSER] restore of an account with an erasure record', function () {
     }
   });
 
-  it('[RSER11] a whole-backup restore that fails at a later account puts back every erasure it withdrew and names the accounts restored before', async function () {
+  it('[RSER11] a whole-backup restore that fails at a later account puts back the erasure of that account only: the accounts restored before keep their withdrawal', async function () {
     const a = await backedUpAccount();
     const b = await backedUpAccount();
     try {
       await stoppedErasure(a);
       await stoppedErasure(b);
-      const beforeA = await recordOf(a);
       const beforeB = await recordOf(b);
 
       const { o, lines } = await orchestrator();
@@ -474,17 +473,17 @@ describe('[RSER] restore of an account with an erasure record', function () {
       } finally {
         await reader.close();
       }
-      assertPutBack(await recordOf(a), beforeA);
+      assert.equal(await recordOf(a), null, 'the withdrawal of a restored account stands');
       assertPutBack(await recordOf(b), beforeB);
       assert.ok(lines.some((l) => l.level === 'error' && l.msg.includes('restored before it are kept') && l.msg.includes(a.username)), JSON.stringify(lines));
-      for (const u of [a, b]) {
-        assert.ok(lines.some((l) => l.level === 'error' && l.msg.includes('is put back') && l.msg.includes(u.username)), JSON.stringify(lines));
-      }
+      assert.ok(lines.some((l) => l.level === 'error' && l.msg.includes('is put back') && l.msg.includes(b.username)), JSON.stringify(lines));
+      assert.ok(!lines.some((l) => l.msg.includes('is put back') && l.msg.includes(a.username)), JSON.stringify(lines));
 
       const { result } = await completionPass([a, b]);
-      assert.equal(result.completed, 2);
-      assert.equal(await exists(a), false);
+      assert.equal(result.completed, 1);
+      assert.equal(await exists(a), true, 'the restored account is not erased');
       assert.equal(await exists(b), false);
+      assert.deepEqual(await afterRestore(a), EXPECTED);
     } finally {
       await cleanUp(a);
       await cleanUp(b);
