@@ -11,6 +11,7 @@ import { ApiEndpoint } from 'utils';
 import { getMall } from 'mall';
 import { getStorageLayer } from 'storage';
 import { getUsersRepository } from 'business/src/users/index.ts';
+import { getErasuresLocal } from 'business/src/auth/erasures.ts';
 import { getLogger } from '@pryv/boiler';
 import { deleteAccessChain } from './accessDeletion.ts';
 import { reconcileSessionsOfGrant } from './oauthSessionReconcile.ts';
@@ -115,4 +116,65 @@ async function buildMallForCmc (): Promise<MallLike> {
   return composed;
 }
 
-export { buildMallForCmc, invalidateCmcAccessCache };
+/**
+ * Whether the CMC background work may write for the account: 'active' while
+ * the users index names it and the core holds no erasure record for it,
+ * 'gone' once the index entry is removed, 'erasing' when the index still names
+ * it but an erasure has started (during the erasure's steps, or for good when
+ * an erasure stopped half way). The erasure writes its record before its
+ * first step and removes the index entry before any data, so a write this
+ * check allows lands either before the erasure's data removal (and is removed
+ * with the rest) or, at worst, when the whole erasure ran between this check
+ * and the write.
+ */
+async function cmcAccountStatus (userId: string): Promise<'active' | 'gone' | 'erasing'> {
+  const usersRepository = await getUsersRepository();
+  const [username, erasure] = await Promise.all([
+    usersRepository.getUsernameForUserId(userId),
+    (async () => (await getErasuresLocal()).get(userId))(),
+  ]);
+  if (username == null) return 'gone';
+  return erasure == null ? 'active' : 'erasing';
+}
+
+/**
+ * The accounts the CMC retry loop and member ledger pass visit: every account
+ * of the core but those with an erasure record. An account whose erasure
+ * stopped half way would otherwise have its queued deliveries re-sent on
+ * every tick, their bookkeeping writes being refused (see the guard below).
+ * One read of the erasures per tick.
+ */
+async function cmcLoopUserIds (): Promise<string[]> {
+  const usersRepository = await getUsersRepository();
+  const [users, erasures] = await Promise.all([
+    usersRepository.getAllUsersIdAndName(),
+    (async () => (await getErasuresLocal()).listAll())(),
+  ]);
+  const erasing = new Set(erasures.map((r: { userId: string }) => r.userId));
+  return users.map((u: { id: string }) => u.id).filter((id: string) => !erasing.has(id));
+}
+
+/**
+ * `mall` for the CMC work that runs outside the request that started it
+ * (dispatch, retry loop, member sweep, accesses post-hooks, delegation detach
+ * notice, stream-delete narrowing): its creates and updates are dropped for
+ * an account that is gone or being erased (see cmc's accountWriteGuard.ts).
+ * Request-time hooks keep the plain mall: they run for an account the request
+ * just authenticated.
+ */
+function guardCmcBackgroundWrites<M extends object> (mall: M): M {
+  return cmc.guardAccountWrites(mall, { accountStatus: cmcAccountStatus, logger: getLogger('cmc:account-guard') });
+}
+
+let cachedBackground: Promise<MallLike> | null = null;
+
+/** The composed mall of `buildMallForCmc`, guarded for background work. */
+function buildBackgroundMallForCmc (): Promise<MallLike> {
+  if (cachedBackground == null) {
+    cachedBackground = buildMallForCmc().then((m) => guardCmcBackgroundWrites(m));
+    cachedBackground.catch(() => { cachedBackground = null; });
+  }
+  return cachedBackground;
+}
+
+export { buildMallForCmc, buildBackgroundMallForCmc, guardCmcBackgroundWrites, cmcAccountStatus, cmcLoopUserIds, invalidateCmcAccessCache };

@@ -16,7 +16,7 @@ const sharedSecrets = require('shared-secrets');
 const emailsGuards = require('business/src/emails/guards.ts');
 const { isStreamOutOfNonPersonalReach } = require('business/src/accesses/canReadEvent.ts');
 const commonFns = require('./helpers/commonFunctions.ts');
-const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMallForCmc, buildBackgroundMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
 const methodsSchema = require('../schema/streamsMethods.ts');
 const streamSchema = require('../schema/stream.ts').default;
@@ -460,7 +460,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // patient cores, recorded on the parent stream). Called by deleteWithData
   // once every check passed, never for a refused delete nor for trashing.
   const cmcNarrowOnStreamDeleted = cmc.createStreamDeleteNarrowing({
-    mall: await buildMallForCmc(),
+    // Runs after the response, like the other post-response CMC work.
+    mall: await buildBackgroundMallForCmc(),
     memberSweep: await buildMemberSweep(),
     logger: getLogger('cmc:stream-delete-narrowing'),
   });

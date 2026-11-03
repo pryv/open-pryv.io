@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import type { CmcLogger, OutboundDeps, CmcAccessLike as AccessLike, MallEventsLike, MallAccessesLike } from './_types.ts';
 
 import type { MemberSweep } from './memberSweep.ts';
+import { isAccountGoneError } from './accountWriteGuard.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -204,10 +205,15 @@ function createAccessesUpdatePostHook (deps: PostHookDeps) {
         localAuditEventId = ev?.id;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        deps.logger?.warn?.('cmc/accessesUpdateHook: local audit-event create failed', {
-          accessId: after.id,
-          error: message,
-        });
+        // Expected when the account was erased meanwhile (the guard logged it).
+        if (isAccountGoneError(err)) {
+          deps.logger?.info?.('cmc/accessesUpdateHook: local audit-event not written, the account is erased', { accessId: after.id });
+        } else {
+          deps.logger?.warn?.('cmc/accessesUpdateHook: local audit-event create failed', {
+            accessId: after.id,
+            error: message,
+          });
+        }
       }
     }
 

@@ -252,6 +252,11 @@ function setPeerTransportForTests (fn: PeerTransport | null): void {
   transport = fn;
 }
 
+/** Tests: the transport in place, so a suite that replaces it can put it back. */
+function getPeerTransportForTests (): PeerTransport | null {
+  return transport;
+}
+
 export {
   MAX_PEER_RESPONSE_BYTES,
   PeerFetchRefusedError,
@@ -260,6 +265,7 @@ export {
   platformHostMatcher,
   describeCmcConfig,
   currentPeerSettings,
-  setPeerTransportForTests
+  setPeerTransportForTests,
+  getPeerTransportForTests
 };
 export type { PeerRefusalKind, PeerSettings, PeerFetchInit };

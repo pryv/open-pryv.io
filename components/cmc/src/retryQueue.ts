@@ -67,6 +67,7 @@ const C = require('./constants.ts');
 const { isRetryableFailure, isPeerAccessGone, postToPeer, stripCredentials, retryAfterOf } = require('./outbound.ts');
 const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 const { findDataGrantByAcceptEventId, hasBackChannel } = require('./handleAccept.ts');
+const { isAccountGoneError } = require('./accountWriteGuard.ts');
 
 const MAX_ATTEMPTS = 6;
 const MAX_DELAY_MS = 10 * 60 * 1000; // 10 min
@@ -1011,6 +1012,12 @@ async function runRetryLoop (params: {
       else if (r.outcome === 'failed-permanent') summary.failedPermanent += 1;
       else summary.skipped += 1;
     } catch (err: unknown) {
+      if (isAccountGoneError(err)) {
+        // The account was erased (or its erasure started) during this pass:
+        // nothing more is written for it, the next pass no longer visits it.
+        deps.logger?.info?.('cmc/retry: the account is erased, its queue is left', { retryEventId: ev.id });
+        break;
+      }
       deps.logger?.warn?.('cmc/retry: processing threw', {
         retryEventId: ev.id,
         error: String((err as Error)?.message || err),
