@@ -631,5 +631,23 @@ describe('[CMCDH] cmc/accessesDeleteHook', () => {
       assert.ok(errors.some((m) => m.includes('could not be queued')));
       assert.ok(errors.some((m) => m.includes('NOT notified')));
     });
+
+    it('[DH30] the account erased meanwhile: its own queue refuses the notice, the deletion outbox takes it', async () => {
+      const { guardAccountWrites } = require('../src/accountWriteGuard.ts');
+      const box = outbox();
+      const mall = fakeMallWithInvite();
+      const created = [];
+      mall.events.create = async (userId, params) => { created.push(params); return { id: 'r-1', ...params }; };
+      const guarded = guardAccountWrites(mall, { accountStatus: async () => 'gone' });
+      const errors = [];
+      const logger = { error: (m) => errors.push(m), warn () {}, debug () {}, info () {} };
+      const results = await createAccessesDeletePostHook({ fetch: fakeFetch({ status: 503, body: {} }).fetch, mall: guarded, enqueueRetries: true, deletionOutbox: box, logger })('u1', [REQUESTER_SIDE_ACCESS]);
+      assert.equal(results[0].deliveryQueued, true);
+      assert.equal(created.length, 0, 'nothing in the erased account');
+      assert.equal(box.rows.length, 1);
+      assert.equal(box.rows[0].deletedUserId, 'u1');
+      assert.equal(box.rows[0].body.type, 'consent/revoke-cmc');
+      assert.deepEqual(errors, []);
+    });
   });
 });

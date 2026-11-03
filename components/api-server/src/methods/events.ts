@@ -45,7 +45,7 @@ const { TypeRepository, isSeriesType } = require('business').types;
 const { getLogger, ready } = require('@pryv/boiler');
 const { getPlatform } = require('platform');
 const { getStorageLayer } = require('storage');
-const { buildMallForCmc, buildBackgroundMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMallForCmc, buildBackgroundMallForCmc, cmcLoopUserIds } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep, cmcSelfIdentityFor: sharedCmcSelfIdentityFor } = require('./helpers/cmcMemberSweep.ts');
 
 const { pubsub } = require('messages');
@@ -663,10 +663,10 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     deletionOutbox: getDeletionNoticesLocal,
     fetch: peerFetch,
     logger: getLogger('cmc:retry-loop'),
-    userIdsProvider: async () => {
-      const users = await usersRepository.getAllUsersIdAndName();
-      return users.map((u: { id: string }) => u.id);
-    },
+    // Accounts with an erasure in progress (or stopped half way) are skipped:
+    // their writes are refused, so their queued work would be replayed on
+    // every tick.
+    userIdsProvider: cmcLoopUserIds,
   }) as CmcRetryLoopHandle;
   // The schedulers drain at shutdown (an in-flight tick finishes, no new one
   // starts); the worker has no other shutdown path. A signal listener

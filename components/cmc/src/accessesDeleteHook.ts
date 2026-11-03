@@ -57,6 +57,7 @@ import * as relationshipKey from './relationshipKey.ts';
 import * as inviteState from './inviteState.ts';
 import * as acceptWithdrawal from './acceptWithdrawal.ts';
 import * as retryQueue from './retryQueue.ts';
+import { isAccountGoneError } from './accountWriteGuard.ts';
 import type { OutboundDeps, CmcAccessLike, MallLike } from './_types.ts';
 import type { MemberSweep } from './memberSweep.ts';
 import type { DeletionOutbox } from './retryQueue.ts';
@@ -80,7 +81,9 @@ type DeleteHookDeps = OutboundDeps & {
   // wiring that forgets the flag fails safe).
   enqueueRetries?: boolean;
   // Account deletion (no `mall`: the account's own queue is being erased): the
-  // core-level outbox the notice is queued in instead, same gate.
+  // core-level outbox the notice is queued in instead, same gate. With a
+  // `mall` too, the fallback when the account's own queue refuses the notice
+  // because the account was erased meanwhile.
   deletionOutbox?: Pick<DeletionOutbox, 'insert'>;
 };
 
@@ -286,26 +289,36 @@ function createAccessesDeletePostHook (deps: DeleteHookDeps) {
         : deps.mall?.events?.create != null ? 'user' : deps.deletionOutbox != null ? 'deletion-outbox' : null;
       if (!delivered && retryable && queue != null) {
         const failureDetail = lastRetryAfterMs != null ? { status: lastStatus, retryAfterMs: lastRetryAfterMs } : { status: lastStatus };
+        const toOutbox = () => retryQueue.enqueueDeletionNotice({
+          deletedUserId: userId,
+          accessId: access.id,
+          delivery: { apiEndpoint, path: 'events', body },
+          failureReason: lastReason,
+          failureDetail,
+          deps: { outbox: deps.deletionOutbox!, logger: deps.logger },
+        });
         try {
           if (queue === 'user') {
-            await retryQueue.enqueueDelivery({
-              userId,
-              delivery: { apiEndpoint, path: 'events', body },
-              originalEventId: null,
-              originalType: C.ET_REVOKE,
-              failureReason: lastReason,
-              failureDetail,
-              deps: { mall: deps.mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
-            });
+            try {
+              await retryQueue.enqueueDelivery({
+                userId,
+                delivery: { apiEndpoint, path: 'events', body },
+                originalEventId: null,
+                originalType: C.ET_REVOKE,
+                failureReason: lastReason,
+                failureDetail,
+                deps: { mall: deps.mall as unknown as Parameters<typeof retryQueue.enqueueDelivery>[0]['deps']['mall'], logger: deps.logger },
+              });
+            } catch (err: unknown) {
+              // The account was erased meanwhile (or its erasure started): its
+              // own queue takes nothing, the core's deletion outbox does, as
+              // for the notices of the erasure itself.
+              if (!isAccountGoneError(err) || deps.deletionOutbox == null) throw err;
+              await toOutbox();
+              deps.logger?.info?.('cmc/accessesDeleteHook: the account is erased, the revoke notice is queued in the deletion outbox', { accessId: access.id });
+            }
           } else {
-            await retryQueue.enqueueDeletionNotice({
-              deletedUserId: userId,
-              accessId: access.id,
-              delivery: { apiEndpoint, path: 'events', body },
-              failureReason: lastReason,
-              failureDetail,
-              deps: { outbox: deps.deletionOutbox!, logger: deps.logger },
-            });
+            await toOutbox();
           }
           deliveryQueued = true;
         } catch (err: unknown) {

@@ -4,22 +4,42 @@
 
 ### CMC: background writes check the account first
 
-- `cmc/src/accountWriteGuard.ts`: `guardAccountWrites(mall, { accountActive, logger })` wraps a mall
-  (Proxy, groups bound to themselves) so `events.create|update|updateWithMerge`,
-  `streams.create|update` and `accesses.create|update` first await `accountActive(userId)`; when false
-  the write rejects with `AccountGoneError` (`code: 'cmc-account-gone'`, `isAccountGoneError`) and an
-  info line names the operation and the record (id, type, streams), never its content. Reads and
-  deletes pass through.
-- api-server `helpers/cmcMall.ts`: `cmcAccountActive` = the users index names the id AND the core
-  holds no erasure record for it (`getErasuresLocal().get`), so the guard closes from the first step
-  of an erasure; `buildBackgroundMallForCmc()` / `guardCmcBackgroundWrites(mall)` give the guarded
-  mall to the dispatch middleware, the retry loop, the member sweep, the accesses.update and
-  accesses.delete post-hooks and the delegation detach notice. Request-time hooks keep the plain mall.
-- `dispatch.ts`: the delivered / completed / failed stamps and the retry enqueue log a refused write
-  at info (`<message>: the account is erased`, with the trigger id) instead of warn.
+- `cmc/src/accountWriteGuard.ts`: `guardAccountWrites(mall, { accountStatus, logger })` wraps a mall
+  (Proxy, groups bound to themselves, one stable function per method) so
+  `events.create|update|updateWithMerge`, `streams.create|update` and `accesses.create|update` first
+  await `accountStatus(userId)` (`'active' | 'gone' | 'erasing'`); otherwise the write rejects with
+  `AccountGoneError` (`code: 'cmc-account-gone'`, `isAccountGoneError`). The line names the operation
+  and the record (id, type; not its streams, whose ids can name the counterparty, nor its content):
+  info for `gone`, warn for `erasing` (at most once per account per 10 min in a process, info
+  otherwise). Reads and deletes pass through.
+- api-server `helpers/cmcMall.ts`: `cmcAccountStatus` = `gone` without a users-index entry, `erasing`
+  with an entry and an erasure record (`getErasuresLocal().get`), `active` otherwise, so the guard
+  closes from the first step of an erasure. `buildBackgroundMallForCmc()` (promise-cached) /
+  `guardCmcBackgroundWrites(mall)` give the guarded mall to the dispatch middleware, the retry loop,
+  the member sweep, the accesses.update and accesses.delete post-hooks, the delegation detach notice
+  and the stream-delete narrowing. Request-time hooks keep the plain mall. `cmcLoopUserIds()` (the
+  retry loop's and ledger pass's `userIdsProvider`) leaves out every id with an erasure record (one
+  `listAll()` per tick): an erasure stopped half way would otherwise have its queued deliveries re-sent
+  every tick, their bookkeeping writes being refused.
+- Expected refusals are not reported as faults: `dispatch.ts` (stamps, retry enqueue), the retry
+  loop (`runRetryLoop` leaves the account for this pass at info instead of warning per record), the
+  member sweep record and the accesses.update audit event log them at info.
+- `accessesDeleteHook`: when the account's own queue refuses a revoke notice (account erased
+  meanwhile), the notice goes to the core's deletion outbox (`deletionOutbox`, now also wired into the
+  accesses.delete hook and the delegation detach notice).
+- Not done, residue: on SQLite with `audit.onUserDelete: keep`, a read by late work still opens (and so
+  creates, empty) the account and base databases in the kept directory. Refusing new per-user files
+  for an id marked erased in the process breaks a restore of that id into a running core (the mark
+  outlives the restore), so it needs a persistent marker that a restore clears.
+- `business` `peerFetch.getPeerTransportForTests()`: a suite that replaces the test transport puts the
+  previous one back.
 - Residual window, by design: a write whose check passed lands after the erasure's data removal only
   if the whole erasure (record, teardown, files, index entry, data) ran between the check and the
-  write. The erasure does not wait for or cancel in-flight work (it may run on another worker).
+  write; for an erasure without teardown (`eraseAccount({ teardown: false })`, a plain
+  `repository.deleteOne`) that is only an index delete and a data delete. The same residual window
+  applies to a grant minted while the teardown runs (the teardown reads the relationships before the
+  grant lands, so no revoke notice is sent for it). The erasure does not wait for or cancel in-flight
+  work (it may run on another worker). A storage-level refusal would close it for every writer.
 
 ### OAuth extension: grouped consent entries, offer size bound
 

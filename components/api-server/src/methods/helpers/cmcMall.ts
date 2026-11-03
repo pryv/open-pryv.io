@@ -117,36 +117,64 @@ async function buildMallForCmc (): Promise<MallLike> {
 }
 
 /**
- * True while the account exists and no erasure of it has started: the users
- * index names it and the core holds no erasure record for it. The erasure
- * writes its record before its first step and removes the index entry before
- * any data, so a write this check allows lands either before the erasure's
- * data removal (and is removed with the rest) or, at worst, when the whole
- * erasure ran between this check and the write.
+ * Whether the CMC background work may write for the account: 'active' while
+ * the users index names it and the core holds no erasure record for it,
+ * 'gone' once the index entry is removed, 'erasing' when the index still names
+ * it but an erasure has started (during the erasure's steps, or for good when
+ * an erasure stopped half way). The erasure writes its record before its
+ * first step and removes the index entry before any data, so a write this
+ * check allows lands either before the erasure's data removal (and is removed
+ * with the rest) or, at worst, when the whole erasure ran between this check
+ * and the write.
  */
-async function cmcAccountActive (userId: string): Promise<boolean> {
+async function cmcAccountStatus (userId: string): Promise<'active' | 'gone' | 'erasing'> {
   const usersRepository = await getUsersRepository();
-  if ((await usersRepository.getUsernameForUserId(userId)) == null) return false;
-  return (await (await getErasuresLocal()).get(userId)) == null;
+  const [username, erasure] = await Promise.all([
+    usersRepository.getUsernameForUserId(userId),
+    (async () => (await getErasuresLocal()).get(userId))(),
+  ]);
+  if (username == null) return 'gone';
+  return erasure == null ? 'active' : 'erasing';
+}
+
+/**
+ * The accounts the CMC retry loop and member ledger pass visit: every account
+ * of the core but those with an erasure record. An account whose erasure
+ * stopped half way would otherwise have its queued deliveries re-sent on
+ * every tick, their bookkeeping writes being refused (see the guard below).
+ * One read of the erasures per tick.
+ */
+async function cmcLoopUserIds (): Promise<string[]> {
+  const usersRepository = await getUsersRepository();
+  const [users, erasures] = await Promise.all([
+    usersRepository.getAllUsersIdAndName(),
+    (async () => (await getErasuresLocal()).listAll())(),
+  ]);
+  const erasing = new Set(erasures.map((r: { userId: string }) => r.userId));
+  return users.map((u: { id: string }) => u.id).filter((id: string) => !erasing.has(id));
 }
 
 /**
  * `mall` for the CMC work that runs outside the request that started it
- * (dispatch, retry loop, member sweep, accesses post-hooks): its creates and
- * updates are dropped for an account that is gone (see cmc's
- * accountWriteGuard.ts). Request-time hooks keep the plain mall: they run for
- * an account the request just authenticated.
+ * (dispatch, retry loop, member sweep, accesses post-hooks, delegation detach
+ * notice, stream-delete narrowing): its creates and updates are dropped for
+ * an account that is gone or being erased (see cmc's accountWriteGuard.ts).
+ * Request-time hooks keep the plain mall: they run for an account the request
+ * just authenticated.
  */
 function guardCmcBackgroundWrites<M extends object> (mall: M): M {
-  return cmc.guardAccountWrites(mall, { accountActive: cmcAccountActive, logger: getLogger('cmc:account-guard') });
+  return cmc.guardAccountWrites(mall, { accountStatus: cmcAccountStatus, logger: getLogger('cmc:account-guard') });
 }
 
-let cachedBackground: MallLike | null = null;
+let cachedBackground: Promise<MallLike> | null = null;
 
 /** The composed mall of `buildMallForCmc`, guarded for background work. */
-async function buildBackgroundMallForCmc (): Promise<MallLike> {
-  if (cachedBackground == null) cachedBackground = guardCmcBackgroundWrites(await buildMallForCmc());
+function buildBackgroundMallForCmc (): Promise<MallLike> {
+  if (cachedBackground == null) {
+    cachedBackground = buildMallForCmc().then((m) => guardCmcBackgroundWrites(m));
+    cachedBackground.catch(() => { cachedBackground = null; });
+  }
   return cachedBackground;
 }
 
-export { buildMallForCmc, buildBackgroundMallForCmc, guardCmcBackgroundWrites, cmcAccountActive, invalidateCmcAccessCache };
+export { buildMallForCmc, buildBackgroundMallForCmc, guardCmcBackgroundWrites, cmcAccountStatus, cmcLoopUserIds, invalidateCmcAccessCache };

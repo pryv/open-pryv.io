@@ -62,7 +62,7 @@ describe('[CMCWG] cmc account write guard', () => {
     it('[WG01] writes for an active account reach the mall, with the group as `this`', async () => {
       const events = new FakeEvents();
       const { accesses, streams } = fakeGroups();
-      const guarded = guardAccountWrites({ events, accesses, streams }, { accountActive: async () => true });
+      const guarded = guardAccountWrites({ events, accesses, streams }, { accountStatus: async () => 'active' });
       const created = await guarded.events.create('u1', { type: 'note/txt', streamIds: ['s'], content: 'x' });
       await guarded.events.update('u1', { ...created, content: 'y' });
       const merged = await guarded.events.updateWithMerge('u1', created.id, (row) => ({ ...row, content: 'z' }));
@@ -77,7 +77,7 @@ describe('[CMCWG] cmc account write guard', () => {
       const events = new FakeEvents();
       const groups = fakeGroups();
       const logger = recordingLogger();
-      const guarded = guardAccountWrites({ events, accesses: groups.accesses, streams: groups.streams }, { accountActive: async () => false, logger });
+      const guarded = guardAccountWrites({ events, accesses: groups.accesses, streams: groups.streams }, { accountStatus: async () => 'gone', logger });
       const content = { capabilityUrl: 'https://' + SECRET + '@peer.example.com/' };
       const attempts = [
         () => guarded.events.create('u1', { type: 'cmc-internal/retry-cmc', streamIds: [':_cmc:_internal:retries'], content }),
@@ -97,7 +97,9 @@ describe('[CMCWG] cmc account write guard', () => {
       assert.deepEqual(logger.lines.info.map((l) => l.data.operation), [
         'events.create', 'events.update', 'events.updateWithMerge', 'accesses.create', 'accesses.update', 'streams.create', 'streams.update',
       ]);
-      assert.deepEqual(logger.lines.info[0].data, { userId: 'u1', operation: 'events.create', type: 'cmc-internal/retry-cmc', streamIds: [':_cmc:_internal:retries'] });
+      // Id and type only: stream ids can name the counterparty.
+      assert.deepEqual(logger.lines.info[0].data, { userId: 'u1', operation: 'events.create', type: 'cmc-internal/retry-cmc' });
+      assert.deepEqual(logger.lines.warn, []);
       assert.deepEqual(logger.lines.info[2].data, { userId: 'u1', operation: 'events.updateWithMerge', id: 'e1' });
       assert.ok(!JSON.stringify(logger.lines).includes(SECRET), 'a credential reached the log');
     });
@@ -106,7 +108,7 @@ describe('[CMCWG] cmc account write guard', () => {
       const events = new FakeEvents();
       const groups = fakeGroups();
       let checks = 0;
-      const guarded = guardAccountWrites({ events, accesses: groups.accesses, streams: groups.streams }, { accountActive: async () => { checks += 1; return false; } });
+      const guarded = guardAccountWrites({ events, accesses: groups.accesses, streams: groups.streams }, { accountStatus: async () => { checks += 1; return 'gone'; } });
       await guarded.events.get('u1', {});
       await guarded.events.getOne('u1', 'e1');
       await guarded.events.delete('u1', { id: 'e1' });
@@ -120,7 +122,7 @@ describe('[CMCWG] cmc account write guard', () => {
 
     it('[WG04] a check that fails rejects with its own error and writes nothing', async () => {
       const events = new FakeEvents();
-      const guarded = guardAccountWrites({ events }, { accountActive: async () => { throw new Error('index unavailable'); } });
+      const guarded = guardAccountWrites({ events }, { accountStatus: async () => { throw new Error('index unavailable'); } });
       await assert.rejects(() => guarded.events.create('u1', { type: 'note/txt' }), (err) => err.message === 'index unavailable' && !isAccountGoneError(err));
       assert.deepEqual(events.calls, []);
     });
@@ -133,7 +135,7 @@ describe('[CMCWG] cmc account write guard', () => {
         get streams () { return groups.streams; },
         accesses: groups.accesses,
       };
-      const guarded = guardAccountWrites(composed, { accountActive: async () => false });
+      const guarded = guardAccountWrites(composed, { accountStatus: async () => 'gone' });
       const copy = { ...guarded, accesses: { ...guarded.accesses, getOne: async () => null } };
       await assert.rejects(() => copy.events.create('u1', {}), isAccountGoneError);
       await assert.rejects(() => copy.accesses.create('u1', {}), isAccountGoneError);
@@ -143,9 +145,31 @@ describe('[CMCWG] cmc account write guard', () => {
       assert.deepEqual(groups.calls, []);
     });
 
+    it('[WG09] an erasure under way on an existing account: refused, warned once per account, then info', async () => {
+      const events = new FakeEvents();
+      const logger = recordingLogger();
+      const guarded = guardAccountWrites({ events }, { accountStatus: async () => 'erasing', logger });
+      for (const userId of ['u1', 'u1', 'u2']) {
+        await assert.rejects(() => guarded.events.create(userId, { type: 'note/txt' }), isAccountGoneError);
+      }
+      assert.deepEqual(logger.lines.warn.map((l) => l.data.userId), ['u1', 'u2']);
+      assert.ok(logger.lines.warn[0].msg.includes('not finished'));
+      assert.deepEqual(logger.lines.info.map((l) => l.data.userId), ['u1']);
+      assert.deepEqual(events.calls, []);
+    });
+
+    it('[WG10] a method read twice is the same function; a method replaced on the group is picked up', async () => {
+      const events = new FakeEvents();
+      const guarded = guardAccountWrites({ events }, { accountStatus: async () => 'active' });
+      assert.equal(guarded.events.get, guarded.events.get);
+      assert.equal(guarded.events.create, guarded.events.create);
+      events.getOne = async () => 'replaced';
+      assert.equal(await guarded.events.getOne('u1', 'x'), 'replaced');
+    });
+
     it('[WG06] a mall without some groups or methods keeps them absent', async () => {
       const events = new FakeEvents();
-      const guarded = guardAccountWrites({ events }, { accountActive: async () => true });
+      const guarded = guardAccountWrites({ events }, { accountStatus: async () => 'active' });
       assert.equal(guarded.accesses, undefined);
       assert.equal(guarded.events.notAMethod, undefined);
     });
@@ -200,7 +224,7 @@ describe('[CMCWG] cmc account write guard', () => {
           const body = answer === 'offer' ? { events: [OFFER] } : { error: { id: 'unknown-resource' } };
           return { status, ok: status === 200, async json () { return body; }, async text () { return JSON.stringify(body); } };
         };
-        const guarded = guardAccountWrites(mall, { accountActive: async () => active, logger });
+        const guarded = guardAccountWrites(mall, { accountStatus: async () => (active ? 'active' : 'gone'), logger });
         const event = { id: 'evt-accept', type: 'consent/accept-cmc', streamIds: [':_cmc:apps:example-app'], content: { capabilityUrl: 'https://' + SECRET + '@peer.example.com/' } };
         mall.seed(event);
         const r = await dispatchMod.dispatch({

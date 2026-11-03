@@ -1097,6 +1097,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     memberSweep: cmcMemberSweep,
     sweepReason: 'accesses.delete',
     enqueueRetries: config.get('cmc:retryLoop:enabled') === true,
+    // A notice the account's own queue refuses (account erased meanwhile).
+    deletionOutbox: { insert: async (row: DeletionNoticeRow) => (await getDeletionNoticesLocal()).insert(row) },
   });
 
   // Account deletion: the account's CMC relationship accesses are erased with

@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 
 import type { MethodNext } from './_types.ts';
+import type { DeletionNoticeRow } from 'storages/interfaces/baseStorage/DeletionNoticesLocalDB.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 
@@ -38,6 +39,7 @@ const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const { fromCallback } = require('utils');
 const { buildMallForCmc, buildBackgroundMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
+const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.ts');
 const { selfIdentityHost } = require('./helpers/selfIdentityHost.ts');
 const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery, setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
@@ -418,8 +420,10 @@ export default async function produceDelegationsApiMethods (api: { register (...
     memberSweep: await buildMemberSweep(),
     sweepReason: 'detach',
     // A requester that cannot be reached gets the notice queued for the
-    // retry loop, when it runs.
+    // retry loop, when it runs; in the core's deletion outbox when the
+    // account's own queue refuses it (account erased meanwhile).
     enqueueRetries: config.get('cmc:retryLoop:enabled') === true,
+    deletionOutbox: { insert: async (row: DeletionNoticeRow) => (await getDeletionNoticesLocal()).insert(row) },
   });
   function notifyConsentGrantsRevoked (bUserId: string, grants: unknown[]): void {
     Promise.resolve()
