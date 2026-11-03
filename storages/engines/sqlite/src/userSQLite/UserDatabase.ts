@@ -120,19 +120,24 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   // expanded by every events.get that names their parents). Read from the
   // full-text vocabulary, a listing decoded every posting of those terms: two
   // per audit row, ~50-130 ms per call on 2M rows. Kept here instead, filled
-  // on insert, and from the vocabulary once when the table is new.
-  const hadTerms = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events_terms'").get() != null;
+  // on insert, and from the vocabulary once when the table is new. Exact for
+  // rows inserted and deleted (an audit log); not maintained on updates.
+  // The table is created and filled in one transaction: a stop in between
+  // must not leave it existing and empty for good.
+  const t0 = Date.now();
+  let filled = false;
   await concurrentSafeWrite.execute(() => {
-    this.db.prepare('CREATE TABLE IF NOT EXISTS events_terms (term TEXT PRIMARY KEY) WITHOUT ROWID').run();
+    this.db.transaction(() => {
+      if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events_terms'").get() != null) return;
+      this.db.prepare('CREATE TABLE events_terms (term TEXT PRIMARY KEY) WITHOUT ROWID').run();
+      fillTerms(this);
+      filled = true;
+    }).immediate();
   });
+  const elapsed = Date.now() - t0;
+  if (filled && elapsed > 1000) this.logger.info(`listed the access / action terms in ${elapsed} ms (once per database)`);
   this.eventQueries.getTerms = this.db.prepare('SELECT term FROM events_terms WHERE term >= ? AND term < ? ORDER BY term');
   this.eventQueries.addTerm = this.db.prepare('INSERT OR IGNORE INTO events_terms (term) VALUES (?)');
-  if (!hadTerms) {
-    const t0 = Date.now();
-    await rebuildTerms(this);
-    const elapsed = Date.now() - t0;
-    if (elapsed > 1000) this.logger.info(`listed the access / action terms in ${elapsed} ms (once per database)`);
-  }
 
   // Head events only: a history version is a row of its own (headId set), never
   // addressed by its own id (same as the PostgreSQL engine's `head_id IS NULL`).
@@ -164,13 +169,17 @@ function termsOf (streamIds: unknown): string[] {
   return out;
 }
 
+function fillTerms (udb: UserDatabaseInstance): void {
+  const fill = udb.db.prepare('INSERT OR IGNORE INTO events_terms (term) SELECT term FROM events_fts_v WHERE term >= ? AND term < ?');
+  for (const [from, to] of TERM_RANGES) fill.run(from, to);
+}
+
 /** Refill `events_terms` from the full-text vocabulary (terms with no row left drop out). */
 async function rebuildTerms (udb: UserDatabaseInstance): Promise<void> {
   await concurrentSafeWrite.execute(() => {
     udb.db.transaction(() => {
       udb.db.prepare('DELETE FROM events_terms').run();
-      const fill = udb.db.prepare('INSERT OR IGNORE INTO events_terms (term) SELECT term FROM events_fts_v WHERE term >= ? AND term < ?');
-      for (const [from, to] of TERM_RANGES) fill.run(from, to);
+      fillTerms(udb);
     })();
   });
 }
