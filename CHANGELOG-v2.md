@@ -1,6 +1,24 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.71 - 2026-11-03
+
+> **Upgrade advice for operators.** Before deploying: (1) if any registry OAuth client has a
+> `logoUri`, set `oauth:logoHosts` on every core BEFORE switching to 2.0.0-rc.71 (the hosts of those
+> logos, identical on every core): without it no logo is served and `--logo-uri` is refused;
+> (2) remove `oauth:requireAppAccountMfa` from the configuration: it was never enforced and a core
+> where it is still set logs a warning at boot. After deploying: (3) a change of a vetted field made
+> with `bin/oauth-client.js update` (redirect URIs, scope, keys, auth method, assertion algorithms,
+> grant types, audiences, features, introspection role, lifetimes) now moves an active registry
+> client to `review` unless the same command carries `--approve`, and a client under review or
+> suspended is now also refused by the data API (within `oauth:clientRevokeCheckSeconds`): add
+> `--approve` to the updates you make on vetted clients; (4) after a `revoke`, or a `suspend` whose
+> users' grants should go too, run `node bin/oauth-client.js purge-grants <clientId> --yes` on each
+> core (the CLI prints it as the next step); (5) check the boot log for registry clients whose
+> registered scope breaks the new offer bounds (256 KiB, entry groups): such a client is refused on
+> every request. No schema migration in this release, so `migrations.autoRunOnStart: false` needs no
+> step; a core upgraded from a release before 2.0.0-rc.70 still needs that release's
+> `accesses.last_login` migration (`node bin/migrate.js up` before switching when `autoRunOnStart` is
+> false). See "BREAKING" in the entries below.
 
 ### OAuth: grouped consent entries
 
