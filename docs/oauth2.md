@@ -49,7 +49,8 @@ uniform `401 invalid_client`. Any core answers for any OAuth session token: a
 session living on another core answers `421 { "error": "wrong_core",
 "coreUrl": "<home core>" }` (ask there); the home core re-reads the session and
 answers `{ "active": false }` when it is deleted, expired, its consent grant is
-gone or its client is revoked, suspended or gone. An active answer carries the
+gone or its client is revoked, suspended, under review, gone or not served in
+this core's region (§ 3b). An active answer carries the
 RFC members (`scope`, for a registry client's session: the same scope answer as
 the token endpoint, recomputed from the session as it stands; omitted for an
 app-account session; `client_id`, `exp`, `iat`, `sub`, `iss`,
@@ -288,7 +289,8 @@ be intersected with them.
 - A registry client's registered `scope` is its **maximum scope set**, parsed
   by the same grammar. A request beyond it answers `invalid_scope`.
 - Whatever the grammar answers, the core refuses (`invalid_scope`) account and
-  system streams, every stream (`*`), the `manage` level, two permissions on
+  system streams, every stream (`*`), the `manage` level, an exclusion mask
+  (level `none`), two permissions on
   one stream in one offer, a token the client did not send, an offer of
   more than 1000 permissions, an offer over 256 KiB of JSON (labels and texts
   included) and malformed `entryGroups` (below). It removes `defaultName` /
@@ -466,10 +468,10 @@ user's grant holds outside the request falls into its group on a
 re-consent); an entry no group names is shown ungrouped. Grouping is display
 only: it is part of the offer's digest and of `shownDigest`, never removes
 an entry from the screen, and `/oauth2/authorize/accept` still takes a flat
-`grantedPermissions`. The signed-out offer is the
-request as parsed; client defaults (forbidden features) and the current grant
-appear only on the signed-in composed offer, which is the authoritative screen
-(next section). `/offer` and `/oauth2/authorize/accept` re-derive the offer
+`grantedPermissions`. The signed-out `/offer` answers the request as
+parsed, never the composition: client defaults
+(forbidden features) and the current grant appear only on the signed-in
+composed offer, which is the authoritative screen (next section). `/offer` and `/oauth2/authorize/accept` re-derive the offer
 from the request; a state whose client or grammar changed since
 `/oauth2/authorize` is refused with `invalid_request` (or `invalid_scope` when
 the new registration no longer covers the request): restart the flow.
@@ -566,6 +568,14 @@ never on the wording; render errors without one generically.
   that introduced it**: a client whose sessions create accesses, webhooks or
   CMC capability requests (invites) must be updated with `--allow-feature accessCreation` BEFORE that release is
   deployed, or each user's next consent locks the forbid onto their grant.
+- **Exclusion masks (a stream at level `none`) never come from a consent.** A
+  consent offer carrying one is refused (from the extension's grammar:
+  `invalid_scope` at `/oauth2/authorize`; at `/oauth2/authorize/accept`:
+  `400 invalid_scope`, "consent offer is invalid"). A registry grant holds masks only when the account owner edited
+  the grant access (`accesses.update`), besides the restriction the core adds
+  to every app access when it loads one (`:_system:account` at `none`). They
+  narrow what the client reaches, are kept by every re-consent and do not
+  count against `--max-entries` (§ 3b).
 - **In any consent offer, a forbidden feature is mandatory** (it cannot be
   unticked, whatever the offer says); one marked `optIn` is refused. This
   holds for OAuth and CMC offers and for the `consent` sidecar of an auth
@@ -618,7 +628,7 @@ oauth:
   dpop:
     clockSkewSeconds: 120          # accepted DPoP proof iat drift, seconds
     keyRevokeCheckSeconds: 30      # revoke-key reaches live DPoP-bound tokens within this, seconds
-  clientRevokeCheckSeconds: 30     # revoke <clientId> reaches live access tokens within this, seconds
+  clientRevokeCheckSeconds: 30     # revoke, suspend or review reaches live access tokens within this, seconds
   clientRegistration:
     mode: curated                  # ONLY supported value (see below)
   logoHosts: []                    # hosts client logos may be served from (see below)
@@ -697,9 +707,11 @@ The hosts (`host`, or `host:port` for a port other than 443) a client's logo
 may come from. `--logo-uri` must be an https URL on one of them (the CLI
 refuses any other), and the consent offer leaves out a stored logo that is not
 https on a listed host (a host removed from the list stops being served at
-once). Empty, the default: no logo is shown, so set it BEFORE upgrading a
-platform whose clients have logos. Platform-wide, like the client registry:
-keep the list identical on every core. Write each host alone (no scheme, path
+once). Empty, the default: no logo is shown and `--logo-uri` is refused.
+**Upgrade (breaking for clients with logos):** put the list on every core
+BEFORE upgrading a platform whose clients have logos, else their logos stop
+being served at the upgrade. Platform-wide, like the client registry: keep
+the list identical on every core. Write each host alone (no scheme, path
 or trailing dot), without the default port 443, an international name in its
 `xn--` form: an entry that can never match, or a malformed list, is reported
 at boot.
@@ -722,7 +734,10 @@ reference or a value published as an example refuses the boot (like the
 `auth.*` secrets); one equal to `auth.adminAccessKey` or shorter than 32
 characters is reported at boot. No other key ever stands in for it: a state
 signed with any other key is refused. Setting or changing it only cancels the
-consent screens open at that moment (a state lives 5 minutes).
+consent screens open at that moment (a state lives 5 minutes). Third-party
+sign-in signs its state cookie with its own per-core secret, `sso:stateKey`
+(required where `sso:enabled` is true, same rules); give the two keys
+different values.
 
 ### `signingKeys`, `idTokenTTL` (OpenID Connect)
 
@@ -870,7 +885,7 @@ node bin/oauth-client.js create <username> [--client-id <opaque-id>] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--application-type web|native] \
     [--jwks-file <path> | --jwks-json <json> | --jwks-uri <https-url>] [--signing-alg <alg> ...] \
     [--access-token-ttl <s>] [--refresh-token-ttl <s>] [--refresh-token-absolute-ttl <s>] \
-    [--offline-access true|false]
+    [--offline-access true|false] [--region <key> ...]
 node bin/oauth-client.js list
 node bin/oauth-client.js show   <clientId>
 node bin/oauth-client.js update <clientId> [--redirect-uri <uri> ...] [--scope <s>] ...
@@ -882,9 +897,10 @@ node bin/oauth-client.js unrevoke-key <jkt> --yes
 node bin/oauth-client.js list-revoked-keys
 ```
 
-(`list`, `show`, `update`, `rotate-secret`, `revoke`, `suspend` and `resume`
-work on both client kinds; registry clients are created with
-`create-registry`, § 3b.)
+(`list`, `show`, `update`, `rotate-secret`, `revoke`, `suspend`, `resume` and
+`purge-grants` work on both client kinds; registry clients are created with
+`create-registry`, § 3b, where `suspend`, `resume` and `purge-grants` are
+described.)
 
 Notes:
 
@@ -919,6 +935,12 @@ Notes:
   `"(set)"` when the client has one, never the hash, and JWK Sets as `kid`,
   `kty`, `crv`, `alg` and thumbprint only; then the pinned algorithms, the
   client's lifetimes and the end of a rotated secret's window.
+- **`revoke <clientId> --yes`** removes the client row (no new consent, no
+  refresh) and writes a platform-wide tombstone: every core refuses the live
+  access tokens minted before it within `oauth:clientRevokeCheckSeconds`
+  (default 30 s). Re-registering the same id does not clear the tombstone
+  (tokens of the new registration are honoured). The users' grants stay until
+  `purge-grants` (§ 3b), which `revoke` prints as the next step.
 - **DPoP keys.** `list-keys [<clientId>]` lists the DPoP key thumbprints
   (`jkt`) seen bound to a client's tokens, most recently used first, flagged
   `REVOKED` where revoked. `revoke-key <jkt> --yes` revokes one key across the
@@ -1017,23 +1039,27 @@ refused. For `--contact`, `--launch-type`, `--extra`, `--policy-uri` and
 
 **`suspend <clientId>` / `resume <clientId>`** (any client kind) refuse or
 restore the client everywhere, with the description "this client is
-suspended": `/oauth2/authorize`, `/offer` and `/accept` answer
-`access_denied`, the code exchange and refresh at `/oauth2/token` answer
-`unauthorized_client`. A
-refused refresh consumes nothing, so the app's refresh token works again after
-`resume`. Access tokens already issued keep working until they expire; use
-`revoke` to stop them.
+suspended": `/oauth2/authorize` answers an HTML 400 and redirects nowhere,
+`/offer` and `/accept` answer `403 access_denied`, every grant at
+`/oauth2/token` answers `unauthorized_client`, introspection answers
+`active: false` for its tokens, and the data API refuses its live access
+tokens (403) within `oauth:clientRevokeCheckSeconds` (default 30 s). A
+refused refresh consumes nothing, and sessions are not ended: the app's
+tokens work again after `resume`. To end the grants and sessions for good,
+run `purge-grants` (which `suspend` prints as the next step). A client under
+review is refused the same way (below).
 
 **`update <clientId>`** takes `--redirect-uri`, `--scope`, `--grant-type`,
 `--name`, `--logo-uri`, `--client-uri`, `--jwks-file` / `--jwks-json` /
 `--jwks-uri` (one replaces the other), `--signing-alg`, the lifetime flags,
-`--offline-access` and
+`--offline-access`, `--region` and
 `--can-introspect` (`false` withdraws it; a confidential client only) on both
 kinds; on an app-account client also `--application-type` and `--cmc-offer`;
 on a registry client also `--audience`, `--any-audience`,
 `--allow-insecure-redirect` (`false` withdraws it), `--subject-type`,
 `--allow-feature`, `--policy-uri`, `--tos-uri`, `--contact`, `--extra`,
-`--launch-type` and `--auth-method` (all refused on app-account clients:
+`--launch-type`, `--auth-method`, the profile flags (below) and `--approve`
+(all refused on app-account clients:
 `update: --x applies to registry clients only`), parsed as `create-registry`
 parses them. A repeatable flag replaces the stored list; `none` clears
 `--policy-uri`, `--tos-uri`, `--contact`, `--extra`, `--launch-type` and
@@ -1103,8 +1129,8 @@ one authorization request (above it `/oauth2/authorize` answers
 `invalid_scope`) and of the grant a re-consent would leave (the signed-in
 `/offer` and `/accept` answer 400 `invalid_scope`, `reason: 'grant-too-large'`;
 `/accept` counts the grant after the consent is applied, without its
-exclusion masks and the client's default forbids, and leaves it unchanged
-when refusing): 1 to 1000, default the platform bound, 1000. Token lifetimes
+exclusion masks, which never come from a consent (§ 1d), and the client's
+default forbids, and leaves it unchanged when refusing): 1 to 1000, default the platform bound, 1000. Token lifetimes
 are set with the lifetime flags (§ 3c). `--logo-uri` must be https on a host of `oauth:logoHosts` (§ 2);
 a stored non-https logo is removed (and printed) by the next `update` or
 `rotate-secret` of a registry client.
@@ -1127,19 +1153,30 @@ they created, their aliases and refresh chains, then every other access minted
 for the client (its `client_credentials` tokens), and any refresh token of the
 client left in this core's keyspace; it prints the counts. Run it on each core
 of the platform (`revoke` and `suspend` print it as the next step), or after a
-change of subject type to make every user consent afresh. The counterparty of
-a deleted CMC data-grant gets no revoke notice (its reach ends all the same).
-Introspection answers `active: false` at once; an API worker that cached a
-deleted session keeps honouring it up to `caching:accessMaxAgeSeconds`
-(default 60 s). The command reads every refresh row of the platform's
-keyspace for this core: on a large platform it may take a while.
+change of subject type to make every user consent afresh.
+
+- **CMC data-grants.** The purged data-grants are those a session of the
+  client is bound to; a CMC relationship with the client's app account that
+  no OAuth session ever used is left alone. Two app-account clients
+  registered on the same offer share the user's data-grant (it is keyed by
+  the offer, not the client): purging either one deletes it for both, and
+  the users re-consent to both. The counterparty of a deleted data-grant
+  gets no revoke notice (the CLI has no CMC hook); its reach ends all the
+  same, and the app side's relationship record, now stale, clears when its
+  next call with it fails.
+- **Bound.** Introspection answers `active: false` at once. The CLI sends no
+  cache invalidation to the running server: an API worker that cached a
+  deleted session keeps honouring it for up to `caching:accessMaxAgeSeconds`
+  (default 60 s), per worker.
+- The command reads every refresh row of the platform's keyspace for this
+  core: on a large platform it may take a while.
 
 **`list`** prints one line per client, `<clientId>  <kind>  <status>
 <subjectType|->`, so `list | grep public` lists the public registry clients.
 **`show <clientId>`** prints the row (`"clientSecretHash": "(set)"` when the
-client has a secret, never the hash; JWK Sets as `kid` and thumbprint only),
-then a note when the subject type is unset and the features forbidden on its
-grants.
+client has a secret, never the hash; JWK Sets as `kid`, `kty`, `crv`, `alg`
+and thumbprint only; the `statusLog`), then a note when the subject type is
+unset and the features forbidden on its grants.
 
 ---
 
@@ -1269,7 +1306,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 | Symptom | Likely cause |
 |---|---|
 | `/oauth2/authorize` → `invalid_scope` | scope is not exactly one registered `cmc:<offer-name>` reference, the offer's capability URL expired/was invalidated, or (on a client registered before `--scope` values were split) scopes were space-joined into one `--scope` value at registration |
-| `/oauth2/authorize` → `invalid_request` / `redirect_uri` mismatch | the request's `redirect_uri` is not byte-for-byte one of the registered URIs |
+| `/oauth2/authorize` → HTML 400 "redirect_uri does not match any registered URI" | the request's `redirect_uri` is not exactly one of the registered URIs (on plain `http` to `127.0.0.1`, `[::1]` or `localhost` only the port may differ, and the host must be a registered form: register each loopback form the client sends, § 3) |
 | `/oauth2/token` → `invalid_grant` (PKCE) | the `code_verifier` does not match the `code_challenge` sent at `/authorize`, or the code expired / was already used |
 | `/oauth2/token` → `invalid_client` | confidential client presented a wrong/rotated `client_secret` |
 | `/oauth2/token` → `invalid_grant` on a multi-core deployment, the core logs "presented to core" | the exchange reached a core other than the one that issued the code: an `oauth.issuer` shared by several cores (see §2) |
@@ -1281,7 +1318,9 @@ single-use, so a reuse means either a broken client or a stolen code.
 | `/oauth2/token` → `invalid_target` | the `resource` given is not the one the authorization named (§ 1c, resource indicators) |
 | registry client: `/oauth2/token` → `500 server_error` "failed to build the token response" | the extension's hook failed or timed out, or its echo claimed reach the session does not hold; see the server log (§ 1c) |
 | consent UI: `400 invalid_request` with `reason: consent-out-of-date` | the grant, the client or the extension changed while the screen was shown: restart the flow (§ 1d) |
-| `access_denied` / `unauthorized_client` "this client is suspended" | the client was suspended (`resume <clientId>`, § 3b) |
+| HTML 400, `access_denied` or `unauthorized_client` "this client is suspended"; data API 403 "The application access is suspended." | the client was suspended (`resume <clientId>`, § 3b) |
+| the same with "this client is under review" / "The application access is under review." | a vetted field of the client changed without `--approve` (`update <clientId> --approve`, § 3b) |
+| consent UI: `400 invalid_scope` with `reason: grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (§ 3b) |
 
 ---
 

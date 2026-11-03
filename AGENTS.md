@@ -27,6 +27,7 @@ bin/              Entry points and admin CLIs
   check-config.js / config-to-env.js  Validate a config / convert it to an env file
   integrity-check.js Per-user integrity verification + platform DB check (--platform)
   mail.js           Mail template admin (in-process email)
+  oauth-client.js   OAuth2 client registry admin (app-account and registry clients, status, purge)
   observability.js  Optional APM admin (enable / disable / set-license-key)
 
 components/       Source code split by domain
@@ -48,6 +49,7 @@ components/       Source code split by domain
     mfa/  notifications/  observability/  series/  system-streams/  users/  webhooks/
   webhooks/         Outbound event delivery (optional named `scopes` filter)
   cmc/              Cross-account messaging & consent (namespace plugin, `:_cmc:`)
+  oauth2/           OAuth2 authorization server (docs/oauth2.md; glue in api-server/src/routes/oauth2*)
   shared-secrets/   One-time secret hand-off by key (namespace plugin, `:_shared-secrets:`)
   errors/ messages/ test-helpers/ tracing/ utils/ externals/
 
@@ -245,6 +247,7 @@ Understand this before debugging why a setting "isn't taking effect".
 - `README-DBs.md`: storage-by-storage DB layout and engine selection.
 - `SINGLE-TO-MULTIPLE.md`: multi-core onboarding, cluster CA, sealed bundle flow.
 - `CHANGELOG-v2.md`: API-facing changes; `CHANGELOG-v2-back.md` for internal changes.
+- `docs/oauth2.md`: the OAuth2 authorization server, operator side (endpoints, registry clients and the OAuth extension, consent, configuration, the `bin/oauth-client.js` CLI); `components/oauth2/IMPLEMENTERS-GUIDE.md` (writing an OAuth extension, new grants and scopes) and `components/oauth2/INTERNALS.md` (keyspaces, multi-core flow, consent composition, client status, purge).
 - `components/business/src/acme/`: ACME orchestrator + cert renewer internals.
 - `components/platform/`: PlatformDB interface + rqlite specifics.
 - `storages/manifest-schema.js` + `storages/pluginLoader.js`: how engines are loaded.

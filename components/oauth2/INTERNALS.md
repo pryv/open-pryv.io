@@ -34,11 +34,15 @@ The component uses these PlatformDB keyspaces, the TTL'd ones on the existing `s
 
 | Keyspace | Lifetime | Contents | Per-core? |
 |---|---|---|---|
-| `oauth-client/<clientId>` | indefinite (rotated on App-account update) | Client metadata: `redirectUris`, `scope`, `grantTypes`, `updatedAt`, plus optional `clientName`, `clientUri`, `logoUri`, `applicationType`, `clientSecretHash`, `jwks`, `jwksRef`, `accountUserId`, `cmcOffers` | NO — cluster-wide |
-| `oauth-client-revoked/<clientId>` | until pruned (`pruneRevokedClients`, by tombstone age) | `{ revokedAt }` — revoke tombstone, written by `deleteClient`. A token EPOCH, not a name reservation: each core caches it (`revokedClientsCache`) and the resource-server path refuses the client's oauth-session accesses minted before that epoch, so live tokens stop working before they expire. Re-registering the same id does NOT clear it. | NO — cluster-wide |
-| `oauth-ac/<sha256(code)>` | 600s | `{ clientId, redirectUri, codeChallenge, codeChallengeMethod, userId, scope, expiresAt, accessId?, coreId?, dataGrantAccessId?, permissions? }` | YES — issuing core's id is in the row |
-| `oauth-rt/<coreId>/<sha256(token)>` | sliding 30d (cap 90d absolute) | `{ clientId, userId, scope, issuedAt, lastUsedAt, expiresAt, absoluteExpiresAt, dataGrantAccessId?, permissions?, jkt? }` | YES — issuing core's id is in the key |
-| `oauth-rt-used/<coreId>/<sha256(token)>` | remaining life of the rotated token | `{ clientId, userId, dataGrantAccessId?, consumedAt }` — reuse-detection marker (chain identity, no credential) | YES |
+| `oauth-client/<clientId>` | indefinite (written by the CLI) | The registration (`OAuthClient` in `src/storage.ts`): `kind` (`app-account` or `registry`), `redirectUris`, `scope`, `grantTypes`, `updatedAt`, display fields (`clientName`, `name`, `description`, `logoUri`, `clientUri`, `policyUri`, `tosUri`), client authentication (`tokenEndpointAuthMethod`, `clientSecretHash`, `previousSecretHash` + `previousSecretExpiresAt`, an inline `jwks` or a `jwksUri`, `tokenEndpointAuthSigningAlgs`), lifetimes and `offlineAccessAllowed`, `status` + `statusLog`, `regions`, `maxEntries`; app-account rows `accountUserId`, `applicationType`, `cmcOffers`; registry rows `subjectType`, `allowedAudiences` / `anyAudience`, `allowFeatures`, `canIntrospect`, `allowInsecureRedirect`, `tokenResponseExtras`, `contacts`, `launchTypes`, `softwareId` | NO, cluster-wide |
+| `oauth-client-revoked/<clientId>` | until pruned (`pruneRevokedClients`, by tombstone age) | `{ revokedAt }`: revoke tombstone, written by `deleteClient`. A token EPOCH, not a name reservation: each core caches it (`revokedClientsCache`) and the resource-server path refuses the client's oauth-session accesses minted before that epoch, so live tokens stop working before they expire. Re-registering the same id does NOT clear it. | NO, cluster-wide |
+| `oauth-ac/<sha256(code)>` | 600s | `{ clientId, redirectUri, codeChallenge, codeChallengeMethod, userId, scope, expiresAt, accessId?, coreId?, dataGrantAccessId?, permissions?, kind?, coreTokens?, grammarTokens?, audience?, nonce?, authTime? }` | YES: the issuing core's id is in the row |
+| `oauth-rt/<coreId>/<sha256(token)>` | sliding 30d (cap 90d absolute; per-client lifetimes, capped) | `{ clientId, userId, scope, issuedAt, lastUsedAt, expiresAt, absoluteExpiresAt, dataGrantAccessId?, permissions?, jkt?, kind?, coreTokens?, grammarTokens?, audience?, accessId? }` (`accessId`: the session the chain backs) | YES: the issuing core's id is in the key |
+| `oauth-rt-used/<coreId>/<sha256(token)>` | remaining life of the rotated token | `{ clientId, userId, dataGrantAccessId?, consumedAt, revoked?, rotated? }`: reuse-detection marker (chain identity, no credential); `rotated` once the rotation's new rows are durable, `revoked` when the chain was ended | YES |
+| `oauth-at/<sha256(access token)>` | the session's expiry | Session index, written at every session mint: `{ userId, accessId, clientId, coreId, dataGrantAccessId?, coreTokens?, grammarTokens?, audience?, expiresAt, refreshTokenHash? }`; no token, username or alias. Lets any core answer introspection (421 to the home core) and revocation, and lets the deletion of a session end its refresh chain | NO, cluster-wide (the home core is in the row) |
+| `oauth-nonce/<clientId>/<sha256(nonce)>` | while its id_token lives, at least 1 h | an OpenID Connect nonce already used (single use per client) | NO, cluster-wide |
+| `oauth-cassert-jti/<clientId>/<jti>` | the assertion's expiry | a `private_key_jwt` assertion already used (single use) | NO, cluster-wide |
+| `dpop-jkt-seen/<clientId>/<jkt>` | indefinite | DPoP key thumbprints seen bound to the client's tokens (`list-keys`) | NO, cluster-wide |
 
 **No row carries a username.** Code and refresh rows identify the account by
 `userId` only, and the client row points at its account through `accountUserId`; a
@@ -47,8 +51,8 @@ exchange. Rows written before `accountUserId` existed carry `accountUsername`
 instead and are read only through `legacyAccountUsername()`. This is what lets a
 deployment keep usernames out of the replicated store.
 
-`jwks` holds PUBLIC EC P-256 keys only (validated on write), so cluster-wide
-caching is safe; `cmcOffers` maps a `cmc:<name>` scope to the capability URL of a
+`jwks` holds PUBLIC keys only (EC P-256 / P-384, RSA of 2048 bits or more;
+private members refused on write), so cluster-wide caching is safe; `cmcOffers` maps a `cmc:<name>` scope to the capability URL of a
 consent offer published by the app's account.
 
 **Upgrade from raw keys.** Earlier releases used `oauth-code/<code>` (with the access token in the row) and `oauth-refresh[-used]/<coreId>/<token>`. At master boot each core moves its own refresh rows to the hashed keys (`rekeyLegacyRefreshTokens`, idempotent; another core's rows wait for that core's upgrade). Legacy code rows are read once by `consumeCode` so an exchange in flight across the upgrade completes; they expire within 10 minutes, and that read is to be removed in the following release.
@@ -99,7 +103,33 @@ presented  = "com.example.app:/cb"                 → MATCH (private-use URI sc
 
 No regex, no prefix matching, no scheme normalization. RFC 9700 §2.1 + RFC 8252 §7.5. Phishers exploit lax matching; we don't blink.
 
-An exhaustive matcher test family (`[OAUTH-REDIR]`) is planned alongside the hardening pass; the callers are wired as the grant handlers land.
+The matcher is covered by the `[OAUTH-REDIR]` and `[OXLH]` families (`test/clientRegistry.test.js`); `routes/authorize.ts` is its only runtime caller. `LOOPBACK_HOSTS` (`clientRegistry.ts`) is the one list of loopback hosts: the port carve-out, the registration rule for plain-http redirect URIs (`--allow-insecure-redirect` needed elsewhere) and the `http` allowance for resource indicators (`resourceIndicator.ts`) all read it.
+
+## Registry consent: composition, digests, the grant
+
+A registry client's offer is not carried in the signed state: `/authorize` signs the offer's digest (`offerDigest`: the canonical JSON of the extension's name and `apiVersion`, the client row's `updatedAt` and the normalised offer) and `resolveStateOffer` (`routes/offer.ts`) re-derives it at `/offer` and `/accept` through the grammar, memoised per state (the signed-in composition never is). A digest that differs means the client or the grammar changed: the flow restarts. This is why the grammar must be deterministic.
+
+- **Signed out**, `/offer` answers the request as parsed (frozen shape). **Signed in** with the owner's personal token, it answers `composeShownOffer` (`consentComposition.ts`, pure): the current grant (`readRegistryGrant`) joined with the request per stream, flags `currentlyGranted` / `currentLevel` / `optIn`, the grant's forbids locked, and `shownDigest` = SHA-256 of `{ offerDigest, shown (entries sorted by code unit), subjectChange }`, the same on every core.
+- `/accept` recomputes the composition. With a matching `shownDigest`, `nextGrantPermissions` replaces the grant with what was ticked plus the kept restrictions (current forbids and exclusion masks); without it, it joins (never narrows). Then the client's default forbids (`defaultForbiddenFeatures`: `REGISTRY_DEFAULT_FORBIDDEN_FEATURES` minus `allowFeatures`). A change of subject mode needs `shownDigest` and `acknowledgeSubjectChange`. Consent offers are positive only: `normalizePermissions(…, { consent: true })` throws on a `none` entry, so a mask can never come from a consent.
+- Then `computeGrantState` (the extension's optional hook, bounded, before anything is written), the grant write and the session mint; a grant permission change re-cuts the live sessions (`reconcileSessionsOfGrant`, api-server).
+
+### The grant bound
+
+`entryCeiling(client)` (`scopeGrammar.ts`) = the client's `maxEntries` capped at `MAX_SYNTH_ENTRIES` (1000), else 1000. It bounds the request at `/authorize` (`resolveRequestedScope`), the composed offer at the signed-in `/offer` (`shown.permissions.length`) and, at `/accept`, the grant the consent leaves (`grantEntryCount`: the grant after `nextGrantPermissions`, without exclusion masks and the client's default forbids, which the screen does not show). The `/accept` check catches a consent UI that never asks for the composition (join mode) and so could grow a grant a little at a time; with `shownDigest`, the `/accept` count is never above what the screen showed. Refusals share `grantTooLarge` (400 `invalid_scope`, `reason: 'grant-too-large'`) and come before anything is written.
+
+## Client status and regions
+
+`clientUnavailable(client, config)` (`clientRegistry.ts`) is the one check: status `active` (or absent) passes, `suspended`, `review` or anything else is refused; with a config, a core outside the client's `regions` (from `core:hosting` and the `hostings` hierarchy) is refused too. Callers:
+
+- `/authorize`: the status first, right after `getClient` and before the redirect URI is looked at, answered as an HTML 400 (a client under review may have an unvetted redirect URI on file: nothing is redirected); the region after the redirect URI is validated, as a redirected `unauthorized_client`.
+- `/offer` and `/accept`: 403 `access_denied`; the grants at `/token`: `unauthorized_client`, checked before a refresh row is consumed; introspection: the token's client (status and region) gives `active: false`, the caller is checked for status only (a resource server may introspect anywhere).
+- The data API: `MethodContext.checkClientNotRevoked` (the revoke epoch) then `checkClientActive` for every `oauth:<clientId>` access, one platform read per client per `oauth:clientRevokeCheckSeconds` (`revokedClientsCache.getClientStatus`, bounded map, fail-open on a read error like the epochs). Sessions are not ended: both states are reversible. Same transport coverage as the revoke (request-authenticated calls; a socket.io connection opened before lags).
+
+The CLI's `update` compares `VETTED_FIELDS` (`changedVettedFields`) and moves an active registry client to `review` unless `--approve`; `resume` refuses while the trail (`statusLog`, last 50) holds a `review` entry after its last `approve`.
+
+## Purge (`purge-grants`)
+
+`bin/oauth-client.js purge-grants` runs `purgeClientGrants` (api-server `methods/helpers/oauthGrantPurge.ts`) in the CLI process, over the users of THIS core: the client's registry grants (`oauth-grant:<clientId>` / `clientData.oauth.grantOf`), the grants its sessions name (`clientData.oauth.dataGrantId`, an app-account client's CMC data-grant included; personal accesses never), then the remaining accesses minted for the client (`oauth:<clientId>`), each through `deleteAccessChain` (deletion record, access-index tombstone, sessions, what they created, aliases, refresh chains); last, `storage.revokeClientRefreshTokens` ends the client's refresh rows left in this core's keyspace. Not run: the `accesses.delete` route's post-delete hooks (no CMC revoke notice) and any cache invalidation of the running server (a cached session lives up to `caching:accessMaxAgeSeconds` per worker). Two app-account clients on one offer share the data-grant, so a purge of either ends it for both.
 
 ## Audit-event awaiting
 

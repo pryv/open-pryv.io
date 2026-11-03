@@ -31,8 +31,11 @@
   unique, at most 32), `maxEntries` (1 to `MAX_SYNTH_ENTRIES`); registry rows: `logoUri` https
   without user information or fragment. `logoAllowed` / `servedLogoUri` against `oauth:logoHosts`;
   `changedVettedFields` over `VETTED_FIELDS`.
-- `scopeGrammar.entryCeiling(client)` bounds the synthesised offer (`resolveRequestedScope`) and the
-  composed re-consent offer at the signed-in `/offer`.
+- `scopeGrammar.entryCeiling(client)` bounds the synthesised offer (`resolveRequestedScope`), the
+  composed re-consent offer at the signed-in `/offer` and, at `/accept`, the grant the consent leaves
+  (`consentComposition.grantEntryCount`: the grant after `nextGrantPermissions`, without exclusion
+  masks and the client's default forbids; checked before the grant state and any write). Both
+  refusals share `scopeGrammar.grantTooLarge`.
 - `extension.toClientView` also drops `statusLog`.
 - Data API: `MethodContext.checkClientNotRevoked` also runs `checkClientActive`, a per-client status
   read through `revokedClientsCache.getClientStatus` (one platform read per client and
@@ -49,6 +52,25 @@
   gains `logoHosts`, `platformRegions` and `purgeClientGrants` (replaceable in tests).
 - `default-config.yml`: `oauth:requireAppAccountMfa` removed (boot warning when set), `oauth:logoHosts:
   []` added (boot warning when malformed); `bin/init.js` appendix names it.
+
+### OAuth: redirect URI matching, one loopback list
+
+- `clientRegistry.matchLoopback` relaxes the port for every host of `LOOPBACK_HOSTS` (`127.0.0.1`,
+  `[::1]`, `localhost`), the same host string on both sides; `localhost` was in the list for the
+  registration rule only. `resourceIndicator.ts` imports the same list. A presented redirect URI with
+  a control character is refused before parsing.
+
+### OAuth2 documentation consolidated (no behaviour change)
+
+- `docs/oauth2.md`: suspension answers as the code does (HTML 400 at `/authorize`, data API refusal
+  within `oauth:clientRevokeCheckSeconds`, sessions kept), `revoke`, the purge of a data-grant shared
+  by two app-account clients on one offer and its cache bound, where exclusion masks come from,
+  `oauth:logoHosts` as an upgrade step, `sso:stateKey` beside `oauth:stateKey`, `show` output,
+  troubleshooting rows (loopback redirect URIs, review, `grant-too-large`).
+- `components/oauth2/IMPLEMENTERS-GUIDE.md`: permissions on streams that do not exist yet, masks
+  refused in offers, the `clientData.oauth` shapes. `INTERNALS.md`: every keyspace, consent
+  composition and digests, the grant bound, client status and regions, the purge. `AGENTS.md` points
+  to the three.
 
 ### OAuth extension: the grant state
 
@@ -182,11 +204,13 @@
   discovery documents and the JWK Set are built per request from the live configuration (mounted
   always; the OpenID ones answer 404 without a key).
 - Code rows of registry clients carry `nonce` and `authTime` when `openid` was requested; the api-server
-  resolver of `/accept` reports `authTime` (the personal access's creation, its sign-in). A burnt
+  resolver of `/accept` reports `authTime` (the personal access's creation, its sign-in; superseded
+  by `lastLogin`, see "Accesses: last sign-in time"). A burnt
   nonce is an access-state row `oauth-nonce/<clientId>/<sha256(nonce)>`, kept while its id_token
   lives and at least one hour.
 - `signedState.stateKeyFromConfig`: `oauth:stateKey`, else `auth:adminAccessKey`; every route that
-  signs or verifies the state uses it.
+  signs or verifies the state uses it. (The admin-key fallback and the unset-key warning were removed
+  later: see "State keys: no admin-key fallback".)
 - New config keys `oauth:stateKey` (default empty), `oauth:signingKeys` (default empty),
   `oauth:idTokenTTL` (default 300, clamped to 3600); `oauth:audAllowList` removed. Boot warnings: state
   key unset while the consent flow is configured, equal to the admin key or shorter than 32 characters,
@@ -245,7 +269,8 @@
 - `sso` component: `signStateCookie` / `verifyStateCookie` take the signing `secret` (was the admin
   key; the HMAC label `pryv-sso-state-v1` is unchanged), the mount deps carry `stateKey` (was
   `adminKey`), and the new `ssoStateKeyFromConfig` (exported) resolves `sso:stateKey`, else
-  `auth:adminAccessKey`. No dual-key verification: a sign-in in flight across the change fails once
+  `auth:adminAccessKey` (fallback and unset-key warning removed later: see "State keys: no admin-key
+  fallback"). No dual-key verification: a sign-in in flight across the change fails once
   and is retried.
 - New config key `sso:stateKey` (default empty), listed in `SECRET_PATHS` and `OPTIONAL_SECRET_PATHS`
   (boot problem, and `bin/check-config.js` problem: a set value that is a placeholder, an unexpanded
@@ -626,7 +651,8 @@
 
 - `oauth.requireAppAccountMfa` and `oauth.audAllowList` are read by no code: `docs/oauth2.md` and
   the `default-config.yml` comments now say they are not enforced (`audAllowList` is superseded by
-  a planned per-client audience check). The keys stay in the config for now.
+  a planned per-client audience check). The keys stay in the config for now (both were removed
+  later, each with a boot warning when still set).
 - `docs/oauth2.md`: the discovery sample lists every field the server emits (`private_key_jwt`,
   `token_endpoint_auth_signing_alg_values_supported`, `response_modes_supported`,
   `authorization_response_iss_parameter_supported`, `dpop_signing_alg_values_supported`); the
