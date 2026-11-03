@@ -39,6 +39,7 @@ type TableSchema = Record<string, ColumnDef>;
 type EventQueries = {
   getAll: SqliteStmt,
   getTerms: SqliteStmt,
+  addTerm: SqliteStmt,
   getById: SqliteStmt,
   getDeletedSince: SqliteStmt,
   getHistory: SqliteStmt,
@@ -115,8 +116,23 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   await concurrentSafeWrite.execute(() => {
     fullTextSearch.setupForTable(this.db, 'events', tableSchemas.events, ['streamIds']);
   });
-  // A range on `term` narrows the vocabulary scan; `LIKE 'prefix%'` read every term.
-  this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term >= ? AND term < ?');
+  // The access / action stream ids, listed by the audit store as streams (and
+  // expanded by every events.get that names their parents). Read from the
+  // full-text vocabulary, a listing decoded every posting of those terms: two
+  // per audit row, ~50-130 ms per call on 2M rows. Kept here instead, filled
+  // on insert, and from the vocabulary once when the table is new.
+  const hadTerms = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events_terms'").get() != null;
+  await concurrentSafeWrite.execute(() => {
+    this.db.prepare('CREATE TABLE IF NOT EXISTS events_terms (term TEXT PRIMARY KEY) WITHOUT ROWID').run();
+  });
+  this.eventQueries.getTerms = this.db.prepare('SELECT term FROM events_terms WHERE term >= ? AND term < ? ORDER BY term');
+  this.eventQueries.addTerm = this.db.prepare('INSERT OR IGNORE INTO events_terms (term) VALUES (?)');
+  if (!hadTerms) {
+    const t0 = Date.now();
+    await rebuildTerms(this);
+    const elapsed = Date.now() - t0;
+    if (elapsed > 1000) this.logger.info(`listed the access / action terms in ${elapsed} ms (once per database)`);
+  }
 
   // Head events only: a history version is a row of its own (headId set), never
   // addressed by its own id (same as the PostgreSQL engine's `head_id IS NULL`).
@@ -129,6 +145,35 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   this.eventQueries.deleteByHeadId = this.db.prepare('DELETE FROM events WHERE headId = ?');
   this.eventQueries.deleteById = this.db.prepare('DELETE FROM events WHERE eventid = ?');
 };
+
+// `[from, to)` ranges of the kept terms; '.' follows '-'.
+const TERM_RANGES: Array<[string, string]> = [['access-', 'access.'], ['action-', 'action.']];
+
+/**
+ * The kept terms of a row's stream ids (an array, or the stored
+ * space-separated string), lowercased as the full-text tokenizer does.
+ */
+function termsOf (streamIds: unknown): string[] {
+  const ids = Array.isArray(streamIds) ? streamIds : (typeof streamIds === 'string' ? streamIds.split(' ') : []);
+  const out: string[] = [];
+  for (const id of ids) {
+    if (typeof id !== 'string') continue;
+    const term = id.toLowerCase();
+    if (TERM_RANGES.some(([from, to]) => term >= from && term < to)) out.push(term);
+  }
+  return out;
+}
+
+/** Refill `events_terms` from the full-text vocabulary (terms with no row left drop out). */
+async function rebuildTerms (udb: UserDatabaseInstance): Promise<void> {
+  await concurrentSafeWrite.execute(() => {
+    udb.db.transaction(() => {
+      udb.db.prepare('DELETE FROM events_terms').run();
+      const fill = udb.db.prepare('INSERT OR IGNORE INTO events_terms (term) SELECT term FROM events_fts_v WHERE term >= ? AND term < ?');
+      for (const [from, to] of TERM_RANGES) fill.run(from, to);
+    })();
+  });
+}
 
 function prepareGetAllQuery (db: SqliteDb, tableName: string): SqliteStmt {
   return db.prepare(`SELECT * FROM ${tableName}`);
@@ -181,7 +226,8 @@ function prepareEventsGetQuery (db: SqliteDb, params: GetParams): string {
   const hasStreamFilter = (params.query || []).some((item) =>
     item.type === 'streamsQuery' && toSQLiteQuery(item.content as Parameters<typeof toSQLiteQuery>[0]) !== null);
   if (hasStreamFilter) return 'SELECT * FROM events NOT INDEXED ' + prepareQuery(params);
-  return 'SELECT * FROM events ' + modifiedSincePlan(db, params) + prepareQuery(params);
+  const plan = modifiedSincePlan(db, params);
+  return 'SELECT * FROM events ' + plan.indexedBy + prepareQuery(plan.params);
 }
 
 // Above this many rows modified since the bound, the time index is walked.
@@ -197,17 +243,20 @@ let modifiedProbeCap = 20_000;
  * capped at `modifiedProbeCap` entries): under the cap they are read through
  * that index and sorted, which costs at most the cap; otherwise the condition
  * gets a unary `+` and the time index is walked as without `modifiedSince`.
+ * Past the cap a page whose cursor lies below every recent row still walks the
+ * index (the plan before this one); the cap bounds the sort of the other plan.
+ * The caller's query is not changed.
  */
-function modifiedSincePlan (db: SqliteDb, params: GetParams): string {
+function modifiedSincePlan (db: SqliteDb, params: GetParams): { indexedBy: string, params: GetParams } {
   const item = (params.query || []).find((q) =>
     q.type === 'greater' && (q.content as { field?: string })?.field === 'modified');
-  if (item == null) return '';
-  const content = item.content as { field: string, value: unknown, noIndex?: boolean };
+  if (item == null) return { indexedBy: '', params };
+  const content = item.content as { field: string, value: unknown };
   const bound = eventsSchema.coerceValueForColumn('modified', content.value);
   const row = db.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM events WHERE modified > ${bound} LIMIT ${modifiedProbeCap})`).get() as { n: number };
-  if (row.n < modifiedProbeCap) return 'INDEXED BY events_modified ';
-  content.noIndex = true;
-  return '';
+  if (row.n < modifiedProbeCap) return { indexedBy: 'INDEXED BY events_modified ', params };
+  const query = params.query.map((q) => q === item ? { type: 'greater', content: { ...content, noIndex: true } } : q);
+  return { indexedBy: '', params: { ...params, query } };
 }
 
 function _setModifiedProbeCap (cap: number): number {
@@ -292,9 +341,23 @@ UserDatabase.prototype.createEvent = async function (this: UserDatabaseInstance,
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(async) CREATE event: ${JSON.stringify(dbEvent)}`);
   await concurrentSafeWrite.execute(() => {
-    this.eventQueries.create.run(dbEvent);
+    insertRow(this, dbEvent, event.streamIds);
   });
 };
+
+// The row and its kept terms in one transaction: a retry after SQLITE_BUSY
+// cannot insert the row twice.
+function insertRow (udb: UserDatabaseInstance, row: EventRow, streamIds: unknown): void {
+  const terms = termsOf(streamIds);
+  if (terms.length === 0) {
+    udb.eventQueries.create.run(row);
+    return;
+  }
+  udb.db.transaction(() => {
+    udb.eventQueries.create.run(row);
+    for (const term of terms) udb.eventQueries.addTerm.run(term);
+  })();
+}
 
 /**
  * Use only in tests or migration
@@ -303,7 +366,7 @@ UserDatabase.prototype.createEvent = async function (this: UserDatabaseInstance,
 UserDatabase.prototype.createEventSync = function (this: UserDatabaseInstance, event: DomainEvent): void {
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(sync) CREATE event: ${JSON.stringify(dbEvent)}`);
-  this.eventQueries.create.run(dbEvent);
+  insertRow(this, dbEvent, event.streamIds);
 };
 
 /**
@@ -429,6 +492,7 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
         this.eventQueries.deleteById.run(event.eventid);
       });
     }
+    await rebuildTerms(this);
     return null;
   }
   // else
@@ -437,6 +501,7 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
   await concurrentSafeWrite.execute(() => {
     res = this.db.prepare(queryString).run();
   });
+  if ((res as { changes: number } | null)?.changes) await rebuildTerms(this);
   return res;
 };
 
@@ -468,7 +533,7 @@ UserDatabase.prototype.exportAllEventsStreamed = async function * (this: UserDat
 UserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {
   for (const event of events) {
     await concurrentSafeWrite.execute(() => {
-      this.eventQueries.create.run(event);
+      insertRow(this, event, event.streamIds);
     });
   }
 };

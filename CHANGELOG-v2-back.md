@@ -12,7 +12,15 @@
   left the planner on the time-index walk. `_setModifiedProbeCap` is a test hook. Test `[SQQP9]`.
   Measured on 2M rows: a page whose cursor lies below the rows modified since the bound went from
   5,365 ms cold / 577 ms warm to 1 ms; `modifiedSince` over the whole log stays ~4 ms per 1,000-row
-  page (~25 ms through the API on 300k rows).
+  page; at the cap the `INDEXED BY` plan sorts 20,000 rows, ~20 ms. Past the cap the walk is the old
+  one (the cliff is the cap). The query item is not mutated (the `+modified` variant is a copy).
+- `UserDatabase`: new table `events_terms (term TEXT PRIMARY KEY) WITHOUT ROWID` holding the
+  lowercased `access-…` / `action-…` stream ids, written with the row (`insertRow`, one transaction,
+  on `createEvent`, `createEventSync` and `importAllEvents`). `getAllAccesses` / `getAllActions` read
+  it instead of `events_fts_v` (fts5vocab `'row'` decodes every posting of those terms: 2 per audit
+  row). Filled from the vocabulary when the table is created (`rebuildTerms`, on `init` of a file
+  without it; logged when over 1 s) and refilled after `deleteEvents`, so terms without rows drop out
+  as before. The `'instance'` vocabulary with a skip-scan was tried: no faster. Test `[SQQP10]`.
 
 ### OAuth extension: grouped consent entries, offer size bound
 

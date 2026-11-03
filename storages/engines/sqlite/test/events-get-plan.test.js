@@ -187,4 +187,30 @@ describe('[SQQP] userSQLite events.get query plans', function () {
       assert.ok(not.rows.length > 0, 'not ' + id);
     }
   });
+
+  // Last: it deletes the audit-shaped row.
+  it('[SQQP10] access and action terms are kept on insert, filled once for an existing file, and dropped once their rows are gone', async function () {
+    const vocab = (prefix) => userDb.db.prepare('SELECT term FROM events_fts_v WHERE term LIKE ? ORDER BY term').all(prefix + '%').map((r) => r.term);
+    const terms = () => ({ accesses: userDb.getAllAccesses().map((r) => r.term), actions: userDb.getAllActions().map((r) => r.term) });
+    const fromVocab = () => ({ accesses: vocab('access-'), actions: vocab('action-') });
+    await userDb.createEvent({
+      id: 'sqqp-audit-2',
+      streamIds: ['access-Z', 'action-events.get'],
+      type: 'audit-log/pryv-api',
+      time: 501,
+      created: 501,
+      createdBy: 'test',
+      modified: 501,
+      modifiedBy: 'test'
+    });
+    assert.deepStrictEqual(terms(), { accesses: ['access-x', 'access-x:1', 'access-z'], actions: ['action-events.get', 'action-y'] });
+    assert.deepStrictEqual(terms(), fromVocab());
+    // A file from before the table: filled from the vocabulary when opened.
+    userDb.db.exec('DROP TABLE events_terms');
+    await userDb.init();
+    assert.deepStrictEqual(terms(), fromVocab());
+    await userDb.deleteEvents({ query: [{ type: 'equal', content: { field: 'id', value: 'sqqp-audit' } }] });
+    assert.deepStrictEqual(terms(), { accesses: ['access-z'], actions: ['action-events.get'] });
+    assert.deepStrictEqual(terms(), fromVocab());
+  });
 });
