@@ -37,13 +37,19 @@ type MethodContext = {
   erasure?: AccountErasureRow;
   // Set by eraseAccount({ resumeOnly }): complete an unfinished erasure, never
   // start one. openErasureRecord sets `erasureNothingToResume` when there is
-  // no record of one any more (the account was restored meanwhile).
+  // no record of one to take over (the account was restored, or another
+  // erasure holds the record, meanwhile).
   erasureResumeOnly?: boolean;
   erasureNothingToResume?: boolean;
   // Names of the account that another account holds since an earlier attempt
   // freed them (a resumed erasure): their series and rows are not this one's.
   foreignNames?: Set<string>;
   erasureHeartbeat?: ReturnType<typeof setInterval>;
+  // The updates of the record (steps, heartbeat), run one at a time.
+  erasureWrites?: Promise<unknown>;
+  // Set once the record is no longer this erasure's: withdrawn by a restore,
+  // or taken over by an erasure that found this one stopped.
+  erasureLost?: boolean;
 };
 type StepFn = (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown;
 type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditData' | 'dropHFDataAgain';
@@ -399,12 +405,20 @@ class Deletion {
       let record: AccountErasureRow;
       if (context.erasureResumeOnly === true && (existing == null || existing.username !== context.user.username)) {
         // The unfinished erasure was withdrawn (its account restored) or
-        // completed meanwhile: never start a new one from here.
+        // completed meanwhile, or the record is now another erasure's under
+        // another name (listed again on the next pass): never start a new
+        // one from here.
         context.erasureNothingToResume = true;
         return next();
       }
       if (existing != null && existing.username === context.user.username) {
         if (now - existing.updatedAt < STALE_ERASURE_MS || !(await store.claim(context.user.id, existing.updatedAt, now))) {
+          // Completing only: a restore or another erasure took the record
+          // over meanwhile, nothing for this one to do.
+          if (context.erasureResumeOnly === true) {
+            context.erasureNothingToResume = true;
+            return next();
+          }
           return next(inProgress());
         }
         record = { ...existing, attempts: existing.attempts + 1, updatedAt: now };
@@ -450,18 +464,44 @@ class Deletion {
   #startHeartbeat (context: MethodContext): void {
     const { ERASURE_HEARTBEAT_MS } = require('./erasures.ts') as typeof import('./erasures.ts');
     const timer = setInterval(() => {
-      const record = context.erasure;
-      if (record == null) return;
-      const expected = record.updatedAt;
-      const at = Date.now();
       // A compare-and-set, never a write: it cannot bring back a record the
-      // erasure removed meanwhile, nor undo a step's own update.
-      erasuresStore().then((store) => store.claim(record.userId, expected, at))
-        .then((refreshed) => { if (refreshed && record.updatedAt === expected) record.updatedAt = at; })
-        .catch((e: unknown) => this.logger.warn('erasure record not refreshed: ' + errorText(e)));
+      // erasure removed meanwhile, nor one withdrawn or taken over.
+      this.#updateRecord(context).catch((e: unknown) => this.logger.warn('erasure record not refreshed: ' + errorText(e)));
     }, ERASURE_HEARTBEAT_MS);
     timer.unref();
     context.erasureHeartbeat = timer;
+  }
+
+  /**
+   * Updates the record of the erasure running in `context` while it is still
+   * this erasure's: a compare-and-set on its last update first, so a record
+   * withdrawn meanwhile (its account restored) or taken over (by an erasure
+   * that found this one stopped, e.g. a process frozen past the takeover
+   * delay) is never written back. `change` is applied once the record is
+   * held. One update at a time (steps and heartbeat), so the last update
+   * known here is the stored one. False, and `erasureLost` set, when the
+   * record is no longer this erasure's.
+   */
+  #updateRecord (context: MethodContext, change?: (record: AccountErasureRow) => void): Promise<boolean> {
+    const update = async (): Promise<boolean> => {
+      const record = context.erasure;
+      if (record == null || context.erasureLost === true) return false;
+      const store = await erasuresStore();
+      const at = Math.max(Date.now(), record.updatedAt + 1);
+      if (!(await store.claim(record.userId, record.updatedAt, at))) {
+        context.erasureLost = true;
+        return false;
+      }
+      record.updatedAt = at;
+      if (change != null) {
+        change(record);
+        await store.put(record);
+      }
+      return true;
+    };
+    const done = (context.erasureWrites ?? Promise.resolve()).then(update, update);
+    context.erasureWrites = done.catch(() => undefined);
+    return done;
   }
 
   #stopHeartbeat (context: MethodContext): void {
@@ -472,7 +512,9 @@ class Deletion {
   async closeErasureRecord (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     this.#stopHeartbeat(context);
     try {
-      await (await erasuresStore()).delete(context.user.id);
+      await context.erasureWrites;
+      // A record this erasure no longer holds is another's to remove.
+      if (context.erasureLost !== true) await (await erasuresStore()).delete(context.user.id);
     } catch (err: unknown) {
       // The account is erased; a record left behind only runs the (done)
       // steps again later.
@@ -496,21 +538,28 @@ class Deletion {
         if (err != null && !(resuming && isErasedUserError(err))) {
           this.#stopHeartbeat(context);
           if (record == null) return next(err);
-          record.lastError = `${name}: ${errorText(err)}`;
-          record.updatedAt = Date.now();
-          erasuresStore().then((store) => store.put(record)).catch((e: unknown) => this.logger.warn('erasure record not updated: ' + errorText(e)))
+          this.#updateRecord(context, (r) => { r.lastError = `${name}: ${errorText(err)}`; })
+            .catch((e: unknown) => this.logger.warn('erasure record not updated: ' + errorText(e)))
             .finally(() => next(err));
           return;
         }
         if (record == null) return next();
-        record.doneSteps.push(name);
-        if (name === 'deleteHFData' && context.seriesNamespaces != null) record.seriesNamespaces = context.seriesNamespaces;
-        record.updatedAt = Date.now();
-        erasuresStore().then((store) => store.put(record))
+        this.#updateRecord(context, (r) => {
+          r.doneSteps.push(name);
+          if (name === 'deleteHFData' && context.seriesNamespaces != null) r.seriesNamespaces = context.seriesNamespaces;
+        }).then((held) => {
+          if (held) return next();
+          // Withdrawn or taken over meanwhile: no further step runs here.
+          this.#stopHeartbeat(context);
+          this.logger.error(`the erasure of account "${context.user.username}" (${context.user.id}) stops after step ${name}: ` +
+            'its record was withdrawn (the account restored) or taken over by another erasure meanwhile');
+          next(errors.invalidOperation('The erasure of this account was withdrawn or taken over meanwhile: stopped.', { userId: context.user.id }));
+        }, (e: unknown) => {
           // A step not recorded as done is run again on a resume, on data
           // already gone: every step accepts that.
-          .catch((e: unknown) => this.logger.warn('erasure record not updated: ' + errorText(e)))
-          .finally(() => next());
+          this.logger.warn('erasure record not updated: ' + errorText(e));
+          next();
+        });
       };
       // A step that rejects without answering fails like one that answers an error.
       Promise.resolve(step(context, params, result, done)).catch(done);

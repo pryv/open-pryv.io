@@ -149,7 +149,8 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   /**
    * Erases the account, or completes its unfinished erasure. With `resume`,
    * only completes one: false when the account has no record of an
-   * unfinished erasure any more (nothing erased).
+   * unfinished erasure to take over any more (nothing erased). Any other
+   * result (`undefined` included) counts as completed.
    */
   erase: (account: SweepAccount, options: { trigger?: Trigger; resume?: boolean }) => Promise<boolean | void>;
   /** Durable record of the erasure (an audit row that outlives the account), written before it starts. */
@@ -321,7 +322,8 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
         // Never a new erasure: the record may have gone since it was listed
         // (the account restored from a backup).
         if (await deps.erase(account, { resume: true }) === false) {
-          logger.info(`auto-deletion: the unfinished erasure of account "${p.username}" (${p.userId}) is no longer recorded (the account was restored, or the erasure completed elsewhere): nothing to complete`);
+          logger.warn(`auto-deletion: nothing erased for account "${p.username}" (${p.userId}), the completion announced above did not run: ` +
+            'its unfinished erasure was withdrawn or taken over since it was listed (the account restored from a backup, or the erasure resumed elsewhere)', record);
           continue;
         }
       } catch (err) {

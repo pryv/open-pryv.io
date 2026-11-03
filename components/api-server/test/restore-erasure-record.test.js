@@ -17,7 +17,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * could not be removed): the restore withdraws that record, so the
  * auto-deletion sweep does not erase the restored account again and its CMC
  * background writes are accepted. The record of an account that is not
- * restored is left alone, and an erasure running now refuses the restore.
+ * restored is left alone, and an erasure running now refuses the restore. A
+ * restore that fails or is rolled back puts the withdrawn record back, and
+ * an erasure whose record was withdrawn meanwhile stops.
  */
 
 /* global initTests, initCore, getNewFixture, assert, cuid */
@@ -25,6 +27,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const zlib = require('node:zlib');
 const { spawnSync } = require('node:child_process');
 const sinon = require('sinon');
 const { getConfig } = require('@pryv/boiler');
@@ -37,6 +40,8 @@ const { getErasuresLocal } = require('business/src/auth/erasures.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { createAccountAutoDeletionSweep } = require('api-server/src/methods/helpers/autoDeletionSweep.ts');
 const { cmcAccountStatus, cmcLoopUserIds, guardCmcBackgroundWrites } = require('api-server/src/methods/helpers/cmcMall.ts');
+const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator.ts').default;
+const { createFilesystemBackupReader } = require('storages/interfaces/backup/index.ts');
 
 const CLI = path.resolve(__dirname, '../../../bin/backup.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
@@ -198,6 +203,56 @@ describe('[RSER] restore of an account with an erasure record', function () {
     await store.delete(u.id);
   }
 
+  async function recordOf (u) {
+    return (await getErasuresLocal()).get(u.id);
+  }
+
+  /** `record` is `before` put back by a failed restore: every step to run again, its last update kept. */
+  function assertPutBack (record, before) {
+    assert.ok(record != null, 'the erasure record is put back');
+    assert.match(String(record.lastError), /^restore failed: /);
+    assert.deepEqual({ ...record, lastError: null }, { ...before, doneSteps: [], lastError: null });
+  }
+
+  /** Rewrites the events file(s) of `u`'s backup with `change(text)`. */
+  function breakBackupEvents (u, change) {
+    const files = fs.readdirSync(u.dir, { recursive: true }).map(String).filter((f) => /(^|\/)events-[0-9]+\.jsonl(\.gz)?$/.test(f));
+    assert.ok(files.length > 0, 'events file of the backup');
+    for (const f of files) {
+      const file = path.join(u.dir, f);
+      const gz = f.endsWith('.gz');
+      const text = gz ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
+      const out = Buffer.from(change(text), 'utf8');
+      fs.writeFileSync(file, gz ? zlib.gzipSync(out) : out);
+    }
+  }
+
+  /** A restore orchestrator of this process, its log lines captured. */
+  async function orchestrator () {
+    const o = await new RestoreOrchestrator().init();
+    const lines = [];
+    o.logger = {};
+    for (const level of ['debug', 'info', 'warn', 'error']) o.logger[level] = (msg) => lines.push({ level, msg });
+    return { o, lines };
+  }
+
+  /** The backups of `users` as one (platform rows aside); `failOn`'s data cannot be read. */
+  async function combinedReader (users, failOn = null) {
+    const readers = users.map((u) => createFilesystemBackupReader(u.dir));
+    const manifests = [];
+    for (const r of readers) manifests.push(await r.readManifest());
+    return {
+      async readManifest () { return { ...manifests[0], users: manifests.flatMap((m) => m.users) }; },
+      async openUser (userId) {
+        if (failOn != null && userId === failOn.id) throw new Error('injected backup read error');
+        return readers[users.findIndex((u) => u.id === userId)].openUser(userId);
+      },
+      async * readPlatformData () {},
+      async * readServerMappings () {},
+      async close () { for (const r of readers) await r.close(); }
+    };
+  }
+
   it('[RSER1] an erased account whose erasure record was left behind is restored: the record goes, its CMC background writes are accepted', async function () {
     const u = await backedUpAccount();
     try {
@@ -285,9 +340,239 @@ describe('[RSER] restore of an account with an erasure record', function () {
       assert.ok(await exists(u), 'the account is not erased');
       assert.ok((await streamIdsOf(u)).includes(u.streamId), 'with its data');
       assert.equal(await (await getErasuresLocal()).get(u.id), null, 'no erasure started');
-      assert.ok(lines.some((l) => l.level === 'info' && l.msg.includes('nothing to complete') && l.msg.includes(u.username)), JSON.stringify(lines));
+      assert.ok(lines.some((l) => l.level === 'warn' && l.msg.includes('nothing erased') && l.msg.includes(u.username)), JSON.stringify(lines));
     } finally {
       await cleanUp(u);
     }
+  });
+
+  it('[RSER6] a restore without --overwrite of an account that still exists is refused before its unfinished erasure is touched: that erasure is still completed', async function () {
+    const u = await backedUpAccount();
+    try {
+      await stoppedErasure(u);
+      const before = await recordOf(u);
+
+      const res = runCli(['--restore', u.dir, '--user', u.username]);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assert.deepEqual(await recordOf(u), before, 'the record is untouched');
+      assert.match(res.stderr, /exists on this core: use --overwrite to replace it/);
+
+      const { result, lines } = await completionPass([u]);
+      assert.equal(result.completed, 1, JSON.stringify(lines));
+      assert.equal(await exists(u), false, 'the erasure is completed');
+    } finally {
+      await cleanUp(u);
+    }
+  });
+
+  it('[RSER7] a restore that fails after withdrawing an unfinished erasure puts it back, every step to run again: the next pass completes it', async function () {
+    const u = await backedUpAccount();
+    try {
+      await stoppedErasure(u);
+      const before = await recordOf(u);
+      breakBackupEvents(u, () => 'not a backup line\n');
+
+      const res = restore(u);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assertPutBack(await recordOf(u), before);
+
+      const { result, lines } = await completionPass([u]);
+      assert.equal(result.completed, 1, JSON.stringify(lines));
+      assert.equal(await exists(u), false, 'the erasure is completed');
+    } finally {
+      await cleanUp(u);
+    }
+  });
+
+  it('[RSER8] an account rolled back by --verify-integrity gets back the unfinished erasure the restore withdrew', async function () {
+    const u = await backedUpAccount();
+    try {
+      await stoppedErasure(u);
+      const before = await recordOf(u);
+      // the event no longer matches its integrity
+      breakBackupEvents(u, (text) => text.split('\n').map((line) => {
+        if (line.trim() === '') return line;
+        const event = JSON.parse(line);
+        return JSON.stringify({ ...event, content: 'tampered' });
+      }).join('\n'));
+
+      const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--verify-integrity']);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assert.match(res.stdout, /Rolled back: /);
+      assert.doesNotMatch(res.stdout, /Unfinished erasures withdrawn/);
+      assertPutBack(await recordOf(u), before);
+
+      const { result, lines } = await completionPass([u]);
+      assert.equal(result.completed, 1, JSON.stringify(lines));
+      assert.equal(await exists(u), false, 'the erasure is completed');
+    } finally {
+      await cleanUp(u);
+    }
+  });
+
+  it('[RSER9] a whole-backup restore withdraws the unfinished erasures of the accounts it restores and lists them in its report', async function () {
+    const a = await backedUpAccount();
+    const b = await backedUpAccount();
+    try {
+      await stoppedErasure(a);
+      const { o, lines } = await orchestrator();
+      const reader = await combinedReader([a, b]);
+      const report = await o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true });
+      await reader.close();
+      assert.deepEqual(report.restored.map((r) => r.userId).sort(), [a.id, b.id].sort());
+      assert.deepEqual(report.erasuresWithdrawn.map((r) => r.userId), [a.id]);
+      assert.ok(lines.some((l) => l.level === 'info' && l.msg.includes('Restore complete: 2 restored, 0 skipped, 1 unfinished erasure(s) withdrawn')), JSON.stringify(lines));
+      assert.ok(lines.some((l) => l.level === 'warn' && l.msg.includes('is withdrawn') && l.msg.includes(a.username)), JSON.stringify(lines));
+      assert.deepEqual(await afterRestore(a), EXPECTED);
+    } finally {
+      await cleanUp(a);
+      await cleanUp(b);
+    }
+  });
+
+  it('[RSER10] a whole-backup restore with an erasure running for one of its accounts is refused before anything is written, every record kept', async function () {
+    const a = await backedUpAccount();
+    const b = await backedUpAccount();
+    const store = await getErasuresLocal();
+    try {
+      await stoppedErasure(a);
+      const before = await recordOf(a);
+      const later = 'rser-later-' + cuid().slice(-8);
+      await fromCallback((cb) => storageLayer.streams.insertOne({ id: a.id }, { id: later, name: 'RSER later ' + later, parentId: null }, cb));
+      const now = Date.now();
+      assert.ok(await store.insertIfAbsent({ userId: b.id, username: b.username, trigger: 'holder', startedAt: now, updatedAt: now, doneSteps: [], seriesNamespaces: null, attempts: 1, lastError: null }));
+
+      const { o } = await orchestrator();
+      const reader = await combinedReader([a, b]);
+      try {
+        await assert.rejects(o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true }), new RegExp('an erasure of the account is running now for ' + b.username));
+      } finally {
+        await reader.close();
+      }
+      assert.deepEqual(await recordOf(a), before, 'nothing withdrawn');
+      assert.ok(await recordOf(b) != null);
+      assert.ok((await streamIdsOf(a)).includes(later), 'nothing restored');
+    } finally {
+      await cleanUp(a);
+      await cleanUp(b);
+    }
+  });
+
+  it('[RSER11] a whole-backup restore that fails at a later account puts back every erasure it withdrew and names the accounts restored before', async function () {
+    const a = await backedUpAccount();
+    const b = await backedUpAccount();
+    try {
+      await stoppedErasure(a);
+      await stoppedErasure(b);
+      const beforeA = await recordOf(a);
+      const beforeB = await recordOf(b);
+
+      const { o, lines } = await orchestrator();
+      const reader = await combinedReader([a, b], b);
+      try {
+        await assert.rejects(o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true }), /injected backup read error/);
+      } finally {
+        await reader.close();
+      }
+      assertPutBack(await recordOf(a), beforeA);
+      assertPutBack(await recordOf(b), beforeB);
+      assert.ok(lines.some((l) => l.level === 'error' && l.msg.includes('restored before it are kept') && l.msg.includes(a.username)), JSON.stringify(lines));
+      for (const u of [a, b]) {
+        assert.ok(lines.some((l) => l.level === 'error' && l.msg.includes('is put back') && l.msg.includes(u.username)), JSON.stringify(lines));
+      }
+
+      const { result } = await completionPass([a, b]);
+      assert.equal(result.completed, 2);
+      assert.equal(await exists(a), false);
+      assert.equal(await exists(b), false);
+    } finally {
+      await cleanUp(a);
+      await cleanUp(b);
+    }
+  });
+
+  it('[RSER12] a restore under another user id withdraws the erasure record of that id, not the one of the backed-up id', async function () {
+    const u = await backedUpAccount();
+    const target = { id: 'rsertgt' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-12), username: u.username };
+    const store = await getErasuresLocal();
+    try {
+      await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'date' });
+      // records left behind after the last step, of both ids
+      const old = Date.now() - STALE_MS;
+      for (const userId of [u.id, target.id]) {
+        await store.put({ userId, username: u.username, trigger: 'date', startedAt: old, updatedAt: old, doneSteps: ALL_STEPS, seriesNamespaces: null, attempts: 1, lastError: null });
+      }
+
+      const { o } = await orchestrator();
+      const reader = createFilesystemBackupReader(u.dir);
+      const report = await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id });
+      await reader.close();
+      assert.deepEqual(report.erasuresWithdrawn.map((r) => r.userId), [target.id]);
+      assert.equal(await store.get(target.id), null);
+      assert.ok(await store.get(u.id) != null, 'the record of the backed-up id is kept');
+      assert.ok(await exists(target));
+    } finally {
+      await cleanUp(target);
+      await cleanUp(u);
+    }
+  });
+
+  it('[RSER13] a completion that finds the record taken over since it was listed (a restore claimed it first) erases nothing and counts no failure', async function () {
+    const u = await backedUpAccount();
+    try {
+      await stoppedErasure(u);
+      const listed = await recordOf(u);
+      // a restore takes the record over (its compare-and-set), not removed yet
+      assert.ok(await (await getErasuresLocal()).claim(u.id, listed.updatedAt, Date.now()));
+
+      const { result, lines } = await completionPass([u], { listPendingErasures: async () => [listed] });
+      assert.equal(result.completed, 0, JSON.stringify(lines));
+      assert.equal(result.failed, 0, JSON.stringify(lines));
+      assert.ok(lines.some((l) => l.level === 'warn' && l.msg.includes('nothing erased') && l.msg.includes(u.username)), JSON.stringify(lines));
+      assert.ok(!lines.some((l) => l.level === 'error'), JSON.stringify(lines));
+      assert.ok(await exists(u));
+      assert.ok(await recordOf(u) != null, 'the record is the restore\'s to remove');
+    } finally {
+      await cleanUp(u);
+    }
+  });
+
+  it('[RSER14] an erasure that goes on after its record was withdrawn (its process frozen past the takeover delay, the account restored) stops: no record written back, no further step', async function () {
+    const u = await backedUpAccount();
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let reached;
+    const atStep = new Promise((resolve) => { reached = resolve; });
+    const original = Deletion.prototype.deleteAttachments;
+    const pause = sinon.stub(Deletion.prototype, 'deleteAttachments').callsFake(function (...args) {
+      reached();
+      return gate.then(() => original.apply(this, args));
+    });
+    try {
+      const erasure = new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'date' }).then(() => null, (err) => err);
+      await atStep;
+      // meanwhile: the record went stale, a restore took it over and removed it
+      await (await getErasuresLocal()).delete(u.id);
+      release();
+      const err = await erasure;
+      assert.ok(await exists(u), 'no step after the withdrawal: the account is not removed');
+      assert.ok((await streamIdsOf(u)).includes(u.streamId), 'with its data');
+      assert.equal(await recordOf(u), null, 'no record written back');
+      assert.match(String(err?.message), /withdrawn or taken over meanwhile/);
+    } finally {
+      pause.restore();
+      await cleanUp(u);
+    }
+  });
+
+  it('[RSER15] a restore that loses the record to an erasure resumed meanwhile fails for that account and removes nothing', async function () {
+    const o = Object.create(RestoreOrchestrator.prototype);
+    const stale = { userId: 'rserx', username: 'rserx', trigger: 'date', startedAt: 0, updatedAt: Date.now() - STALE_MS, doneSteps: [], seriesNamespaces: null, attempts: 1, lastError: null };
+    const removed = [];
+    o.erasures = { get: async () => stale, claim: async () => false, delete: async (id) => { removed.push(id); return true; }, insertIfAbsent: async () => true };
+    o.staleErasureMs = 15 * 60 * 1000;
+    o.logger = { info () {}, warn () {}, error () {} };
+    await assert.rejects(o._withdrawStoppedErasure('rserx', 'rserx'), /an erasure of this account is running now/);
+    assert.deepEqual(removed, []);
   });
 });

@@ -29,19 +29,46 @@
   (`restoreAllUsers`: every user not skipped as a conflict; `restoreUser`: the target id) before any
   write when a record is fresher than `STALE_ERASURE_MS`. `_withdrawStoppedErasure`, first thing in
   `_restoreSingleUser`, takes the target id's record over with `claim` (compare-and-set) and deletes
-  it, warn line; a lost `claim` (an erasure resumed meanwhile) fails that account's restore. Only the
-  target id is touched (with `remapUserId`, the target, not the source).
+  it, warn line, and returns it; a lost `claim` (an erasure resumed meanwhile) fails that account's
+  restore. Only the target id is touched (with `remapUserId`, the target, not the source). Before it,
+  without `overwrite`, an account the index still holds is refused (`_isIndexed`), so a restore the
+  index would refuse anyway never withdraws a record.
+- `restoreAllUsers`: `_assertNoRunningErasure` checks every account it would restore before any
+  write, and a running erasure refuses the whole run (nothing restored, nothing withdrawn); it does
+  not skip that account and go on. Per-account failures after that point stop the run as before.
+- A failed restore puts the withdrawn records back: `restoreUser` / `restoreAllUsers` collect them
+  (`report.erasuresWithdrawn`, full rows) and, on any throw after the first withdrawal (an account,
+  the platform rows, external ids, aliases), call `rearmWithdrawnErasures(records, reason)`:
+  `insertIfAbsent` (a newer record is kept) of `{ ...record, doneSteps: [], lastError }` with the
+  original `updatedAt` (stale: the sweep completes it at its next pass, and a retried restore is not
+  refused for 15 minutes), error line per record. `doneSteps: []` because the restore wrote back
+  what the done steps had removed (a resume skips done steps); the teardown runs again too.
+  `bin/backup.js --verify-integrity` calls it for the accounts it rolls back and drops them from the
+  report's withdrawn list; the rollback now passes the username to `_clearUserData`, so the series
+  of a rolled-back account are dropped too (they were left in place).
 - `Deletion.eraseAccount(account, { resumeOnly })` now returns a boolean: with `resumeOnly`,
-  `openErasureRecord` finds no record of that id and username and the call returns false without
-  running a step (no new record, no heartbeat). The sweep's `completeErasures` calls
-  `erase(account, { resume: true })` and counts a false neither completed nor failed. Restore and a
-  completion race through the record: the restore's `claim` makes it fresh (the completion's
-  `openErasureRecord` answers "in progress"), the completion's `claim` makes the restore fail, a
-  withdrawn record makes the completion a no-op.
+  `openErasureRecord` finds no record of that id and username to take over (none, another name, or
+  a fresh one / a lost `claim`: a restore or another erasure holds it) and the call returns false
+  without running a step (no new record, no heartbeat). The sweep's `completeErasures` calls
+  `erase(account, { resume: true })`, logs a false at warn ("nothing erased", after its
+  "completing" warn line) and counts it neither completed nor failed. Restore and a completion race
+  through the record: the restore's `claim` makes it fresh (the completion is a no-op), the
+  completion's `claim` makes the restore fail, a withdrawn record makes the completion a no-op.
+- Record writes of a running erasure are conditional (`Deletion#updateRecord`): each step update,
+  the failure update and the heartbeat first `claim` the record on the `updatedAt` this erasure last
+  wrote, then `put`, one at a time per erasure (promise chain shared with the heartbeat). A lost
+  `claim` sets `erasureLost`: the step stops the erasure with an `invalid-operation` error and an
+  error line, and `closeErasureRecord` leaves the record alone. Before, an erasure frozen past
+  `STALE_ERASURE_MS` that woke up after a takeover or a restore withdrawal wrote its record back
+  with an unconditional `put` and ran its remaining steps.
 - Not changed: the record is per core (never replicated). An account restored onto another core than
-  the one holding a stopped erasure of the same id is not covered: the record stays on that core,
-  whose sweep still completes the erasure there (when not done yet, its `deleteUser` step removes the
-  account's platform-wide rows), so withdraw such a record by hand before restoring elsewhere.
+  the one holding a stopped erasure of the same id is not covered: the restore cannot see that
+  record, and that core's sweep still completes the erasure there (when not done yet, its
+  `deleteUser` step removes the account's platform-wide rows: user-core routing, unique fields).
+  Complete the erasure on the core that holds it first (its next sweep pass), which removes its index
+  entry and the platform rows, then restore on the other core with the platform rows. Never delete
+  the record by hand: the first core would keep the account indexed with its data and nothing left
+  to erase it.
 
 ### CMC: background writes check the account first
 

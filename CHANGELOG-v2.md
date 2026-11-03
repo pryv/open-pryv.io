@@ -44,18 +44,44 @@
   account and the data just restored were erased again. Until then, its CMC background work
   (consent exchanges) was refused as for an account being erased. A restore now withdraws the erasure
   record of each account it restores, before writing its data, and logs a warning naming the
-  withdrawn erasure (start, trigger, steps done). The records of accounts the restore does not
-  restore are kept and their erasures are completed as before.
-- **A restore of an account whose erasure is running at that moment is refused** (its record was
-  updated less than 15 minutes ago): nothing is restored; restore once that erasure has ended.
-- **The sweep no longer starts an erasure when the record it listed is gone at the account's turn**
-  (withdrawn by a restore meanwhile): it logs "nothing to complete" at info and leaves the account.
+  withdrawn erasure (start, trigger, steps done). The restore report lists the withdrawn erasures
+  ("Unfinished erasures withdrawn") and the "Restore complete" log line counts them. The records of
+  accounts the restore does not restore are kept and their erasures are completed as before.
+- **A restore that fails after withdrawing an erasure puts it back** (an unreadable backup, a failed
+  import, a later account failing in a whole-backup restore, or an account rolled back by
+  `--verify-integrity`): the record returns with every step to run again and its former last
+  update, and an error line names it. The account is left partly restored; the next sweep pass
+  completes the erasure, unless you run the restore again first (it is not refused as a running
+  erasure). In a whole-backup restore every erasure the run withdrew is put back, also for the
+  accounts restored before the failure (named in an error line).
+- **A restore without `--overwrite` of an account that still exists on this core is refused before
+  its erasure record is touched** (as before, nothing is restored for it; its erasure is still
+  completed).
+- **An erasure running at that moment refuses the restore** (its record was updated less than 15
+  minutes ago). With `--user`: nothing is restored. A whole-backup restore checks every account it
+  would restore first and refuses the whole run when one has a running erasure: nothing is restored,
+  no record is withdrawn. Restore once that erasure has ended.
+- **The sweep no longer starts an erasure when the record it listed is gone, or taken over, at the
+  account's turn** (a restore meanwhile): it logs "nothing erased" at warn, counted neither
+  completed nor failed, and leaves the account.
+- **An erasure whose record was withdrawn or taken over while it ran** (a process frozen past the
+  15 minutes after which a stopped erasure is taken over) now stops at its next step instead of
+  writing the record back and erasing on.
+- **Not covered: a restore onto another core than the one holding a stopped erasure of the same
+  account.** The record is per core and the restore only sees its own. Complete the erasure on the
+  core that holds it first (its next sweep pass, after 15 minutes), then restore on the other core.
+  Do not delete that record by hand: the account would stay indexed on the first core with no
+  erasure left to remove it.
 - Accounts restored before this fix and still holding a record: on PostgreSQL,
   `SELECT user_id, username, started_at, done_steps FROM account_erasures WHERE user_id IN (SELECT user_id FROM users_index);`
-  lists the records of accounts that exist (on SQLite, the `account_erasures` table of
-  `account-erasures.db` next to the users index). Such a record is either an erasure that stopped
-  and is still to be completed, or a restored account: deleting the row of a restored account keeps
-  it.
+  lists the records of accounts that exist. On SQLite the records are in `account-erasures.db`,
+  next to the users index `user-index.db`: in `sqlite3 account-erasures.db`, run
+  `ATTACH DATABASE 'user-index.db' AS idx;` then
+  `SELECT user_id, username, started_at, done_steps FROM account_erasures WHERE user_id IN (SELECT userId FROM idx.id4name);`.
+  A record whose `done_steps`
+  includes `deleteUser` belongs to a restored account (that step removed the index entry); any other
+  is either an erasure that stopped and is still to be completed, or a restored account. Deleting
+  the row of a restored account keeps it.
 
 ### CMC: nothing is written for an account erased while a consent operation runs
 
