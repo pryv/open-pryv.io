@@ -117,18 +117,21 @@ describe('[STRE] streams', function () {
         validation.checkSchema(res.body, methodsSchema.get.result);
         collect(res.body.streams);
       }
-      const opened = new Set();
+      const opened = new Map();
       while (hidden.length > 0) {
         const parentId = hidden.shift();
         // `:faulty:` is the test store that fails every call.
         if (opened.has(parentId) || parentId === ':faulty:') continue;
-        opened.add(parentId);
         const res = await get({ parentId });
         assert.strictEqual(res.statusCode, 200, parentId + ': ' + JSON.stringify(res.body));
         assert.doesNotThrow(() => validation.checkSchema(res.body, methodsSchema.get.result), parentId);
+        opened.set(parentId, res.body.streams);
         collect(res.body.streams);
       }
-      assert.ok(opened.has(':_audit:') && opened.has(':_audit:accesses'), 'premise: the audit subtree was opened: ' + [...opened]);
+      // Premise: the audit subtree was opened and holds an access child (the login wrote one).
+      assert.ok(opened.has(':_audit:'), 'premise: the audit store was opened: ' + [...opened.keys()]);
+      assert.ok((opened.get(':_audit:accesses') || []).some((s) => s.id.startsWith(':_audit:access-')),
+        'premise: an access child was validated: ' + JSON.stringify(opened.get(':_audit:accesses')));
     });
 
     it('[RDD5] must include stream deletions (since the given time) when requested', function (done) {
