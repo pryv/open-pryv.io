@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### SQLite: `events.get` with a recent `modifiedSince` on a large file
+
+- **Fixed: on the SQLite engine (and the SQLite audit store), `events.get` with a `modifiedSince` that
+  few events meet read the whole time index on every page whose time range held none of them** (an
+  incremental account export of a large audit log: 5 s per page on a 1M-row file read cold, growing
+  with the file). Such a page now answers in about a millisecond; a `modifiedSince` most events meet
+  reads as before. Same results, same order.
+
 ### CMC: the chat stream of an ended relationship can be deleted
 
 - **Fixed: `streams.delete` on a `…:chats:<slug>` or `…:collectors:<slug>` stream once its

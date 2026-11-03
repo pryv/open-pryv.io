@@ -12,6 +12,7 @@ const cuid = require('cuid');
 const userLocalDirectory = require('../../../test/helpers').userLocalDirectory;
 const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage.ts');
 const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
+const { _setModifiedProbeCap } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
 
 /**
  * `events.get` on a large per-user file (an audit log of several GB) must not
@@ -84,7 +85,7 @@ describe('[SQQP] userSQLite events.get query plans', function () {
   }
 
   it('[SQQP1] with no stream filter, walks the time index and stops at the limit (no full sort)', async function () {
-    const { rows, plan, sql } = await run({ modifiedSince: 1, fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
+    const { rows, plan, sql } = await run({ fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
     assert.ok(!sql.includes('events_fts'), sql);
     assert.match(plan, /USING INDEX events_time/, plan);
     assert.doesNotMatch(plan, /TEMP B-TREE/, plan);
@@ -144,6 +145,38 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     for (let i = 30; i >= 0; i--) if (i % 3 !== 0 && i !== 7) expectedStar.push('sqqp-' + i);
     expectedStar.push('sqqp-audit');
     assert.deepStrictEqual(star.rows.map((e) => e.id), expectedStar);
+  });
+
+  it('[SQQP9] modifiedSince: few recent rows are read through the modified index, many by walking the time index', async function () {
+    const previous = _setModifiedProbeCap(10);
+    try {
+      // 61 rows modified since 1: over the cap, the time index is walked.
+      const many = await run({ modifiedSince: 1, fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
+      assert.match(many.sql, /\+modified > 1/, many.sql);
+      assert.match(many.plan, /USING INDEX events_time/, many.plan);
+      assert.doesNotMatch(many.plan, /TEMP B-TREE/, many.plan);
+      assert.deepStrictEqual(many.rows.map((e) => e.id), Array.from({ length: 10 }, (_, k) => 'sqqp-' + (59 - k)));
+      // 4 rows modified since 1055: under the cap, the modified index; a cursor
+      // below them answers at once instead of walking the time index.
+      const few = await run({ modifiedSince: 1055, fromTime: -1e12, toTime: 1e12 }, { limit: 2 });
+      assert.match(few.plan, /USING INDEX events_modified/, few.plan);
+      assert.deepStrictEqual(few.rows.map((e) => e.id), ['sqqp-59', 'sqqp-58']);
+      const below = await run({ modifiedSince: 1055, fromTime: -1e12, toTime: 1030 }, { limit: 2 });
+      assert.deepStrictEqual(below.rows, []);
+      // Both plans return the same rows.
+      for (const since of [1, 1020, 1055, 1059]) {
+        for (const toTime of [1e12, 1040]) {
+          const q = { modifiedSince: since, fromTime: -1e12, toTime };
+          const capped = (await run(q, { limit: 5 })).rows.map((e) => e.id);
+          _setModifiedProbeCap(1e9);
+          const indexed = (await run(q, { limit: 5 })).rows.map((e) => e.id);
+          _setModifiedProbeCap(10);
+          assert.deepStrictEqual(capped, indexed, JSON.stringify(q));
+        }
+      }
+    } finally {
+      _setModifiedProbeCap(previous);
+    }
   });
 
   it('[SQQP8] stream ids carrying quotes stay inside the match expression', async function () {

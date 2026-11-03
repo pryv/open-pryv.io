@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### SQLite events read plan for `modifiedSince`
+
+- `UserDatabase` (`storages/engines/sqlite`): a read with no stream filter and a `modified > X`
+  condition first counts the rows modified since `X` on the covering `events_modified` index, capped
+  at `modifiedProbeCap` (20,000). Under the cap the query runs `INDEXED BY events_modified` (at most
+  the cap fetched and sorted); otherwise the condition renders as `+modified > X` and the `time` index
+  is walked as before. No new index and no statistics: measured on 2M audit rows, `ANALYZE` (STAT4)
+  left the planner on the time-index walk. `_setModifiedProbeCap` is a test hook. Test `[SQQP9]`.
+  Measured on 2M rows: a page whose cursor lies below the rows modified since the bound went from
+  5,365 ms cold / 577 ms warm to 1 ms; `modifiedSince` over the whole log stays ~4 ms per 1,000-row
+  page (~25 ms through the API on 300k rows).
+
 ### OAuth extension: grouped consent entries, offer size bound
 
 - `SynthOffer.entryGroups` (optional offer member, `EntryGroup = { key, label, entries }`; extension

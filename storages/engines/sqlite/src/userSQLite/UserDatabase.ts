@@ -145,7 +145,7 @@ UserDatabase.prototype.close = function (this: UserDatabaseInstance): void {
 UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params: GetParams): DomainEvent[] | null {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
-  const queryString = prepareEventsGetQuery(params);
+  const queryString = prepareEventsGetQuery(this.db, params);
   this.logger.debug(`GET events: ${queryString}`);
   const res = this.db.prepare(queryString).all();
   if (res != null) {
@@ -157,7 +157,7 @@ UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params:
 UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance, params: GetParams): NodeReadable {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
-  const queryString = prepareEventsGetQuery(params);
+  const queryString = prepareEventsGetQuery(this.db, params);
   this.logger.debug(`GET events streamed: ${queryString}`);
   const query = this.db.prepare(queryString);
   return readableEventsStreamForIterator(query.iterate());
@@ -175,11 +175,45 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
  *   the matches). When the planner walks the `time` index instead, a stream
  *   holding few events costs a scan of the whole index (measured 128 ms vs
  *   0.1 ms on 500k rows); `NOT INDEXED` rules that plan out.
+ * - `modifiedSince` with no stream filter: see `modifiedSincePlan`.
  */
-function prepareEventsGetQuery (params: GetParams): string {
+function prepareEventsGetQuery (db: SqliteDb, params: GetParams): string {
   const hasStreamFilter = (params.query || []).some((item) =>
     item.type === 'streamsQuery' && toSQLiteQuery(item.content as Parameters<typeof toSQLiteQuery>[0]) !== null);
-  return 'SELECT * FROM events ' + (hasStreamFilter ? 'NOT INDEXED ' : '') + prepareQuery(params);
+  if (hasStreamFilter) return 'SELECT * FROM events NOT INDEXED ' + prepareQuery(params);
+  return 'SELECT * FROM events ' + modifiedSincePlan(db, params) + prepareQuery(params);
+}
+
+// Above this many rows modified since the bound, the time index is walked.
+let modifiedProbeCap = 20_000;
+
+/**
+ * Walking the `time` index stops at `LIMIT` only when the rows it meets pass
+ * the filters. With `modified > X` where few rows are that recent (an
+ * incremental export, its cursor below them), the walk read the whole index
+ * and found nothing: 5 s on 1M rows from a cold file, once per page.
+ *
+ * So count the rows modified since the bound on the `modified` index (covering,
+ * capped at `modifiedProbeCap` entries): under the cap they are read through
+ * that index and sorted, which costs at most the cap; otherwise the condition
+ * gets a unary `+` and the time index is walked as without `modifiedSince`.
+ */
+function modifiedSincePlan (db: SqliteDb, params: GetParams): string {
+  const item = (params.query || []).find((q) =>
+    q.type === 'greater' && (q.content as { field?: string })?.field === 'modified');
+  if (item == null) return '';
+  const content = item.content as { field: string, value: unknown, noIndex?: boolean };
+  const bound = eventsSchema.coerceValueForColumn('modified', content.value);
+  const row = db.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM events WHERE modified > ${bound} LIMIT ${modifiedProbeCap})`).get() as { n: number };
+  if (row.n < modifiedProbeCap) return 'INDEXED BY events_modified ';
+  content.noIndex = true;
+  return '';
+}
+
+function _setModifiedProbeCap (cap: number): number {
+  const previous = modifiedProbeCap;
+  modifiedProbeCap = cap;
+  return previous;
 }
 
 UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number, options?: DeletionsOptions | null): NodeReadable {
@@ -387,7 +421,7 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
     this.logger.debug(`DELETE events one by one as query includes "MATCH": ${queryString}`);
     // HACK: SQLite does not know how to delete with "MATCH" statement,
     //       so we're getting events that match and deleting them one by one
-    const selectEventsToBeDeleted = prepareEventsGetQuery(params);
+    const selectEventsToBeDeleted = prepareEventsGetQuery(this.db, params);
 
     for (const event of this.db.prepare(selectEventsToBeDeleted).iterate() as Iterable<{ eventid: string }>) {
       this.logger.debug(`  > DELETE event: ${event.eventid}`);
@@ -461,9 +495,9 @@ const converters: Record<string, (content: unknown) => string | null> = {
     return `${column} = ${value}`;
   },
   greater: (content: unknown) => {
-    const c = content as { field: string, value: unknown };
+    const c = content as { field: string, value: unknown, noIndex?: boolean };
     const value = eventsSchema.coerceValueForColumn(c.field, c.value);
-    return `${c.field} > ${value}`;
+    return `${c.noIndex === true ? '+' : ''}${c.field} > ${value}`;
   },
   greaterOrEqual: (content: unknown) => {
     const c = content as { field: string, value: unknown };
@@ -616,4 +650,4 @@ function pagingClause (limit: unknown, skip: unknown): string {
   return clause;
 }
 
-export { UserDatabase, jsonConditionToSql };
+export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap };
