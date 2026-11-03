@@ -1104,9 +1104,8 @@ one authorization request (above it `/oauth2/authorize` answers
 `/offer` and `/accept` answer 400 `invalid_scope`, `reason: 'grant-too-large'`;
 `/accept` counts the grant after the consent is applied, without its
 exclusion masks and the client's default forbids, and leaves it unchanged
-when refusing): 1 to 1000,
-default the platform bound, 1000. Token lifetimes are set with the lifetime
-flags (§ 3c). `--logo-uri` must be https on a host of `oauth:logoHosts` (§ 2);
+when refusing): 1 to 1000, default the platform bound, 1000. Token lifetimes
+are set with the lifetime flags (§ 3c). `--logo-uri` must be https on a host of `oauth:logoHosts` (§ 2);
 a stored non-https logo is removed (and printed) by the next `update` or
 `rotate-secret` of a registry client.
 
