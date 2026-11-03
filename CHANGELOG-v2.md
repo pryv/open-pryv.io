@@ -7,7 +7,9 @@
 - **Fixed: the `displayName` a member gives when asking to join a group (`requesterMeta.displayName`)
   was dropped at the accept.** The membership access minted on the group account now carries it on
   `clientData.cmc.counterparty.displayName` (absent when the request had none), so the group reads its
-  members' names from `accesses.get`. Memberships accepted earlier keep no name.
+  members' names from `accesses.get`. The name is the requester's own text: control and
+  direction-override characters are removed, spaces trimmed, and it is cut at 200 characters.
+  Memberships accepted earlier keep no name.
 
 ### CMC: the chat stream of an ended relationship can be deleted
 

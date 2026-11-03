@@ -1370,7 +1370,7 @@ The member is the **requester**, the group the **accepter**. The member writes o
         { streamId: ':_cmc:apps:practice:team-a', level: 'contribute' }
       ]
     },
-    requesterMeta: { username, appId }
+    requesterMeta: { username, appId, displayName }   // displayName: how the group lists the member
   }
 }
 ```
@@ -1393,7 +1393,7 @@ The hand-off is the **capability URL** (QR code or link) the member shows to an 
   permissions: [ /* the granted team streams + the relationship's channel streams */ ],
   clientData: { cmc: {
     role: 'member',
-    counterparty: { username, host, displayName?, ... },   // the member; displayName from its request's requesterMeta
+    counterparty: { username, host, displayName?, ... },   // the member; displayName from its request (untrusted text: control characters removed, at most 200 characters)
     features: { chat: false, systemMessaging: true },
     membership: {
       approvedBy: { delegate: { username: string, hostSlug?: string }, relId: string } | null,  // null: the owner

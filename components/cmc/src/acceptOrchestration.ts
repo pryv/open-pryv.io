@@ -347,8 +347,8 @@ function buildDataGrantPayload (params: {
         scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
         // A member's name as they gave it when asking to join: the group
         // account reads its members from these accesses.
-        counterparty: membership != null && typeof meta.displayName === 'string' && meta.displayName !== ''
-          ? { ...counterparty, displayName: meta.displayName }
+        counterparty: membership != null && memberDisplayName(meta.displayName) != null
+          ? { ...counterparty, displayName: memberDisplayName(meta.displayName) }
           : counterparty,
         offerEventId: offerEvent.id,
         acceptEventId: acceptEventId ?? null,
@@ -359,6 +359,21 @@ function buildDataGrantPayload (params: {
       },
     },
   };
+}
+
+const MEMBER_DISPLAY_NAME_MAX = 200;
+
+/**
+ * The name a member gave, as kept on the membership access: the requester
+ * writes it freely, so control and direction-override characters are removed,
+ * spaces trimmed and the length capped. Null when nothing is left.
+ */
+function memberDisplayName (value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = value.replace(/[\u0000-\u001F\u007F-\u009F‪-‮⁦-⁩]/g, '').trim();
+  if (cleaned === '') return null;
+  return Array.from(cleaned).slice(0, MEMBER_DISPLAY_NAME_MAX).join('');
 }
 
 /**

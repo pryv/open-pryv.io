@@ -230,6 +230,16 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       const noName = { ...VALID_OFFER, content: { ...VALID_OFFER.content, requesterMeta: { appId: 'example-app' } } };
       assert.deepEqual(buildDataGrantPayload({ offerEvent: noName, counterparty, membership: { approvedBy: null } }).clientData.cmc.counterparty, counterparty);
       assert.deepEqual(buildDataGrantPayload({ offerEvent: VALID_OFFER, counterparty }).clientData.cmc.counterparty, counterparty);
+      // Written freely by the requester: cleaned, capped, dropped when empty.
+      const named = (displayName) => buildDataGrantPayload({
+        offerEvent: { ...VALID_OFFER, content: { ...VALID_OFFER.content, requesterMeta: { appId: 'example-app', displayName } } },
+        counterparty,
+        membership: { approvedBy: null },
+      }).clientData.cmc.counterparty.displayName;
+      assert.strictEqual(named(''), undefined);
+      assert.strictEqual(named('  \n\t '), undefined);
+      assert.strictEqual(named(' Dr\u0000 Who‮ \n'), 'Dr Who');
+      assert.strictEqual(named('é'.repeat(250)).length, 200);
     });
 
     it('[AO-AT1] defaults to a shared data-grant when request.accessType is absent', () => {
