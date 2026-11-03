@@ -99,6 +99,38 @@ describe('[STRE] streams', function () {
       });
     });
 
+    it('[SYSV] every stream returned, account and store streams included, passes the published stream schema', async function () {
+      const get = (query) => new Promise((resolve) => request.get(basePath).query(query).end(resolve));
+      // Hidden subtrees (store roots, audit accesses / actions) are read through parentId.
+      const hidden = [];
+      const collect = (streams) => {
+        for (const s of streams || []) {
+          if (s.childrenHidden === true) hidden.push(s.id);
+          collect(s.children);
+        }
+      };
+      for (const query of [{}, { state: 'all' }]) {
+        const res = await get(query);
+        assert.strictEqual(res.statusCode, 200);
+        assert.ok(res.body.streams.some((s) => s.id.startsWith(':_system:') || s.id.startsWith(':system:')),
+          'premise: the account streams are listed');
+        validation.checkSchema(res.body, methodsSchema.get.result);
+        collect(res.body.streams);
+      }
+      const opened = new Set();
+      while (hidden.length > 0) {
+        const parentId = hidden.shift();
+        // `:faulty:` is the test store that fails every call.
+        if (opened.has(parentId) || parentId === ':faulty:') continue;
+        opened.add(parentId);
+        const res = await get({ parentId });
+        assert.strictEqual(res.statusCode, 200, parentId + ': ' + JSON.stringify(res.body));
+        assert.doesNotThrow(() => validation.checkSchema(res.body, methodsSchema.get.result), parentId);
+        collect(res.body.streams);
+      }
+      assert.ok(opened.has(':_audit:') && opened.has(':_audit:accesses'), 'premise: the audit subtree was opened: ' + [...opened]);
+    });
+
     it('[RDD5] must include stream deletions (since the given time) when requested', function (done) {
       // Relative to the fixture deletion (stamped when the test data loads),
       // not to the clock: a long suite reaches this test after any fixed window.
