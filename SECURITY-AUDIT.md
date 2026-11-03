@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 12 (2026-11-02), covering releases 2.0.0-rc.40 to 2.0.0-rc.70.
+**Report revision:** 13 (2026-11-03), covering releases 2.0.0-rc.40 to 2.0.0-rc.71.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -49,7 +49,9 @@ October and November 2026 alongside the work on token introspection, revocation 
 OAuth2 subjects, added those fixed in 2.0.0-rc.69, and a review of OAuth2 client authentication,
 of what an OAuth2 session may create and of the authorization request's audience, made in November
 2026 alongside the work on client key sets, grant state and resource indicators, added those fixed
-in 2.0.0-rc.70; they were fixed under the same rules (tests that
+in 2.0.0-rc.70, and a review of the suspension and lifecycle of OAuth2 clients, made in November
+2026 alongside the work on the vetting status of clients registered by the operator, added those
+fixed in 2.0.0-rc.71; they were fixed under the same rules (tests that
 fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
@@ -60,7 +62,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 64 findings, each rated and described individually in
+The review and its follow-ups recorded 65 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -69,8 +71,8 @@ items reported through the public issue tracker, are described but not counted:
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
 | Medium | 35 | 0 | 0 |
-| Low | 1 | 0 | 0 |
-| **Total** | **64** | **0** | **0** |
+| Low | 2 | 0 | 0 |
+| **Total** | **65** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -115,6 +117,7 @@ its applicability is stated with it.
 | 2.0.0-rc.68 | 2026-10-30 | lower-severity fixes, completion steps of earlier findings | yes (2026-10-30) |
 | 2.0.0-rc.69 | 2026-11-02 | 2 Medium, lower-severity fixes; dependency update, not an audit finding: `follow-redirects` 1.16.2 (GHSA-mrwp-f3q8-3g9p, high: a custom credential header could follow a cross-origin redirect; reached through the ACME certificate client); operator action: set the two new per-core state keys (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
 | 2.0.0-rc.70 | 2026-11-02 | 2 Medium, lower-severity fixes, completion step of an earlier finding (the state keys are required; the admin-key fallback is removed); operator action: set both state keys where their feature is on, allow `accessCreation` on the registry OAuth2 clients whose sessions create accesses, webhooks or CMC capability requests, give a distinct `kid` to every key of a multi-key inline client key set (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
+| 2.0.0-rc.71 | 2026-11-03 | 1 Low, lower-severity fixes, completion step of an earlier hardening (a client's suspension reaches the data API); operator action: set `oauth.logoHosts` before upgrading where registry OAuth2 clients have logos, approve vetted client changes with `update --approve`, run `purge-grants` after a revoke (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-03) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1702,6 +1705,76 @@ releases.
   accessCreation`, keeping the features already allowed); (3) give a distinct `kid` to every key of
   an inline client key set holding several keys (every core reports such rows at boot).
 
+### Fixed in 2.0.0-rc.71 (deployed)
+
+2.0.0-rc.71 adds a vetting status for the OAuth2 clients registered by the operator (a change of
+where a client's codes and tokens land, how it authenticates or what it reaches waits for the
+operator's approval), profile fields, regions, an entry ceiling per client, grouped consent entries
+and `http://localhost` as a loopback redirect host. These are new features, described in
+`CHANGELOG-v2.md`, not fixes. The review of client suspension and of the client lifecycle made
+alongside them found the following in earlier releases.
+
+#### A suspended OAuth2 client kept obtaining tokens with the `client_credentials` grant
+
+- **Severity:** Low (deployments that serve OAuth2 clients with an app account registered for the
+  `client_credentials` grant, and only while the operator holds such a client suspended). It needs
+  the client's own credential (its secret or signing key); the gain is continued use of the app's
+  own account after the operator stopped the app, not access to another account. Affected:
+  2.0.0-rc.68 to rc.70 (suspension appeared in rc.68).
+- **What could happen:** `bin/oauth-client.js suspend` is the operator's way to stop an app at
+  once. The authorization code and refresh grants and introspection refused a suspended client,
+  but the `client_credentials` grant did not check the client's status: a suspended client could
+  go on minting access tokens on its own app account, as its registration allowed, and use them on
+  the data API for as long as it stayed suspended.
+- **What changed:** the grant checks the client's status once the client is authenticated and
+  refuses a suspended client, or one under review, with `400 unauthorized_client`, minting
+  nothing. The data API also refuses the live tokens of such a client (below).
+- **Operator action:** none beyond the upgrade. The tokens a client suspended before the upgrade
+  minted meanwhile are refused by the data API once the upgrade is deployed; `purge-grants` deletes
+  them.
+
+#### Lower-severity fixes in 2.0.0-rc.71
+
+- **A client's suspension reaches the data API** (completion step of the 2.0.0-rc.68 suspension):
+  the live access tokens of a suspended client were refused at the token endpoint and by
+  introspection, but went on working on the data API until they expired (one access-token lifetime
+  at most). The data API now refuses them (`403 invalid-access-token`) within
+  `oauth.clientRevokeCheckSeconds` (default 30 s), as for a revoke; the sessions are kept and work
+  again after `resume`. A suspended client also gets no redirect from `/oauth2/authorize` (an HTML
+  400).
+- **Grants left after a revoke** (operator tool): `revoke` refuses a client's live tokens
+  everywhere but left the users' consent grants, the accesses they created and the client's
+  `client_credentials` tokens in place. `node bin/oauth-client.js purge-grants <clientId> --yes`
+  deletes them on a core, with the CMC data-grants the client's sessions are bound to; `revoke`
+  and `suspend` print it as the next step.
+- **A consent could grow a grant past the platform bound** (hardening): the bound on the
+  permission entries of one authorization applied to each request, not to the grant a consent
+  leaves, so a consent page that never asked for the composed offer could grow a grant past it by
+  repeated consents. `/oauth2/authorize/accept` now refuses a consent whose resulting grant exceeds
+  the client's entry ceiling (`400 invalid_scope`, `grant-too-large`), writing nothing, and the
+  signed-in offer refuses such a re-consent too.
+- **Client logos from listed hosts only** (hardening): the consent offer handed the consent page
+  any logo URL stored for a client, `http` included, so the user's browser fetched it from that
+  host. A logo is now served only when it is `https` on a host of the new `oauth.logoHosts` list;
+  `--logo-uri` is refused otherwise, and a stored non-https logo is removed at the client's next
+  `update` or `rotate-secret`.
+- **Consent-screen texts** (hardening): the client names and descriptions shown on the consent
+  screen refuse control and direction-override characters, which could make a name read as
+  another; a registry client's offer is bounded (256 KiB of JSON, labels included, where
+  `entryLabels` had no bound).
+- **Redirect URIs with a control character** (hardening): the URL parser drops tabs and newlines,
+  so a presented redirect URI containing one could match a registered URI and then fail as the
+  redirect's `Location`. Such a URI is now refused.
+- Not security fixes, listed for operators: the setting `oauth.requireAppAccountMfa` is removed:
+  it was never enforced, so a core that set it did not require multi-factor authentication on
+  app accounts, and such a core now logs a warning at boot; the platform integrity check reports
+  orphan rows on SQLite too.
+- **Operator action:** before deploying, set `oauth.logoHosts` on every core (identical everywhere)
+  if any registry client has a logo, or no logo is served; after deploying, add `--approve` to the
+  `update` commands that change a vetted field of an active registry client (otherwise the client
+  moves to `review` and is refused until approved), and run `purge-grants` on each core after a
+  `revoke`, or after a `suspend` whose users' grants should go too.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1799,3 +1872,4 @@ This report is updated with every release that carries a security fix:
 | 10 | 2026-10-30 | 2.0.0-rc.40 to 2.0.0-rc.68 | Adds 2.0.0-rc.67 (no security fix: the 2.0.0-rc.66 server with its Docker image) and 2.0.0-rc.68 (review of the OAuth2 consent flow alongside the OAuth2 clients registered by the operator): lower-severity fixes and the completion steps of the 2.0.0-rc.64 and rc.66 consent items; counts unchanged. Deployed on the maintainers' platforms (2026-10-30). |
 | 11 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.69 | Adds 2.0.0-rc.69 (review of the OAuth2 refresh chain and of pseudonymous access aliases alongside token introspection, revocation and pseudonymous OAuth2 subjects): 2 Medium findings and lower-severity fixes, plus the `follow-redirects` 1.16.2 dependency update (high advisory, not an audit finding); section 4.1 updates the alias check. Deployed on the maintainers' platforms (2026-11-02). |
 | 12 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.70 | Adds 2.0.0-rc.70 (review of OAuth2 client authentication, of what an OAuth2 session may create and of the authorization request's audience, alongside client key sets, grant state and resource indicators): 2 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.69 state-key item (the admin-key fallback removed). Deployed on the maintainers' platforms (2026-11-02). |
+| 13 | 2026-11-03 | 2.0.0-rc.40 to 2.0.0-rc.71 | Adds 2.0.0-rc.71 (review of the suspension and lifecycle of OAuth2 clients, alongside the vetting status of clients registered by the operator): 1 Low finding, lower-severity fixes and the completion step of the 2.0.0-rc.68 suspension (the data API refuses a suspended client's tokens). Deployed on the maintainers' platforms (2026-11-03). |
