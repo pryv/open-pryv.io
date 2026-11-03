@@ -222,6 +222,16 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
       assert.equal(payload.clientData.cmc.backChannelApiEndpoint, null);
     });
 
+    it('[AO-MDN] a membership keeps the member\'s display name on its counterparty; a relationship does not change', () => {
+      const counterparty = { username: 'provider-a', host: 'example.com' };
+      const member = buildDataGrantPayload({ offerEvent: VALID_OFFER, counterparty, membership: { approvedBy: null } });
+      assert.deepEqual(member.clientData.cmc.counterparty, { ...counterparty, displayName: 'Provider A' });
+      assert.deepEqual(counterparty, { username: 'provider-a', host: 'example.com' }, 'the caller\'s object is not mutated');
+      const noName = { ...VALID_OFFER, content: { ...VALID_OFFER.content, requesterMeta: { appId: 'example-app' } } };
+      assert.deepEqual(buildDataGrantPayload({ offerEvent: noName, counterparty, membership: { approvedBy: null } }).clientData.cmc.counterparty, counterparty);
+      assert.deepEqual(buildDataGrantPayload({ offerEvent: VALID_OFFER, counterparty }).clientData.cmc.counterparty, counterparty);
+    });
+
     it('[AO-AT1] defaults to a shared data-grant when request.accessType is absent', () => {
       const payload = buildDataGrantPayload({
         offerEvent: VALID_OFFER,

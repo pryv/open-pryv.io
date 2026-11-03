@@ -1393,7 +1393,7 @@ The hand-off is the **capability URL** (QR code or link) the member shows to an 
   permissions: [ /* the granted team streams + the relationship's channel streams */ ],
   clientData: { cmc: {
     role: 'member',
-    counterparty: { username, host, ... },   // the member
+    counterparty: { username, host, displayName?, ... },   // the member; displayName from its request's requesterMeta
     features: { chat: false, systemMessaging: true },
     membership: {
       approvedBy: { delegate: { username: string, hostSlug?: string }, relId: string } | null,  // null: the owner

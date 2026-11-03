@@ -43,7 +43,7 @@ const permissionSet = require('business/src/accesses/permissionSet.ts');
 type PermissionLike = { streamId: string; level: string } | { feature: string; setting: string };
 type OfferContent = {
   request?: { permissions?: unknown[]; accessType?: 'shared' | 'app' };
-  requesterMeta?: { appId?: string };
+  requesterMeta?: { appId?: string; displayName?: string };
 };
 
 type OfferEvent = {
@@ -345,7 +345,11 @@ function buildDataGrantPayload (params: {
         // THIS relationship on both accounts, so deliveries can be routed to
         // the right grant when one peer holds several. See relationshipKey.ts.
         scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
-        counterparty,
+        // A member's name as they gave it when asking to join: the group
+        // account reads its members from these accesses.
+        counterparty: membership != null && typeof meta.displayName === 'string' && meta.displayName !== ''
+          ? { ...counterparty, displayName: meta.displayName }
+          : counterparty,
         offerEventId: offerEvent.id,
         acceptEventId: acceptEventId ?? null,
         // The back-channel apiEndpoint is added by the orchestration loop

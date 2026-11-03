@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### CMC: a member's display name is kept on the membership
+
+- **Fixed: the `displayName` a member gives when asking to join a group (`requesterMeta.displayName`)
+  was dropped at the accept.** The membership access minted on the group account now carries it on
+  `clientData.cmc.counterparty.displayName` (absent when the request had none), so the group reads its
+  members' names from `accesses.get`. Memberships accepted earlier keep no name.
+
 ### CMC: the chat stream of an ended relationship can be deleted
 
 - **Fixed: `streams.delete` on a `…:chats:<slug>` or `…:collectors:<slug>` stream once its
