@@ -314,12 +314,18 @@ async function runRestore (args) {
       console.log(`\nIntegrity check failed for ${failedUsers.length} user(s). Rolling back...`);
       for (const { userId, username } of failedUsers) {
         try {
-          await orchestrator._clearUserData({ id: userId }, userId);
+          await orchestrator._clearUserData({ id: userId }, userId, username);
           console.log(`  Rolled back: ${username} (${userId})`);
         } catch (e) {
           console.error(`  Rollback failed for ${username}: ${e.message}`);
         }
       }
+      // A rolled-back account whose unfinished erasure the restore withdrew:
+      // that erasure is put back, to be completed.
+      const failedIds = new Set(failedUsers.map(f => f.userId));
+      const withdrawn = report.erasuresWithdrawn ?? [];
+      await orchestrator.rearmWithdrawnErasures(withdrawn.filter(r => failedIds.has(r.userId)), 'integrity check failed, rolled back');
+      report.erasuresWithdrawn = withdrawn.filter(r => !failedIds.has(r.userId));
       // Remove failed users from restored list and add to report
       report.rolledBack = failedUsers.map(f => ({ userId: f.userId, username: f.username }));
       report.restored = report.restored.filter(u =>
@@ -367,6 +373,12 @@ async function runRestore (args) {
   console.log(`  Restored: ${report.restored.length} users`);
   for (const u of report.restored) {
     console.log(`    - ${u.username} (${u.userId})`);
+  }
+  if (report.erasuresWithdrawn && report.erasuresWithdrawn.length > 0) {
+    console.log(`  Unfinished erasures withdrawn (the restored account is kept): ${report.erasuresWithdrawn.length}`);
+    for (const r of report.erasuresWithdrawn) {
+      console.log(`    - ${r.username} (${r.userId}): started ${new Date(r.startedAt).toISOString()}, trigger ${r.trigger ?? 'unknown'}, steps done: ${r.doneSteps.join(', ') || 'none'}`);
+    }
   }
   if (report.skipped.length > 0) {
     console.log(`  Skipped: ${report.skipped.length} users`);

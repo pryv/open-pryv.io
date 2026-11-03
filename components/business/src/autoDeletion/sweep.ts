@@ -146,8 +146,13 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   withdrawInvite: (account: SweepAccount, claimedBy: ClaimedBy) => Promise<void>;
   /** The deletion guards' objection, or null. Throws when the erasure cannot be attempted (an operator problem). */
   checkErasable: (account: SweepAccount) => Promise<Objection | null>;
-  /** Erases the account, or completes its unfinished erasure. */
-  erase: (account: SweepAccount, options: { trigger?: Trigger }) => Promise<void>;
+  /**
+   * Erases the account, or completes its unfinished erasure. With `resume`,
+   * only completes one: false when the account has no record of an
+   * unfinished erasure to take over any more (nothing erased). Any other
+   * result (`undefined` included) counts as completed.
+   */
+  erase: (account: SweepAccount, options: { trigger?: Trigger; resume?: boolean }) => Promise<boolean | void>;
   /** Durable record of the erasure (an audit row that outlives the account), written before it starts. */
   recordErasure?: (account: SweepAccount, record: ErasureRecord) => Promise<void>;
   /** Pryv seconds. */
@@ -314,7 +319,13 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       const record = { username: p.username, userId: p.userId, trigger: p.trigger };
       logger.warn(`auto-deletion: completing the unfinished erasure of account "${p.username}" (${p.userId}), trigger ${p.trigger ?? 'unknown'}`, record);
       try {
-        await deps.erase(account, {});
+        // Never a new erasure: the record may have gone since it was listed
+        // (the account restored from a backup).
+        if (await deps.erase(account, { resume: true }) === false) {
+          logger.warn(`auto-deletion: nothing erased for account "${p.username}" (${p.userId}), the completion announced above did not run: ` +
+            'its unfinished erasure was withdrawn or taken over since it was listed (the account restored from a backup, or the erasure resumed elsewhere)', record);
+          continue;
+        }
       } catch (err) {
         ctx.result.failed++;
         logger.error(`auto-deletion: the erasure of account "${p.username}" (${p.userId}) failed again, completed on a later pass: ${errorText(err)}`);
