@@ -398,6 +398,9 @@ async function runRestore (args) {
       console.log(`    - ${c.username}: ${c.reason}`);
     }
   }
+  if (report.uniqueValuesLost > 0) {
+    console.log(`  Unique values of the platform rows: ${report.uniqueValuesLost} held by another account (not restored)`);
+  }
   const xid = report.externalIds;
   if (xid != null && xid.restored + xid.lost + xid.namespaceMissing + xid.invalid > 0) {
     console.log(`  External ids: ${xid.restored} restored, ${xid.lost} lost (held by another account or core), ` +
@@ -692,7 +695,8 @@ Restore:
                             the last delta; refused by default)
   --user, -u <userId>       Restore a single user (default: all users)
   --overwrite               Clear existing data before import
-  --skip-conflicts          Skip users with username/email conflicts
+  --skip-conflicts          Skip users with username/email conflicts, and users
+                            the platform routes to another core (multi-core)
   --delete-on-success       Delete backup data after successful restore
   --move-on-success <path>  Move backup data after successful restore
   --verify-integrity        Verify integrity hashes after restore. Roll back and

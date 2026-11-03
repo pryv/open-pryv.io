@@ -113,7 +113,8 @@ function makeReaderWithPlatform (users, { platformRows = [], serverMappings = []
 // A platform store with one available core, recording its writes.
 function recordingPlatformDB (writes) {
   return {
-    async importAll (rows) { writes.push('platform.importAll:' + rows.length); },
+    async setUserUniqueFieldIfNotExists (username, field) { writes.push('platform.unique:' + field); return true; },
+    async setUserIndexedField (username, field) { writes.push('platform.indexed:' + field); },
     async getAllCoreInfos () { return [{ id: 'core-one', available: true }]; }
   };
 }
@@ -250,8 +251,8 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       const { o, writes } = makeOrchestrator();
       o.platformDB = recordingPlatformDB(writes);
       await o.restoreAllUsers(makeReaderWithPlatform(users, { platformRows: [goodRow, { key: 'user-indexed/language/firstuser', value: 'en' }] }));
-      assert.strictEqual(writes[writes.length - 1], 'platform.importAll:2');
-      assert.ok(writes.indexOf('usersIndex.addUser') < writes.indexOf('platform.importAll:2'));
+      assert.deepStrictEqual(writes.slice(-2), ['platform.unique:email', 'platform.indexed:language']);
+      assert.ok(writes.indexOf('usersIndex.addUser') < writes.indexOf('platform.unique:email'));
     });
 
     it('[RSOW1] a single-user restore never overwrites an account that now holds the username, even with overwrite', async function () {
@@ -483,5 +484,82 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       assert.deepStrictEqual((await collect(linkedUser.readAttachments())).map((a) => [a.fileId, a.eventId, a.data]), [['file-ref', 'evt1', 'referenced']]);
       assert.ok(await linkedUser.readAccountData());
     });
+  });
+});
+
+// The platform's name -> core rows, as a core of a multi-core platform (or
+// a single core) sees them; `claimRefused` answers a claim as lost to
+// another core (one that took the name after the check).
+function fakeCoreRouting (writes, { coreId = 'core-a', isSingleCore = false, rows = {}, claimRefused = false } = {}) {
+  return {
+    coreId,
+    isSingleCore,
+    rows,
+    async getUserCore (username) { return rows[username] ?? null; },
+    async setUserCore (username, id) { writes.push('routing.set:' + username + '=' + id); rows[username] = id; },
+    async setUserCoreIfNotExists (username, id) {
+      if (claimRefused) { rows[username] = 'core-c'; return false; }
+      writes.push('routing.claim:' + username + '=' + id);
+      if (rows[username] == null) rows[username] = id;
+      return rows[username] === id;
+    }
+  };
+}
+
+describe('[RXCR] restore on a multi-core platform: accounts routed to another core', function () {
+  const users = [{ userId: CUID1_ID, username: 'firstuser' }, { userId: CUID2_ID, username: 'validname' }];
+
+  it('[RXCR6] an account routed to another core refuses a whole restore before anything is written, a single-account one even with overwrite; --skip-conflicts skips it', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { rows: { validname: 'core-b' } });
+    await assert.rejects(() => o.restoreAllUsers(makeReader(users), { skipPlatform: true }),
+      /Restore aborted: 1 conflict\(s\): validname \(username "validname" is routed to core "core-b" \(this core is "core-a"\)\)\. Restore it on that core.*Nothing was restored/);
+    assert.deepStrictEqual(writes, []);
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true }),
+      /User validname cannot be restored on this core: username "validname" is routed to core "core-b".*Nothing was restored/);
+    assert.deepStrictEqual(writes, []);
+
+    const report = await o.restoreAllUsers(makeReader(users), { skipPlatform: true, skipConflicts: true, deleteOnSuccess: true });
+    assert.deepStrictEqual(report.restored, [users[0]]);
+    assert.deepStrictEqual(report.skipped, [users[1]]);
+    assert.deepStrictEqual(report.conflicts.map((c) => [c.username, c.kind]), [['validname', 'other-core']]);
+    assert.ok(writes.includes('routing.claim:firstuser=core-a'), 'the restored account is routed here');
+    assert.ok(!writes.some((w) => w.includes('validname')), JSON.stringify(writes));
+  });
+
+  it('[RXCR7] a name another core claims after the check refuses that account\'s restore before its data is written', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { claimRefused: true });
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true }),
+      /User validname cannot be restored on this core: username "validname" is routed to core "core-c".*Nothing was restored for this account/);
+    assert.deepStrictEqual(writes, []);
+  });
+
+  it('[RXCR8] a single core routes the restored account to itself, whatever an earlier row says', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { coreId: 'single', isSingleCore: true, rows: { validname: 'renamed-core' } });
+    await o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true });
+    assert.ok(writes.includes('usersIndex.addUser'));
+    assert.strictEqual(o.coreRouting.rows.validname, 'single');
+  });
+
+  it('[RXCR9] a unique value of the platform rows held by another account is kept by its holder and counted', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.platformDB = {
+      async setUserUniqueFieldIfNotExists (username, field, value) { writes.push('platform.unique:' + value); return value !== 'taken@example.com'; },
+      async setUserIndexedField (username, field) { writes.push('platform.indexed:' + field); },
+      async getAllCoreInfos () { return []; }
+    };
+    const warnings = [];
+    o.logger = { info () {}, warn (msg) { warnings.push(msg); }, error () {} };
+    const rows = [
+      { username: 'firstuser', field: 'email', value: 'taken@example.com', isUnique: true },
+      { username: 'firstuser', field: 'email', value: 'free@example.com', isUnique: true },
+      { username: 'firstuser', field: 'language', value: 'en', isUnique: false }
+    ];
+    const report = await o.restoreAllUsers(makeReaderWithPlatform([users[0]], { platformRows: rows }));
+    assert.strictEqual(report.uniqueValuesLost, 1);
+    assert.deepStrictEqual(writes.filter((w) => w.startsWith('platform.')), ['platform.unique:taken@example.com', 'platform.unique:free@example.com', 'platform.indexed:language']);
+    assert.ok(warnings.some((w) => /1 unique value\(s\) held by another account \(fields: email\): kept by their holder/.test(w)), JSON.stringify(warnings));
   });
 });

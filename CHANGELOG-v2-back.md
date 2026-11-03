@@ -64,14 +64,37 @@
   error line, and `closeErasureRecord` leaves the record alone. Before, an erasure frozen past
   `STALE_ERASURE_MS` that woke up after a takeover or a restore withdrawal wrote its record back
   with an unconditional `put` and ran its remaining steps.
-- Not changed: the record is per core (never replicated). An account restored onto another core than
-  the one holding a stopped erasure of the same id is not covered: the restore cannot see that
-  record, and that core's sweep still completes the erasure there (when not done yet, its
-  `deleteUser` step removes the account's platform-wide rows: user-core routing, unique fields).
-  Complete the erasure on the core that holds it first (its next sweep pass), which removes its index
-  entry and the platform rows, then restore on the other core with the platform rows. Never delete
-  the record by hand: the first core would keep the account indexed with its data and nothing left
-  to erase it.
+- Not changed: the record is per core (never replicated); the restore cannot see another core's
+  record. A restore onto another core than the one holding a stopped erasure of the same id is
+  refused on a multi-core platform by the routing check (next section) while that erasure has not
+  run its `deleteUser` step (which removes the account's platform-wide rows: user-core routing,
+  unique fields). Complete the erasure on the core that holds it first (its next sweep pass), then
+  restore on the other core with the platform rows. Never delete the record by hand: the first core
+  would keep the account indexed with its data and nothing left to erase it.
+
+### Restore checks the routing of the accounts it restores
+
+- `RestoreOrchestrator.coreRouting` (set in `init()` to the Platform; not set: not consulted, no row
+  written). `_detectOtherCoreAccounts(users)`: on a multi-core platform (`!isSingleCore`), an account
+  whose `getUserCore(username)` is non-null and not `coreId` is a conflict of kind `other-core`.
+  `restoreAllUsers` adds them to the conflicts, before any write: the run aborts without
+  `skipConflicts` (the abort message now ends "Nothing was restored."), they are skipped with it.
+  `restoreUser` throws on one, also with `overwrite` (as for `username-taken`). Treated as a conflict
+  rather than like the running-erasure refusal (which ignores `skipConflicts`): an account that lives
+  elsewhere is one the operator may choose to skip, and either way nothing is written for it.
+- `_claimUserCore(username)`, in `_restoreSingleUser` after the erasure withdrawal and before
+  `_importUser` (a throw puts the withdrawn record back): multi-core `setUserCoreIfNotExists` (false:
+  throws, nothing written for that account), single core `setUserCore` when the row differs. The row
+  stays when the import fails later (the account is then indexed here).
+- `_writePlatform`: per row `setUserUniqueFieldIfNotExists` (false: counted in `uniqueValuesLost`,
+  fields logged at warn) or `setUserIndexedField`, instead of `platformDB.importAll` (INSERT OR
+  REPLACE). A row the same owner holds is confirmed. `restoreAllUsers` and `restoreUser` return
+  `uniqueValuesLost`; `bin/backup.js` prints it.
+- Not changed: a whole backup carries the platform rows of every account of the platform (every
+  core's), and the indexed rows of the accounts the restore does not restore are still written with
+  the backup's values. `repository.deleteOne` still removes the user-core row whatever core it names.
+- Tests `[RXCR1-5]` (api-server: `bin/backup.js` run as a member of a multi-core platform over the
+  test platform store) and `[RXCR6-9]` (business unit).
 
 ### CMC: background writes check the account first
 

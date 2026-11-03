@@ -87,6 +87,8 @@ class RestoreOrchestrator {
   erasures: ErasureRecordsLike | null = null;
   /** How long an erasure record stays untouched before its erasure counts as stopped (set with `erasures`). */
   staleErasureMs = 0;
+  /** This core's identity and the platform's name -> core rows (not set: not consulted, none written). */
+  coreRouting: CoreRoutingLike | null = null;
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -104,6 +106,8 @@ class RestoreOrchestrator {
     const { getErasuresLocal, STALE_ERASURE_MS } = await import('business/src/auth/erasures.ts');
     this.erasures = await getErasuresLocal();
     this.staleErasureMs = STALE_ERASURE_MS;
+    const { getPlatform } = require('platform');
+    this.coreRouting = await getPlatform();
     const { getLogger } = require('@pryv/boiler');
     this.logger = getLogger('restore');
     await accountStreams.init();
@@ -142,16 +146,18 @@ class RestoreOrchestrator {
     const deleted = Array.isArray(manifest.deletedUsers) ? manifest.deletedUsers : [];
     for (const d of deleted) this.logger.info(deletedUserMessage(d));
 
-    // Detect conflicts
-    const conflicts = await this._detectConflicts(manifest.users);
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[] } =
-      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [] };
+    // Detect conflicts: on this core, and accounts the platform routes to
+    // another core (skipped with --skip-conflicts, like the others).
+    const conflicts = [...await this._detectConflicts(manifest.users), ...await this._detectOtherCoreAccounts(manifest.users)];
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number, externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[] } =
+      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0, externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [] };
     const pendingExternalIds: PendingExternalIds[] = [];
     const pendingAliases: PendingAliases[] = [];
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
       const conflictDesc = conflicts.map(c => `${c.username} (${c.reason})`).join(', ');
-      throw new Error(`Restore aborted: ${conflicts.length} conflict(s): ${conflictDesc}`);
+      const otherCore = conflicts.some((c) => c.kind === 'other-core') ? ' ' + OTHER_CORE_ADVICE : '';
+      throw new Error(`Restore aborted: ${conflicts.length} conflict(s): ${conflictDesc}.${otherCore} Nothing was restored.`);
     }
 
     const conflictUserIds = new Set(conflicts.map(c => c.userId));
@@ -173,7 +179,9 @@ class RestoreOrchestrator {
       }
 
       if (platformRead != null) {
-        report.extIdNamespaceSaltMismatch = (await this._writePlatform(platformRead)).extIdNamespaceSaltMismatch;
+        const written = await this._writePlatform(platformRead);
+        report.extIdNamespaceSaltMismatch = written.extIdNamespaceSaltMismatch;
+        report.uniqueValuesLost = written.uniqueValuesLost;
       }
       // After the platform rows: the namespaces they restore are known.
       report.externalIds = await this._restoreExternalIds(pendingExternalIds);
@@ -227,6 +235,12 @@ class RestoreOrchestrator {
     if (nameTaken != null) {
       throw new Error(`User ${username} cannot be restored: ${nameTaken.reason}. Nothing was restored.`);
     }
+    // The account lives on another core (or its erasure there has not
+    // completed): never, even with --overwrite.
+    const [otherCore] = await this._detectOtherCoreAccounts([{ userId: targetUserId, username }]);
+    if (otherCore != null) {
+      throw new Error(`User ${username} cannot be restored on this core: ${otherCore.reason}. ${OTHER_CORE_ADVICE} Nothing was restored.`);
+    }
     if (conflicts.length > 0 && !opts.overwrite) {
       throw new Error(`User ${username} conflicts with existing data: ${conflicts[0].reason}. Use --overwrite to replace.`);
     }
@@ -236,14 +250,12 @@ class RestoreOrchestrator {
     const erasuresWithdrawn: AccountErasureRow[] = [];
     const pendingExternalIds = await this._restoreSingleUser(reader, userId, username, opts, targetUserId, erasuresWithdrawn);
 
-    if (platformRead != null) {
-      await this._writePlatform(platformRead);
-    }
+    const uniqueValuesLost = platformRead != null ? (await this._writePlatform(platformRead)).uniqueValuesLost : 0;
     const externalIds = await this._restoreExternalIds([pendingExternalIds]);
     const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
 
     this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
-    return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts, externalIds, aliases, erasuresWithdrawn };
+    return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts, uniqueValuesLost, externalIds, aliases, erasuresWithdrawn };
   }
 
   /**
@@ -310,6 +322,9 @@ class RestoreOrchestrator {
     const withdrawn = await this._withdrawStoppedErasure(targetUserId, username);
     let pending: PendingExternalIds;
     try {
+      // Routed here before its data is written: a name another core took
+      // since the check refuses the account.
+      await this._claimUserCore(username);
       pending = await this._importUser(reader, userId, username, opts, targetUserId);
     } catch (err) {
       if (withdrawn != null) await this.rearmWithdrawnErasures([withdrawn], errorMessage(err));
@@ -547,6 +562,47 @@ class RestoreOrchestrator {
       }
     }
     return putBack;
+  }
+
+  /**
+   * The accounts of `users` whose username the platform routes to another
+   * core, on a multi-core platform: the account lives there, or its erasure
+   * there has not completed. Restored here, two cores would hold it, and the
+   * other core's deletion or erasure of it would remove the platform rows
+   * (routing, unique fields) of the copy restored here.
+   */
+  async _detectOtherCoreAccounts (users: Array<{ userId: string; username: string }>): Promise<ConflictRef[]> {
+    const routing = this.coreRouting;
+    if (routing == null || routing.isSingleCore) return [];
+    const conflicts: ConflictRef[] = [];
+    for (const { userId, username } of users) {
+      const coreId = await routing.getUserCore(username);
+      if (coreId != null && coreId !== routing.coreId) {
+        conflicts.push({ userId, username, kind: 'other-core', reason: otherCoreReason(username, coreId, routing.coreId) });
+      }
+    }
+    return conflicts;
+  }
+
+  /**
+   * Route `username` to this core, as its registration did: without the row
+   * the restored account is not reached (embedded DNS, the other cores) and
+   * its name reads as free to the other cores. Before the account's data is
+   * written. On a multi-core platform an atomic claim, refused when another
+   * core took the name since the check; on a single core written as
+   * registration writes it.
+   */
+  async _claimUserCore (username: string): Promise<void> {
+    const routing = this.coreRouting;
+    if (routing == null) return;
+    if (routing.isSingleCore) {
+      if (await routing.getUserCore(username) !== routing.coreId) await routing.setUserCore(username, routing.coreId);
+      return;
+    }
+    if (!await routing.setUserCoreIfNotExists(username, routing.coreId)) {
+      const coreId = await routing.getUserCore(username);
+      throw new Error(`User ${username} cannot be restored on this core: ${otherCoreReason(username, coreId ?? 'unknown', routing.coreId)}. ${OTHER_CORE_ADVICE} Nothing was restored for this account.`);
+    }
   }
 
   /** True when this core's users index holds `userId`. */
@@ -796,13 +852,29 @@ class RestoreOrchestrator {
     return read;
   }
 
-  /** Write what `_readPlatform` read and checked. */
-  async _writePlatform (read: PlatformRead): Promise<{ extIdNamespaceSaltMismatch: string[] }> {
-    if (!this.platformDB) return { extIdNamespaceSaltMismatch: [] };
-    if (read.data.length > 0) {
-      await this.platformDB.importAll(read.data);
+  /**
+   * Write what `_readPlatform` read and checked. A unique value (an email, an
+   * SSO binding) held now by another account stays with its holder (counted
+   * in `uniqueValuesLost`): written over, the lookups by that value (the
+   * core of an account by email, SSO account linking) would answer the
+   * restored account.
+   */
+  async _writePlatform (read: PlatformRead): Promise<{ extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number }> {
+    if (!this.platformDB) return { extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0 };
+    const lostFields = new Set<string>();
+    let uniqueValuesLost = 0;
+    for (const entry of read.data) {
+      if (!entry.isUnique) {
+        await this.platformDB.setUserIndexedField(entry.username, entry.field, entry.value);
+      } else if (!await this.platformDB.setUserUniqueFieldIfNotExists(entry.username, entry.field, entry.value)) {
+        uniqueValuesLost++;
+        lostFields.add(entry.field);
+      }
     }
-    this.logger.info(`Platform data restored: ${read.data.length} records${read.skipped ? ` (${read.skipped} unsupported keys skipped)` : ''}`);
+    this.logger.info(`Platform data restored: ${read.data.length - uniqueValuesLost} records${read.skipped ? ` (${read.skipped} unsupported keys skipped)` : ''}`);
+    if (uniqueValuesLost > 0) {
+      this.logger.warn(`Platform data: ${uniqueValuesLost} unique value(s) held by another account (fields: ${[...lostFields].join(', ')}): kept by their holder, not restored`);
+    }
     let extIdNamespaceSaltMismatch: string[] = [];
     if (read.extIdNamespaces.length > 0) {
       const { importNamespaceRows } = await import('platform/src/externalIdIndex.ts');
@@ -833,7 +905,7 @@ class RestoreOrchestrator {
     if (serverMappingsCount > 0) {
       this.logger.info(`Register server mappings restored: ${serverMappingsCount} user-core rows written`);
     }
-    return { extIdNamespaceSaltMismatch };
+    return { extIdNamespaceSaltMismatch, uniqueValuesLost };
   }
 }
 
@@ -857,6 +929,13 @@ function parseRawPlatformEntry (entry: { key: string; value: string }) {
     return { isUnique: false, field, username: userNameOrValue, value: entry.value };
   }
   return null;
+}
+
+/** What to do with an account the platform routes to another core. */
+const OTHER_CORE_ADVICE = 'Restore it on that core; or, to bring it here, first delete it there (or let its erasure there complete), which frees the name.';
+
+function otherCoreReason (username: string, coreId: string, thisCoreId: string): string {
+  return `username "${username}" is routed to core "${coreId}" (this core is "${thisCoreId}")`;
 }
 
 /** An erasure record, for a log line: when it started, what decided it, the steps it did. */
@@ -975,7 +1054,15 @@ type DeletedUserRef = { userId: string; username: string | null; lastRunId: stri
  * `deletedUsers`: the accounts deleted along them, not in `users`.
  */
 type Manifest = { formatVersion: string; backupType: string; users: UserManifest[]; runs?: Array<{ runId: string }>; deletedUsers?: DeletedUserRef[] };
-type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed'; reason: string };
+type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed' | 'other-core'; reason: string };
+/** The platform's name -> core rows and this core's identity (the Platform's methods the restore calls). */
+type CoreRoutingLike = {
+  readonly coreId: string;
+  readonly isSingleCore: boolean;
+  getUserCore (username: string): Promise<string | null>;
+  setUserCore (username: string, coreId: string): Promise<void>;
+  setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean>;
+};
 /** The platform part of a backup, read and checked before anything is written. */
 type PlatformRead = { data: PlatformEntry[]; skipped: number; mappingUsernames: string[]; defaultCoreId: string | null; extIdNamespaces: Array<{ key: string, value: string }> };
 type UserReader = {

@@ -31,7 +31,8 @@ function fakePlatformDB (userRows = []) {
     coreId: 'core-a',
     hashFor: (field, value) => value,
     async exportAll () { return userRows; },
-    async importAll (rows) { imported.push(...rows); },
+    async setUserUniqueFieldIfNotExists (username, field, value) { imported.push({ isUnique: true, field, username, value }); return true; },
+    async setUserIndexedField (username, field, value) { imported.push({ isUnique: false, field, username, value }); },
     async getAllCoreInfos () { return []; },
     async getPlatformKv (key) { return store.get(key) ?? null; },
     async setPlatformKv (key, value) { store.set(key, value); },
@@ -119,7 +120,7 @@ describe('[XIDB] external-id namespace rows through a platform backup and restor
     const result = await restore._writePlatform(read);
     await reader.close();
 
-    assert.deepStrictEqual(target.imported, [userRow], 'the user rows still go through importAll, without the namespace rows');
+    assert.deepStrictEqual(target.imported, [userRow], 'the user rows are written, without the namespace rows');
     assert.strictEqual(target.store.get('ext-id-ns/ns-new'), source.store.get('ext-id-ns/ns-new'), 'restored with its salt');
     assert.strictEqual(target.store.get('ext-id-ns/ns-live'), liveRow, 'the live namespace is not overwritten');
     assert.deepStrictEqual(result.extIdNamespaceSaltMismatch, ['ns-live']);
