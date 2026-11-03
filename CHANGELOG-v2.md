@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### SQLite audit and events: faster export pages on large files
+
+- **Fixed: every `events.get` naming the audit streams `:_audit:accesses` / `:_audit:actions` listed
+  their child streams from the full-text index, at a cost growing with the size of the audit log**
+  (about 45 ms warm and 130 ms cold per page on a 2M-row log, more on a larger one; an account export
+  pays it on every page). The list is now kept in the audit file itself: built once, when a file of an
+  earlier release is first opened (one listing, about the cost of one page before), then kept up as
+  rows are written. Measured through the API on 300k rows: 24 ms → 12 ms per 1,000-event page.
+- **Fixed: on the SQLite engine and the SQLite audit store, `events.get` with a `modifiedSince` that
+  few events meet (up to 20,000) read the whole time index on every page whose time range held none of
+  them** (an incremental export: 5.4 s per page on a 2M-row file read cold). Such a page now answers
+  in about a millisecond. Above 20,000 events modified since the bound, pages read as before. Same
+  results, same order.
+
 ### CMC: the chat stream of an ended relationship can be deleted
 
 - **Fixed: `streams.delete` on a `…:chats:<slug>` or `…:collectors:<slug>` stream once its

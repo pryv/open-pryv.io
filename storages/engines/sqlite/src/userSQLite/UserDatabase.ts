@@ -39,6 +39,7 @@ type TableSchema = Record<string, ColumnDef>;
 type EventQueries = {
   getAll: SqliteStmt,
   getTerms: SqliteStmt,
+  addTerm: SqliteStmt,
   getById: SqliteStmt,
   getDeletedSince: SqliteStmt,
   getHistory: SqliteStmt,
@@ -115,8 +116,28 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   await concurrentSafeWrite.execute(() => {
     fullTextSearch.setupForTable(this.db, 'events', tableSchemas.events, ['streamIds']);
   });
-  // A range on `term` narrows the vocabulary scan; `LIKE 'prefix%'` read every term.
-  this.eventQueries.getTerms = this.db.prepare('SELECT * FROM events_fts_v WHERE term >= ? AND term < ?');
+  // The access / action stream ids, listed by the audit store as streams (and
+  // expanded by every events.get that names their parents). Read from the
+  // full-text vocabulary, a listing decoded every posting of those terms: two
+  // per audit row, ~50-130 ms per call on 2M rows. Kept here instead, filled
+  // on insert, and from the vocabulary once when the table is new. Exact for
+  // rows inserted and deleted (an audit log); not maintained on updates.
+  // The table is created and filled in one transaction: a stop in between
+  // must not leave it existing and empty for good.
+  const t0 = Date.now();
+  let filled = false;
+  await concurrentSafeWrite.execute(() => {
+    this.db.transaction(() => {
+      if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events_terms'").get() != null) return;
+      this.db.prepare('CREATE TABLE events_terms (term TEXT PRIMARY KEY) WITHOUT ROWID').run();
+      fillTerms(this);
+      filled = true;
+    }).immediate();
+  });
+  const elapsed = Date.now() - t0;
+  if (filled && elapsed > 1000) this.logger.info(`listed the access / action terms in ${elapsed} ms (once per database)`);
+  this.eventQueries.getTerms = this.db.prepare('SELECT term FROM events_terms WHERE term >= ? AND term < ? ORDER BY term');
+  this.eventQueries.addTerm = this.db.prepare('INSERT OR IGNORE INTO events_terms (term) VALUES (?)');
 
   // Head events only: a history version is a row of its own (headId set), never
   // addressed by its own id (same as the PostgreSQL engine's `head_id IS NULL`).
@@ -129,6 +150,39 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   this.eventQueries.deleteByHeadId = this.db.prepare('DELETE FROM events WHERE headId = ?');
   this.eventQueries.deleteById = this.db.prepare('DELETE FROM events WHERE eventid = ?');
 };
+
+// `[from, to)` ranges of the kept terms; '.' follows '-'.
+const TERM_RANGES: Array<[string, string]> = [['access-', 'access.'], ['action-', 'action.']];
+
+/**
+ * The kept terms of a row's stream ids (an array, or the stored
+ * space-separated string), lowercased as the full-text tokenizer does.
+ */
+function termsOf (streamIds: unknown): string[] {
+  const ids = Array.isArray(streamIds) ? streamIds : (typeof streamIds === 'string' ? streamIds.split(' ') : []);
+  const out: string[] = [];
+  for (const id of ids) {
+    if (typeof id !== 'string') continue;
+    const term = id.toLowerCase();
+    if (TERM_RANGES.some(([from, to]) => term >= from && term < to)) out.push(term);
+  }
+  return out;
+}
+
+function fillTerms (udb: UserDatabaseInstance): void {
+  const fill = udb.db.prepare('INSERT OR IGNORE INTO events_terms (term) SELECT term FROM events_fts_v WHERE term >= ? AND term < ?');
+  for (const [from, to] of TERM_RANGES) fill.run(from, to);
+}
+
+/** Refill `events_terms` from the full-text vocabulary (terms with no row left drop out). */
+async function rebuildTerms (udb: UserDatabaseInstance): Promise<void> {
+  await concurrentSafeWrite.execute(() => {
+    udb.db.transaction(() => {
+      udb.db.prepare('DELETE FROM events_terms').run();
+      fillTerms(udb);
+    })();
+  });
+}
 
 function prepareGetAllQuery (db: SqliteDb, tableName: string): SqliteStmt {
   return db.prepare(`SELECT * FROM ${tableName}`);
@@ -145,7 +199,7 @@ UserDatabase.prototype.close = function (this: UserDatabaseInstance): void {
 UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params: GetParams): DomainEvent[] | null {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
-  const queryString = prepareEventsGetQuery(params);
+  const queryString = prepareEventsGetQuery(this.db, params);
   this.logger.debug(`GET events: ${queryString}`);
   const res = this.db.prepare(queryString).all();
   if (res != null) {
@@ -157,7 +211,7 @@ UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params:
 UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance, params: GetParams): NodeReadable {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
-  const queryString = prepareEventsGetQuery(params);
+  const queryString = prepareEventsGetQuery(this.db, params);
   this.logger.debug(`GET events streamed: ${queryString}`);
   const query = this.db.prepare(queryString);
   return readableEventsStreamForIterator(query.iterate());
@@ -175,11 +229,49 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
  *   the matches). When the planner walks the `time` index instead, a stream
  *   holding few events costs a scan of the whole index (measured 128 ms vs
  *   0.1 ms on 500k rows); `NOT INDEXED` rules that plan out.
+ * - `modifiedSince` with no stream filter: see `modifiedSincePlan`.
  */
-function prepareEventsGetQuery (params: GetParams): string {
+function prepareEventsGetQuery (db: SqliteDb, params: GetParams): string {
   const hasStreamFilter = (params.query || []).some((item) =>
     item.type === 'streamsQuery' && toSQLiteQuery(item.content as Parameters<typeof toSQLiteQuery>[0]) !== null);
-  return 'SELECT * FROM events ' + (hasStreamFilter ? 'NOT INDEXED ' : '') + prepareQuery(params);
+  if (hasStreamFilter) return 'SELECT * FROM events NOT INDEXED ' + prepareQuery(params);
+  const plan = modifiedSincePlan(db, params);
+  return 'SELECT * FROM events ' + plan.indexedBy + prepareQuery(plan.params);
+}
+
+// Above this many rows modified since the bound, the time index is walked.
+let modifiedProbeCap = 20_000;
+
+/**
+ * Walking the `time` index stops at `LIMIT` only when the rows it meets pass
+ * the filters. With `modified > X` where few rows are that recent (an
+ * incremental export, its cursor below them), the walk read the whole index
+ * and found nothing: 5 s on 1M rows from a cold file, once per page.
+ *
+ * So count the rows modified since the bound on the `modified` index (covering,
+ * capped at `modifiedProbeCap` entries): under the cap they are read through
+ * that index and sorted, which costs at most the cap; otherwise the condition
+ * gets a unary `+` and the time index is walked as without `modifiedSince`.
+ * Past the cap a page whose cursor lies below every recent row still walks the
+ * index (the plan before this one); the cap bounds the sort of the other plan.
+ * The caller's query is not changed.
+ */
+function modifiedSincePlan (db: SqliteDb, params: GetParams): { indexedBy: string, params: GetParams } {
+  const item = (params.query || []).find((q) =>
+    q.type === 'greater' && (q.content as { field?: string })?.field === 'modified');
+  if (item == null) return { indexedBy: '', params };
+  const content = item.content as { field: string, value: unknown };
+  const bound = eventsSchema.coerceValueForColumn('modified', content.value);
+  const row = db.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM events WHERE modified > ${bound} LIMIT ${modifiedProbeCap})`).get() as { n: number };
+  if (row.n < modifiedProbeCap) return { indexedBy: 'INDEXED BY events_modified ', params };
+  const query = params.query.map((q) => q === item ? { type: 'greater', content: { ...content, noIndex: true } } : q);
+  return { indexedBy: '', params: { ...params, query } };
+}
+
+function _setModifiedProbeCap (cap: number): number {
+  const previous = modifiedProbeCap;
+  modifiedProbeCap = cap;
+  return previous;
 }
 
 UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseInstance, deletedSince: number, options?: DeletionsOptions | null): NodeReadable {
@@ -258,9 +350,23 @@ UserDatabase.prototype.createEvent = async function (this: UserDatabaseInstance,
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(async) CREATE event: ${JSON.stringify(dbEvent)}`);
   await concurrentSafeWrite.execute(() => {
-    this.eventQueries.create.run(dbEvent);
+    insertRow(this, dbEvent, event.streamIds);
   });
 };
+
+// The row and its kept terms in one transaction: a retry after SQLITE_BUSY
+// cannot insert the row twice.
+function insertRow (udb: UserDatabaseInstance, row: EventRow, streamIds: unknown): void {
+  const terms = termsOf(streamIds);
+  if (terms.length === 0) {
+    udb.eventQueries.create.run(row);
+    return;
+  }
+  udb.db.transaction(() => {
+    udb.eventQueries.create.run(row);
+    for (const term of terms) udb.eventQueries.addTerm.run(term);
+  })();
+}
 
 /**
  * Use only in tests or migration
@@ -269,7 +375,7 @@ UserDatabase.prototype.createEvent = async function (this: UserDatabaseInstance,
 UserDatabase.prototype.createEventSync = function (this: UserDatabaseInstance, event: DomainEvent): void {
   const dbEvent = eventsSchema.toDB(event);
   this.logger.debug(`(sync) CREATE event: ${JSON.stringify(dbEvent)}`);
-  this.eventQueries.create.run(dbEvent);
+  insertRow(this, dbEvent, event.streamIds);
 };
 
 /**
@@ -387,7 +493,7 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
     this.logger.debug(`DELETE events one by one as query includes "MATCH": ${queryString}`);
     // HACK: SQLite does not know how to delete with "MATCH" statement,
     //       so we're getting events that match and deleting them one by one
-    const selectEventsToBeDeleted = prepareEventsGetQuery(params);
+    const selectEventsToBeDeleted = prepareEventsGetQuery(this.db, params);
 
     for (const event of this.db.prepare(selectEventsToBeDeleted).iterate() as Iterable<{ eventid: string }>) {
       this.logger.debug(`  > DELETE event: ${event.eventid}`);
@@ -395,6 +501,7 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
         this.eventQueries.deleteById.run(event.eventid);
       });
     }
+    await rebuildTerms(this);
     return null;
   }
   // else
@@ -403,6 +510,7 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
   await concurrentSafeWrite.execute(() => {
     res = this.db.prepare(queryString).run();
   });
+  if ((res as { changes: number } | null)?.changes) await rebuildTerms(this);
   return res;
 };
 
@@ -434,7 +542,7 @@ UserDatabase.prototype.exportAllEventsStreamed = async function * (this: UserDat
 UserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {
   for (const event of events) {
     await concurrentSafeWrite.execute(() => {
-      this.eventQueries.create.run(event);
+      insertRow(this, event, event.streamIds);
     });
   }
 };
@@ -461,9 +569,9 @@ const converters: Record<string, (content: unknown) => string | null> = {
     return `${column} = ${value}`;
   },
   greater: (content: unknown) => {
-    const c = content as { field: string, value: unknown };
+    const c = content as { field: string, value: unknown, noIndex?: boolean };
     const value = eventsSchema.coerceValueForColumn(c.field, c.value);
-    return `${c.field} > ${value}`;
+    return `${c.noIndex === true ? '+' : ''}${c.field} > ${value}`;
   },
   greaterOrEqual: (content: unknown) => {
     const c = content as { field: string, value: unknown };
@@ -616,4 +724,4 @@ function pagingClause (limit: unknown, skip: unknown): string {
   return clause;
 }
 
-export { UserDatabase, jsonConditionToSql };
+export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap };

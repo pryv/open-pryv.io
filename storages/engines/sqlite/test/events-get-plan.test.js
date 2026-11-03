@@ -12,6 +12,7 @@ const cuid = require('cuid');
 const userLocalDirectory = require('../../../test/helpers').userLocalDirectory;
 const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage.ts');
 const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
+const { _setModifiedProbeCap } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
 
 /**
  * `events.get` on a large per-user file (an audit log of several GB) must not
@@ -84,7 +85,7 @@ describe('[SQQP] userSQLite events.get query plans', function () {
   }
 
   it('[SQQP1] with no stream filter, walks the time index and stops at the limit (no full sort)', async function () {
-    const { rows, plan, sql } = await run({ modifiedSince: 1, fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
+    const { rows, plan, sql } = await run({ fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
     assert.ok(!sql.includes('events_fts'), sql);
     assert.match(plan, /USING INDEX events_time/, plan);
     assert.doesNotMatch(plan, /TEMP B-TREE/, plan);
@@ -146,6 +147,38 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     assert.deepStrictEqual(star.rows.map((e) => e.id), expectedStar);
   });
 
+  it('[SQQP9] modifiedSince: few recent rows are read through the modified index, many by walking the time index', async function () {
+    const previous = _setModifiedProbeCap(10);
+    try {
+      // 61 rows modified since 1: over the cap, the time index is walked.
+      const many = await run({ modifiedSince: 1, fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
+      assert.match(many.sql, /\+modified > 1/, many.sql);
+      assert.match(many.plan, /USING INDEX events_time/, many.plan);
+      assert.doesNotMatch(many.plan, /TEMP B-TREE/, many.plan);
+      assert.deepStrictEqual(many.rows.map((e) => e.id), Array.from({ length: 10 }, (_, k) => 'sqqp-' + (59 - k)));
+      // 4 rows modified since 1055: under the cap, the modified index; a cursor
+      // below them answers at once instead of walking the time index.
+      const few = await run({ modifiedSince: 1055, fromTime: -1e12, toTime: 1e12 }, { limit: 2 });
+      assert.match(few.plan, /USING INDEX events_modified/, few.plan);
+      assert.deepStrictEqual(few.rows.map((e) => e.id), ['sqqp-59', 'sqqp-58']);
+      const below = await run({ modifiedSince: 1055, fromTime: -1e12, toTime: 1030 }, { limit: 2 });
+      assert.deepStrictEqual(below.rows, []);
+      // Both plans return the same rows.
+      for (const since of [1, 1020, 1055, 1059]) {
+        for (const toTime of [1e12, 1040]) {
+          const q = { modifiedSince: since, fromTime: -1e12, toTime };
+          const capped = (await run(q, { limit: 5 })).rows.map((e) => e.id);
+          _setModifiedProbeCap(1e9);
+          const indexed = (await run(q, { limit: 5 })).rows.map((e) => e.id);
+          _setModifiedProbeCap(10);
+          assert.deepStrictEqual(capped, indexed, JSON.stringify(q));
+        }
+      }
+    } finally {
+      _setModifiedProbeCap(previous);
+    }
+  });
+
   it('[SQQP8] stream ids carrying quotes stay inside the match expression', async function () {
     for (const id of ["o'q", 'd"q', "x' OR 1=1 --"]) {
       const { rows } = await run({ streams: [[{ any: [id] }]] }, {});
@@ -153,5 +186,31 @@ describe('[SQQP] userSQLite events.get query plans', function () {
       const not = await run({ streams: [[{ any: ['a'] }, { not: [id] }]], toTime: 1030 }, {});
       assert.ok(not.rows.length > 0, 'not ' + id);
     }
+  });
+
+  // Last: it deletes the audit-shaped row.
+  it('[SQQP10] access and action terms are kept on insert, filled once for an existing file, and dropped once their rows are gone', async function () {
+    const vocab = (prefix) => userDb.db.prepare('SELECT term FROM events_fts_v WHERE term LIKE ? ORDER BY term').all(prefix + '%').map((r) => r.term);
+    const terms = () => ({ accesses: userDb.getAllAccesses().map((r) => r.term), actions: userDb.getAllActions().map((r) => r.term) });
+    const fromVocab = () => ({ accesses: vocab('access-'), actions: vocab('action-') });
+    await userDb.createEvent({
+      id: 'sqqp-audit-2',
+      streamIds: ['access-Z', 'action-events.get'],
+      type: 'audit-log/pryv-api',
+      time: 501,
+      created: 501,
+      createdBy: 'test',
+      modified: 501,
+      modifiedBy: 'test'
+    });
+    assert.deepStrictEqual(terms(), { accesses: ['access-x', 'access-x:1', 'access-z'], actions: ['action-events.get', 'action-y'] });
+    assert.deepStrictEqual(terms(), fromVocab());
+    // A file from before the table: filled from the vocabulary when opened.
+    userDb.db.exec('DROP TABLE events_terms');
+    await userDb.init();
+    assert.deepStrictEqual(terms(), fromVocab());
+    await userDb.deleteEvents({ query: [{ type: 'equal', content: { field: 'id', value: 'sqqp-audit' } }] });
+    assert.deepStrictEqual(terms(), { accesses: ['access-z'], actions: ['action-events.get'] });
+    assert.deepStrictEqual(terms(), fromVocab());
   });
 });
