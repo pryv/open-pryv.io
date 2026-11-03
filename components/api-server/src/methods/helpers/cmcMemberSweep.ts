@@ -9,7 +9,7 @@ import * as cmc from 'cmc';
 import { getConfig, getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { peerFetch } from 'business/src/outbound/peerFetch.ts';
-import { buildMallForCmc } from './cmcMall.ts';
+import { buildBackgroundMallForCmc } from './cmcMall.ts';
 import { selfIdentityHost } from './selfIdentityHost.ts';
 
 import type { MemberSweep } from 'cmc/src/memberSweep.ts';
@@ -39,7 +39,9 @@ let cached: MemberSweep | null = null;
 
 async function buildMemberSweep (): Promise<MemberSweep> {
   if (cached != null) return cached;
-  const mall = await buildMallForCmc();
+  // Runs outside any request (periodic pass, post-hooks, dispatch): nothing
+  // is written for an account erased meanwhile.
+  const mall = await buildBackgroundMallForCmc();
   const logger = getLogger('cmc:member-sweep');
   const config = await getConfig();
   const dispatchDeps = {

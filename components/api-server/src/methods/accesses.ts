@@ -52,7 +52,7 @@ const { samePermissionKeys } = require('../routes/oauth2/types.ts');
 const cmc = require('cmc');
 const delegation = require('delegation');
 const { getLogger, ready } = require('@pryv/boiler');
-const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMallForCmc, buildBackgroundMallForCmc, guardCmcBackgroundWrites } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery } = require('business/src/auth/deletionTeardown.ts');
 const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.ts');
@@ -670,7 +670,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // collectors stream when an access is updated externally (the hook
   // only uses mall.events.create).
   const cmcAccessesUpdateHook = cmc.createAccessesUpdatePostHook({
-    mall,
+    // Runs after the response: nothing is written for an account erased
+    // meanwhile.
+    mall: guardCmcBackgroundWrites(mall),
     // Lazy fetch resolution — see the delete hook below.
     fetch: peerFetch,
     timeoutMs: 15_000,
@@ -1086,8 +1088,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   const cmcAccessesDeleteHook = cmc.createAccessesDeletePostHook({
     // The composed CMC mall (with `.accesses` and `.events`) lets the hook mark
     // the invite a deleted relationship descends from as revoked (local
-    // bookkeeping) alongside the peer notify.
-    mall: mallForCmc,
+    // bookkeeping) alongside the peer notify. Guarded, as the hook runs after
+    // the response: nothing is written for an account erased meanwhile.
+    mall: await buildBackgroundMallForCmc(),
     fetch: cmcDeliveryFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:accesses-delete-hook'),

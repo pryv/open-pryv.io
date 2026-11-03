@@ -45,7 +45,7 @@ const { TypeRepository, isSeriesType } = require('business').types;
 const { getLogger, ready } = require('@pryv/boiler');
 const { getPlatform } = require('platform');
 const { getStorageLayer } = require('storage');
-const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMallForCmc, buildBackgroundMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep, cmcSelfIdentityFor: sharedCmcSelfIdentityFor } = require('./helpers/cmcMemberSweep.ts');
 
 const { pubsub } = require('messages');
@@ -210,6 +210,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // CMC wiring site; see methods/helpers/cmcMall.ts. Passing the raw Mall (no
   // `accesses`) would silently no-op anything the handlers do via mall.accesses.
   const mallForCmc = await buildMallForCmc();
+  // The same, for the work that outlives the request (dispatch, retry loop):
+  // nothing is written for an account erased meanwhile.
+  const backgroundMallForCmc = await buildBackgroundMallForCmc();
   await eventsGetUtils.init();
 
   // Initialise the project version as soon as we can.
@@ -538,7 +541,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     logger: getLogger('cmc:capability-post-create'),
   });
   const cmcDispatchMiddleware = cmc.createDispatchMiddleware({
-    mall: mallForCmc,
+    mall: backgroundMallForCmc,
     fetch: peerFetch,
     timeoutMs: 15_000,
     logger: cmcDispatchLogger,
@@ -652,7 +655,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // shard / per-recent-activity scoping can be wired later.
   cmcRetryLoop = cmc.startRetryLoopIfEnabled({
     config,
-    mall: mallForCmc,
+    mall: backgroundMallForCmc,
     selfIdentityFor: cmcSelfIdentityFor,
     lineageOf: delegationLineageOf,
     relationshipExists: delegationRelationshipExists,

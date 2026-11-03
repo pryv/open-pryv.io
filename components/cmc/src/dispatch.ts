@@ -48,6 +48,20 @@ const handleMemberRevokeMod: typeof import('./handleMemberRevoke.ts') = require(
 const retryQueueMod = require('./retryQueue.ts');
 const outbound = require('./outbound.ts');
 const credentialScrub = require('./credentialScrub.ts');
+const { isAccountGoneError } = require('./accountWriteGuard.ts');
+
+/**
+ * Log a write of this loop that failed. A write refused because the account
+ * is erased (see accountWriteGuard.ts) is expected, not a fault: info, and
+ * without the error text.
+ */
+function logWriteFailure (deps: DispatchDeps, message: string, err: unknown, fields: Record<string, unknown>): void {
+  if (isAccountGoneError(err)) {
+    deps.logger?.info?.(message + ': the account is erased', fields);
+    return;
+  }
+  deps.logger?.warn?.(message, { ...fields, error: String((err as Error)?.message ?? err) });
+}
 
 /**
  * Options for every write this loop makes to a trigger event.
@@ -252,10 +266,7 @@ async function dispatch (params: {
       event.content = deliveredContent;
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* notify is best-effort */ }
     } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as delivered', {
-        eventId: event.id,
-        error: String((err as Error)?.message ?? err),
-      });
+      logWriteFailure(deps, 'cmc/dispatch: failed to mark trigger as delivered', err, { eventId: event.id });
     }
   }
 
@@ -543,10 +554,7 @@ async function markCompleted (deps: DispatchDeps, userId: string, event: CmcEven
     await stampTriggerStatus(deps, userId, event.id, { status: 'completed', ...cleaned });
     try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
   } catch (err: unknown) {
-    deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as completed', {
-      eventId: event.id,
-      error: String((err as Error)?.message ?? err),
-    });
+    logWriteFailure(deps, 'cmc/dispatch: failed to mark trigger as completed', err, { eventId: event.id });
   }
   return { handled: true, eventType: event.type, status: 'completed' };
 }
@@ -581,10 +589,7 @@ async function markFailed (
         },
       });
     } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/dispatch: failed to enqueue retry', {
-        eventId: event.id,
-        error: String((err as Error)?.message ?? err),
-      });
+      logWriteFailure(deps, 'cmc/dispatch: failed to enqueue retry', err, { eventId: event.id, type: event.type });
     }
   }
   if (event.id != null && deps.mall.events.updateWithMerge != null) {
@@ -604,11 +609,7 @@ async function markFailed (
       await stampTriggerStatus(deps, userId, event.id, { status: 'failed', failure: { reason, detail: detail ?? null } });
       try { deps.notifyEventChanged?.(userId, event); } catch (_e) { /* best-effort */ }
     } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/dispatch: failed to mark trigger as failed', {
-        eventId: event.id,
-        reason,
-        error: String((err as Error)?.message ?? err),
-      });
+      logWriteFailure(deps, 'cmc/dispatch: failed to mark trigger as failed', err, { eventId: event.id, reason });
     }
   }
   return { handled: true, eventType: event.type, status: 'failed', reason, detail };

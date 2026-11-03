@@ -11,6 +11,7 @@ import { ApiEndpoint } from 'utils';
 import { getMall } from 'mall';
 import { getStorageLayer } from 'storage';
 import { getUsersRepository } from 'business/src/users/index.ts';
+import { getErasuresLocal } from 'business/src/auth/erasures.ts';
 import { getLogger } from '@pryv/boiler';
 import { deleteAccessChain } from './accessDeletion.ts';
 import { reconcileSessionsOfGrant } from './oauthSessionReconcile.ts';
@@ -115,4 +116,37 @@ async function buildMallForCmc (): Promise<MallLike> {
   return composed;
 }
 
-export { buildMallForCmc, invalidateCmcAccessCache };
+/**
+ * True while the account exists and no erasure of it has started: the users
+ * index names it and the core holds no erasure record for it. The erasure
+ * writes its record before its first step and removes the index entry before
+ * any data, so a write this check allows lands either before the erasure's
+ * data removal (and is removed with the rest) or, at worst, when the whole
+ * erasure ran between this check and the write.
+ */
+async function cmcAccountActive (userId: string): Promise<boolean> {
+  const usersRepository = await getUsersRepository();
+  if ((await usersRepository.getUsernameForUserId(userId)) == null) return false;
+  return (await (await getErasuresLocal()).get(userId)) == null;
+}
+
+/**
+ * `mall` for the CMC work that runs outside the request that started it
+ * (dispatch, retry loop, member sweep, accesses post-hooks): its creates and
+ * updates are dropped for an account that is gone (see cmc's
+ * accountWriteGuard.ts). Request-time hooks keep the plain mall: they run for
+ * an account the request just authenticated.
+ */
+function guardCmcBackgroundWrites<M extends object> (mall: M): M {
+  return cmc.guardAccountWrites(mall, { accountActive: cmcAccountActive, logger: getLogger('cmc:account-guard') });
+}
+
+let cachedBackground: MallLike | null = null;
+
+/** The composed mall of `buildMallForCmc`, guarded for background work. */
+async function buildBackgroundMallForCmc (): Promise<MallLike> {
+  if (cachedBackground == null) cachedBackground = guardCmcBackgroundWrites(await buildMallForCmc());
+  return cachedBackground;
+}
+
+export { buildMallForCmc, buildBackgroundMallForCmc, guardCmcBackgroundWrites, cmcAccountActive, invalidateCmcAccessCache };

@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### CMC: background writes check the account first
+
+- `cmc/src/accountWriteGuard.ts`: `guardAccountWrites(mall, { accountActive, logger })` wraps a mall
+  (Proxy, groups bound to themselves) so `events.create|update|updateWithMerge`,
+  `streams.create|update` and `accesses.create|update` first await `accountActive(userId)`; when false
+  the write rejects with `AccountGoneError` (`code: 'cmc-account-gone'`, `isAccountGoneError`) and an
+  info line names the operation and the record (id, type, streams), never its content. Reads and
+  deletes pass through.
+- api-server `helpers/cmcMall.ts`: `cmcAccountActive` = the users index names the id AND the core
+  holds no erasure record for it (`getErasuresLocal().get`), so the guard closes from the first step
+  of an erasure; `buildBackgroundMallForCmc()` / `guardCmcBackgroundWrites(mall)` give the guarded
+  mall to the dispatch middleware, the retry loop, the member sweep, the accesses.update and
+  accesses.delete post-hooks and the delegation detach notice. Request-time hooks keep the plain mall.
+- `dispatch.ts`: the delivered / completed / failed stamps and the retry enqueue log a refused write
+  at info (`<message>: the account is erased`, with the trigger id) instead of warn.
+- Residual window, by design: a write whose check passed lands after the erasure's data removal only
+  if the whole erasure (record, teardown, files, index entry, data) ran between the check and the
+  write. The erasure does not wait for or cancel in-flight work (it may run on another worker).
+
 ### OAuth extension: grouped consent entries, offer size bound
 
 - `SynthOffer.entryGroups` (optional offer member, `EntryGroup = { key, label, entries }`; extension

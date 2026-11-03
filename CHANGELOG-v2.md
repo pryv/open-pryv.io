@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### CMC: nothing is written for an account erased while a consent operation runs
+
+- **Fixed: an account erased while one of its CMC operations was still running could leave a record
+  behind.** An accept or a refuse reads the requester's offer for up to 15 seconds after its `201`;
+  when the account was erased during that read, the plugin wrote afterwards for the erased account a
+  retry record holding the trigger's content, the requester's invite URL with its token included. The
+  record was invisible through the API, never processed and never removed (PostgreSQL; on SQLite with
+  `audit.onUserDelete: keep` it re-created an events database in the kept user directory). The work
+  that runs after a request (dispatch of a trigger, retry loop, member sweep, the follow-ups of
+  `accesses.update` and `accesses.delete`) now writes nothing for an account that no longer exists or
+  whose erasure has started: the write is dropped and logged at info (operation, record id, never its
+  content). A grant that cannot be stored is not announced to the requester. No change to the API or
+  to what a counterparty receives for a live account. A record left by an earlier erasure is not
+  removed by this fix: it is an `events` row (type `cmc-internal/retry-cmc`) whose user id is no
+  longer an account of the core.
+
 ### CMC: the chat stream of an ended relationship can be deleted
 
 - **Fixed: `streams.delete` on a `…:chats:<slug>` or `…:collectors:<slug>` stream once its

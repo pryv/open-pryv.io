@@ -51,6 +51,7 @@ const memberMintRegistry = require('./memberMintRegistry.ts');
 const memberLedger = require('./memberLedger.ts');
 const handleMemberRevoke = require('./handleMemberRevoke.ts');
 const memberSweep = require('./memberSweep.ts');
+const accountWriteGuard = require('./accountWriteGuard.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -95,6 +96,9 @@ export const { mintCapability, gcCapability } = capability;
 
 export const { createAccessesUpdatePostHook, createStreamDeleteNarrowing, runWithSuppression } = accessesUpdateHook;
 export const { createAccessesDeletePostHook } = accessesDeleteHook;
+// The mall handed to the background work (dispatch, retry loop, sweeps,
+// post-hooks): no create or update for an account that is gone.
+export const { guardAccountWrites, isAccountGoneError } = accountWriteGuard;
 export const { RetryScheduler } = retryScheduler;
 export const { startRetryLoopIfEnabled } = bootRetryLoop;
 export const { createMallAccessesAdapter } = mallAccessesAdapter;

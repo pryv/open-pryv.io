@@ -36,7 +36,7 @@ const { peerUrlProblem, insecurePeerUrlAllowed, peerFetchOptions } = require('pl
 const { getStorageLayer } = require('storage');
 const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 const { fromCallback } = require('utils');
-const { buildMallForCmc } = require('./helpers/cmcMall.ts');
+const { buildMallForCmc, buildBackgroundMallForCmc } = require('./helpers/cmcMall.ts');
 const { buildMemberSweep } = require('./helpers/cmcMemberSweep.ts');
 const { selfIdentityHost } = require('./helpers/selfIdentityHost.ts');
 const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
@@ -407,7 +407,9 @@ export default async function produceDelegationsApiMethods (api: { register (...
   // and forget, like on that route: a slow or unreachable requester never
   // holds the detach.
   const cmcConsentGrantsRevokedNotice = cmc.createAccessesDeletePostHook({
-    mall,
+    // Runs after the response: nothing is written for an account erased
+    // meanwhile.
+    mall: await buildBackgroundMallForCmc(),
     fetch: peerFetch,
     timeoutMs: 15_000,
     logger: getLogger('cmc:delegation-detach'),
