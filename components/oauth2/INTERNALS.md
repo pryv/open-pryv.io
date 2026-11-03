@@ -26,7 +26,7 @@ Apart from `issuer`, operators MUST keep the `oauth.*` config block in sync acro
 
 After `/oauth2/token` returns an access token, that token is bound to a specific user on a specific home core. Vanilla RFC 6749 clients don't know about Pryv's home-core routing — they'd hit `reg.pryv.me/<user>/<api>`, receive `421 + coreUrl` from `checkUserCore.ts`, and fail (RFC 6749 doesn't define 421-handling).
 
-The Pryv-specific `apiEndpoint` field in the token response (carried over from the existing `/reg/access` ACCEPTED response shape) tells the client the home-core URL directly. lib-js reads it automatically; vanilla clients MUST be told to read it (operator-facing doc deliverable). Single-core deployments: `apiEndpoint` equals the LB URL — no client-side change needed.
+The Pryv-specific `apiEndpoint` field in the token response (carried over from the existing `/reg/access` ACCEPTED response shape) tells the client the home-core URL directly. lib-js reads it automatically; vanilla clients MUST be told to read it (operator-facing doc deliverable). Single-core deployments: `apiEndpoint` is under the deployment's public API URL (`dnsLess.publicUrl`), no client-side change needed. It names the API, not the issuer: with an `oauth:issuer` on a vanity host the two differ (`docs/oauth2.md`, `issuer`).
 
 ## PlatformDB keyspaces
 

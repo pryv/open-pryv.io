@@ -696,6 +696,17 @@ load-balancer URL. The code exchange at `/oauth2/token` must reach the core
 that issued the code (there is no cross-core forwarding; a code presented to
 another core answers `invalid_grant`).
 
+When `oauth.issuer` names a different host than the core (a vanity URL served
+by a reverse proxy in front of it), the proxy must forward `/.well-known/`,
+`/oauth2/` and `/reg/service/info` to the core: the issuer is also the
+`pryvApi` handed to the consent UI, which signs the user in through
+`{pryvApi}/reg/service/info`. A consent UI with an origin allowlist (the
+`trustedOrigins` of app-web-user-account) must list the issuer URL. Keep the
+client's Host header or send `X-Forwarded-Host` / `X-Forwarded-Proto` (with
+`http.trustedProxies` covering the proxy): DPoP proofs are checked against the
+URL the request reached. `apiEndpoint` in token responses and `api_base` in
+introspection keep naming the core's API URL, the resource server.
+
 ### `clientRegistration.mode` is `curated`
 
 Dynamic client registration (RFC 7591) is **not** offered. `mode: open` is
