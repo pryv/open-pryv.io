@@ -146,7 +146,7 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
           permissions: [{ streamId: teamStream, level: 'contribute' }],
           features: { chat: false, systemMessaging: true },
         },
-        requesterMeta: { username: member.username, appId: APP },
+        requesterMeta: { username: member.username, appId: APP, displayName: 'Member of ' + team },
       },
     });
     assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
@@ -249,6 +249,8 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       assert.deepStrictEqual(membershipAccess.clientData.cmc.membership, { approvedBy: null, requestedScopes: [teamStream] });
       assert.deepStrictEqual(membershipAccess.clientData.cmc.features, { chat: false, systemMessaging: true });
       assert.deepStrictEqual(membershipAccess.clientData.cmc.counterparty.username, member.username);
+      // The name the member gave when asking, kept through the back-channel stamp.
+      assert.strictEqual(membershipAccess.clientData.cmc.counterparty.displayName, 'Member of team-join');
       assert.ok(membershipAccess.permissions.some((p) => p.streamId === teamStream && p.level === 'contribute'));
       assert.ok(!membershipAccess.permissions.some((p) => /:chats/.test(p.streamId)), 'no chat channel');
       assert.strictEqual(mirror.content.membership, true);

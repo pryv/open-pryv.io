@@ -43,7 +43,7 @@ const permissionSet = require('business/src/accesses/permissionSet.ts');
 type PermissionLike = { streamId: string; level: string } | { feature: string; setting: string };
 type OfferContent = {
   request?: { permissions?: unknown[]; accessType?: 'shared' | 'app' };
-  requesterMeta?: { appId?: string };
+  requesterMeta?: { appId?: string; displayName?: string };
 };
 
 type OfferEvent = {
@@ -273,6 +273,7 @@ function buildDataGrantPayload (params: {
 }): Record<string, unknown> {
   const { offerEvent, counterparty, accessName, features, extraPermissions, grantedPermissions, acceptEventId, scopeStreamId, membership } = params;
   const meta = offerEvent?.content?.requesterMeta ?? {};
+  const memberName = membership != null ? memberDisplayName(meta.displayName) : null;
   const computedName = accessName ??
     ((membership != null ? 'cmc-member:' : 'cmc:') + (meta.appId || 'app') + ':' + counterparty.username + '@' + counterparty.host);
   const offeredPerms = permissionsFromOffer(offerEvent); // consent form (mandatory preserved)
@@ -345,7 +346,11 @@ function buildDataGrantPayload (params: {
         // THIS relationship on both accounts, so deliveries can be routed to
         // the right grant when one peer holds several. See relationshipKey.ts.
         scopeStreamId: typeof scopeStreamId === 'string' ? scopeStreamId : null,
-        counterparty,
+        // A member's name as they gave it when asking to join: the group
+        // account reads its members from these accesses.
+        counterparty: membership != null && memberName != null
+          ? { ...counterparty, displayName: memberName }
+          : counterparty,
         offerEventId: offerEvent.id,
         acceptEventId: acceptEventId ?? null,
         // The back-channel apiEndpoint is added by the orchestration loop
@@ -355,6 +360,21 @@ function buildDataGrantPayload (params: {
       },
     },
   };
+}
+
+const MEMBER_DISPLAY_NAME_MAX = 200;
+
+/**
+ * The name a member gave, as kept on the membership access: the requester
+ * writes it freely, so control and direction-override characters are removed,
+ * spaces trimmed and the length capped. Null when nothing is left.
+ */
+function memberDisplayName (value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const cleaned = value.replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/g, '').trim();
+  if (cleaned === '') return null;
+  return Array.from(cleaned).slice(0, MEMBER_DISPLAY_NAME_MAX).join('');
 }
 
 /**
