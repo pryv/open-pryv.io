@@ -158,6 +158,8 @@ export type MallStreamsLike = {
   // where the lazy-provisioning hook now also runs. Optional so unit
   // fakes may omit it (callers then fall back to an idempotent create).
   getOneWithNoChildren?: (userId: string, streamId: string, storeId?: string | null) => Promise<unknown>;
+  // Partial update (MallUserStreams.update). Optional so unit fakes may omit it.
+  update?: (userId: string, params: MallParams & { id: string }) => Promise<unknown>;
   // Takes the stream id itself, like the real mall (MallUserStreams.delete),
   // not a params object: the mall parses the id to route it to its store.
   delete?: (userId: string, streamId: string) => Promise<unknown>;

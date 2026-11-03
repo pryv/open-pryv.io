@@ -223,7 +223,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // plugins read their regions by stream query, so a user subtree moved there
   // would be read as their records. Wired before the permission walk
   // (applyPrerequisitesForUpdate), like the create guards.
-  const cmcStreamUpdateHook = cmc.createStreamUpdateReservedRootHook({ errors });
+  const cmcStreamUpdateHook = cmc.createStreamUpdateReservedRootHook({ errors, mall: await buildMallForCmc() });
   const delegationStreamUpdateHook = delegationActive
     ? delegation.createStreamUpdateReservedRootHook({ errors })
     : delegationPassthrough;
@@ -452,7 +452,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // silently break every active CMC relationship on the account. Wired
   // BEFORE the existing permission check so the rejection is plugin-
   // owned (not permission-shaped) and surfaces a stable error id.
-  const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors });
+  // The mall lets it tell the chat stream of an ended relationship, which the
+  // account owner may delete, from one still in use.
+  const cmcStreamDeleteHook = cmc.createStreamDeleteReservedRootHook({ errors, mall: await buildMallForCmc() });
   // Group accounts: a team stream deleted for good narrows every membership
   // covering it (the member accesses minted under it are deleted on the
   // patient cores, recorded on the parent stream). Called by deleteWithData

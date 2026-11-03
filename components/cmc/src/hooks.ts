@@ -22,7 +22,10 @@ const C = require('./constants.ts');
 const validators = require('./validators.ts');
 const provisioning = require('./provisioning.ts');
 const anchorStreams = require('./anchorStreams.ts');
+const relationshipKey = require('./relationshipKey.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
+
+type MallAccessesLike = import('./_types.ts').MallAccessesLike;
 
 type ApiError = Error & { id?: string; data?: unknown };
 type ErrorFactory = {
@@ -43,6 +46,8 @@ type MethodContext = {
     id?: string;
     type?: string;
     isPersonal?: () => boolean;
+    canDeleteStream?: (streamId: string) => Promise<boolean>;
+    canUpdateStream?: (streamId: string) => Promise<boolean>;
     clientData?: {
       cmc?: {
         role?: string;
@@ -296,22 +301,26 @@ function createStreamCreateReservedRootHook (deps: Deps): Middleware {
  *
  * `streams.update` takes `{ id, update: { trashed?, parentId?, ... } }`.
  * Trashing a plugin-managed stream (`:_cmc:inbox`, the `:_cmc:_internal`
- * subtree, a `chats` / `collectors` leaf) would break the deliveries and
- * records that live on it exactly as a delete would (a trashed inbox refuses
- * every peer delivery), so `update.trashed === true` on such a stream is
- * refused with `cmc-reserved-stream` (400), for every token including
- * personal. The MOVE checks (a move into a plugin region, and a move of a
- * plugin-managed stream) live in the `streams.update` prerequisites, where the
- * stored parent is known, so a rename that merely repeats the current parentId
- * is not treated as a move.
+ * subtree, a `chats` / `collectors` leaf of a live relationship) would break
+ * the deliveries and records that live on it exactly as a delete would (a
+ * trashed inbox refuses every peer delivery), so `update.trashed === true` on
+ * such a stream is refused with `cmc-reserved-stream` (400), for every token
+ * including personal. A `chats` / `collectors` leaf whose relationship has
+ * ended may be trashed, as `streams.delete` allows (see
+ * `createStreamDeleteReservedRootHook`); without `mall` it stays refused. The
+ * MOVE checks (a move into a plugin region, and a move of a plugin-managed
+ * stream) live in the `streams.update` prerequisites, where the stored parent
+ * is known, so a rename that merely repeats the current parentId is not
+ * treated as a move.
  */
-function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
-  return function cmcStreamUpdateReservedRootHook (_context, params, _result, next) {
+function createStreamUpdateReservedRootHook (deps: Deps & { mall?: { accesses: MallAccessesLike } }): Middleware {
+  return async function cmcStreamUpdateReservedRootHook (context, params, _result, next) {
     const update = params?.update;
     if (update == null || typeof update !== 'object') return next();
     if ((update as { trashed?: unknown }).trashed !== true) return next();
     const id: unknown = C.canonicalLocalStreamId(params?.id);
     if (typeof id === 'string' && C.isPluginManagedStreamId(id)) {
+      if (await mayEraseEndedChannelStream(deps.mall, context, id, 'update')) return next();
       return next(deps.errors.invalidOperation(
         'Stream "' + id + '" is managed by the CMC plugin and cannot be trashed',
         { id: 'cmc-reserved-stream', streamId: id }
@@ -338,12 +347,19 @@ function createStreamUpdateReservedRootHook (deps: Deps): Middleware {
  *     `:_cmc:_internal`, `:_cmc:_internal:retries`) → reject.
  *   - Inside `:_cmc:apps:` and NOT under a `chats|collectors` segment
  *     (i.e. `isUserCreatableStreamId(id) === true`) → passthrough.
+ *   - A chat / collector stream (`…:chats:<slug>`, `…:collectors:<slug>`)
+ *     whose relationship has ended (no relationship access left for its
+ *     scope and counterparty), asked by a token that may manage it →
+ *     passthrough: revoking keeps it and its
+ *     events, and the account owner may erase them. Without `mall` (unit
+ *     fakes) it stays refused. `mergeEventsWithParent: true` is refused
+ *     there: it would move the counterparty's messages into the plugin's
+ *     `chats` / `collectors` parent rather than erase them.
  *   - Everything else under `:_cmc:` (`:_cmc:_internal:*`,
- *     chats/collectors parents and children) → reject. The plugin
- *     owns these and removes them itself when revoking a relationship.
+ *     chats/collectors parents, children of a live relationship) → reject.
  */
-function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
-  return function cmcStreamDeleteReservedRootHook (_context, params, _result, next) {
+function createStreamDeleteReservedRootHook (deps: Deps & { mall?: { accesses: MallAccessesLike } }): Middleware {
+  return async function cmcStreamDeleteReservedRootHook (context, params, _result, next) {
     const id: unknown = C.canonicalLocalStreamId(params?.id);
     if (typeof id !== 'string') return next();
     if (!C.isCmcStreamId(id)) return next();
@@ -357,11 +373,67 @@ function createStreamDeleteReservedRootHook (deps: Deps): Middleware {
 
     if (C.isUserCreatableStreamId(id)) return next();
 
+    if (await mayEraseEndedChannelStream(deps.mall, context, id, 'delete')) {
+      if (params?.mergeEventsWithParent === true) {
+        return next(deps.errors.invalidOperation(
+          'Stream "' + id + '" holds the messages of an ended relationship: delete them with it (mergeEventsWithParent: false)',
+          { id: 'cmc-reserved-stream-undeletable', streamId: id }
+        ));
+      }
+      return next();
+    }
+
     return next(deps.errors.invalidOperation(
       'Stream "' + id + '" lives in a plugin-managed region of :_cmc: and may not be deleted directly',
       { id: 'cmc-reserved-stream-undeletable', streamId: id }
     ));
   };
+}
+
+/**
+ * True when the calling access may manage `streamId` and its relationship
+ * has ended (`relationshipEnded`). The permission is checked first, so a
+ * token that may not manage the stream gets the same refusal whether the
+ * relationship is live or not.
+ */
+async function mayEraseEndedChannelStream (
+  mall: { accesses: MallAccessesLike } | undefined,
+  context: MethodContext,
+  streamId: string,
+  action: 'delete' | 'update'
+): Promise<boolean> {
+  const access = context?.access;
+  if (access == null) return false;
+  if (!isPersonalAccess(access)) {
+    const check = action === 'delete' ? access.canDeleteStream : access.canUpdateStream;
+    if (typeof check !== 'function' || !(await check.call(access, streamId))) return false;
+  }
+  return await relationshipEnded(mall, context?.user?.id, streamId);
+}
+
+/**
+ * True when `streamId` is a chat / collector stream (`…:chats:<slug>`,
+ * `…:collectors:<slug>`) and no relationship access of the account serves
+ * its scope and counterparty any more (the same selection the revoke uses).
+ * False for any other stream, without a mall or user, and when the accesses
+ * cannot be read: the stream then stays protected.
+ */
+async function relationshipEnded (mall: { accesses: MallAccessesLike } | undefined, userId: string | undefined, streamId: string): Promise<boolean> {
+  if (mall == null || userId == null) return false;
+  const parsed = relationshipKey.parseChannelStream(streamId);
+  if (parsed == null) return false;
+  try {
+    const accesses = await mall.accesses.get(userId, {});
+    return relationshipKey.selectRelationshipAccess({
+      accesses,
+      role: C.RELATIONSHIP_ROLES,
+      counterparty: parsed.counterparty,
+      scopeStreamId: parsed.scopeStreamId,
+      appCode: parsed.appCode,
+    }) == null;
+  } catch (_e) {
+    return false;
+  }
 }
 
 /**

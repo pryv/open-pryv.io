@@ -88,7 +88,8 @@ async function provisionAnchorStreams (params: {
     ? [chatsParent, collectorsParent, chatStream, collectorStream]
     : [chatsParent, collectorsParent, collectorStream];
   for (const sid of anchors) {
-    const failure = await ensureStream(mall, userId, sid, parentOf(sid));
+    const perPeer = sid === chatStream || sid === collectorStream;
+    const failure = await ensureStream(mall, userId, sid, parentOf(sid), perPeer);
     if (failure != null) {
       return { ok: false, created, failedStreamId: sid, failureMessage: failure };
     }
@@ -119,7 +120,7 @@ function scopeAncestors (scopeStreamId: string): string[] {
   return out;
 }
 
-async function ensureStream (mall: MallLike, userId: string, id: string, parentId: string): Promise<string | null> {
+async function ensureStream (mall: MallLike, userId: string, id: string, parentId: string, untrash = false): Promise<string | null> {
   try {
     await mall.streams.create(userId, {
       id,
@@ -132,9 +133,27 @@ async function ensureStream (mall: MallLike, userId: string, id: string, parentI
     const code = e?.id || e?.code || e?.errorId;
     if (code === 'stream-already-exists' || code === 'item-already-exists' ||
         /already.*exist/i.test(String(e?.message || ''))) {
-      return null;
+      return untrash ? await untrashStream(mall, userId, id) : null;
     }
     return String(e?.message || err);
+  }
+}
+
+/**
+ * The owner may trash a per-peer chat / collector stream once its
+ * relationship has ended (the first `streams.delete` call). Established
+ * again with the same peer under the same scope, the relationship takes it
+ * back: writes to a trashed stream are refused.
+ */
+async function untrashStream (mall: MallLike, userId: string, id: string): Promise<string | null> {
+  if (mall.streams.getOneWithNoChildren == null || mall.streams.update == null) return null;
+  try {
+    const stream = await mall.streams.getOneWithNoChildren(userId, id) as { trashed?: boolean } | null;
+    if (stream?.trashed !== true) return null;
+    await mall.streams.update(userId, { id, trashed: false, modified: Date.now() / 1000, modifiedBy: C.SYSTEM_ACCESS_ID });
+    return null;
+  } catch (err) {
+    return String((err as Error)?.message || err);
   }
 }
 
