@@ -35,3 +35,23 @@ export function anyCaseLikePattern (value: string): string {
   }
   return pattern;
 }
+
+/**
+ * True when a stored value matches `value` as `getUsersUniqueFieldAnyCase`
+ * selects it on the rqlite engine (SQLite's case-insensitive `LIKE` over
+ * `anyCaseLikePattern(value)`, the stored value trimmed): the same length in
+ * characters, an ASCII character of `value` equal in any case, any one
+ * character where `value` has one outside ASCII. For a caller that selects
+ * among rows it read itself, with the same result as the engine's query.
+ */
+export function anyCaseLikeMatches (storedValue: string, value: string): boolean {
+  const stored = [...storedValue.trim()];
+  const wanted = [...value.trim()];
+  if (stored.length !== wanted.length) return false;
+  for (let i = 0; i < wanted.length; i++) {
+    if (wanted[i].charCodeAt(0) > 0x7f) continue;
+    if (stored[i].charCodeAt(0) > 0x7f) return false;
+    if (wanted[i].toLowerCase() !== stored[i].toLowerCase()) return false;
+  }
+  return true;
+}

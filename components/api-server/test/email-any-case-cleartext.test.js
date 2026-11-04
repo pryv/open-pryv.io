@@ -74,6 +74,77 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
     return holder;
   }
 
+  /** Counts the platform store's reads of the email rows (the whole-field read, the any-case query) while `fn` runs. */
+  async function countEmailScans (fn) {
+    const counts = { whole: 0, anyCase: 0 };
+    const saved = ['getAllWithPrefix', 'getUsersUniqueFieldAnyCase'].map((m) => [m, Object.getOwnPropertyDescriptor(platformDB, m)]);
+    const getAllWithPrefix = platformDB.getAllWithPrefix;
+    const getUsersUniqueFieldAnyCase = platformDB.getUsersUniqueFieldAnyCase;
+    platformDB.getAllWithPrefix = function (prefix) {
+      if (prefix === 'user-unique/email/') counts.whole++;
+      return getAllWithPrefix.call(this, prefix);
+    };
+    platformDB.getUsersUniqueFieldAnyCase = function (field, value) {
+      if (field === 'email') counts.anyCase++;
+      return getUsersUniqueFieldAnyCase.call(this, field, value);
+    };
+    try {
+      await fn();
+    } finally {
+      for (const [m, descriptor] of saved) {
+        if (descriptor != null) Object.defineProperty(platformDB, m, descriptor);
+        else delete platformDB[m];
+      }
+    }
+    return counts;
+  }
+
+  it('[EMCI7] an auto-deletion pass reads the email rows once, not once per account, and judges each address as the per-account check does', async function () {
+    const { createPassFactsLoader, createAccountAutoDeletionSweep } = require('api-server/src/methods/helpers/autoDeletionSweep.ts');
+    const { isEmailHeldByAnother } = require('business/src/emails/heldAddress.ts');
+    const { AUTO_DELETION_DEFAULTS } = require('business/src/autoDeletion/config.ts');
+    const config = await require('@pryv/boiler').getConfig();
+    const held = await registered('Emci7h-' + slug() + '@Case.example');
+    await heldByAnother(held.email.toUpperCase());
+    const free = await registered('emci7f-' + slug() + '@case.example');
+    const own = await registered('EMCI7O-' + slug() + '@case.example');
+    const accounts = [held, free, own].map((u) => ({ id: u.id, username: u.username }));
+
+    // The facts of one pass, account after account, against the per-account check.
+    const loader = createPassFactsLoader(config, () => Date.now() / 1000);
+    const facts = [];
+    const counts = await countEmailScans(async () => {
+      loader.beginPass();
+      for (const a of accounts) facts.push(await loader.loadFacts(a));
+    });
+    assert.deepStrictEqual(counts, { whole: 1, anyCase: 0 }, 'one read of the email rows for the pass');
+    assert.strictEqual(facts[0].mail, 'no-email', 'mail is configured in the test core: ' + JSON.stringify(facts[0]));
+    const perAccount = [];
+    for (const u of [held, free, own]) perAccount.push(await isEmailHeldByAnother(platform, u.username, u.email));
+    assert.deepStrictEqual(facts.map((f) => f.emailHeld), perAccount);
+    assert.deepStrictEqual(perAccount, [true, false, false]);
+    // A new pass reads them again (an address that changed hands since is seen).
+    const again = await countEmailScans(async () => {
+      loader.beginPass();
+      await loader.loadFacts(accounts[1]);
+      await loader.loadFacts(accounts[2]);
+    });
+    assert.deepStrictEqual(again, { whole: 1, anyCase: 0 });
+
+    // The sweep itself (dry run, a preset that evaluates every account): one read per pass.
+    const sweep = await createAccountAutoDeletionSweep(config, {
+      getConfig: () => ({ ...AUTO_DELETION_DEFAULTS, dryRun: true, inactivity: { ...AUTO_DELETION_DEFAULTS.inactivity, defaultDays: 365 } }),
+      listAccounts: async () => accounts,
+      listPendingErasures: async () => [],
+      logger: { info () {}, warn () {}, error () {}, debug () {} }
+    });
+    const sweepCounts = await countEmailScans(async () => {
+      const result = await sweep.runPass();
+      assert.strictEqual(result.failed, 0, JSON.stringify(result));
+    });
+    assert.deepStrictEqual(sweepCounts, { whole: 1, anyCase: 0 });
+  });
+
   it('[EMCI6] the email reconcile names the other holder of an address held in another case, with its spelling', async function () {
     const u = await registered('Emci6-' + slug() + '@Case.example');
     const holder = await heldByAnother(u.email.toLowerCase());

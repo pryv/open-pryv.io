@@ -38,9 +38,16 @@ type UniqueRows = {
  * account answers true even when `username` holds its own spelling. Throws
  * when the platform store cannot be read.
  */
-export async function isEmailHeldByAnother (platform: UniqueRows, username: string, email: string): Promise<boolean> {
-  return await platform.isUniqueValueHeldByAnother(platform.hashFor('username', username), UNIQUE_FIELD, platform.hashFor(UNIQUE_FIELD, email));
+export async function isEmailHeldByAnother (platform: UniqueRows, username: string, email: string, index: EmailRowsIndex | null = null): Promise<boolean> {
+  const own = platform.hashFor('username', username);
+  const stored = platform.hashFor(UNIQUE_FIELD, email);
+  // Same answer from the rows read once for many accounts (`Platform.getUniqueValueIndex`).
+  if (index != null) return index.rows(stored).some((row) => row.username !== own);
+  return await platform.isUniqueValueHeldByAnother(own, UNIQUE_FIELD, stored);
 }
+
+/** The email rows read once (`Platform.getUniqueValueIndex('email')`; null in hashed mode). */
+export type EmailRowsIndex = { rows (storedValue: string): Array<{ value: string, username: string }> };
 
 /**
  * True when another account holds the account's stored `email`: the caller

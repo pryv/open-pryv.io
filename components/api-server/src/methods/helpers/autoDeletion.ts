@@ -10,6 +10,7 @@ import { getStorageLayer, getUserAccountStorage } from 'storage';
 import { store as delegationStore, STATUS as DELEGATION_STATUS } from 'delegation';
 import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
 import { isStoredEmailHeldElsewhere, isEmailHeldByAnother } from 'business/src/emails/heldAddress.ts';
+import type { EmailRowsIndex } from 'business/src/emails/heldAddress.ts';
 import { getPlatform } from 'platform';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import type { AutoDeletionConfig } from 'business/src/autoDeletion/config.ts';
@@ -92,7 +93,13 @@ async function hasActiveDelegate (userId: string): Promise<boolean> {
 }
 
 /** `now` (pryv seconds) is the clock activity is read against; the sweep passes its own. */
-export async function loadAccountFacts (config: ConfigLike, user: UserRef, now?: number): Promise<AccountFacts> {
+/**
+ * `emailRows` (the sweep): the email rows read once for the pass
+ * (`Platform.getUniqueValueIndex`), so that, in cleartext mode, the held
+ * check of each account is not one scan of the email rows; null in hashed
+ * mode (one exact read per account) and when not given.
+ */
+export async function loadAccountFacts (config: ConfigLike, user: UserRef, now?: number, emailRows?: () => Promise<EmailRowsIndex | null>): Promise<AccountFacts> {
   const accesses = await findAccesses(user);
   const account = await (await getUsersRepository()).getUserById(user.id) as { email?: unknown; language?: unknown } | null;
   const email = typeof account?.email === 'string' && account.email !== '' ? account.email : null;
@@ -101,7 +108,7 @@ export async function loadAccountFacts (config: ConfigLike, user: UserRef, now?:
   // An address another account holds is not this account's inbox: the
   // account counts as one without an address (blocked "no-email", no preset).
   // A failed lookup throws: the account is not judged on a guess.
-  const emailHeld = mailOk && email != null && await isEmailHeldByAnother(await getPlatform(), user.username, email);
+  const emailHeld = mailOk && email != null && await isEmailHeldByAnother(await getPlatform(), user.username, email, emailRows != null ? await emailRows() : null);
   const mail: MailState = !mailOk ? 'not-configured' : (email == null || emailHeld) ? 'no-email' : 'available';
   const isGroup = accesses.some((a) => a?.type === 'shared' && a.clientData?.cmc?.role === 'member');
   const isControlled = await hasActiveDelegate(user.id);

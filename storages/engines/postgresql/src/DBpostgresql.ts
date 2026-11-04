@@ -54,9 +54,15 @@ class DBpostgresql {
     );
     // Keys in byte order, for the key ranges of `getUsersUniqueFieldAnyCase`
     // (the primary key follows the database collation, which does not).
-    await this.db.query(
-      'CREATE INDEX IF NOT EXISTS platform_kv_key_c ON platform_kv (key COLLATE "C")'
-    );
+    // `IF NOT EXISTS` is not atomic across sessions: of two processes booting
+    // at once, one may get `duplicate_table` (42P07) once the other created it.
+    try {
+      await this.db.query(
+        'CREATE INDEX IF NOT EXISTS platform_kv_key_c ON platform_kv (key COLLATE "C")'
+      );
+    } catch (err) {
+      if ((err as { code?: unknown } | null)?.code !== '42P07') throw err;
+    }
     this.closed = false;
   }
 

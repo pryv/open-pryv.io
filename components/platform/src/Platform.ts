@@ -22,6 +22,7 @@ const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 
 const getPlatformDB = require('./getPlatformDB.ts').default;
 const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM, CASE_INSENSITIVE_FIELDS } = require('./PiiHasher.ts');
+const { anyCaseLikeMatches } = require('storages/interfaces/platformStorage/anyCase.ts') as typeof import('../../../storages/interfaces/platformStorage/anyCase.ts');
 
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
@@ -323,6 +324,36 @@ class Platform {
     const normalized = PiiHasher.normalize(field, storedValue);
     const rows = await this.#db.getUsersUniqueFieldAnyCase(field, normalized);
     return rows.filter((row) => PiiHasher.normalize(field, row.value) === normalized);
+  }
+
+  /**
+   * For a caller that asks `getUniqueValueRows` for many values in a row (the
+   * auto-deletion sweep, one account after the other): in cleartext mode, for
+   * a field compared in any case, the field's rows read once, and a lookup
+   * that answers each value as `getUniqueValueRows` would at the time of the
+   * read (same normalisation, and the rows the engine's any-case query
+   * selects). Null in hashed mode and for a field compared as written, where
+   * `getUniqueValueRows` is one exact read already. Throws when the platform
+   * store cannot be read.
+   */
+  async getUniqueValueIndex (field: string): Promise<UniqueValueIndex | null> {
+    if (this.#piiInitError != null) throw this.#piiInitError;
+    if (this.#piiHasher != null || !CASE_INSENSITIVE_FIELDS.has(field)) return null;
+    const byNormalized = new Map<string, Array<{ value: string, username: string }>>();
+    for (const row of await this.#db.getAllWithPrefix('user-unique/' + field + '/')) {
+      if (row.isUnique !== true || row.field !== field || typeof row.value !== 'string') continue;
+      const key = PiiHasher.normalize(field, row.value);
+      const rows = byNormalized.get(key);
+      if (rows == null) byNormalized.set(key, [{ value: row.value, username: row.username }]);
+      else rows.push({ value: row.value, username: row.username });
+    }
+    return {
+      rows (storedValue: string) {
+        if (typeof storedValue !== 'string') return [];
+        const normalized = PiiHasher.normalize(field, storedValue);
+        return (byNormalized.get(normalized) ?? []).filter((row) => anyCaseLikeMatches(row.value, normalized));
+      }
+    };
   }
 
   /**
@@ -1836,7 +1867,7 @@ function parseJsonString (raw: string): string {
 const platform = new Platform();
 export default platform;
 export { platform, Platform };
-export type { PlatformOperation };
+export type { PlatformOperation, UniqueValueIndex };
 
 // Local type aliases for shapes that aren't formally exported by an interface.
 type PlatformOperation = {
@@ -1846,4 +1877,8 @@ type PlatformOperation = {
   key: string;
   value: string;
   previousValue?: string;
+};
+/** `Platform.getUniqueValueIndex`: the rows holding a value (storage form), as `getUniqueValueRows` answers them. */
+type UniqueValueIndex = {
+  rows (storedValue: string): Array<{ value: string, username: string }>;
 };

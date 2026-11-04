@@ -14,10 +14,17 @@
   INDEX IF NOT EXISTS`, next to its `CREATE TABLE IF NOT EXISTS`; no schema migration), then
   `btrim(...) ILIKE pattern`. Conformance tests `[ANYC1-2]`. Cost in cleartext mode: each call scans
   the email rows of the field's key range (O(accounts)); a claim makes one or two such calls, a
-  whole-backup restore one per email row (O(n^2) over the email rows), and the auto-deletion sweep
-  one per account it evaluates (each account with a setting or bookkeeping, every account when
-  `inactivity.defaultDays` is set). A normalised key per address in cleartext mode would remove the
-  scan (a data migration, not done).
+  whole-backup restore one per email row (O(n^2) over the email rows). The auto-deletion sweep does
+  not scan per account: `createPassFactsLoader` (api-server `autoDeletionSweep.ts`, new optional
+  `SweepDeps.beginPass`) reads the email rows once per pass (`Platform.getUniqueValueIndex`: one
+  `getAllWithPrefix('user-unique/email/')`, rows keyed by `PiiHasher.normalize`, each lookup narrowed
+  with `anyCaseLikeMatches`, the JS form of the rqlite query, so the owners and refusals are those of
+  the per-account check), when the first evaluated account needs them; `loadAccountFacts` and
+  `isEmailHeldByAnother` take that index (optional). Hashed mode reads nothing more (one exact read
+  per account). Test `[EMCI7]`. The claim paths still scan per claim: a normalised key per address
+  in cleartext mode would remove that scan (a data migration, not done).
+- PostgreSQL `init()`: the `platform_kv_key_c` creation treats `duplicate_table` (42P07) as success
+  (`IF NOT EXISTS` is not atomic across two booting sessions; not `CONCURRENTLY`). Test `[PGIX1-2]`.
 - `parseEntry` of both engines (`getAllWithPrefix`, `getAllForUser`, `exportAll`) and the restore's
   v1 `parseRawPlatformEntry` use `parseUserRowEntry` (`storages/interfaces/platformStorage/userRowKey.ts`):
   type and field end at the first two `/`, the value (or username) is the rest of the key. Was
