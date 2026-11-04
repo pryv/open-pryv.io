@@ -53,7 +53,9 @@ function ignoredUsernameSubdomains (config: ConfigReader): string[] {
  * user, so the username-rewriter must leave these alone whatever the Host.
  * Prefix matches (trailing slash on purpose: `/oauth2x` is still a user path;
  * `/users` has none, so `POST /users` matches, and no user route starts with
- * it); a new root route family has to be added here explicitly.
+ * it); a new root route family has to be added here explicitly. Adapter
+ * routes (`/adapter/<name>/`) are not listed: their dispatcher runs before
+ * this rewrite, and without a route the path is a user's.
  */
 const ROOT_ONLY_PATHS: readonly string[] = Object.freeze(['/oauth2/', '/.well-known/', '/auth/sso/', '/users']);
 
