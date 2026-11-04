@@ -102,7 +102,7 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
       assert.strictEqual(res.status, 409, spelling + ': ' + JSON.stringify(res.body));
       assert.strictEqual(res.body.error?.id, 'item-already-exists', JSON.stringify(res.body));
       assert.ok(Object.keys(res.body.error?.data ?? {}).includes('email'), JSON.stringify(res.body));
-      assert.strictEqual(await usersRepository.getUserIdForUsername(username), null, 'not created: ' + spelling);
+      assert.ok(await usersRepository.getUserIdForUsername(username) == null, 'not created: ' + spelling);
       assert.strictEqual(await platformDB.getUsersUniqueField('email', spelling), null, 'no row for ' + JSON.stringify(spelling));
     }
     // Another address, and its own spelling: registered.
@@ -144,7 +144,8 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
     const sent = await request();
     assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
     assert.strictEqual(captured.length, 1, 'sent while no other account holds the address');
-    await platformDB.deleteAccessState(require('business/src/auth/passwordResetThrottle.ts').cooldownKey(u.username));
+    // A second request within the minute is otherwise refused.
+    await require('business/src/auth/passwordResetThrottle.ts').clearPasswordResetThrottle(u.id);
 
     await heldByAnother(u.email.toUpperCase());
     const held = await request();

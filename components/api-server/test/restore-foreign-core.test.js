@@ -314,8 +314,9 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     // Over the account restored before (--overwrite): the account, whose data
     // the restore cleared, is removed as well.
     const w = await backedUpAccount({ email: 'rxcr24w-' + slug() + '@rxcr.example' });
-    assertOk(runCliMultiCore(['--restore', w.dir, '--user', w.username]), 'restore');
-    assert.strictEqual(await exists(w), true);
+    // (Not read from this process before the rollback: its users index cache
+    // would keep the name the other process removes.)
+    assert.match(runCliMultiCore(['--restore', w.dir, '--user', w.username]).stdout, /Restored: 1 users/);
     tamperBackupEvents(w);
     await rolledBack(w, ['--overwrite']);
   });

@@ -168,10 +168,19 @@ describe('[RSLK] password-reset link', function () {
   });
 
   it('[RSLK5] when the platform rows cannot be read, the reset fails and no mail is sent', async function () {
-    const { res, captured } = await resetWith(async (platform) => {
-      const original = platform.getUsersUniqueField;
-      platform.getUsersUniqueField = async () => { throw new Error('platform store unreachable'); };
-      return async () => { platform.getUsersUniqueField = original; };
+    // The platform store's reads of unique rows fail (both lookups the check may use).
+    const { res, captured } = await resetWith(async () => {
+      const platformDB = require('storages').platformDB;
+      const unreachable = async () => { throw new Error('platform store unreachable'); };
+      const methods = ['getUsersUniqueField', 'getUsersUniqueFieldAnyCase'];
+      const saved = methods.map((m) => Object.getOwnPropertyDescriptor(platformDB, m));
+      for (const m of methods) platformDB[m] = unreachable;
+      return async () => {
+        methods.forEach((m, i) => {
+          if (saved[i] != null) Object.defineProperty(platformDB, m, saved[i]);
+          else delete platformDB[m];
+        });
+      };
     });
     assert.ok(res.status >= 500, res.status + ' ' + JSON.stringify(res.body));
     assert.strictEqual(res.body.error?.id, 'unexpected-error', JSON.stringify(res.body));
