@@ -43,7 +43,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     setMethodId('mfa.activate'),
     loadAccessMiddleware,
     function routeMFAActivate (req: PryvRequest, res: Response, next: NextFunction) {
-      api.call(req.context, req.body || {}, methodCallback(res, next, 302));
+      api.call(req.context, req.body || {}, methodCallback(res, next, 200));
     });
 
   expressApp.post(Paths.MFA + '/deactivate',

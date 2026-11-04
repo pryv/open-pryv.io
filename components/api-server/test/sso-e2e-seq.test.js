@@ -237,7 +237,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(login.status, 200, 'password login: ' + JSON.stringify(login.body));
     const personalToken = login.body.token;
     const act = await coreRequest.post(`/${u.username}/mfa/activate`).set('Authorization', personalToken).send({});
-    assert.strictEqual(act.status, 302, 'mfa activate: ' + JSON.stringify(act.body));
+    assert.strictEqual(act.status, 200, 'mfa activate: ' + JSON.stringify(act.body));
     const secret = act.body.secret;
     const confirm = await coreRequest.post(`/${u.username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
       .send({ code: await previousStepCodeFor(secret) });
@@ -322,7 +322,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
       .send({ username: u.username, password: PASSWORD, appId: TRUSTED_APP });
     assert.strictEqual(login.status, 200, 'password login: ' + JSON.stringify(login.body));
     const act = await coreRequest.post(`/${u.username}/mfa/activate`).set('Authorization', login.body.token).send({});
-    assert.strictEqual(act.status, 302, 'mfa activate: ' + JSON.stringify(act.body));
+    assert.strictEqual(act.status, 200, 'mfa activate: ' + JSON.stringify(act.body));
     const confirm = await coreRequest.post(`/${u.username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
       .send({ code: await previousStepCodeFor(act.body.secret) });
     assert.strictEqual(confirm.status, 200, 'mfa confirm: ' + JSON.stringify(confirm.body));
@@ -428,7 +428,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
       .send({ username: u.username, password: PASSWORD, appId: TRUSTED_APP });
     assert.strictEqual(login.status, 200, 'password login: ' + JSON.stringify(login.body));
     const act = await coreRequest.post(`/${u.username}/mfa/activate`).set('Authorization', login.body.token).send({});
-    assert.strictEqual(act.status, 302, 'mfa activate: ' + JSON.stringify(act.body));
+    assert.strictEqual(act.status, 200, 'mfa activate: ' + JSON.stringify(act.body));
     const confirm = await coreRequest.post(`/${u.username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
       .send({ code: await previousStepCodeFor(act.body.secret) });
     assert.strictEqual(confirm.status, 200, 'mfa confirm: ' + JSON.stringify(confirm.body));
