@@ -53,6 +53,13 @@ describe('[BKSR] backup + restore carry HF series data', function () {
     await restore.init();
     await restore._clearUserData({ id: userId }, userId, username);
     await usersIndex.deleteById(userId);
+    // The restore also wrote the account's platform rows (the indexed fields
+    // its registration writes) and routed its name to this core: left behind,
+    // they trip the next suite's platform-vs-repository integrity check.
+    const { getPlatform } = require('platform');
+    const platform = await getPlatform();
+    await platform.deleteUser(username);
+    await platform.deleteUserCore(username);
     fs.rmSync(backupDir, { recursive: true, force: true });
   });
 
