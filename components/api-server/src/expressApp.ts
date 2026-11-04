@@ -38,7 +38,8 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   // NOTE Insert this bit in front of 'requestTraceMiddleware' to also see
   //  username in logged paths.
   //
-  // The OAuth 2 endpoints and the discovery documents are root-only too
+  // The OAuth 2 endpoints, the discovery documents, the third-party sign-in
+  // routes and the account creation and deletion routes are root-only too
   // (ROOT_ONLY_PATHS): served on every host the core answers, the issuer host
   // included, whatever its first label.
   const ignorePaths = Object.values(Paths)

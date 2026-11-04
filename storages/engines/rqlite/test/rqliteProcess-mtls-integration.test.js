@@ -35,11 +35,14 @@ const { spawn, execFileSync } = require('node:child_process');
 
 const { buildArgs } = require('../src/rqliteProcess.ts');
 
+// Initialises the test config, so this file reads it when it loads first.
+require('test-helpers/src/api-server-tests-config.ts');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 const RQLITED_BIN = path.resolve(__dirname, '../../../../bin-ext/rqlited');
-// 14001-14004 on a checkout whose rqlite is on 4001; the same offset as its
-// rqlite otherwise (config/test-config.yml: 4101 gives 14101-14104).
+// 14001-14004 on a checkout whose rqlite is on 4001 (the default); shifted by
+// the same offset when the checkout's test config moves its rqlite (4101 gives
+// 14101-14104).
 const RQLITE_URL = getConfigUnsafe(true).get('storages:engines:rqlite:url') || 'http://localhost:4001';
 const PORT_BASE = 14001 + (Number(new URL(RQLITE_URL).port || 4001) - 4001);
 const PORTS_A = { http: PORT_BASE, raft: PORT_BASE + 1 };
