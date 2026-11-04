@@ -495,6 +495,46 @@ async function handleIncomingAccept (params: {
   }
 
   const capabilityMode = (capabilityAccess?.clientData as { cmc?: { capability?: { mode?: string } } } | undefined)?.cmc?.capability?.mode;
+
+  // Single-use lifecycle: flip the capability access's
+  // `clientData.cmc.capability.state` from 'open' to 'consumed' so a
+  // subsequent re-click via the same capabilityUrl can be rejected
+  // with `cmc-capability-consumed` by the responses-stream write-hook
+  // (instead of silently re-running this handler and minting a
+  // duplicate back-channel access). Open-link mode skips this step:
+  // capabilities with `mode: 'open-link'` keep state='open' until
+  // explicit invalidation, and write nothing here: the back-channel access
+  // just minted is the record of this join, which is what the response-stream
+  // write-hook reads to refuse a same-subject re-click. Best-effort; the
+  // back-channel access is already minted so the relationship is established.
+  //
+  // Runs BEFORE the invite is stamped 'accepted' and before the outbound
+  // back-channel delivery: an app that sees the accepted trigger may at once
+  // answer the same link again (refusal or second accept), and that answer
+  // must meet a consumed capability, not an open one.
+  //
+  // `capabilityIdToConsume` and `capabilityAccess` were resolved above
+  // (for the inbox-mirror enrichment). Reuse to avoid a second lookup.
+  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
+    try {
+      if (capabilityMode === 'single-use' || capabilityMode == null) {
+        // Default 'single-use' for legacy capabilities minted before
+        // this field existed.
+        await capabilityMod.markCapabilityConsumed({
+          userId,
+          capabilityId: capabilityIdToConsume,
+          accessId: capabilityAccess?.id ?? capabilityAccessIdHint,
+          deps: { mall, logger: deps.logger },
+        });
+      }
+    } catch (err: unknown) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: capability state-flip failed (non-fatal)', {
+        capabilityId: capabilityIdToConsume,
+        error: String((err as Error)?.message || err),
+      });
+    }
+  }
+
   // Single-use: the invite now has its counterparty; record the outcome on
   // the trigger the requester's app watches. Open-link invites are not
   // written: one subject joining does not change the link, and concurrent
@@ -610,40 +650,6 @@ async function handleIncomingAccept (params: {
         // log stream and on to whatever aggregates it. The host is what
         // identifies the failed delivery.
         peerApiEndpoint: outbound.stripCredentials(grantedApiEndpoint),
-        error: String((err as Error)?.message || err),
-      });
-    }
-  }
-
-  // Single-use lifecycle: flip the capability access's
-  // `clientData.cmc.capability.state` from 'open' to 'consumed' so a
-  // subsequent re-click via the same capabilityUrl can be rejected
-  // with `cmc-capability-consumed` by the responses-stream write-hook
-  // (instead of silently re-running this handler and minting a
-  // duplicate back-channel access). Open-link mode skips this step —
-  // capabilities with `mode: 'open-link'` keep state='open' until
-  // explicit invalidation, and write nothing here: the back-channel access
-  // just minted is the record of this join, which is what the response-stream
-  // write-hook reads to refuse a same-subject re-click. Best-effort; the
-  // back-channel access is already minted so the relationship is established.
-  //
-  // `capabilityIdToConsume` and `capabilityAccess` were resolved above
-  // (for the inbox-mirror enrichment). Reuse to avoid a second lookup.
-  if (typeof capabilityIdToConsume === 'string' && capabilityIdToConsume.length > 0) {
-    try {
-      if (capabilityMode === 'single-use' || capabilityMode == null) {
-        // Default 'single-use' for legacy capabilities minted before
-        // this field existed.
-        await capabilityMod.markCapabilityConsumed({
-          userId,
-          capabilityId: capabilityIdToConsume,
-          accessId: capabilityAccess?.id ?? capabilityAccessIdHint,
-          deps: { mall, logger: deps.logger },
-        });
-      }
-    } catch (err: unknown) {
-      deps.logger?.warn?.('cmc/handleIncomingAccept: capability state-flip failed (non-fatal)', {
-        capabilityId: capabilityIdToConsume,
         error: String((err as Error)?.message || err),
       });
     }

@@ -609,6 +609,24 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.equal(mall.capability.clientData.cmc.capability.state, 'consumed');
     });
 
+    it('[IA14B] a single-use link is consumed before the invite reads accepted, so an answer sent on seeing accepted meets a consumed link', async () => {
+      const mall = inviteMall('single-use');
+      const stateWhenNotified = [];
+      const r = await handleIncomingAccept({
+        userId: 'u1',
+        acceptEvent: acceptThroughCapability,
+        selfIdentity: SELF,
+        deps: {
+          mall,
+          notifyEventChanged: (u, e) => {
+            if (e.id === 'invite-1') stateWhenNotified.push([mall.invite.content.status, mall.capability.clientData.cmc.capability.state]);
+          },
+        },
+      });
+      assert.equal(r.ok, true);
+      assert.deepEqual(stateWhenNotified, [['accepted', 'consumed']]);
+    });
+
     it('[IA15] an open-link accept writes neither the invite nor the capability access', async () => {
       const mall = inviteMall('open-link');
       const r = await handleIncomingAccept({
