@@ -71,11 +71,12 @@
 - **An erasure whose record was withdrawn or taken over while it ran** (a process frozen past the
   15 minutes after which a stopped erasure is taken over) now stops at its next step instead of
   writing the record back and erasing on.
-- **Not covered: a restore onto another core than the one holding a stopped erasure of the same
-  account.** The record is per core and the restore only sees its own. Complete the erasure on the
-  core that holds it first (its next sweep pass, after 15 minutes), then restore on the other core.
-  Do not delete that record by hand: the account would stay indexed on the first core with no
-  erasure left to remove it.
+- **A restore onto another core than the one holding a stopped erasure of the same account is
+  refused on a multi-core platform** (see the next section): until that erasure has removed the
+  account, the platform routes its username to that core. The record is per core and the restore
+  only sees its own: complete the erasure on the core that holds it first (its next sweep pass,
+  after 15 minutes), then restore on the other core. Do not delete that record by hand: the account
+  would stay indexed on the first core with no erasure left to remove it.
 - Accounts restored before this fix and still holding a record: on PostgreSQL,
   `SELECT user_id, username, started_at, done_steps FROM account_erasures WHERE user_id IN (SELECT user_id FROM users_index);`
   lists the records of accounts that exist. On SQLite the records are in `account-erasures.db`,
@@ -86,6 +87,57 @@
   includes `deleteUser` belongs to a restored account (that step removed the index entry); any other
   is either an erasure that stopped and is still to be completed, or a restored account. Deleting
   the row of a restored account keeps it.
+
+### Backup restore: an account routed to another core is not restored here
+
+- **Fixed: on a multi-core platform, `bin/backup.js --restore` restored an account whatever core the
+  platform routes its username to.** An account living on another core (or whose erasure there had
+  not completed) was then held by two cores, and the other core's deletion or erasure of it removed
+  the platform rows (routing, email and other unique values) of the copy restored here, which became
+  unreachable. The restore now reads the routing of each account before writing anything. With
+  `--user`, an account routed to another core is refused, also with `--overwrite`: nothing is
+  restored. A whole-backup restore treats it as a conflict: the whole run is refused ("Restore
+  aborted: N conflict(s): ...", nothing restored), or with `--skip-conflicts` the account is skipped
+  (listed under "Conflicts" and "Skipped") and the others are restored; nothing is written for a
+  skipped account, its platform rows included. The message names the other core. Restore the
+  account on that core; to bring it to this core, back it up there first, then delete it there (or
+  let its erasure there complete), which frees its name, then restore that backup here. If that
+  core is gone for good, restore on a replacement core that takes its core id, or first move every
+  account of that core to this one with the admin route `/reg/admin/servers/<that core>/rename/<this
+  core>` (it re-points all the routing rows of that core, not one account's).
+  A single core is not concerned; a restore run on a single core warns when the platform store
+  lists other available cores (a member of a multi-core platform run with a single-core config).
+- **A restored account is routed to this core.** The restore writes the platform row routing the
+  account's name to this core, before its data: on a multi-core platform an atomic claim, on a
+  single core as registration writes it. A core that took the name between the check and the claim
+  fails that account's restore, nothing written for it; in a whole-backup restore that failure ends
+  the run: the accounts restored before it are kept, but no platform rows, external ids or aliases
+  are written for any account (restore again once the conflict is resolved). Before, a restored
+  account had no such row: on a multi-core platform it was not reached through the embedded DNS or
+  from the other cores, and its name read as free to register on the other cores. For accounts
+  restored earlier, `bin/reconcile-user-cores.js` on their core writes the missing rows.
+- **Fixed: a whole-backup restore wrote over the unique values (emails, SSO bindings) that other
+  accounts hold now.** The platform rows of the backup were written as they were: a value that changed
+  hands since the backup (an email the backed-up account gave up and another account took) went back
+  to the restored account, and the lookups by that value (the core of an account by email, SSO account
+  linking) then answered the restored account. A value another account holds now stays with it; the
+  restore logs the fields and the restored accounts concerned at warn and the report counts them
+  ("Unique values of the platform rows: N held by another account (not restored)").
+- **Fixed: a whole-backup restore wrote the platform rows of accounts it does not restore.** A whole
+  backup carries the platform rows of every account of the platform (every core's): they were all
+  written back with the backup's values, the skipped accounts' included. Only the rows of the
+  accounts restored are written now; the others keep their current rows.
+- **Not changed: a `--user` restore writes no platform rows for the account** other than its
+  routing row (none of its email and other unique values, nor its indexed values): its email is
+  not reserved platform-wide, so the lookups by email do not find it and another account can
+  register it. Restore the account from the whole backup without `--user` for those rows, until a
+  release backs up each account's own rows.
+- **Fixed: on a multi-core platform, deleting or erasing an account removed the platform rows of its
+  username even when the platform routes that name to another core.** That core's account of the
+  name (taken there after an earlier attempt of the deletion freed it, or restored there) lost its
+  routing row, its email and other unique values, and its indexed values. A name routed to another
+  core now keeps them: this core's data of the account is deleted, and a warning names the other
+  core.
 
 ### CMC: nothing is written for an account erased while a consent operation runs
 

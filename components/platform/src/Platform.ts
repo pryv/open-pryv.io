@@ -51,6 +51,8 @@ const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
  * every call-site.
  */
 const USERNAME_FIELD = 'username';
+/** Key prefix of the name→core rows in the engines (`user-core/<username>`). */
+const USER_CORE_ROW_PREFIX = 'user-core/';
 /** `consumedBy` of an invitation whose account was deleted: never a valid username. */
 const INVITATION_CONSUMER_DELETED = '(deleted)';
 
@@ -800,6 +802,15 @@ class Platform {
    */
   async deleteUserCore (username: string) {
     await this.#db.deleteUserCore(this.hashFor(USERNAME_FIELD, username));
+  }
+
+  /**
+   * Remove the name→core mapping of `username` only while it names `coreId`
+   * (an atomic conditional delete): a row naming another core is kept.
+   * Plaintext input; hashed internally. True when a row was removed.
+   */
+  async deleteUserCoreIfValue (username: string, coreId: string): Promise<boolean> {
+    return await this.#db.deleteCoreRowIfValue(USER_CORE_ROW_PREFIX, this.hashFor(USERNAME_FIELD, username), coreId);
   }
 
   /**

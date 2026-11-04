@@ -113,7 +113,8 @@ function makeReaderWithPlatform (users, { platformRows = [], serverMappings = []
 // A platform store with one available core, recording its writes.
 function recordingPlatformDB (writes) {
   return {
-    async importAll (rows) { writes.push('platform.importAll:' + rows.length); },
+    async setUserUniqueFieldIfNotExists (username, field) { writes.push('platform.unique:' + field); return true; },
+    async setUserIndexedField (username, field) { writes.push('platform.indexed:' + field); },
     async getAllCoreInfos () { return [{ id: 'core-one', available: true }]; }
   };
 }
@@ -250,8 +251,8 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       const { o, writes } = makeOrchestrator();
       o.platformDB = recordingPlatformDB(writes);
       await o.restoreAllUsers(makeReaderWithPlatform(users, { platformRows: [goodRow, { key: 'user-indexed/language/firstuser', value: 'en' }] }));
-      assert.strictEqual(writes[writes.length - 1], 'platform.importAll:2');
-      assert.ok(writes.indexOf('usersIndex.addUser') < writes.indexOf('platform.importAll:2'));
+      assert.deepStrictEqual(writes.slice(-2), ['platform.unique:email', 'platform.indexed:language']);
+      assert.ok(writes.indexOf('usersIndex.addUser') < writes.indexOf('platform.unique:email'));
     });
 
     it('[RSOW1] a single-user restore never overwrites an account that now holds the username, even with overwrite', async function () {
@@ -483,5 +484,222 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       assert.deepStrictEqual((await collect(linkedUser.readAttachments())).map((a) => [a.fileId, a.eventId, a.data]), [['file-ref', 'evt1', 'referenced']]);
       assert.ok(await linkedUser.readAccountData());
     });
+  });
+});
+
+// The platform's name -> core rows, as a core of a multi-core platform (or
+// a single core) sees them; `claimRefused` answers a claim as lost to
+// another core (one that took the name after the check).
+function fakeCoreRouting (writes, { coreId = 'core-a', isSingleCore = false, rows = {}, claimRefused = false, hashFor = (field, value) => value } = {}) {
+  return {
+    coreId,
+    isSingleCore,
+    rows,
+    hashFor,
+    async getUserCore (username) { return rows[username] ?? null; },
+    async setUserCore (username, id) { writes.push('routing.set:' + username + '=' + id); rows[username] = id; },
+    async setUserCoreIfNotExists (username, id) {
+      if (claimRefused) { rows[username] = 'core-c'; return false; }
+      writes.push('routing.claim:' + username + '=' + id);
+      if (rows[username] == null) rows[username] = id;
+      return rows[username] === id;
+    },
+    async deleteUserCoreIfValue (username, id) {
+      if (rows[username] !== id) return false;
+      writes.push('routing.release:' + username);
+      delete rows[username];
+      return true;
+    }
+  };
+}
+
+// This core's record of erasures in progress, with the store's compare-and-set.
+function fakeErasures (records) {
+  const store = new Map(records.map((r) => [r.userId, structuredClone(r)]));
+  return {
+    store,
+    async get (userId) { return store.has(userId) ? structuredClone(store.get(userId)) : null; },
+    async claim (userId, updatedAt, at) {
+      const r = store.get(userId);
+      if (r == null || r.updatedAt !== updatedAt) return false;
+      r.updatedAt = at;
+      return true;
+    },
+    async delete (userId) { store.delete(userId); },
+    async insertIfAbsent (row) {
+      if (store.has(row.userId)) return false;
+      store.set(row.userId, structuredClone(row));
+      return true;
+    }
+  };
+}
+
+/** An erasure of `validname` that stopped an hour ago after two steps. */
+function stoppedErasure () {
+  const startedAt = Date.now() - 3600000;
+  return { userId: CUID2_ID, username: 'validname', trigger: 'date', startedAt, updatedAt: startedAt + 1000, doneSteps: ['runTeardownSteps', 'deleteUserFiles'], seriesNamespaces: null, attempts: 1, lastError: 'deleteHFData: unreachable' };
+}
+
+/** A users index that holds what the restore adds. */
+function statefulIndex (o) {
+  const byName = new Map();
+  o.usersLocalIndex.addUser = async (username, userId) => { byName.set(username, userId); };
+  o.usersLocalIndex.getUserId = async (username) => byName.get(username) ?? null;
+}
+
+describe('[RXCR] restore on a multi-core platform: accounts routed to another core', function () {
+  const users = [{ userId: CUID1_ID, username: 'firstuser' }, { userId: CUID2_ID, username: 'validname' }];
+
+  it('[RXCR6] an account routed to another core refuses a whole restore before anything is written, a single-account one even with overwrite; --skip-conflicts skips it', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { rows: { validname: 'core-b' } });
+    await assert.rejects(() => o.restoreAllUsers(makeReader(users), { skipPlatform: true }),
+      /Restore aborted: 1 conflict\(s\): validname \(username "validname" is routed to core "core-b" \(this core is "core-a"\)\)\. Restore it on that core.*Nothing was restored/);
+    assert.deepStrictEqual(writes, []);
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true }),
+      /User validname cannot be restored on this core: username "validname" is routed to core "core-b".*Nothing was restored/);
+    assert.deepStrictEqual(writes, []);
+
+    const report = await o.restoreAllUsers(makeReader(users), { skipPlatform: true, skipConflicts: true, deleteOnSuccess: true });
+    assert.deepStrictEqual(report.restored, [users[0]]);
+    assert.deepStrictEqual(report.skipped, [users[1]]);
+    assert.deepStrictEqual(report.conflicts.map((c) => [c.username, c.kind]), [['validname', 'other-core']]);
+    assert.ok(writes.includes('routing.claim:firstuser=core-a'), 'the restored account is routed here');
+    assert.ok(!writes.some((w) => w.includes('validname')), JSON.stringify(writes));
+  });
+
+  it('[RXCR7] a name another core claims after the check refuses that account\'s restore before its data is written', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { claimRefused: true });
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true }),
+      /User validname cannot be restored on this core: username "validname" is routed to core "core-c".*Nothing was restored for this account/);
+    assert.deepStrictEqual(writes, []);
+  });
+
+  it('[RXCR8] a single core routes the restored account to itself, whatever an earlier row says', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { coreId: 'single', isSingleCore: true, rows: { validname: 'renamed-core' } });
+    await o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true });
+    assert.ok(writes.includes('usersIndex.addUser'));
+    assert.strictEqual(o.coreRouting.rows.validname, 'single');
+  });
+
+  it('[RXCR9] a unique value of the platform rows held by another account is kept by its holder and counted', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.platformDB = {
+      async setUserUniqueFieldIfNotExists (username, field, value) { writes.push('platform.unique:' + value); return value !== 'taken@example.com'; },
+      async setUserIndexedField (username, field) { writes.push('platform.indexed:' + field); },
+      async getAllCoreInfos () { return []; }
+    };
+    const warnings = [];
+    o.logger = { info () {}, warn (msg) { warnings.push(msg); }, error () {} };
+    const rows = [
+      { username: 'firstuser', field: 'email', value: 'taken@example.com', isUnique: true },
+      { username: 'firstuser', field: 'email', value: 'free@example.com', isUnique: true },
+      { username: 'firstuser', field: 'language', value: 'en', isUnique: false }
+    ];
+    const report = await o.restoreAllUsers(makeReaderWithPlatform([users[0]], { platformRows: rows }));
+    assert.strictEqual(report.uniqueValuesLost, 1);
+    assert.deepStrictEqual(writes.filter((w) => w.startsWith('platform.')), ['platform.unique:taken@example.com', 'platform.unique:free@example.com', 'platform.indexed:language']);
+    assert.ok(warnings.some((w) => /1 unique value\(s\) held by another account \(fields: email; of restored accounts: firstuser\): kept by their holder/.test(w)), JSON.stringify(warnings));
+  });
+
+  it('[RXCR10] a name another core claims after the check puts the withdrawn erasure back as it was: it resumes where it stopped', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { claimRefused: true });
+    const stopped = stoppedErasure();
+    o.erasures = fakeErasures([stopped]);
+    o.staleErasureMs = 60000;
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users), { overwrite: true }), /routed to core "core-c".*Nothing was restored for this account/);
+    assert.deepStrictEqual(writes, []);
+    assert.deepStrictEqual(o.erasures.store.get(CUID2_ID), stopped, 'its done steps and last update kept');
+
+    // A failure once the account's data is being written: every step again.
+    const { o: late, writes: lateWrites } = makeOrchestrator();
+    late.coreRouting = fakeCoreRouting(lateWrites);
+    late.erasures = fakeErasures([stopped]);
+    late.staleErasureMs = 60000;
+    const failing = { ...makeReader(users), async openUser () { throw new Error('backup unreadable'); } };
+    await assert.rejects(() => late.restoreUser(CUID2_ID, failing, { overwrite: true }), /backup unreadable/);
+    const rearmed = late.erasures.store.get(CUID2_ID);
+    assert.deepStrictEqual(rearmed.doneSteps, []);
+    assert.strictEqual(rearmed.updatedAt, stopped.updatedAt);
+  });
+
+  it('[RXCR11] a routing row the restore wrote is removed when the account fails before it is indexed; it stays once indexed, or when it was there', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes);
+    o.usersLocalIndex.addUser = async () => { throw new Error('index refused'); };
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users)), /index refused/);
+    assert.deepStrictEqual(writes, ['routing.claim:validname=core-a', 'routing.release:validname']);
+    assert.strictEqual(o.coreRouting.rows.validname, undefined);
+
+    const indexed = makeOrchestrator();
+    indexed.o.coreRouting = fakeCoreRouting(indexed.writes);
+    statefulIndex(indexed.o);
+    const failing = { ...makeReader(users), async openUser () { throw new Error('backup unreadable'); } };
+    await assert.rejects(() => indexed.o.restoreUser(CUID2_ID, failing), /backup unreadable/);
+    assert.strictEqual(indexed.o.coreRouting.rows.validname, 'core-a', 'indexed: the row stays');
+
+    const found = makeOrchestrator();
+    found.o.coreRouting = fakeCoreRouting(found.writes, { rows: { validname: 'core-a' } });
+    found.o.usersLocalIndex.addUser = async () => { throw new Error('index refused'); };
+    await assert.rejects(() => found.o.restoreUser(CUID2_ID, makeReader(users)), /index refused/);
+    assert.strictEqual(found.o.coreRouting.rows.validname, 'core-a', 'a row found there is not this restore\'s');
+  });
+
+  it('[RXCR12] a whole restore writes the platform rows of the accounts it restores only: a skipped account, or one the backup holds without restoring it, keeps its rows', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { rows: { validname: 'core-b' }, hashFor: (field, value) => 'tok-' + value });
+    o.platformDB = {
+      async setUserUniqueFieldIfNotExists (owner, field, value) { writes.push('platform.unique:' + owner + ':' + value); return value !== 'taken@example.com'; },
+      async setUserIndexedField (owner, field) { writes.push('platform.indexed:' + owner + ':' + field); },
+      async getAllCoreInfos () { return [{ id: 'core-a', available: true }]; }
+    };
+    const warnings = [];
+    o.logger = { info () {}, warn (msg) { warnings.push(msg); }, error () {} };
+    const platformRows = [
+      { username: 'tok-firstuser', field: 'email', value: 'first@example.com', isUnique: true },
+      { username: 'tok-firstuser', field: 'email', value: 'taken@example.com', isUnique: true },
+      { key: 'user-indexed/language/firstuser', value: 'en' }, // a v1 row: the name in clear
+      { username: 'tok-validname', field: 'email', value: 'valid@example.com', isUnique: true },
+      { username: 'tok-validname', field: 'language', value: 'fr', isUnique: false },
+      { username: 'tok-elsewhere', field: 'email', value: 'else@example.com', isUnique: true }
+    ];
+    const serverMappings = [{ username: 'firstuser' }, { username: 'validname' }, { username: 'elsewhere' }];
+    const report = await o.restoreAllUsers(makeReaderWithPlatform(users, { platformRows, serverMappings }), { skipConflicts: true, deleteOnSuccess: true });
+    assert.deepStrictEqual(report.restored, [users[0]]);
+    assert.deepStrictEqual(report.skipped, [users[1]]);
+    assert.deepStrictEqual(writes.filter((w) => w.startsWith('platform.')), [
+      'platform.unique:tok-firstuser:first@example.com',
+      'platform.unique:tok-firstuser:taken@example.com',
+      'platform.indexed:firstuser:language'
+    ]);
+    assert.ok(!writes.some((w) => /validname|elsewhere/.test(w)), JSON.stringify(writes));
+    assert.strictEqual(o.coreRouting.rows.validname, 'core-b');
+    assert.strictEqual(report.uniqueValuesLost, 1);
+    assert.ok(warnings.some((w) => /\(fields: email; of restored accounts: firstuser\)/.test(w)), JSON.stringify(warnings));
+  });
+
+  it('[RXCR13] on a single core a row naming another core id is rewritten with a warning; other cores listed by the platform store are warned about once', async function () {
+    const { o, writes } = makeOrchestrator();
+    const warnings = [];
+    o.logger = { info () {}, warn (msg) { warnings.push(msg); }, error () {} };
+    o.coreRouting = fakeCoreRouting(writes, { coreId: 'single', isSingleCore: true, rows: { firstuser: 'core-b' } });
+    o.platformDB = { async getAllCoreInfos () { return [{ id: 'single' }, { id: 'core-b', available: true }, { id: 'core-old', available: false }]; } };
+    await o.restoreAllUsers(makeReader(users), { skipPlatform: true });
+    assert.strictEqual(o.coreRouting.rows.firstuser, 'single');
+    assert.strictEqual(o.coreRouting.rows.validname, 'single');
+    assert.ok(warnings.some((w) => /Restoring user firstuser: its routing row named core "core-b"/.test(w)), JSON.stringify(warnings));
+    assert.strictEqual(warnings.filter((w) => /lists other available cores \(core-b\)/.test(w)).length, 1, JSON.stringify(warnings));
+  });
+
+  it('[RXCR14] an account with a conflict on this core and a routing row naming another core is listed once', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.coreRouting = fakeCoreRouting(writes, { rows: { validname: 'core-b' } });
+    o.usersLocalIndex.getUsername = async (userId) => userId === CUID2_ID ? 'formername' : null;
+    await assert.rejects(() => o.restoreAllUsers(makeReader(users), { skipPlatform: true }),
+      /Restore aborted: 1 conflict\(s\): validname \(userId "[^"]+" already registered as "formername"\)\. Nothing was restored/);
+    assert.deepStrictEqual(writes, []);
   });
 });

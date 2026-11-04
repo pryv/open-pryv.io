@@ -853,16 +853,26 @@ class UsersRepository {
     await this.usersIndex.deleteById(userId);
     if (username != null) {
       cache.unsetUser(username);
-      await this.platform.deleteUser(username, user);
-      // Free the name→core routing rows so the released name (and each alias)
-      // reports available again on EVERY core. platform.deleteUser leaves these
-      // behind: it matches rows by username, but `user-core/` rows carry no
-      // username. Ungated on single-core (registration writes the canonical
-      // row there too); no B3 guard needed since the index entry is already
-      // gone above.
-      await this.platform.deleteUserCore(username);
+      // On a multi-core platform a name routed to another core is that core's
+      // account now (taken there after an earlier attempt of this deletion
+      // freed it, or restored there): its platform rows, all owned by the
+      // name, are left to it. This core's data of the account is deleted.
+      const otherCore = await this.#otherCoreOf(username);
+      if (otherCore != null) {
+        logger.warn(`deleting account ${userId}: its username "${username}" is routed to core "${otherCore}", whose account of that name keeps its platform rows ` +
+          '(routing, unique and indexed values, access index; also the unique values only this core\'s copy held): only the data of this core is deleted');
+      } else {
+        await this.platform.deleteUser(username, user);
+        // Free the name→core routing rows so the released name (and each alias)
+        // reports available again on EVERY core. platform.deleteUser leaves these
+        // behind: it matches rows by username, but `user-core/` rows carry no
+        // username. Ungated on single-core (registration writes the canonical
+        // row there too); no B3 guard needed since the index entry is already
+        // gone above.
+        await this.#releaseNameRow(username);
+      }
       for (const alias of aliases) {
-        await this.platform.deleteUserCore(alias);
+        await this.#releaseNameRow(alias);
         cache.unsetUser(alias);
       }
       // Breach-scope reverse-index cleanup (Art.17). The index is keyed by
@@ -871,8 +881,12 @@ class UsersRepository {
       // tombstones them (strip username) so a late breach can still confirm the
       // accessId belonged to a since-erased account. Non-fatal.
       const keepMode = ((await getConfig()).get('audit:onUserDelete') as string) === 'keep';
-      // Also under the former names: rows written before they were moved on rename.
-      for (const name of [username, ...aliases]) await cleanupUserAccessIndexNonFatal(this.platform, name, keepMode);
+      // Also under the former names: rows written before they were moved on
+      // rename. Not under a name routed to another core (its account's rows).
+      for (const name of [username, ...aliases]) {
+        if (name === username ? otherCore != null : await this.#otherCoreOf(name) != null) continue;
+        await cleanupUserAccessIndexNonFatal(this.platform, name, keepMode);
+      }
       // Reset requests are keyed by username: a token issued before the
       // deletion must not apply to a later account of the same name, nor of
       // one of its aliases (a former username is released here too).
@@ -895,6 +909,30 @@ class UsersRepository {
     // drops the account's cached accesses, streams and name mappings (the
     // index is gone, so they cannot be refilled).
     cache.unsetUserById(userId);
+  }
+
+  /**
+   * The core another core's routing row sends `name` to, on a multi-core
+   * platform; null when the row names this core, when there is none, and on
+   * a single core.
+   */
+  async #otherCoreOf (name: string): Promise<string | null> {
+    if (this.platform.isSingleCore) return null;
+    const coreId = await this.platform.getUserCore(name);
+    return coreId != null && coreId !== this.platform.coreId ? coreId : null;
+  }
+
+  /**
+   * Remove the name→core row of `name`. On a multi-core platform only while
+   * it names this core (an atomic conditional delete): a row naming another
+   * core is that core's.
+   */
+  async #releaseNameRow (name: string): Promise<void> {
+    if (this.platform.isSingleCore) {
+      await this.platform.deleteUserCore(name);
+      return;
+    }
+    await this.platform.deleteUserCoreIfValue(name, this.platform.coreId);
   }
 
   /**
