@@ -860,7 +860,7 @@ class UsersRepository {
       const otherCore = await this.#otherCoreOf(username);
       if (otherCore != null) {
         logger.warn(`deleting account ${userId}: its username "${username}" is routed to core "${otherCore}", whose account of that name keeps its platform rows ` +
-          '(routing, unique and indexed values, access index): only the data of this core is deleted');
+          '(routing, unique and indexed values, access index; also the unique values only this core\'s copy held): only the data of this core is deleted');
       } else {
         await this.platform.deleteUser(username, user);
         // Free the name→core routing rows so the released name (and each alias)

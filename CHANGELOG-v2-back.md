@@ -84,8 +84,8 @@
   refusal (which ignores `skipConflicts`): an account that lives elsewhere is one the operator may
   choose to skip, and either way nothing is written for it. `OTHER_CORE_ADVICE`: back it up there,
   delete it there, restore that backup here; a core gone for good: a replacement core with its core
-  id, or the admin route `/reg/admin/servers/<src>/rename/<dst>` (moves its user-core and ext-id
-  rows) before the restore.
+  id, or the admin route `/reg/admin/servers/<src>/rename/<dst>` (moves every user-core and ext-id
+  row of that core, all its accounts, and needs the destination core registered) before the restore.
 - `_claimUserCore(username)`, in `_restoreSingleUser` after the erasure withdrawal and before
   `_importUser`: multi-core `setUserCoreIfNotExists` (false: throws, nothing written for that
   account), single core `setUserCore` when the row differs (warn when the row named another core id;
@@ -98,7 +98,9 @@
   releases the row only when this call created it and the name is not in the local index
   (`_releaseUnindexedClaim`, `deleteUserCoreIfValue`); once indexed the row stays (a retry confirms
   it, the re-armed erasure removes it). A kill between the claim and the index leaves a stale
-  self-row, which `bin/reconcile-user-cores.js` deletes.
+  self-row, which `bin/reconcile-user-cores.js` deletes. "Created" means no row at the read before
+  the claim: a registration of the same name on this core racing a failed restore can lose its row;
+  `bin/reconcile-user-cores.js` writes it back.
 - `_writePlatform`: per row `setUserUniqueFieldIfNotExists` (false: counted in `uniqueValuesLost`,
   fields and restored usernames logged at warn) or `setUserIndexedField`, instead of
   `platformDB.importAll` (INSERT OR REPLACE). A row the same owner holds is confirmed.
@@ -114,7 +116,11 @@
   deleted. User-core rows (the username's and each alias's) are removed through
   `Platform.deleteUserCoreIfValue(name, coreId)` (new; `deleteCoreRowIfValue` on `user-core/`): only
   while they name this core. Single core unchanged (`deleteUserCore`). Covers every caller (account
-  deletion, the erasure sweep, admin deletion).
+  deletion, the erasure sweep, admin deletion). Residual: the unique values only this core's copy
+  held (an email the other core's account never had) stay reserved under the name: a registration
+  with them is refused and a lookup by them answers that core's account, until that account
+  releases them or an operator removes the rows. They cannot be told apart by owner, and deleting
+  the ones the deleted account carries would remove values the other core's account holds too.
 - Not changed: `--overwrite` does not clear the account's current platform rows: an account that
   changed its email after the backup keeps that row and gets the backup's email back when free (two
   email rows). A `--user` restore writes no platform rows other than the routing row (a per-user

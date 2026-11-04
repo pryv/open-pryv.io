@@ -1054,7 +1054,7 @@ function parseRawPlatformEntry (entry: { key: string; value: string }) {
 /** What to do with an account the platform routes to another core. */
 const OTHER_CORE_ADVICE = 'Restore it on that core; or, to bring it here, back it up there, delete it there (or let its erasure there complete), ' +
   'which frees the name, then restore that backup here. If that core is gone for good, restore on a replacement core that takes its core id, ' +
-  'or first move its routing rows to this core (admin route /reg/admin/servers/<that core>/rename/<this core>).';
+  'or first move every account of that core to this one (admin route /reg/admin/servers/<that core>/rename/<this core>, which re-points all its routing rows).';
 
 function otherCoreReason (username: string, coreId: string, thisCoreId: string): string {
   return `username "${username}" is routed to core "${coreId}" (this core is "${thisCoreId}")`;

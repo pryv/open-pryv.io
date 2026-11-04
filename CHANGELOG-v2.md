@@ -102,8 +102,9 @@
   skipped account, its platform rows included. The message names the other core. Restore the
   account on that core; to bring it to this core, back it up there first, then delete it there (or
   let its erasure there complete), which frees its name, then restore that backup here. If that
-  core is gone for good, restore on a replacement core that takes its core id, or first move its
-  routing rows to this core with the admin route `/reg/admin/servers/<that core>/rename/<this core>`.
+  core is gone for good, restore on a replacement core that takes its core id, or first move every
+  account of that core to this one with the admin route `/reg/admin/servers/<that core>/rename/<this
+  core>` (it re-points all the routing rows of that core, not one account's).
   A single core is not concerned; a restore run on a single core warns when the platform store
   lists other available cores (a member of a multi-core platform run with a single-core config).
 - **A restored account is routed to this core.** The restore writes the platform row routing the
@@ -127,9 +128,10 @@
   written back with the backup's values, the skipped accounts' included. Only the rows of the
   accounts restored are written now; the others keep their current rows.
 - **Not changed: a `--user` restore writes no platform rows for the account** other than its
-  routing row (none of its email and other unique values, nor its indexed values): its email is not reserved platform-wide, so the lookups by
-  email do not find it and another account can register it. Restore the whole backup for those
-  rows, until a release backs up each account's own rows.
+  routing row (none of its email and other unique values, nor its indexed values): its email is
+  not reserved platform-wide, so the lookups by email do not find it and another account can
+  register it. Restore the account from the whole backup without `--user` for those rows, until a
+  release backs up each account's own rows.
 - **Fixed: on a multi-core platform, deleting or erasing an account removed the platform rows of its
   username even when the platform routes that name to another core.** That core's account of the
   name (taken there after an earlier attempt of the deletion freed it, or restored there) lost its
