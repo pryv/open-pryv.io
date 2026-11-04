@@ -165,6 +165,10 @@ require('@pryv/boiler').init({
       if (s.heldElsewhere.length > 0) {
         console.log('    ! no password reset or notice is mailed to these accounts until their email is changed');
       }
+      if (s.failed.length > 0) {
+        console.log('  could not be read        ' + s.failed.length + ': ' + s.failed.join(', ') + ' (see the log; run again)');
+        process.exit(1);
+      }
       process.exit(0);
     }
 
@@ -216,6 +220,10 @@ function parseArgs (argv) {
       process.exit(1);
     }
   }
+  if (args.emails && args.extIds) {
+    console.error('--emails and --ext-ids are separate passes: run the tool once with each');
+    process.exit(1);
+  }
   return args;
 }
 
@@ -238,6 +246,8 @@ function printUsage (stream) {
     '                                              # claim the missing email rows of this core\'s',
     '                                              # accounts (never over another holder); list',
     '                                              # the accounts whose email another account holds',
+    '                                              # (safe with this core\'s API running: it never',
+    '                                              # deletes nor overwrites a row)',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

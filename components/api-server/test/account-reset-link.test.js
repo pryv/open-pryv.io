@@ -113,15 +113,15 @@ describe('[RSLK] password-reset link', function () {
   });
 
   /** A reset request for a new account whose email row `prepare` changes; the mails it sent. */
-  async function resetWith (prepare) {
+  async function resetWith (prepare, emailOf = (username) => username + '@reset.example.com') {
     const { platform } = require('platform');
     const username = 'rsl' + cuid().toLowerCase().slice(1, 12);
-    const email = username + '@reset.example.com';
+    const email = emailOf(username);
     await fixtures.user(username, { email });
     const captured = [];
     nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json')
       .reply(200, (uri, body) => { captured.push(body); return {}; });
-    const undo = await prepare(platform, email);
+    const undo = await prepare(platform, email, username);
     try {
       const res = await withInjectedConfig({
         services: { email: { enabled: { resetPassword: true } } },
@@ -144,6 +144,25 @@ describe('[RSLK] password-reset link', function () {
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(captured.length, 1);
     assert.deepStrictEqual(captured[0].message.to.map((t) => t.email), [email]);
+  });
+
+  it('[RSLK6] in cleartext mode, another spelling of the address held by another account counts as held: no mail', async function () {
+    // The platform seen in cleartext mode (rows keyed by the address as
+    // written): the account holds the stored spelling, another account the
+    // lowercase one (a registration by whoever controls that inbox now).
+    const { res, captured } = await resetWith(async (platform, address, username) => {
+      const rows = { [address]: username, [address.toLowerCase()]: 'rslholder' };
+      Object.defineProperty(platform, 'piiModeIsHashed', { value: false, configurable: true });
+      platform.hashFor = (field, value) => value;
+      platform.getUsersUniqueField = async (field, value) => field === 'email' ? (rows[value] ?? null) : null;
+      return async () => {
+        delete platform.piiModeIsHashed;
+        delete platform.hashFor;
+        delete platform.getUsersUniqueField;
+      };
+    }, (username) => 'Rsl' + username.slice(3) + '@Reset.example.com');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(captured.length, 0, 'no mail to the address another account holds under another spelling');
   });
 
   it('[RSLK5] when the platform rows cannot be read, the reset fails and no mail is sent', async function () {

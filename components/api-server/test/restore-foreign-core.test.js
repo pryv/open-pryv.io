@@ -277,7 +277,17 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     assert.ok(!restored.some((r) => r.field === 'username'), JSON.stringify(restored));
   });
 
-  it('[RXCR20] bin/reconcile-user-cores.js --emails claims the missing email rows of this core\'s accounts and lists those another account holds', async function () {
+  it('[RXCR20] the email row reconcile (usersRepository.reconcileEmailRows, bin/reconcile-user-cores.js --emails) claims the missing email rows of this core\'s accounts and lists those another account holds', async function () {
+    // The command line: a dry run reports; combined with --ext-ids it is refused.
+    const reconcile = (args) => spawnSync('node', [path.resolve(__dirname, '../../../bin/reconcile-user-cores.js'), ...args],
+      { cwd: REPO_ROOT, encoding: 'utf8', env: { ...process.env, ...childStorageEngineEnv() }, timeout: 90000 });
+    const dryCli = reconcile(['--emails', '--dry-run']);
+    assert.strictEqual(dryCli.status, 0, dryCli.stdout + dryCli.stderr);
+    assert.match(dryCli.stdout, /reconcile-user-cores --emails: DRY-RUN \(no writes\)/);
+    const both = reconcile(['--emails', '--ext-ids']);
+    assert.strictEqual(both.status, 1, both.stdout + both.stderr);
+    assert.match(both.stderr, /--emails and --ext-ids are separate passes/);
+
     const token = (name) => platform.hashFor('username', name);
     const slug = cuid.slug().toLowerCase();
     const fx = getNewFixture();

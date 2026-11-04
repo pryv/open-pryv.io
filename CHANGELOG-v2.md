@@ -192,9 +192,11 @@
   gets the same status and body as when it is sent (it answers sooner, without the delivery round
   trip, and it answers success where a send would have failed on a mail server down), and a warning
   names the account (not the address). Absent or held by the account itself, the mail is sent as
-  before. The lookup goes through the platform store, so it is the same on every core of a
-  multi-core platform; when the platform store cannot be read, the request fails instead of
-  sending.
+  before. In cleartext mode (`platform.piiMode`, the default) the rows are keyed by the address as
+  written, so `User@example.com` and `user@example.com` are two rows: another account holding any
+  spelling of the address (as written, trimmed, lowercased) counts as holding it. The lookup goes
+  through the platform store, so it is the same on every core of a multi-core platform; when the
+  platform store cannot be read, the request fails instead of sending.
 - **Trade-off: the row's holder is trusted, whether or not it proved the address.** Registration
   does not prove an address by default (`account.emailVerification.requireAtRegistration: false`):
   anyone who registers an address an account stores without holding its row (see the restore
@@ -202,9 +204,14 @@
   the wrong person is worse than none: the account's owner signs in and changes the email, or the
   operator does; `bin/reconcile-user-cores.js --emails` lists these accounts.
 - **The MFA-change notice and the account auto-deletion notices follow the same rule**: not sent to
-  the account's address when another account holds it (a warning names the account). For the
-  auto-deletion mails this counts as an account without an address. Mails to an address the account
-  is proving (verification, registration challenge) and to a transfer beneficiary are unchanged.
+  the account's address when another account holds it (a warning names the account). For account
+  auto-deletion such an account counts as one without an address: `account.getAutoDeletion` answers
+  `mail: "no-email"`, setting a schedule needs `acknowledgeNoReminders`, an operator preset does
+  not apply to it, and a schedule set before is blocked (`no-email`) until the account's email is
+  changed or the holder acknowledges. A mail to the account's own address that is not sent this
+  way is never recorded as given (the owner of a transfer is not marked told of its start; it is
+  tried again at each pass). Mails to an address the account is proving (verification,
+  registration challenge) and to a transfer beneficiary are unchanged.
 
 ### CMC: nothing is written for an account erased while a consent operation runs
 

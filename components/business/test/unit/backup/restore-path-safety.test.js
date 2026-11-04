@@ -837,6 +837,16 @@ describe('[RXPR] restore: the platform rows of a single-account restore, and the
     assert.ok(warnings.some((w) => w === 'The email of validname could not be checked against the platform rows (platform store unreachable)'), JSON.stringify(warnings));
   });
 
+  it('[RXCR23] in cleartext mode, a restored account is listed when another account holds another spelling of its email', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.logger = recordingLogger().logger;
+    // Cleartext rows: keyed by the address as written; the account holds its own spelling.
+    o.coreRouting = fakeCoreRouting(writes, { uniqueOwners: { 'email/Valid@Example.com': 'validname', 'email/valid@example.com': 'holder' } });
+    o.accountFields[CUID2_ID] = { email: 'Valid@Example.com' };
+    const report = await o.restoreUser(CUID2_ID, makeReader(users));
+    assert.deepStrictEqual(report.emailsHeldElsewhere, [users[1]]);
+  });
+
   it('[RXCR22] the register server mapping of a restored account never routes it to another core; a platform-only restore writes it as before', async function () {
     const platformRows = [{ username: 'validname', field: 'language', value: 'fr', isUnique: false }];
     const serverMappings = [{ username: 'validname' }];

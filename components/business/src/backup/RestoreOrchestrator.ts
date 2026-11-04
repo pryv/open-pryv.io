@@ -13,6 +13,7 @@ const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const emailsConstants = require('../emails/constants.ts');
+const { isEmailHeldByAnother } = require('../emails/heldAddress.ts') as typeof import('../emails/heldAddress.ts');
 const timestamp = require('unix-timestamp');
 const { seriesNamespace, formerUsernames } = require('../series/namespace.ts');
 const { deletedUserMessage } = require('storages/interfaces/backup/chain.ts');
@@ -1027,7 +1028,8 @@ class RestoreOrchestrator {
       rows.push({ username: owner, field, value: stored, isUnique: true });
     };
     for (const field of (accountStreams.indexedFieldNames ?? []) as string[]) {
-      // The value as registration passes it (not coerced to a string).
+      // The value as registration passes it (not coerced to a string; a
+      // non-string unique value fails in hashed mode, as at registration).
       const value = (fields[field] ?? accountStreams.accountMap[accountStreams.toStreamId(field)]?.default) as string;
       if (value == null) continue;
       if (uniqueFields.has(field)) addUnique(field, value);
@@ -1051,8 +1053,7 @@ class RestoreOrchestrator {
       try {
         const email = await this.userAccountStorage.getAccountField(userId, field);
         if (typeof email !== 'string' || email === '') continue;
-        const owner = await routing.getUsersUniqueField(field, email);
-        if (owner == null || owner === routing.hashFor('username', username)) continue;
+        if (!await isEmailHeldByAnother(routing, username, email)) continue;
         held.push({ userId, username });
         this.logger.warn(`The email of ${username} is held by another account: password reset will not send to it until the account's email is changed`);
       } catch (err: unknown) {
@@ -1309,6 +1310,8 @@ type CoreRoutingLike = {
   hashFor (field: string, value: string): string;
   /** The owner of a unique value, in storage form (null: no account holds it). */
   getUsersUniqueField (field: string, value: string): Promise<string | null>;
+  /** True in hashed mode (row keys normalised); cleartext otherwise. */
+  readonly piiModeIsHashed?: boolean;
 };
 /** The platform part of a backup, read and checked before anything is written. */
 type PlatformRead = {

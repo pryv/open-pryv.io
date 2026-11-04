@@ -166,16 +166,19 @@
 - `restoreUser` callers: `bin/backup.js` only (it passes no `skipPlatform`, so it takes the new
   default).
 - `usersRepository.reconcileEmailRows(dryRun)`, `bin/reconcile-user-cores.js --emails [--dry-run]`:
-  for each account of the local index (skipped: no email, the email field not unique, a name routed
-  to another core), the stored primary email's row: absent -> `missing`, claimed with
-  `platform.setUserUniqueFieldIfNotExists` unless dry run (`claimed`; a lost claim is listed as
-  held); another owner -> `heldElsewhere`. Never overwrites a row.
+  run per core; for each account of the local index (skipped: no email, the email field not
+  unique, a name routed to another core), the stored primary email: held by another account under
+  any spelling (`isEmailHeldByAnother`, below) -> `heldElsewhere`, nothing claimed; else its row
+  absent -> `missing`, claimed with `platform.setUserUniqueFieldIfNotExists` unless dry run
+  (`claimed`; a lost claim is listed as held). Never deletes nor overwrites a row (safe with the API
+  running). An account that cannot be read goes to `failed` (warned), the others are done; the CLI
+  then exits 1. `--emails` with `--ext-ids` is refused (exit 1): separate passes.
 - Not changed: a `--verify-integrity` rollback (`_clearUserData`) leaves the platform rows, the
   routing row and the index entry of a rolled-back account; a rolled-back `--user` restore now
   leaves its email reserved too, and `uniqueValuesLost` still counts its values.
 - Tests `[RXCR1-5, 18-20]` (api-server: `bin/backup.js` run as a member of a multi-core platform
   over the test platform store; `[RXCR19]` compares the derived rows with the rows registration
-  wrote; `[RXCR20]` the email reconcile), `[RXCR6-17, 21-22]` (business unit), `[DXCR1-2]`
+  wrote; `[RXCR20]` the email reconcile), `[RXCR6-17, 21-23]` (business unit), `[DXCR1-2]`
   (api-server: the users repository over the test platform store as a member of a multi-core
   platform). `reg-multicore.test.js` puts back `core:id` with the single-core config (it left
   `core-a` for the later suites of the process); `[RXCR4]` asserts the routing row names
@@ -183,24 +186,41 @@
 
 ### Password reset and notices: no mail to an address another account holds
 
-- `business/src/emails/heldAddress.ts` `isStoredEmailHeldElsewhere(username, email, what, logger)`:
-  `!emailsContainer.isRowFreeFor(username, email)` (an absent row or the account's own answers
-  false), warns naming the username, throws when the platform store cannot be read. Used by:
+- `business/src/emails/heldAddress.ts`: `isEmailHeldByAnother(platform, username, email)`: another
+  owner than `hashFor('username', username)` on the row of any spelling of the address
+  (`emailSpellings`: in hashed mode the address once, the row key being normalised already; in
+  cleartext mode, where `hashFor` returns the address as written and nothing normalises it at
+  registration, the address as written, `PiiHasher.normalize('email', ...)` and its lowercase).
+  Throws when the platform store cannot be read. Also used by the restore report
+  (`_emailsHeldElsewhere`) and `reconcileEmailRows`. `isStoredEmailHeldElsewhere(username, email,
+  what, logger)` wraps it with `getPlatform()` and warns naming the username. Used by:
   - `account.requestPasswordReset`, step `sendPasswordResetMail` (now async; a rejected step is
     answered as an error by the API runner): held -> `next()` with no mail (same status and body as
     a sent mail, the reset token generated and unused; sooner, no delivery round trip). A lookup
     error answers `unexpectedError` (fails closed).
   - `mfaChange.ts` `sendMfaChangeNotice`: held -> not sent; a lookup error is the notice's failure
     (logged, the MFA change stands).
-  - `autoDeletion.ts` `sendAutoDeletionMail`, stored-email branch only (`to == null`): held ->
-    `'off'` (as an account without an address: the sweep counts reminders off, a transfer's
-    "started" notice counts as told); a lookup error is `'failed'` (retried at the next pass).
-    `facts.notifiable` is unchanged: whether an operator preset applies does not depend on it.
+  - `autoDeletion.ts` `loadAccountFacts`: `emailHeld` (new optional fact) from
+    `isEmailHeldByAnother`, and then `mail: 'no-email'`, so `notifiable` and `presetApplies` are
+    false: the account is treated exactly as one without an address (`deadline.evaluate` blocks a
+    user schedule `no-email` unless `acknowledgedNoReminders`; the preset does not apply;
+    `account.setAutoDeletion` asks for `acknowledgeNoReminders`). A lookup error throws (the get/set
+    method fails, the sweep skips the account for the pass): an account is not judged on a guess.
+  - `sendAutoDeletionMail`, stored-email branch only (`to == null`), before the switch checks:
+    `facts.emailHeld`, or the address found held at the send (`isStoredEmailHeldElsewhere`) ->
+    `'rejected'`, not `'off'`: a notice not given, never recorded as given (`tellOwnerStarted` keeps
+    `ownerToldAt` unset and retries at each pass, `logRefused` logs once); a lookup error is
+    `'failed'` (retried at the next pass).
 - Checked, not guarded: the verification and registration-challenge mails go to the address being
   proved, the transfer claim mails to the beneficiary's address, the welcome mail to the address
   just registered. No other sender mails a credential to the stored email (`sendmail(` callers).
-- Tests `[RSLK3-5]` (held: no mail, same status and body; absent row: sent; lookup error: fails, no
-  mail), `[MSN4]`, `[ACST15D]`.
+- Tests `[RSLK3-6]` (held: no mail, same status and body; absent row: sent; lookup error: fails, no
+  mail; cleartext mode, another spelling held: no mail), `[MSN4]`, `[ACST15D]` (view `no-email`,
+  acknowledgement asked, no mail, no notice recorded, facts not notifiable, `'rejected'`),
+  `[RXCR23]` (restore report, cleartext spelling).
+- Not changed: in cleartext mode two spellings of one address are two rows, so registration and
+  the email methods accept an address another account holds under another spelling (pre-existing
+  uniqueness semantics; the checks above look the spellings up, the writes do not normalise).
 
 ### CMC: background writes check the account first
 

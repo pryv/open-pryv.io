@@ -445,8 +445,9 @@ describe('[ACST] account auto-deletion setting', function () {
       });
     });
 
-    it('[ACST15D] no confirmation to the account\'s email when another account holds that address', async function () {
+    it('[ACST15D] an account whose email another account holds counts as one without an address: no mail to that address, no notice recorded', async function () {
       const { platform } = require('platform');
+      const { sendAutoDeletionMail, loadAccountFacts } = require('../src/methods/helpers/autoDeletion.ts');
       await withInjectedConfig(MAIL_ON, async () => {
         const u = await freshUser();
         const email = u.username + '@acst.example.com';
@@ -454,12 +455,24 @@ describe('[ACST] account auto-deletion setting', function () {
         await platform.setUserUniqueField('acstholder' + cuid().toLowerCase().slice(-8), 'email', email);
         try {
           const captured = capture();
-          const res = await set(u, { mode: 'inactivity', inactivityDays: 365, password: PASSWORD });
+          assert.equal((await get(u)).body.autoDeletion.mail, 'no-email', 'shown as an account without an address');
+          const refused = await set(u, { mode: 'inactivity', inactivityDays: 365, password: PASSWORD });
+          assert.equal(errorId(refused), 'auto-deletion-no-email', JSON.stringify(refused.body));
+          const res = await set(u, { mode: 'inactivity', inactivityDays: 365, acknowledgeNoReminders: true, password: PASSWORD });
           assert.equal(res.status, 200, JSON.stringify(res.body));
           await new Promise((resolve) => setTimeout(resolve, 300));
           assert.equal(captured.length, 0, JSON.stringify(captured));
           const b = await state.getBookkeeping(u.id);
           assert.equal(b.firstNoticeAt, undefined, 'no notice recorded');
+          // A mail to the account itself is a notice not given (not one switched
+          // off): the sweep does not record it, e.g. the owner told of a transfer start.
+          const config = await require('@pryv/boiler').getConfig();
+          const facts = await loadAccountFacts(config, { id: u.id, username: u.username });
+          assert.equal(facts.emailHeld, true);
+          assert.equal(facts.notifiable, false);
+          assert.equal(facts.presetApplies, false, 'an operator preset does not apply, as for an account without an address');
+          assert.equal(await sendAutoDeletionMail(config, 'transferStarted', { id: u.id, username: u.username }, facts, () => ({})), 'rejected');
+          assert.equal(captured.length, 0, JSON.stringify(captured));
         } finally {
           await platform.deleteUserUniqueField('email', email);
           await platform.setUserUniqueField(u.username, 'email', email);
