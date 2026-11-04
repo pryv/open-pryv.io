@@ -1121,11 +1121,16 @@ and for how long: redirect URIs, scope, key set (`--jwks-file`, `--jwks-json`,
 (`--audience`, `--any-audience`), `--allow-feature`, `--can-introspect`,
 `--launch-type` (the core does not act on it, an extension may grant on it),
 the lifetimes and `--offline-access`. Any change counts, a narrowing too, compared
-as stored (the same scope tokens in another order are a change). A narrowing
-(a scope token, audience, feature or launch type removed, `--any-audience`
-withdrawn) is not applied to the grants given before: they keep what they
-hold until they end (`--offline-access false` is: refresh is refused at once). `update` says so and prints the step that
-ends them, `purge-grants <clientId> --yes` (run on each core). Not vetted:
+as stored (the same scope tokens in another order are a change; an empty list
+is the same as none). A narrowing (a scope token, audience, feature or launch
+type removed, `--any-audience` withdrawn) is not applied to the grants given
+before: they keep the permissions and audience stored for them until they end.
+`update` says so and prints the step that ends them, `purge-grants <clientId>
+--yes` (run on each core). Withdrawing refresh is applied at once: with
+`--offline-access false`, or `refresh_token` removed from the grant types, a
+refresh is refused. An extension reads the client's current row at every
+refresh and introspection, so what it adds on a launch type follows the row
+from the next refresh. Not vetted:
 `--subject-type` (its own `--yes`), the display and contact fields,
 `--region`, `--max-entries`. A `jwks_uri` client's published key set can
 change without any `update`: the review step does not see it.

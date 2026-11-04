@@ -488,7 +488,13 @@ export const VETTED_FIELDS = [
 
 /** The vetted fields that differ between two versions of a row. */
 export function changedVettedFields (before: OAuthClient, after: OAuthClient): string[] {
-  return VETTED_FIELDS.filter((k) => canonicalJson(before[k] ?? null) !== canonicalJson(after[k] ?? null));
+  return VETTED_FIELDS.filter((k) => canonicalJson(vettedValue(before[k])) !== canonicalJson(vettedValue(after[k])));
+}
+
+// An empty list is the same as none (a row written before a list field
+// existed has none at all, e.g. `launchTypes`).
+function vettedValue (v: unknown): unknown {
+  return v == null || (Array.isArray(v) && v.length === 0) ? null : v;
 }
 
 const GRANT_LIST_FIELDS = ['scope', 'allowedAudiences', 'allowFeatures', 'launchTypes'] as const;
@@ -496,12 +502,16 @@ const GRANT_FLAG_FIELDS = ['anyAudience'] as const;
 
 /**
  * The fields of what a client may be granted that an update narrowed (an
- * entry removed, a flag withdrawn). Grants given before keep what they hold:
- * the row is read at the next consent, not re-applied to live grants.
- * (`offlineAccessAllowed` is not one: the refresh grant reads it.)
+ * entry removed, a flag withdrawn). Grants given before keep what the core
+ * stored for them: the row is read at the next consent, not re-applied to
+ * live grants. (Not `offlineAccessAllowed` nor `grantTypes`: the refresh
+ * grant reads them.) The extension hooks see the current row at each refresh
+ * and introspection.
  */
 export function narrowedGrantFields (before: OAuthClient, after: OAuthClient): string[] {
   const lists = GRANT_LIST_FIELDS.filter((k) => {
+    // `--any-audience` clears the list: a widening, not a narrowing.
+    if (k === 'allowedAudiences' && after.anyAudience === true) return false;
     const kept = new Set((after[k] as string[] | undefined) ?? []);
     return ((before[k] as string[] | undefined) ?? []).some((v) => !kept.has(v));
   });

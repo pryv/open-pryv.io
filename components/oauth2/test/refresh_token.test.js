@@ -314,6 +314,25 @@ describe('[OAUTH-TKN-RT] /oauth2/token — refresh_token grant', () => {
     });
   });
 
+  describe('[OAUTH-TKN-RT-GT] grant types withdrawn after issuance', () => {
+    it('[OTR-GT1] a registry client whose grant types no longer list refresh_token: unauthorized_client, the token not used up; an app-account client is not concerned', async () => {
+      const platform = fakePlatform({ myapp: { kind: 'registry', tokenEndpointAuthMethod: 'none', grantTypes: ['authorization_code'] } });
+      await seedRefresh(platform, 'RT-GT1');
+      const handler = handleToken({ config: fakeConfig(), platform, mintRefreshedAccess: MINT_REFRESHED_FAKE });
+      let res = fakeRes();
+      await handler({ body: { grant_type: 'refresh_token', refresh_token: 'RT-GT1', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 400, JSON.stringify(res.body));
+      assert.equal(res.body.error, 'unauthorized_client');
+      assert.notEqual(await getRefresh(platform, CORE_ID, 'RT-GT1'), null, 'not used up');
+      const appAccount = fakePlatform({ myapp: { grantTypes: ['authorization_code'] } });
+      await seedRefresh(appAccount, 'RT-GT2');
+      res = fakeRes();
+      await handleToken({ config: fakeConfig(), platform: appAccount, mintRefreshedAccess: MINT_REFRESHED_FAKE })(
+        { body: { grant_type: 'refresh_token', refresh_token: 'RT-GT2', client_id: 'myapp' } }, res);
+      assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    });
+  });
+
   describe('[OAUTH-TKN-RT-CONF] confidential-client authentication', () => {
     const { mintSecret } = require('../src/clientSecret.ts');
     function basicAuth (id, secret) {

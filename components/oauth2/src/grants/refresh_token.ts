@@ -244,6 +244,12 @@ export async function handleRefreshToken (
   if (!offlineAccessAllowed(client)) {
     return { ok: false, status: 400, error: 'unauthorized_client', description: 'refresh tokens are not allowed for this client' };
   }
+  // Same for a registry client whose grant types no longer list
+  // refresh_token (its chains were issued under offline_access, which needs
+  // it). App-account clients get chains whatever their grant types: not read.
+  if (client?.kind === 'registry' && Array.isArray(client.grantTypes) && !client.grantTypes.includes('refresh_token')) {
+    return { ok: false, status: 400, error: 'unauthorized_client', description: 'refresh tokens are not allowed for this client' };
+  }
   // Non-consuming read: a token issued to another client is refused and left
   // live (the presenter learns nothing it does not hold: it has the token).
   const peek = await storage.getRefresh(deps.platform, coreId, params.refresh_token);

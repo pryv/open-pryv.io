@@ -687,9 +687,20 @@ describe('[OCLI] operator CLI: registry clients', () => {
       assert.match(r.out, /purge-grants Cli\.lt --yes/);
       row = await getClient(platform, 'Cli.lt');
       assert.deepEqual(row.launchTypes, []);
-      // A widening alone prints no purge hint.
+      // A widening alone prints no purge hint, --any-audience (which clears
+      // the audience list) included.
       r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--scope', 'read/a read/c', '--approve']);
       assert.doesNotMatch(r.out, /live grants/);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--any-audience', '--approve']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.doesNotMatch(r.out, /live grants/);
+      // A row written before the field (no launchTypes at all): "none" is no change.
+      const legacy = await getClient(platform, 'Cli.lt');
+      delete legacy.launchTypes;
+      await persistClient(platform, legacy);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--launch-type', 'none']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.equal(await statusOf(platform, 'Cli.lt'), 'active');
     });
 
     it('[OCLI20] the registry profile: localized name, description, software id, entry ceiling, regions, logo on an allowed host; show; none clears', async () => {
