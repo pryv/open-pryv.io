@@ -702,7 +702,9 @@ lifetime (`--access-token-ttl`, else `oauth.accessTokenTTL`); a repeated
 exchange may extend it up to that bound, never shorten it. A derived session
 past its expiry, or made before the resource server's id was revoked, is
 **replaced, never revived**: the next exchange deletes it and answers a new
-token. Its lifecycle follows its subject and grant:
+token. A replaced derived session is deleted as any session is, so the
+accesses it created go with it; a derived session that merely expired, and is
+not replaced, leaves them in place. Its lifecycle follows its subject and grant:
 
 - the subject session deleted (by the owner, by the client's RFC 7009
   revocation of its access or refresh token, by a chain collapse): the
