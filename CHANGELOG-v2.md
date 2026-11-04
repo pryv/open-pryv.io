@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### OAuth registry clients: a change of launch types is vetted
+
+- **Fixed: `bin/oauth-client.js update <clientId> --launch-type ...` on an active registry client
+  did not move it to `review`.** The core does not act on the launch types, but an extension may
+  grant on them (a write capability for one launch type, for example), so a change gave the client
+  what it grants without an approval. A change of `--launch-type` is now a vetted change like a
+  change of scope or audiences: the client is refused until `update <clientId> --approve`, or the
+  change carries `--approve`.
+- **`update` says when it narrows what the client may be granted** (a scope token, audience,
+  feature or launch type removed, `--any-audience` withdrawn): the grants given before keep what they
+  hold until they end. It prints the step that ends them, `purge-grants <clientId> --yes`, to run on
+  each core. A client whose launch type was removed in an earlier release still holds those grants:
+  run `purge-grants` for it.
+
 ### SQLite audit and events: faster export pages on large files
 
 - **Fixed: every `events.get` naming the audit streams `:_audit:accesses` / `:_audit:actions` listed

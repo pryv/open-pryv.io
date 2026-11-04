@@ -475,19 +475,38 @@ export function clientUnavailable (client: OAuthClient, config?: { get (key: str
 /**
  * The fields whose change (in any direction) moves an active registry client
  * to review: where its codes and tokens land, how it proves who it is, what
- * it may reach and for how long. Not the subject type (its own confirmation
- * and the user's acknowledgement), the display texts, regions nor the entry
- * ceiling.
+ * it may reach and for how long. The launch types count too: the core does
+ * not act on them, but an extension may grant on them. Not the subject type
+ * (its own confirmation and the user's acknowledgement), the display texts,
+ * regions nor the entry ceiling.
  */
 export const VETTED_FIELDS = [
   'redirectUris', 'scope', 'jwks', 'jwksUri', 'tokenEndpointAuthMethod', 'tokenEndpointAuthSigningAlgs', 'grantTypes',
-  'allowedAudiences', 'anyAudience', 'allowFeatures', 'canIntrospect',
+  'allowedAudiences', 'anyAudience', 'allowFeatures', 'canIntrospect', 'launchTypes',
   'accessTokenTTL', 'refreshTokenTTL', 'refreshTokenAbsoluteTTL', 'offlineAccessAllowed',
 ] as const;
 
 /** The vetted fields that differ between two versions of a row. */
 export function changedVettedFields (before: OAuthClient, after: OAuthClient): string[] {
   return VETTED_FIELDS.filter((k) => canonicalJson(before[k] ?? null) !== canonicalJson(after[k] ?? null));
+}
+
+const GRANT_LIST_FIELDS = ['scope', 'allowedAudiences', 'allowFeatures', 'launchTypes'] as const;
+const GRANT_FLAG_FIELDS = ['anyAudience'] as const;
+
+/**
+ * The fields of what a client may be granted that an update narrowed (an
+ * entry removed, a flag withdrawn). Grants given before keep what they hold:
+ * the row is read at the next consent, not re-applied to live grants.
+ * (`offlineAccessAllowed` is not one: the refresh grant reads it.)
+ */
+export function narrowedGrantFields (before: OAuthClient, after: OAuthClient): string[] {
+  const lists = GRANT_LIST_FIELDS.filter((k) => {
+    const kept = new Set((after[k] as string[] | undefined) ?? []);
+    return ((before[k] as string[] | undefined) ?? []).some((v) => !kept.has(v));
+  });
+  const flags = GRANT_FLAG_FIELDS.filter((k) => before[k] === true && after[k] !== true);
+  return [...lists, ...flags];
 }
 
 // The loopback host strings (`localhost` counts: RFC 6761 reserves it for

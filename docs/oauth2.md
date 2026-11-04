@@ -1052,7 +1052,9 @@ Flags:
 - `--name` (the `client_name`, default the client id), `--logo-uri`,
   `--client-uri`, `--policy-uri`, `--tos-uri` are returned to the consent UI by
   `/oauth2/authorize/offer`. `--contact` and `--launch-type` are stored on the
-  row and visible to the extension; the core does not act on them.
+  row and visible to the extension; the core does not act on them. An
+  extension may grant on `--launch-type`, so changing it on `update` is vetted
+  (below).
 
 The boolean flags (`--any-audience`, `--allow-insecure-redirect`,
 `--can-introspect`) take no value, or `true` / `false`; anything else is
@@ -1116,9 +1118,14 @@ client, an `update` that changes a vetted field moves an active client to
 decide where its codes and tokens land, how it authenticates, what it reaches
 and for how long: redirect URIs, scope, key set (`--jwks-file`, `--jwks-json`,
 `--jwks-uri`), auth method, `--signing-alg`, grant types, audiences
-(`--audience`, `--any-audience`), `--allow-feature`, `--can-introspect`, the
-lifetimes and `--offline-access`. Any change counts, a narrowing too, compared
-as stored (the same scope tokens in another order are a change). Not vetted:
+(`--audience`, `--any-audience`), `--allow-feature`, `--can-introspect`,
+`--launch-type` (the core does not act on it, an extension may grant on it),
+the lifetimes and `--offline-access`. Any change counts, a narrowing too, compared
+as stored (the same scope tokens in another order are a change). A narrowing
+(a scope token, audience, feature or launch type removed, `--any-audience`
+withdrawn) is not applied to the grants given before: they keep what they
+hold until they end (`--offline-access false` is: refresh is refused at once). `update` says so and prints the step that
+ends them, `purge-grants <clientId> --yes` (run on each core). Not vetted:
 `--subject-type` (its own `--yes`), the display and contact fields,
 `--region`, `--max-entries`. A `jwks_uri` client's published key set can
 change without any `update`: the review step does not see it.
