@@ -23,6 +23,8 @@ import { persistClient, changedVettedFields, narrowedGrantFields, VETTED_FIELDS 
 import { mintSecret } from '../src/clientSecret.ts';
 import { setSessionIndex, getSessionIndex, setClient, getClient } from '../src/storage.ts';
 import { checkRegistryClients } from '../src/registryBootCheck.ts';
+import { prepareRegistryResponse } from '../src/responseHooks.ts';
+import { parseAudienceBoundSessions, audienceBoundSessions, audienceBoundSessionsProblem } from '../src/audienceBinding.ts';
 
 /** The operator revoke epoch of a client (what `deleteClient` writes), without deleting its row. */
 async function setRevokedAt (platform, clientId, at) {
@@ -31,8 +33,8 @@ async function setRevokedAt (platform, clientId, at) {
 
 const ISSUER = 'https://core.example.com';
 const CORE_ID = 'core-a';
-const AUD = 'https://rs.example.com/mcp';
-const OTHER_AUD = 'https://other-rs.example.com/fhir';
+const AUD = 'https://rs.example.com/rs';
+const OTHER_AUD = 'https://other-rs.example.com/api';
 const USER_ID = 'u-alice';
 
 function toyExtension (overrides = {}) {
@@ -113,7 +115,7 @@ async function seeded () {
   const platform = fakePlatform();
   await persistClient(platform, CONNECTOR);
   const rs = { ...CONNECTOR, tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, tokenResponseExtras: { rs_extra: 'yes' } };
-  await persistClient(platform, { ...rs, clientId: 'mcp-rs', canExchange: true });
+  await persistClient(platform, { ...rs, clientId: 'rs-one', canExchange: true });
   await persistClient(platform, { ...rs, clientId: 'no-role' });
   await persistClient(platform, { ...rs, clientId: 'other-rs', canExchange: true, allowedAudiences: [OTHER_AUD] });
   await persistClient(platform, { ...rs, clientId: 'short-rs', canExchange: true, accessTokenTTL: 600 });
@@ -199,7 +201,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
   afterEach(() => extension._resetForTests());
 
   async function exchange (platform, {
-    auth = basic('mcp-rs', rsSecret.plaintext),
+    auth = basic('rs-one', rsSecret.plaintext),
     body = {},
     headers = {},
     subject = subjectSession(),
@@ -249,13 +251,13 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     assert.equal(b.connector_extra, undefined);
     // The derived session: the resource server's, bound to the subject.
     assert.deepEqual(store.calls.map(({ expiresAt: _e, ...c }) => c), [{
-      userId: USER_ID, username: 'alice', clientId: 'mcp-rs', subjectAccessId: 'session-1', subjectClientId: 'conn-app', reused: false,
+      userId: USER_ID, username: 'alice', clientId: 'rs-one', subjectAccessId: 'session-1', subjectClientId: 'conn-app', notBefore: null, reused: false,
     }]);
     const index = await getSessionIndex(platform, 'derived-token-1');
     assert.deepEqual({ ...index, expiresAt: typeof index.expiresAt }, {
       userId: USER_ID,
       accessId: 'derived-1',
-      clientId: 'mcp-rs',
+      clientId: 'rs-one',
       coreId: CORE_ID,
       expiresAt: 'number',
       dataGrantAccessId: 'grant-1',
@@ -275,9 +277,9 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
       for (const [auth, body] of [
         [basic('nobody', 'x'), {}],
         [null, { client_id: 'conn-app' }],
-        [basic('mcp-rs', 'wrong'), {}],
-        [null, { client_id: 'mcp-rs' }],
-        [basic('mcp-rs', rsSecret.plaintext), { client_id: 'other-rs' }],
+        [basic('rs-one', 'wrong'), {}],
+        [null, { client_id: 'rs-one' }],
+        [basic('rs-one', rsSecret.plaintext), { client_id: 'other-rs' }],
         [null, {}],
       ]) {
         const res = await exchange(platform, { auth, body, store });
@@ -288,7 +290,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     assert.deepEqual(rows, []);
     assert.equal(store.calls.length, 0);
     // client_secret_post works as Basic does.
-    const post = await exchange(platform, { auth: null, body: { client_id: 'mcp-rs', client_secret: rsSecret.plaintext }, store });
+    const post = await exchange(platform, { auth: null, body: { client_id: 'rs-one', client_secret: rsSecret.plaintext }, store });
     assert.equal(post.statusCode, 200, post.raw);
   });
 
@@ -299,7 +301,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     assert.equal(res.statusCode, 400, res.raw);
     assert.deepEqual(res.body, { error: 'unauthorized_client', error_description: 'client is not registered for token exchange' });
     assert.deepEqual(rows, [{ event: 'oauth.token.exchange_refused', payload: { clientId: 'no-role', reason: 'not-entitled' } }]);
-    const row = await getClient(platform, 'mcp-rs');
+    const row = await getClient(platform, 'rs-one');
     for (const [status, text] of [['suspended', 'this client is suspended'], ['review', 'this client is under review']]) {
       await setClient(platform, { ...row, status });
       res = await exchange(platform);
@@ -349,7 +351,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     assert.deepEqual(res.body, { error: 'invalid_target', error_description: 'the subject token was issued for a resource this client is not registered for' });
     assert.equal(rows[0].payload.reason, 'foreign-audience');
     const base = await getSessionIndex(platform, 'subject-token');
-    await setSessionIndex(platform, 'subject-token', { ...base, audience: 'HTTPS://RS.example.com/mcp/' });
+    await setSessionIndex(platform, 'subject-token', { ...base, audience: 'HTTPS://RS.example.com/rs/' });
     res = await exchange(platform);
     assert.equal(res.statusCode, 200, res.raw);
   });
@@ -363,6 +365,19 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     assert.equal(res.statusCode, 421, res.raw);
     assert.deepEqual(res.body, { error: 'wrong_core', coreUrl: 'https://core-b.example.com' });
     assert.equal(store.calls.length, 0);
+    // A resource server the token was not issued for learns no core URL.
+    const foreign = await exchange(platform, { auth: basic('other-rs', rsSecret.plaintext), store });
+    assert.deepEqual(foreign.body, { error: 'invalid_target', error_description: 'the subject token was issued for a resource this client is not registered for' });
+  });
+
+  it('[OTX20] the resource server\'s revoke epoch reaches the derived session lookup: passed as notBefore', async () => {
+    const platform = await seeded();
+    const store = derivedStore();
+    assert.equal((await exchange(platform, { store })).statusCode, 200);
+    const epoch = Date.now();
+    await setRevokedAt(platform, 'rs-one', epoch);
+    assert.equal((await exchange(platform, { store })).statusCode, 200);
+    assert.deepEqual(store.calls.map((c) => c.notBefore), [null, epoch]);
   });
 
   it('[OTX07] scope, an actor token, a missing or wrong subject token type, a wrong requested type, a repeated resource: refused before the subject is read', async () => {
@@ -377,6 +392,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
       [{ subject_token: '' }, 'invalid_request', 'subject_token is required'],
       [{ requested_token_type: 'urn:ietf:params:oauth:token-type:jwt' }, 'invalid_request', 'requested_token_type must be ' + ACCESS_TOKEN_TYPE],
       [{ resource: [ISSUER, ISSUER] }, 'invalid_target', 'one resource per request'],
+      [{ audience: { url: ISSUER } }, 'invalid_request', 'resource and audience must be strings'],
     ]) {
       const res = await exchange(platform, { body, readSubjectSession });
       assert.equal(res.statusCode, 400, JSON.stringify(body) + ': ' + res.raw);
@@ -415,7 +431,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     const exchanged = rows.filter((r) => r.event === 'oauth.token.exchanged');
     assert.deepEqual(exchanged.map((r) => r.payload.reused), [false, true]);
     assert.deepEqual(exchanged[0].payload, {
-      clientId: 'mcp-rs',
+      clientId: 'rs-one',
       userId: USER_ID,
       accessId: 'derived-1',
       dataGrantAccessId: 'grant-1',
@@ -445,11 +461,14 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     // A later exchange with a shorter bound keeps the derived session's expiry.
     res = await exchange(platform, { subject: subjectSession({ expires: now / 1000 + 100 }), store });
     assert.ok(res.body.expires_in >= 298, String(res.body.expires_in));
-    // One second left: nothing is issued.
+    // One second left: nothing is issued, and no hook runs for it.
+    let hookCalls = 0;
+    extension.setExtension(toyExtension({ tokenResponse () { hookCalls++; return {}; } }));
     store = derivedStore();
     res = await exchange(platform, { subject: subjectSession({ expires: now / 1000 + 1 }), store });
     assert.deepEqual(res.body, { error: 'invalid_grant', error_description: 'subject token is not active' });
     assert.equal(store.calls.length, 0);
+    assert.equal(hookCalls, 0);
   });
 
   it('[OTX11] a failing tokenResponse hook: 500, and no derived session is issued', async () => {
@@ -472,21 +491,66 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     extension.setExtension(toyExtension({ tokenResponse (ctx) { seen.push(ctx); return { hook_field: ctx.actor?.clientId }; } }));
     const res = await exchange(platform);
     assert.equal(res.statusCode, 200, res.raw);
-    assert.equal(res.body.hook_field, 'mcp-rs');
+    assert.equal(res.body.hook_field, 'rs-one');
     assert.equal(seen.length, 1);
     const ctx = seen[0];
     assert.equal(ctx.grantType, 'token-exchange');
     assert.equal(ctx.clientId, 'conn-app');
     assert.equal(ctx.client.clientId, 'conn-app');
-    assert.deepEqual(ctx.actor, { clientId: 'mcp-rs' });
+    assert.deepEqual(ctx.actor, { clientId: 'rs-one' });
     assert.equal(ctx.audience, undefined);
     assert.equal(ctx.subject, USER_ID);
     assert.deepEqual(ctx.scopeTokens, ['read/a']);
-    for (const key of ['api_base', 'access_token', 'scope']) {
+    for (const key of ['api_base', 'issued_token_type', 'access_token', 'scope']) {
       extension.setExtension(toyExtension({ tokenResponse: () => ({ [key]: 'x' }) }));
       const bad = await exchange(platform);
       assert.equal(bad.statusCode, 500, key + ': ' + bad.raw);
     }
+    // The same keys in the resource server's static extras are dropped.
+    extension.setExtension(toyExtension());
+    const row = await getClient(platform, 'rs-one');
+    await setClient(platform, { ...row, tokenResponseExtras: { api_base: 'x', issued_token_type: 'y', kept: 1 } });
+    const extras = await exchange(platform);
+    assert.equal(extras.statusCode, 200, extras.raw);
+    assert.equal(extras.body.api_base, 'https://alice.example.com/');
+    assert.equal(extras.body.issued_token_type, ACCESS_TOKEN_TYPE);
+    assert.equal(extras.body.kept, 1);
+  });
+
+  it('[OTX21] the exchange\'s reserved keys are reserved there only: the other grants\' hooks and static extras may still set api_base, introspection of a non-derived token act', async () => {
+    const ctx = { scopeTokens: [] };
+    extension.setExtension(toyExtension({ tokenResponse: () => ({ api_base: 'hook', issued_token_type: 'hook' }), introspectionClaims: () => ({ act: 'hook' }) }));
+    assert.deepEqual(await extension.runHook('tokenResponse', ctx), { api_base: 'hook', issued_token_type: 'hook' });
+    assert.deepEqual(await extension.runHook('introspectionClaims', ctx), { act: 'hook' });
+    await assert.rejects(extension.runHook('tokenResponse', ctx, extension.EXCHANGE_RESERVED_KEYS.tokenResponse), /reserved key.*api_base/);
+    await assert.rejects(extension.runHook('introspectionClaims', ctx, extension.EXCHANGE_RESERVED_KEYS.introspectionClaims), /reserved key.*act/);
+    assert.ok(!extension.RESERVED_KEYS.tokenResponse.includes('api_base'));
+    assert.ok(!extension.RESERVED_KEYS.introspectionClaims.includes('act'));
+    for (const grantType of ['authorization_code', 'refresh_token']) {
+      const parts = await prepareRegistryResponse({
+        client: { ...CONNECTOR, tokenResponseExtras: { static_base: 's', api_base: 'static' }, updatedAt: 1 },
+        grantType,
+        issuer: ISSUER,
+        config: fakeConfig(),
+        coreTokens: [],
+        grammarTokens: ['read/a'],
+        permissions: [{ streamId: 'a', level: 'read' }],
+        subject: USER_ID,
+        aliased: false,
+      });
+      assert.equal(parts.extra.api_base, 'hook', grantType);
+      assert.equal(parts.extra.static_base, 's', grantType);
+    }
+    // The introspection of the subject token (not derived) answers the hook's act.
+    const platform = await seeded();
+    const res = fakeRes();
+    await handleIntrospect({
+      config: fakeConfig(),
+      platform,
+      introspectAccess: async () => subjectSession(),
+    })({ headers: { authorization: basic('intro-rs', rsSecret.plaintext) }, body: { token: 'subject-token' } }, res);
+    assert.equal(res.statusCode, 200, res.raw);
+    assert.equal(res.body.act, 'hook');
   });
 
   it('[OTX13] the registry: the role needs a registry row, a confidential method and an audience list, never "any audience"', async () => {
@@ -579,7 +643,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
       const b = res.body;
       assert.equal(b.active, true);
       assert.equal(b.client_id, 'conn-app');
-      assert.deepEqual(b.act, { client_id: 'mcp-rs' });
+      assert.deepEqual(b.act, { client_id: 'rs-one' });
       assert.equal(b.aud, undefined);
       assert.equal(b.cnf, undefined);
       assert.equal(b.scope, 'read/a');
@@ -587,12 +651,14 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
       assert.equal(b.claim, 1);
       assert.deepEqual(b.permissions, [{ streamId: 'a', level: 'read' }]);
       assert.equal(seen[0].clientId, 'conn-app');
-      assert.deepEqual(seen[0].actor, { clientId: 'mcp-rs' });
+      assert.deepEqual(seen[0].actor, { clientId: 'rs-one' });
       const introspected = rows.find((r) => r.event === 'oauth.token.introspected');
       assert.equal(introspected.payload.tokenClientId, 'conn-app');
-      assert.equal(introspected.payload.actorClientId, 'mcp-rs');
+      assert.equal(introspected.payload.actorClientId, 'rs-one');
+      // `act` is the core's in this answer: a hook setting it fails the introspection.
       extension.setExtension(toyExtension({ introspectionClaims: () => ({ act: 'x' }) }));
-      await assert.rejects(extension.runHook('introspectionClaims', { scopeTokens: [] }), /reserved key.*act/);
+      const reserved = await introspect(platform);
+      assert.equal(reserved.statusCode, 500, reserved.raw);
       // The subject token itself answers as before.
       extension.setExtension(toyExtension());
       const subject = await introspect(platform, { token: 'subject-token' });
@@ -604,7 +670,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     it('[OTX18] inactive when the resource server or the subject\'s client is revoked, suspended or under review', async () => {
       const platform = await seeded();
       assert.equal((await exchange(platform)).statusCode, 200);
-      for (const clientId of ['mcp-rs', 'conn-app']) {
+      for (const clientId of ['rs-one', 'conn-app']) {
         const row = await getClient(platform, clientId);
         for (const status of ['suspended', 'review']) {
           await setClient(platform, { ...row, status });
@@ -617,7 +683,7 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
         await platform.deletePlatformKv('oauth-client-revoked/' + clientId);
       }
       // The resource server's regions are not checked (its status only).
-      await setClient(platform, { ...(await getClient(platform, 'mcp-rs')), regions: ['elsewhere'] });
+      await setClient(platform, { ...(await getClient(platform, 'rs-one')), regions: ['elsewhere'] });
       assert.equal((await introspect(platform)).body.active, true);
     });
   });
@@ -633,5 +699,20 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     const none = fakePlatform();
     await persistClient(none, CONNECTOR);
     assert.equal(await checkRegistryClients(none, fakeConfig()), await checkRegistryClients(none, fakeConfig({ 'oauth:audienceBoundSessions': true })));
+    // The string an environment variable gives counts as on.
+    assert.equal(await checkRegistryClients(platform, fakeConfig({ 'oauth:audienceBoundSessions': 'TRUE' })), on);
+  });
+
+  it('[OTX22] audienceBoundSessions: a boolean or the strings true / false (any case); anything else is a configuration problem, never read as on or off silently', () => {
+    for (const [value, parsed] of [[true, true], [false, false], [undefined, false], [null, false], ['true', true], [' True ', true], ['false', false], ['FALSE', false]]) {
+      assert.equal(parseAudienceBoundSessions(value), parsed, JSON.stringify(value));
+      assert.equal(audienceBoundSessionsProblem(value), null, JSON.stringify(value));
+    }
+    for (const value of ['yes', '1', 1, 0, {}, []]) {
+      assert.equal(parseAudienceBoundSessions(value), null, JSON.stringify(value));
+      assert.match(audienceBoundSessionsProblem(value), /true or false is expected/, JSON.stringify(value));
+      assert.equal(audienceBoundSessions(fakeConfig({ 'oauth:audienceBoundSessions': value })), false);
+    }
+    assert.equal(audienceBoundSessions(fakeConfig({ 'oauth:audienceBoundSessions': 'true' })), true);
   });
 });

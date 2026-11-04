@@ -7,33 +7,46 @@
 - New `oauth2/src/grants/token_exchange.ts` (`handleTokenExchange`, `TOKEN_EXCHANGE`), dispatched by
   `routes/token.ts`; a refusal outcome may carry `extra` body members (`coreUrl`). Host deps
   `readSubjectSession` and `issueDerivedSession` (api-server `routes/oauth2/sessions.ts`). The
-  response parts (hooks included) are computed before the derived session is issued.
+  lifetime floor (2 s) is checked, then the response parts (hooks included) are computed, before
+  the derived session is issued; the audience is checked before the home core is named (421).
 - Derived session row: `name oauth:<resource server>`, `deviceName oauth-exchange:<subject session
-  id>` (one per subject session and resource server; an expired row still holds the slot, so it is
-  brought back with a new expiry), `clientData.oauth.exchange = { subjectClientId,
-  subjectAccessId }`, the subject's `dataGrantId`, chain, alias and permissions; no `audience`, no
-  DPoP. `mintAccessDirect` gains `audience`, `deviceName`, `exchange`; `sessionClientData` writes
-  `audience` / `exchange`. `createAccess` (from `/accept`) and `mintRefreshedAccess` (from the
-  refresh row's `audience`) record the audience on every session minted for a resource server.
+  id>` (one per subject session and resource server), `clientData.oauth.exchange = { subjectClientId,
+  subjectAccessId, subjectCreated }`, the subject's `dataGrantId`, chain, alias and permissions; no
+  `audience`, no DPoP. A found row is reused only when live and created after the resource server's
+  revoke epoch (`notBefore`); otherwise it is deleted through `deleteAccessChain` (an expired row
+  still holds the slot) and a new one minted. After a mint the subject is read again: gone, the new
+  row is deleted (`invalid_grant`); re-cut, the new row follows it. A reused row whose expiry or
+  permissions change is reindexed. `mintAccessDirect` gains `audience`, `deviceName`, `exchange`;
+  `sessionClientData` writes `audience` / `exchange`. `createAccess` (from `/accept`) and
+  `mintRefreshedAccess` (from the refresh row) record the audience on a registry client's sessions
+  only. `readSubjectSession` reads the grant the session row names.
 - `oauth-at/` index rows gain `exchange`; a derived token's row has no core tokens and no audience.
 - `accessDeletion.ts`: `deleteAccessChain` / `accessChainIds` delete the derived sessions of a
-  deleted session (first pass and final pass). `oauthGrantPurge.ts`: a derived session does not
-  bind its client's grant to the resource server's purge.
+  deleted session (first pass and final pass, the final one with what a deleted derived session
+  created meanwhile). `oauthGrantPurge.ts`: a derived session does not bind its client's grant to
+  the resource server's purge.
 - `MethodContext`: `checkClientNotRevoked` also checks `clientData.oauth.exchange.subjectClientId`
-  (same epoch and status read, `checkOAuthClient`); new `checkAudienceBinding` after it, reading
-  `oauth:audienceBoundSessions`.
-- Introspection: a derived token checks both clients and answers `client_id` / `act`; audit
+  (same epoch and status read, `checkOAuthClient`; the epoch compared with `subjectCreated`); the
+  revoke epoch refuses a session created at or before it (`<=`, as the exchange and introspection);
+  new `checkAudienceBinding` after it.
+- New `oauth2/src/audienceBinding.ts`: `oauth:audienceBoundSessions` as a boolean or the strings
+  `true` / `false` (any case), used by `MethodContext`, `registryBootCheck` and the validators;
+  `config-validation.js` and `bin/check-config.js` refuse any other value (a boot problem).
+- Introspection: a derived token checks both clients (the subject's client's epoch against
+  `subjectCreated`, from `introspectAccess`) and answers `client_id` / `act`; audit
   `oauth.token.introspected` gains `actorClientId`. New audit methods `oauth.token.exchanged` (user)
   and `oauth.token.exchange_refused` (user-less), declared in `audit/src/ApiMethods.ts`.
 - Registry: `OAuthClient.canExchange` (registry only, `client_secret_basic` / `private_key_jwt`,
   non-empty `allowedAudiences`, never `anyAudience`), in `VETTED_FIELDS`; withdrawing it is a
   narrowing (`narrowedGrantFields`). `checkRegistryClients(platform, config?)` warns once when a
-  client may exchange and `oauth:audienceBoundSessions` is not `true`. `RESERVED_KEYS`:
-  `tokenResponse` gains `api_base`, `introspectionClaims` gains `act`; `HookCtx.actor`.
-- Config: `oauth.audienceBoundSessions` (default `false`), checked by `config-validation.js` and
-  `bin/check-config.js`; the `bin/init.js` appendix shows it with the grant type URN.
-- Tests: `[OTX01]` to `[OTX19]` (oauth2), `[OCLI24]`, `[OTXE01]` to `[OTXE14]` (api-server),
-  `[2C78]` (two cores).
+  client may exchange and `oauth:audienceBoundSessions` is off. `RESERVED_KEYS` unchanged; new
+  `EXCHANGE_RESERVED_KEYS` (`tokenResponse`: `api_base`, `issued_token_type`;
+  `introspectionClaims`: `act`) passed to `runHook` (new optional third argument) in the exchange's
+  response and a derived token's introspection only; `HookCtx.actor`.
+- Config: `oauth.audienceBoundSessions` (default `false`); the `bin/init.js` appendix shows it with
+  the grant type URN.
+- Tests: `[OTX01]` to `[OTX22]` (oauth2), `[ORI11]`, `[OCLI24]`, `[OTXE01]` to `[OTXE20]`
+  (api-server), `[2C78]` (two cores).
 
 ### OAuth registry: `launchTypes` vetted, narrowing notice
 

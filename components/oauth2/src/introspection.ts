@@ -44,7 +44,7 @@ import { authenticateClient } from './clientSecret.ts';
 import { decodeBasicAuth, clientIdFromAssertion, isConfidentialClient as isConfidential } from './clientAuth.ts';
 import { issuerFromConfig } from './issuer.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
-import { runHook, toClientView } from './extension.ts';
+import { runHook, toClientView, EXCHANGE_RESERVED_KEYS } from './extension.ts';
 import { logServerError } from './serverLog.ts';
 import { audit } from './audit.ts';
 
@@ -63,6 +63,8 @@ export type IntrospectAccess = (params: {
   /** The account's API base URL, no credential in it (alias-based when the grant is aliased). */
   apiBase?: string;
   dpopJkt?: string;
+  /** A derived session (token exchange): when its subject session was created (seconds). */
+  subjectCreated?: number;
 } | null>;
 
 export type IntrospectDeps = {
@@ -158,7 +160,10 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
     const actor = await getClient(deps.platform, row.clientId);
     if (actor == null || clientUnavailable(actor, null) != null) return { status: 200, body: INACTIVE };
   }
-  if (await revokedSince(deps, tokenClientId, session.created)) return { status: 200, body: INACTIVE };
+  // A derived token carries the subject session's authorization: the subject
+  // client's revoke epoch is compared with the subject session's creation.
+  const authorizedAt = exchange != null ? (session.subjectCreated ?? session.created) : session.created;
+  if (await revokedSince(deps, tokenClientId, authorizedAt)) return { status: 200, body: INACTIVE };
   const client = await getClient(deps.platform, tokenClientId);
   if (client == null || clientUnavailable(client, deps.config) != null) return { status: 200, body: INACTIVE };
 
@@ -189,7 +194,8 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
         ...(row.audience != null ? { audience: row.audience } : {}),
         ...(exchange != null ? { actor: { clientId: row.clientId } } : {}),
       };
-      extra = await runHook('introspectionClaims', ctx);
+      // A derived token's answer reserves `act` too, in that context only.
+      extra = await runHook('introspectionClaims', ctx, exchange != null ? EXCHANGE_RESERVED_KEYS.introspectionClaims : []);
     } catch (err: unknown) {
       logServerError('introspection: registry claims failed', err);
       return { status: 500, body: { error: 'server_error', error_description: 'failed to build the introspection answer' } };

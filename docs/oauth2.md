@@ -618,7 +618,7 @@ never on the wording; render errors without one generically.
 
 ## 1e. Token exchange (RFC 8693) for resource servers
 
-A resource server in front of a core (an MCP server, an API facade) receives
+A resource server in front of a core (an agent gateway, an API facade) receives
 the access token a user's client obtained for it (the authorization named the
 resource server in `aud` / `resource`). With token exchange it trades that
 token for a **derived session** of its own on the user's home core, and calls
@@ -659,7 +659,7 @@ token as it was:
 | the caller is unknown, public, or its credentials are wrong | 401 | `invalid_client` |
 | the caller is not registered for token exchange, or is suspended / under review | 400 | `unauthorized_client` |
 | a malformed request (table above) | 400 | `invalid_request`, `invalid_scope`, `invalid_target` |
-| the subject token is unknown, expired, deleted, retired, its grant gone, issued for no resource server, itself a derived token, or not a registry client's | 400 | `invalid_grant` ("subject token is not active") |
+| the subject token is unknown, expired, deleted, retired past its grace, its grant gone, issued for no resource server, itself a derived token, or not a registry client's | 400 | `invalid_grant` ("subject token is not active") |
 | the subject token's client is revoked, suspended, under review, gone or not served in this core's region | 400 | `invalid_grant` ("the subject token's client is not available") |
 | the subject token was issued for a resource the caller is not registered for | 400 | `invalid_target` |
 | the subject session lives on another core | 421 | `wrong_core`, with `coreUrl`: exchange there |
@@ -681,7 +681,10 @@ request is malformed".
 plus the resource server's `--extra` fields and what the extension's
 `tokenResponse` hook adds (`ctx.grantType` is `token-exchange`, `ctx.actor` the
 resource server; the subject, the scope and `ctx.client` are the client's
-authorization). `scope` is the extension's echo over the subject session's
+authorization). In this response a hook may not set `api_base` nor
+`issued_token_type` (nor the members it may never set), and the resource
+server's `--extra` fields of those names are dropped; the other grants'
+responses are unchanged. `scope` is the extension's echo over the subject session's
 permissions (no `offline_access` / `openid`: no refresh token and no id_token
 come with it). `api_base` is the account's API base URL, built on the grant's
 alias for a pseudonymous grant; it carries no credential: send the token in
@@ -690,14 +693,16 @@ the `Authorization` header. No `apiEndpoint`, no `refresh_token`.
 **The derived session.** A real access of the user, named
 `oauth:<resource server id>`, of the same grant (same permissions, chain and
 alias as the subject session; no audience, no DPoP binding), recorded with
-`clientData.oauth.exchange = { subjectClientId, subjectAccessId }`. What it
+`clientData.oauth.exchange = { subjectClientId, subjectAccessId, subjectCreated }`. What it
 writes is created by it. One per subject session and resource server: a
-repeated exchange of the same subject token answers **the same token**, so
-several instances of a resource server share it. Its lifetime is at most the
-subject session's and at most the resource server's own access-token lifetime
-(`--access-token-ttl`, else `oauth.accessTokenTTL`); a repeated exchange may
-extend it up to that bound, never shorten it. Its lifecycle follows its subject
-and grant:
+repeated exchange of the same subject token answers **the same token** while it
+lives, so several instances of a resource server share it. Its lifetime is at
+most the subject session's and at most the resource server's own access-token
+lifetime (`--access-token-ttl`, else `oauth.accessTokenTTL`); a repeated
+exchange may extend it up to that bound, never shorten it. A derived session
+past its expiry, or made before the resource server's id was revoked, is
+**replaced, never revived**: the next exchange deletes it and answers a new
+token. Its lifecycle follows its subject and grant:
 
 - the subject session deleted (by the owner, by the client's RFC 7009
   revocation of its access or refresh token, by a chain collapse): the
@@ -705,10 +710,13 @@ and grant:
 - the grant narrowed: the derived session is narrowed with the subject; the
   grant withdrawn: both go;
 - a refresh retires the subject session but not the derived one, which lives
-  out its own expiry; the new subject token gets a new derived session;
+  out its own expiry; the new subject token gets a new derived session (the
+  retired one may still be exchanged during its grace,
+  `oauth.refreshRetireGraceSeconds`, for a derived session no longer than it);
 - the resource server or the subject token's client revoked, suspended or
   under review: the data API refuses the derived token (within
-  `oauth.clientRevokeCheckSeconds`) and introspection answers inactive;
+  `oauth.clientRevokeCheckSeconds`) and introspection answers inactive (the
+  client's revoke is compared with the subject session's creation);
 - `purge-grants <resource server>` deletes its derived sessions only (the
   client's grant stays); `purge-grants <client>` deletes the grant with them.
 
@@ -722,26 +730,33 @@ grant.
 client (whose authorization it carries), `act: { "client_id": "<resource
 server>" }` (RFC 8693 § 4.1), no `aud`; it is active only while both clients
 are. A resource server that receives a token as a bearer should check
-`client_id` and `act`.
+`client_id` and `act`. In this answer an extension's `introspectionClaims` may
+not set `act`; the introspection of any other token is unchanged.
 
 **Multi-core.** The exchange runs on the subject session's home core; any
 other core answers `421 wrong_core` with `coreUrl`. A resource server serving
 one core per issuer never sees it.
 
-**`oauth.audienceBoundSessions`** (per core, boolean). Every session minted
-for an authorization naming a resource server records it
-(`clientData.oauth.audience`). With `true`, the data API refuses such a
-session at the access check every call goes through (requests, batch calls,
-socket.io connections):
+**`oauth.audienceBoundSessions`** (per core: `true` or `false`, the strings
+`"true"` / `"false"` accepted as an environment variable gives them; any other
+value stops the boot). Every session a registry client's authorization naming a
+resource server mints records it (`clientData.oauth.audience`). With `true`,
+the data API refuses such a session at the access check every call goes
+through (requests, batch calls, socket.io connections):
 `403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`;
 the resource server's exchange and introspection still accept it. Sessions
 minted before this release carry no such record and keep working until they
 expire or their chain refreshes; sessions issued for no resource server are
-never refused (and cannot be exchanged). `false` (the default in this
-release) keeps every token usable at the API; the next release defaults it to
-`true`. Turn it on once every resource server whose clients use this core
-exchanges; while it is off and a client is registered with `--can-exchange`,
-the core warns at boot.
+never refused (and cannot be exchanged), nor are app-account clients'
+sessions (they record no audience: they have no exchange to replace them).
+`false` (the default in this release) keeps every token usable at the API; the
+next release defaults it to `true`. Turn it on once every resource server whose
+clients use this core exchanges; while it is off and a client is registered
+with `--can-exchange`, the core warns at boot. The setting is read from the
+configuration (it changes with a restart): a socket.io connection opened
+before it changed stays until it reconnects, and an HFS series metadata cache
+entry lags it by at most its lifetime (5 minutes), as for a client revoke.
+Accesses a session created while it was off carry no audience and stay usable.
 
 ---
 
@@ -1267,7 +1282,9 @@ is the same as none). A narrowing (a scope token, audience, feature or launch
 type removed, `--any-audience` or `--can-exchange` withdrawn) is not applied to the grants given
 before: they keep the permissions and audience stored for them until they end
 (a withdrawn `--can-exchange`: the derived sessions already issued live out
-their lifetime, at most the subject token's).
+their lifetime, at most the subject token's; `purge-grants` ends them, and,
+for a resource server that is also a client with users' grants of its own,
+those grants too).
 `update` says so and prints the step that ends them, `purge-grants <clientId>
 --yes` (run on each core). Withdrawing refresh is applied at once: with
 `--offline-access false`, or `refresh_token` removed from the grant types, a

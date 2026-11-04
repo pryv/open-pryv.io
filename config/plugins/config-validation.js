@@ -672,8 +672,20 @@ async function validate (config) {
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
+  checkAudienceBoundSessions(config, problems);
 
   return problems;
+}
+
+/**
+ * `oauth.audienceBoundSessions` is a security switch: a boolean, or the
+ * strings `true` / `false` (an environment variable); anything else stops the
+ * boot rather than being read as off.
+ */
+function checkAudienceBoundSessions (config, problems) {
+  const { audienceBoundSessionsProblem } = require('../../components/oauth2/src/audienceBinding.ts');
+  const message = audienceBoundSessionsProblem(config.get('oauth:audienceBoundSessions'));
+  if (message != null) problems.push({ message, path: ['oauth', 'audienceBoundSessions'] });
 }
 
 /**
@@ -856,11 +868,6 @@ function oauthWarnings (config) {
     warnings.push(`'oauth.idTokenTTL' is ${JSON.stringify(idTokenTTL)}: a positive number of seconds is expected; 300 is used.`);
   } else if (Number(idTokenTTL) > OAUTH_MAX_ID_TOKEN_TTL) {
     warnings.push(`'oauth.idTokenTTL' is ${idTokenTTL} s, above the ${OAUTH_MAX_ID_TOKEN_TTL} s maximum: id_tokens live ${OAUTH_MAX_ID_TOKEN_TTL} s.`);
-  }
-  const audienceBound = config.get('oauth:audienceBoundSessions');
-  if (audienceBound != null && typeof audienceBound !== 'boolean') {
-    warnings.push(`'oauth.audienceBoundSessions' is ${JSON.stringify(audienceBound)}: true or false is expected; ` +
-      'as it is, the sessions minted for a resource server stay usable at the data API (false).');
   }
   // A client retrying a refresh within the reuse grace (a double-submit) gets
   // no new token; the token it holds must still work meanwhile.

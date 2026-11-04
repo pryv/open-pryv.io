@@ -27,6 +27,7 @@ import { checkMaxSet } from './scopeGrammar.ts';
 import { insecureRedirectUris } from './clientRegistry.ts';
 import { validatePublicJwkSet } from './jwks.ts';
 import { logServerWarning } from './serverLog.ts';
+import { audienceBoundSessions } from './audienceBinding.ts';
 
 /**
  * Check every registry client of the platform. Resolves to the number of
@@ -77,7 +78,7 @@ export async function checkRegistryClients (platform: PlatformDB, config?: { get
         : `oauth registry client ${id}: plain-http redirect URIs on a non-loopback host (${insecure.join(', ')}) stored without the insecure-redirect registration (a row written before the rule; update it)`);
     }
   }
-  if (config != null && exchanging.length > 0 && config.get('oauth:audienceBoundSessions') !== true) {
+  if (config != null && exchanging.length > 0 && !audienceBoundSessions(config)) {
     warnings++;
     logServerWarning(`oauth registry client(s) ${exchanging.join(', ')} may exchange tokens, but this core still accepts at its data API ` +
       'the tokens issued for a resource server (oauth.audienceBoundSessions is not true): set it once those resource servers exchange');

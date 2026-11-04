@@ -551,7 +551,7 @@ class MethodContext {
    * oauth session during a platform hiccup would be worse than the ≤TTL window.
    */
   async checkClientNotRevoked () {
-    const access = this.access as { name?: unknown; created?: unknown; clientData?: { oauth?: { exchange?: { subjectClientId?: unknown } } } } | null;
+    const access = this.access as { name?: unknown; created?: unknown; clientData?: { oauth?: { exchange?: { subjectClientId?: unknown; subjectCreated?: unknown } } } } | null;
     const name = access?.name;
     if (typeof name !== 'string' || !name.startsWith('oauth:')) return;
     const clientId = name.slice('oauth:'.length);
@@ -561,10 +561,13 @@ class MethodContext {
     await this.checkOAuthClient(platform, clientId, access?.created);
     // A derived session (token exchange) carries the authorization of the
     // client the subject token was issued to: that client must not be
-    // revoked, suspended or under review either.
-    const subjectClientId = access?.clientData?.oauth?.exchange?.subjectClientId;
+    // revoked, suspended or under review either. Its revoke epoch is compared
+    // with the subject session's creation (the authorization the derived
+    // session carries), not with the derived session's own.
+    const exchange = access?.clientData?.oauth?.exchange;
+    const subjectClientId = exchange?.subjectClientId;
     if (typeof subjectClientId === 'string' && subjectClientId.length > 0 && subjectClientId !== clientId) {
-      await this.checkOAuthClient(platform, subjectClientId, access?.created);
+      await this.checkOAuthClient(platform, subjectClientId, typeof exchange?.subjectCreated === 'number' ? exchange.subjectCreated : access?.created);
     }
   }
 
@@ -580,13 +583,14 @@ class MethodContext {
     } catch { /* config not booted (unit contexts) — keep the default */ }
     const { getRevokedAt } = require('oauth2/src/revokedClientsCache.ts');
     const revokedAt = await getRevokedAt(platform, clientId, ttlSeconds);
-    // Token epoch: a revoke kills tokens minted BEFORE `revokedAt`; tokens
+    // Token epoch: a revoke kills tokens minted at or before `revokedAt`
+    // (the same boundary as the token exchange and introspection); tokens
     // minted after (e.g. after a re-registration) survive. `created` is unix
     // SECONDS; `revokedAt` is ms. When `created` is missing (shouldn't happen
     // for a minted oauth access), fail safe = treat as revoked.
     if (revokedAt != null) {
       const createdMs = typeof created === 'number' ? created * 1000 : 0;
-      if (createdMs < revokedAt) {
+      if (createdMs <= revokedAt) {
         throw errors.invalidAccessToken('The application access has been revoked.', 403);
       }
     }
@@ -609,7 +613,9 @@ class MethodContext {
     if (typeof audience !== 'string' || audience.length === 0) return;
     let enforced = false;
     try {
-      enforced = require('@pryv/boiler').getConfigSync().get('oauth:audienceBoundSessions') === true;
+      // `true` or the string `true` (an environment variable); the boot refuses any other value.
+      const { audienceBoundSessions } = require('oauth2/src/audienceBinding.ts');
+      enforced = audienceBoundSessions(require('@pryv/boiler').getConfigSync());
     } catch { /* config not booted (unit contexts): not enforced */ }
     if (!enforced) return;
     const err = errors.invalidAccessToken('The access token is bound to a resource server: that resource server exchanges it for its own token.', 403);

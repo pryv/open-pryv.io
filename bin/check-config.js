@@ -486,13 +486,12 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   }
 }
 
-// oauth.audienceBoundSessions: a boolean (the boot reads anything else as false).
+// oauth.audienceBoundSessions: a boolean, or the strings true / false (the boot
+// refuses anything else).
 {
-  const audienceBound = get('oauth.audienceBoundSessions');
-  if (audienceBound != null && typeof audienceBound !== 'boolean') {
-    warnings.push(`oauth.audienceBoundSessions is ${JSON.stringify(audienceBound)}: true or false is expected; ` +
-      'as it is, the sessions minted for a resource server stay usable at the data API (false).');
-  }
+  const { audienceBoundSessionsProblem } = require('../components/oauth2/src/audienceBinding.ts');
+  const message = audienceBoundSessionsProblem(get('oauth.audienceBoundSessions'));
+  if (message != null) problems.push(message);
 }
 
 // services.mfa: the same check master.js runs at boot, on the merged

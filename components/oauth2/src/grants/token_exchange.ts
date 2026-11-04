@@ -74,8 +74,10 @@ export type ReadSubjectSession = (params: {
 
 /**
  * Find or mint the derived session of (subject session, resource server) on
- * this core. Throws an error with `code: 'subject-inactive'` when the subject
- * session is gone meanwhile.
+ * this core: a live one, created after `notBefore`, is reused; an expired one,
+ * or one created at or before `notBefore`, is deleted and replaced. Throws an
+ * error with `code: 'subject-inactive'` when the subject session is gone
+ * meanwhile (a derived session minted meanwhile is deleted again).
  */
 export type IssueDerivedSession = (params: {
   userId: string;
@@ -86,6 +88,11 @@ export type IssueDerivedSession = (params: {
   subjectClientId: string;
   /** Upper bound of the derived expiry (ms since epoch). */
   expiresAt: number;
+  /**
+   * The resource server's revoke epoch (ms), or null: a derived session
+   * created at or before it is not reused (it is deleted and a new one minted).
+   */
+  notBefore: number | null;
 }) => Promise<{ accessId: string; accessToken: string; expires: number; reused: boolean }>;
 
 export type TokenExchangeDeps = {
@@ -166,21 +173,23 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
   if (row == null || row.exchange != null || row.audience == null) {
     return await refuse('subject-inactive', { ok: false, status: 400, error: 'invalid_grant', description: NOT_ACTIVE });
   }
+
+  // 5. Confused deputy: the subject token must have been issued for one of
+  //    the audiences this resource server is registered for. Checked before
+  //    the home core is named: the audience is on the cluster-wide index row,
+  //    so a resource server the token was not issued for learns no core URL.
+  const audience = row.audience;
+  if (!(caller.allowedAudiences ?? []).some((a) => withinResourceCap(audience, [a]) && sameResource(audience, a))) {
+    return await refuse('foreign-audience', {
+      ok: false, status: 400, error: 'invalid_target', description: 'the subject token was issued for a resource this client is not registered for',
+    });
+  }
   const coreId = String(deps.config.get('core:id') ?? 'single');
   if (row.coreId !== coreId) {
     if (typeof deps.coreUrlFor !== 'function') {
       return await refuse('wrong-core', { ok: false, status: 400, error: 'invalid_grant', description: NOT_ACTIVE });
     }
     return await refuse('wrong-core', { ok: false, status: 421, error: 'wrong_core', extra: { coreUrl: await deps.coreUrlFor(row.coreId) } });
-  }
-
-  // 5. Confused deputy: the subject token must have been issued for one of
-  //    the audiences this resource server is registered for.
-  const audience = row.audience;
-  if (!(caller.allowedAudiences ?? []).some((a) => withinResourceCap(audience, [a]) && sameResource(audience, a))) {
-    return await refuse('foreign-audience', {
-      ok: false, status: 400, error: 'invalid_target', description: 'the subject token was issued for a resource this client is not registered for',
-    });
   }
 
   // 6. The subject session on its home core, and the client it was issued to.
@@ -209,12 +218,19 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
     return await refuse('subject-client-unavailable', { ok: false, status: 400, error: 'invalid_grant', description: CLIENT_NOT_AVAILABLE });
   }
 
-  // 7. The response parts first (hooks included), so a failing hook leaves
-  //    no derived session behind; then the derived session (found or
-  //    minted), its index row, the audit and the answer. The scope is the
-  //    grammar's echo over the subject's permissions, without the core
-  //    tokens (`offline_access`, `openid`): the derived token comes with no
-  //    refresh token and no id_token.
+  // 7. The lifetime first: never longer than the subject session, nor than
+  //    the resource server's own access-token lifetime (a refusal here runs
+  //    no hook). Then the response parts (hooks included), so a failing hook
+  //    leaves no derived session behind; then the derived session (a live
+  //    one found, or minted), its index row, the audit and the answer. The
+  //    scope is the grammar's echo over the subject's permissions, without
+  //    the core tokens (`offline_access`, `openid`): the derived token comes
+  //    with no refresh token and no id_token.
+  const now = Date.now();
+  const expiresAt = Math.min(subject.expires * 1000, now + clientLifetimes(deps.config, caller).accessTokenTTL * 1000);
+  if (expiresAt - now < MIN_DERIVED_LIFETIME_MS) {
+    return await refuse('subject-inactive', { ok: false, status: 400, error: 'invalid_grant', description: NOT_ACTIVE });
+  }
   const coreTokens: string[] = [];
   let parts: RegistryResponseParts;
   try {
@@ -236,13 +252,10 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
     return { ok: false, status: 500, error: 'server_error', description: 'failed to issue the derived token' };
   }
 
-  const now = Date.now();
-  // Never longer than the subject session, nor than the resource server's
-  // own access-token lifetime.
-  const expiresAt = Math.min(subject.expires * 1000, now + clientLifetimes(deps.config, caller).accessTokenTTL * 1000);
-  if (expiresAt - now < MIN_DERIVED_LIFETIME_MS) {
-    return await refuse('subject-inactive', { ok: false, status: 400, error: 'invalid_grant', description: NOT_ACTIVE });
-  }
+  // A derived session made before the resource server's revoke epoch (an id
+  // revoked and registered again keeps its tombstone) is refused at the data
+  // API: it is replaced, never handed out again.
+  const notBefore = await storage.getRevokedAt(deps.platform, clientId);
   let issued: { accessId: string; accessToken: string; expires: number; reused: boolean };
   try {
     issued = await deps.issueDerivedSession({
@@ -252,6 +265,7 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
       subjectAccessId: row.accessId,
       subjectClientId: row.clientId,
       expiresAt,
+      notBefore,
     });
   } catch (err: unknown) {
     if ((err as { code?: string } | null)?.code === 'subject-inactive') {
@@ -319,7 +333,8 @@ function requestShapeRefusal (params: TokenExchangeParams, issuer: string): Refu
   }
   for (const value of [params.resource, params.audience]) {
     if (value == null || value === '') continue;
-    if (typeof value !== 'string') return { ok: false, status: 400, error: 'invalid_target', description: 'one resource per request' };
+    if (Array.isArray(value)) return { ok: false, status: 400, error: 'invalid_target', description: 'one resource per request' };
+    if (typeof value !== 'string') return { ok: false, status: 400, error: 'invalid_request', description: 'resource and audience must be strings' };
     if (!withinResourceCap(value, [issuer]) || !sameResource(value, issuer)) {
       return { ok: false, status: 400, error: 'invalid_target', description: 'the requested resource is not this server' };
     }

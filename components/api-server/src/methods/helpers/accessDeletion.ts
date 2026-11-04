@@ -321,6 +321,7 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
   let related: AccessRow[] = params.relatedAccessesToDelete ?? [];
   const grantBaseId = parseAccessRef(params.id).base;
   let sessionIds: string[] = [];
+  let derivedIds: string[] = [];
   if (accessToDelete.type !== 'personal') {
     const all = await fromCallback((cb: NodeCallback) => accessesRepository.find(user, {}, dbFindOptions, cb)) as AccessRow[];
     if (params.relatedAccessesToDelete == null) related = managedAccessesOf(all, params.id, timestamp.now());
@@ -329,7 +330,9 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     related = related.concat(sessions);
     // The derived sessions (token exchange) of the access itself (a session)
     // and of the grant's sessions.
-    related = related.concat(derivedOfSessions(all, [grantBaseId].concat(sessionIds), timestamp.now(), related));
+    const derived = derivedOfSessions(all, [grantBaseId].concat(sessionIds), timestamp.now(), related);
+    derivedIds = derived.filter((a) => isDerivedOf(a, grantBaseId) || sessionIds.some((id) => isDerivedOf(a, id))).map((a) => a.id);
+    related = related.concat(derived);
     related = related.concat(expiredAliasHolders(all, [{ ...accessToDelete, id: grantBaseId }].concat(related), timestamp.now()));
   }
   let idsToDelete: Array<{ id: string }> = [{ id: params.id }].concat(related.map((a) => ({ id: a.id })));
@@ -400,8 +403,8 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     const late = all.filter((a) => typeof a.id === 'string' && !deletedIds.has(a.id) &&
       !(a.expires != null && now > a.expires) &&
       (isManagedBy(a, params.id) || isBoundToGrant(a, grantBaseId) || sessionIds.some((id) => isManagedBy(a, id)) ||
-        // a derived session minted meanwhile
-        isDerivedOf(a, grantBaseId) || sessionIds.some((id) => isDerivedOf(a, id))));
+        // a derived session minted meanwhile, or an access a deleted derived session created meanwhile
+        isDerivedOf(a, grantBaseId) || sessionIds.some((id) => isDerivedOf(a, id)) || derivedIds.some((id) => isManagedBy(a, id))));
     if (late.length > 0) {
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
       for (const a of late) {

@@ -36,7 +36,7 @@ import { purgeClientGrants } from '../src/methods/helpers/oauthGrantPurge.ts';
 const REDIRECT_URI = 'https://app.exchange.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
 const STATE_KEY = 'test-oauth-state-key-' + 'a1B2c3D4e5'.repeat(2);
-const RS_AUD = 'https://rs.example.test/mcp';
+const RS_AUD = 'https://rs.example.test/rs';
 const OTHER_AUD = 'https://other.example.test/api';
 const TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
@@ -112,8 +112,8 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     pairId = await register('Pair', { subjectType: 'pairwise' });
     // Registered for no particular audience: its authorizations may name none.
     freeId = await register('Free', { allowedAudiences: [], anyAudience: true });
-    rsId = await register('Mcp', { ...confidential, canExchange: true, canIntrospect: true });
-    otherRsId = await register('Fhir', { ...confidential, canExchange: true, allowedAudiences: [OTHER_AUD] });
+    rsId = await register('Rs', { ...confidential, canExchange: true, canIntrospect: true });
+    otherRsId = await register('Other', { ...confidential, canExchange: true, allowedAudiences: [OTHER_AUD] });
     introId = await register('Intro', { ...confidential, canIntrospect: true });
   });
 
@@ -285,7 +285,7 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     assert.equal(subject.clientData.oauth.audience, RS_AUD);
     assert.equal(derived.name, 'oauth:' + rsId);
     assert.equal(derived.type, 'app');
-    assert.deepEqual(derived.clientData.oauth.exchange, { subjectClientId: connId, subjectAccessId: subject.id });
+    assert.deepEqual(derived.clientData.oauth.exchange, { subjectClientId: connId, subjectAccessId: subject.id, subjectCreated: subject.created });
     assert.equal(derived.clientData.oauth.dataGrantId, subject.clientData.oauth.dataGrantId);
     assert.equal(derived.clientData.oauth.audience, undefined);
     assert.ok(derived.expires <= subject.expires, derived.expires + ' > ' + subject.expires);
@@ -569,21 +569,167 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     assert.equal((await accesses(who)).filter((x) => x.name === 'oauth:' + rsId).length, 1);
   });
 
-  it('[OTXE14] a derived session past its own expiry while its subject lives: the next exchange brings back the same token with a new expiry', async () => {
+  /** Write `update` on an access storage-direct (as a row from another time, or a drift), then drop the cached copy. */
+  async function rewrite (who, id, update) {
+    const repo = storages.storageLayer.accesses;
+    await new Promise((resolve, reject) => repo.updateOne({ id: who.userId, username: who.username }, { id },
+      { ...update, modified: Date.now() / 1000 }, (err) => (err != null ? reject(err) : resolve())));
+    (await import('cache')).default.unsetUserData(who.userId);
+  }
+
+  /** The operator revoke epoch of a client (what a revoke writes), its row kept. */
+  async function setRevokedAt (clientId, at) {
+    await platformDB.setPlatformKv('oauth-client-revoked/' + clientId, JSON.stringify({ revokedAt: at }));
+  }
+
+  /** Run `body` with `before(row)` run (once) ahead of the insert of the next derived session. */
+  async function beforeDerivedInsert (before, body) {
+    const repo = storages.storageLayer.accesses;
+    const insertOne = repo.insertOne;
+    let pending = true;
+    repo.insertOne = function (user, row, cb) {
+      if (pending && typeof row?.deviceName === 'string' && row.deviceName.startsWith('oauth-exchange:')) {
+        pending = false;
+        before(row).then(() => insertOne.call(this, user, row, cb), cb);
+        return;
+      }
+      return insertOne.apply(this, arguments);
+    };
+    try {
+      return await body();
+    } finally {
+      repo.insertOne = insertOne;
+    }
+  }
+
+  it('[OTXE14] a derived session past its own expiry while its subject lives is replaced, never revived: a new token, the old one stays refused and its index row is gone', async () => {
     const who = await newUser();
     const t = await connectorToken(who);
     const x = await exchanged(t.access_token);
     const derived = await rowOf(who, x.access_token);
-    const repo = storages.storageLayer.accesses;
-    await new Promise((resolve, reject) => repo.updateOne({ id: who.userId, username: who.username }, { id: derived.id },
-      { expires: Date.now() / 1000 - 5, modified: Date.now() / 1000 }, (err) => (err != null ? reject(err) : resolve())));
-    (await import('cache')).default.unsetUserData(who.userId);
+    await rewrite(who, derived.id, { expires: Date.now() / 1000 - 5 });
     assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
     const again = await exchanged(t.access_token);
+    assert.notEqual(again.access_token, x.access_token);
+    assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
+    assert.equal((await readStream(who, again.access_token, 'a')).status, 200);
+    assert.equal(await storage.getSessionIndex(platformDB, x.access_token), null);
+    const rows = (await accesses(who, { includeExpired: true })).filter((a) => a.name === 'oauth:' + rsId);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].token, again.access_token);
+  });
+
+  it('[OTXE15] a derived session made before the resource server\'s revoke epoch is replaced: the next exchange answers a new token that reads', async () => {
+    const epochRs = await register('RsEpoch', { tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, canExchange: true });
+    const who = await newUser();
+    const t = await connectorToken(who);
+    const x = (await exchange(t.access_token, [epochRs, rsSecret.plaintext])).body;
+    assert.ok(x.access_token != null, JSON.stringify(x));
+    // A revoke of the resource server's id (its row registered again keeps the tombstone).
+    await setRevokedAt(epochRs, Date.now());
+    await withInjectedConfig({ oauth: { ...OAUTH, clientRevokeCheckSeconds: 1 } }, async () => {
+      assert.equal(await eventually(() => readStream(who, x.access_token, 'a'), 403), 403);
+      const y = await exchange(t.access_token, [epochRs, rsSecret.plaintext]);
+      assert.equal(y.status, 200, JSON.stringify(y.body));
+      assert.notEqual(y.body.access_token, x.access_token);
+      assert.equal((await readStream(who, y.body.access_token, 'a')).status, 200);
+      assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
+      assert.equal(await storage.getSessionIndex(platformDB, x.access_token), null);
+      assert.equal((await accesses(who, { includeExpired: true })).filter((a) => a.name === 'oauth:' + epochRs).length, 1);
+    });
+  });
+
+  it('[OTXE16] a reused derived session whose permissions drifted from its subject\'s is brought back to the subject\'s', async () => {
+    const who = await newUser();
+    const t = await connectorToken(who);
+    const x = await exchanged(t.access_token);
+    const derived = await rowOf(who, x.access_token);
+    // Wider than its subject (as a re-cut racing an exchange could leave it).
+    const wider = derived.permissions.map((p) => (p.streamId === 'b' ? { ...p, level: 'contribute' } : p));
+    await rewrite(who, derived.id, { permissions: wider });
+    assert.equal((await writeEvent(who, x.access_token, 'b')).status, 201);
+    const again = await exchanged(t.access_token);
     assert.equal(again.access_token, x.access_token);
+    assert.equal((await writeEvent(who, x.access_token, 'b')).status, 403);
+    assert.equal((await readStream(who, x.access_token, 'b')).status, 200);
+  });
+
+  it('[OTXE17] two chains of one grant with different reach: each derived session holds its own subject\'s reach', async () => {
+    const who = await newUser();
+    const narrow = await connectorToken(who, 'offline_access read/a');
+    const wide = await connectorToken(who, 'offline_access read/a read/b');
+    const xa = await exchanged(narrow.access_token);
+    const xb = await exchanged(wide.access_token);
+    assert.notEqual(xa.access_token, xb.access_token);
+    assert.equal((await readStream(who, xa.access_token, 'a')).status, 200);
+    assert.equal((await readStream(who, xa.access_token, 'b')).status, 403);
+    assert.equal((await readStream(who, xb.access_token, 'b')).status, 200);
+    assert.equal((await accesses(who)).filter((a) => a.name === 'oauth:' + rsId).length, 2);
+  });
+
+  it('[OTXE18] the client revoked: the derived token is refused at the data API; a revoke landing between the exchange\'s check and its mint is caught too (the subject\'s creation is compared)', async () => {
+    const revokedConn = await register('ConnRev');
+    const who = await newUser();
+    await withInjectedConfig({ oauth: { ...OAUTH, clientRevokeCheckSeconds: 1 } }, async () => {
+      // Revoked after the exchange.
+      const t = await connectorToken(who, 'offline_access write/a read/b', { cid: revokedConn });
+      const x = await exchanged(t.access_token);
+      assert.equal((await readStream(who, x.access_token, 'a')).status, 200);
+      const t2 = await connectorToken(who, 'offline_access write/a read/b', { cid: revokedConn });
+      await setRevokedAt(revokedConn, Date.now());
+      assert.equal(await eventually(() => readStream(who, x.access_token, 'a'), 403), 403);
+      assert.deepEqual((await introspect(x.access_token)).body, { active: false });
+      // Revoked while an exchange (of a session made before the revoke) is
+      // between its check and its mint: the revoke epoch falls after the
+      // subject's creation and before the derived session's.
+      await platformDB.deletePlatformKv('oauth-client-revoked/' + revokedConn);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      let epoch;
+      const res = await beforeDerivedInsert(async (row) => {
+        epoch = Math.floor(row.created * 1000) - 1;
+        await setRevokedAt(revokedConn, epoch);
+      }, () => exchange(t2.access_token));
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      const derived = await rowOf(who, res.body.access_token);
+      assert.ok(derived.created * 1000 > epoch && derived.clientData.oauth.exchange.subjectCreated * 1000 <= epoch);
+      assert.equal(await eventually(() => readStream(who, res.body.access_token, 'a'), 403), 403);
+      assert.deepEqual((await introspect(res.body.access_token)).body, { active: false });
+    });
+  });
+
+  it('[OTXE19] a subject inside its retire grace may still be exchanged; the derived session ends with the grace', async () => {
+    const who = await newUser();
+    const t = await connectorToken(who);
+    const r = await refresh(t.refresh_token);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const retired = await rowOf(who, t.access_token);
+    assert.ok(retired.expires <= Date.now() / 1000 + 61, String(retired.expires));
+    const x = await exchanged(t.access_token);
+    assert.ok(x.expires_in <= 61, String(x.expires_in));
+    assert.ok((await rowOf(who, x.access_token)).expires <= retired.expires);
     assert.equal((await readStream(who, x.access_token, 'a')).status, 200);
-    const row = (await accesses(who, { includeExpired: true })).filter((a) => a.name === 'oauth:' + rsId);
-    assert.equal(row.length, 1);
-    assert.ok(row[0].expires > Date.now() / 1000);
+  });
+
+  it('[OTXE20] the subject deleted, or its grant narrowed, between the exchange\'s check and its mint: the new derived session is deleted again (invalid_grant), or follows the subject', async () => {
+    const who = await newUser();
+    const t = await connectorToken(who);
+    const subject = await rowOf(who, t.access_token);
+    const gone = await beforeDerivedInsert(async () => {
+      const del = await coreRequest.delete('/' + who.username + '/accesses/' + encodeURIComponent(subject.id)).set('Authorization', who.token);
+      assert.equal(del.status, 200, JSON.stringify(del.body));
+    }, () => exchange(t.access_token));
+    assert.deepEqual([gone.status, gone.body.error], [400, 'invalid_grant']);
+    assert.equal((await accesses(who, { includeExpired: true })).filter((a) => a.name === 'oauth:' + rsId).length, 0);
+
+    const t2 = await connectorToken(who);
+    const narrowed = await beforeDerivedInsert(async () => {
+      const grant = (await accesses(who)).find((a) => a.name === 'oauth-grant:' + connId);
+      const upd = await coreRequest.put('/' + who.username + '/accesses/' + encodeURIComponent(grant.id)).set('Authorization', who.token)
+        .send({ permissions: [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }] });
+      assert.equal(upd.status, 200, JSON.stringify(upd.body));
+    }, () => exchange(t2.access_token));
+    assert.equal(narrowed.status, 200, JSON.stringify(narrowed.body));
+    assert.equal((await writeEvent(who, narrowed.body.access_token, 'a')).status, 403);
+    assert.equal((await readStream(who, narrowed.body.access_token, 'a')).status, 200);
   });
 });

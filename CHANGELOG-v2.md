@@ -112,7 +112,7 @@
 ### OAuth: token exchange (RFC 8693) for resource servers
 
 - **Added: OAuth 2.0 Token Exchange (RFC 8693) for registry clients registered `--can-exchange`.**
-  A resource server in front of a core (an MCP server, an API facade) posts to `/oauth2/token`
+  A resource server in front of a core (an agent gateway, an API facade) posts to `/oauth2/token`
   `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, the access token a user's client
   sent it as `subject_token` and `subject_token_type=urn:ietf:params:oauth:token-type:access_token`,
   with its client authentication (HTTP Basic, `client_secret_post` or `private_key_jwt`). The
@@ -121,7 +121,8 @@
   (the account's API base URL; the alias for a pseudonymous grant), no refresh token. The derived
   token is a session of the user's grant for the resource server: the subject session's permissions,
   at most its lifetime and the resource server's own access-token lifetime; a repeated exchange of
-  the same subject token answers the same token. Deleting or revoking the subject session ends it at
+  the same subject token answers the same token while it lives (an expired one is replaced by a new
+  token, never revived). Deleting or revoking the subject session ends it at
   once, a narrowed grant narrows it, a refresh of the client does not end it (it lives out its own
   expiry). `resource` / `audience` are optional (this server if given); `scope` (`invalid_scope`)
   and actor tokens (`invalid_request`) are refused. Errors: `invalid_client` (401),
@@ -132,11 +133,15 @@
   to `oauth.grantTypesSupported`. See `docs/oauth2.md` § 1e.
 - **Added: introspection of a derived token** answers `client_id` = the client whose token was
   exchanged and `act: { "client_id": "<resource server>" }`, no `aud`; it is active only while both
-  clients are available. Extensions: `act` and, in token responses, `api_base` are reserved; hooks
-  get `ctx.grantType: 'token-exchange'` and `ctx.actor` (optional context field).
-- **Changed: a session minted for an authorization naming a resource server (`aud` / `resource`)
-  records it** (`clientData.oauth.audience`, server-owned, visible in `accesses.get`). With the new
-  per-core setting `oauth.audienceBoundSessions: true`, the data API refuses such a token
+  clients are available. Extensions: hooks get `ctx.grantType: 'token-exchange'` and `ctx.actor`
+  (optional context field); in the new contexts only, `api_base` and `issued_token_type` are reserved
+  in the exchange's response and `act` in a derived token's introspection. The existing grants'
+  hooks are unchanged (no `apiVersion` change).
+- **Changed: a session a registry client's authorization naming a resource server (`aud` /
+  `resource`) mints records it** (`clientData.oauth.audience`, server-owned, visible in
+  `accesses.get`; not on an app-account client's sessions, which have no exchange path). With the
+  new per-core setting `oauth.audienceBoundSessions: true` (or the string `"true"`; a value that is
+  neither `true` nor `false` stops the boot), the data API refuses such a token
   (`403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`): it is meant to be
   exchanged by that resource server. Default `false` in this release; **the next release defaults it
   to `true`**: set it explicitly to `false` on a core whose resource servers do not exchange yet.

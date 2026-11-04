@@ -85,7 +85,7 @@ export type DataGrant = {
       /** A session minted for a resource server (`aud` / `resource`): that resource server. */
       audience?: string;
       /** A derived session (token exchange): the subject session and its client. */
-      exchange?: { subjectClientId?: string; subjectAccessId?: string };
+      exchange?: { subjectClientId?: string; subjectAccessId?: string; subjectCreated?: number };
     };
     dpop?: { jkt?: string };
     cmc?: {

@@ -35,14 +35,14 @@ import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
-import { notifyScopedAccessChange, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
+import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
 import { isDeepStrictEqual } from 'node:util';
 
-/** What a derived session (token exchange) is derived from. */
-type DerivedFrom = { subjectClientId: string; subjectAccessId: string };
+/** What a derived session (token exchange) is derived from (`subjectCreated`: seconds). */
+type DerivedFrom = { subjectClientId: string; subjectAccessId: string; subjectCreated?: number };
 
 export function createSessions (env: GlueEnv) {
   const { storageLayer } = env;
@@ -86,7 +86,15 @@ export function createSessions (env: GlueEnv) {
         dataGrantId: parseAccessRef(dataGrantAccessId).base,
         chain: chainOf(chainPermissions),
         ...(typeof more.audience === 'string' && more.audience.length > 0 ? { audience: more.audience } : {}),
-        ...(more.exchange != null ? { exchange: { subjectClientId: more.exchange.subjectClientId, subjectAccessId: more.exchange.subjectAccessId } } : {}),
+        ...(more.exchange != null
+          ? {
+              exchange: {
+                subjectClientId: more.exchange.subjectClientId,
+                subjectAccessId: more.exchange.subjectAccessId,
+                ...(typeof more.exchange.subjectCreated === 'number' ? { subjectCreated: more.exchange.subjectCreated } : {}),
+              },
+            }
+          : {}),
       },
       ...(dpopJkt != null ? { dpop: { jkt: dpopJkt } } : {}),
     };
@@ -477,9 +485,12 @@ export function createSessions (env: GlueEnv) {
   // core (live, not itself derived, its grant live); the derived session is
   // a session of the same grant, named after the resource server, one per
   // (subject session, resource server): the identity (type, name,
-  // deviceName) is unique among live rows, so a repeated exchange finds it
-  // and answers its token, and of two concurrent first exchanges the second
-  // insert fails on the slot and reuses the first's row.
+  // deviceName) is unique among rows not deleted (expired ones included), so
+  // a repeated exchange finds it and answers its token while it lives, and of
+  // two concurrent first exchanges the second insert fails on the slot and
+  // reuses the first's row. An expired row, or one created at or before the
+  // resource server's revoke epoch, is deleted and replaced: an expired
+  // credential is never brought back.
   // ---------------------------------------------------------------------
   async function liveSubjectRow (userId: string, username: string, accessId: string, clientId: string): Promise<DataGrant | null> {
     const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
@@ -508,7 +519,8 @@ export function createSessions (env: GlueEnv) {
     if (access == null) return null;
     let grant: DataGrant;
     try {
-      grant = await readDataGrantHead(userId, username, dataGrantAccessId ?? access.clientData!.oauth!.dataGrantId!);
+      // The session row names its grant (authoritative over the index row's copy).
+      grant = await readDataGrantHead(userId, username, access.clientData?.oauth?.dataGrantId ?? dataGrantAccessId!);
     } catch (err: unknown) {
       if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
       throw err;
@@ -541,6 +553,9 @@ export function createSessions (env: GlueEnv) {
   // when a re-cut changed them in between, and a later expiry (never an
   // earlier one, so a lagging exchange never shortens a token another
   // instance holds; never past the bound, which is at most the subject's).
+  // The webhooks of the row are not re-scoped here: this runs only when a
+  // re-cut raced the exchange, and the re-cut rewrites the row (webhooks
+  // included) itself.
   async function touchDerivedSession (userId: string, username: string, row: DataGrant, subject: DataGrant, expiresAt: number): Promise<number> {
     const update: Record<string, unknown> = {};
     const subjectPermissions = canonicalPermissions(subject.permissions ?? []);
@@ -557,32 +572,51 @@ export function createSessions (env: GlueEnv) {
       accessesRepository.updateOne({ id: userId, username }, { id: row.id }, { ...update, modified }, cb));
     // The access cache validates on `expires` and holds the permissions.
     cache.unsetUserData(userId);
+    // The breach-scope index row carries the expiry too.
+    await reindexAccessNonFatal(username, { id: row.id, type: 'app', expires, modified });
     if (permissionsChanged) {
       notifyScopedAccessChange(username, { id: row.id, type: 'app', permissions: subjectPermissions as Array<{ streamId?: string }> }, 'update');
-      await reindexAccessNonFatal(username, { id: row.id, type: 'app', expires, modified });
       pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
     }
     return expires;
   }
 
-  async function issueDerivedSession ({ userId, username, clientId, subjectAccessId, subjectClientId, expiresAt }: {
-    userId: string; username: string; clientId: string; subjectAccessId: string; subjectClientId: string; expiresAt: number;
+  /** A found derived row may be answered again: alive, and made after the resource server's revoke epoch. */
+  function reusableDerived (row: DataGrant, notBefore: number | null): boolean {
+    if (typeof row.expires !== 'number' || row.expires <= Date.now() / 1000) return false;
+    return notBefore == null || (typeof row.created === 'number' && row.created * 1000 > notBefore);
+  }
+
+  function subjectInactive (): Error {
+    const gone = new Error('the subject session is no longer live') as Error & { code: string };
+    gone.code = 'subject-inactive';
+    return gone;
+  }
+
+  async function issueDerivedSession ({ userId, username, clientId, subjectAccessId, subjectClientId, expiresAt, notBefore }: {
+    userId: string; username: string; clientId: string; subjectAccessId: string; subjectClientId: string; expiresAt: number; notBefore: number | null;
   }): Promise<{ accessId: string; accessToken: string; expires: number; reused: boolean }> {
+    const user = { id: userId, username };
     const subject = await liveSubjectRow(userId, username, subjectAccessId, subjectClientId);
-    if (subject == null) {
-      const gone = new Error('the subject session is no longer live') as Error & { code: string };
-      gone.code = 'subject-inactive';
-      throw gone;
-    }
+    if (subject == null) throw subjectInactive();
     let row = await findDerivedSession(userId, username, clientId, subjectAccessId);
+    if (row != null && !reusableDerived(row, notBefore)) {
+      // Expired, or made before the resource server's revoke epoch: deleted
+      // as any session is (its index row ends, what it created goes with it),
+      // which frees the slot for a new one.
+      await deleteAccessChain(user, { id: row.id });
+      row = null;
+    }
     if (row == null) {
       const oauth = subject.clientData!.oauth!;
+      let minted: { accessId: string; accessToken: string } | null = null;
       try {
         // The subject's reach exactly (its stored permissions, the session
         // selfRevoke override re-applied), under the same grant and chain,
         // with its alias; no audience (it is meant for the data API), no
-        // DPoP binding.
-        const minted = await mintAccessDirect({
+        // DPoP binding. The subject's creation is recorded: the data API
+        // compares the subject client's revoke epoch with it.
+        minted = await mintAccessDirect({
           userId,
           username,
           clientId,
@@ -592,18 +626,36 @@ export function createSessions (env: GlueEnv) {
           chainPermissions: Array.isArray(oauth.chain) ? oauth.chain : storedSessionPermissions(subject.permissions),
           alias: subject.alias,
           deviceName: DERIVED_DEVICE_PREFIX + subjectAccessId,
-          exchange: { subjectClientId, subjectAccessId },
+          exchange: { subjectClientId, subjectAccessId, ...(typeof subject.created === 'number' ? { subjectCreated: subject.created } : {}) },
         });
-        return { accessId: minted.accessId, accessToken: minted.accessToken, expires: Math.floor(expiresAt / 1000), reused: false };
       } catch (err: unknown) {
         // A concurrent first exchange won the slot: reuse its row.
         if (!isDuplicateSlot(err)) throw err;
         row = await findDerivedSession(userId, username, clientId, subjectAccessId);
-        if (row == null) throw err;
+        if (row == null || !reusableDerived(row, notBefore)) throw err;
+      }
+      if (minted != null) {
+        // The subject read again: a deletion of the subject, or a re-cut of
+        // its grant, that ran between the check above and the insert has not
+        // seen the new row. Gone: the new row goes too. Re-cut: the new row
+        // follows the subject.
+        const after = await liveSubjectRow(userId, username, subjectAccessId, subjectClientId);
+        if (after == null) {
+          await deleteAccessChain(user, { id: minted.accessId });
+          throw subjectInactive();
+        }
+        const fresh: DataGrant = {
+          id: minted.accessId,
+          token: minted.accessToken,
+          permissions: canonicalPermissions(withSessionSelfRevoke(subject.permissions ?? [])),
+          expires: Math.floor(expiresAt / 1000),
+        };
+        const expires = await touchDerivedSession(userId, username, fresh, after, expiresAt);
+        return { accessId: minted.accessId, accessToken: minted.accessToken, expires, reused: false };
       }
     }
-    const expires = await touchDerivedSession(userId, username, row, subject, expiresAt);
-    return { accessId: row.id, accessToken: row.token as string, expires, reused: true };
+    const expires = await touchDerivedSession(userId, username, row!, subject, expiresAt);
+    return { accessId: row!.id, accessToken: row!.token as string, expires, reused: true };
   }
 
   function isDuplicateSlot (err: unknown): boolean {

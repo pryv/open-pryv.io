@@ -43,7 +43,11 @@
  *
  * Versioning: an integer `apiVersion`. Adding an optional hook or an optional
  * context field does not bump it; changing a context field's meaning, a return
- * shape or a reserved-key list does. A mismatch fails the boot.
+ * shape or a reserved-key list does. A mismatch fails the boot. A context the
+ * core adds later (the token exchange, the introspection of a derived token)
+ * may reserve further keys in that context only (`EXCHANGE_RESERVED_KEYS`);
+ * `RESERVED_KEYS` is the contract of the existing contexts and changes only
+ * with the version.
  *
  * Grammar rules the core enforces (a violation is a contract error: the
  * request answers `invalid_scope` and the server logs it):
@@ -231,9 +235,20 @@ export type HookName = 'tokenResponse' | 'idTokenClaims' | 'introspectionClaims'
 
 /** Keys a hook may not set: the core owns them. */
 export const RESERVED_KEYS: Record<HookName, string[]> = {
-  tokenResponse: ['access_token', 'token_type', 'expires_in', 'refresh_token', 'scope', 'id_token', 'apiEndpoint', 'api_base'],
+  tokenResponse: ['access_token', 'token_type', 'expires_in', 'refresh_token', 'scope', 'id_token', 'apiEndpoint'],
   idTokenClaims: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'auth_time', 'azp'],
-  introspectionClaims: ['active', 'scope', 'client_id', 'exp', 'iat', 'sub', 'iss', 'token_type', 'aud', 'cnf', 'api_base', 'permissions', 'act'],
+  introspectionClaims: ['active', 'scope', 'client_id', 'exp', 'iat', 'sub', 'iss', 'token_type', 'aud', 'cnf', 'api_base', 'permissions'],
+};
+
+/**
+ * Keys reserved in the contexts added after the lists above, in that context
+ * only (passed to `runHook` as its extra reserved list).
+ */
+export const EXCHANGE_RESERVED_KEYS = {
+  /** The token exchange's response. */
+  tokenResponse: ['api_base', 'issued_token_type'],
+  /** The introspection of a derived token. */
+  introspectionClaims: ['act'],
 };
 
 const HOOK_NAMES: HookName[] = ['tokenResponse', 'idTokenClaims', 'introspectionClaims'];
@@ -352,7 +367,7 @@ export function toClientView (client: OAuthClient): ClientView {
  * timeout, returns a non-object, or sets a key the core owns: the caller
  * answers `server_error`.
  */
-export async function runHook (name: HookName, ctx: HookCtx): Promise<Record<string, unknown>> {
+export async function runHook (name: HookName, ctx: HookCtx, extraReserved: readonly string[] = []): Promise<Record<string, unknown>> {
   const ext = current;
   const hook = ext?.[name];
   if (typeof hook !== 'function') return {};
@@ -367,7 +382,7 @@ export async function runHook (name: HookName, ctx: HookCtx): Promise<Record<str
   if (typeof out !== 'object' || Array.isArray(out)) {
     throw new Error(`oauth extension hook ${name} must return an object`);
   }
-  const reserved = RESERVED_KEYS[name].filter((k) => Object.prototype.hasOwnProperty.call(out, k));
+  const reserved = [...RESERVED_KEYS[name], ...extraReserved].filter((k) => Object.prototype.hasOwnProperty.call(out, k));
   if (reserved.length > 0) {
     const err = new Error(`oauth extension hook ${name} sets reserved key(s): ${reserved.join(', ')}`);
     logServerError(`oauth extension ${ext!.name}: reserved key collision`, err);

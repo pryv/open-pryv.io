@@ -1170,10 +1170,11 @@ oauth:
   # user's client sent it for a session of its own. To advertise it, add
   # urn:ietf:params:oauth:grant-type:token-exchange to grantTypesSupported.
   # audienceBoundSessions: true refuses at the data API every session minted
-  # for a resource server (an authorization naming `aud` / `resource`): such
-  # a token works only through that resource server's exchange. false (the
-  # default in this release) keeps such tokens usable at the API; the next
-  # release defaults it to true. Per core.
+  # for a resource server (a registry client's authorization naming `aud` /
+  # `resource`): such a token works only through that resource server's
+  # exchange. false (the default in this release) keeps such tokens usable at
+  # the API; the next release defaults it to true. Per core; true or false
+  # (the strings "true" / "false" too), any other value stops the boot.
   audienceBoundSessions: false
   # Options handed as-is to the OAuth extension (customExtensions:oauthExtension).
   extensionOptions: {}

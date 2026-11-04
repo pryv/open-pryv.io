@@ -1303,8 +1303,8 @@ describe('[RG2C] Two-core integration tests', function () {
     });
 
     it('[2C78] a token exchange on the other core answers 421 with the home core\'s URL; on the home core the derived token reads the account', async () => {
-      const exchangerId = 'McX.' + Date.now().toString(36);
-      const audience = 'https://rs.multicore.test/mcp';
+      const exchangerId = 'RsX.' + Date.now().toString(36);
+      const audience = 'https://rs.multicore.test/rs';
       await oauth2.persistClient(platformDB, registryRow({
         clientId: exchangerId,
         tokenEndpointAuthMethod: 'client_secret_basic',

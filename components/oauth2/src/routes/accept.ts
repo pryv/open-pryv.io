@@ -153,9 +153,9 @@ export type CreateAccess = (params: {
    */
   grantState?: { name: string | null; value: unknown };
   /**
-   * The resource server the authorization names (`aud` / `resource`): the
-   * session records it (server-owned), so the data API can refuse the token
-   * when `oauth:audienceBoundSessions` is on.
+   * A registry client's authorization naming a resource server (`aud` /
+   * `resource`): the session records it (server-owned), so the data API can
+   * refuse the token when `oauth:audienceBoundSessions` is on.
    */
   audience?: string;
 }) => Promise<{
@@ -471,7 +471,10 @@ export function handleAccept (deps: AcceptDeps) {
           : payload.offer!,
         grantedPermissions,
         ...(grantPermissions != null ? { grantPermissions, subjectChange, grantState } : {}),
-        ...(payload.audience != null ? { audience: payload.audience } : {}),
+        // Registry clients only: their sessions are the ones a resource server
+        // can exchange; an app-account session keeps no audience (it would be
+        // refused at the data API with no exchange to replace it).
+        ...(synthesised != null && payload.audience != null ? { audience: payload.audience } : {}),
       });
     } catch (err: unknown) {
       // The effective-permission guard (hierarchical consent masking) runs

@@ -472,7 +472,9 @@ export async function handleRefreshToken (
       ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
       ...(row.permissions != null ? { permissions: row.permissions } : {}),
       ...(boundJkt != null ? { jkt: boundJkt } : {}),
-      ...(row.audience != null ? { audience: row.audience } : {}),
+      // Registry clients only, as at the consent (an app-account session has
+      // no exchange path).
+      ...(row.kind === 'registry' && row.audience != null ? { audience: row.audience } : {}),
     });
   } catch (err: unknown) {
     if ((err as { code?: string } | null)?.code === 'data-grant-revoked') {
