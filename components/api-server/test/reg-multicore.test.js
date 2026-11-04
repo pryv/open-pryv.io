@@ -45,6 +45,9 @@ describe('[RGMC] register: multi-core', function () {
 
   let config;
   let savedIntegrityCheck;
+  // The core id before this suite: put back with the single-core config, so
+  // later suites of the same process do not run as `core-a`.
+  let savedCoreId;
 
   function getPlatformDB () {
     return require('storages').platformDB;
@@ -57,6 +60,7 @@ describe('[RGMC] register: multi-core', function () {
     savedIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK;
     process.env.DISABLE_INTEGRITY_CHECK = '1';
     config = await getConfig();
+    savedCoreId = config.get('core:id');
     // Ensure storages are initialized
     const app = getApplication(true);
     await app.initiate();
@@ -150,6 +154,7 @@ describe('[RGMC] register: multi-core', function () {
     config.injectTestConfig({});
     config.set('core:isSingleCore', true);
     config.set('core:url', null);
+    config.set('core:id', savedCoreId);
   }
 
   // ----------------------------------------------------------------

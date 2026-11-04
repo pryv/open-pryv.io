@@ -61,6 +61,7 @@ const ErrorIds = require('errors').ErrorIds;
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
+const { isStoredEmailHeldElsewhere } = require('business/src/emails/heldAddress.ts') as typeof import('business/src/emails/heldAddress.ts');
 const emailsOperations = require('business/src/emails/operations.ts');
 const registrationPolicy = require('business/src/emails/registrationPolicy.ts');
 const { isAddressProved } = require('business/src/emails/status.ts');
@@ -446,13 +447,26 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     next();
   }
 
-  function sendPasswordResetMail (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+  async function sendPasswordResetMail (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     // Skip this step if reset mail is deactivated.
     const emailSettings = getEmail();
     const isMailActivated = emailSettings.enabled;
     if (isMailActivated === false ||
             (isMailActivated != null && isMailActivated.resetPassword === false)) {
       return next();
+    }
+    // Invariant: addUserBusinessToContext ran earlier in this chain.
+    const account = context.userBusiness!;
+    // An address the platform reserves for another account (it changed hands,
+    // e.g. since the backup this account was restored from) is not this
+    // account's inbox: the reset link would hand the account to its holder.
+    // Answered with the same status and body as a sent mail; it answers
+    // sooner (no delivery round trip). The row holder is trusted whether or
+    // not it proved the address. A failed lookup sends nothing.
+    try {
+      if (await isStoredEmailHeldElsewhere(account.username, account.email, 'Password reset mail', logger)) return next();
+    } catch (err) {
+      return next(errors.unexpectedError(err));
     }
     // The REQUIRED_WHEN boot check guarantees `auth.passwordResetPageURL`
     // is populated when the reset-password email feature is enabled
@@ -466,8 +480,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     const separator = passwordResetPageURL.includes('?') ? '&' : '?';
     const resetLink = passwordResetPageURL + separator + 'resetToken=' + encodeURIComponent(context.resetToken!);
     const recipient = {
-      email: context.userBusiness!.email,
-      name: context.userBusiness!.username,
+      email: account.email,
+      name: account.username,
       type: 'to'
     };
     const substitutions = {
@@ -475,7 +489,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       RESET_URL: passwordResetPageURL,
       RESET_LINK: resetLink
     };
-    mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, context.userBusiness!.language, next);
+    mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, account.language, next);
   }
 
   // EMAIL VERIFICATION

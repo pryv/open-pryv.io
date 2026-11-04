@@ -35,6 +35,7 @@ const { gatherAccountSeries } = require('business/src/series/namespace.ts');
 const cmc = require('cmc');
 const emailsContainer = require('business/src/emails/container.ts');
 const emailsConstants = require('business/src/emails/constants.ts');
+const { isEmailHeldByAnother } = require('business/src/emails/heldAddress.ts') as typeof import('business/src/emails/heldAddress.ts');
 const { getLogger, getConfig } = require('@pryv/boiler');
 const cmcLogger = getLogger('cmc:provisioning');
 const logger = getLogger('users:repository');
@@ -1079,6 +1080,45 @@ class UsersRepository {
           }
         }
         summary.healed.push(token);
+      }
+    }
+    return summary;
+  }
+
+  /**
+   * The email rows of this core's accounts (`bin/reconcile-user-cores.js
+   * --emails`). An account whose stored email has no platform row (one
+   * restored with `--user` by a release that wrote none) gets it claimed,
+   * never over another holder (`missing`, `claimed` once written); one whose
+   * email another account holds is listed (`heldElsewhere`: no password reset
+   * or notice is mailed to it until its email is changed; in cleartext mode
+   * another spelling of the address counts, as for the mails, and the row is
+   * then not claimed). The primary email only; accounts routed to another
+   * core are skipped. An account that cannot be read is listed in `failed`,
+   * the others are still done.
+   */
+  async reconcileEmailRows (dryRun = false): Promise<{ scanned: number; missing: string[]; claimed: string[]; heldElsewhere: string[]; failed: string[] }> {
+    const summary: { scanned: number; missing: string[]; claimed: string[]; heldElsewhere: string[]; failed: string[] } = { scanned: 0, missing: [], claimed: [], heldElsewhere: [], failed: [] };
+    const field = emailsConstants.UNIQUE_FIELD;
+    if (!accountStreams.uniqueFieldNames.includes(field)) return summary;
+    for (const { id, username } of await this.getAllUsersIdAndName()) {
+      try {
+        const email = await this.getOnePropertyValue(id, field);
+        if (typeof email !== 'string' || email === '' || await this.#otherCoreOf(username) != null) continue;
+        summary.scanned++;
+        if (await isEmailHeldByAnother(this.platform, username, email)) {
+          summary.heldElsewhere.push(username);
+          continue;
+        }
+        // Not held by another account: the row is this account's, or absent.
+        if (await this.platform.getUsersUniqueField(field, email) != null) continue;
+        summary.missing.push(username);
+        if (dryRun) continue;
+        if (await this.platform.setUserUniqueFieldIfNotExists(username, field, email)) summary.claimed.push(username);
+        else summary.heldElsewhere.push(username); // claimed by another account meanwhile
+      } catch (err) {
+        summary.failed.push(username);
+        logger.warn(`email row of user "${username}" not reconciled: ${(err as Error)?.message ?? String(err)}`);
       }
     }
     return summary;

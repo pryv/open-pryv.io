@@ -2039,6 +2039,24 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(captured.length, 0, JSON.stringify(captured));
       });
 
+      it('[MSN4] no notice to the account\'s email when another account holds that address', async function () {
+        const { platform } = require('platform');
+        const captured = captureMails();
+        await platform.deleteUserUniqueField('email', email);
+        await platform.setUserUniqueField('mfnholder' + cuid.slug().toLowerCase(), 'email', email);
+        try {
+          const act = await activateTotp();
+          const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
+            .send({ code: await previousStepCodeFor(act.body.secret) });
+          assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          assert.strictEqual(captured.length, 0, JSON.stringify(captured));
+        } finally {
+          await platform.deleteUserUniqueField('email', email);
+          await platform.setUserUniqueField(username, 'email', email);
+        }
+      });
+
       // mfa.recover and system.deactivateMfa are audited without a user (no
       // access of the account), so they leave a row in the account's trail.
       async function auditRows () {

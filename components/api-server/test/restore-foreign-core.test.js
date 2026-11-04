@@ -70,8 +70,8 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'restore-foreign-core-'));
   });
 
-  // Before the per-test platform consistency check: a single-account restore
-  // writes no platform rows (indexed fields) for the account.
+  // Before the per-test platform consistency check: the restored accounts and
+  // their platform rows are removed.
   afterEach(async function () {
     for (const u of accounts.splice(0)) {
       if (await exists(u)) await usersRepository.deleteOne(u.id, u.username);
@@ -92,16 +92,18 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
    * An account backed up with bin/backup.js, then removed from this core
    * (index, data, platform rows): as if it had moved to another core.
    */
-  async function backedUpAccount () {
+  async function backedUpAccount (attrs = {}) {
     const fx = getNewFixture();
     fixtures.push(fx);
     const username = ('rxcr' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
-    const fu = await fx.user(username);
+    const fu = await fx.user(username, attrs);
     const stream = await fu.stream({ id: 'rxcr-' + cuid().slice(-10), name: 'RXCR ' + cuid().slice(-6) });
     await stream.event({ type: 'note/txt', content: 'backed up' });
     const dir = path.join(tmpDir, username);
     assertOk(runCli(['--output', dir, '--user', username]), 'backup');
-    const u = { id: fu.attrs.id, username, dir };
+    // Its platform rows as its registration wrote them (storage form).
+    const rows = await platformDB.getAllForUser(platform.hashFor('username', username));
+    const u = { id: fu.attrs.id, username, dir, rows };
     accounts.push(u);
     await usersRepository.deleteOne(u.id, u.username);
     assert.strictEqual(await exists(u), false, 'removed from this core');
@@ -179,10 +181,9 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     const res = runCli(['--restore', u.dir, '--user', u.username]);
     assertOk(res, 'restore on a single core');
     assert.strictEqual(await exists(u), true, 'indexed on this core');
-    // Routed to the CLI's own core id (not read here: this process's core id
-    // may differ from the CLI's after other suites).
-    const routedTo = await platform.getUserCore(u.username);
-    assert.ok(routedTo != null && routedTo !== OTHER_CORE, 'routed to the restoring core: ' + routedTo);
+    // Routed to the CLI's own core id: the one this process runs as (the
+    // suites before this one put back the core id they changed).
+    assert.strictEqual(await platform.getUserCore(u.username), platform.coreId, 'routed to the restoring core');
   });
 
   it('[RXCR5] a platform restore keeps a unique value another account holds now, and writes the free ones', async function () {
@@ -225,6 +226,94 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
       await platform.deleteUserUniqueField('email', taken);
       await platform.deleteUserUniqueField('email', free);
       await platformDB.deleteUserIndexedField(token(restored), 'language');
+    }
+  });
+
+  it('[RXCR18] a single-account restore of a backup of that account reserves its email and writes its indexed values; an email another account holds now stays with it and the account is listed', async function () {
+    const token = (name) => platform.hashFor('username', name);
+    const email = 'rxcr18-' + cuid.slug().toLowerCase() + '@rxcr.example';
+    const u = await backedUpAccount({ email, language: 'fr' });
+    assert.strictEqual(await platform.getUsersUniqueField('email', email), null, 'removed with the account');
+
+    const res = runCliMultiCore(['--restore', u.dir, '--user', u.username]);
+    assertOk(res, 'restore');
+    assert.strictEqual(await platform.getUsersUniqueField('email', email), token(u.username), 'its email is reserved for it');
+    assert.strictEqual(await platformDB.getUserIndexedField(token(u.username), 'language'), 'fr', 'its indexed values are written');
+    assert.doesNotMatch(res.stdout, /Email held by another account/);
+
+    // An account restored by a release that wrote no email row: a restore
+    // over it with --overwrite writes the row.
+    await platform.deleteUserUniqueField('email', email);
+    const over = runCliMultiCore(['--restore', u.dir, '--user', u.username, '--overwrite']);
+    assertOk(over, 'restore with --overwrite');
+    assert.strictEqual(await platform.getUsersUniqueField('email', email), token(u.username), 'the row is written again');
+
+    // The email of another backed-up account changed hands meanwhile.
+    const heldEmail = 'rxcr18h-' + cuid.slug().toLowerCase() + '@rxcr.example';
+    const v = await backedUpAccount({ email: heldEmail });
+    const holder = 'rxcrholder' + cuid.slug().toLowerCase();
+    await platform.setUserUniqueField(holder, 'email', heldEmail);
+    try {
+      const held = runCliMultiCore(['--restore', v.dir, '--user', v.username]);
+      assertOk(held, 'restore with a held email');
+      assert.strictEqual(await exists(v), true, 'restored');
+      assert.strictEqual(await platform.getUsersUniqueField('email', heldEmail), token(holder), 'the holder keeps its email');
+      assert.match(held.stdout, /Unique values of the platform rows: 1 held by another account/);
+      assert.match(held.stdout, new RegExp(`Email held by another account \\(password reset does not send to it until the account's email is changed\\): 1 users\\s+- ${v.username} \\(${v.id}\\)`));
+    } finally {
+      await platform.deleteUserUniqueField('email', heldEmail);
+    }
+  });
+
+  it('[RXCR19] the platform rows a single-account restore derives are the rows its registration wrote', async function () {
+    const u = await backedUpAccount({ email: 'rxcr19-' + cuid.slug().toLowerCase() + '@rxcr.example', language: 'de' });
+    assert.ok(u.rows.length > 0, 'registration wrote rows');
+    const res = runCliMultiCore(['--restore', u.dir, '--user', u.username]);
+    assertOk(res, 'restore');
+    const sorted = (rows) => rows.map((r) => JSON.stringify([r.field, r.isUnique, r.value, r.username])).sort();
+    const restored = await platformDB.getAllForUser(platform.hashFor('username', u.username));
+    assert.deepStrictEqual(sorted(restored), sorted(u.rows));
+    // Registration writes no `username` row (the name is routed by its user-core row).
+    assert.ok(!restored.some((r) => r.field === 'username'), JSON.stringify(restored));
+  });
+
+  it('[RXCR20] the email row reconcile (usersRepository.reconcileEmailRows, bin/reconcile-user-cores.js --emails) claims the missing email rows of this core\'s accounts and lists those another account holds', async function () {
+    // The command line: a dry run reports; combined with --ext-ids it is refused.
+    const reconcile = (args) => spawnSync('node', [path.resolve(__dirname, '../../../bin/reconcile-user-cores.js'), ...args],
+      { cwd: REPO_ROOT, encoding: 'utf8', env: { ...process.env, ...childStorageEngineEnv() }, timeout: 90000 });
+    const dryCli = reconcile(['--emails', '--dry-run']);
+    assert.strictEqual(dryCli.status, 0, dryCli.stdout + dryCli.stderr);
+    assert.match(dryCli.stdout, /reconcile-user-cores --emails: DRY-RUN \(no writes\)/);
+    const both = reconcile(['--emails', '--ext-ids']);
+    assert.strictEqual(both.status, 1, both.stdout + both.stderr);
+    assert.match(both.stderr, /--emails and --ext-ids are separate passes/);
+
+    const token = (name) => platform.hashFor('username', name);
+    const slug = cuid.slug().toLowerCase();
+    const fx = getNewFixture();
+    fixtures.push(fx);
+    const missing = { username: 'rxcrmiss' + slug, email: 'rxcr20m-' + slug + '@rxcr.example' };
+    const held = { username: 'rxcrheld' + slug, email: 'rxcr20h-' + slug + '@rxcr.example' };
+    const holder = 'rxcrhold' + slug;
+    for (const a of [missing, held]) a.id = (await fx.user(a.username, { email: a.email })).attrs.id;
+    // As restored by a release that wrote no email row; the other address changed hands.
+    await platform.deleteUserUniqueField('email', missing.email);
+    await platform.deleteUserUniqueField('email', held.email);
+    await platform.setUserUniqueField(holder, 'email', held.email);
+    try {
+      const dry = await usersRepository.reconcileEmailRows(true);
+      assert.ok(dry.missing.includes(missing.username) && dry.heldElsewhere.includes(held.username), JSON.stringify(dry));
+      assert.strictEqual(await platform.getUsersUniqueField('email', missing.email), null, 'a dry run writes nothing');
+
+      const applied = await usersRepository.reconcileEmailRows(false);
+      assert.ok(applied.claimed.includes(missing.username), JSON.stringify(applied));
+      assert.ok(applied.heldElsewhere.includes(held.username), JSON.stringify(applied));
+      assert.strictEqual(await platform.getUsersUniqueField('email', missing.email), token(missing.username), 'the missing row is claimed');
+      assert.strictEqual(await platform.getUsersUniqueField('email', held.email), token(holder), 'a held row is never taken');
+    } finally {
+      await platform.deleteUserUniqueField('email', held.email);
+      await platform.setUserUniqueField(held.username, 'email', held.email);
+      for (const a of [missing, held]) await usersRepository.deleteOne(a.id, a.username);
     }
   });
 });

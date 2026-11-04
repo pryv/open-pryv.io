@@ -211,6 +211,7 @@ describe('[XIDB] external-id namespace rows through a platform backup and restor
     restore.isReservedUsername = () => false;
     restore.isListedUsername = () => false;
     restore.usersLocalIndex = { async getUserId () { return null; }, async getUsername () { return null; } };
+    restore.userAccountStorage = { async getAccountFields () { return {}; }, async getAccountField () { return null; } };
     restore._restoreSingleUser = async (reader, userId) => {
       assert.strictEqual(await idx.getNamespace(target, 'ns-ehr'), null, 'users are restored before the platform rows');
       return { userId, entries: await collect((await reader.openUser(userId)).readExternalIds()) };

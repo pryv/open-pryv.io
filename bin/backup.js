@@ -326,6 +326,7 @@ async function runRestore (args) {
       const withdrawn = report.erasuresWithdrawn ?? [];
       await orchestrator.rearmWithdrawnErasures(withdrawn.filter(r => failedIds.has(r.userId)), 'integrity check failed, rolled back');
       report.erasuresWithdrawn = withdrawn.filter(r => !failedIds.has(r.userId));
+      report.emailsHeldElsewhere = (report.emailsHeldElsewhere ?? []).filter(u => !failedIds.has(u.userId));
       // Remove failed users from restored list and add to report
       report.rolledBack = failedUsers.map(f => ({ userId: f.userId, username: f.username }));
       report.restored = report.restored.filter(u =>
@@ -400,6 +401,15 @@ async function runRestore (args) {
   }
   if (report.uniqueValuesLost > 0) {
     console.log(`  Unique values of the platform rows: ${report.uniqueValuesLost} held by another account (not restored)`);
+  }
+  if (report.extIdNamespaceSaltMismatch && report.extIdNamespaceSaltMismatch.length > 0) {
+    console.log(`  External-id namespaces kept with a salt that differs from the backup: ${report.extIdNamespaceSaltMismatch.join(', ')}`);
+  }
+  if (report.emailsHeldElsewhere && report.emailsHeldElsewhere.length > 0) {
+    console.log(`  Email held by another account (password reset does not send to it until the account's email is changed): ${report.emailsHeldElsewhere.length} users`);
+    for (const u of report.emailsHeldElsewhere) {
+      console.log(`    - ${u.username} (${u.userId})`);
+    }
   }
   const xid = report.externalIds;
   if (xid != null && xid.restored + xid.lost + xid.namespaceMissing + xid.invalid > 0) {

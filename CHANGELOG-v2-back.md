@@ -134,13 +134,93 @@
   the ones the deleted account carries would remove values the other core's account holds too.
 - Not changed: `--overwrite` does not clear the account's current platform rows: an account that
   changed its email after the backup keeps that row and gets the backup's email back when free (two
-  email rows). A `--user` restore writes no platform rows other than the routing row (a per-user
-  backup carries none, and `restoreUser` defaults `skipPlatform`). A whole restore that fails on one
-  account (a lost claim included) ends the run: the accounts restored before are kept, no platform
-  rows, external ids or aliases are written.
-- Tests `[RXCR1-5]` (api-server: `bin/backup.js` run as a member of a multi-core platform over the
-  test platform store), `[RXCR6-14]` (business unit), `[DXCR1-2]` (api-server: the users repository
-  over the test platform store as a member of a multi-core platform).
+  email rows). A whole restore that fails on one account (a lost claim included) ends the run: the
+  accounts restored before are kept, no platform rows, external ids or aliases are written.
+- Fixed: a `--user` restore wrote no platform rows other than the routing row (a per-user backup
+  carries none, and `restoreUser` defaulted `skipPlatform` to true). `restoreUser` now defaults it
+  to false and reads the platform part with `_readPlatform(reader, isReserved, [{ username }])`,
+  which keeps (and checks) only the account's rows and server mapping. Both paths go through
+  `_accountPlatformRows(read, restored, imported)`: `_platformRowsOf`, then for each restored
+  account without a row there, `_derivedPlatformRows`: one row per
+  `accountStreams.indexedFieldNames` field (stored value, else the field's default, as
+  `repository.insertOne`), unique for `uniqueFieldNames`, plus a unique `email` row per address the
+  account's `:_emails:` container holds as `verified` (`verifiedEmailsOf` over the imported events:
+  heads only, not deleted, not trashed); storage form through `coreRouting.hashFor`. Written by
+  `_writePlatform` (same held-value protection and count). Unique rows are deduplicated by storage
+  form (two spellings of one address are one row in hashed mode); indexed values are passed as
+  registration passes them (not coerced to strings). `_importUser` returns `ImportedAccount`
+  (external-id `entries`, `verifiedEmails`). A pending address gets no row: the email methods
+  reserve a row when an address is proved, not when it is added. Derived rows trust the backup's
+  email list as a whole backup's platform rows were already trusted.
+- `restoreUser` from a whole backup also writes its external-id namespace rows (`_platformRowsOf`
+  keeps `extIdNamespaces`; `importNamespaceRows` writes absent ones only) and returns
+  `extIdNamespaceSaltMismatch` like `restoreAllUsers` (`bin/backup.js` prints it for both).
+  `_writePlatform` skips, with a warning, the register server mappings of restored accounts
+  (`read.ownerNames` set) when `defaultCoreId` is not `coreRouting.coreId`: `_claimUserCore` routed
+  them here, the mapping would re-route them to the platform's single available core (another one
+  when this core is unavailable). A platform-only restore writes the mappings as before.
+- `_emailsHeldElsewhere(restored)`, both paths, after the platform rows: an account whose stored
+  `email` field `coreRouting.getUsersUniqueField` gives to another owner is listed in
+  `emailsHeldElsewhere` (report; `bin/backup.js` prints it, filtered of rolled-back accounts) and
+  warned. A failed lookup is a warning, never a failed restore.
+- `restoreUser` callers: `bin/backup.js` only (it passes no `skipPlatform`, so it takes the new
+  default).
+- `usersRepository.reconcileEmailRows(dryRun)`, `bin/reconcile-user-cores.js --emails [--dry-run]`:
+  run per core; for each account of the local index (skipped: no email, the email field not
+  unique, a name routed to another core), the stored primary email: held by another account under
+  one of its three spellings (`isEmailHeldByAnother`, below) -> `heldElsewhere`, nothing claimed; else its row
+  absent -> `missing`, claimed with `platform.setUserUniqueFieldIfNotExists` unless dry run
+  (`claimed`; a lost claim is listed as held). Never deletes nor overwrites a row (safe with the API
+  running). An account that cannot be read goes to `failed` (warned), the others are done; the CLI
+  then exits 1. `--emails` with `--ext-ids` is refused (exit 1): separate passes.
+- Not changed: a `--verify-integrity` rollback (`_clearUserData`) leaves the platform rows, the
+  routing row and the index entry of a rolled-back account; a rolled-back `--user` restore now
+  leaves its email reserved too, and `uniqueValuesLost` still counts its values.
+- Tests `[RXCR1-5, 18-20]` (api-server: `bin/backup.js` run as a member of a multi-core platform
+  over the test platform store; `[RXCR19]` compares the derived rows with the rows registration
+  wrote; `[RXCR20]` the email reconcile), `[RXCR6-17, 21-23]` (business unit), `[DXCR1-2]`
+  (api-server: the users repository over the test platform store as a member of a multi-core
+  platform). `reg-multicore.test.js` puts back `core:id` with the single-core config (it left
+  `core-a` for the later suites of the process); `[RXCR4]` asserts the routing row names
+  `platform.coreId` again.
+
+### Password reset and notices: no mail to an address another account holds
+
+- `business/src/emails/heldAddress.ts`: `isEmailHeldByAnother(platform, username, email)`: another
+  owner than `hashFor('username', username)` on the row of one of three spellings of the address
+  (`emailSpellings`: in hashed mode the address once, the row key being normalised already; in
+  cleartext mode, where `hashFor` returns the address as written and nothing normalises it at
+  registration, the address as written, `PiiHasher.normalize('email', ...)` and its lowercase).
+  Throws when the platform store cannot be read. Also used by the restore report
+  (`_emailsHeldElsewhere`) and `reconcileEmailRows`. `isStoredEmailHeldElsewhere(username, email,
+  what, logger)` wraps it with `getPlatform()` and warns naming the username. Used by:
+  - `account.requestPasswordReset`, step `sendPasswordResetMail` (now async; a rejected step is
+    answered as an error by the API runner): held -> `next()` with no mail (same status and body as
+    a sent mail, the reset token generated and unused; sooner, no delivery round trip). A lookup
+    error answers `unexpectedError` (fails closed).
+  - `mfaChange.ts` `sendMfaChangeNotice`: held -> not sent; a lookup error is the notice's failure
+    (logged, the MFA change stands).
+  - `autoDeletion.ts` `loadAccountFacts`: `emailHeld` (new optional fact) from
+    `isEmailHeldByAnother`, and then `mail: 'no-email'`, so `notifiable` and `presetApplies` are
+    false: the account is treated exactly as one without an address (`deadline.evaluate` blocks a
+    user schedule `no-email` unless `acknowledgedNoReminders`; the preset does not apply;
+    `account.setAutoDeletion` asks for `acknowledgeNoReminders`). A lookup error throws (the get/set
+    method fails, the sweep skips the account for the pass): an account is not judged on a guess.
+  - `sendAutoDeletionMail`, stored-email branch only (`to == null`), before the switch checks:
+    `facts.emailHeld`, or the address found held at the send (`isStoredEmailHeldElsewhere`) ->
+    `'rejected'`, not `'off'`: a notice not given, never recorded as given (`tellOwnerStarted` keeps
+    `ownerToldAt` unset and retries at each pass, `logRefused` logs once); a lookup error is
+    `'failed'` (retried at the next pass).
+- Checked, not guarded: the verification and registration-challenge mails go to the address being
+  proved, the transfer claim mails to the beneficiary's address, the welcome mail to the address
+  just registered. No other sender mails a credential to the stored email (`sendmail(` callers).
+- Tests `[RSLK3-6]` (held: no mail, same status and body; absent row: sent; lookup error: fails, no
+  mail; cleartext mode, another spelling held: no mail), `[MSN4]`, `[ACST15D]` (view `no-email`,
+  acknowledgement asked, no mail, no notice recorded, facts not notifiable, `'rejected'`),
+  `[RXCR23]` (restore report, cleartext spelling).
+- Not changed: in cleartext mode two spellings of one address are two rows, so registration and
+  the email methods accept an address another account holds under another spelling (pre-existing
+  uniqueness semantics; the checks above look the spellings up, the writes do not normalise).
 
 ### CMC: background writes check the account first
 

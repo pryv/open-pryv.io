@@ -10,6 +10,7 @@ import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
 import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
+import { isStoredEmailHeldElsewhere } from 'business/src/emails/heldAddress.ts';
 import { sendmail, isLoggedMailFailure } from './mailing.ts';
 
 /**
@@ -61,6 +62,7 @@ async function sendMfaChangeNotice (config: ConfigLike, user: UserRef, change: M
   const account = await (await getUsersRepository()).getUserByUsername(user.username);
   const email = account?.email;
   if (typeof email !== 'string' || email === '') return;
+  if (await isStoredEmailHeldElsewhere(user.username, email, `MFA change notice (${change})`, logger)) return;
   const substitutions: Record<string, string> = { USERNAME: user.username, MFA_CHANGE: change };
   for (const [kind, flag] of Object.entries(CHANGE_FLAGS)) substitutions[flag] = kind === change ? 'true' : '';
   const lang = account.language || emailSettings.defaultLang || 'en';

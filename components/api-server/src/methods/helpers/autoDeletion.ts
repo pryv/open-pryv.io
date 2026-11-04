@@ -9,6 +9,8 @@ import type { ConfigLike } from '@pryv/boiler';
 import { getStorageLayer, getUserAccountStorage } from 'storage';
 import { store as delegationStore, STATUS as DELEGATION_STATUS } from 'delegation';
 import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { isStoredEmailHeldElsewhere, isEmailHeldByAnother } from 'business/src/emails/heldAddress.ts';
+import { getPlatform } from 'platform';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import type { AutoDeletionConfig } from 'business/src/autoDeletion/config.ts';
 import { createAutoDeletionState } from 'business/src/autoDeletion/state.ts';
@@ -48,6 +50,8 @@ export type MailState = 'available' | 'no-email' | 'not-configured';
 export type AccountFacts = {
   activity: AccountActivity;
   email: string | null;
+  /** Another account holds `email` on the platform (`mail` is then `no-email`). */
+  emailHeld?: boolean;
   language: string | null;
   mail: MailState;
   /** The account has an email address and the core can send mail. */
@@ -94,13 +98,18 @@ export async function loadAccountFacts (config: ConfigLike, user: UserRef, now?:
   const email = typeof account?.email === 'string' && account.email !== '' ? account.email : null;
   const language = typeof account?.language === 'string' && account.language !== '' ? account.language : null;
   const mailOk = describeMailCapability(config).ok;
-  const mail: MailState = !mailOk ? 'not-configured' : email == null ? 'no-email' : 'available';
+  // An address another account holds is not this account's inbox: the
+  // account counts as one without an address (blocked "no-email", no preset).
+  // A failed lookup throws: the account is not judged on a guess.
+  const emailHeld = mailOk && email != null && await isEmailHeldByAnother(await getPlatform(), user.username, email);
+  const mail: MailState = !mailOk ? 'not-configured' : (email == null || emailHeld) ? 'no-email' : 'available';
   const isGroup = accesses.some((a) => a?.type === 'shared' && a.clientData?.cmc?.role === 'member');
   const isControlled = await hasActiveDelegate(user.id);
   const notifiable = mail === 'available';
   return {
     activity: activityOf(accesses, now),
     email,
+    emailHeld,
     language,
     mail,
     notifiable,
@@ -248,10 +257,18 @@ export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeleti
   try {
     const emailSettings = config.get('services:email') as EmailSettings | null | undefined;
     if (emailSettings == null) return 'off';
+    // The account's own address held by another account (`loadAccountFacts`,
+    // or found at the send): a notice not given, never one switched off, so
+    // it is not recorded as given (`rejected`: retried, logged once by the
+    // sweep). A failed lookup is a failed send, retried. The live lookup runs
+    // after the switched-off cases, so a mail that would not be sent anyway
+    // does not read the platform.
+    if (to == null && facts.emailHeld === true) return 'rejected';
     if (to == null && (!facts.notifiable || facts.email == null)) return 'off';
     if (to != null && (facts.mail === 'not-configured' || to.email === '')) return 'off';
     const enabled = emailSettings.enabled;
     if (enabled != null && typeof enabled === 'object' && (enabled as Record<string, unknown>)[mail.flag] === false) return 'off';
+    if (to == null && await isStoredEmailHeldElsewhere(user.username, facts.email, `auto-deletion ${kind} mail`, logger)) return 'rejected';
     const lang = facts.language || emailSettings.defaultLang || 'en';
     const configured = (emailSettings as Record<string, unknown>)[mail.templateKey];
     const template = typeof configured === 'string' && configured !== '' ? configured : mail.template;

@@ -74,4 +74,105 @@ describe('[RSLK] password-reset link', function () {
     assert.strictEqual(link.searchParams.get('pryvServiceInfoUrl'), 'https://core.example.com/reg/service/info');
     assert.strictEqual(link.searchParams.get('resetToken'), token);
   });
+
+  it('[RSLK3] no reset mail goes to an account\'s email that another account holds now; the answer is the same as when it is sent', async function () {
+    const { platform } = require('platform');
+    const username = 'rsl' + cuid().toLowerCase().slice(1, 12);
+    const email = username + '@reset.example.com';
+    await fixtures.user(username, { email });
+    const captured = [];
+    nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json').times(2)
+      .reply(200, (uri, body) => { captured.push(body); return {}; });
+    const request = () => withInjectedConfig({
+      services: { email: { enabled: { resetPassword: true } } },
+      auth: { passwordResetPageURL: 'https://app.example.com/reset-password' }
+    }, async () => await coreRequest.post('/' + username + '/account/request-password-reset').send({ appId: TRUSTED_APP }));
+    const withoutMeta = (body) => { const { meta, ...rest } = body; return rest; };
+
+    // Sent while the account holds its email.
+    const sent = await request();
+    assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+    assert.strictEqual(captured.length, 1);
+    // A second request within the minute is otherwise refused.
+    await require('storages').platformDB.deleteAccessState(require('business/src/auth/passwordResetThrottle.ts').cooldownKey(username));
+
+    // The address changed hands (e.g. the account was restored from a backup older than that).
+    const holder = 'rslholder' + cuid().toLowerCase().slice(1, 10);
+    await platform.deleteUserUniqueField('email', email);
+    await platform.setUserUniqueField(holder, 'email', email);
+    try {
+      const held = await request();
+      assert.strictEqual(held.status, sent.status, JSON.stringify(held.body));
+      assert.deepStrictEqual(withoutMeta(held.body), withoutMeta(sent.body));
+      assert.strictEqual(captured.length, 1, 'no mail sent to the holder of the address');
+    } finally {
+      await platform.deleteUserUniqueField('email', email);
+      await platform.setUserUniqueField(username, 'email', email);
+      nock.cleanAll();
+    }
+  });
+
+  /** A reset request for a new account whose email row `prepare` changes; the mails it sent. */
+  async function resetWith (prepare, emailOf = (username) => username + '@reset.example.com') {
+    const { platform } = require('platform');
+    const username = 'rsl' + cuid().toLowerCase().slice(1, 12);
+    const email = emailOf(username);
+    await fixtures.user(username, { email });
+    const captured = [];
+    nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json')
+      .reply(200, (uri, body) => { captured.push(body); return {}; });
+    const undo = await prepare(platform, email, username);
+    try {
+      const res = await withInjectedConfig({
+        services: { email: { enabled: { resetPassword: true } } },
+        auth: { passwordResetPageURL: 'https://app.example.com/reset-password' }
+      }, async () => await coreRequest.post('/' + username + '/account/request-password-reset').send({ appId: TRUSTED_APP }));
+      return { res, captured, email };
+    } finally {
+      await undo();
+      await platform.deleteUserUniqueField('email', email);
+      await platform.setUserUniqueField(username, 'email', email);
+      nock.cleanAll();
+    }
+  }
+
+  it('[RSLK4] an account\'s email with no platform row at all is mailed (an absent row is not a held one)', async function () {
+    const { res, captured, email } = await resetWith(async (platform, address) => {
+      await platform.deleteUserUniqueField('email', address);
+      return async () => {};
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(captured.length, 1);
+    assert.deepStrictEqual(captured[0].message.to.map((t) => t.email), [email]);
+  });
+
+  it('[RSLK6] in cleartext mode, another spelling of the address held by another account counts as held: no mail', async function () {
+    // The platform seen in cleartext mode (rows keyed by the address as
+    // written): the account holds the stored spelling, another account the
+    // lowercase one (a registration by whoever controls that inbox now).
+    const { res, captured } = await resetWith(async (platform, address, username) => {
+      const rows = { [address]: username, [address.toLowerCase()]: 'rslholder' };
+      Object.defineProperty(platform, 'piiModeIsHashed', { value: false, configurable: true });
+      platform.hashFor = (field, value) => value;
+      platform.getUsersUniqueField = async (field, value) => field === 'email' ? (rows[value] ?? null) : null;
+      return async () => {
+        delete platform.piiModeIsHashed;
+        delete platform.hashFor;
+        delete platform.getUsersUniqueField;
+      };
+    }, (username) => 'Rsl' + username.slice(3) + '@Reset.example.com');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(captured.length, 0, 'no mail to the address another account holds under another spelling');
+  });
+
+  it('[RSLK5] when the platform rows cannot be read, the reset fails and no mail is sent', async function () {
+    const { res, captured } = await resetWith(async (platform) => {
+      const original = platform.getUsersUniqueField;
+      platform.getUsersUniqueField = async () => { throw new Error('platform store unreachable'); };
+      return async () => { platform.getUsersUniqueField = original; };
+    });
+    assert.ok(res.status >= 500, res.status + ' ' + JSON.stringify(res.body));
+    assert.strictEqual(res.body.error?.id, 'unexpected-error', JSON.stringify(res.body));
+    assert.strictEqual(captured.length, 0, 'no mail');
+  });
 });
