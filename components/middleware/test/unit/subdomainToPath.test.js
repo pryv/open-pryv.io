@@ -74,5 +74,10 @@ describe('[SDTP] subdomainToPath middleware', function () {
       assert.strictEqual(route(['records'], 'alice.pryv.li'), '/alice/events');
       assert.strictEqual(route(undefined, 'alice.pryv.li'), '/alice/events');
     });
+
+    it('[SDPC] a list compares labels without case, as the predicate does', function () {
+      assert.strictEqual(route(['records'], 'Records.pryv.li'), '/events');
+      assert.strictEqual(route(['Records'], 'records.pryv.li'), '/events');
+    });
   });
 });

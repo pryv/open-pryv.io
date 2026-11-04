@@ -22,9 +22,13 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
  *   names that change at runtime, e.g. DNS records added after boot)
  */
 export default function (ignoredPaths: readonly string[], ignoredSubdomains?: readonly string[] | ((label: string) => boolean)): RequestHandler {
+  // Labels compare lowercased in both forms (a Host is case-insensitive).
+  const ignoredList = typeof ignoredSubdomains === 'function'
+    ? []
+    : (ignoredSubdomains || []).map((name) => name.toLowerCase());
   const isIgnoredSubdomain: (label: string) => boolean = typeof ignoredSubdomains === 'function'
     ? (label) => ignoredSubdomains(label.toLowerCase())
-    : (label) => (ignoredSubdomains || []).includes(label);
+    : (label) => ignoredList.includes(label.toLowerCase());
   return function (req: Request, res: Response, next: NextFunction): void {
     if (isIgnoredPath(req.url)) {
       return next();

@@ -1512,17 +1512,30 @@ class Platform {
 
   /**
    * Whether the name is one the platform routes itself, so an account under
-   * it would collide with the platform: starts with "pryv", a service host
-   * of the embedded DNS (`reg`, `access`, `mfa`, `lsc`), a path segment the
-   * core routes, a hosted-site name of any core, a core id, a static entry
-   * or a runtime DNS record name (as of the last refreshPlatformNames()).
-   * The word list is a registration rule on top of these.
+   * it would collide with the platform: starts with "pryv", a path segment
+   * the core routes, or a name the embedded DNS answers itself (see
+   * `isNameRoutedByPlatform`). The word list is a registration rule on top
+   * of these.
    */
   isUsernameRoutingReserved (username: string): boolean {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
-    if (DNS_SERVICE_NAMES.has(lower)) return true;
     if (ROUTE_SEGMENT_NAMES.has(lower)) return true;
+    return this.isNameRoutedByPlatform(lower);
+  }
+
+  /**
+   * Whether the embedded DNS answers the name itself, before its username
+   * lookup: a service host (`reg`, `access`, `mfa`, `lsc`), a hosted-site
+   * name of any core, a core id, a static entry, a runtime DNS record name or
+   * this core's issuer label (as of the last refreshPlatformNames()). A
+   * request on `<name>.<domain>` never reaches an account, so the
+   * username-rewriter skips it. The registration-only rules (`pryv*`, route
+   * segments) are left out: an account that predates them keeps its host.
+   */
+  isNameRoutedByPlatform (name: string): boolean {
+    const lower = name.toLowerCase();
+    if (DNS_SERVICE_NAMES.has(lower)) return true;
     if (this.#platformDnsNames.has(lower)) return true;
     return this.#hostedSiteNames.has(lower);
   }

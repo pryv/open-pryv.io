@@ -21,6 +21,13 @@ const assert = require('node:assert/strict');
 const { Platform } = require('../../src/Platform.ts');
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until (condition, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('condition not met within ' + timeoutMs + 'ms');
+    await wait(5);
+  }
+}
 
 describe('[PINI] Platform.init is shared and retryable', () => {
   // init() needs the storages (PlatformDB singleton) to be up.
@@ -98,10 +105,15 @@ describe('[PCUR] core URL cache and platform names refresh', () => {
     p.startPlatformNamesRefresh(10);
     try {
       records.push({ subdomain: 'vanity', records: { a: ['10.0.0.1'] } });
-      await wait(60);
-      assert.strictEqual(p.isUsernameRoutingReserved('vanity'), true);
+      await until(() => p.isUsernameRoutingReserved('vanity'));
+      // A registration-only rule is not a name the DNS answers itself.
+      assert.strictEqual(p.isNameRoutedByPlatform('vanity'), true);
+      assert.strictEqual(p.isUsernameRoutingReserved('pryvfan'), true);
+      assert.strictEqual(p.isNameRoutedByPlatform('pryvfan'), false);
+      assert.strictEqual(p.isNameRoutedByPlatform('users'), false);
       fail = true;
-      await wait(40);
+      const readsAtFail = reads;
+      await until(() => reads >= readsAtFail + 2);
       assert.strictEqual(p.isUsernameRoutingReserved('vanity'), true, 'previous names kept');
     } finally {
       p.stopPlatformNamesRefresh();
