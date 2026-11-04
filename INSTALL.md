@@ -1085,6 +1085,8 @@ records:
 
 Static entries declared in `dns.staticEntries` config are authoritative and cannot be shadowed by PlatformDB entries; attempts to write a matching subdomain are rejected.
 
+A runtime record name is never read as a username: like a static entry, it is refused at registration, and the api-server does not rewrite `<record>.<domain>/…` into `/<record>/…`, so a host pointed at a core with a runtime record serves the same paths as the core's own host (the api-server re-reads the names every 30 s, and at once after a `/reg/records` change on that core). The HFS and previews workers still skip only the names from the configuration (core id, `reg`/`access`/`mfa`, `dns.staticEntries`, hosted sites).
+
 The first-boot bootstrap (above) also writes through `bin/dns-records.js`-equivalent paths (`setDnsRecord('core', ...)` + an in-memory mutation of `dns.records.root` for SOA/NS). It only fills records that are missing — any subdomain you `load` via this CLI is left in place across restarts. To take ownership of the `core` A record (e.g. to point it at multiple IPs), `node bin/dns-records.js load core-override.yaml` once; the bootstrap will see it on the next boot and not overwrite.
 
 ## Cluster security

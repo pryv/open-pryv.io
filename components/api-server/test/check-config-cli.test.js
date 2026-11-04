@@ -501,6 +501,61 @@ oauth:
   });
 });
 
+describe('[CKOI] bin/check-config.js oauth.issuer host on a platform with the embedded DNS', function () {
+  this.timeout(60000);
+
+  // A member of a DNS platform (dns.domain, dnsLess off): its only other note
+  // is the "no DNS of its own" warning.
+  const DNS_MEMBER = BASE.replace('dnsLess:\n  isActive: true\n  publicUrl: https://core.example.com/\n',
+    'dnsLess:\n  isActive: false\ndns:\n  active: false\n  domain: example.org\ncore:\n  id: core-b\n');
+  const withIssuer = (issuer, extra = '') => DNS_MEMBER + `
+oauth:
+  issuer: ${issuer}
+` + extra;
+  const OUTSIDE = /oauth\.issuer names auth\.other\.net, outside dns\.domain \(example\.org\), while this core terminates TLS itself/;
+  const NO_RESOLVE = /oauth\.issuer names auth-eu\.example\.org under dns\.domain, but nothing in this configuration makes that name resolve/;
+
+  it('[CKOI1] outside dns.domain on a core that terminates TLS is a warning; behind a proxy it is silent', () => {
+    assert.notStrictEqual(DNS_MEMBER, BASE);
+    const keyFile = runCheck(withIssuer('https://auth.other.net', 'http:\n  ssl:\n    keyFile: /etc/tls/key.pem\n    certFile: /etc/tls/cert.pem\n'));
+    assert.strictEqual(keyFile.status, 0, keyFile.stdout + keyFile.stderr);
+    assert.match(keyFile.stdout, OUTSIDE);
+    const le = runCheck(withIssuer('https://auth.other.net', 'letsEncrypt:\n  enabled: true\n  atRestKey: WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=\n'));
+    assert.match(le.stdout + le.stderr, OUTSIDE);
+    const proxied = runCheck(withIssuer('https://auth.other.net'));
+    assert.strictEqual(proxied.status, 0, proxied.stdout + proxied.stderr);
+    assert.doesNotMatch(proxied.stdout + proxied.stderr, /oauth\.issuer names/);
+  });
+
+  it('[CKOI2] under dns.domain without a static entry is a warning', () => {
+    const res = runCheck(withIssuer('https://auth-eu.example.org'));
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, NO_RESOLVE);
+  });
+
+  it('[CKOI3] under dns.domain with a static entry, or the core id as label, is clean', () => {
+    for (const body of [
+      withIssuer('https://auth-eu.example.org').replace('  domain: example.org\n',
+        '  domain: example.org\n  staticEntries:\n    auth-eu:\n      a: ["203.0.113.7"]\n'),
+      withIssuer('https://core-b.example.org')
+    ]) {
+      assert.match(body, /issuer: https/);
+      const res = runCheck(body);
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      assert.doesNotMatch(res.stdout + res.stderr, /oauth\.issuer/);
+    }
+  });
+
+  it('[CKOI4] a label the core routes elsewhere (reg, a hosted site) is a problem (exit 1)', () => {
+    const reg = runCheck(withIssuer('https://reg.example.org'));
+    assert.strictEqual(reg.status, 1, reg.stdout + reg.stderr);
+    assert.match(reg.stderr, /oauth\.issuer names reg\.example\.org, whose label reg is served by the register host/);
+    const site = runCheck(withIssuer('https://sitehome.example.org', 'hostedSites:\n  sitehome:\n    proxy: https://example.github.io/docs/\n'));
+    assert.strictEqual(site.status, 1, site.stdout + site.stderr);
+    assert.match(site.stderr, /whose label sitehome is served by the hosted site sitehome/);
+  });
+});
+
 describe('[CKSO] bin/check-config.js sso.stateKey', function () {
   this.timeout(60000);
 

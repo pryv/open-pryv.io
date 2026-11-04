@@ -86,7 +86,12 @@ class Server {
     // middleware. A site that cannot be served (no folder, or its name is a
     // core id or a user's) stops the boot, so this core never advertises it half-way.
     const sites = parseHostedSites(config);
-    const siteProblems = await checkHostedSitesAtBoot(sites, await getUsersRepository(), await getPlatform());
+    const platform = await getPlatform();
+    // The username-rewriter (expressApp.ts) skips the platform's names: keep
+    // them current, so a DNS record written on another core is learnt within
+    // the interval (unref'd timer, a failed read keeps the previous names).
+    if (usernameInHost(config)) platform.startPlatformNamesRefresh();
+    const siteProblems = await checkHostedSitesAtBoot(sites, await getUsersRepository(), platform);
     if (siteProblems.length > 0) {
       throw new Error('Hosted sites cannot be served: ' + siteProblems.join('; '));
     }

@@ -861,6 +861,28 @@ keeps the client's Host header and ends TLS (plain HTTP to the core) only
 needs to send `X-Forwarded-Proto`. The forwarding headers count only from a
 proxy address listed in `http.trustedProxies` (from any other address they
 are ignored).
+
+On a platform with the embedded DNS (`dns.domain` set, `dnsLess.isActive:
+false`), the issuer host must be a name the embedded DNS resolves to **this**
+core: the core's own host (`https://<core.id>.<dns.domain>`, the default) or
+a vanity name under `dns.domain` (for example `https://auth-eu.<dns.domain>`)
+declared as a `dns.staticEntries` key on every core running the embedded DNS,
+or as a runtime DNS record (`bin/dns-records.js`), pointing at this core. The
+issuer's label is then refused as a username on this core (a static entry or a
+runtime record is refused on every core). `reg`, `access`, `mfa`, `lsc` and
+hosted-site names cannot be the issuer label (`check-config` reports it as a
+problem). A core that terminates TLS itself (`http.ssl.keyFile`, or
+`letsEncrypt.enabled`) serves the `*.<dns.domain>` certificate only, so an
+issuer outside `dns.domain` works only behind a proxy that holds that host's
+certificate; `check-config` and the boot log warn about both cases (outside
+the domain on a TLS-terminating core, and a name under the domain that the
+configuration does not make resolve). The `/oauth2/*` and `/.well-known/*`
+paths are root-only on every host the core answers: they are never read as a
+user's path, so a user host such as `alice.<dns.domain>/oauth2/authorize`
+answers the platform's endpoints too, by design (the discovery document and
+the consent hand-off always name the configured issuer, never the request's
+host).
+
 DPoP proofs are checked against the URL the request reached: a mismatch
 answers `invalid_dpop_proof`. `apiEndpoint` in token responses and `api_base`
 in introspection keep naming the core's API URL, the resource server.

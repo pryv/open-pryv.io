@@ -17,9 +17,18 @@ const { USERNAME_REGEXP_STR } = require('api-server/src/schema/helpers.ts');
  * username again if it is already present as the path root.
  *
  * @param ignoredPaths Paths for which no translation is needed
+ * @param ignoredSubdomains Host first labels that are never usernames: a fixed
+ *   list, or a predicate called with the lowercased label on each request (for
+ *   names that change at runtime, e.g. DNS records added after boot)
  */
-export default function (ignoredPaths: string[], ignoredSubdomains?: string[]): RequestHandler {
-  const subdomains: string[] = ignoredSubdomains || [];
+export default function (ignoredPaths: readonly string[], ignoredSubdomains?: readonly string[] | ((label: string) => boolean)): RequestHandler {
+  // Labels compare lowercased in both forms (a Host is case-insensitive).
+  const ignoredList = typeof ignoredSubdomains === 'function'
+    ? []
+    : (ignoredSubdomains || []).map((name) => name.toLowerCase());
+  const isIgnoredSubdomain: (label: string) => boolean = typeof ignoredSubdomains === 'function'
+    ? (label) => ignoredSubdomains(label.toLowerCase())
+    : (label) => ignoredList.includes(label.toLowerCase());
   return function (req: Request, res: Response, next: NextFunction): void {
     if (isIgnoredPath(req.url)) {
       return next();
@@ -33,7 +42,7 @@ export default function (ignoredPaths: string[], ignoredSubdomains?: string[]): 
     const firstChunk = hostChunks[0];
     if (!looksLikeUsername(firstChunk)) { return next(); }
     // Skip core's own subdomain in multi-core mode
-    if (subdomains.includes(firstChunk)) { return next(); }
+    if (isIgnoredSubdomain(firstChunk)) { return next(); }
     // Skip if it is already in the path.
     const pathPrefix = `/${firstChunk}`;
     if (req.url.startsWith(pathPrefix)) { return next(); }

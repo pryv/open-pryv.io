@@ -43,6 +43,7 @@ const IDNA_RESERVED_LABEL_RE = /^..--/;
 const { hostedSiteNames } = require('business/src/hostedSites.ts');
 const { coreIdProblem, isValidCoreId, peerUrlProblem, insecurePeerUrlAllowed } = require('./coreIdentity.ts');
 const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
+const { issuerLabelUnderDomain } = require('oauth2/src/issuerHost.ts');
 
 /**
  * Field name used when hashing a username as a key (i.e. when the
@@ -58,6 +59,11 @@ const INVITATION_CONSUMER_DELETED = '(deleted)';
 
 /** How often a multi-core core re-reads the other cores' URLs (as the embedded DNS does). */
 const CORE_URL_REFRESH_INTERVAL_MS = 30_000;
+/**
+ * How often the api-server re-reads the platform names its username-rewriter
+ * skips (the embedded DNS re-reads its runtime records at the same pace).
+ */
+const PLATFORM_NAMES_REFRESH_INTERVAL_MS = 30_000;
 
 /**
  * @class Platform
@@ -67,6 +73,7 @@ class Platform {
   #initialized: boolean;
   #initPromise: Promise<this> | null = null;
   #coreUrlRefreshTimer: ReturnType<typeof setInterval> | null = null;
+  #platformNamesRefreshTimer: ReturnType<typeof setInterval> | null = null;
   #db!: PlatformDB;
   #config!: Config;
   initialized: boolean = false;
@@ -77,7 +84,8 @@ class Platform {
   // misses a name still refuses it. Refreshed with the core-info reads.
   #hostedSiteNames: Set<string> = new Set();
   // DNS names the platform answers itself, which take precedence over a
-  // username: core ids, `dns.staticEntries` keys, runtime DNS record names.
+  // username: core ids, `dns.staticEntries` keys, runtime DNS record names,
+  // and this core's OAuth issuer label when the issuer is under `dns.domain`.
   // Refreshed by refreshPlatformNames().
   #platformDnsNames: Set<string> = new Set();
   #platformNamesReadAt: number = 0;
@@ -570,9 +578,33 @@ class Platform {
   }
 
   /**
+   * Re-read the platform names every `intervalMs` (default 30 s), for the
+   * api-server's username-rewriter, which skips them: a runtime DNS record
+   * written on another core is learnt within one interval. The timer does not
+   * keep the process alive; a failed read keeps the previous names and is
+   * logged. Idempotent: a running timer is replaced.
+   */
+  startPlatformNamesRefresh (intervalMs: number = PLATFORM_NAMES_REFRESH_INTERVAL_MS): void {
+    this.stopPlatformNamesRefresh();
+    this.#platformNamesRefreshTimer = setInterval(() => {
+      this.refreshPlatformNames().catch((err: unknown) => {
+        logger.warn('platform names refresh failed (previous names kept): ' + ((err as Error)?.message ?? err));
+      });
+    }, intervalMs);
+    this.#platformNamesRefreshTimer.unref?.();
+  }
+
+  stopPlatformNamesRefresh (): void {
+    if (this.#platformNamesRefreshTimer != null) clearInterval(this.#platformNamesRefreshTimer);
+    this.#platformNamesRefreshTimer = null;
+  }
+
+  /**
    * Re-read the names an account may not take: the hosted-site names
    * advertised by every core (plus this core's own), the core ids, the
-   * `dns.staticEntries` keys and the runtime DNS record names. Registration
+   * `dns.staticEntries` keys, the runtime DNS record names and this core's
+   * OAuth issuer label (when the issuer host is `<label>.<dns.domain>`: the
+   * name answers the platform's endpoints, never an account). Registration
    * and the change-username flow call it so a name added on another core
    * after this one booted is still refused as a username. `maxAgeMs` > 0
    * skips the read when the last one is that recent (the public, advisory
@@ -593,6 +625,10 @@ class Platform {
     for (const row of await this.#db.getAllDnsRecords()) {
       if (typeof row?.subdomain === 'string') names.add(row.subdomain.toLowerCase());
     }
+    // Not gated on dns.active: a member without a DNS of its own is still
+    // reached under the platform's domain.
+    const issuerLabel = this.#config == null ? null : issuerLabelUnderDomain(this.#config);
+    if (issuerLabel != null) names.add(issuerLabel);
     this.#platformDnsNames = names;
     this.#platformNamesReadAt = Date.now();
   }
@@ -1476,17 +1512,30 @@ class Platform {
 
   /**
    * Whether the name is one the platform routes itself, so an account under
-   * it would collide with the platform: starts with "pryv", a service host
-   * of the embedded DNS (`reg`, `access`, `mfa`, `lsc`), a path segment the
-   * core routes, a hosted-site name of any core, a core id, a static entry
-   * or a runtime DNS record name (as of the last refreshPlatformNames()).
-   * The word list is a registration rule on top of these.
+   * it would collide with the platform: starts with "pryv", a path segment
+   * the core routes, or a name the embedded DNS answers itself (see
+   * `isNameRoutedByPlatform`). The word list is a registration rule on top
+   * of these.
    */
   isUsernameRoutingReserved (username: string): boolean {
     const lower = username.toLowerCase();
     if (/^pryv/.test(lower)) return true;
-    if (DNS_SERVICE_NAMES.has(lower)) return true;
     if (ROUTE_SEGMENT_NAMES.has(lower)) return true;
+    return this.isNameRoutedByPlatform(lower);
+  }
+
+  /**
+   * Whether the embedded DNS answers the name itself, before its username
+   * lookup: a service host (`reg`, `access`, `mfa`, `lsc`), a hosted-site
+   * name of any core, a core id, a static entry, a runtime DNS record name or
+   * this core's issuer label (as of the last refreshPlatformNames()). A
+   * request on `<name>.<domain>` never reaches an account, so the
+   * username-rewriter skips it. The registration-only rules (`pryv*`, route
+   * segments) are left out: an account that predates them keeps its host.
+   */
+  isNameRoutedByPlatform (name: string): boolean {
+    const lower = name.toLowerCase();
+    if (DNS_SERVICE_NAMES.has(lower)) return true;
     if (this.#platformDnsNames.has(lower)) return true;
     return this.#hostedSiteNames.has(lower);
   }

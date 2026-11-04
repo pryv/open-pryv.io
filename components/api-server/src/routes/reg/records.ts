@@ -50,6 +50,18 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     }
   }
 
+  // The username-rewriter skips the platform's names: re-read them so this
+  // worker treats the changed record at once (the others within their
+  // periodic refresh). The record is stored either way: a failed read is
+  // only logged, the next refresh catches up.
+  async function refreshPlatformNames (platform: { refreshPlatformNames: () => Promise<void> }): Promise<void> {
+    try {
+      await platform.refreshPlatformNames();
+    } catch (err) {
+      logger.warn('could not re-read the platform names after a DNS record change: ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+
   expressApp.post('/reg/records', async (req: Request, res: Response, next: NextFunction) => {
     if (!isAuthorized(req)) return next(errors.unknownResource());
 
@@ -87,8 +99,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       return next(err);
     }
 
+    let platform;
     try {
-      const platform = await getPlatform();
+      platform = await getPlatform();
       // A new name an account holds would take that account's host (DNS
       // records answer before usernames); an existing record may change.
       if (await platform.getDnsRecord(subdomain) == null && await platform.isNameHeldByAccount(subdomain)) {
@@ -104,6 +117,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       });
     }
 
+    await refreshPlatformNames(platform);
     nudgeMaster(subdomain);
     res.status(200).json({ subdomain, records, status: 'ok' });
   });
@@ -118,8 +132,9 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       });
     }
 
+    let platform;
     try {
-      const platform = await getPlatform();
+      platform = await getPlatform();
       const existing = await platform.getDnsRecord(subdomain);
       if (existing == null) {
         return res.status(404).json({
@@ -134,6 +149,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       });
     }
 
+    await refreshPlatformNames(platform);
     nudgeMaster(subdomain);
     res.status(200).json({ subdomain, status: 'deleted' });
   });

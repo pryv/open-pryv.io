@@ -48,4 +48,36 @@ describe('[SDTP] subdomainToPath middleware', function () {
       }
     });
   });
+
+  describe('[SDPR] ignored subdomains given as a predicate', function () {
+    const route = (ignoredSubdomains, host, url = '/events') => {
+      const req = { url, headers: { host } };
+      require('middleware/src/subdomainToPath.ts').default([], ignoredSubdomains)(req, {}, () => {});
+      return req.url;
+    };
+
+    it('[SDPF] a label the predicate accepts is not rewritten, others are; the predicate sees the lowercased label', function () {
+      const seen = [];
+      let names = new Set(['records']);
+      const predicate = (label) => { seen.push(label); return names.has(label); };
+      assert.strictEqual(route(predicate, 'records.pryv.li'), '/events');
+      assert.strictEqual(route(predicate, 'Records.pryv.li'), '/events');
+      assert.strictEqual(route(predicate, 'alice.pryv.li'), '/alice/events');
+      assert.deepStrictEqual(seen, ['records', 'records', 'alice']);
+      // read on every request: a name the predicate learns later is skipped from then on
+      names = new Set(['records', 'alice']);
+      assert.strictEqual(route(predicate, 'alice.pryv.li'), '/events');
+    });
+
+    it('[SDPA] a list keeps its behaviour', function () {
+      assert.strictEqual(route(['records'], 'records.pryv.li'), '/events');
+      assert.strictEqual(route(['records'], 'alice.pryv.li'), '/alice/events');
+      assert.strictEqual(route(undefined, 'alice.pryv.li'), '/alice/events');
+    });
+
+    it('[SDPC] a list compares labels without case, as the predicate does', function () {
+      assert.strictEqual(route(['records'], 'Records.pryv.li'), '/events');
+      assert.strictEqual(route(['Records'], 'records.pryv.li'), '/events');
+    });
+  });
 });
