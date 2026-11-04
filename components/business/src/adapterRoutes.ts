@@ -54,6 +54,10 @@ type AdapterRoutesInput = {
   publicUrl?: string | null;
   /** `core.url`, used for the upstream loop check. */
   coreUrl?: string | null;
+  /** `http.ip`, the address this core listens on. */
+  listenIp?: string | null;
+  /** The ports this host's core processes listen on (`http.port`, `http.hfsPort`, `http.previewsPort`). */
+  listenPorts?: number[];
 };
 
 type AdapterRoutesReport = { routes: Map<string, AdapterRoute>; problems: string[]; warnings: string[] };
@@ -61,13 +65,15 @@ type AdapterRoutesReport = { routes: Map<string, AdapterRoute>; problems: string
 const DEFAULT_MAX_BODY_BYTES = 1048576;
 const DEFAULT_IDLE_TIMEOUT_MS = 60000;
 const LOW_IDLE_TIMEOUT_MS = 5000;
+/** 24 h: far above any useful idle time, well below the timer limit (2^31-1 ms). */
+const MAX_IDLE_TIMEOUT_MS = 86400000;
 
 /** A DNS label: 1-63 chars, lowercase letters, digits and inner hyphens. */
 const NAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 const NAME_MAX = 63;
 const KEYS = ['upstream', 'paths', 'maxBodyBytes', 'idleTimeoutMs'];
 /** The core's own `.well-known` documents: never claimable, whatever follows them. */
-const CORE_WELL_KNOWN_LABELS = ['oauth-authorization-server', 'openid-configuration'];
+const CORE_WELL_KNOWN_LABELS = ['oauth-authorization-server', 'openid-configuration', 'acme-challenge'];
 const WELL_KNOWN_RE = /^\/\.well-known\/([a-z0-9-]+)\/adapter\/([a-z0-9-]+)\//;
 
 function isPlainObject (v: unknown): v is Record<string, unknown> {
@@ -98,6 +104,14 @@ function isLocalHost (hostname: string): boolean {
     return host === '::1' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host);
   }
   return host === 'localhost' || host.endsWith('.localhost') || !host.includes('.');
+}
+
+/** Whether the host is this machine: loopback, unspecified, `localhost`, or `listenIp`. */
+function isThisMachine (hostname: string, listenIp: string | null): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '0.0.0.0' || host === '::' || host === '::1') return true;
+  if (net.isIP(host) === 4 && host.startsWith('127.')) return true;
+  return listenIp != null && host === listenIp.toLowerCase();
 }
 
 /** Problem with one claimed path of route `name`, or null when it is valid. */
@@ -139,6 +153,9 @@ function describeAdapterRoutes (input: AdapterRoutesInput): AdapterRoutesReport 
   const domain = (input.domain || '').toLowerCase() || null;
   const loopOrigins = [input.dnsLessActive === true ? originOf(input.publicUrl) : null, originOf(input.coreUrl)]
     .filter((o): o is { host: string; port: string } => o != null);
+  const listenIp = input.listenIp ? String(input.listenIp) : null;
+  const listenPorts = new Set((input.listenPorts || []).map(String));
+  const listensEverywhere = listenIp == null || listenIp === '0.0.0.0' || listenIp === '::';
 
   for (const name of Object.keys(raw)) {
     const where = `adapterRoutes.${name}`;
@@ -177,11 +194,20 @@ function describeAdapterRoutes (input: AdapterRoutesInput): AdapterRoutesReport 
       } else {
         const host = upstream.hostname.toLowerCase();
         const port = upstream.port || (upstream.protocol === 'https:' ? '443' : '80');
-        if ((domain != null && (host === domain || host.endsWith('.' + domain))) ||
+        if (port === '0') {
+          routeProblems.push(`${where}.upstream: the port must be between 1 and 65535`);
+          upstream = null;
+        } else if ((domain != null && (host === domain || host.endsWith('.' + domain))) ||
             loopOrigins.some((o) => o.host === host && o.port === port)) {
           routeProblems.push(`${where}.upstream points at this platform (${host}); the request would loop back here`);
           upstream = null;
-        } else if (upstream.protocol === 'http:' && !isLocalHost(host)) {
+        } else if (listenPorts.has(port) && isThisMachine(host, listenIp)) {
+          routeProblems.push(`${where}.upstream points at this core's own listener (${host}:${port}); the request would loop back here`);
+          upstream = null;
+        } else if (listenPorts.has(port) && listensEverywhere && net.isIP(upstream.hostname.replace(/^\[|\]$/g, '')) !== 0) {
+          warnings.push(`${where}.upstream uses port ${port}, which this core also listens on (on every interface): if ${host} is this host, the request loops back here`);
+        }
+        if (upstream != null && upstream.protocol === 'http:' && !isLocalHost(host)) {
           warnings.push(`${where}.upstream uses http to ${host}, which is not a local address: the traffic, credentials included, travels in clear`);
         }
       }
@@ -210,8 +236,8 @@ function describeAdapterRoutes (input: AdapterRoutesInput): AdapterRoutesReport 
     }
     let idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS;
     if (entry.idleTimeoutMs != null) {
-      if (!positiveInteger(entry.idleTimeoutMs)) {
-        routeProblems.push(`${where}.idleTimeoutMs must be a positive integer (milliseconds)`);
+      if (!positiveInteger(entry.idleTimeoutMs) || entry.idleTimeoutMs > MAX_IDLE_TIMEOUT_MS) {
+        routeProblems.push(`${where}.idleTimeoutMs must be a positive integer (milliseconds), at most ${MAX_IDLE_TIMEOUT_MS} (24 h)`);
       } else {
         idleTimeoutMs = entry.idleTimeoutMs;
         if (idleTimeoutMs < LOW_IDLE_TIMEOUT_MS) {
@@ -261,7 +287,11 @@ function adapterRoutesInputFromConfig (config: ConfigReader): AdapterRoutesInput
     domain: (config.get('dns:domain') as string) || null,
     dnsLessActive: config.get('dnsLess:isActive') === true,
     publicUrl: (config.get('dnsLess:publicUrl') as string) || null,
-    coreUrl: (config.get('core:url') as string) || null
+    coreUrl: (config.get('core:url') as string) || null,
+    // Same defaults as the api-server, which reads these keys to listen and route.
+    listenIp: (config.get('http:ip') as string) || '127.0.0.1',
+    listenPorts: [config.get('http:port'), config.get('http:hfsPort') || 4000, config.get('http:previewsPort') || 3001]
+      .map(Number).filter((p) => Number.isInteger(p) && p > 0)
   };
 }
 
@@ -293,5 +323,5 @@ async function checkAdapterRoutesAtBoot (
   return [];
 }
 
-export { describeAdapterRoutes, adapterRoutesInputFromConfig, parseAdapterRoutes, checkAdapterRoutesAtBoot, DEFAULT_MAX_BODY_BYTES, DEFAULT_IDLE_TIMEOUT_MS };
+export { describeAdapterRoutes, adapterRoutesInputFromConfig, parseAdapterRoutes, checkAdapterRoutesAtBoot, DEFAULT_MAX_BODY_BYTES, DEFAULT_IDLE_TIMEOUT_MS, MAX_IDLE_TIMEOUT_MS };
 export type { AdapterRoute, AdapterRoutesInput, AdapterRoutesReport };

@@ -27,7 +27,7 @@ const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSit
 const { guardIngress } = require('./ingressGuard.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
 const { parseAdapterRoutes, checkAdapterRoutesAtBoot } = require('business/src/adapterRoutes.ts');
-const { buildAdapterIngress } = require('./adapterIngress.ts');
+const { buildAdapterIngress, attachAdapterContinueCheck } = require('./adapterIngress.ts');
 const { getPlatform } = require('platform');
 const { checkValidityWindow, clockSkewSecondsFromConfig } = require('business/src/acme/certUtils.ts');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
@@ -130,6 +130,7 @@ class Server {
     // No core route starts like that, so nothing of the API is shadowed.
     const adapterRoutes = parseAdapterRoutes(config);
     let toAdapters = toSites;
+    let adaptersDispatch: { refuseBeforeContinue: unknown } | null = null;
     if (adapterRoutes.size > 0) {
       const adapterProblems = await checkAdapterRoutesAtBoot(adapterRoutes, await getUsersRepository());
       if (adapterProblems.length > 0) {
@@ -138,8 +139,9 @@ class Server {
       for (const route of adapterRoutes.values()) {
         this.logger.info(`adapter route ${route.name}: ${route.upstream} paths ${route.paths.join(' ')}`);
       }
-      const adaptersDispatch = buildAdapterIngress({ routes: adapterRoutes, logger: this.logger });
-      toAdapters = (req: unknown, res: unknown) => adaptersDispatch(req, res, toSites);
+      const dispatch = buildAdapterIngress({ routes: adapterRoutes, logger: this.logger });
+      adaptersDispatch = dispatch;
+      toAdapters = (req: unknown, res: unknown) => dispatch(req, res, toSites);
     }
     const requestHandler = guardIngress(toAdapters, this.logger);
     // Setup HTTP and register server; setup Socket.IO.
@@ -178,6 +180,8 @@ class Server {
     } else { // http
       server = http.createServer(requestHandler);
     }
+    // An oversize upload to an adapter route is refused before `100 Continue`.
+    if (adaptersDispatch != null) attachAdapterContinueCheck(server, adaptersDispatch, this.logger);
     await this.setupSocketIO(server);
     await this.startListen(server!, serverInfos);
     this.logger.info('Server ready. API Version: ' + apiVersion);

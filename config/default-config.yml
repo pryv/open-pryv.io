@@ -912,7 +912,7 @@ adapterRoutes: {}
 #                                          # must be /.well-known/<label>/adapter/<name>/
 #    maxBodyBytes: 1048576                 # optional; 413 past it; default 1 MiB
 #    idleTimeoutMs: 60000                  # optional; 504 when no byte moves for this long
-#                                          # (streams must keep alive); default 60 s
+#                                          # (streams must keep alive); default 60 s, at most 24 h
 
 # === PLATFORM-WIDE (targeted for PlatformDB migration before v2) ===
 # --- Hostings (regions/zones/providers) ---

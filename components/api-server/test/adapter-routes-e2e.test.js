@@ -242,16 +242,27 @@ describe('[ADRE] adapter routes served by the real api-server', function () {
     });
   });
 
-  it('[ADRE05b] a core with adapter routes refuses to start while a user is named "adapter"', async function () {
-    const { getUsersRepository, User } = require('business/src/users/index.ts');
-    const repo = await getUsersRepository();
-    const template = testData.users[0];
-    const id = cuid();
-    await repo.insertOne(new User({ id, username: 'adapter', password: template.password, email: 'adapter-' + id + '@adre.test' }), false, true);
-    try {
-      await assert.rejects(() => manager.ensureStartedAsync(settingsWith({ dnsLess: true })), /Server failed/);
-    } finally {
-      await repo.deleteOne(id, 'adapter');
-    }
+  // Last, after the suites above have started the same settings without the account.
+  describe('[ADRE3] boot refusal', function () {
+    it('[ADRE05b] a core with adapter routes refuses to start while a user is named "adapter"', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const repo = await getUsersRepository();
+      const template = testData.users[0];
+      const id = cuid();
+      // The child writes warn+ lines synchronously here (logs:fileSync).
+      const syncLog = path.join(__dirname, '../var-pryv/logs/test-sync.log');
+      const logSize = fs.existsSync(syncLog) ? fs.statSync(syncLog).size : 0;
+      await repo.insertOne(new User({ id, username: 'adapter', password: template.password, email: 'adapter-' + id + '@adre.test' }), false, true);
+      try {
+        await assert.rejects(() => manager.ensureStartedAsync(settingsWith({ dnsLess: true })), /Server failed/);
+        const written = fs.readFileSync(syncLog).subarray(logSize).toString();
+        assert.match(written, /Adapter routes cannot be served: adapterRoutes: a user named \\"adapter\\" exists; rename that user/);
+      } finally {
+        await repo.deleteOne(id, 'adapter');
+      }
+      // The same settings start once the account is gone.
+      await manager.ensureStartedAsync(settingsWith({ dnsLess: true }));
+      await manager.stopAsync();
+    });
   });
 });

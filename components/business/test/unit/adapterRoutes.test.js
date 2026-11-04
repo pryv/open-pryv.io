@@ -103,6 +103,27 @@ describe('[ADRC] adapterRoutes configuration', function () {
       assert.deepEqual(warningsOf({ calendar: { upstream } }), [], upstream);
     }
     assert.equal(describeAdapterRoutes(input({ calendar: { upstream: 'http://[::1]:7450' } })).routes.get('calendar').hostname, '::1');
+    assert.match(problemsOf({ calendar: { upstream: 'http://sidecar:0' } }).join(), /port must be between 1 and 65535/);
+    assert.match(problemsOf({ calendar: { upstream: 'http://sidecar:70000' } }).join(), /absolute http\(s\) origin/);
+  });
+
+  it('[ADRC08] the upstream cannot be this core\'s own listener or one of its workers', function () {
+    const own = { listenIp: '127.0.0.1', listenPorts: [3000, 4000, 3001] };
+    for (const upstream of ['http://127.0.0.1:3000', 'http://localhost:3000', 'http://0.0.0.0:3000', 'http://[::1]:3000', 'http://127.0.0.2:4000', 'http://localhost:3001']) {
+      assert.match(problemsOf({ calendar: { upstream } }, own).join(), /this core's own listener/, upstream);
+    }
+    assert.match(problemsOf({ calendar: { upstream: 'http://172.17.0.1:443' } }, { listenIp: '172.17.0.1', listenPorts: [443] }).join(), /own listener/);
+    // Another port, or another host while listening on loopback only: fine.
+    assert.deepEqual(problemsOf({ calendar: { upstream: 'http://127.0.0.1:7450' } }, own), []);
+    assert.deepEqual(warningsOf({ calendar: { upstream: 'http://172.17.0.1:3000' } }, own), []);
+    // Listening on every interface: an address on the same port may be this host.
+    const everywhere = { listenIp: '0.0.0.0', listenPorts: [443] };
+    assert.match(problemsOf({ calendar: { upstream: 'http://127.0.0.1:443' } }, everywhere).join(), /own listener/);
+    assert.match(warningsOf({ calendar: { upstream: 'http://172.17.0.1:443' } }, everywhere).join(), /also listens on/);
+    assert.deepEqual(warningsOf({ calendar: { upstream: 'http://sidecar:443' } }, everywhere), []);
+    // From a boiler config: http.ip, http.port and the worker ports, with the server's defaults.
+    const config = configOf({ adapterRoutes: { calendar: { upstream: 'http://127.0.0.1:4000' } }, 'http:ip': '127.0.0.1', 'http:port': 3000 });
+    assert.throws(() => parseAdapterRoutes(config), /own listener/);
   });
 
   it('[ADRC04] paths: /adapter/<name>/ implied, only own prefixes, no core label, no dubious form, no overlap', function () {
@@ -117,6 +138,7 @@ describe('[ADRC] adapterRoutes configuration', function () {
       '/oauth2/': /must start with/,
       '/.well-known/openid-configuration/adapter/calendar/': /served by the core/,
       '/.well-known/oauth-authorization-server/adapter/calendar/': /served by the core/,
+      '/.well-known/acme-challenge/adapter/calendar/': /served by the core/,
       '/.well-known/oauth-protected-resource/adapter/facade/': /must start with/,
       '/adapter/calendar/../x/': /dot segment/,
       '/adapter/calendar/./x/': /dot segment/,
@@ -148,6 +170,10 @@ describe('[ADRC] adapterRoutes configuration', function () {
     assert.deepEqual(r.warnings, []);
     assert.match(warningsOf({ calendar: { upstream: UP, idleTimeoutMs: 4999 } }).join(), /idleTimeoutMs is 4999 ms/);
     assert.deepEqual(warningsOf({ calendar: { upstream: UP, idleTimeoutMs: 5000 } }), []);
+    assert.deepEqual(problemsOf({ calendar: { upstream: UP, idleTimeoutMs: 86400000 } }), []);
+    for (const v of [86400001, 2 ** 31, 3e9]) {
+      assert.match(problemsOf({ calendar: { upstream: UP, idleTimeoutMs: v } }).join(), /at most 86400000/, String(v));
+    }
   });
 
   it('[ADRC06] an unknown key is a problem (typo safety); an invalid route is left out', function () {

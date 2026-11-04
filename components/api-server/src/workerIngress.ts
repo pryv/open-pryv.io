@@ -41,6 +41,13 @@ const DEFAULT_UPSTREAM_IDLE_TIMEOUT_MS = 60_000;
  */
 const HOP_BY_HOP_REQUEST = ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-authenticate', 'proxy-authorization', 'expect'];
 const HOP_BY_HOP_RESPONSE = ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-authenticate'];
+/**
+ * Headers a `Connection` token never removes: the message framing, the Host,
+ * and the forwarding headers this proxy controls. A client listing
+ * `content-length` there would otherwise send its body to the upstream
+ * unframed, where it reads as a further request.
+ */
+const NEVER_DROPPED = new Set(['host', 'content-length', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto']);
 
 const JSON_ERROR_HEADERS = { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
 
@@ -77,7 +84,9 @@ type WorkerProxyOptions = {
   /** Log the path without its query (the workers log the redacted URL). */
   logPathOnly?: boolean,
   /** Release the upstream request when the client leaves before the answer is complete. */
-  releaseOnClientClose?: boolean
+  releaseOnClientClose?: boolean,
+  /** Agent for the upstream connections; the global agent unless set. */
+  agent?: http.Agent
 };
 
 /** Headers named by `connection` (and the hop-by-hop list), lowercased. */
@@ -88,7 +97,7 @@ function hopByHopOf (headers: IncomingHttpHeaders, base: string[]): Set<string> 
   for (const v of values) {
     for (const token of v.split(',')) {
       const t = token.trim().toLowerCase();
-      if (t !== '') names.add(t);
+      if (t !== '' && !NEVER_DROPPED.has(t)) names.add(t);
     }
   }
   return names;
@@ -99,6 +108,21 @@ function withoutHopByHop (headers: IncomingHttpHeaders, base: string[]): Incomin
   const out: IncomingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
     if (!drop.has(name)) out[name] = value;
+  }
+  return out;
+}
+
+/**
+ * The upstream's response headers as it sent them: a header Node joined into
+ * one `, `-separated line (several `WWW-Authenticate` challenges, `Link`)
+ * goes back as separate lines. Headers Node keeps the first of (e.g.
+ * `content-type`, `content-length`) stay single.
+ */
+function responseHeadersAsSent (proxyRes: IncomingMessage): IncomingHttpHeaders {
+  const out: IncomingHttpHeaders = { ...proxyRes.headers };
+  for (const [name, values] of Object.entries(proxyRes.headersDistinct)) {
+    const joined = out[name];
+    if (values != null && values.length > 1 && typeof joined === 'string' && joined === values.join(', ')) out[name] = values;
   }
   return out;
 }
@@ -155,11 +179,13 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       if (headers['x-forwarded-host'] == null && req.headers.host != null) headers['x-forwarded-host'] = req.headers.host;
       if (headers['x-forwarded-proto'] == null) headers['x-forwarded-proto'] = (req.socket as TLSSocket | undefined)?.encrypted === true ? 'https' : 'http';
     }
-    // The client's body arrives decoded from its chunked framing: re-frame it
+    // Framing is derived from the request as received, never from what is left
+    // after the strip: the declared length as is, else a chunked body re-framed
     // as chunked whatever the method (Node frames only some methods by default,
     // and an unframed body would be read by the upstream as a next request).
-    if (stripHopByHop && req.headers['transfer-encoding'] != null && req.headers['content-length'] == null) {
-      headers['transfer-encoding'] = 'chunked';
+    if (stripHopByHop) {
+      if (req.headers['content-length'] != null) headers['content-length'] = req.headers['content-length'];
+      else if (req.headers['transfer-encoding'] != null) headers['transfer-encoding'] = 'chunked';
     }
 
     let bodyTooLarge = false;
@@ -178,6 +204,7 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       method: req.method,
       path: targetPath,
       headers,
+      ...(opts.agent != null ? { agent: opts.agent } : {}),
       ...tlsOptions
     }, (proxyRes: IncomingMessage) => {
       // The client may have left while the worker was still working on the
@@ -202,7 +229,7 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
         }
       });
       try {
-        res.writeHead(proxyRes.statusCode ?? 500, stripHopByHop ? withoutHopByHop(proxyRes.headers, HOP_BY_HOP_RESPONSE) : proxyRes.headers);
+        res.writeHead(proxyRes.statusCode ?? 500, stripHopByHop ? withoutHopByHop(responseHeadersAsSent(proxyRes), HOP_BY_HOP_RESPONSE) : proxyRes.headers);
       } catch (err) {
         // A throw here is in the client request's callback: it would end the worker.
         proxyRes.destroy();

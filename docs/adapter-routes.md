@@ -34,10 +34,10 @@ adapterRoutes:
 | Key | Rule |
 |---|---|
 | name | a DNS label (1-63 lowercase letters, digits, inner hyphens); `adapter` is refused |
-| `upstream` | an absolute `http:` or `https:` origin, no path, query, fragment or credentials; never this platform (`dns.domain` or a subdomain, the dnsLess `publicUrl` origin, the `core.url` origin). `http:` to an address that is not loopback, private, link-local or a single-label container name warns at boot (the traffic, credentials included, travels in clear) |
-| `paths` | each entry starts with `/adapter/<name>/` or `/.well-known/<label>/adapter/<name>/`, ends with `/`, holds no `%`, no `//`, no dot segment, no query; `/.well-known/oauth-authorization-server/...` and `/.well-known/openid-configuration/...` are refused (the core serves them) |
+| `upstream` | an absolute `http:` or `https:` origin (port 1-65535), no path, query, fragment or credentials; never this platform (`dns.domain` or a subdomain, the dnsLess `publicUrl` origin, the `core.url` origin) nor this core's own listener (`http.port`, `http.hfsPort`, `http.previewsPort` on a loopback address, `localhost`, `0.0.0.0` or `http.ip`; on another address of the host when `http.ip` is `0.0.0.0` it warns). `http:` to an address that is not loopback, private, link-local or a single-label container name warns at boot (the traffic, credentials included, travels in clear) |
+| `paths` | each entry starts with `/adapter/<name>/` or `/.well-known/<label>/adapter/<name>/`, ends with `/`, holds no `%`, no `//`, no dot segment, no query; `/.well-known/oauth-authorization-server/...`, `/.well-known/openid-configuration/...` and `/.well-known/acme-challenge/...` are refused (the core serves them) |
 | `maxBodyBytes` | positive integer, bytes |
-| `idleTimeoutMs` | positive integer, milliseconds; below 5000 warns |
+| `idleTimeoutMs` | positive integer, milliseconds, at most 86400000 (24 h); below 5000 warns |
 
 Unknown keys are refused (typo safety). `bin/check-config.js` and the boot validation report every
 problem with its key path. Keep the route names and `paths` identical on every core of a platform
@@ -46,6 +46,8 @@ problem with its key path. Keep the route names and `paths` identical on every c
 **Reserved username.** `adapter` cannot be registered nor taken by a rename, on every core and in both
 topologies. A core with at least one route refuses to boot while an account named `adapter` exists on
 the platform (rename it with `account.changeUsername` first); without a route nothing changes for it.
+A backup that names an account `adapter` is refused at restore ("reserved username"; `--skip-conflicts`
+does not bypass it): rename the account on the source platform and back it up again.
 
 At boot each route logs one line: `adapter route <name>: <upstream> paths <list>`. There is no probe of
 the upstream and nothing in `/service/info`: a sidecar may start after the core.
@@ -59,7 +61,9 @@ resolved, `\` read as `/`); the normalised path is both what is matched and what
 the query unchanged. `/adapter/<name>` without its trailing slash is forwarded as is (no redirect).
 
 **Request:**
-- every method (OPTIONS and preflights included), the body, streamed;
+- every method but TRACE (OPTIONS and preflights included), the body, streamed. A declared
+  `Content-Length` is forwarded as is, a chunked body is forwarded chunked; a `Connection` header
+  cannot remove `Host`, `Content-Length` or the `X-Forwarded-*` headers;
 - every header except the hop-by-hop ones (`Connection` and the headers it names, `Keep-Alive`,
   `Proxy-Connection`, `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade`, `Proxy-Authenticate`,
   `Proxy-Authorization`) and `Expect` (the core answers `100 Continue` itself). `Authorization`,
@@ -75,6 +79,9 @@ the query unchanged. `/adapter/<name>` without its trailing slash is forwarded a
 `Location` and `Access-Control-*` included, streamed (an event stream is passed on as it is written).
 The core adds no header of its own: no CORS, no `X-Content-Type-Options`, no HSTS, no `API-Version`.
 
+Each request uses a new connection to the sidecar (no keep-alive pool), so the sidecar's own
+keep-alive timeout does not matter.
+
 **Not supported:** WebSocket upgrades (the upgrade request is not forwarded and its connection is
 closed). Streamable HTTP and server-sent events are plain responses and work.
 
@@ -82,15 +89,22 @@ closed). Streamable HTTP and server-sent events are plain responses and work.
 
 | Status | When | Body (`application/json`, `nosniff`, `no-store`) |
 |---|---|---|
-| 400 | the path holds an encoded `/` or `\` (`%2f`, `%5c`), `%00`, an invalid percent-encoding, or an encoded dot segment | `{ "error": { "id": "invalid-request-structure", ... } }` |
-| 413 | the body is above `maxBodyBytes` (declared length: at once, without contacting the sidecar; chunked: when it crosses the cap); the connection is closed | `{ "error": { "id": "invalid-request-structure", "message": "request body exceeds adapterRoutes.<name>.maxBodyBytes (<n> bytes)" } }` |
+| 400 | the path holds an encoded `/` or `\` (`%2f`, `%5c`), `%00`, a percent-encoding that is invalid or not UTF-8 (e.g. `%FF`), or an encoded dot segment; or the request's `Transfer-Encoding` is not exactly `chunked`; the connection is closed | `{ "error": { "id": "invalid-request-structure", ... } }` |
+| 405 | the method is TRACE (it would echo the credentials); the connection is closed | `{ "error": { "id": "invalid-operation", ... } }` |
+| 413 | the body is above `maxBodyBytes` (declared length: at once, without contacting the sidecar, and without `100 Continue` for a client that sent `Expect: 100-continue`; chunked: when it crosses the cap); the connection is closed | `{ "error": { "id": "invalid-request-structure", "message": "request body exceeds adapterRoutes.<name>.maxBodyBytes (<n> bytes)" } }` |
 | 502 | the sidecar cannot be reached (refused, reset, TLS failure) before it answered | `{ "error": { "id": "unexpected-error", "message": "adapter <name> unreachable" } }` |
 | 504 | no byte moved on the sidecar connection for `idleTimeoutMs` before it answered | `{ "error": { "id": "unexpected-error", "message": "adapter <name> timed out" } }` |
 
 After the answer has started, a failure closes the connection instead. The idle timeout has no total
 counterpart: a stream lives as long as bytes move, so a sidecar that holds a stream open must send
 something (an SSE comment) more often than `idleTimeoutMs`. A client that leaves ends the upstream
-request. No answer names the upstream address.
+request. No answer names the upstream address. A client still uploading when the 413 arrives may see
+its connection reset before it reads the answer (no lingering close).
+
+Path and header fidelity: a raw non-ASCII byte in the path reaches the sidecar percent-encoded as UTF-8;
+a response header the sidecar sent several times (`WWW-Authenticate`, `Link`, `Set-Cookie`) goes back
+as several lines; a request header the client sent several times reaches the sidecar as one
+comma-separated line.
 
 Logs: one `debug` line per request (route, method, path without its query, status, duration), one
 `warn` line per 400 / 413 / 502 / 504; never a header value or a body.

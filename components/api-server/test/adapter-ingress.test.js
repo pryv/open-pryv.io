@@ -11,7 +11,8 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const https = require('node:https');
-const { buildAdapterIngress } = require('../src/adapterIngress.ts');
+const net = require('node:net');
+const { buildAdapterIngress, attachAdapterContinueCheck } = require('../src/adapterIngress.ts');
 const { describeAdapterRoutes } = require('business/src/adapterRoutes.ts');
 const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
 
@@ -92,6 +93,43 @@ function request (port, { method = 'GET', path = '/', headers = {}, body, chunks
   });
 }
 
+/**
+ * Sends `text` as is on a new connection; resolves with what came back once
+ * the server has answered (or closed) and `settleMs` passed.
+ */
+function rawRequest (port, text, settleMs = 300) {
+  return new Promise((resolve, reject) => {
+    let answer = '';
+    const socket = net.connect(port, '127.0.0.1', () => socket.write(text));
+    socket.on('data', (c) => { answer += c; });
+    socket.on('error', reject);
+    let done = false;
+    const finish = () => { if (done) return; done = true; socket.destroy(); resolve(answer); };
+    socket.on('close', () => setTimeout(finish, settleMs));
+    const timer = setInterval(() => {
+      if (/^HTTP\/1\.1 \d{3}/.test(answer) && answer.includes('\r\n\r\n')) { clearInterval(timer); setTimeout(finish, settleMs); }
+    }, 20);
+    setTimeout(() => { clearInterval(timer); finish(); }, 5000);
+  });
+}
+
+/** A self-signed certificate valid for the IP 127.0.0.1 (no DNS name). */
+function ipCertificate () {
+  const forge = require('node-forge');
+  const keys = forge.pki.rsa.generateKeyPair({ bits: 2048 });
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = keys.publicKey;
+  cert.serialNumber = '01';
+  cert.validity.notBefore = new Date(Date.now() - 60000);
+  cert.validity.notAfter = new Date(Date.now() + 3600000);
+  const subject = [{ name: 'commonName', value: '127.0.0.1' }];
+  cert.setSubject(subject);
+  cert.setIssuer(subject);
+  cert.setExtensions([{ name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.1' }] }]);
+  cert.sign(keys.privateKey, forge.md.sha256.create());
+  return { keyPem: forge.pki.privateKeyToPem(keys.privateKey), certPem: forge.pki.certificateToPem(cert) };
+}
+
 describe('[ADRI] adapter routes in-process dispatcher', function () {
   this.timeout(10000);
   const savedTrust = currentTrustedProxies();
@@ -115,6 +153,7 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
     front = opts.tls != null
       ? https.createServer(opts.tls, (req, res) => dispatch(req, res, fallback))
       : http.createServer((req, res) => dispatch(req, res, fallback));
+    attachAdapterContinueCheck(front, dispatch, quietLogger);
     await listen(front);
     frontPort = front.address().port;
   }
@@ -151,7 +190,7 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
     assert.equal(upstream.seen.length, before, 'none of them reached the upstream');
   });
 
-  it('[ADRI02] every method reaches the upstream with its body, a chunked body included, whatever the method', async function () {
+  it('[ADRI02] every method but TRACE reaches the upstream with its body, a chunked body included, whatever the method', async function () {
     await setup();
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
       const body = 'body of ' + method;
@@ -160,12 +199,19 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
       assert.equal(upstream.seen.at(-1).method, method);
       assert.equal(upstream.seen.at(-1).body, 'body of ' + method);
     }
-    for (const method of ['GET', 'HEAD', 'TRACE']) {
+    for (const method of ['GET', 'HEAD']) {
       const res = await request(frontPort, { method, path: '/adapter/calendar/m' });
       assert.equal(res.status, 200, method);
       assert.equal(upstream.seen.at(-1).method, method);
       if (method === 'HEAD') assert.equal(res.body, '');
     }
+    // TRACE would echo the credentials: answered by the core.
+    const count = upstream.seen.length;
+    const trace = await request(frontPort, { method: 'TRACE', path: '/adapter/calendar/m', headers: { authorization: 'Bearer abc' } });
+    assert.equal(trace.status, 405);
+    assert.equal(trace.headers.connection, 'close');
+    assert.deepEqual(JSON.parse(trace.body), { error: { id: 'invalid-operation', message: 'adapter calendar: TRACE is not allowed' } });
+    assert.equal(upstream.seen.length, count, 'TRACE did not reach the upstream');
     for (const method of ['DELETE', 'POST', 'GET']) {
       // Framed explicitly: Node's client sends a GET or DELETE body unframed otherwise.
       const res = await request(frontPort, { method, path: '/adapter/calendar/chunked', headers: { 'transfer-encoding': 'chunked' }, chunks: ['one,', 'two,', 'three'] });
@@ -175,10 +221,41 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
       assert.equal(seen.headers['transfer-encoding'], 'chunked', method);
       assert.equal(seen.headers['content-length'], undefined, method);
     }
-    // The connection to the upstream stays usable: the next request is read as one.
+    // The next request is read as one.
     const res = await request(frontPort, { path: '/adapter/calendar/after' });
     assert.equal(res.status, 200);
     assert.equal(upstream.seen.at(-1).url, '/adapter/calendar/after');
+  });
+
+  it('[ADRI14] a Connection header cannot remove the framing nor the Host: a request-shaped body is never read as a second request', async function () {
+    await setup();
+    const inner = 'GET /elsewhere HTTP/1.1\r\nHost: x\r\nX-Forwarded-For: 10.0.0.1\r\n\r\n';
+    for (const [method, connection] of [['GET', 'content-length'], ['DELETE', 'content-length'], ['OPTIONS', 'content-length'], ['GET', 'host, content-length'], ['DELETE', 'Host']]) {
+      upstream.seen.length = 0;
+      const answer = await rawRequest(frontPort,
+        `${method} /adapter/calendar/x HTTP/1.1\r\nHost: public.example\r\nConnection: ${connection}\r\nContent-Length: ${inner.length}\r\n\r\n${inner}`);
+      const label = method + ' / ' + connection;
+      assert.match(answer, /^HTTP\/1\.1 200/, label);
+      assert.equal(upstream.seen.length, 1, label + ': the upstream saw exactly one request');
+      const seen = upstream.seen[0];
+      assert.equal(seen.url, '/adapter/calendar/x', label);
+      assert.equal(seen.headers['content-length'], String(inner.length), label);
+      assert.equal(seen.headers.host, 'public.example', label);
+      assert.equal(seen.body, inner, label);
+    }
+  });
+
+  it('[ADRI15] a transfer-encoding other than chunked is refused before the upstream', async function () {
+    await setup();
+    const answer = await rawRequest(frontPort,
+      'POST /adapter/calendar/x HTTP/1.1\r\nHost: public.example\r\nTransfer-Encoding: gzip, chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n');
+    assert.match(answer, /^HTTP\/1\.1 400/);
+    assert.match(answer, /only the chunked transfer-encoding is accepted/);
+    assert.equal(upstream.seen.length, 0);
+    const chunked = await rawRequest(frontPort,
+      'POST /adapter/calendar/x HTTP/1.1\r\nHost: public.example\r\nTransfer-Encoding: Chunked\r\nConnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n');
+    assert.match(chunked, /^HTTP\/1\.1 200/);
+    assert.equal(upstream.seen.at(-1).body, 'hello');
   });
 
   it('[ADRI03] request headers: credentials and custom headers pass, hop-by-hop ones do not; Host kept; X-Forwarded-* set by the core', async function () {
@@ -265,7 +342,8 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
     await setup((req, res) => {
       req.resume();
       res.writeHead(418, {
-        'www-authenticate': 'Bearer realm="x", error="invalid_token"',
+        'www-authenticate': ['Bearer realm="x", error="invalid_token"', 'DPoP algs="ES256"'],
+        link: ['<a>; rel="x"', '<b>; rel="y"'],
         'set-cookie': ['a=1; HttpOnly', 'b=2'],
         'access-control-allow-origin': 'https://app.example',
         'x-custom': 'yes',
@@ -280,14 +358,19 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
     const res = await request(frontPort, { path: '/adapter/calendar/r', headers: { origin: 'https://app.example' } });
     assert.equal(res.status, 418);
     assert.equal(res.body, 'hello');
-    assert.equal(res.headers['www-authenticate'], 'Bearer realm="x", error="invalid_token"');
+    // Repeated headers come back as the separate lines the upstream sent.
+    const lines = (name) => res.rawHeaders.filter((_, i) => i % 2 === 0 && res.rawHeaders[i].toLowerCase() === name).length;
+    assert.equal(lines('www-authenticate'), 2);
+    assert.equal(lines('link'), 2);
+    assert.equal(lines('set-cookie'), 2);
+    assert.equal(res.headers['www-authenticate'], 'Bearer realm="x", error="invalid_token", DPoP algs="ES256"');
     assert.deepEqual(res.headers['set-cookie'], ['a=1; HttpOnly', 'b=2']);
     assert.equal(res.headers['access-control-allow-origin'], 'https://app.example');
     assert.equal(res.headers['x-custom'], 'yes');
     assert.equal(res.headers['content-length'], '5');
     assert.equal(res.headers['x-drop'], undefined);
     assert.notEqual(res.headers['keep-alive'], 'timeout=99');
-    const allowed = new Set(['www-authenticate', 'set-cookie', 'access-control-allow-origin', 'x-custom', 'content-type', 'content-length', 'date', 'connection', 'keep-alive']);
+    const allowed = new Set(['www-authenticate', 'link', 'set-cookie', 'access-control-allow-origin', 'x-custom', 'content-type', 'content-length', 'date', 'connection', 'keep-alive']);
     for (const name of Object.keys(res.headers)) assert.ok(allowed.has(name), 'unexpected header ' + name);
 
     // A chunked upstream answer is re-chunked, not double-chunked.
@@ -352,16 +435,38 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
     const atCap = await request(frontPort, { method: 'POST', path: '/adapter/calendar/ok', body: 'x'.repeat(1000) });
     assert.equal(atCap.status, 200);
 
-    const chunked = await request(frontPort, { method: 'POST', path: '/adapter/calendar/big', chunks: ['y'.repeat(600), 'y'.repeat(600), 'y'.repeat(600)] })
-      .catch((err) => ({ error: err }));
-    if (chunked.error == null) {
-      assert.equal(chunked.status, 413);
-      assert.equal(chunked.headers.connection, 'close');
-    }
+    // Chunked: the client stops writing once it has the answer.
+    const chunked = await new Promise((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port: frontPort, method: 'POST', path: '/adapter/calendar/big' });
+      const state = { answered: null };
+      r.on('response', (res) => { state.answered = { status: res.statusCode, headers: res.headers }; res.resume(); resolve(state.answered); });
+      r.on('error', (err) => { if (state.answered == null) reject(err); });
+      (async () => {
+        for (let i = 0; i < 3 && state.answered == null; i++) { r.write('y'.repeat(600)); await sleep(50); }
+        if (state.answered == null) r.end();
+      })();
+    });
+    assert.equal(chunked.status, 413);
+    assert.equal(chunked.headers.connection, 'close');
     const seen = upstream.seen.at(-1);
     assert.equal(seen.url, '/adapter/calendar/big');
     await seen.closed;
     assert.equal(seen.complete, false, 'the upstream request was cut before its body completed');
+    assert.equal(seen.body.length, 600, 'the chunk that crossed the cap was not forwarded');
+
+    // Expect: 100-continue with a declared length over the cap: refused before the client sends the body.
+    const before = upstream.seen.length;
+    const early = await new Promise((resolve, reject) => {
+      const r = http.request({ host: '127.0.0.1', port: frontPort, method: 'POST', path: '/adapter/calendar/big', headers: { expect: '100-continue', 'content-length': '5000' } });
+      let continued = false;
+      r.on('continue', () => { continued = true; r.end('x'.repeat(5000)); });
+      r.on('response', (res) => { res.resume(); resolve({ status: res.statusCode, continued }); });
+      r.on('error', reject);
+      r.flushHeaders();
+    });
+    assert.equal(early.status, 413);
+    assert.equal(early.continued, false, 'no 100 Continue before the 413');
+    assert.equal(upstream.seen.length, before);
   });
 
   it('[ADRI07] upstream down: 502 naming the route only', async function () {
@@ -405,6 +510,7 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
       const res = await request(frontPort, { path });
       assert.equal(res.status, 400, path);
       assert.equal(JSON.parse(res.body).error.id, 'invalid-request-structure', path);
+      assert.equal(res.headers.connection, 'close', path);
     }
     for (const path of ['/adapter/calendar/../oauth2/token', '/adapter/calendar/../../oauth2/token', '/adapter/calendar/%2e%2e/%2E%2E/oauth2/token']) {
       const res = await request(frontPort, { path });
@@ -498,6 +604,23 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
       const refused = await request(strictFront.address().port, { path: '/adapter/calendar/x' });
       await close(strictFront);
       assert.equal(refused.status, 502);
+    } finally {
+      await close(tlsUpstream);
+    }
+  });
+
+  it('[ADRI13b] an https upstream given by IP is verified against the certificate\'s IP entry', async function () {
+    const { keyPem, certPem } = ipCertificate();
+    const tlsUpstream = https.createServer({ key: keyPem, cert: certPem }, (req, res) => { req.resume(); res.end('ip ok'); });
+    await listen(tlsUpstream);
+    try {
+      const routes = routesOf({ calendar: { upstream: 'https://127.0.0.1:' + tlsUpstream.address().port } });
+      const dispatch = buildAdapterIngress({ routes, logger: quietLogger, ca: certPem });
+      front = http.createServer((req, res) => dispatch(req, res, () => assert.fail('no fallback')));
+      await listen(front);
+      const res = await request(front.address().port, { path: '/adapter/calendar/x', headers: { host: 'public.example' } });
+      assert.equal(res.status, 200);
+      assert.equal(res.body, 'ip ok');
     } finally {
       await close(tlsUpstream);
     }
