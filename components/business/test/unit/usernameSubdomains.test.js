@@ -15,7 +15,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { ignoredUsernameSubdomains } = require('../../src/usernameSubdomains.ts');
+const { ignoredUsernameSubdomains, ROOT_ONLY_PATHS } = require('../../src/usernameSubdomains.ts');
 const subdomainToPath = require('middleware/src/subdomainToPath.ts').default;
 
 const config = (values) => ({ get: (key) => values[key] });
@@ -38,6 +38,24 @@ describe('[USUB] username subdomains ignored by the rewriter', () => {
     assert.strictEqual(routedPath('single', 'single.example.com', '/users/alice'), '/users/alice');
     assert.strictEqual(routedPath('core-a', 'core-a.example.com', '/users/alice'), '/users/alice');
     assert.strictEqual(routedPath('single', 'alice.example.com', '/events'), '/alice/events');
+  });
+
+  it('[USUB-04] the OAuth and discovery paths stay at the root on any host; other paths of a user host are still rewritten', () => {
+    const ignored = ignoredUsernameSubdomains(config({ 'core:id': 'core-a' }));
+    // the api-server's ignore list: the root routes plus the root-only prefixes
+    const routed = (host, url) => {
+      const req = { url, headers: { host } };
+      subdomainToPath(['/system', '/reg'].concat(ROOT_ONLY_PATHS), ignored)(req, {}, () => {});
+      return req.url;
+    };
+    for (const host of ['auth-eu.example.com', 'alice.example.com']) {
+      for (const url of ['/oauth2/authorize?client_id=x', '/oauth2/token', '/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
+        assert.strictEqual(routed(host, url), url, host + url);
+      }
+    }
+    // prefix with the trailing slash: a look-alike path is a user path
+    assert.strictEqual(routed('alice.example.com', '/oauth2x/y'), '/alice/oauth2x/y');
+    assert.strictEqual(routed('alice.example.com', '/events'), '/alice/events');
   });
 
   it('[USUB-03] `single` cannot be registered as a username (its host is the core)', () => {

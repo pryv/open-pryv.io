@@ -13,7 +13,8 @@ const require = createRequire(import.meta.url);
  * and later callers must get the one initialisation (never a half-initialised
  * platform) and a failed one must be retryable. A multi-core core re-reads the
  * other cores' URLs periodically, so it learns a core that joined or moved
- * after it booted.
+ * after it booted. The api-server re-reads the platform names the same way
+ * (its username-rewriter skips them).
  */
 
 const assert = require('node:assert/strict');
@@ -53,7 +54,7 @@ describe('[PINI] Platform.init is shared and retryable', () => {
   });
 });
 
-describe('[PCUR] core URL cache refresh', () => {
+describe('[PCUR] core URL cache and platform names refresh', () => {
   it('[PCUR-01] the periodic refresh learns a core that joined, and a core that moved', async () => {
     const rows = [{ id: 'core-a', url: 'https://core-a.example.com/' }];
     const db = { async getAllCoreInfos () { return rows.map((r) => ({ ...r })); } };
@@ -75,6 +76,39 @@ describe('[PCUR] core URL cache refresh', () => {
     } finally {
       p.stopCoreUrlRefresh();
     }
+  });
+
+  it('[PNRF-01] the platform names refresh learns a runtime record, keeps the previous names on a failed read, and stops', async () => {
+    const records = [];
+    let fail = false;
+    let reads = 0;
+    const db = {
+      async getAllCoreInfos () { return [{ id: 'core-a' }]; },
+      async getAllDnsRecords () {
+        reads++;
+        if (fail) throw new Error('rqlite unavailable');
+        return records.map((r) => ({ ...r }));
+      }
+    };
+    const values = { 'core:id': 'core-a', 'dns:domain': 'example.com' };
+    const p = new Platform();
+    p._setDependenciesForTests(db, null, { get: (key) => values[key] });
+    await p.refreshPlatformNames();
+    assert.strictEqual(p.isUsernameRoutingReserved('vanity'), false);
+    p.startPlatformNamesRefresh(10);
+    try {
+      records.push({ subdomain: 'vanity', records: { a: ['10.0.0.1'] } });
+      await wait(60);
+      assert.strictEqual(p.isUsernameRoutingReserved('vanity'), true);
+      fail = true;
+      await wait(40);
+      assert.strictEqual(p.isUsernameRoutingReserved('vanity'), true, 'previous names kept');
+    } finally {
+      p.stopPlatformNamesRefresh();
+    }
+    const readsAtStop = reads;
+    await wait(40);
+    assert.strictEqual(reads, readsAtStop, 'no read after stop');
   });
 
   it('[PCUR-02] a failed refresh keeps the previous URLs', async () => {

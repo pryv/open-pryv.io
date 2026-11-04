@@ -55,6 +55,31 @@
   consumed first, so an answer made after the invite reads `accepted` meets the consumed link and
   fails with `cmc-capability-consumed`. Open-link invites are unchanged.
 
+### OAuth: the issuer host on a platform with the embedded DNS
+
+- **Fixed: the OAuth endpoints answer 404 on a vanity issuer host of a DNS-topology core.** With
+  `dnsLess.isActive: false`, the username-in-host rewriter read the first label of an issuer host
+  such as `auth-eu.<dns.domain>` as a username and turned `/oauth2/*` and
+  `/.well-known/oauth-authorization-server` into `/auth-eu/oauth2/...`, unless the label was also a
+  `dns.staticEntries` key. `/oauth2/*` and `/.well-known/*` are now root-only on every host the core
+  answers, so the OAuth surface works on any issuer host the core receives (a user host such as
+  `alice.<dns.domain>/oauth2/...` answers the platform's endpoints too; the discovery document always
+  names the configured issuer).
+- **Changed: the label of `oauth.issuer` is refused as a username** when the issuer host is
+  `<label>.<dns.domain>` (registration and `check_username`), like a core id or a static entry.
+- **Changed: a runtime DNS record name (`/reg/records`, `bin/dns-records.js`) is skipped by the
+  api-server's username rewriter like a `dns.staticEntries` key**: `<record>.<dns.domain>/<user>/...`
+  is served as on the core's own host instead of `/<record>/<user>/...`. The api-server re-reads the
+  names every 30 s, and at once after a `/reg/records` change on the same core. The HFS and previews
+  workers still skip the configured names only.
+- **Added: `bin/check-config.js` and the boot log check the `oauth.issuer` host** when `dns.domain`
+  is set: a warning for an issuer outside `dns.domain` on a core that terminates TLS itself (its
+  certificate covers `*.<dns.domain>` only), a warning for a name under `dns.domain` that the
+  configuration does not make resolve (neither the core id nor a `dns.staticEntries` key: add one, or
+  a runtime record), and a problem for a label the core serves otherwise (`reg`, `access`, `mfa`,
+  `lsc`, a hosted site) or an `oauth.issuer` that is not an absolute http(s) URL. The boot never
+  refuses on these. See `docs/oauth2.md` "`issuer` (optional)".
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

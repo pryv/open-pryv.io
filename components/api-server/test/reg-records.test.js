@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-/* global initTests, initCore, coreRequest, assert, config, getNewFixture */
+/* global initTests, initCore, coreRequest, assert, config, getNewFixture, app, injectTestConfigSnapshot */
 
 const cuid = require('cuid');
 const { captureWarnings } = require('test-helpers/src/captureWarnings.ts');
@@ -189,6 +189,78 @@ describe('[RGRC] Register records admin endpoint', () => {
         assert.strictEqual((await coreRequest.get('/reg/' + sub + '/check_username')).body.reserved, true);
       } finally {
         await platform.deleteDnsRecord(sub);
+      }
+    });
+  });
+
+  describe('runtime record names on a DNS-topology host', () => {
+    const DOMAIN = 'rr-host.pryv.li';
+    let front, fixtures, username, token;
+    // The test core runs dnsLess: the front of a DNS-topology app (its
+    // username-rewriter included) is put before it, as in reg-gap-features.
+    before(async function () {
+      this.timeout(30000);
+      const { listeningAgent } = require('test-helpers');
+      const { expressAppInit } = require('../src/expressApp.ts');
+      const restore = injectTestConfigSnapshot({ dnsLess: { isActive: false }, dns: { domain: DOMAIN } });
+      let frontApp;
+      try {
+        frontApp = await expressAppInit(app.logging);
+      } finally {
+        restore();
+      }
+      frontApp.use((req, res, next) => app.expressApp(req, res, next));
+      front = await listeningAgent(frontApp);
+      fixtures = getNewFixture();
+      username = 'rrhost' + cuid().slice(-8).toLowerCase();
+      token = cuid();
+      const user = await fixtures.user(username);
+      await user.access({ type: 'personal', token });
+      await user.session(token);
+    });
+    after(async function () {
+      platform.stopPlatformNamesRefresh();
+      await fixtures.clean();
+    });
+
+    const getEvents = (sub) => front.get('/' + username + '/events').set('Host', sub + '.' + DOMAIN).set('Authorization', token);
+
+    it('[RR15] a record written or deleted through /reg/records is skipped by the username-rewriter at once', async () => {
+      const sub = 'rrvan' + cuid().slice(-8).toLowerCase();
+      // not a platform name yet: read as a username
+      assert.strictEqual((await getEvents(sub)).status, 404);
+      let res = await coreRequest.post('/reg/records')
+        .set('Authorization', adminAccessKey)
+        .send({ subdomain: sub, records: { a: ['10.0.0.9'] } });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      try {
+        res = await getEvents(sub);
+        assert.strictEqual(res.status, 200, res.text);
+        assert.ok(Array.isArray(res.body.events), res.text);
+      } finally {
+        res = await coreRequest.delete('/reg/records/' + sub).set('Authorization', adminAccessKey);
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      }
+      assert.strictEqual((await getEvents(sub)).status, 404);
+    });
+
+    it('[RR16] a record written by another core is learnt by the periodic refresh', async () => {
+      const sub = 'rrper' + cuid().slice(-8).toLowerCase();
+      platform.startPlatformNamesRefresh(50);
+      try {
+        // straight to PlatformDB, as another core (or bin/dns-records.js) does
+        await platform.setDnsRecord(sub, { a: ['10.0.0.9'] });
+        let res;
+        for (let i = 0; i < 40; i++) {
+          res = await getEvents(sub);
+          if (res.status === 200) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        assert.strictEqual(res.status, 200, res.text);
+      } finally {
+        platform.stopPlatformNamesRefresh();
+        await platform.deleteDnsRecord(sub);
+        await platform.refreshPlatformNames();
       }
     });
   });

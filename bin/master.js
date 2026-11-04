@@ -138,6 +138,10 @@ if (cluster.isPrimary) {
       const { consentUrlWarning } = require('../components/oauth2/src/consentUrlCheck.ts');
       const message = consentUrlWarning(config);
       if (message != null) warn(`[oauth] ${message}`);
+      // oauth.issuer host vs dns.domain and the TLS this core terminates
+      // (bin/check-config.js runs the same check). Never blocks either.
+      const { issuerHostWarnings } = require('../components/oauth2/src/issuerHostCheck.ts');
+      for (const issuerMessage of issuerHostWarnings(config)) warn(`[oauth] ${issuerMessage}`);
     }
 
     // Start rqlited when rqlite is the platform engine — master.js owns the lifecycle.

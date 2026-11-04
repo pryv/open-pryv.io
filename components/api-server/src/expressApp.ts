@@ -11,7 +11,7 @@ const express = require('express');
 const middleware = require('middleware');
 const Paths = require('./routes/Paths.ts');
 const { getConfig } = require('@pryv/boiler');
-const { usernameInHost, ignoredUsernameSubdomains } = require('business/src/usernameSubdomains.ts');
+const { usernameInHost, ignoredUsernameSubdomains, ROOT_ONLY_PATHS } = require('business/src/usernameSubdomains.ts');
 const { configureTrustedProxies, expressTrustProxy } = require('middleware/src/clientIp.ts');
 const { effectiveMaxSizeMb } = require('./middleware/uploads.ts');
 // ------------------------------------------------------------ express app init
@@ -38,9 +38,13 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   // NOTE Insert this bit in front of 'requestTraceMiddleware' to also see
   //  username in logged paths.
   //
+  // The OAuth 2 endpoints and the discovery documents are root-only too
+  // (ROOT_ONLY_PATHS): served on every host the core answers, the issuer host
+  // included, whatever its first label.
   const ignorePaths = Object.values(Paths)
     .filter((e) => typeof e === 'string')
-    .filter((e) => e.indexOf(Paths.Params.Username) < 0);
+    .filter((e) => e.indexOf(Paths.Params.Username) < 0)
+    .concat(ROOT_ONLY_PATHS);
   if (usernameInHost(config)) {
     // Keep the core's own subdomain and the distribution-reserved service
     // subdomains out of the username-rewriter. Without this, e.g.
@@ -50,7 +54,17 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
     // DnsServer.RESERVED_SERVICE_NAMES); operator-owned staticEntries names
     // (sw, mail, etc.) and hosted-site names (answered before express) are
     // harvested from config too. The HFS worker uses the same list.
-    const ignoredSubdomains = ignoredUsernameSubdomains(config);
+    const staticIgnored: string[] = ignoredUsernameSubdomains(config);
+    // On top of it, every name the platform routes itself and no account can
+    // hold (core ids, static entries and runtime DNS records of the whole
+    // platform, hosted sites of every core, the issuer label): the platform
+    // keeps them in memory, refreshed periodically and after a local
+    // /reg/records change, so a record added at runtime is skipped like a
+    // static entry. The singleton answers from empty sets until it is
+    // initialised (later in the boot), i.e. the static list alone.
+    const { platform } = require('platform');
+    const isIgnoredSubdomain = (label: string): boolean =>
+      staticIgnored.includes(label) || platform.isUsernameRoutingReserved(label);
 
     // When Host matches a reserved service subdomain (reg/access/mfa), the
     // client-facing URL is rootless — e.g. `reg.pryv.me/perki/server` or
@@ -71,7 +85,7 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
       next();
     });
 
-    app.use(middleware.subdomainToPath(ignorePaths, ignoredSubdomains));
+    app.use(middleware.subdomainToPath(ignorePaths, isIgnoredSubdomain));
   }
   app.use(requestTraceMiddleware);
   // Before the body parsers: the answers to their errors (malformed or

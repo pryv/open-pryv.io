@@ -486,6 +486,16 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   }
 }
 
+// oauth.issuer host: on a platform with the embedded DNS, a name this core
+// answers and holds a certificate for. Same function as the boot warning; an
+// issuer that can never work (not a URL, a label routed elsewhere) is a problem.
+{
+  const { issuerHostReport } = require('../components/oauth2/src/issuerHostCheck.ts');
+  const report = issuerHostReport(configReader);
+  for (const p of report.problems) problems.push(p);
+  for (const w of report.warnings) warnings.push(w);
+}
+
 // oauth.audienceBoundSessions: a boolean, or the strings true / false (the boot
 // refuses anything else).
 {
