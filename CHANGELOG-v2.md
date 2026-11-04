@@ -1,6 +1,26 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.72 - 2026-11-04
+
+> **Upgrade advice for operators.** BREAKING for API clients: `POST /{username}/mfa/activate` now
+> answers `200` with its body instead of a `302` without `Location`: an app that checks for `302`
+> must accept `200` (see the first entry below; tell the developers of apps on your platform). No
+> new configuration key and no schema migration in this release, so `migrations.autoRunOnStart:
+> false` needs no step (a core upgraded from a release before 2.0.0-rc.70 still needs that
+> release's `accesses.last_login` migration: `node bin/migrate.js up` before switching when
+> `autoRunOnStart` is false). After deploying: (1) where accounts were restored with
+> `bin/backup.js --restore --user` by an earlier release, run `node bin/reconcile-user-cores.js
+> --emails --dry-run` on each core, then without `--dry-run`: it claims their missing email rows and
+> lists the accounts whose email another account holds (change those accounts' email; their
+> password-reset mails are no longer sent to that address); on a multi-core platform
+> `bin/reconcile-user-cores.js` also writes the missing routing rows of accounts restored earlier;
+> (2) look for erasure records of accounts that exist (restored accounts) and for CMC retry records
+> left by past erasures with the queries in the "Backup restore" and "CMC" entries below; (3)
+> `bin/oauth-client.js update --launch-type` on an active registry client now moves it to `review`
+> unless the command carries `--approve`, and a client whose launch type was removed in an earlier
+> release keeps the grants given before until `purge-grants <clientId> --yes` is run on each core;
+> (4) a SQLite audit file of an earlier release lists its access / action stream ids once, at its
+> first open (an INFO line when that takes more than a second).
 
 ### BREAKING: `POST /{username}/mfa/activate` answers 200
 
