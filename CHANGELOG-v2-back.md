@@ -77,24 +77,53 @@
 - `RestoreOrchestrator.coreRouting` (set in `init()` to the Platform; not set: not consulted, no row
   written). `_detectOtherCoreAccounts(users)`: on a multi-core platform (`!isSingleCore`), an account
   whose `getUserCore(username)` is non-null and not `coreId` is a conflict of kind `other-core`.
-  `restoreAllUsers` adds them to the conflicts, before any write: the run aborts without
-  `skipConflicts` (the abort message now ends "Nothing was restored."), they are skipped with it.
-  `restoreUser` throws on one, also with `overwrite` (as for `username-taken`). Treated as a conflict
-  rather than like the running-erasure refusal (which ignores `skipConflicts`): an account that lives
-  elsewhere is one the operator may choose to skip, and either way nothing is written for it.
+  `restoreAllUsers` adds them to the conflicts, before any write (an account with a local conflict
+  is not checked again: listed once): the run aborts without `skipConflicts` (the abort message now
+  ends "Nothing was restored."), they are skipped with it. `restoreUser` throws on one, also with
+  `overwrite` (as for `username-taken`). Treated as a conflict rather than like the running-erasure
+  refusal (which ignores `skipConflicts`): an account that lives elsewhere is one the operator may
+  choose to skip, and either way nothing is written for it. `OTHER_CORE_ADVICE`: back it up there,
+  delete it there, restore that backup here; a core gone for good: a replacement core with its core
+  id, or the admin route `/reg/admin/servers/<src>/rename/<dst>` (moves its user-core and ext-id
+  rows) before the restore.
 - `_claimUserCore(username)`, in `_restoreSingleUser` after the erasure withdrawal and before
-  `_importUser` (a throw puts the withdrawn record back): multi-core `setUserCoreIfNotExists` (false:
-  throws, nothing written for that account), single core `setUserCore` when the row differs. The row
-  stays when the import fails later (the account is then indexed here).
+  `_importUser`: multi-core `setUserCoreIfNotExists` (false: throws, nothing written for that
+  account), single core `setUserCore` when the row differs (warn when the row named another core id;
+  once per run, warn when `getAllCoreInfos()` lists other available cores). Answers whether it
+  created the row (none read before). A refused claim puts the withdrawn erasure record back as it
+  was (`_putBackErasures(..., asItWas = true)`: its `doneSteps` and `updatedAt`): the sweep resumes
+  it where it stopped, never re-running a `deleteUser` step it did (which could remove the rows of
+  the other core's account of the name; that step is also guarded now, see below). An import
+  failure re-arms it as before (`rearmWithdrawnErasures`, every step again). An import failure
+  releases the row only when this call created it and the name is not in the local index
+  (`_releaseUnindexedClaim`, `deleteUserCoreIfValue`); once indexed the row stays (a retry confirms
+  it, the re-armed erasure removes it). A kill between the claim and the index leaves a stale
+  self-row, which `bin/reconcile-user-cores.js` deletes.
 - `_writePlatform`: per row `setUserUniqueFieldIfNotExists` (false: counted in `uniqueValuesLost`,
-  fields logged at warn) or `setUserIndexedField`, instead of `platformDB.importAll` (INSERT OR
-  REPLACE). A row the same owner holds is confirmed. `restoreAllUsers` and `restoreUser` return
-  `uniqueValuesLost`; `bin/backup.js` prints it.
-- Not changed: a whole backup carries the platform rows of every account of the platform (every
-  core's), and the indexed rows of the accounts the restore does not restore are still written with
-  the backup's values. `repository.deleteOne` still removes the user-core row whatever core it names.
+  fields and restored usernames logged at warn) or `setUserIndexedField`, instead of
+  `platformDB.importAll` (INSERT OR REPLACE). A row the same owner holds is confirmed.
+  `restoreAllUsers` and `restoreUser` return `uniqueValuesLost`; `bin/backup.js` prints it. The
+  server mappings go through `coreRouting` (the Platform).
+- `_platformRowsOf(read, accounts)`: `restoreAllUsers` and `restoreUser` write only the rows owned
+  by the accounts restored (owner = username or `hashFor('username', ...)`: v2 rows in storage form,
+  v1 rows in clear) and their server mappings; the count left out is logged. `restorePlatform`
+  (platform only) writes every row, unfiltered.
+- `repository.deleteOne`: on a multi-core platform, a username whose user-core row names another
+  core (`#otherCoreOf`) keeps its platform rows: `platform.deleteUser`, the user-core row and the
+  access-index cleanup are skipped for it, with a warn; the local index, data and collections are
+  deleted. User-core rows (the username's and each alias's) are removed through
+  `Platform.deleteUserCoreIfValue(name, coreId)` (new; `deleteCoreRowIfValue` on `user-core/`): only
+  while they name this core. Single core unchanged (`deleteUserCore`). Covers every caller (account
+  deletion, the erasure sweep, admin deletion).
+- Not changed: `--overwrite` does not clear the account's current platform rows: an account that
+  changed its email after the backup keeps that row and gets the backup's email back when free (two
+  email rows). A `--user` restore writes no platform rows other than the routing row (a per-user
+  backup carries none, and `restoreUser` defaults `skipPlatform`). A whole restore that fails on one
+  account (a lost claim included) ends the run: the accounts restored before are kept, no platform
+  rows, external ids or aliases are written.
 - Tests `[RXCR1-5]` (api-server: `bin/backup.js` run as a member of a multi-core platform over the
-  test platform store) and `[RXCR6-9]` (business unit).
+  test platform store), `[RXCR6-14]` (business unit), `[DXCR1-2]` (api-server: the users repository
+  over the test platform store as a member of a multi-core platform).
 
 ### CMC: background writes check the account first
 

@@ -165,6 +165,11 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     assertOk(again, 'restore over the account routed here');
     assert.strictEqual(await exists(u), true);
     assert.strictEqual(await platform.getUserCore(u.username), THIS_CORE);
+
+    const whole = runCliMultiCore(['--restore', u.dir, '--overwrite']);
+    assertOk(whole, 'whole-backup restore over the account routed here');
+    assert.match(whole.stdout, /Restored: 1 users/);
+    assert.strictEqual(await platform.getUserCore(u.username), THIS_CORE);
   });
 
   it('[RXCR4] on a single core, a routing row naming another core id does not refuse the restore', async function () {
@@ -174,9 +179,13 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     const res = runCli(['--restore', u.dir, '--user', u.username]);
     assertOk(res, 'restore on a single core');
     assert.strictEqual(await exists(u), true, 'indexed on this core');
+    // Routed to the CLI's own core id (not read here: this process's core id
+    // may differ from the CLI's after other suites).
+    const routedTo = await platform.getUserCore(u.username);
+    assert.ok(routedTo != null && routedTo !== OTHER_CORE, 'routed to the restoring core: ' + routedTo);
   });
 
-  it('[RXCR5] a whole restore keeps a unique value another account holds now, and writes the free ones', async function () {
+  it('[RXCR5] a platform restore keeps a unique value another account holds now, and writes the free ones', async function () {
     const slug = cuid.slug().toLowerCase();
     const restored = 'rxcrr' + slug;
     const holder = 'rxcrh' + slug;
@@ -207,11 +216,10 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     const warnings = [];
     o.logger = { info () {}, warn (msg) { warnings.push(msg); }, error () {}, debug () {} };
     try {
-      const report = await o.restoreAllUsers(reader);
+      await o.restorePlatform(reader);
       assert.strictEqual(await platform.getUsersUniqueField('email', taken), token(holder), 'the holder keeps its email');
       assert.strictEqual(await platform.getUsersUniqueField('email', free), token(restored), 'a free email is restored');
       assert.strictEqual(await platformDB.getUserIndexedField(token(restored), 'language'), 'fr', 'indexed rows are restored');
-      assert.strictEqual(report.uniqueValuesLost, 1);
       assert.ok(warnings.some((w) => /1 unique value\(s\) held by another account \(fields: email\)/.test(w)), warnings.join('\n'));
     } finally {
       await platform.deleteUserUniqueField('email', taken);

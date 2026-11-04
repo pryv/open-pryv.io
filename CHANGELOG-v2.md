@@ -98,22 +98,44 @@
   `--user`, an account routed to another core is refused, also with `--overwrite`: nothing is
   restored. A whole-backup restore treats it as a conflict: the whole run is refused ("Restore
   aborted: N conflict(s): ...", nothing restored), or with `--skip-conflicts` the account is skipped
-  (listed under "Conflicts" and "Skipped") and the others are restored. The message names the other
-  core. Restore the account on that core; to bring it to this core, delete it there first (or let
-  its erasure there complete), which frees its name. A single core is not concerned.
+  (listed under "Conflicts" and "Skipped") and the others are restored; nothing is written for a
+  skipped account, its platform rows included. The message names the other core. Restore the
+  account on that core; to bring it to this core, back it up there first, then delete it there (or
+  let its erasure there complete), which frees its name, then restore that backup here. If that
+  core is gone for good, restore on a replacement core that takes its core id, or first move its
+  routing rows to this core with the admin route `/reg/admin/servers/<that core>/rename/<this core>`.
+  A single core is not concerned; a restore run on a single core warns when the platform store
+  lists other available cores (a member of a multi-core platform run with a single-core config).
 - **A restored account is routed to this core.** The restore writes the platform row routing the
-  account's name to this core, before its data: on a multi-core platform an atomic claim (a core that took the name meanwhile
-  fails that account's restore, nothing written for it), on a single core as registration writes it.
-  Before, a restored account had no such row: on a multi-core platform it was not reached through the
-  embedded DNS or from the other cores, and its name read as free to register on the other cores.
-  For accounts restored earlier, `bin/reconcile-user-cores.js` on their core writes the missing rows.
+  account's name to this core, before its data: on a multi-core platform an atomic claim, on a
+  single core as registration writes it. A core that took the name between the check and the claim
+  fails that account's restore, nothing written for it; in a whole-backup restore that failure ends
+  the run: the accounts restored before it are kept, but no platform rows, external ids or aliases
+  are written for any account (restore again once the conflict is resolved). Before, a restored
+  account had no such row: on a multi-core platform it was not reached through the embedded DNS or
+  from the other cores, and its name read as free to register on the other cores. For accounts
+  restored earlier, `bin/reconcile-user-cores.js` on their core writes the missing rows.
 - **Fixed: a whole-backup restore wrote over the unique values (emails, SSO bindings) that other
   accounts hold now.** The platform rows of the backup were written as they were: a value that changed
   hands since the backup (an email the backed-up account gave up and another account took) went back
   to the restored account, and the lookups by that value (the core of an account by email, SSO account
   linking) then answered the restored account. A value another account holds now stays with it; the
-  restore logs the fields concerned at warn and the report counts them ("Unique values of the platform
-  rows: N held by another account (not restored)").
+  restore logs the fields and the restored accounts concerned at warn and the report counts them
+  ("Unique values of the platform rows: N held by another account (not restored)").
+- **Fixed: a whole-backup restore wrote the platform rows of accounts it does not restore.** A whole
+  backup carries the platform rows of every account of the platform (every core's): they were all
+  written back with the backup's values, the skipped accounts' included. Only the rows of the
+  accounts restored are written now; the others keep their current rows.
+- **Not changed: a `--user` restore writes no platform rows for the account** other than its
+  routing row (none of its email and other unique values, nor its indexed values): its email is not reserved platform-wide, so the lookups by
+  email do not find it and another account can register it. Restore the whole backup for those
+  rows, until a release backs up each account's own rows.
+- **Fixed: on a multi-core platform, deleting or erasing an account removed the platform rows of its
+  username even when the platform routes that name to another core.** That core's account of the
+  name (taken there after an earlier attempt of the deletion freed it, or restored there) lost its
+  routing row, its email and other unique values, and its indexed values. A name routed to another
+  core now keeps them: this core's data of the account is deleted, and a warning names the other
+  core.
 
 ### CMC: nothing is written for an account erased while a consent operation runs
 
