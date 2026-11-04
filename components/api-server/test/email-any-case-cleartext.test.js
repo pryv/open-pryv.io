@@ -99,6 +99,8 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
     for (const spelling of [local.toUpperCase() + '@CASE.EXAMPLE', 'E' + local.slice(1) + '@Case.example']) {
       const username = 'emci' + slug();
       const res = await register(username, spelling);
+      // Removed by the cleanup if it was created all the same.
+      if (res.status < 300) made.push({ username, id: await usersRepository.getUserIdForUsername(username) });
       assert.strictEqual(res.status, 409, spelling + ': ' + JSON.stringify(res.body));
       assert.strictEqual(res.body.error?.id, 'item-already-exists', JSON.stringify(res.body));
       assert.ok(Object.keys(res.body.error?.data ?? {}).includes('email'), JSON.stringify(res.body));
