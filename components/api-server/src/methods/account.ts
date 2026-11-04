@@ -446,13 +446,28 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     next();
   }
 
-  function sendPasswordResetMail (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+  async function sendPasswordResetMail (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     // Skip this step if reset mail is deactivated.
     const emailSettings = getEmail();
     const isMailActivated = emailSettings.enabled;
     if (isMailActivated === false ||
             (isMailActivated != null && isMailActivated.resetPassword === false)) {
       return next();
+    }
+    // Invariant: addUserBusinessToContext ran earlier in this chain.
+    const account = context.userBusiness!;
+    // An address the platform reserves for another account (it changed hands,
+    // e.g. since the backup this account was restored from) is not this
+    // account's inbox: the reset link would hand the account to its holder.
+    // Answered as a sent mail (the caller learns nothing about the address).
+    try {
+      if (typeof account.email === 'string' && account.email !== '' &&
+          !(await emailsContainer.isRowFreeFor(account.username, account.email))) {
+        logger.warn(`Password reset of user "${account.username}": its email is held by another account, the reset mail is not sent (the account's email must be changed)`);
+        return next();
+      }
+    } catch (err) {
+      return next(errors.unexpectedError(err));
     }
     // The REQUIRED_WHEN boot check guarantees `auth.passwordResetPageURL`
     // is populated when the reset-password email feature is enabled
@@ -466,8 +481,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     const separator = passwordResetPageURL.includes('?') ? '&' : '?';
     const resetLink = passwordResetPageURL + separator + 'resetToken=' + encodeURIComponent(context.resetToken!);
     const recipient = {
-      email: context.userBusiness!.email,
-      name: context.userBusiness!.username,
+      email: account.email,
+      name: account.username,
       type: 'to'
     };
     const substitutions = {
@@ -475,7 +490,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       RESET_URL: passwordResetPageURL,
       RESET_LINK: resetLink
     };
-    mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, context.userBusiness!.language, next);
+    mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, account.language, next);
   }
 
   // EMAIL VERIFICATION

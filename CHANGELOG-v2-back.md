@@ -134,13 +134,39 @@
   the ones the deleted account carries would remove values the other core's account holds too.
 - Not changed: `--overwrite` does not clear the account's current platform rows: an account that
   changed its email after the backup keeps that row and gets the backup's email back when free (two
-  email rows). A `--user` restore writes no platform rows other than the routing row (a per-user
-  backup carries none, and `restoreUser` defaults `skipPlatform`). A whole restore that fails on one
-  account (a lost claim included) ends the run: the accounts restored before are kept, no platform
-  rows, external ids or aliases are written.
-- Tests `[RXCR1-5]` (api-server: `bin/backup.js` run as a member of a multi-core platform over the
-  test platform store), `[RXCR6-14]` (business unit), `[DXCR1-2]` (api-server: the users repository
-  over the test platform store as a member of a multi-core platform).
+  email rows). A whole restore that fails on one account (a lost claim included) ends the run: the
+  accounts restored before are kept, no platform rows, external ids or aliases are written.
+- Fixed: a `--user` restore wrote no platform rows other than the routing row (a per-user backup
+  carries none, and `restoreUser` defaulted `skipPlatform` to true). `restoreUser` now defaults it
+  to false and reads the platform part with `_readPlatform(reader, isReserved, [{ username }])`,
+  which keeps (and checks) only the account's rows and server mapping. Both paths go through
+  `_accountPlatformRows(read, restored, imported)`: `_platformRowsOf`, then for each restored
+  account without a row there, `_derivedPlatformRows`: one row per
+  `accountStreams.indexedFieldNames` field (stored value, else the field's default, as
+  `repository.insertOne`), unique for `uniqueFieldNames`, plus a unique `email` row per address the
+  account's `:_emails:` container holds as `verified` (`verifiedEmailsOf` over the imported events:
+  heads only, not deleted, not trashed); storage form through `coreRouting.hashFor`. Written by
+  `_writePlatform` (same held-value protection and count).
+  `_importUser` returns `ImportedAccount` (external-id `entries`, `verifiedEmails`).
+- `_emailsHeldElsewhere(restored)`, both paths, after the platform rows: an account whose stored
+  `email` field `coreRouting.getUsersUniqueField` gives to another owner is listed in
+  `emailsHeldElsewhere` (report; `bin/backup.js` prints it, filtered of rolled-back accounts) and
+  warned. A failed lookup is a warning, never a failed restore.
+- Tests `[RXCR1-5, 15]` (api-server: `bin/backup.js` run as a member of a multi-core platform over
+  the test platform store), `[RXCR6-17]` (business unit), `[DXCR1-2]` (api-server: the users
+  repository over the test platform store as a member of a multi-core platform).
+  `reg-multicore.test.js` puts back `core:id` with the single-core config (it left `core-a` for the
+  later suites of the process); `[RXCR4]` asserts the routing row names `platform.coreId` again.
+
+### Password reset: no mail to an address another account holds
+
+- `account.requestPasswordReset`, step `sendPasswordResetMail` (now async): before sending,
+  `emailsContainer.isRowFreeFor(username, email)`; false (another owner): warn naming the username,
+  `next()` with no mail (the same result as a sent mail; the reset token is generated and expires
+  unused). A lookup error answers `unexpectedError` (fails closed). The other mails to the stored
+  email were checked: the MFA-change notice and the auto-deletion notices carry no credential (not
+  guarded); the verification and registration-challenge mails go to the address being proved, not
+  the stored one. Test `[RSLK3]`.
 
 ### CMC: background writes check the account first
 

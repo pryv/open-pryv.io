@@ -12,6 +12,7 @@ import type { ErasuresLocalDB, AccountErasureRow } from '../../../../storages/in
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
+const emailsConstants = require('../emails/constants.ts');
 const timestamp = require('unix-timestamp');
 const { seriesNamespace, formerUsernames } = require('../series/namespace.ts');
 const { deletedUserMessage } = require('storages/interfaces/backup/chain.ts');
@@ -154,9 +155,9 @@ class RestoreOrchestrator {
     const localConflicts = await this._detectConflicts(manifest.users);
     const locallyConflicting = new Set(localConflicts.map((c) => c.userId));
     const conflicts = [...localConflicts, ...await this._detectOtherCoreAccounts(manifest.users.filter((u: UserManifest) => !locallyConflicting.has(u.userId)))];
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number, externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[] } =
-      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0, externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [] };
-    const pendingExternalIds: PendingExternalIds[] = [];
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number, emailsHeldElsewhere: AccountRef[], externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[] } =
+      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0, emailsHeldElsewhere: [], externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [] };
+    const imported: ImportedAccount[] = [];
     const pendingAliases: PendingAliases[] = [];
 
     if (conflicts.length > 0 && !opts.skipConflicts) {
@@ -178,19 +179,20 @@ class RestoreOrchestrator {
           continue;
         }
 
-        pendingExternalIds.push(await this._restoreSingleUser(reader, userId, username, opts, undefined, report.erasuresWithdrawn));
+        imported.push(await this._restoreSingleUser(reader, userId, username, opts, undefined, report.erasuresWithdrawn));
         pendingAliases.push({ userId, username, aliases: aliasesOf(userManifest) });
         report.restored.push({ userId, username });
       }
 
       if (platformRead != null) {
         // Only the rows of the accounts restored: the others keep their current rows.
-        const written = await this._writePlatform(this._platformRowsOf(platformRead, report.restored));
+        const written = await this._writePlatform(await this._accountPlatformRows(platformRead, report.restored, imported));
         report.extIdNamespaceSaltMismatch = written.extIdNamespaceSaltMismatch;
         report.uniqueValuesLost = written.uniqueValuesLost;
       }
+      report.emailsHeldElsewhere = await this._emailsHeldElsewhere(report.restored);
       // After the platform rows: the namespaces they restore are known.
-      report.externalIds = await this._restoreExternalIds(pendingExternalIds);
+      report.externalIds = await this._restoreExternalIds(imported);
       // After the platform rows too: their alias rows are confirmed, not refused.
       report.aliases = await this._restoreAliases(pendingAliases);
     } catch (err) {
@@ -210,11 +212,11 @@ class RestoreOrchestrator {
    * Restore a single user from backup.
    * @param [options]
    * @param [options.overwrite=false] - clearAll before import
-   * @param [options.skipPlatform=true] - skip platform data
+   * @param [options.skipPlatform=false] - write none of the account's platform rows
    * @param [options.remapUserId] - remap to a different userId
    */
   async restoreUser (userId: string, reader: BackupReaderLike, options: RestoreOptions = {}) {
-    const opts: RestoreOptions = Object.assign({ overwrite: false, skipPlatform: true }, options);
+    const opts: RestoreOptions = Object.assign({ overwrite: false, skipPlatform: false }, options);
     const manifest = await reader.readManifest();
 
     const deleted = (Array.isArray(manifest.deletedUsers) ? manifest.deletedUsers : []).find((d) => d.userId === userId);
@@ -251,17 +253,21 @@ class RestoreOrchestrator {
       throw new Error(`User ${username} conflicts with existing data: ${conflicts[0].reason}. Use --overwrite to replace.`);
     }
     await this._assertNoRunningErasure([{ userId: targetUserId, username }]);
-    const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved);
+    // The account's own rows only: the other rows of a whole backup are not
+    // read for this restore, nor checked.
+    const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved, [{ username }]);
 
     const erasuresWithdrawn: AccountErasureRow[] = [];
-    const pendingExternalIds = await this._restoreSingleUser(reader, userId, username, opts, targetUserId, erasuresWithdrawn);
+    const imported = await this._restoreSingleUser(reader, userId, username, opts, targetUserId, erasuresWithdrawn);
 
-    const uniqueValuesLost = platformRead != null ? (await this._writePlatform(this._platformRowsOf(platformRead, [{ username }]))).uniqueValuesLost : 0;
-    const externalIds = await this._restoreExternalIds([pendingExternalIds]);
+    const restored = [{ userId: targetUserId, username }];
+    const uniqueValuesLost = platformRead != null ? (await this._writePlatform(await this._accountPlatformRows(platformRead, restored, [imported]))).uniqueValuesLost : 0;
+    const emailsHeldElsewhere = await this._emailsHeldElsewhere(restored);
+    const externalIds = await this._restoreExternalIds([imported]);
     const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
 
     this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
-    return { restored: [{ userId: targetUserId, username }], skipped: [], conflicts, uniqueValuesLost, externalIds, aliases, erasuresWithdrawn };
+    return { restored, skipped: [], conflicts, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn };
   }
 
   /**
@@ -310,7 +316,7 @@ class RestoreOrchestrator {
    * Restore one account's data. Its external ids are read here and returned,
    * not linked: the caller links them after the platform rows are written.
    */
-  async _restoreSingleUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId?: string, erasuresWithdrawn: AccountErasureRow[] = []): Promise<PendingExternalIds> {
+  async _restoreSingleUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId?: string, erasuresWithdrawn: AccountErasureRow[] = []): Promise<ImportedAccount> {
     targetUserId = targetUserId || userId;
 
     this.logger.info(`Restoring user: ${username} (${userId}${targetUserId !== userId ? ' -> ' + targetUserId : ''})`);
@@ -337,7 +343,7 @@ class RestoreOrchestrator {
       if (withdrawn != null) await this._putBackErasures([withdrawn], errorMessage(err), true);
       throw err;
     }
-    let pending: PendingExternalIds;
+    let pending: ImportedAccount;
     try {
       pending = await this._importUser(reader, userId, username, opts, targetUserId);
     } catch (err) {
@@ -371,9 +377,10 @@ class RestoreOrchestrator {
 
   /**
    * Write one account's data from the backup (index entry, data, attachments,
-   * account fields, audit, series) and read its external ids.
+   * account fields, audit, series) and read its external ids and its verified
+   * email addresses.
    */
-  async _importUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId: string): Promise<PendingExternalIds> {
+  async _importUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId: string): Promise<ImportedAccount> {
     // Ensure user exists in local index
     try {
       await this.usersLocalIndex.addUser(username, targetUserId);
@@ -527,7 +534,7 @@ class RestoreOrchestrator {
     }
 
     this.logger.info(`User restored: ${username} (${targetUserId})`);
-    return { userId: targetUserId, entries: externalIds };
+    return { userId: targetUserId, entries: externalIds, verifiedEmails: verifiedEmailsOf(events) };
   }
 
   /**
@@ -712,7 +719,7 @@ class RestoreOrchestrator {
    * platform's tokens. An id held meanwhile by another account or core stays
    * with its holder (counted lost); one of a namespace unknown here is skipped.
    */
-  async _restoreExternalIds (pending: PendingExternalIds[]): Promise<ExternalIdRestoreSummary> {
+  async _restoreExternalIds (pending: ImportedAccount[]): Promise<ExternalIdRestoreSummary> {
     const total = emptyExtIdSummary();
     if (this.externalIds == null) return total;
     for (const { userId, entries } of pending) {
@@ -879,9 +886,10 @@ class RestoreOrchestrator {
   /**
    * Read the platform rows and the register server mappings of a backup, and
    * refuse the restore (nothing written) when one names an invalid or
-   * reserved username, as for the manifest.
+   * reserved username, as for the manifest. With `accounts`, only their rows
+   * and mappings are kept (and checked).
    */
-  async _readPlatform (reader: BackupReaderLike, isReserved: (name: string) => boolean): Promise<PlatformRead> {
+  async _readPlatform (reader: BackupReaderLike, isReserved: (name: string) => boolean, accounts?: Array<{ username: string }>): Promise<PlatformRead> {
     const read: PlatformRead = { data: [], skipped: 0, mappingUsernames: [], defaultCoreId: null, extIdNamespaces: [] };
     if (!this.platformDB) return read;
     const data = read.data;
@@ -903,10 +911,6 @@ class RestoreOrchestrator {
         data.push(item as PlatformEntry);
       }
     }
-    // In hashed PII mode a row names its owner by a 64-hex token: one safe
-    // segment, never a reserved name.
-    assertRestorableUsernames(data.map((entry) => entry.username), isReserved, 'platform row(s) of the backup');
-
     // v1 enterprise register mappings → v2 user-core rows.
     //
     // The v1 register's `{username}:server` Redis entries are exported to
@@ -940,8 +944,12 @@ class RestoreOrchestrator {
       this.logger.warn('Restoring register/ server mappings failed: ' + (err as Error).message);
       read.mappingUsernames = [];
     }
-    assertRestorableUsernames(read.mappingUsernames, isReserved, 'register server mapping(s) of the backup');
-    return read;
+    const kept = accounts != null ? this._platformRowsOf(read, accounts) : read;
+    // In hashed PII mode a row names its owner by a 64-hex token: one safe
+    // segment, never a reserved name.
+    assertRestorableUsernames(kept.data.map((entry) => entry.username), isReserved, 'platform row(s) of the backup');
+    assertRestorableUsernames(kept.mappingUsernames, isReserved, 'register server mapping(s) of the backup');
+    return kept;
   }
 
   /**
@@ -967,6 +975,83 @@ class RestoreOrchestrator {
       this.logger.info(`Platform data: ${left} row(s) of accounts this restore does not restore: not written (their current rows are kept)`);
     }
     return { ...read, data, mappingUsernames, ownerNames };
+  }
+
+  /**
+   * The platform rows to write for the `accounts` restored: each account's
+   * rows of the backup; for an account the backup has none of (a backup of
+   * single accounts carries no platform rows), the rows its registration
+   * writes, built from the account as restored (see `_derivedPlatformRows`).
+   */
+  async _accountPlatformRows (read: PlatformRead, accounts: AccountRef[], imported: ImportedAccount[]): Promise<PlatformRead> {
+    const rows = this._platformRowsOf(read, accounts);
+    if (!this.platformDB) return rows;
+    const withRows = new Set(rows.data.map((entry) => rows.ownerNames?.get(entry.username)));
+    for (const account of accounts) {
+      if (withRows.has(account.username)) continue;
+      const verifiedEmails = imported.find((i) => i.userId === account.userId)?.verifiedEmails ?? [];
+      const derived = await this._derivedPlatformRows(account, verifiedEmails);
+      if (derived.length === 0) continue;
+      rows.data.push(...derived);
+      this.logger.info(`Platform rows of user ${account.username}: none in the backup, ${derived.length} written from the restored account`);
+    }
+    return rows;
+  }
+
+  /**
+   * The platform rows registration writes for an account, from the account
+   * as restored, in storage form: one per indexed account field (its value,
+   * or the field's default), unique for the unique fields (its email), and
+   * one unique email row per address its email container holds as verified.
+   */
+  async _derivedPlatformRows (account: AccountRef, verifiedEmails: string[]): Promise<PlatformEntry[]> {
+    const hash = (field: string, value: string) => this.coreRouting?.hashFor(field, value) ?? value;
+    const owner = hash('username', account.username);
+    const fields = await this.userAccountStorage.getAccountFields(account.userId);
+    const uniqueFields = new Set<string>(accountStreams.uniqueFieldNames ?? []);
+    const rows: PlatformEntry[] = [];
+    const uniqueValues = new Set<string>();
+    for (const field of (accountStreams.indexedFieldNames ?? []) as string[]) {
+      const value = fields[field] ?? accountStreams.accountMap[accountStreams.toStreamId(field)]?.default;
+      if (value == null) continue;
+      if (uniqueFields.has(field)) {
+        uniqueValues.add(field + '/' + String(value));
+        rows.push({ username: owner, field, value: hash(field, String(value)), isUnique: true });
+      } else {
+        rows.push({ username: owner, field, value: String(value), isUnique: false });
+      }
+    }
+    const emailField = emailsConstants.UNIQUE_FIELD;
+    for (const email of new Set(verifiedEmails)) {
+      if (uniqueValues.has(emailField + '/' + email)) continue;
+      rows.push({ username: owner, field: emailField, value: hash(emailField, email), isUnique: true });
+    }
+    return rows;
+  }
+
+  /**
+   * The `accounts` whose stored email is held by another account now (the
+   * address changed hands since the backup): a warning each. The password
+   * reset of such an account does not send its mail to that address.
+   */
+  async _emailsHeldElsewhere (accounts: AccountRef[]): Promise<AccountRef[]> {
+    const routing = this.coreRouting;
+    const held: AccountRef[] = [];
+    if (routing == null) return held;
+    const field = emailsConstants.UNIQUE_FIELD;
+    for (const { userId, username } of accounts) {
+      try {
+        const email = await this.userAccountStorage.getAccountField(userId, field);
+        if (typeof email !== 'string' || email === '') continue;
+        const owner = await routing.getUsersUniqueField(field, email);
+        if (owner == null || owner === routing.hashFor('username', username)) continue;
+        held.push({ userId, username });
+        this.logger.warn(`The email of ${username} is held by another account: password reset will not send to it until the account's email is changed`);
+      } catch (err: unknown) {
+        this.logger.warn(`The email of ${username} could not be checked against the platform rows (${errorMessage(err)})`);
+      }
+    }
+    return held;
   }
 
   /**
@@ -1078,6 +1163,23 @@ function aliasesOf (entry: { aliases?: unknown } | null | undefined): string[] {
   return Array.isArray(aliases) ? aliases : [aliases as string];
 }
 
+/**
+ * The addresses the email container of an account holds as verified, from
+ * its backed-up events (heads only: not a former version, not deleted, not
+ * trashed).
+ */
+function verifiedEmailsOf (events: unknown[]): string[] {
+  const emails: string[] = [];
+  for (const item of events) {
+    const event = item as { streamIds?: unknown; type?: unknown; headId?: unknown; deleted?: unknown; trashed?: unknown; content?: { value?: unknown; status?: unknown } } | null;
+    if (event == null || event.type !== emailsConstants.EVENT_TYPE || event.headId != null || event.deleted != null || event.trashed === true) continue;
+    if (!Array.isArray(event.streamIds) || !event.streamIds.includes(emailsConstants.CONTAINER_STREAM_ID)) continue;
+    const value = event.content?.value;
+    if (event.content?.status === emailsConstants.STATUS_VERIFIED && typeof value === 'string' && value !== '') emails.push(value);
+  }
+  return emails;
+}
+
 function emptyAliasSummary (): AliasRestoreSummary {
   return { restored: 0, refused: [] };
 }
@@ -1151,6 +1253,8 @@ type UserAccountStorageLike = {
   _importAll (userId: string, data: unknown): Promise<unknown>;
   setAccountField (userId: string, field: string, value: unknown, source: string, time: number): Promise<unknown>;
   _clearAll (userId: string): Promise<unknown>;
+  getAccountFields (userId: string): Promise<Record<string, unknown>>;
+  getAccountField (userId: string, field: string): Promise<unknown>;
 };
 type EventFilesLike = {
   saveAttachmentFromStream (stream: unknown, userId: string, eventId: string, fileId: string): Promise<unknown>;
@@ -1187,6 +1291,8 @@ type CoreRoutingLike = {
   deleteUserCoreIfValue (username: string, coreId: string): Promise<boolean>;
   /** The storage form of a value (its token in hashed mode, itself otherwise). */
   hashFor (field: string, value: string): string;
+  /** The owner of a unique value, in storage form (null: no account holds it). */
+  getUsersUniqueField (field: string, value: string): Promise<string | null>;
 };
 /** The platform part of a backup, read and checked before anything is written. */
 type PlatformRead = {
@@ -1210,8 +1316,13 @@ type UserReader = {
   readSeries (): AsyncIterable<unknown>;
   readExternalIds? (): AsyncIterable<unknown>;
 };
-/** The external ids of a restored account, linked after the platform rows. */
-type PendingExternalIds = { userId: string; entries: unknown[] };
+/**
+ * A restored account, as its import read it: its external ids (`entries`,
+ * linked after the platform rows) and the addresses its email container holds
+ * as verified (reserved with its platform rows when the backup has none).
+ */
+type ImportedAccount = { userId: string; entries: unknown[]; verifiedEmails?: string[] };
+type AccountRef = { userId: string; username: string };
 type BackupReaderLike = {
   readManifest (): Promise<Manifest>;
   openUser (userId: string): Promise<UserReader>;

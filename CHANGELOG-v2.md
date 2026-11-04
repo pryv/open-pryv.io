@@ -147,17 +147,42 @@
   backup carries the platform rows of every account of the platform (every core's): they were all
   written back with the backup's values, the skipped accounts' included. Only the rows of the
   accounts restored are written now; the others keep their current rows.
-- **Not changed: a `--user` restore writes no platform rows for the account** other than its
-  routing row (none of its email and other unique values, nor its indexed values): its email is
-  not reserved platform-wide, so the lookups by email do not find it and another account can
-  register it. Restore the account from the whole backup without `--user` for those rows, until a
-  release backs up each account's own rows.
+- **Fixed: a `--user` restore wrote no platform rows for the account** other than its routing row
+  (none of its email and other unique values, nor its indexed values): its email was not reserved
+  platform-wide, the lookups by email did not find it and another account could register it. A
+  `--user` restore now writes the account's own rows, with the same protection as a whole-backup
+  restore (a unique value another account holds now stays with it, counted in the report). From a
+  whole backup, they are the account's rows of the backup (the other accounts' rows are neither
+  written nor checked). A backup made with `--output --user` carries no platform rows: the rows are
+  then the ones registration writes, built from the account as restored (its indexed account
+  fields, its email, and the addresses its email list holds as verified). The same applies to a
+  whole-backup restore for an account the backup holds no platform rows of.
+  `RestoreOrchestrator.restoreUser` now defaults `skipPlatform` to false.
+- **A restored account whose email another account holds now is listed** in the report ("Email held
+  by another account (password reset does not send to it until the account's email is changed)"),
+  with a warning naming the account. The address changed hands since the backup: the restored
+  account keeps it as its stored email, but no password-reset mail goes to it (next section). Change
+  the account's email.
 - **Fixed: on a multi-core platform, deleting or erasing an account removed the platform rows of its
   username even when the platform routes that name to another core.** That core's account of the
   name (taken there after an earlier attempt of the deletion freed it, or restored there) lost its
   routing row, its email and other unique values, and its indexed values. A name routed to another
   core now keeps them: this core's data of the account is deleted, and a warning names the other
   core.
+
+### Password reset: no mail to an address another account holds
+
+- **Fixed: a password reset sent its mail to the account's stored email even when the platform
+  reserves that address for another account.** This happens when the address changed hands after
+  the account stored it (an account restored from a backup older than the change): the address's
+  current holder received a reset link for the account and could take it over. The reset now looks
+  the address up in the platform rows first: held by another account, no mail is sent, the caller
+  gets the same answer as when it is sent, and a warning names the account (not the address).
+  Absent or held by the account itself, the mail is sent as before. The lookup goes through the
+  platform store, so it is the same on every core of a multi-core platform; when the platform store
+  cannot be read, the request fails instead of sending.
+- Not changed: the notices sent to the stored email without a credential (MFA changes, account
+  auto-deletion notices) are still sent to it.
 
 ### CMC: nothing is written for an account erased while a consent operation runs
 

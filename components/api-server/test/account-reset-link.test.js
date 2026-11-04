@@ -74,4 +74,41 @@ describe('[RSLK] password-reset link', function () {
     assert.strictEqual(link.searchParams.get('pryvServiceInfoUrl'), 'https://core.example.com/reg/service/info');
     assert.strictEqual(link.searchParams.get('resetToken'), token);
   });
+
+  it('[RSLK3] no reset mail goes to an account\'s email that another account holds now; the answer is the same as when it is sent', async function () {
+    const { platform } = require('platform');
+    const username = 'rsl' + cuid().toLowerCase().slice(1, 12);
+    const email = username + '@reset.example.com';
+    await fixtures.user(username, { email });
+    const captured = [];
+    nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json').times(2)
+      .reply(200, (uri, body) => { captured.push(body); return {}; });
+    const request = () => withInjectedConfig({
+      services: { email: { enabled: { resetPassword: true } } },
+      auth: { passwordResetPageURL: 'https://app.example.com/reset-password' }
+    }, async () => await coreRequest.post('/' + username + '/account/request-password-reset').send({ appId: TRUSTED_APP }));
+    const withoutMeta = (body) => { const { meta, ...rest } = body; return rest; };
+
+    // Sent while the account holds its email.
+    const sent = await request();
+    assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+    assert.strictEqual(captured.length, 1);
+    // A second request within the minute is otherwise refused.
+    await require('storages').platformDB.deleteAccessState(require('business/src/auth/passwordResetThrottle.ts').cooldownKey(username));
+
+    // The address changed hands (e.g. the account was restored from a backup older than that).
+    const holder = 'rslholder' + cuid().toLowerCase().slice(1, 10);
+    await platform.deleteUserUniqueField('email', email);
+    await platform.setUserUniqueField(holder, 'email', email);
+    try {
+      const held = await request();
+      assert.strictEqual(held.status, sent.status, JSON.stringify(held.body));
+      assert.deepStrictEqual(withoutMeta(held.body), withoutMeta(sent.body));
+      assert.strictEqual(captured.length, 1, 'no mail sent to the holder of the address');
+    } finally {
+      await platform.deleteUserUniqueField('email', email);
+      await platform.setUserUniqueField(username, 'email', email);
+      nock.cleanAll();
+    }
+  });
 });
