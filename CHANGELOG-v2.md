@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### CMC: a single-use link is consumed before its invite reads accepted
+
+- **Fixed: an answer sent on the same single-use link right after its invite turned `accepted`
+  could still get through.** The requester's core marked the invite trigger `accepted` (and notified
+  it) before it marked the capability consumed, with the inbox mirror and the back-channel delivery to
+  the accepter's core in between. A refusal or a second accept sent through the same link in that
+  window met an open capability and passed the single-use check (a refusal was recorded as completed
+  on the answering side) instead of failing with `cmc-capability-consumed`. The capability is now
+  consumed first, so an answer made after the invite reads `accepted` meets the consumed link and
+  fails with `cmc-capability-consumed`. Open-link invites are unchanged.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
