@@ -118,7 +118,7 @@ describe('[LGLL] sign-in records lastLogin', function () {
     try {
       const token = (await login(username)).token;
       const act = await coreRequest.post('/' + username + '/mfa/activate').set('Authorization', token).send({ method: 'totp' });
-      assert.equal(act.status, 302, JSON.stringify(act.body));
+      assert.equal(act.status, 200, JSON.stringify(act.body));
       // The confirm uses the previous step's code, leaving the current one to the verify.
       const left = 30 - (Math.floor(Date.now() / 1000) % 30);
       if (left < 5) await new Promise((resolve) => setTimeout(resolve, left * 1000 + 100));

@@ -226,7 +226,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         .post(`/${username}/mfa/activate`)
         .set('Authorization', personalToken)
         .send({});
-      assert.strictEqual(res.status, 302, `activate failed: ${JSON.stringify(res.body)}`);
+      assert.strictEqual(res.status, 200, `activate failed: ${JSON.stringify(res.body)}`);
       assert.strictEqual(res.body.method, 'totp');
       assert.match(res.body.otpauthUri, /^otpauth:\/\/totp\//);
       assert.match(res.body.secret, /^[A-Z2-7]+$/);
@@ -235,7 +235,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     it('[MA15C] full TOTP ceremony works under pure defaults', async function () {
       const act = await coreRequest
         .post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({});
-      assert.strictEqual(act.status, 302);
+      assert.strictEqual(act.status, 200);
       const secret = act.body.secret;
       const confirm = await coreRequest
         .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
@@ -260,7 +260,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       assert.strictEqual(withPhone.body.error.data.id, 'invalid-mfa-content');
       const act = await coreRequest
         .post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ method: 'totp' });
-      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assert.strictEqual(act.status, 200, JSON.stringify(act.body));
       const noCode = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({});
       assert.strictEqual(noCode.status, 400, JSON.stringify(noCode.body));
       assert.strictEqual(noCode.body.error.id, 'invalid-parameters-format');
@@ -301,7 +301,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     it('[MA16B] mfa.deactivate with a delegate token is refused and the owner MFA stays active', async function () {
       const act = await coreRequest
         .post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({});
-      assert.strictEqual(act.status, 302);
+      assert.strictEqual(act.status, 200);
       const confirm = await coreRequest
         .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
         .send({ code: await previousStepCodeFor(act.body.secret) });
@@ -347,7 +347,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         nock(SMS_HOST).post('/challenge').reply(200, {});
         nock(SMS_HOST).post('/verify').reply(204);
         const act = await coreRequest.post(`/${user}/mfa/activate`).set('Authorization', token).send({ phone: '+41791234567' });
-        assert.strictEqual(act.status, 302, `activate failed: ${JSON.stringify(act.body)}`);
+        assert.strictEqual(act.status, 200, `activate failed: ${JSON.stringify(act.body)}`);
         const confirm = await coreRequest.post(`/${user}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code: '1234' });
         assert.strictEqual(confirm.status, 200, `confirm failed: ${JSON.stringify(confirm.body)}`);
       } finally {
@@ -400,7 +400,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
     it('[MFIN3] a TOTP enrolment with TOTP active is still asked for its second factor', async function () {
       const act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ method: 'totp' });
-      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assert.strictEqual(act.status, 200, JSON.stringify(act.body));
       const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
         .send({ code: await previousStepCodeFor(act.body.secret) });
       assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
@@ -463,7 +463,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
     // ----- activate --------------------------------------------------
     describe('[MA3] mfa.activate', function () {
-      it('[MA3A] sends an SMS challenge and returns a 302 with mfaToken', async function () {
+      it('[MA3A] sends an SMS challenge and returns a 200 with mfaToken', async function () {
         let challengeBody = null;
         nock(SMS_HOST)
           .post('/challenge')
@@ -474,7 +474,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .set('Authorization', personalToken)
           .send({ phone: '+41791234567' });
 
-        assert.strictEqual(res.status, 302);
+        assert.strictEqual(res.status, 200);
         assert.ok(res.body.mfaToken != null);
         assert.ok(challengeBody != null, 'SMS challenge should have been sent');
         // The body template {{ phone }} was replaced.
@@ -519,7 +519,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       it('[MACC1] an activation refused by the provider keeps the enrolment pending before it', async function () {
         nock(SMS_HOST).post('/challenge').reply(200, {});
         const pending = await activateSms('+41791234501');
-        assert.strictEqual(pending.status, 302, JSON.stringify(pending.body));
+        assert.strictEqual(pending.status, 200, JSON.stringify(pending.body));
         nock(SMS_HOST).post('/challenge').reply(500, { id: 'sms-down', message: 'down' });
         const refused = await activateSms('+41791234502');
         assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
@@ -532,7 +532,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       it('[MACC2] two concurrent activations refused by the provider keep the enrolment pending before them', async function () {
         nock(SMS_HOST).post('/challenge').reply(200, {});
         const pending = await activateSms('+41791234501');
-        assert.strictEqual(pending.status, 302, JSON.stringify(pending.body));
+        assert.strictEqual(pending.status, 200, JSON.stringify(pending.body));
         // Slow failures, so both activations claim the slot before either is refused.
         nock(SMS_HOST).post('/challenge').times(2).delay(800).reply(500, { id: 'sms-down', message: 'down' });
         const [a, b] = await Promise.all([activateSms('+41791234502'), activateSms('+41791234503')]);
@@ -558,7 +558,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       async function pendingEnrolment () {
         nock(SMS_HOST).post('/challenge').reply(200, {});
         const act = await activate({ phone: '+41791234567' });
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         return act.body.mfaToken;
       }
       /** A login pending its second factor; returns its mfaToken. */
@@ -580,7 +580,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         // any earlier pending one), over the active enrolment: with a step-up.
         nock(SMS_HOST).post('/challenge').reply(200, {});
         const act = await activate({ phone: '+41791234567', password });
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         const enrolToken = act.body.mfaToken;
         const provider = nock(SMS_HOST).post('/verify').reply(204);
         for (const body of [{ code: '12&4' }, { code: '1234"' }, { code: '%0d%0a' }, { code: '1234\r\n' }, { code: '{{ phone }}' }, { code: 1234 }, {}]) {
@@ -611,7 +611,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         }
         assert.ok(!provider.isDone(), 'no challenge was sent');
         const ok = await activate({ phone: '+41791234567' });
-        assert.strictEqual(ok.status, 302, JSON.stringify(ok.body));
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
       });
 
       it('[MA17D] allow-listed values reach the provider encoded (URL, JSON body), within a size cap, never expanded again', async function () {
@@ -631,7 +631,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           let seen = null;
           nock(SMS_HOST).post('/challenge').query(true).reply(200, function (uri, body) { seen = { uri, body }; return {}; });
           const res = await activate({ phone: '+41791234567', note });
-          assert.strictEqual(res.status, 302, JSON.stringify(res.body));
+          assert.strictEqual(res.status, 200, JSON.stringify(res.body));
           assert.ok(seen != null, 'the challenge was sent');
           assert.strictEqual(seen.uri, '/challenge?note=' + encodeURIComponent(note));
           assert.deepStrictEqual(seen.body, { to: '+41791234567', note });
@@ -652,7 +652,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41791234567' });
-        assert.strictEqual(res.status, 302, `hook mfa.activate failed: ${JSON.stringify(res.body)}`);
+        assert.strictEqual(res.status, 200, `hook mfa.activate failed: ${JSON.stringify(res.body)}`);
         mfaToken = res.body.mfaToken;
       });
 
@@ -704,7 +704,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41791234567' });
-        assert.strictEqual(activateRes.status, 302, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
+        assert.strictEqual(activateRes.status, 200, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
         const confirmRes = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', activateRes.body.mfaToken)
@@ -767,7 +767,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41791234567' });
-        assert.strictEqual(activateRes.status, 302, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
+        assert.strictEqual(activateRes.status, 200, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
         const confirmRes = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', activateRes.body.mfaToken)
@@ -823,7 +823,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41791111111', password });
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         assert.ok(!JSON.stringify(challengeBody).includes(password), 'the password must not reach the SMS provider');
         const confirm = await coreRequest
           .post(`/${username}/mfa/confirm`)
@@ -849,7 +849,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({ phone: '+41791234567' });
-        assert.strictEqual(activateRes.status, 302, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
+        assert.strictEqual(activateRes.status, 200, `hook mfa.activate failed: ${JSON.stringify(activateRes.body)}`);
         const confirmRes = await coreRequest
           .post(`/${username}/mfa/confirm`)
           .set('Authorization', activateRes.body.mfaToken)
@@ -960,7 +960,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       await _resetMFASingletons();
       nock(SMS_HOST).post('/challenge').reply(200, {});
       const act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken).send({ phone: '+41791234567' });
-      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assert.strictEqual(act.status, 200, JSON.stringify(act.body));
       return act.body.mfaToken;
     }
     const confirm = (mfaToken) => coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', mfaToken).send({ code: '123456' });
@@ -1053,7 +1053,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     }
     async function enrol (user = username, token = personalToken, phone = '+41791234567') {
       const act = await activate(user, token, phone);
-      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assert.strictEqual(act.status, 200, JSON.stringify(act.body));
       const res = await coreRequest.post(`/${user}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code: lastCode() });
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     }
@@ -1160,19 +1160,19 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       await otherUser.access({ type: 'personal', token: otherToken, name: 'pryv-test' });
       await otherUser.session(otherToken);
       const act = await activate(other, otherToken); // 2, same phone
-      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assert.strictEqual(act.status, 200, JSON.stringify(act.body));
       assertTooManySends(await login()); // 3rd send to that phone, first user
       const elsewhere = await activate(other, otherToken, '+41790000000');
-      assert.strictEqual(elsewhere.status, 302, `another phone is not held back: ${JSON.stringify(elsewhere.body)}`);
+      assert.strictEqual(elsewhere.status, 200, `another phone is not held back: ${JSON.stringify(elsewhere.body)}`);
     });
 
     it('[MSMS8] a new activation invalidates the previous pending enrolment', async function () {
       await setUp();
       const first = await activate();
-      assert.strictEqual(first.status, 302, JSON.stringify(first.body));
+      assert.strictEqual(first.status, 200, JSON.stringify(first.body));
       const firstCode = lastCode();
       const second = await activate();
-      assert.strictEqual(second.status, 302, JSON.stringify(second.body));
+      assert.strictEqual(second.status, 200, JSON.stringify(second.body));
       const refused = await confirm(first.body.mfaToken, firstCode);
       assert.strictEqual(refused.status, 401, JSON.stringify(refused.body));
       const ok = await confirm(second.body.mfaToken, lastCode());
@@ -1221,7 +1221,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       assert.ok(a.body.mfaToken != null && b.body.mfaToken != null);
       const act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken)
         .send({ method: 'sms', phone: '+41791234567', password });
-      assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+      assert.strictEqual(act.status, 200, JSON.stringify(act.body));
       assert.strictEqual((await confirm(act.body.mfaToken, lastCode())).status, 200);
       const sent = sends.length;
       assertEnrolmentChanged(await verify(a.body.mfaToken, codeA));
@@ -1315,7 +1315,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     it('[MSMS15] an activation refused by a failing provider or by the send limits leaves the earlier pending enrolment usable', async function () {
       await setUp({ sendLimits: { perUserPerHour: 2 } });
       const first = await activate(); // 1
-      assert.strictEqual(first.status, 302, JSON.stringify(first.body));
+      assert.strictEqual(first.status, 200, JSON.stringify(first.body));
       const firstCode = lastCode();
 
       failNextSend();
@@ -1369,7 +1369,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
     describe('[MA10E] enrolment', function () {
       it('[MA10A] activate(totp)+confirm returns an otpauth URI + secret, then recovery codes', async function () {
         const act = await activateTotp();
-        assert.strictEqual(act.status, 302, `activate failed: ${JSON.stringify(act.body)}`);
+        assert.strictEqual(act.status, 200, `activate failed: ${JSON.stringify(act.body)}`);
         assert.strictEqual(act.body.method, 'totp');
         assert.match(act.body.otpauthUri, /^otpauth:\/\/totp\//);
         assert.match(act.body.secret, /^[A-Z2-7]+$/);
@@ -1407,7 +1407,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
           .post(`/${username}/mfa/activate`)
           .set('Authorization', personalToken)
           .send({});
-        assert.strictEqual(res.status, 302);
+        assert.strictEqual(res.status, 200);
         assert.strictEqual(res.body.method, 'totp');
         assert.ok(res.body.otpauthUri != null);
       });
@@ -1415,7 +1415,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       it('[MA10F] a second activation invalidates the first pending enrolment', async function () {
         const first = await activateTotp();
         const second = await activateTotp();
-        assert.strictEqual(second.status, 302, JSON.stringify(second.body));
+        assert.strictEqual(second.status, 200, JSON.stringify(second.body));
         const refused = await coreRequest
           .post(`/${username}/mfa/confirm`).set('Authorization', first.body.mfaToken)
           .send({ code: totpCodeFor(first.body.secret, 0) });
@@ -1694,7 +1694,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       /** Enrol TOTP, leaving the current step's code unused. */
       async function enrol () {
         const act = await activateTotp();
-        assert.strictEqual(act.status, 302, `activate failed: ${JSON.stringify(act.body)}`);
+        assert.strictEqual(act.status, 200, `activate failed: ${JSON.stringify(act.body)}`);
         secret = act.body.secret;
         const confirm = await coreRequest
           .post(`/${username}/mfa/confirm`)
@@ -1761,7 +1761,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const code = totpCodeFor(secret, 0);
         // Re-activation over the active enrolment, stepped up with the code.
         const act = await activateWith({ code });
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         // The enrolment is unchanged until that activation is confirmed.
         const mfa = await assertMfaStillActive();
         assert.ok(mfa.totp.lastUsedStep >= Math.floor(Date.now() / 1000 / 30) - 1, 'the step was consumed');
@@ -1788,7 +1788,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         await enrol();
         const oldSecret = secret;
         const act = await activateWith({ password });
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         assert.notStrictEqual(act.body.secret, oldSecret);
         const confirm = await coreRequest
           .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
@@ -1802,7 +1802,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
       it('[MSU8] a first enrolment needs no step-up', async function () {
         const act = await activateWith({});
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         const confirm = await coreRequest
           .post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
           .send({ code: totpCodeFor(act.body.secret, 0) });
@@ -1812,7 +1812,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       it('[MSU9] an activation started with no enrolment cannot be confirmed over one enrolled meanwhile', async function () {
         // Started while the account had no MFA, so no step-up was asked...
         const early = await activateWith({});
-        assert.strictEqual(early.status, 302);
+        assert.strictEqual(early.status, 200);
         // ...then an enrolment is made on another session, whose activation
         // also invalidates the earlier pending one.
         await enrol();
@@ -1828,7 +1828,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
       it('[MSU13] an activation cannot be confirmed over an enrolment written meanwhile by another path', async function () {
         const early = await activateWith({});
-        assert.strictEqual(early.status, 302);
+        assert.strictEqual(early.status, 200);
         // An enrolment that did not go through mfa.activate on this core
         // (e.g. restored), so it did not invalidate the pending activation.
         const { user, profile, data } = await storedProfile();
@@ -1977,7 +1977,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         // Replace.
         act = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken)
           .send({ method: 'totp', password });
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
           .send({ code: await previousStepCodeFor(act.body.secret) });
         assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
@@ -2067,7 +2067,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       }
       async function enrolTotp () {
         const act = await activateTotp();
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
           .send({ code: await previousStepCodeFor(act.body.secret) });
         assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
@@ -2231,7 +2231,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       /** Enrol TOTP for `user` with its personal token; answers the secret. */
       async function enrolFor (user, token) {
         const act = await coreRequest.post(`/${user}/mfa/activate`).set('Authorization', token).send({ method: 'totp' });
-        assert.strictEqual(act.status, 302, JSON.stringify(act.body));
+        assert.strictEqual(act.status, 200, JSON.stringify(act.body));
         const confirm = await coreRequest.post(`/${user}/mfa/confirm`).set('Authorization', act.body.mfaToken)
           .send({ code: await previousStepCodeFor(act.body.secret) });
         assert.strictEqual(confirm.status, 200, JSON.stringify(confirm.body));
@@ -2279,7 +2279,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         // An activation of the first account does not count as a login session.
         const replace = await coreRequest.post(`/${username}/mfa/activate`).set('Authorization', personalToken)
           .send({ method: 'totp', password });
-        assert.strictEqual(replace.status, 302, JSON.stringify(replace.body));
+        assert.strictEqual(replace.status, 200, JSON.stringify(replace.body));
         const stillPending = await verify(username, tokens[1], secret);
         assert.notStrictEqual(stillPending.body.error?.id, 'invalid-access-token', 'the second login session was not evicted by the activation');
       });

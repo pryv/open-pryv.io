@@ -532,7 +532,7 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
       const login = await signIn();
       assert.equal(login.status, 200, JSON.stringify(login.body));
       const act = await coreRequest.post('/' + name + '/mfa/activate').set('Authorization', login.body.token).send({ method: 'totp' });
-      assert.equal(act.status, 302, JSON.stringify(act.body));
+      assert.equal(act.status, 200, JSON.stringify(act.body));
       // The confirm uses the previous step's code, leaving the current one to the verify.
       const left = 30 - (Math.floor(Date.now() / 1000) % 30);
       if (left < 5) await new Promise((resolve) => setTimeout(resolve, left * 1000 + 100));
