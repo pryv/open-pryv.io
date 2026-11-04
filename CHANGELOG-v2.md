@@ -193,8 +193,9 @@
   trip, and it answers success where a send would have failed on a mail server down), and a warning
   names the account (not the address). Absent or held by the account itself, the mail is sent as
   before. In cleartext mode (`platform.piiMode`, the default) the rows are keyed by the address as
-  written, so `User@example.com` and `user@example.com` are two rows: another account holding any
-  spelling of the address (as written, trimmed, lowercased) counts as holding it. The lookup goes
+  written, so `User@example.com` and `user@example.com` are two rows: another account holding the
+  address in one of three spellings (as written, trimmed and lowercased, lowercased) counts as
+  holding it; another mixed-case spelling (`USER@example.com`) is not seen. The lookup goes
   through the platform store, so it is the same on every core of a multi-core platform; when the
   platform store cannot be read, the request fails instead of sending.
 - **Trade-off: the row's holder is trusted, whether or not it proved the address.** Registration

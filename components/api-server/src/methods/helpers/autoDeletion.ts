@@ -260,13 +260,15 @@ export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeleti
     // The account's own address held by another account (`loadAccountFacts`,
     // or found at the send): a notice not given, never one switched off, so
     // it is not recorded as given (`rejected`: retried, logged once by the
-    // sweep). A failed lookup is a failed send, retried.
-    if (to == null && (facts.emailHeld === true ||
-        await isStoredEmailHeldElsewhere(user.username, facts.email, `auto-deletion ${kind} mail`, logger))) return 'rejected';
+    // sweep). A failed lookup is a failed send, retried. The live lookup runs
+    // after the switched-off cases, so a mail that would not be sent anyway
+    // does not read the platform.
+    if (to == null && facts.emailHeld === true) return 'rejected';
     if (to == null && (!facts.notifiable || facts.email == null)) return 'off';
     if (to != null && (facts.mail === 'not-configured' || to.email === '')) return 'off';
     const enabled = emailSettings.enabled;
     if (enabled != null && typeof enabled === 'object' && (enabled as Record<string, unknown>)[mail.flag] === false) return 'off';
+    if (to == null && await isStoredEmailHeldElsewhere(user.username, facts.email, `auto-deletion ${kind} mail`, logger)) return 'rejected';
     const lang = facts.language || emailSettings.defaultLang || 'en';
     const configured = (emailSettings as Record<string, unknown>)[mail.templateKey];
     const template = typeof configured === 'string' && configured !== '' ? configured : mail.template;

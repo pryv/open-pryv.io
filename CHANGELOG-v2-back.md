@@ -168,7 +168,7 @@
 - `usersRepository.reconcileEmailRows(dryRun)`, `bin/reconcile-user-cores.js --emails [--dry-run]`:
   run per core; for each account of the local index (skipped: no email, the email field not
   unique, a name routed to another core), the stored primary email: held by another account under
-  any spelling (`isEmailHeldByAnother`, below) -> `heldElsewhere`, nothing claimed; else its row
+  one of its three spellings (`isEmailHeldByAnother`, below) -> `heldElsewhere`, nothing claimed; else its row
   absent -> `missing`, claimed with `platform.setUserUniqueFieldIfNotExists` unless dry run
   (`claimed`; a lost claim is listed as held). Never deletes nor overwrites a row (safe with the API
   running). An account that cannot be read goes to `failed` (warned), the others are done; the CLI
@@ -187,7 +187,7 @@
 ### Password reset and notices: no mail to an address another account holds
 
 - `business/src/emails/heldAddress.ts`: `isEmailHeldByAnother(platform, username, email)`: another
-  owner than `hashFor('username', username)` on the row of any spelling of the address
+  owner than `hashFor('username', username)` on the row of one of three spellings of the address
   (`emailSpellings`: in hashed mode the address once, the row key being normalised already; in
   cleartext mode, where `hashFor` returns the address as written and nothing normalises it at
   registration, the address as written, `PiiHasher.normalize('email', ...)` and its lowercase).
