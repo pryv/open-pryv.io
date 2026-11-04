@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### OAuth: token exchange (RFC 8693) for resource servers
+
+- **Added: OAuth 2.0 Token Exchange (RFC 8693) for registry clients registered `--can-exchange`.**
+  A resource server in front of a core (an agent gateway, an API facade) posts to `/oauth2/token`
+  `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, the access token a user's client
+  sent it as `subject_token` and `subject_token_type=urn:ietf:params:oauth:token-type:access_token`,
+  with its client authentication (HTTP Basic, `client_secret_post` or `private_key_jwt`). The
+  subject token must have been issued for one of the resource server's audiences. The answer:
+  `access_token`, `issued_token_type`, `token_type: Bearer`, `expires_in`, `scope` and `api_base`
+  (the account's API base URL; the alias for a pseudonymous grant), no refresh token. The derived
+  token is a session of the user's grant for the resource server: the subject session's permissions,
+  at most its lifetime and the resource server's own access-token lifetime; a repeated exchange of
+  the same subject token answers the same token while it lives (an expired one is replaced by a new
+  token, never revived). Deleting or revoking the subject session ends it at
+  once, a narrowed grant narrows it, a refresh of the client does not end it (it lives out its own
+  expiry). `resource` / `audience` are optional (this server if given); `scope` (`invalid_scope`)
+  and actor tokens (`invalid_request`) are refused. Errors: `invalid_client` (401),
+  `unauthorized_client` (not registered for it, suspended, under review), `invalid_target` (the
+  subject token was issued for another resource), `invalid_grant` for any unusable subject token
+  (a deliberate departure from RFC 8693 § 2.2.2, which says `invalid_request`), `421 wrong_core` with
+  `coreUrl` when the subject session lives on another core. Advertise the grant by adding its URN
+  to `oauth.grantTypesSupported`. See `docs/oauth2.md` § 1e.
+- **Added: introspection of a derived token** answers `client_id` = the client whose token was
+  exchanged and `act: { "client_id": "<resource server>" }`, no `aud`; it is active only while both
+  clients are available. Extensions: hooks get `ctx.grantType: 'token-exchange'` and `ctx.actor`
+  (optional context field); in the new contexts only, `api_base` and `issued_token_type` are reserved
+  in the exchange's response and `act` in a derived token's introspection. The existing grants'
+  hooks are unchanged (no `apiVersion` change).
+- **Changed: a session a registry client's authorization naming a resource server (`aud` /
+  `resource`) mints records it** (`clientData.oauth.audience`, server-owned, visible in
+  `accesses.get`; not on an app-account client's sessions, which have no exchange path). With the
+  new per-core setting `oauth.audienceBoundSessions: true` (or the string `"true"`; a value that is
+  neither `true` nor `false` stops the boot), the data API refuses such a token
+  (`403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`): it is meant to be
+  exchanged by that resource server. Default `false` in this release; **the next release defaults it
+  to `true`**: set it explicitly to `false` on a core whose resource servers do not exchange yet.
+  Sessions minted before this release, and sessions issued for no resource server, are never
+  refused. The core warns at boot while a client is registered `--can-exchange` and the setting is off.
+- **Added: `bin/oauth-client.js` `--can-exchange`** on `create-registry` and `update` (`false`
+  withdraws it; a confidential client with an audience list only; a vetted change). `show` prints it.
+- **Added: audit events `oauth.token.exchanged` and `oauth.token.exchange_refused`.**
+
 ### CMC: a single-use link is consumed before its invite reads accepted
 
 - **Fixed: an answer sent on the same single-use link right after its invite turned `accepted`
@@ -108,48 +150,6 @@
   answer. A client that checks for `302` must accept `200`; a client that only reads the body is not
   affected. `auth/login` on an account with MFA already answers `200` with an `mfaToken` (the reference
   said `302`; corrected).
-
-### OAuth: token exchange (RFC 8693) for resource servers
-
-- **Added: OAuth 2.0 Token Exchange (RFC 8693) for registry clients registered `--can-exchange`.**
-  A resource server in front of a core (an agent gateway, an API facade) posts to `/oauth2/token`
-  `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, the access token a user's client
-  sent it as `subject_token` and `subject_token_type=urn:ietf:params:oauth:token-type:access_token`,
-  with its client authentication (HTTP Basic, `client_secret_post` or `private_key_jwt`). The
-  subject token must have been issued for one of the resource server's audiences. The answer:
-  `access_token`, `issued_token_type`, `token_type: Bearer`, `expires_in`, `scope` and `api_base`
-  (the account's API base URL; the alias for a pseudonymous grant), no refresh token. The derived
-  token is a session of the user's grant for the resource server: the subject session's permissions,
-  at most its lifetime and the resource server's own access-token lifetime; a repeated exchange of
-  the same subject token answers the same token while it lives (an expired one is replaced by a new
-  token, never revived). Deleting or revoking the subject session ends it at
-  once, a narrowed grant narrows it, a refresh of the client does not end it (it lives out its own
-  expiry). `resource` / `audience` are optional (this server if given); `scope` (`invalid_scope`)
-  and actor tokens (`invalid_request`) are refused. Errors: `invalid_client` (401),
-  `unauthorized_client` (not registered for it, suspended, under review), `invalid_target` (the
-  subject token was issued for another resource), `invalid_grant` for any unusable subject token
-  (a deliberate departure from RFC 8693 § 2.2.2, which says `invalid_request`), `421 wrong_core` with
-  `coreUrl` when the subject session lives on another core. Advertise the grant by adding its URN
-  to `oauth.grantTypesSupported`. See `docs/oauth2.md` § 1e.
-- **Added: introspection of a derived token** answers `client_id` = the client whose token was
-  exchanged and `act: { "client_id": "<resource server>" }`, no `aud`; it is active only while both
-  clients are available. Extensions: hooks get `ctx.grantType: 'token-exchange'` and `ctx.actor`
-  (optional context field); in the new contexts only, `api_base` and `issued_token_type` are reserved
-  in the exchange's response and `act` in a derived token's introspection. The existing grants'
-  hooks are unchanged (no `apiVersion` change).
-- **Changed: a session a registry client's authorization naming a resource server (`aud` /
-  `resource`) mints records it** (`clientData.oauth.audience`, server-owned, visible in
-  `accesses.get`; not on an app-account client's sessions, which have no exchange path). With the
-  new per-core setting `oauth.audienceBoundSessions: true` (or the string `"true"`; a value that is
-  neither `true` nor `false` stops the boot), the data API refuses such a token
-  (`403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`): it is meant to be
-  exchanged by that resource server. Default `false` in this release; **the next release defaults it
-  to `true`**: set it explicitly to `false` on a core whose resource servers do not exchange yet.
-  Sessions minted before this release, and sessions issued for no resource server, are never
-  refused. The core warns at boot while a client is registered `--can-exchange` and the setting is off.
-- **Added: `bin/oauth-client.js` `--can-exchange`** on `create-registry` and `update` (`false`
-  withdraws it; a confidential client with an audience list only; a vetted change). `show` prints it.
-- **Added: audit events `oauth.token.exchanged` and `oauth.token.exchange_refused`.**
 
 ### OAuth registry clients: a change of launch types is vetted
 
