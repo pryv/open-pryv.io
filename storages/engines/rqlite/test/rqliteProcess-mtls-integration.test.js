@@ -22,7 +22,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  *
  * The test uses loopback addresses and non-default ports
  * (14xxx range) so it can run on a developer machine without
- * clashing with any rqlited already listening on 4001/4002.
+ * clashing with any rqlited already listening on 4001/4002. The range
+ * is shifted by this checkout's own rqlite port offset, so checkouts
+ * running the suite side by side never share it.
  */
 
 const assert = require('node:assert/strict');
@@ -33,7 +35,15 @@ const { spawn, execFileSync } = require('node:child_process');
 
 const { buildArgs } = require('../src/rqliteProcess.ts');
 
+const { getConfigUnsafe } = require('@pryv/boiler');
+
 const RQLITED_BIN = path.resolve(__dirname, '../../../../bin-ext/rqlited');
+// 14001-14004 on a checkout whose rqlite is on 4001; the same offset as its
+// rqlite otherwise (config/test-config.yml: 4101 gives 14101-14104).
+const RQLITE_URL = getConfigUnsafe(true).get('storages:engines:rqlite:url') || 'http://localhost:4001';
+const PORT_BASE = 14001 + (Number(new URL(RQLITE_URL).port || 4001) - 4001);
+const PORTS_A = { http: PORT_BASE, raft: PORT_BASE + 1 };
+const PORTS_B = { http: PORT_BASE + 2, raft: PORT_BASE + 3 };
 const BOOT_TIMEOUT_MS = 30_000;
 const CLUSTER_FORM_TIMEOUT_MS = 30_000;
 
@@ -87,7 +97,7 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
     };
 
     // --- node-a: bootstrap the cluster as a single node ---
-    const portsA = { http: 14001, raft: 14002 };
+    const portsA = PORTS_A;
     nodeA = spawnRqlited({
       nodeId: 'node-a',
       dataDir: path.join(tmpDir, 'node-a-data'),
@@ -105,7 +115,7 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
 
     // --- node-b: join node-a via HTTP (the join handshake is plain HTTP,
     // after which inter-node Raft traffic flows over mTLS) ---
-    const portsB = { http: 14003, raft: 14004 };
+    const portsB = PORTS_B;
     nodeB = spawnRqlited({
       nodeId: 'node-b',
       dataDir: path.join(tmpDir, 'node-b-data'),
@@ -163,7 +173,7 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
     const followerUrl = await findFollower([urlA, urlB]);
     // Each node advertises an HTTP address nobody can reach (spawnRqlited):
     // forwarding and reachability must go over the Raft port only.
-    assert.equal(nodeA._args[nodeA._args.indexOf('-http-addr') + 1], '127.0.0.1:14001');
+    assert.equal(nodeA._args[nodeA._args.indexOf('-http-addr') + 1], '127.0.0.1:' + PORTS_A.http);
     const write = await fetch(followerUrl + '/db/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
