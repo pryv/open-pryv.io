@@ -1190,7 +1190,7 @@ describe('[RG2C] Two-core integration tests', function () {
     });
 
     // Consent and code exchange on the home core: one refresh chain.
-    async function newChain () {
+    async function newChain ({ resource } = {}) {
       const username = user.username;
       const verifier = crypto.randomBytes(32).toString('base64url');
       const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
@@ -1201,7 +1201,8 @@ describe('[RG2C] Two-core integration tests', function () {
         state: 'mc',
         scope: 'offline_access read/notes',
         code_challenge: challenge,
-        code_challenge_method: 'S256'
+        code_challenge_method: 'S256',
+        ...(resource != null ? { resource } : {})
       });
       const auth = await fetch(`http://127.0.0.1:${CORE_B_PORT}/oauth2/authorize?${q}`, { redirect: 'manual' });
       assert.strictEqual(auth.status, 302, await auth.text());
@@ -1299,6 +1300,41 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.strictEqual(live.body.active, true, JSON.stringify(live.body));
       const list = await httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/accesses', null, { Authorization: user.token });
       assert.ok(list.body.accesses.some((a) => a.name === 'oauth-grant:' + appId), 'the grant stays');
+    });
+
+    it('[2C78] a token exchange on the other core answers 421 with the home core\'s URL; on the home core the derived token reads the account', async () => {
+      const exchangerId = 'RsX.' + Date.now().toString(36);
+      const audience = 'https://rs.multicore.test/rs';
+      await oauth2.persistClient(platformDB, registryRow({
+        clientId: exchangerId,
+        tokenEndpointAuthMethod: 'client_secret_basic',
+        clientSecretHash: rsSecret.hash,
+        anyAudience: undefined,
+        allowedAudiences: [audience],
+        canExchange: true
+      }));
+      try {
+        const subject = await newChain({ resource: audience });
+        // The request a resource server sends, nothing more.
+        const asExchanger = (port) => httpRequest(port, 'POST', '/oauth2/token', {
+          grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+          subject_token: subject.access_token,
+          subject_token_type: 'urn:ietf:params:oauth:token-type:access_token'
+        }, { Authorization: 'Basic ' + Buffer.from(exchangerId + ':' + rsSecret.plaintext).toString('base64') });
+        const onA = await asExchanger(CORE_A_PORT);
+        assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+        assert.strictEqual(onA.body.error, 'wrong_core');
+        assert.strictEqual(trim(onA.body.coreUrl), trim(CORE_B_URL));
+        const onB = await asExchanger(CORE_B_PORT);
+        assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+        assert.strictEqual(onB.body.token_type, 'Bearer');
+        assert.strictEqual(onB.body.issued_token_type, 'urn:ietf:params:oauth:token-type:access_token');
+        const read = await httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/events?streams=' + encodeURIComponent('["notes"]'), null,
+          { Authorization: onB.body.access_token });
+        assert.strictEqual(read.status, 200, JSON.stringify(read.body));
+      } finally {
+        try { await oauthStorage.deleteClient(platformDB, exchangerId); } catch (_) { /* best-effort */ }
+      }
     });
 
     it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {

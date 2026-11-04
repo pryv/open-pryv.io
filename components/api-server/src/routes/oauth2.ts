@@ -23,6 +23,8 @@
  *   - the refresh-chain collapse on reuse, and the session deletion behind
  *     the client's own revocation of a token (`oauth2/revoke.ts`);
  *   - the session re-read behind token introspection (`oauth2/introspect.ts`);
+ *   - the subject re-read and the derived session behind token exchange
+ *     (`oauth2/sessions.ts`);
  *   - the operator's OAuth extension, loaded here at mount.
  *
  * If `service:api`, `oauth:consentUrl` or the state key `oauth:stateKey`
@@ -184,5 +186,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     resolveUser,
     createAccess: grants.createAccess,
     readRegistryGrant: grants.readRegistryGrant,
+    readSubjectSession: sessions.readSubjectSession,
+    issueDerivedSession: sessions.issueDerivedSession,
   });
 }

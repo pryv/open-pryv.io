@@ -439,6 +439,44 @@ describe('[ORI] OAuth2: RFC 8707 resource indicators', () => {
     assert.equal((await introspect(platform, tokNone.body.access_token)).aud, undefined);
   });
 
+  it('[ORI11] the session records the audience for a registry client only, at the consent and at every refresh', async () => {
+    const platform = await seeded();
+    const accepted = async (query) => {
+      const a = await authorize(platform, authorizeQuery(query));
+      assert.ok(a.signed, JSON.stringify(a.error) + ' ' + a.res.raw);
+      let granted = [{ streamId: 'a', level: 'read' }];
+      if (query.client_id == null) {
+        const offerRes = fakeRes();
+        await handleOffer({ config: fakeConfig(), platform })({ body: { state: a.signed } }, offerRes);
+        granted = offerRes.body.offer.permissions;
+      }
+      const calls = [];
+      const acc = fakeRes();
+      await handleAccept({
+        config: fakeConfig(),
+        platform,
+        resolveUser: async () => ({ userId: USER_ID, username: 'alice' }),
+        createAccess: fakeCreateAccess(calls),
+      })({ body: { state: a.signed, username: 'alice', userToken: 'personal', grantedPermissions: granted } }, acc);
+      assert.equal(acc.statusCode, 200, acc.raw);
+      return calls[0];
+    };
+    assert.equal((await accepted({ aud: AUD })).audience, AUD);
+    assert.equal('audience' in (await accepted({ client_id: 'cmc-app', scope: 'cmc:study', aud: OTHER })), false);
+    const seen = [];
+    const capture = async (p) => { seen.push(p); return await mint(); };
+    await seedRefresh(platform, 'RT-REG');
+    await seedRefresh(platform, 'RT-APP', { kind: undefined, coreTokens: undefined, grammarTokens: undefined });
+    for (const token of ['RT-REG', 'RT-APP']) {
+      await handleToken(tokenDeps(platform, fakeConfig(), { mintRefreshedAccess: capture }))({
+        headers: {}, body: { grant_type: 'refresh_token', refresh_token: token, client_id: 'reg-app' },
+      }, fakeRes());
+    }
+    assert.equal(seen.length, 2);
+    assert.equal(seen[0].audience, AUD);
+    assert.equal('audience' in seen[1], false);
+  });
+
   it('[ORI08] /token code grant: the same resource passes, another one consumes the code and revokes the access', async () => {
     const platform = await seeded();
     const ok = await exchange(platform, await codeFor(platform, { aud: AUD }), { resource: AUD + '/' });

@@ -39,6 +39,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
     grantState?: unknown;
     apiBase: string;
     dpopJkt?: string;
+    subjectCreated?: number;
   } | null> {
     const username = await sessions.resolveUsername(userId);
     if (username == null) return null;
@@ -75,6 +76,7 @@ export function createIntrospect (_env: GlueEnv, sessions: SessionReads) {
       grantState,
       apiBase: ApiEndpoint.build(apiBaseName, undefined),
       ...(typeof access.clientData?.dpop?.jkt === 'string' ? { dpopJkt: access.clientData.dpop.jkt } : {}),
+      ...(typeof access.clientData?.oauth?.exchange?.subjectCreated === 'number' ? { subjectCreated: access.clientData.oauth.exchange.subjectCreated } : {}),
     };
   }
 

@@ -21,7 +21,7 @@
  *    token.issued.authorization_code, token.refreshed, token.revoked) — carry
  *    a `userId` and are persisted to that user's audit storage (+ syslog).
  *  - user-less (consent.shown, consent.refused, code.reused,
- *    token.introspected): no user is known (pre-consent / reuse of an
+ *    token.introspected, token.exchange_refused): no user is known (pre-consent / reuse of an
  *    already-consumed code or refresh token / a resource server asking about
  *    any token), so they go to syslog only (per-user storage needs a user to
  *    key on).
@@ -54,7 +54,9 @@ export type OAuthAuditEvent =
   | 'oauth.token.reuse_detected'
   | 'oauth.token.dpop_mismatch'
   | 'oauth.token.revoked'
-  | 'oauth.token.introspected';
+  | 'oauth.token.introspected'
+  | 'oauth.token.exchanged'
+  | 'oauth.token.exchange_refused';
 
 /**
  * OAuth events for which no user is resolvable at emit time (pre-consent
@@ -72,7 +74,9 @@ export const USERLESS_EVENTS: ReadonlySet<OAuthAuditEvent> = new Set([
   'oauth.code.reused',
   // A resource server's question about a token: the answer may be about no
   // user at all (unknown, expired or another core's token).
-  'oauth.token.introspected'
+  'oauth.token.introspected',
+  // A refused token exchange: the subject token may name no user at all.
+  'oauth.token.exchange_refused'
 ]);
 
 /**
@@ -101,6 +105,10 @@ export type OAuthAuditPayload = {
   retiredAccessId?: string; // oauth.token.refreshed: the session the rotation retired
   active?: boolean; // oauth.token.introspected: the answer (the token itself is never recorded)
   tokenClientId?: string; // oauth.token.introspected: the client the token was issued to, when known
+  actorClientId?: string; // oauth.token.introspected: the resource server holding a derived token
+  subjectClientId?: string; // oauth.token.exchanged: the client the subject token was issued to
+  subjectAccessId?: string; // oauth.token.exchanged: the subject session
+  reused?: boolean; // oauth.token.exchanged: the derived session existed already
 };
 
 /** The subset of AuditEventLike (components/audit/) we build here. */

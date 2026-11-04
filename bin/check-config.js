@@ -486,6 +486,14 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   }
 }
 
+// oauth.audienceBoundSessions: a boolean, or the strings true / false (the boot
+// refuses anything else).
+{
+  const { audienceBoundSessionsProblem } = require('../components/oauth2/src/audienceBinding.ts');
+  const message = audienceBoundSessionsProblem(get('oauth.audienceBoundSessions'));
+  if (message != null) problems.push(message);
+}
+
 // services.mfa: the same check master.js runs at boot, on the merged
 // configuration: a partial block is judged by the configuration it produces.
 try {

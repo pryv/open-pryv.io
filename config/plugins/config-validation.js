@@ -672,8 +672,20 @@ async function validate (config) {
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
+  checkAudienceBoundSessions(config, problems);
 
   return problems;
+}
+
+/**
+ * `oauth.audienceBoundSessions` is a security switch: a boolean, or the
+ * strings `true` / `false` (an environment variable); anything else stops the
+ * boot rather than being read as off.
+ */
+function checkAudienceBoundSessions (config, problems) {
+  const { audienceBoundSessionsProblem } = require('../../components/oauth2/src/audienceBinding.ts');
+  const message = audienceBoundSessionsProblem(config.get('oauth:audienceBoundSessions'));
+  if (message != null) problems.push({ message, path: ['oauth', 'audienceBoundSessions'] });
 }
 
 /**

@@ -26,6 +26,7 @@ import type { OAuthExtension } from './extension.ts';
 import type { RevokeChain, RetireSession } from './grants/refresh_token.ts';
 import type { IntrospectAccess } from './introspection.ts';
 import type { RevokeSession } from './revocation.ts';
+import type { ReadSubjectSession, IssueDerivedSession } from './grants/token_exchange.ts';
 import { handleIntrospect } from './introspection.ts';
 import { handleRevoke } from './revocation.ts';
 import type { NextFunction, Request, Response } from 'express';
@@ -178,6 +179,10 @@ export type Deps = {
    */
   readRegistryGrant?: (params: { session: { userId: string; username: string; [key: string]: unknown }; clientId: string })
   => Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean } | null>;
+  /** Token exchange (RFC 8693): the subject session re-read on its home core. */
+  readSubjectSession?: ReadSubjectSession;
+  /** Token exchange: find or mint the derived session on this core. */
+  issueDerivedSession?: IssueDerivedSession;
 };
 
 /**
@@ -299,6 +304,9 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       revokeAccessLocal: deps.revokeAccessLocal,
       resolveUsername: deps.resolveUsername,
       ...(deps.resolveGrantSubject != null ? { resolveGrantSubject: deps.resolveGrantSubject } : {}),
+      ...(deps.readSubjectSession != null ? { readSubjectSession: deps.readSubjectSession } : {}),
+      ...(deps.issueDerivedSession != null ? { issueDerivedSession: deps.issueDerivedSession } : {}),
+      ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
     })));
 
   if (introspection) {
@@ -327,7 +335,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   // Registry rows are written by the operator CLI, which does not load the
   // extension: check their maximum scope sets now, in the background. A bad
   // row is reported, never fatal (one client must not take the core down).
-  checkRegistryClients(deps.platform).catch((err: unknown) =>
+  checkRegistryClients(deps.platform, deps.config).catch((err: unknown) =>
     logServerError('oauth2: registry client check at boot failed', err));
 }
 

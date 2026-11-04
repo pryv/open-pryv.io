@@ -143,6 +143,34 @@ function isBoundToGrant (access: AccessRow, grantBaseId: string): boolean {
   return oauth?.dataGrantId === grantBaseId;
 }
 
+/**
+ * A derived session (token exchange) of the session `sessionId`: deleting a
+ * session deletes the sessions a resource server holds in its place
+ * (`clientData.oauth.exchange.subjectAccessId`, written by the OAuth routes
+ * only), at once, instead of leaving them valid until their own expiry.
+ */
+function isDerivedOf (access: AccessRow, sessionId: string): boolean {
+  const oauth = access?.clientData?.oauth as { exchange?: { subjectAccessId?: unknown } } | undefined;
+  return access?.type === 'app' && oauth?.exchange?.subjectAccessId === sessionId;
+}
+
+/**
+ * The derived sessions of `sessionIds` not already in `known`, and what they
+ * created (live), expired derived sessions included (they are deleted, not
+ * left behind, like the sessions of a withdrawn grant).
+ */
+function derivedOfSessions (all: AccessRow[], sessionIds: string[], now: number, known: AccessRow[]): AccessRow[] {
+  const seen = new Set<string>(known.map((a) => a.id).concat(sessionIds));
+  const derived = all.filter((a) => !seen.has(a.id) && sessionIds.some((id) => isDerivedOf(a, id)));
+  for (const d of derived) seen.add(d.id);
+  const created = derived.flatMap((d) => managedAccessesOf(all, d.id, now)).filter((a) => {
+    if (seen.has(a.id)) return false;
+    seen.add(a.id);
+    return true;
+  });
+  return derived.concat(created);
+}
+
 /** An OAuth session access: it names its consent grant. */
 function isOAuthSession (access: AccessRow): boolean {
   const oauth = access?.clientData?.oauth as { dataGrantId?: unknown } | undefined;
@@ -223,13 +251,17 @@ async function accessChainIds (user: DeletionUser, id: string): Promise<string[]
   const storageLayer = await getStorageLayer();
   const all = await fromCallback((cb: NodeCallback) => storageLayer.accesses.find(user, {}, dbFindOptions, cb)) as AccessRow[];
   const now = timestamp.now();
+  const base = parseAccessRef(id).base;
   const related = managedAccessesOf(all, id, now);
-  const sessions = sessionsOfGrant(all, parseAccessRef(id).base, now, related);
-  const self = all.find((a) => a.id === parseAccessRef(id).base);
-  const chain = (self != null ? [{ ...self, id: parseAccessRef(id).base }] : []).concat(related, sessions);
+  const sessions = sessionsOfGrant(all, base, now, related);
+  // As deleteAccessChain: the derived sessions of the access (a session)
+  // and of the grant's sessions go too.
+  const derived = derivedOfSessions(all, [base].concat(sessions.map((a) => a.id)), now, related.concat(sessions));
+  const self = all.find((a) => a.id === base);
+  const chain = (self != null ? [{ ...self, id: base }] : []).concat(related, sessions, derived);
   // As deleteAccessChain: expired accesses sharing the chain's alias go too.
   const pinning = expiredAliasHolders(all, chain, now);
-  return [id].concat(related.map((a) => a.id), sessions.map((a) => a.id), pinning.map((a) => a.id));
+  return [id].concat(related.map((a) => a.id), sessions.map((a) => a.id), derived.map((a) => a.id), pinning.map((a) => a.id));
 }
 
 /**
@@ -289,12 +321,18 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
   let related: AccessRow[] = params.relatedAccessesToDelete ?? [];
   const grantBaseId = parseAccessRef(params.id).base;
   let sessionIds: string[] = [];
+  let derivedIds: string[] = [];
   if (accessToDelete.type !== 'personal') {
     const all = await fromCallback((cb: NodeCallback) => accessesRepository.find(user, {}, dbFindOptions, cb)) as AccessRow[];
     if (params.relatedAccessesToDelete == null) related = managedAccessesOf(all, params.id, timestamp.now());
     const sessions = sessionsOfGrant(all, grantBaseId, timestamp.now(), related);
     sessionIds = sessions.filter((a) => isSessionOfGrant(a, grantBaseId)).map((a) => a.id);
     related = related.concat(sessions);
+    // The derived sessions (token exchange) of the access itself (a session)
+    // and of the grant's sessions.
+    const derived = derivedOfSessions(all, [grantBaseId].concat(sessionIds), timestamp.now(), related);
+    derivedIds = derived.filter((a) => isDerivedOf(a, grantBaseId) || sessionIds.some((id) => isDerivedOf(a, id))).map((a) => a.id);
+    related = related.concat(derived);
     related = related.concat(expiredAliasHolders(all, [{ ...accessToDelete, id: grantBaseId }].concat(related), timestamp.now()));
   }
   let idsToDelete: Array<{ id: string }> = [{ id: params.id }].concat(related.map((a) => ({ id: a.id })));
@@ -364,7 +402,9 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     const deletedIds = new Set(idsToDelete.map((d) => d.id));
     const late = all.filter((a) => typeof a.id === 'string' && !deletedIds.has(a.id) &&
       !(a.expires != null && now > a.expires) &&
-      (isManagedBy(a, params.id) || isBoundToGrant(a, grantBaseId) || sessionIds.some((id) => isManagedBy(a, id))));
+      (isManagedBy(a, params.id) || isBoundToGrant(a, grantBaseId) || sessionIds.some((id) => isManagedBy(a, id)) ||
+        // a derived session minted meanwhile, or an access a deleted derived session created meanwhile
+        isDerivedOf(a, grantBaseId) || sessionIds.some((id) => isDerivedOf(a, id)) || derivedIds.some((id) => isManagedBy(a, id))));
     if (late.length > 0) {
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
       for (const a of late) {

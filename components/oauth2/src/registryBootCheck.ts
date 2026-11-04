@@ -27,12 +27,19 @@ import { checkMaxSet } from './scopeGrammar.ts';
 import { insecureRedirectUris } from './clientRegistry.ts';
 import { validatePublicJwkSet } from './jwks.ts';
 import { logServerWarning } from './serverLog.ts';
+import { audienceBoundSessions } from './audienceBinding.ts';
 
-/** Check every registry client of the platform. Resolves to the number of warnings. */
-export async function checkRegistryClients (platform: PlatformDB): Promise<number> {
+/**
+ * Check every registry client of the platform. Resolves to the number of
+ * warnings. With `config`: a client registered for token exchange while this
+ * core still accepts at the data API the tokens issued for a resource server
+ * (`oauth:audienceBoundSessions` not on) is reported once.
+ */
+export async function checkRegistryClients (platform: PlatformDB, config?: { get (key: string): unknown }): Promise<number> {
   let warnings = 0;
   if (typeof platform?.listPlatformKvKeys !== 'function') return 0; // a partial store (tests)
   const ids: string[] = await storage.listClientIds(platform);
+  const exchanging: string[] = [];
   for (const id of ids) {
     let client: OAuthClient | null;
     try {
@@ -53,6 +60,7 @@ export async function checkRegistryClients (platform: PlatformDB): Promise<numbe
       }
     }
     if (client.kind !== 'registry') continue;
+    if (client.canExchange === true) exchanging.push(id);
     const max = checkMaxSet(client);
     if (!max.ok) {
       warnings++;
@@ -69,6 +77,11 @@ export async function checkRegistryClients (platform: PlatformDB): Promise<numbe
         ? `oauth registry client ${id}: registered with plain-http redirect URIs on a non-loopback host (${insecure.join(', ')})`
         : `oauth registry client ${id}: plain-http redirect URIs on a non-loopback host (${insecure.join(', ')}) stored without the insecure-redirect registration (a row written before the rule; update it)`);
     }
+  }
+  if (config != null && exchanging.length > 0 && !audienceBoundSessions(config)) {
+    warnings++;
+    logServerWarning(`oauth registry client(s) ${exchanging.join(', ')} may exchange tokens, but this core still accepts at its data API ` +
+      'the tokens issued for a resource server (oauth.audienceBoundSessions is not true): set it once those resource servers exchange');
   }
   return warnings;
 }

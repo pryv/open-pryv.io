@@ -757,6 +757,15 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #       privateKeyFile: /path/to/oidc-signing-key.pem
 # #   idTokenTTL: 300
 
+# # Token exchange (RFC 8693) for a resource server in front of this core (a
+# # registry client registered with --can-exchange): advertise the grant, and,
+# # once that resource server exchanges, refuse at the data API the tokens
+# # issued for it (false by default in this release). Under the oauth: block above.
+# #   grantTypesSupported:
+# #     - authorization_code
+# #     - urn:ietf:params:oauth:grant-type:token-exchange
+# #   audienceBoundSessions: true
+
 # # Logos of OAuth clients on the consent screen: https only, from these hosts
 # # (none shown while the list is empty). Under the oauth: block above.
 # #   logoHosts:

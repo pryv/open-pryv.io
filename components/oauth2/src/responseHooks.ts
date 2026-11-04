@@ -26,7 +26,7 @@
 
 import type { OAuthClient } from './storage.ts';
 import type { HookCtx, ExtPermission } from './extension.ts';
-import { runHook, toClientView, RESERVED_KEYS } from './extension.ts';
+import { runHook, toClientView, RESERVED_KEYS, EXCHANGE_RESERVED_KEYS } from './extension.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
 import { loadSigningKeys, signJwt } from './signingKeys.ts';
 
@@ -34,8 +34,15 @@ import { loadSigningKeys, signJwt } from './signingKeys.ts';
 export const DEFAULT_ID_TOKEN_TTL = 300;
 
 export type RegistryGrant = {
+  /** The client whose authorization the token carries (the echo and the hooks are about it). */
   client: OAuthClient;
-  grantType: 'authorization_code' | 'refresh_token';
+  grantType: 'authorization_code' | 'refresh_token' | 'token-exchange';
+  /**
+   * Token exchange: the resource server receiving the response. Its static
+   * extras are the ones added (they are about the client that receives the
+   * response), and the hooks see it as `ctx.actor`.
+   */
+  actor?: OAuthClient;
   issuer: string;
   /** Read for the signing keys and `oauth:idTokenTTL`. */
   config: { get (key: string): unknown };
@@ -84,10 +91,14 @@ export async function prepareRegistryResponse (g: RegistryGrant): Promise<Regist
     permissions: g.permissions,
     issuer: g.issuer,
     ...(g.audience != null ? { audience: g.audience } : {}),
+    ...(g.actor != null ? { actor: { clientId: g.actor.clientId } } : {}),
   };
-  const staticExtras = { ...(g.client.tokenResponseExtras ?? {}) } as Record<string, unknown>;
-  for (const k of RESERVED_KEYS.tokenResponse) delete staticExtras[k];
-  const extra: Record<string, unknown> = { ...staticExtras, ...(await runHook('tokenResponse', ctx)) };
+  // The token exchange's response reserves its own members too, in that
+  // context only (the other grants' contract is unchanged).
+  const extraReserved = g.actor != null ? EXCHANGE_RESERVED_KEYS.tokenResponse : [];
+  const staticExtras = { ...((g.actor ?? g.client).tokenResponseExtras ?? {}) } as Record<string, unknown>;
+  for (const k of [...RESERVED_KEYS.tokenResponse, ...extraReserved]) delete staticExtras[k];
+  const extra: Record<string, unknown> = { ...staticExtras, ...(await runHook('tokenResponse', ctx, extraReserved)) };
   const parts: RegistryResponseParts = { scopeTokens, extra, refresh: scopeTokens.includes('offline_access') };
   // No id_token on refresh (OpenID Connect Core §12.2 makes it optional; the
   // nonce of the original request must not be replayed).
