@@ -705,10 +705,13 @@ to find the API it signs the user in at. A consent UI with an origin allowlist
 must list the issuer's origin (app-web-user-account: `trustedApiOrigins` in
 its `settings.json`, or `VITE_OAUTH_TRUSTED_API_ORIGINS` at build time; not
 `returnPolicy.trustedOrigins`, which is about return addresses). Make the
-core see the client-facing scheme and host: either keep the client's Host
-header and reach the core over the same scheme as the public URL, or send
-`X-Forwarded-Host` and `X-Forwarded-Proto` from a proxy address listed in
-`http.trustedProxies` (from any other address those headers are ignored).
+core see the client-facing scheme and host. Host and scheme are taken
+separately: the host from `X-Forwarded-Host`, else the Host header; the
+scheme from `X-Forwarded-Proto`, else the connection to the core. A proxy that
+keeps the client's Host header and ends TLS (plain HTTP to the core) only
+needs to send `X-Forwarded-Proto`. The forwarding headers count only from a
+proxy address listed in `http.trustedProxies` (from any other address they
+are ignored).
 DPoP proofs are checked against the URL the request reached: a mismatch
 answers `invalid_dpop_proof`. `apiEndpoint` in token responses and `api_base`
 in introspection keep naming the core's API URL, the resource server.
