@@ -36,7 +36,7 @@ Once enabled, each core exposes:
 | `POST /oauth2/authorize/offer` | Consent UI: fetch the consent offer of a registry client by reference (§ 1d) |
 | `POST /oauth2/authorize/accept` | Consent UI: the user grants the request |
 | `POST /oauth2/authorize/refuse` | Consent UI: the user declines the request |
-| `POST /oauth2/token` | Token endpoint — code exchange, refresh, client credentials |
+| `POST /oauth2/token` | Token endpoint: code exchange, refresh, client credentials, token exchange (RFC 8693, § 1e) |
 | `GET /.well-known/openid-configuration` | OpenID Connect discovery (404 while `oauth.signingKeys` is empty) |
 | `GET /oauth2/jwks` | JWK Set of the id_token signing keys, public members only (404 while `oauth.signingKeys` is empty) |
 | `POST /oauth2/introspect` | RFC 7662 token introspection, for resource servers (confidential clients registered with `--can-introspect`) |
@@ -605,12 +605,143 @@ never on the wording; render errors without one generically.
 - **`clientData.oauth` is server-owned.** OAuth session accesses
   (`name: "oauth:<clientId>"`, `createdBy: "system"`) carry
   `clientData.oauth = { dataGrantId, chain }`, the link to their grant and
-  their chain's consent; the accesses they create carry
+  their chain's consent, plus `audience` when the authorization named a
+  resource server, and, on a derived session (§ 1e),
+  `exchange = { subjectClientId, subjectAccessId }`; the accesses they create carry
   `clientData.oauth = { dataGrantId }`; a registry grant carries
   `clientData.oauth = { grantOf, extensionData? }` (its client, and the
   grant's state under the extension's name). `accesses.create` refuses an access carrying
   `clientData.oauth`, and `accesses.update` refuses any change to it
   (`403 forbidden`); sending it back unchanged passes.
+
+---
+
+## 1e. Token exchange (RFC 8693) for resource servers
+
+A resource server in front of a core (an MCP server, an API facade) receives
+the access token a user's client obtained for it (the authorization named the
+resource server in `aud` / `resource`). With token exchange it trades that
+token for a **derived session** of its own on the user's home core, and calls
+the data API with the derived token. The client's token itself can then be
+refused at the data API (`oauth.audienceBoundSessions`, below): whoever holds
+it, it works only through the resource server it was issued for.
+
+**Who may exchange.** A registry client registered with `--can-exchange`
+(§ 3b): confidential (`client_secret_basic` or `private_key_jwt`), with an
+audience list (`--audience`, never `--any-audience`), active. The grant is
+gated by that row flag, not by the client's `--grant-type` list. To advertise
+it in the discovery document, add
+`urn:ietf:params:oauth:grant-type:token-exchange` to
+`oauth.grantTypesSupported`.
+
+**Request.** `POST /oauth2/token`, form or JSON, client authentication as at
+any token request (HTTP Basic, `client_secret_post` or `private_key_jwt`):
+
+| Parameter | Rule |
+|---|---|
+| `grant_type` | `urn:ietf:params:oauth:grant-type:token-exchange` |
+| `subject_token` | required: the access token the client sent |
+| `subject_token_type` | required: `urn:ietf:params:oauth:token-type:access_token` |
+| `requested_token_type` | optional; if given, `urn:ietf:params:oauth:token-type:access_token` |
+| `resource`, `audience` | optional; if given, this server (its issuer URL), one value |
+| `scope` | refused (`invalid_scope`): no narrowing in this version |
+| `actor_token`, `actor_token_type` | refused (`invalid_request`) |
+| `DPoP` header | refused (`invalid_request`), as for every registry client |
+
+The minimal request (`grant_type`, `subject_token`, `subject_token_type` and
+HTTP Basic) is all a resource server needs.
+
+**Checks**, in order; nothing is consumed and a refusal leaves the subject
+token as it was:
+
+| Case | Status | `error` |
+|---|---|---|
+| the caller is unknown, public, or its credentials are wrong | 401 | `invalid_client` |
+| the caller is not registered for token exchange, or is suspended / under review | 400 | `unauthorized_client` |
+| a malformed request (table above) | 400 | `invalid_request`, `invalid_scope`, `invalid_target` |
+| the subject token is unknown, expired, deleted, retired, its grant gone, issued for no resource server, itself a derived token, or not a registry client's | 400 | `invalid_grant` ("subject token is not active") |
+| the subject token's client is revoked, suspended, under review, gone or not served in this core's region | 400 | `invalid_grant` ("the subject token's client is not available") |
+| the subject token was issued for a resource the caller is not registered for | 400 | `invalid_target` |
+| the subject session lives on another core | 421 | `wrong_core`, with `coreUrl`: exchange there |
+| a server fault (an extension hook failing, storage) | 500 | `server_error` |
+
+Departure from RFC 8693 § 2.2.2, which answers an unusable subject token with
+`invalid_request`: here it is `invalid_grant`, so a resource server can tell
+"the user's authorization is gone, ask the client to authorize again" from "the
+request is malformed".
+
+**Response** (`Cache-Control: no-store`):
+
+```json
+{ "access_token": "…", "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer", "expires_in": 1789, "scope": "…",
+  "api_base": "https://<username or alias>.<domain>/" }
+```
+
+plus the resource server's `--extra` fields and what the extension's
+`tokenResponse` hook adds (`ctx.grantType` is `token-exchange`, `ctx.actor` the
+resource server; the subject, the scope and `ctx.client` are the client's
+authorization). `scope` is the extension's echo over the subject session's
+permissions (no `offline_access` / `openid`: no refresh token and no id_token
+come with it). `api_base` is the account's API base URL, built on the grant's
+alias for a pseudonymous grant; it carries no credential: send the token in
+the `Authorization` header. No `apiEndpoint`, no `refresh_token`.
+
+**The derived session.** A real access of the user, named
+`oauth:<resource server id>`, of the same grant (same permissions, chain and
+alias as the subject session; no audience, no DPoP binding), recorded with
+`clientData.oauth.exchange = { subjectClientId, subjectAccessId }`. What it
+writes is created by it. One per subject session and resource server: a
+repeated exchange of the same subject token answers **the same token**, so
+several instances of a resource server share it. Its lifetime is at most the
+subject session's and at most the resource server's own access-token lifetime
+(`--access-token-ttl`, else `oauth.accessTokenTTL`); a repeated exchange may
+extend it up to that bound, never shorten it. Its lifecycle follows its subject
+and grant:
+
+- the subject session deleted (by the owner, by the client's RFC 7009
+  revocation of its access or refresh token, by a chain collapse): the
+  derived session is deleted at once;
+- the grant narrowed: the derived session is narrowed with the subject; the
+  grant withdrawn: both go;
+- a refresh retires the subject session but not the derived one, which lives
+  out its own expiry; the new subject token gets a new derived session;
+- the resource server or the subject token's client revoked, suspended or
+  under review: the data API refuses the derived token (within
+  `oauth.clientRevokeCheckSeconds`) and introspection answers inactive;
+- `purge-grants <resource server>` deletes its derived sessions only (the
+  client's grant stays); `purge-grants <client>` deletes the grant with them.
+
+The account app lists a derived session like any app access; its
+`clientData.oauth.exchange.subjectClientId` and its name tell which resource
+server acts for which client. Deleting it alone is transient: the resource
+server gets another at its next exchange; the user's control is the client's
+grant.
+
+**Introspection** of a derived token answers `client_id` = the subject token's
+client (whose authorization it carries), `act: { "client_id": "<resource
+server>" }` (RFC 8693 § 4.1), no `aud`; it is active only while both clients
+are. A resource server that receives a token as a bearer should check
+`client_id` and `act`.
+
+**Multi-core.** The exchange runs on the subject session's home core; any
+other core answers `421 wrong_core` with `coreUrl`. A resource server serving
+one core per issuer never sees it.
+
+**`oauth.audienceBoundSessions`** (per core, boolean). Every session minted
+for an authorization naming a resource server records it
+(`clientData.oauth.audience`). With `true`, the data API refuses such a
+session at the access check every call goes through (requests, batch calls,
+socket.io connections):
+`403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`;
+the resource server's exchange and introspection still accept it. Sessions
+minted before this release carry no such record and keep working until they
+expire or their chain refreshes; sessions issued for no resource server are
+never refused (and cannot be exchanged). `false` (the default in this
+release) keeps every token usable at the API; the next release defaults it to
+`true`. Turn it on once every resource server whose clients use this core
+exchanges; while it is off and a client is registered with `--can-exchange`,
+the core warns at boot.
 
 ---
 
@@ -639,6 +770,7 @@ oauth:
   idTokenTTL: 300                  # id_token lifetime, seconds
   grantTypesSupported:             # advertised in the discovery document
     - authorization_code
+  audienceBoundSessions: false     # true: the data API refuses tokens issued for a resource server (§ 1e)
   extensionOptions: {}             # handed as is to the OAuth extension (see below)
   extensionHookTimeoutMs: 5000     # bound on each asynchronous extension hook, milliseconds
 
@@ -999,7 +1131,7 @@ node bin/oauth-client.js create-registry <clientId> \
     [--auth-method none|client_secret_basic|private_key_jwt] \
     [--jwks-file <path> | --jwks-json <json> | --jwks-uri <https-url>] [--signing-alg <alg> ...] \
     [--access-token-ttl <s>] [--refresh-token-ttl <s>] [--refresh-token-absolute-ttl <s>] \
-    [--offline-access true|false] [--can-introspect] \
+    [--offline-access true|false] [--can-introspect] [--can-exchange] \
     [--allow-insecure-redirect] [--allow-feature webhooks|secretSharing|accessCreation ...] \
     [--extra <key>=<value> ...] [--grant-type <name> ...] \
     [--name <s>] [--logo-uri <s>] [--client-uri <s>] [--policy-uri <s>] [--tos-uri <s>] \
@@ -1044,6 +1176,13 @@ Flags:
 - **`--can-introspect`**: the resource-server role, the client may call
   `/oauth2/introspect` (§ 1). Confidential clients only (`client_secret_basic`
   or `private_key_jwt`); refused with `--auth-method none`.
+- **`--can-exchange`**: the resource-server role of token exchange (§ 1e): the
+  client may exchange at `/oauth2/token` a token issued for one of its
+  `--audience` values for a derived session of its own. Registry clients
+  only, confidential (`client_secret_basic` or `private_key_jwt`), with an
+  audience list: refused with `--auth-method none` or `--any-audience`.
+  `create-registry` echoes the audiences it covers, `show` prints
+  `can exchange:   yes (audiences: …)`. A vetted field (below).
 - **`--extra <key>=<value>`** (repeatable): a static field added to every
   token response of the client (`true`, `false` and numbers are stored as
   such, anything else as a string). Keys the core owns are ignored.
@@ -1057,7 +1196,7 @@ Flags:
   (below).
 
 The boolean flags (`--any-audience`, `--allow-insecure-redirect`,
-`--can-introspect`) take no value, or `true` / `false`; anything else is
+`--can-introspect`, `--can-exchange`) take no value, or `true` / `false`; anything else is
 refused. For `--contact`, `--launch-type`, `--extra`, `--policy-uri` and
 `--tos-uri`, the value `none` means empty / unset.
 
@@ -1080,7 +1219,8 @@ review is refused the same way (below).
 `--can-introspect` (`false` withdraws it; a confidential client only) on both
 kinds; on an app-account client also `--application-type` and `--cmc-offer`;
 on a registry client also `--audience`, `--any-audience`,
-`--allow-insecure-redirect` (`false` withdraws it), `--subject-type`,
+`--allow-insecure-redirect` (`false` withdraws it), `--can-exchange` (`false`
+withdraws it; checked against the row as written: auth method and audiences), `--subject-type`,
 `--allow-feature`, `--policy-uri`, `--tos-uri`, `--contact`, `--extra`,
 `--launch-type`, `--auth-method`, the profile flags (below) and `--approve`
 (all refused on app-account clients:
@@ -1119,12 +1259,15 @@ decide where its codes and tokens land, how it authenticates, what it reaches
 and for how long: redirect URIs, scope, key set (`--jwks-file`, `--jwks-json`,
 `--jwks-uri`), auth method, `--signing-alg`, grant types, audiences
 (`--audience`, `--any-audience`), `--allow-feature`, `--can-introspect`,
+`--can-exchange` (it decides whose authorizations the client may reach),
 `--launch-type` (the core does not act on it, an extension may grant on it),
 the lifetimes and `--offline-access`. Any change counts, a narrowing too, compared
 as stored (the same scope tokens in another order are a change; an empty list
 is the same as none). A narrowing (a scope token, audience, feature or launch
-type removed, `--any-audience` withdrawn) is not applied to the grants given
-before: they keep the permissions and audience stored for them until they end.
+type removed, `--any-audience` or `--can-exchange` withdrawn) is not applied to the grants given
+before: they keep the permissions and audience stored for them until they end
+(a withdrawn `--can-exchange`: the derived sessions already issued live out
+their lifetime, at most the subject token's).
 `update` says so and prints the step that ends them, `purge-grants <clientId>
 --yes` (run on each core). Withdrawing refresh is applied at once: with
 `--offline-access false`, or `refresh_token` removed from the grant types, a
@@ -1325,7 +1468,9 @@ Collect these for security monitoring and incident response.
 | `oauth.token.reuse_detected` | a consumed or ended refresh token was presented again (`reason`: `revoked-token`, `foreign-client`, `within-grace`, or `chain-revoked`: theft signal, the chain is revoked) |
 | `oauth.token.dpop_mismatch` | a refresh carried a DPoP proof that does not match the chain's key (refused) |
 | `oauth.token.revoked` | a token was revoked (reuse detected, consent withdrawn, revoked by its client at `/oauth2/revoke`, or its chain ended while a refresh was in flight) |
-| `oauth.token.introspected` | a resource server introspected a token (caller, `active`; never the token; syslog only) |
+| `oauth.token.introspected` | a resource server introspected a token (caller, `active`; `actorClientId` for a derived token; never the token; syslog only) |
+| `oauth.token.exchanged` | a resource server exchanged a client's token (§ 1e): `clientId` the resource server, `subjectClientId`, `accessId` (the derived session), `subjectAccessId`, `dataGrantAccessId`, `reused`, `grantedScope`; never a token |
+| `oauth.token.exchange_refused` | an authenticated exchange was refused (`reason`: `not-entitled`, `request-shape`, `subject-inactive`, `subject-client-unavailable`, `foreign-audience`, `wrong-core`; syslog only) |
 
 Registry clients emit the same events. `oauth.consent.granted` carries
 `subjectChange` when the consent switched the grant's subject mode (§ 1d).
@@ -1354,6 +1499,10 @@ single-use, so a reuse means either a broken client or a stolen code.
 | consent UI: `400 invalid_request` with `reason: consent-out-of-date` | the grant, the client or the extension changed while the screen was shown: restart the flow (§ 1d) |
 | HTML 400, `access_denied` or `unauthorized_client` "this client is suspended"; data API 403 "The application access is suspended." | the client was suspended (`resume <clientId>`, § 3b) |
 | the same with "this client is under review" / "The application access is under review." | a vetted field of the client changed without `--approve` (`update <clientId> --approve`, § 3b) |
+| token exchange: `400 unauthorized_client` "client is not registered for token exchange" | the resource server's row has no `--can-exchange`, or it is suspended / under review (§ 1e, § 3b) |
+| token exchange: `400 invalid_target` "the subject token was issued for a resource this client is not registered for" | the client's authorization named an `aud` / `resource` that is not in the resource server's `--audience` list |
+| token exchange: `400 invalid_grant` for a token that works at the API | the token was issued for no resource server (no `aud` / `resource` at `/oauth2/authorize`): not exchangeable (§ 1e) |
+| data API `403` "The access token is bound to a resource server" | `oauth.audienceBoundSessions` is on and the token was issued for a resource server: call through that resource server, which exchanges it (§ 1e) |
 | consent UI: `400 invalid_scope` with `reason: grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (§ 3b) |
 
 ---
