@@ -953,6 +953,14 @@ async function runUpdate (platform, args, getClient, persistClient) {
   console.log('OK   client updated: ' + clientId);
   if (droppedLogo != null) console.log('     logoUri cleared: ' + droppedLogo + ' (not https: never served)');
   if (vetting?.entry != null) printVetting(clientId, vetting);
+  if (existing.kind === 'registry') {
+    const { narrowedGrantFields } = require('oauth2/src/clientRegistry.ts');
+    const narrowed = narrowedGrantFields(existing, row);
+    if (narrowed.length > 0) {
+      console.log('     live grants:   keep what they were given (' + narrowed.join(', ') + ' narrowed); to end them on each core:');
+      console.log('        node bin/oauth-client.js purge-grants ' + clientId + ' --yes');
+    }
+  }
   if (row !== merged) console.log('     converted the account reference to the user id');
   if (existing.kind === 'registry' && wantedSubject != null) {
     console.log('     subject type:  ' + describeSubjectType(merged.subjectType));

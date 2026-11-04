@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### OAuth registry clients: a change of launch types is vetted
+
+- **Fixed: `bin/oauth-client.js update <clientId> --launch-type ...` on an active registry client
+  did not move it to `review`.** The core does not act on the launch types, but an extension may
+  grant on them (a write capability for one launch type, for example), so a change gave the client
+  what it grants without an approval. A change of `--launch-type` is now a vetted change like a
+  change of scope or audiences: the client is refused until `update <clientId> --approve`, or the
+  change carries `--approve`.
+- **`update` says when it narrows what the client may be granted** (a scope token, audience,
+  feature or launch type removed, `--any-audience` withdrawn): the grants given before keep the
+  permissions and audience stored for them until they end. It prints the step that ends them,
+  `purge-grants <clientId> --yes`, to run on each core. A client whose launch type was removed in an
+  earlier release still holds those grants: run `purge-grants` for it. An extension reads the
+  client's current row at every refresh and introspection, so what it adds on a launch type follows
+  the row from the next refresh.
+- **Fixed: a registry client whose grant types no longer list `refresh_token` could still refresh
+  the chains issued before.** Such a refresh is now refused (`unauthorized_client`, the token is not
+  used up), as with `--offline-access false`. App-account clients are not concerned (their refresh
+  tokens do not depend on their grant types).
+
 ### SQLite audit and events: faster export pages on large files
 
 - **Fixed: every `events.get` naming the audit streams `:_audit:accesses` / `:_audit:actions` listed

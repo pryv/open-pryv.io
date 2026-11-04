@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### OAuth registry: `launchTypes` vetted, narrowing notice
+
+- `clientRegistry.VETTED_FIELDS` gains `launchTypes` (`changedVettedFields`, the review trail and
+  `resume` follow); `changedVettedFields` reads an empty list as none (a row from before the field).
+  New `narrowedGrantFields(before, after)`: `scope`, `allowedAudiences` (not when `anyAudience` is
+  set), `allowFeatures`, `launchTypes` lost an entry, or `anyAudience` withdrawn (not
+  `offlineAccessAllowed` nor `grantTypes`: the refresh grant reads them). `bin/oauth-client.js update`
+  prints the `purge-grants` hint for them on a registry client. Test `[OCLI23]`.
+- `grants/refresh_token.ts`: a registry client whose `grantTypes` lacks `refresh_token` is refused
+  next to the `offlineAccessAllowed` check (before the token is read). Test `[OTR-GT1]`.
+
 ### SQLite events read plan for `modifiedSince`
 
 - `UserDatabase` (`storages/engines/sqlite`): a read with no stream filter and a `modified > X`

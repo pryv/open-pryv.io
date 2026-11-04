@@ -667,6 +667,42 @@ describe('[OCLI] operator CLI: registry clients', () => {
       assert.equal(await statusOf(platform, 'appacct'), undefined);
     });
 
+    it('[OCLI23] a change of launch types moves an active registry client to review; a narrowing prints that live grants keep what they hold, with purge-grants', async () => {
+      const platform = fakePlatform();
+      await run(cli.runCreateRegistry, platform, createArgs('Cli.lt', ['--subject-type', 'public', '--scope', 'read/a read/b']));
+      let r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--launch-type', 'mcp']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /status: {8}review \(launchTypes changed\)/);
+      assert.doesNotMatch(r.out, /live grants/);
+      let row = await getClient(platform, 'Cli.lt');
+      assert.equal(row.status, 'review');
+      assert.deepEqual(row.statusLog.at(-1).fields, ['launchTypes']);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--approve']);
+      assert.equal(await statusOf(platform, 'Cli.lt'), 'active');
+      // Removing it: review again, and live grants are not cut.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--launch-type', 'none', '--scope', 'read/a']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /status: {8}review \(scope, launchTypes changed\)/);
+      assert.match(r.out, /live grants: {3}keep what they were given \(scope, launchTypes narrowed\)/);
+      assert.match(r.out, /purge-grants Cli\.lt --yes/);
+      row = await getClient(platform, 'Cli.lt');
+      assert.deepEqual(row.launchTypes, []);
+      // A widening alone prints no purge hint, --any-audience (which clears
+      // the audience list) included.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--scope', 'read/a read/c', '--approve']);
+      assert.doesNotMatch(r.out, /live grants/);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--any-audience', '--approve']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.doesNotMatch(r.out, /live grants/);
+      // A row written before the field (no launchTypes at all): "none" is no change.
+      const legacy = await getClient(platform, 'Cli.lt');
+      delete legacy.launchTypes;
+      await persistClient(platform, legacy);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.lt', '--launch-type', 'none']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.equal(await statusOf(platform, 'Cli.lt'), 'active');
+    });
+
     it('[OCLI20] the registry profile: localized name, description, software id, entry ceiling, regions, logo on an allowed host; show; none clears', async () => {
       const platform = fakePlatform();
       let r = await run(cli.runCreateRegistry, platform, createArgs('Cli.prof', [
