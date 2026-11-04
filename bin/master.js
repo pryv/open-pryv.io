@@ -305,6 +305,26 @@ if (cluster.isPrimary) {
       }
     }
 
+    // --- Adapter routes boot check ---
+    // With a route configured no account may be named `adapter` (in dnsLess its
+    // API lives under /adapter/...). Checked here so a refusal is one clear
+    // line, not a worker crash loop; the api workers repeat it before they listen.
+    {
+      const { parseAdapterRoutes, checkAdapterRoutesAtBoot } = require('../components/business/src/adapterRoutes.ts');
+      const routes = parseAdapterRoutes(config);
+      if (routes.size > 0) {
+        const { getUsersRepository } = require('../components/business/src/users/index.ts');
+        const problems = await checkAdapterRoutesAtBoot(routes, await getUsersRepository());
+        if (problems.length > 0) {
+          for (const p of problems) error('[adapter-routes] ' + p);
+          throw new Error('adapter routes configuration is invalid (see above)');
+        }
+        for (const route of routes.values()) {
+          log(`[adapter-routes] ${route.name}: ${route.upstream} paths ${route.paths.join(' ')}`);
+        }
+      }
+    }
+
     // --- Mail template seed ---
     // First-boot bootstrap: when `services.email.method === 'in-process'`,
     // populate PlatformDB from a Pug directory if it holds no templates yet.

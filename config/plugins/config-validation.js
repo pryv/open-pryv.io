@@ -497,6 +497,16 @@ function checkHostedSites (config, problems) {
   }
 }
 
+// adapterRoutes shape (names, upstream origin and loop, claimed paths, limits).
+// The `adapter` account check needs the users database: the api-server and
+// master run it before they serve.
+function checkAdapterRoutes (config, problems) {
+  const { describeAdapterRoutes, adapterRoutesInputFromConfig } = require('../../components/business/src/adapterRoutes.ts');
+  for (const message of describeAdapterRoutes(adapterRoutesInputFromConfig(config)).problems) {
+    problems.push({ message, path: ['adapterRoutes'], payload: {} });
+  }
+}
+
 // http.trustedProxies: every entry must compile (IP, CIDR or a proxy-addr name).
 function checkTrustedProxies (config, problems) {
   const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
@@ -664,6 +674,7 @@ async function validate (config) {
   checkEmailVerificationGate(config, problems);
   checkMfaConfig(config, problems);
   checkHostedSites(config, problems);
+  checkAdapterRoutes(config, problems);
   checkTrustedProxies(config, problems);
   checkWebhooks(config, problems);
   checkCmcOutbound(config, problems);
@@ -815,6 +826,8 @@ function collectWarnings (config) {
   warnings.push(...describeMfaConfig(config.get('services:mfa')).warnings);
   const { describeHostedSites, hostedSitesInputFromConfig } = require('../../components/business/src/hostedSites.ts');
   warnings.push(...describeHostedSites(hostedSitesInputFromConfig(config)).warnings);
+  const { describeAdapterRoutes, adapterRoutesInputFromConfig } = require('../../components/business/src/adapterRoutes.ts');
+  warnings.push(...describeAdapterRoutes(adapterRoutesInputFromConfig(config)).warnings);
   const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
   warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
   warnings.push(...revocationLagWarnings(config));
@@ -953,6 +966,7 @@ module.exports = {
   checkEmailVerificationGate,
   checkMfaConfig,
   checkHostedSites,
+  checkAdapterRoutes,
   checkTrustedProxies,
   checkIntegrityAlgorithm,
   checkAutoDeletion,

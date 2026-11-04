@@ -26,6 +26,8 @@ const { usernameInHost } = require('business/src/usernameSubdomains.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
 const { guardIngress } = require('./ingressGuard.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
+const { parseAdapterRoutes, checkAdapterRoutesAtBoot } = require('business/src/adapterRoutes.ts');
+const { buildAdapterIngress, attachAdapterContinueCheck } = require('./adapterIngress.ts');
 const { getPlatform } = require('platform');
 const { checkValidityWindow, clockSkewSecondsFromConfig } = require('business/src/acme/certUtils.ts');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
@@ -82,7 +84,7 @@ class Server {
       hfsPort: (config.get('http:hfsPort') as number) || 4000,
       logger: this.logger
     });
-    // Hosted sites answer first: their traffic never reaches HFS or the API
+    // Hosted sites answer next (after adapter routes, below): their traffic never reaches HFS or the API
     // middleware. A site that cannot be served (no folder, or its name is a
     // core id or a user's) stops the boot, so this core never advertises it half-way.
     const sites = parseHostedSites(config);
@@ -122,7 +124,26 @@ class Server {
       ? toExpress
       : (req: unknown, res: unknown) => previewsDispatch(req, res, toExpress);
     const toHfs = (req: unknown, res: unknown) => hfsDispatch(req, res, toPreviews);
-    const requestHandler = guardIngress((req: unknown, res: unknown) => sitesDispatch(req, res, toHfs), this.logger);
+    const toSites = (req: unknown, res: unknown) => sitesDispatch(req, res, toHfs);
+    // Adapter routes answer before everything else (Socket.IO's own path
+    // aside): `/adapter/<name>/...` on every host goes to the route's sidecar.
+    // No core route starts like that, so nothing of the API is shadowed.
+    const adapterRoutes = parseAdapterRoutes(config);
+    let toAdapters = toSites;
+    let adaptersDispatch: { refuseBeforeContinue: unknown } | null = null;
+    if (adapterRoutes.size > 0) {
+      const adapterProblems = await checkAdapterRoutesAtBoot(adapterRoutes, await getUsersRepository());
+      if (adapterProblems.length > 0) {
+        throw new Error('Adapter routes cannot be served: ' + adapterProblems.join('; '));
+      }
+      for (const route of adapterRoutes.values()) {
+        this.logger.info(`adapter route ${route.name}: ${route.upstream} paths ${route.paths.join(' ')}`);
+      }
+      const dispatch = buildAdapterIngress({ routes: adapterRoutes, logger: this.logger });
+      adaptersDispatch = dispatch;
+      toAdapters = (req: unknown, res: unknown) => dispatch(req, res, toSites);
+    }
+    const requestHandler = guardIngress(toAdapters, this.logger);
     // Setup HTTP and register server; setup Socket.IO.
     let server: { address: () => { address: string; port: number }; listen: (...args: unknown[]) => unknown; once: (event: string, handler: (err?: Error) => void) => unknown; key?: unknown } | null = null;
     const serverInfos: { hostname: string | null } = {
@@ -159,6 +180,8 @@ class Server {
     } else { // http
       server = http.createServer(requestHandler);
     }
+    // An oversize upload to an adapter route is refused before `100 Continue`.
+    if (adaptersDispatch != null) attachAdapterContinueCheck(server, adaptersDispatch, this.logger);
     await this.setupSocketIO(server);
     await this.startListen(server!, serverInfos);
     this.logger.info('Server ready. API Version: ' + apiVersion);

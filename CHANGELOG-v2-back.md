@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Adapter routes: dispatcher, shared proxy core, validator
+
+- New `business/src/adapterRoutes.ts`: the single `adapterRoutes` validator
+  (`describeAdapterRoutes` -> `{ routes, problems, warnings }`, `adapterRoutesInputFromConfig`,
+  `parseAdapterRoutes`, `checkAdapterRoutesAtBoot`; refuses this core's own listener and worker ports
+  as upstream, `idleTimeoutMs` above 24 h, port 0, the `acme-challenge` label), called by `config-validation.js`
+  (`checkAdapterRoutes` + warnings), `bin/check-config.js`, `bin/master.js` (boot check before the
+  workers fork) and `server.ts`.
+- New `api-server/src/adapterIngress.ts`, first in the request chain (`adapters -> sites -> hfs ->
+  previews -> express`; not built without routes): path-only match on the WHATWG-normalised path,
+  which is also the forwarded path (raw query appended), 400 on encoded separators / `%00`.
+- `workerIngress.ts` `buildWorkerProxy` gains opt-in options, defaults unchanged for the HFS and
+  previews workers: `protocol` (`https:` upstream, verified against the upstream's own name or IP,
+  not the client `Host`), `stripHopByHop` (both directions; `Connection` tokens never remove `host`,
+  `content-length` or the `x-forwarded-*` headers; the request framing is derived from the received
+  headers: the declared length, else chunked whatever the method; repeated response headers kept as
+  separate lines), `forwardedHeaders: 'adapter'`, `maxBodyBytes` (413 on a declared length or once a
+  chunked body crosses it), `messages`, `logPathOnly`, `releaseOnClientClose`, `agent`; the 502 / 504
+  bodies share one helper. Adapter routes use a per-route agent without keep-alive.
+- `adapterIngress.ts`: TRACE answers 405, a `transfer-encoding` other than `chunked` 400 (both before
+  the upstream, `connection: close`); `attachAdapterContinueCheck` (a `checkContinue` listener, only
+  with routes) answers 413 before `100 Continue` and hands every other request to the server's
+  `request` listeners, as Node does by default.
+- `hasEncodedSeparatorOrDotSegment` moved from `hostedSitesIngress.ts` to `ingressGuard.ts` (shared,
+  no behaviour change). `Platform` `ROUTE_SEGMENT_NAMES` and `hostedSites` `DNSLESS_ROUTE_SEGMENTS`
+  gain `adapter`.
+- `default-config.yml` documents `adapterRoutes: {}`; the `bin/init.js` appendix and
+  `docs/nginx-ingress-sample.conf` carry an example; new operator guide `docs/adapter-routes.md`.
+- Tests: `[ADRC]` (validator), `[ADRI]` (dispatcher against a fake upstream), `[ADRE]` (the real
+  api-server, both topologies, PG and SQLite).
+
 ### OAuth token exchange: derived sessions, audience on sessions
 
 - New `oauth2/src/grants/token_exchange.ts` (`handleTokenExchange`, `TOKEN_EXCHANGE`), dispatched by

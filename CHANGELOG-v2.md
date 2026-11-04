@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Adapter routes: a sidecar served under `/adapter/<name>/`
+
+- **Added: adapter routes (`adapterRoutes`).** A configured sidecar on the same host (a resource
+  server for this core's accounts) is served under `/adapter/<name>/` and the route's optional
+  `/.well-known/<label>/adapter/<name>/` prefixes, on every host the core serves and in both
+  topologies, without an nginx in front. Every method, the body and every header except the
+  hop-by-hop ones are forwarded, streamed both ways (`Authorization`, `Cookie`, preflight `OPTIONS`
+  included, TRACE refused with 405; `Host` kept; `X-Forwarded-For` / `-Proto` / `-Host` set by the core); the answer comes
+  back unchanged (`WWW-Authenticate`, `Set-Cookie`, `Access-Control-*` included), with no header
+  added by the core. **The core authenticates nothing on those paths** (no CORS, audit or rate limit
+  either): the sidecar must. Per route: `upstream` (an origin), `paths`, `maxBodyBytes` (default
+  1 MiB, 413 past it, before `100 Continue` for a declared length) and `idleTimeoutMs` (default 60 s,
+  at most 24 h, 504). Encoded separators in the path and a `Transfer-Encoding` other than `chunked`
+  answer 400, an unreachable sidecar 502. The upstream cannot be this core's own listener. WebSocket
+  upgrades are not forwarded. See `docs/adapter-routes.md`.
+- **Changed: `adapter` is a reserved username** on every core (registration and rename refuse it,
+  as do hosted-site names in dnsLess); a core with adapter routes refuses to boot while an account
+  named `adapter` exists. A backup that names an account `adapter` is refused at restore (reserved
+  username; `--skip-conflicts` does not bypass it): rename it on the source platform first.
+
 ### OAuth: token exchange (RFC 8693) for resource servers
 
 - **Added: OAuth 2.0 Token Exchange (RFC 8693) for registry clients registered `--can-exchange`.**

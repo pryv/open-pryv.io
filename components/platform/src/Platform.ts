@@ -28,8 +28,9 @@ const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 const reservedWords = new Set(require('./reserved-words.json').list);
 // First path segments the core routes itself, outside any user. On a dnsLess
 // core a user with one of these names would lose part of its own API to them
-// (e.g. its batch call `POST /users` is the registration route).
-const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 'system']);
+// (e.g. its batch call `POST /users` is the registration route). `adapter`
+// is the prefix of the adapter routes, on every host in both topologies.
+const ROUTE_SEGMENT_NAMES = new Set(['users', 'oauth2', 'previews', 'series', 'system', 'adapter']);
 // The service hosts the embedded DNS answers (`reg.`, `access.`, `mfa.`, and
 // `lsc.` for cluster discovery): an account under one of them would not be
 // reachable at `<username>.<domain>`.
