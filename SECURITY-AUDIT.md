@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 13 (2026-11-03), covering releases 2.0.0-rc.40 to 2.0.0-rc.71.
+**Report revision:** 14 (2026-11-04), covering releases 2.0.0-rc.40 to 2.0.0-rc.72.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -51,7 +51,9 @@ of what an OAuth2 session may create and of the authorization request's audience
 2026 alongside the work on client key sets, grant state and resource indicators, added those fixed
 in 2.0.0-rc.70, and a review of the suspension and lifecycle of OAuth2 clients, made in November
 2026 alongside the work on the vetting status of clients registered by the operator, added those
-fixed in 2.0.0-rc.71; they were fixed under the same rules (tests that
+fixed in 2.0.0-rc.71, and a review of backup restore on multi-core platforms, of the mails sent to
+an account's stored address and of the background work of an account being erased, made in November
+2026, added those fixed in 2.0.0-rc.72; they were fixed under the same rules (tests that
 fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
@@ -62,7 +64,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 65 findings, each rated and described individually in
+The review and its follow-ups recorded 68 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -70,9 +72,9 @@ items reported through the public issue tracker, are described but not counted:
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
-| Medium | 35 | 0 | 0 |
-| Low | 2 | 0 | 0 |
-| **Total** | **65** | **0** | **0** |
+| Medium | 37 | 0 | 0 |
+| Low | 3 | 0 | 0 |
+| **Total** | **68** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -118,6 +120,7 @@ its applicability is stated with it.
 | 2.0.0-rc.69 | 2026-11-02 | 2 Medium, lower-severity fixes; dependency update, not an audit finding: `follow-redirects` 1.16.2 (GHSA-mrwp-f3q8-3g9p, high: a custom credential header could follow a cross-origin redirect; reached through the ACME certificate client); operator action: set the two new per-core state keys (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
 | 2.0.0-rc.70 | 2026-11-02 | 2 Medium, lower-severity fixes, completion step of an earlier finding (the state keys are required; the admin-key fallback is removed); operator action: set both state keys where their feature is on, allow `accessCreation` on the registry OAuth2 clients whose sessions create accesses, webhooks or CMC capability requests, give a distinct `kid` to every key of a multi-key inline client key set (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
 | 2.0.0-rc.71 | 2026-11-03 | 1 Low, lower-severity fixes, completion step of an earlier hardening (a client's suspension reaches the data API); operator action: set `oauth.logoHosts` before upgrading where registry OAuth2 clients have logos, approve vetted client changes with `update --approve`, run `purge-grants` after a revoke (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-03) |
+| 2.0.0-rc.72 | 2026-11-04 | 2 Medium, 1 Low, lower-severity fixes; operator action: run `bin/reconcile-user-cores.js --emails` on each core where accounts were restored with `--user` by an earlier release, look for leftover records with the queries of that release (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-04) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1775,6 +1778,108 @@ alongside them found the following in earlier releases.
   moves to `review` and is refused until approved), and run `purge-grants` on each core after a
   `revoke`, or after a `suspend` whose users' grants should go too.
 
+### Fixed in 2.0.0-rc.72 (deployed)
+
+2.0.0-rc.72 makes backup restore aware of multi-core routing, has a restore withdraw the stopped
+erasure of the accounts it restores, adds faster SQLite audit export pages and lets the chat and
+collector streams of an ended consent relationship be deleted. These are described in
+`CHANGELOG-v2.md`. The review of backup restore on multi-core platforms, of the mails sent to an
+account's stored address and of the background work of an account being erased, made alongside
+them, found the following in earlier releases.
+
+#### A whole-backup restore gave a unique value that had changed hands back to the restored account
+
+- **Severity:** Medium (impact: sign-in to another account for the value's current holder; low
+  likelihood: it needs the operator to restore a whole backup older than the change of hands of an
+  email or SSO binding, and the holder to be one who signs in by SSO for the first time or is found
+  by an email lookup). Affected: 2.0.0-rc.71 and earlier releases with whole-backup restore.
+- **What could happen:** a whole-backup restore wrote the backup's platform rows as they were. A
+  value that another account had taken since the backup (an email the backed-up account gave up,
+  an SSO binding) went back to the restored account: the value's current holder signing in by SSO
+  for the first time was linked to, and logged into, the restored account, and lookups by email
+  answered the restored account. The same restore also wrote the platform rows of accounts it did
+  not restore, and on a multi-core platform could restore an account the platform routes to another
+  core.
+- **What changed:** a value held by another account stays with it (the restore logs the fields and
+  accounts concerned and counts them in its report); only the restored accounts' platform rows are
+  written; an account routed to another core is refused (`--user`) or treated as a conflict (whole
+  backup) before anything is written.
+- **Operator action:** none beyond the upgrade. A restore made with an earlier release may have
+  re-pointed such values: the restore report of that run, or `bin/reconcile-user-cores.js --emails
+  --dry-run` for emails, shows the accounts concerned.
+
+#### Password-reset mails of a restored account could reach the new holder of its old address
+
+- **Severity:** Medium (impact: a reset link for the account in the hands of another person, which
+  is an account takeover; low likelihood: it needs an account restored from a backup older than a
+  change of hands of its email, and that address registered since by someone else). Affected:
+  2.0.0-rc.71 and earlier releases.
+- **What could happen:** a restored account kept the email stored in its backup. When that address
+  had changed hands, the platform reserved it for another account, but the password reset (and the
+  MFA-change and account auto-deletion notices) still mailed the stored address, so its new holder
+  received a reset link for the restored account. A `--user` restore also wrote no email row at
+  all, so the restored account's address was not reserved and anyone could register it, which
+  then led to the same case.
+- **What changed:** no password-reset mail, MFA-change notice or account auto-deletion notice is
+  sent to an address another account holds (in cleartext mode three spellings of the address are
+  looked up); the caller of a reset gets the same answer as when the mail is sent, and a warning
+  names the account. A `--user` restore now writes the account's platform rows, a value another
+  account holds staying with it. The restore report lists the restored accounts whose email
+  another account holds.
+- **Operator action:** on each core where accounts were restored with `--user` by an earlier
+  release, run `node bin/reconcile-user-cores.js --emails --dry-run`, then without `--dry-run`: it
+  claims the missing email rows (never over another account) and lists the accounts whose email
+  another account holds; change those accounts' email.
+
+#### An account erased during a consent operation kept a record holding a peer's capability token
+
+- **Severity:** Low (erasure completeness: the record was invisible through the API and never
+  processed; it needs an account erased within the seconds a CMC accept or refuse reads the
+  requester's offer). Affected: 2.0.0-rc.71 and earlier releases with the CMC plugin.
+- **What could happen:** when the account was erased while that read ran, the plugin then wrote a
+  retry record for the erased account holding the trigger's content, the requester's invite URL
+  with its token included. On PostgreSQL it stayed as an `events` row of a deleted account; on
+  SQLite with `audit.onUserDelete: keep` it re-created an events database in the directory kept
+  for the audit. The erasure was therefore not complete, and a peer's capability token outlived it.
+- **What changed:** the work that runs after a request (dispatch, retry loop, member sweep, the
+  follow-ups of access, delegation and stream changes) writes nothing for an account that no longer
+  exists or whose erasure has started; the write is dropped and logged without its content. Known
+  residue on SQLite with `audit.onUserDelete: keep`: late reads can re-open empty databases (no
+  row) in the kept directory.
+- **Operator action:** records left by earlier erasures are not removed automatically. On
+  PostgreSQL,
+  `SELECT user_id, id FROM events WHERE type = 'cmc-internal/retry-cmc' AND user_id NOT IN (SELECT user_id FROM users_index) AND user_id NOT IN (SELECT user_id FROM account_erasures);`
+  lists them; delete those rows (the requester can also invalidate its invite). On SQLite with
+  `audit.onUserDelete: keep`, the files of an erased account's directory other than its `audit-*`
+  files are leftovers and may be removed.
+
+#### Lower-severity fixes in 2.0.0-rc.72
+
+- **A change of a registry client's launch types was not vetted** (completion step of the 2.0.0-rc.71
+  vetting status): the core does not act on launch types, but an extension may grant on them, so
+  `bin/oauth-client.js update --launch-type` on an active client gave it what the extension grants
+  without the operator's approval. It is now a vetted change (the client moves to `review` unless
+  the command carries `--approve`), and `update` says when it narrows what a client may be granted,
+  with the `purge-grants` step that ends the grants given before.
+- **A withdrawn `refresh_token` grant type did not stop refreshes** (completion step of the client
+  lifecycle): a registry client whose grant types no longer listed `refresh_token` could still
+  refresh the chains issued before. Such a refresh is now refused (`unauthorized_client`).
+- **Deletion on a multi-core platform removed another core's platform rows**: deleting or erasing
+  an account removed the platform rows of its username even when the platform routes that name to
+  another core, whose account of the name lost its routing, email and other unique values. A name
+  routed elsewhere now keeps them.
+- Reported through the public issue tracker, not counted: the chat and collector streams of an
+  ended consent relationship could not be deleted, so the former counterparty's messages could not
+  be erased by the account (open-pryv.io#166); they can now be deleted once no relationship access
+  serves them.
+- Not security fixes, listed for operators: a restore withdraws the stopped erasure of the
+  accounts it restores (before, the next sweep erased a restored account again); the release notes
+  give the query that finds the records left on accounts restored earlier.
+- **Operator action:** run `bin/reconcile-user-cores.js --emails` as above; look for leftover CMC
+  retry records and leftover erasure records with the queries in `CHANGELOG-v2.md`; add `--approve`
+  to `update --launch-type` on vetted clients; run `purge-grants` for a client whose launch type was
+  removed in an earlier release.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1873,3 +1978,4 @@ This report is updated with every release that carries a security fix:
 | 11 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.69 | Adds 2.0.0-rc.69 (review of the OAuth2 refresh chain and of pseudonymous access aliases alongside token introspection, revocation and pseudonymous OAuth2 subjects): 2 Medium findings and lower-severity fixes, plus the `follow-redirects` 1.16.2 dependency update (high advisory, not an audit finding); section 4.1 updates the alias check. Deployed on the maintainers' platforms (2026-11-02). |
 | 12 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.70 | Adds 2.0.0-rc.70 (review of OAuth2 client authentication, of what an OAuth2 session may create and of the authorization request's audience, alongside client key sets, grant state and resource indicators): 2 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.69 state-key item (the admin-key fallback removed). Deployed on the maintainers' platforms (2026-11-02). |
 | 13 | 2026-11-03 | 2.0.0-rc.40 to 2.0.0-rc.71 | Adds 2.0.0-rc.71 (review of the suspension and lifecycle of OAuth2 clients, alongside the vetting status of clients registered by the operator): 1 Low finding, lower-severity fixes and the completion step of the 2.0.0-rc.68 suspension (the data API refuses a suspended client's tokens). Deployed on the maintainers' platforms (2026-11-03). |
+| 14 | 2026-11-04 | 2.0.0-rc.40 to 2.0.0-rc.72 | Adds 2.0.0-rc.72 (review of backup restore on multi-core platforms, of the mails sent to an account's stored address and of the background work of an account being erased): 2 Medium findings, 1 Low finding and lower-severity fixes, among them two completion steps of the 2.0.0-rc.71 client vetting (launch types, withdrawn refresh grant type). Deployed on the maintainers' platforms (2026-11-04). |
