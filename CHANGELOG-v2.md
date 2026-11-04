@@ -4,8 +4,8 @@
 
 ### BREAKING: `POST /{username}/mfa/activate` answers 200
 
-- **`mfa/activate` now answers `200 OK`** with the same body (`mfaToken`, and for `totp` the
-  `otpauthUri` and `secret`). It answered `302 Found` with no `Location` header, inherited from the v1
+- **`mfa/activate` now answers `200 OK`** with the same body (`mfaToken`, and for `totp` also
+  `method`, `otpauthUri` and `secret`). It answered `302 Found` with no `Location` header, inherited from the v1
   MFA service: an HTTP client that follows redirects or treats a 3xx as an error could not read the
   answer. A client that checks for `302` must accept `200`; a client that only reads the body is not
   affected. `auth/login` on an account with MFA already answers `200` with an `mfaToken` (the reference
