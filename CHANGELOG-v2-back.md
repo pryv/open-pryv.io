@@ -2,44 +2,73 @@
 
 ## Unreleased
 
-### Email any-case uniqueness (cleartext piiMode); restore rollback; SSO bindings in single-account backups
+### Email any-case uniqueness (cleartext piiMode); restore rollback; SSO bindings in single-account backups; values holding `/`
 
-- New `PlatformDB.getUsersUniqueFieldAnyCase(field, value)` (rqlite: key range of the field, then
-  `trim(substr(key, n), chars) LIKE pattern ESCAPE '\'`, SQLite's LIKE being ASCII-case-insensitive;
-  PostgreSQL: `left(key, n) = prefix` and `btrim(...) ILIKE pattern`): the field's rows matching
+- New `PlatformDB.getUsersUniqueFieldAnyCase(field, value)`: the field's rows matching
   `anyCaseLikePattern(value)` (`storages/interfaces/platformStorage/anyCase.ts`: the trimmed value,
-  `%` `_` `\` escaped, a non-ASCII character as `_`), a superset the caller narrows. Conformance
-  tests `[ANYC1-2]`.
-- `Platform.getUniqueValueOwners(field, storedValue)`: hashed mode or a field compared as written:
-  the exact row's owner; cleartext mode and a `CASE_INSENSITIVE_FIELDS` field (email): the owners of
-  the rows whose value `PiiHasher.normalize`s to the same. `isUniqueValueHeldByAnother(ownerToken,
-  field, storedValue)`. The claims consult it first in cleartext mode (`#otherSpellingHeldByAnother`,
-  no extra read in hashed mode): `#claimUniqueValue` (`updateUser` create/update),
-  `#reserveForRegistration` step 8, `setUserUniqueFieldIfNotExists` (emails container, `/system`
-  reservations, alias rows are not email), `checkUpdateOperationUniqueness`; registration step 3
-  lists the email conflict in any case. Check-then-claim: two concurrent claims of two spellings
-  can both pass (the held-address check then flags both accounts).
+  `%` `_` `\` escaped, a non-ASCII character as `_`), the stored value trimmed of `TRIMMED_CHARS`
+  (what JavaScript's `trim()` removes); a superset the caller narrows. rqlite: the key range of the
+  field (primary key, BINARY order), then `trim(substr(key, n), chars) LIKE pattern ESCAPE '\'`
+  (SQLite's LIKE is ASCII-case-insensitive). PostgreSQL: `key COLLATE "C"` range on a new index
+  `platform_kv_key_c ON platform_kv (key COLLATE "C")`, created by the engine's `init()` (`CREATE
+  INDEX IF NOT EXISTS`, next to its `CREATE TABLE IF NOT EXISTS`; no schema migration), then
+  `btrim(...) ILIKE pattern`. Conformance tests `[ANYC1-2]`. Cost in cleartext mode: each call scans
+  the email rows of the field's key range (O(accounts)); a claim makes one or two such calls, a
+  whole-backup restore one per email row (O(n^2) over the email rows), and the auto-deletion sweep
+  one per account it evaluates (each account with a setting or bookkeeping, every account when
+  `inactivity.defaultDays` is set). A normalised key per address in cleartext mode would remove the
+  scan (a data migration, not done).
+- `parseEntry` of both engines (`getAllWithPrefix`, `getAllForUser`, `exportAll`) and the restore's
+  v1 `parseRawPlatformEntry` use `parseUserRowEntry` (`storages/interfaces/platformStorage/userRowKey.ts`):
+  type and field end at the first two `/`, the value (or username) is the rest of the key. Was
+  `key.split('/')[2]`. Conformance test `[MUV06]`.
+- `Platform.getUniqueValueRows(field, storedValue)` / `getUniqueValueOwners`: hashed mode or a field
+  compared as written: the exact row; cleartext mode and a `CASE_INSENSITIVE_FIELDS` field (email):
+  every row whose value `PiiHasher.normalize`s to the same. `isUniqueValueHeldByAnother(ownerToken,
+  field, storedValue)`, `isUniqueValueTaken(field, value)` (plaintext). The claims consult it first in
+  cleartext mode (`#otherSpellingHeldByAnother`, which returns before any read in hashed mode):
+  `#claimUniqueValue` (`updateUser` create/update), `#reserveForRegistration` step 8,
+  `setUserUniqueFieldIfNotExists` (emails container, `/system` reservations, reconcile),
+  `checkUpdateOperationUniqueness`; registration step 3 lists the email conflict in any case. The
+  answers that a value is free use `isUniqueValueTaken` / `isUniqueValueHeldByAnother`:
+  `auth.emailCheck`, `auth.emailChallenge` (`refuseTakenAddress`), `/system/users` reservation
+  conflicts, `container.isRowFreeFor` (gates `addEmails` and the resend). Check-then-claim: two
+  concurrent claims of two spellings can both pass (the held-address check then flags both).
 - `heldAddress.isEmailHeldByAnother` is `platform.isUniqueValueHeldByAnother` on the email;
   `emailSpellings` removed. A row of another spelling held by another account still counts as held
   when the account holds its own spelling (unchanged rule).
+- `reconcileEmailRows` returns `heldBy` (cleartext mode: per held account, the other holders and the
+  spelling each holds); `bin/reconcile-user-cores.js --emails` prints them.
 - Restore `_writePlatform`: a unique row is not written when `coreRouting.isUniqueValueHeldByAnother`
-  (another spelling of an email in cleartext mode), counted in `uniqueValuesLost`.
-- `RestoreOrchestrator.rollBackAccount(userId, username)`: `_clearUserData` then
-  `usersRepository.deleteOne` (index entry, platform rows owned, routing rows of the name and its
-  aliases, access index, reset requests, external ids); used by `bin/backup.js` for the
-  `--verify-integrity` rollback (replaces the bare `_clearUserData`; the erasure put back as before).
+  (another spelling of an email in cleartext mode), counted in `uniqueValuesLost`; in hashed mode
+  this is one more exact read per unique row (a restore, not a hot path).
+- `RestoreOrchestrator.rollBackAccount(userId, username)` -> `'removed' | 'emptied'`:
+  `_clearUserData` (needed: the account deletion does not remove the audit and the series), then,
+  for an account the restore created, `usersRepository.deleteOne` (index entry, platform rows owned,
+  routing rows of the name and its aliases, access index, reset requests, external ids). An account
+  indexed before the restore (`preExistingAccounts`, recorded by `_restoreSingleUser`) is only
+  emptied. `bin/backup.js` (`--verify-integrity`): loud warning per emptied account, a failed
+  rollback is listed (`report.rollbackFailed`, "Rollback INCOMPLETE", recovery commands), never
+  counted as rolled back; the withdrawn erasure is put back as before.
 - Backup: `UserBackupWriter.writeSsoBindings` / `UserBackupReader.readSsoBindings`
   (`sso-bindings.jsonl`, newest run of a chain); `BackupOrchestrator.backupUser` writes the
   account's unique `sso-*` rows (`ssoBindingsOf(platformDB.getAllForUser(token))`, storage form;
-  option `withSsoBindings`, not for whole backups, whose platform rows hold them). Restore: read in
-  `_importUser` (`isSsoBinding`: an `sso-<provider>` field and a value, anything else warned and
-  dropped), added to the derived rows of an account the backup has no platform rows of.
-- Tests: `[RXCR24]` (rollback, multi-core CLI), `[RXCR27]` (bindings, CLI), `[RXCR25-26]`
-  (business unit), `[EMCI1-3]` (the core's platform switched to cleartext mode over the test store:
-  registration, email change, emails container, reset mail), `[RSLK6]` now on a cleartext platform
-  over the store (was a stub). `[WHBK] [WB08]`: the clock (`Date`) is stopped from the first send
-  until `[OZGP]` moves it past the interval (sinon, `Date` only), so a slow store no longer lets the
-  throttled sends through nor the retry fire before the assertions.
+  option `withSsoBindings`, not for whole backups, whose platform rows hold them), every run, so a
+  binding released since an earlier run is not brought back. Restore: read in `_importUser`
+  (`isSsoBinding`: an `sso-<provider>` field and a non-empty value, `/` allowed; anything else
+  warned and dropped), added to the derived rows of an account the backup has no platform rows of.
+- `Platform._piiHasherForTests()` (test seam, as `_setDependenciesForTests`).
+- Tests: `[RXCR24]` (rollback of a created account and of a pre-existing one, multi-core CLI),
+  `[RXCR27]` (bindings, a subject holding `/`, CLI), `[RXCR28]` (a binding released before an
+  incremental run is not restored), `[RXCR25-26]` (business unit), `[EMCI1-6]` (the core's platform
+  switched to cleartext mode over the test store, its own hasher put back: registration, email
+  change, emails container, `emails.add` through the API, availability check and email challenge,
+  reset mail, reconcile holders), `[PLUC6]`, `[MUV06]`, `[ANYC1-2]`; `[RSLK6]` on a cleartext platform
+  over the store (was a stub), `[RSLK5]` stubs the store reads. `[WHBK] [WB08]`: the clock (`Date`)
+  is stopped from the first send until `[OZGP]` moves it past the interval (sinon, `Date` only,
+  restored in its own hook), so a slow store no longer lets the throttled sends through nor the
+  retry fire before the assertions. `Platform-unique-values.test.js` holds no literal NUL any more
+  (git reads it as text).
 
 ### Adapter routes: dispatcher, shared proxy core, validator
 

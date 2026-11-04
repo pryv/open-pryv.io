@@ -308,6 +308,13 @@ describe('[WHBK] Webhook', () => {
       const minIntervalMs = 100;
       let clock;
 
+      // Its own hook, run whatever the other hooks do: a fake clock left in
+      // place would reach every later suite of the process.
+      after(() => {
+        clock?.restore();
+        clock = null;
+      });
+
       before(async () => {
         postPath = '/notifs3';
         url = 'http://127.0.0.1:' + PORT + postPath;
@@ -316,9 +323,8 @@ describe('[WHBK] Webhook', () => {
       });
 
       after(() => {
-        webhook.stop();
+        webhook?.stop();
         notificationsServer.close();
-        clock?.restore();
       });
 
       let webhook, runs, storedWebhook;

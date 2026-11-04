@@ -15,6 +15,7 @@ const accountStreams = require('../system-streams/index.ts');
 const emailsConstants = require('../emails/constants.ts');
 const { isEmailHeldByAnother } = require('../emails/heldAddress.ts') as typeof import('../emails/heldAddress.ts');
 const { isSsoBinding } = require('./ssoBindings.ts') as typeof import('./ssoBindings.ts');
+const { parseUserRowEntry } = require('storages/interfaces/platformStorage/userRowKey.ts') as typeof import('../../../../storages/interfaces/platformStorage/userRowKey.ts');
 type SsoBinding = import('./ssoBindings.ts').SsoBinding;
 const timestamp = require('unix-timestamp');
 const { seriesNamespace, formerUsernames } = require('../series/namespace.ts');
@@ -99,6 +100,8 @@ class RestoreOrchestrator {
   coreRouting: CoreRoutingLike | null = null;
   /** Set once the single-core check of the platform's cores ran. */
   singleCoreStoreChecked = false;
+  /** The accounts this restore wrote over (they existed on this core before it): a rollback empties them, never removes them. */
+  preExistingAccounts: Set<string> = new Set();
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -335,9 +338,12 @@ class RestoreOrchestrator {
 
     // Without overwrite, an account this core still indexes is not restored
     // (the index refuses it): refused before its erasure record is touched.
-    if (!opts.overwrite && await this._isIndexed(targetUserId)) {
+    const existed = await this._isIndexed(targetUserId);
+    if (!opts.overwrite && existed) {
       throw new Error(`User ${username} (${targetUserId}) exists on this core: use --overwrite to replace it. Nothing was restored for this account.`);
     }
+    // A rollback empties such an account, it never removes it.
+    if (existed) (this.preExistingAccounts ??= new Set()).add(targetUserId);
 
     // Before anything is written: the auto-deletion sweep must not complete
     // the account's erasure on what the restore brings back. Put back if this
@@ -815,21 +821,27 @@ class RestoreOrchestrator {
   }
 
   /**
-   * Remove an account this restore wrote and that is not kept (its integrity
-   * check failed, `--verify-integrity`): its data, then the account as its
-   * deletion removes it: its index entry, its platform rows, its routing row
-   * and those of its aliases, its external ids. Without that, the name and
-   * the unique values the restore reserved for it stay taken by an account
-   * whose data is gone. The deletion leaves to another account what that
-   * account holds: only the rows the account owns are removed, and on a
-   * multi-core platform a name routed to another core keeps its rows. Over an
-   * account that existed before the restore (`--overwrite`), the account is
-   * gone too: the restore cleared its data first.
+   * Undo the restore of an account that is not kept (its integrity check
+   * failed, `--verify-integrity`). Its data is cleared. An account this
+   * restore created is then removed as its deletion removes it: its index
+   * entry, its platform rows, its routing row and those of its aliases, its
+   * external ids (`'removed'`); without that, the name and the unique values
+   * the restore reserved for it stay taken by an account whose data is gone.
+   * The deletion leaves to another account what that account holds: only the
+   * rows the account owns are removed, and on a multi-core platform a name
+   * routed to another core keeps its rows. An account that existed on this
+   * core before the restore (`--overwrite`) is only emptied (`'emptied'`): it
+   * keeps its platform rows, name, addresses, aliases and routing, which no
+   * backup necessarily holds, and is to be restored from a backup of its own.
+   * The data is cleared first in both cases: the account deletion does not
+   * remove the audit and the series.
    */
-  async rollBackAccount (userId: string, username: string): Promise<void> {
+  async rollBackAccount (userId: string, username: string): Promise<'removed' | 'emptied'> {
     await this._clearUserData({ id: userId }, userId, username);
+    if (this.preExistingAccounts?.has(userId) === true) return 'emptied';
     const repository = this.usersRepository ?? await require('business/src/users/index.ts').getUsersRepository();
     await repository.deleteOne(userId, username);
+    return 'removed';
   }
 
   async _clearUserData (user: UserRef, userId: string, username: string) {
@@ -1186,16 +1198,11 @@ class RestoreOrchestrator {
  * core-info, invitation) are v2-only and have no v1 equivalent; returns null.
  */
 function parseRawPlatformEntry (entry: { key: string; value: string }) {
-  const parts = entry.key.split('/');
-  if (parts.length < 3) return null;
-  const [type, field, userNameOrValue] = parts;
-  if (type === 'user-unique') {
-    return { isUnique: true, field, username: entry.value, value: userNameOrValue };
-  }
-  if (type === 'user-indexed') {
-    return { isUnique: false, field, username: userNameOrValue, value: entry.value };
-  }
-  return null;
+  if (!entry.key.startsWith('user-unique/') && !entry.key.startsWith('user-indexed/')) return null;
+  const parsed = parseUserRowEntry(entry);
+  // The value (or username) is the rest of the key, `/` included.
+  if (parsed.field == null || parsed.value == null || parsed.username == null) return null;
+  return parsed;
 }
 
 /** What to do with an account the platform routes to another core. */

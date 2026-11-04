@@ -5,8 +5,17 @@
  * Refer to LICENSE file
  */
 
-/** The characters an engine trims from a stored value before matching it (SQL `trim(x, chars)`). */
-export const TRIMMED_CHARS = ' \t\n\r\f\v';
+/**
+ * The characters an engine trims from a stored value before matching it (SQL
+ * `trim(x, chars)` / `btrim`): those JavaScript's `trim()` removes (white
+ * space and line terminators), so that a stored value matches as
+ * `PiiHasher.normalize` compares it.
+ */
+export const TRIMMED_CHARS = String.fromCharCode(
+  0x20, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0xa0, 0x1680,
+  0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200a,
+  0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff
+);
 
 /**
  * The SQL `LIKE` pattern (escape character `\`) that `getUsersUniqueFieldAnyCase`

@@ -153,15 +153,24 @@ describe('[RSLK] password-reset link', function () {
     // inbox now).
     const { res, captured } = await resetWith(async (platform, address, username) => {
       const platformDB = require('storages').platformDB;
-      const config = await require('@pryv/boiler').getConfig();
-      const { PiiHasher } = require('platform/src/PiiHasher.ts');
-      platform._setDependenciesForTests(platformDB, null);
-      await platformDB.setUserUniqueField(username, 'email', address);
-      await platformDB.setUserUniqueField('rslholder', 'email', address.toLowerCase());
-      return async () => {
-        for (const value of [address, address.toLowerCase()]) await platformDB.deleteUserUniqueField('email', value);
-        platform._setDependenciesForTests(platformDB, new PiiHasher(config.get('platform:piiHmacKey'), config.get('platform:piiAlgorithm') || undefined));
+      // The platform's own hasher (null in a cleartext run), put back whatever happens.
+      const originalHasher = platform._piiHasherForTests();
+      const undo = async () => {
+        try {
+          for (const value of [address, address.toLowerCase()]) await platformDB.deleteUserUniqueField('email', value);
+        } finally {
+          platform._setDependenciesForTests(platformDB, originalHasher);
+        }
       };
+      platform._setDependenciesForTests(platformDB, null);
+      try {
+        await platformDB.setUserUniqueField(username, 'email', address);
+        await platformDB.setUserUniqueField('rslholder', 'email', address.toLowerCase());
+      } catch (err) {
+        await undo();
+        throw err;
+      }
+      return undo;
     }, (username) => 'Rsl' + username.slice(3) + '@Reset.example.com');
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(captured.length, 0, 'no mail to the address another account holds under another spelling');

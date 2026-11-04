@@ -162,8 +162,13 @@ require('@pryv/boiler').init({
       console.log('  email row missing       ' + s.missing.length + (s.missing.length > 0 ? ': ' + s.missing.join(', ') : ''));
       console.log('  email row claimed       ' + s.claimed.length);
       console.log('  held by another account ' + s.heldElsewhere.length + (s.heldElsewhere.length > 0 ? ': ' + s.heldElsewhere.join(', ') : ''));
+      for (const [name, holders] of Object.entries(s.heldBy ?? {})) {
+        if (holders.length === 0) continue;
+        console.log('    - ' + name + ': also held by ' + holders.map((h) => h.holder + ' as "' + h.spelling + '"').join(', '));
+      }
       if (s.heldElsewhere.length > 0) {
-        console.log('    ! no password reset or notice is mailed to these accounts until their email is changed');
+        console.log('    ! no password reset or notice is mailed to these accounts until their email is changed' +
+          ' (two accounts listed against each other share one address in two cases: change the email of one of them)');
       }
       if (s.failed.length > 0) {
         console.log('  could not be read        ' + s.failed.length + ': ' + s.failed.join(', ') + ' (see the log; run again)');

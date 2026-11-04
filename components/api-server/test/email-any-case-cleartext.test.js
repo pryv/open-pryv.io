@@ -23,9 +23,7 @@ const require = createRequire(import.meta.url);
 const nock = require('nock');
 const { useNock } = require('test-helpers/src/nockScope.ts');
 const { withInjectedConfig } = require('test-helpers');
-const { getConfig } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
-const { PiiHasher } = require('platform/src/PiiHasher.ts');
 
 const TRUSTED_APP = 'pryv-test-no-cors';
 
@@ -33,17 +31,18 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
   this.timeout(60000);
   useNock();
 
-  let platform, platformDB, usersRepository, config;
-  // Accounts and rows a test made (cleartext form), removed before the platform goes back to hashed mode.
+  let platform, platformDB, usersRepository, originalHasher;
+  // Accounts and rows a test made (cleartext form), removed before the platform goes back to its mode.
   let made, rows;
 
   before(async function () {
     await initTests();
     await initCore();
-    config = await getConfig();
     platform = require('platform').platform;
     platformDB = require('storages').platformDB;
     usersRepository = await getUsersRepository();
+    // The platform's own hasher (null when the run is in cleartext mode), put back after each test.
+    originalHasher = platform._piiHasherForTests();
   });
 
   beforeEach(function () {
@@ -60,7 +59,7 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
       }
       for (const value of rows) await platformDB.deleteUserUniqueField('email', value);
     } finally {
-      platform._setDependenciesForTests(platformDB, new PiiHasher(config.get('platform:piiHmacKey'), config.get('platform:piiAlgorithm') || undefined));
+      platform._setDependenciesForTests(platformDB, originalHasher);
       nock.cleanAll();
     }
   });
@@ -70,8 +69,18 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
   /** Another account's row for `value` (cleartext form: the address as written). */
   async function heldByAnother (value) {
     rows.push(value);
-    await platformDB.setUserUniqueField('emciholder' + slug(), 'email', value);
+    const holder = 'emciholder' + slug();
+    await platformDB.setUserUniqueField(holder, 'email', value);
+    return holder;
   }
+
+  it('[EMCI6] the email reconcile names the other holder of an address held in another case, with its spelling', async function () {
+    const u = await registered('Emci6-' + slug() + '@Case.example');
+    const holder = await heldByAnother(u.email.toLowerCase());
+    const summary = await usersRepository.reconcileEmailRows(true);
+    assert.ok(summary.heldElsewhere.includes(u.username), JSON.stringify(summary));
+    assert.deepStrictEqual(summary.heldBy[u.username], [{ holder, spelling: u.email.toLowerCase() }]);
+  });
 
   function register (username, email) {
     return coreRequest.post('/users').send({
@@ -88,10 +97,50 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
     const username = 'emci' + slug();
     const res = await register(username, email);
     assert.ok(res.status === 201 || res.status === 200, `registration: ${res.status} ${JSON.stringify(res.body)}`);
-    const u = { username, id: await usersRepository.getUserIdForUsername(username), email };
+    const u = { username, id: await usersRepository.getUserIdForUsername(username), email, token: res.body.apiEndpoint.split('//')[1].split('@')[0] };
     made.push(u);
     return u;
   }
+
+  it('[EMCI4] adding an address another account holds in another case is refused through the API: no pending address, no verification token', async function () {
+    const container = require('business/src/emails/container.ts');
+    const u = await registered('emci4-' + slug() + '@case.example');
+    const held = 'emci4h-' + slug() + '@case.example';
+    await heldByAnother(held);
+    const spelling = held.toUpperCase();
+    const res = await coreRequest.put('/' + u.username + '/account').set('Authorization', u.token).send({ emails: { add: [spelling] } });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.error?.id, 'item-already-exists', JSON.stringify(res.body));
+    const values = (await container.getRawEvents(u.id)).map((e) => String(e.content?.value).toLowerCase());
+    assert.ok(!values.includes(held), 'no pending event for the address: ' + JSON.stringify(values));
+    // A free address is still added (the token works).
+    const free = await coreRequest.put('/' + u.username + '/account').set('Authorization', u.token).send({ emails: { add: ['emci4f-' + slug() + '@case.example'] } });
+    assert.strictEqual(free.status, 200, JSON.stringify(free.body));
+  });
+
+  it('[EMCI5] the availability check and the registration email challenge answer an address another account holds in another case as taken: no code mailed', async function () {
+    const held = 'emci5h-' + slug() + '@case.example';
+    await heldByAnother(held);
+    const spelling = 'E' + held.slice(1).toUpperCase();
+    const check = await coreRequest.get('/reg/' + encodeURIComponent(spelling) + '/check_email');
+    assert.strictEqual(check.status, 409, JSON.stringify(check.body));
+    const free = await coreRequest.get('/reg/' + encodeURIComponent('emci5f-' + slug() + '@case.example') + '/check_email');
+    assert.strictEqual(free.status, 200, JSON.stringify(free.body));
+
+    const captured = [];
+    nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json').times(2)
+      .reply(200, (uri, body) => { captured.push(body); return {}; });
+    await withInjectedConfig({ account: { emailVerification: { requireAtRegistration: true, registrationCodeResendCooldownMs: 0 } } }, async () => {
+      const refused = await coreRequest.post('/reg/email-challenge').send({ email: spelling });
+      assert.strictEqual(refused.status, 409, JSON.stringify(refused.body));
+      assert.strictEqual(refused.body.error?.id, 'item-already-exists', JSON.stringify(refused.body));
+      assert.strictEqual(captured.length, 0, 'no code mailed to the holder of the address');
+      // The gate is on: a free address gets its code.
+      const sent = await coreRequest.post('/reg/email-challenge').send({ email: 'emci5c-' + slug() + '@case.example' });
+      assert.strictEqual(sent.status, 200, JSON.stringify(sent.body));
+      assert.strictEqual(captured.length, 1);
+    });
+  });
 
   it('[EMCI1] registration refuses an address another account holds in another case', async function () {
     const local = 'emci1-' + slug();

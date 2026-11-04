@@ -15,6 +15,7 @@ import type {
   PlatformIntegrityReport
 } from '../../../interfaces/platformStorage/PlatformDB.ts';
 import { anyCaseLikePattern, TRIMMED_CHARS } from '../../../interfaces/platformStorage/anyCase.ts';
+import { parseUserRowEntry } from '../../../interfaces/platformStorage/userRowKey.ts';
 
 // All queries here hit the `keyValue` table (key TEXT, value TEXT).
 type Row = Record<string, string>;
@@ -808,14 +809,7 @@ function checkKvPrefix (method: string, prefix: string): void {
 // --- Key helpers (same as SQLite engine) --- //
 
 function parseEntry (entry: Row): PlatformEntry {
-  const [type, field, userNameOrValue] = (entry.key as string).split('/');
-  const isUnique = (type === 'user-unique');
-  return {
-    isUnique,
-    field,
-    username: isUnique ? entry.value : userNameOrValue,
-    value: isUnique ? userNameOrValue : entry.value
-  };
+  return parseUserRowEntry({ key: entry.key, value: entry.value });
 }
 
 function getUserUniqueKey (field: string, value: string) {

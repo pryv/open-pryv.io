@@ -91,7 +91,9 @@ class Platform {
   #platformDnsNames: Set<string> = new Set();
   #platformNamesReadAt: number = 0;
 
-  // Null in `cleartext` mode (default); a PiiHasher instance when
+  // Null in `cleartext` mode (the opt-out; `default-config.yml` sets
+  // `platform.piiMode: hashed`, and a config without the key reads as
+  // cleartext); a PiiHasher instance when
   // `platform.piiMode === 'hashed'`. Wrapped by `#hashFor(field, value)`
   // — every PlatformDB call that takes a PII argument routes through
   // that helper so `cleartext` mode is byte-identical to pre-hashing
@@ -271,6 +273,11 @@ class Platform {
     if (config != null) this.#config = config;
   }
 
+  /** Test-only: the current PII hasher (null in cleartext mode), to put back after `_setDependenciesForTests`. */
+  _piiHasherForTests (): InstanceType<typeof PiiHasher> | null {
+    return this.#piiHasher;
+  }
+
   /** Test-only: run the invitation-token key migration on demand (init() runs it at boot). */
   async _migrateInvitationTokensForTests (): Promise<void> {
     return this.#migrateInvitationTokensToHashedKeys();
@@ -298,14 +305,24 @@ class Platform {
    * it. Throws when the platform store cannot be read.
    */
   async getUniqueValueOwners (field: string, storedValue: string): Promise<string[]> {
+    return [...new Set((await this.getUniqueValueRows(field, storedValue)).map((row) => row.username))];
+  }
+
+  /**
+   * The rows behind `getUniqueValueOwners`: each spelling held (`value`, in
+   * storage form) and its owner (`username`, in storage form). In cleartext
+   * mode both are as written, which lets an operator tool name the holder of
+   * another spelling.
+   */
+  async getUniqueValueRows (field: string, storedValue: string): Promise<Array<{ value: string, username: string }>> {
     if (this.#piiInitError != null) throw this.#piiInitError;
     if (this.#piiHasher != null || !CASE_INSENSITIVE_FIELDS.has(field) || typeof storedValue !== 'string') {
       const owner = await this.#db.getUsersUniqueField(field, storedValue);
-      return owner == null ? [] : [owner];
+      return owner == null ? [] : [{ value: storedValue, username: owner }];
     }
     const normalized = PiiHasher.normalize(field, storedValue);
     const rows = await this.#db.getUsersUniqueFieldAnyCase(field, normalized);
-    return [...new Set(rows.filter((row) => PiiHasher.normalize(field, row.value) === normalized).map((row) => row.username))];
+    return rows.filter((row) => PiiHasher.normalize(field, row.value) === normalized);
   }
 
   /**
@@ -315,6 +332,16 @@ class Platform {
    */
   async isUniqueValueHeldByAnother (ownerToken: string, field: string, storedValue: string): Promise<boolean> {
     return (await this.getUniqueValueOwners(field, storedValue)).some((owner) => owner !== ownerToken);
+  }
+
+  /**
+   * True when an account holds `value` (plaintext) of the unique `field`, in
+   * any of its spellings (`getUniqueValueOwners`): the answer of the checks
+   * that tell whether a value is free (availability, reservations, a code or
+   * a link to mail).
+   */
+  async isUniqueValueTaken (field: string, value: string): Promise<boolean> {
+    return (await this.getUniqueValueOwners(field, this.hashFor(field, value))).length > 0;
   }
 
   /**

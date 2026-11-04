@@ -30,6 +30,7 @@ import type {
 } from '../../../interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
 const { anyCaseLikePattern, TRIMMED_CHARS } = require('../../../interfaces/platformStorage/anyCase.ts') as typeof import('../../../interfaces/platformStorage/anyCase.ts');
+const { parseUserRowEntry } = require('../../../interfaces/platformStorage/userRowKey.ts') as typeof import('../../../interfaces/platformStorage/userRowKey.ts');
 
 interface PgQueryResult { rows: Array<Record<string, unknown>>; rowCount?: number | null }
 interface DbLike {
@@ -50,6 +51,11 @@ class DBpostgresql {
     await this.db.ensureConnect();
     await this.db.query(
       'CREATE TABLE IF NOT EXISTS platform_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)'
+    );
+    // Keys in byte order, for the key ranges of `getUsersUniqueFieldAnyCase`
+    // (the primary key follows the database collation, which does not).
+    await this.db.query(
+      'CREATE INDEX IF NOT EXISTS platform_kv_key_c ON platform_kv (key COLLATE "C")'
     );
     this.closed = false;
   }
@@ -121,11 +127,13 @@ class DBpostgresql {
 
   async getUsersUniqueFieldAnyCase (field: string, value: string): Promise<Array<{ value: string, username: string }>> {
     const prefix = getUserUniqueKey(field, '');
-    // A prefix compared as is (`left`: the column's collation does not order
-    // keys byte by byte), then ILIKE, which compares letters in any case.
+    // The key range of the field's rows in byte order (`COLLATE "C"`, index
+    // `platform_kv_key_c`: `0` follows `/`), then ILIKE, which compares
+    // letters in any case.
     const res = await this.db.query(
-      "SELECT key, value FROM platform_kv WHERE left(key, $1::int) = $2 AND btrim(substr(key, $3::int), $4) ILIKE $5 ESCAPE '\\'",
-      [prefix.length, prefix, prefix.length + 1, TRIMMED_CHARS, anyCaseLikePattern(value)]
+      'SELECT key, value FROM platform_kv WHERE key COLLATE "C" >= $1 AND key COLLATE "C" < $2 ' +
+      "AND btrim(substr(key, $3::int), $4) ILIKE $5 ESCAPE '\\'",
+      [prefix, prefix.slice(0, -1) + '0', prefix.length + 1, TRIMMED_CHARS, anyCaseLikePattern(value)]
     );
     return (res.rows as Row[]).map((row) => ({ value: row.key.slice(prefix.length), username: row.value }));
   }
@@ -650,14 +658,7 @@ function checkKvPrefix (method: string, prefix: string): void {
 // --- Key helpers (same namespaces as the rqlite engine) --- //
 
 function parseEntry (entry: Row): PlatformEntry {
-  const [type, field, userNameOrValue] = entry.key.split('/');
-  const isUnique = (type === 'user-unique');
-  return {
-    isUnique,
-    field,
-    username: isUnique ? entry.value : userNameOrValue,
-    value: isUnique ? userNameOrValue : entry.value
-  };
+  return parseUserRowEntry(entry);
 }
 
 function getUserUniqueKey (field: string, value: string) {

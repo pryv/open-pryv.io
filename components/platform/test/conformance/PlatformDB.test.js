@@ -151,10 +151,32 @@ export default function conformanceTests (getDB) {
         ].sort());
         assert.deepStrictEqual(await db.getAllForUser('nobody' + cuid().toLowerCase()), []);
       });
+
+      it('[MUV06] a unique value holding `/` (an email local part, an identity provider subject) is read whole: listed, exported, and removed by its own key', async () => {
+        const username = 'slash' + cuid().toLowerCase();
+        const email = 'a/b-' + username + '@x.example';
+        const sub = 'https://idp.example/u/' + username;
+        await db.setUserUniqueField(username, 'email', email);
+        await db.setUserUniqueField(username, 'sso-idp', sub);
+        const key = (e) => [e.isUnique, e.field, e.username, e.value].join('|');
+        const expected = [[true, 'email', username, email].join('|'), [true, 'sso-idp', username, sub].join('|')].sort();
+        assert.deepStrictEqual((await db.getAllForUser(username)).map(key).sort(), expected);
+        assert.deepStrictEqual((await db.getAllWithPrefix('user-unique/')).filter((e) => e.username === username).map(key).sort(), expected);
+        assert.deepStrictEqual((await db.exportAll()).filter((e) => e.username === username).map(key).sort(), expected);
+        // What a deletion does: each row the account owns, removed by its (field, value).
+        for (const e of await db.getAllForUser(username)) await db.deleteUserUniqueField(e.field, e.value);
+        assert.strictEqual(await db.getUsersUniqueField('email', email), null, 'the address is free');
+        assert.strictEqual(await db.getUsersUniqueField('sso-idp', sub), null, 'the subject is free');
+        // An export imports back whole.
+        await db.importAll([{ isUnique: true, field: 'sso-idp', username, value: sub }]);
+        assert.strictEqual(await db.getUsersUniqueField('sso-idp', sub), username);
+      });
     });
 
     describe('[ANYC] getUsersUniqueFieldAnyCase()', () => {
       const values = (rows) => rows.map((r) => r.value + '=' + r.username).sort();
+      const NBSP = String.fromCharCode(0xa0);
+      const IDEO_SPACE = String.fromCharCode(0x3000);
 
       it('[ANYC1] answers the rows of the field that hold the value in any case and with surrounding spaces, each with its stored value and owner', async () => {
         const id = cuid().toLowerCase();
@@ -163,12 +185,15 @@ export default function conformanceTests (getDB) {
         await db.setUserUniqueField(a, 'email', 'user-' + id + '@case.example');
         await db.setUserUniqueField(b, 'email', 'USER-' + id.toUpperCase() + '@Case.Example');
         await db.setUserUniqueField(b, 'email', ' User-' + id + '@case.example\t');
+        // White space JavaScript trims beyond ASCII (no-break space, ideographic space).
+        await db.setUserUniqueField(b, 'email', NBSP + 'user-' + id + '@CASE.example' + IDEO_SPACE);
         // Other values, another field, a longer value: not matched.
         await db.setUserUniqueField(a, 'email', 'user-' + id + '@case.example.org');
         await db.setUserUniqueField(a, 'email', 'other-' + id + '@case.example');
         await db.setUserUniqueField(a, 'emailx', 'user-' + id + '@case.example');
         assert.deepStrictEqual(values(await db.getUsersUniqueFieldAnyCase('email', 'user-' + id + '@case.example')), [
           ' User-' + id + '@case.example\t=' + b,
+          NBSP + 'user-' + id + '@CASE.example' + IDEO_SPACE + '=' + b,
           'USER-' + id.toUpperCase() + '@Case.Example=' + b,
           'user-' + id + '@case.example=' + a
         ].sort());

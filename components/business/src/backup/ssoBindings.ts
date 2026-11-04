@@ -31,11 +31,13 @@ export function ssoBindingsOf (rows: PlatformEntry[]): SsoBinding[] {
 /**
  * True for an entry a restore may write as a binding: an `sso-<provider>`
  * field (nothing else: the entry comes from a backup, and must not write an
- * email, an alias or another unique value of the platform) and a value.
+ * email, an alias or another unique value of the platform) and a value. A
+ * value may hold `/` (a subject such as `https://idp/u/1`): the platform
+ * store keys it whole.
  */
 export function isSsoBinding (entry: unknown): entry is SsoBinding {
   const e = entry as { field?: unknown; value?: unknown } | null;
-  return e != null && isSsoBindingField(e.field) && typeof e.value === 'string' && e.value !== '' && !e.value.includes('/');
+  return e != null && isSsoBindingField(e.field) && typeof e.value === 'string' && e.value !== '';
 }
 
 function isSsoBindingField (field: unknown): field is string {

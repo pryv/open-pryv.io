@@ -213,11 +213,14 @@ async function reserveRow (username: string, value: string): Promise<boolean> {
   return await platform.reserveUserUniqueValue(username, C.UNIQUE_FIELD, value);
 }
 
-/** True when no other user owns `(email, value)` (absent, or owned by `username`). Writes nothing. */
+/**
+ * True when no other user owns `(email, value)` (absent, or owned by
+ * `username`), in any spelling (in cleartext mode another case is the same
+ * address). Writes nothing.
+ */
 async function isRowFreeFor (username: string, value: string): Promise<boolean> {
   const platform = await getPlatform();
-  const owner = await platform.getUsersUniqueField(C.UNIQUE_FIELD, value);
-  return owner == null || owner === platform.hashFor('username', username);
+  return !await platform.isUniqueValueHeldByAnother(platform.hashFor('username', username), C.UNIQUE_FIELD, platform.hashFor(C.UNIQUE_FIELD, value));
 }
 
 /** Release `(email, value)` if owned by the user. */

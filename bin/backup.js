@@ -312,12 +312,23 @@ async function runRestore (args) {
 
     if (failedUsers.length > 0) {
       console.log(`\nIntegrity check failed for ${failedUsers.length} user(s). Rolling back...`);
+      const emptied = [];
+      const rollbackFailed = [];
       for (const { userId, username } of failedUsers) {
         try {
-          await orchestrator.rollBackAccount(userId, username);
-          console.log(`  Rolled back: ${username} (${userId}), the account removed`);
+          if (await orchestrator.rollBackAccount(userId, username) === 'emptied') {
+            emptied.push({ userId, username });
+            console.error(`  WARNING: rolled back ${username} (${userId}): EMPTIED, NOT REMOVED. This account existed on this core before ` +
+              'the restore (--overwrite): its data is cleared; its name, addresses, aliases and routing are kept. ' +
+              'Restore it from a backup of its own that passes --verify-integrity (--restore <that backup> --user <id> --overwrite --verify-integrity).');
+          } else {
+            console.log(`  Rolled back: ${username} (${userId}), the account removed`);
+          }
         } catch (e) {
-          console.error(`  Rollback failed for ${username}: ${e.message}`);
+          rollbackFailed.push({ userId, username, error: e.message });
+          console.error(`  Rollback FAILED for ${username} (${userId}): ${e.message}. The account may be left partly restored or partly removed: ` +
+            `remove it with DELETE /users/${username} (admin key) on this core, or restore it again; then run bin/reconcile-user-cores.js (routing rows) ` +
+            'and bin/reconcile-user-cores.js --emails (email rows).');
         }
       }
       // A rolled-back account whose unfinished erasure the restore withdrew:
@@ -328,11 +339,22 @@ async function runRestore (args) {
       report.erasuresWithdrawn = withdrawn.filter(r => !failedIds.has(r.userId));
       report.emailsHeldElsewhere = (report.emailsHeldElsewhere ?? []).filter(u => !failedIds.has(u.userId));
       // Remove failed users from restored list and add to report
-      report.rolledBack = failedUsers.map(f => ({ userId: f.userId, username: f.username }));
+      const notRolledBack = new Set(rollbackFailed.map(f => f.userId));
+      report.rolledBack = failedUsers.filter(f => !notRolledBack.has(f.userId)).map(f => ({ userId: f.userId, username: f.username }));
+      report.emptied = emptied;
+      report.rollbackFailed = rollbackFailed;
       report.restored = report.restored.filter(u =>
         !failedUsers.some(f => f.userId === u.userId)
       );
-      console.log('\nRollback complete. Only users that passed integrity checks remain.');
+      if (rollbackFailed.length > 0) {
+        console.error(`\nRollback INCOMPLETE: ${rollbackFailed.length} account(s) could not be rolled back (see above): ` +
+          rollbackFailed.map(f => `${f.username} (${f.userId})`).join(', '));
+      } else if (emptied.length > 0) {
+        console.log(`\nRollback complete. ${emptied.length} account(s) that existed before the restore are left emptied, to restore from their own backup: ` +
+          emptied.map(f => `${f.username} (${f.userId})`).join(', '));
+      } else {
+        console.log('\nRollback complete. Only users that passed integrity checks remain.');
+      }
     }
 
     if (unverifiedUsers.length > 0) {
@@ -709,9 +731,13 @@ Restore:
                             the platform routes to another core (multi-core)
   --delete-on-success       Delete backup data after successful restore
   --move-on-success <path>  Move backup data after successful restore
-  --verify-integrity        Verify integrity hashes after restore. Roll back (the
-                            account is removed: its data, index entry and platform
-                            rows) and exit 1 on failure; exit 2 if verification could not run
+  --verify-integrity        Verify integrity hashes after restore. On failure roll
+                            back and exit 1: an account the restore created is
+                            removed (data, index entry, platform rows, routing);
+                            an account that existed before (--overwrite) is left
+                            EMPTIED (its data was cleared before verifying; its
+                            name, addresses and routing are kept): back it up
+                            before restoring over it. Exit 2 if verification could not run
                             (integrity inactive or store unavailable). On a non-green
                             result the backup source is kept (never cleaned up).
   --private-key <pem>       Private key to decrypt a hybrid-encrypted backup
