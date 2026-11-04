@@ -153,6 +153,39 @@ export default function conformanceTests (getDB) {
       });
     });
 
+    describe('[ANYC] getUsersUniqueFieldAnyCase()', () => {
+      const values = (rows) => rows.map((r) => r.value + '=' + r.username).sort();
+
+      it('[ANYC1] answers the rows of the field that hold the value in any case and with surrounding spaces, each with its stored value and owner', async () => {
+        const id = cuid().toLowerCase();
+        const a = 'a-' + id;
+        const b = 'b-' + id;
+        await db.setUserUniqueField(a, 'email', 'user-' + id + '@case.example');
+        await db.setUserUniqueField(b, 'email', 'USER-' + id.toUpperCase() + '@Case.Example');
+        await db.setUserUniqueField(b, 'email', ' User-' + id + '@case.example\t');
+        // Other values, another field, a longer value: not matched.
+        await db.setUserUniqueField(a, 'email', 'user-' + id + '@case.example.org');
+        await db.setUserUniqueField(a, 'email', 'other-' + id + '@case.example');
+        await db.setUserUniqueField(a, 'emailx', 'user-' + id + '@case.example');
+        assert.deepStrictEqual(values(await db.getUsersUniqueFieldAnyCase('email', 'user-' + id + '@case.example')), [
+          ' User-' + id + '@case.example\t=' + b,
+          'USER-' + id.toUpperCase() + '@Case.Example=' + b,
+          'user-' + id + '@case.example=' + a
+        ].sort());
+        assert.deepStrictEqual(await db.getUsersUniqueFieldAnyCase('email', 'nobody-' + id + '@case.example'), []);
+      });
+
+      it('[ANYC2] the LIKE wildcards of a value are compared as characters; a character outside ASCII matches the row of the other case', async () => {
+        const id = cuid().toLowerCase();
+        await db.setUserUniqueField('u-' + id, 'email', 'a_b%' + id + '@x.example');
+        await db.setUserUniqueField('v-' + id, 'email', 'axb' + id + '@x.example');
+        assert.deepStrictEqual(values(await db.getUsersUniqueFieldAnyCase('email', 'A_B%' + id + '@x.example')), ['a_b%' + id + '@x.example=u-' + id]);
+        await db.setUserUniqueField('w-' + id, 'email', 'JOSÉ' + id + '@x.example');
+        const found = values(await db.getUsersUniqueFieldAnyCase('email', 'josé' + id + '@x.example'));
+        assert.ok(found.includes('JOSÉ' + id + '@x.example=w-' + id), JSON.stringify(found));
+      });
+    });
+
     describe('setUserIndexedField() / getUserIndexedField()', () => {
       it('must set and retrieve an indexed field', async () => {
         const username = 'user-' + cuid();

@@ -314,8 +314,8 @@ async function runRestore (args) {
       console.log(`\nIntegrity check failed for ${failedUsers.length} user(s). Rolling back...`);
       for (const { userId, username } of failedUsers) {
         try {
-          await orchestrator._clearUserData({ id: userId }, userId, username);
-          console.log(`  Rolled back: ${username} (${userId})`);
+          await orchestrator.rollBackAccount(userId, username);
+          console.log(`  Rolled back: ${username} (${userId}), the account removed`);
         } catch (e) {
           console.error(`  Rollback failed for ${username}: ${e.message}`);
         }
@@ -709,8 +709,9 @@ Restore:
                             the platform routes to another core (multi-core)
   --delete-on-success       Delete backup data after successful restore
   --move-on-success <path>  Move backup data after successful restore
-  --verify-integrity        Verify integrity hashes after restore. Roll back and
-                            exit 1 on failure; exit 2 if verification could not run
+  --verify-integrity        Verify integrity hashes after restore. Roll back (the
+                            account is removed: its data, index entry and platform
+                            rows) and exit 1 on failure; exit 2 if verification could not run
                             (integrity inactive or store unavailable). On a non-green
                             result the backup source is kept (never cleaned up).
   --private-key <pem>       Private key to decrypt a hybrid-encrypted backup

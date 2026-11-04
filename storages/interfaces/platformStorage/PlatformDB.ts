@@ -131,6 +131,14 @@ export interface PlatformDB {
   deleteUserIndexedField (username: string, field: string): Promise<void>;
   getUserIndexedField (username: string, field: string): Promise<string | null>;
   getUsersUniqueField (field: string, value: string): Promise<string | null>;
+  /**
+   * The rows of the unique `field` whose value, trimmed, matches `value` in
+   * any case (`anyCaseLikePattern`): every row that holds `value` up to case
+   * and surrounding spaces, and possibly others (a character outside ASCII
+   * matches any one character). `value` is each row's value as stored,
+   * `username` its owner. The caller compares the values.
+   */
+  getUsersUniqueFieldAnyCase (field: string, value: string): Promise<Array<{ value: string, username: string }>>;
   getAllWithPrefix (prefix: string): Promise<PlatformEntry[]>;
   /** The unique and indexed field rows owned by `username` (storage form), read without listing the others. */
   getAllForUser (username: string): Promise<PlatformEntry[]>;
@@ -318,6 +326,7 @@ const PlatformDB: PlatformDB = {
   async getUserIndexedField (username: string, field: string): Promise<string | null> { throw new Error('Not implemented'); },
 
   async getUsersUniqueField (field: string, value: string): Promise<string | null> { throw new Error('Not implemented'); },
+  async getUsersUniqueFieldAnyCase (field: string, value: string): Promise<Array<{ value: string, username: string }>> { throw new Error('Not implemented'); },
 
   async getAllWithPrefix (prefix: string): Promise<PlatformEntry[]> { throw new Error('Not implemented'); },
 

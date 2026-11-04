@@ -14,6 +14,8 @@ const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
 const emailsConstants = require('../emails/constants.ts');
 const { isEmailHeldByAnother } = require('../emails/heldAddress.ts') as typeof import('../emails/heldAddress.ts');
+const { isSsoBinding } = require('./ssoBindings.ts') as typeof import('./ssoBindings.ts');
+type SsoBinding = import('./ssoBindings.ts').SsoBinding;
 const timestamp = require('unix-timestamp');
 const { seriesNamespace, formerUsernames } = require('../series/namespace.ts');
 const { deletedUserMessage } = require('storages/interfaces/backup/chain.ts');
@@ -81,8 +83,12 @@ class RestoreOrchestrator {
   isReservedUsername: ((name: string) => boolean) | null = null;
   /** Replaces the platform's word-list check when set (tests). */
   isListedUsername: ((name: string) => boolean) | null = null;
-  /** Replaces the users repository that reserves the restored aliases when set (tests). */
-  usersRepository: { restoreAliases (username: string, userId: string, aliases: string[]): Promise<string[]> } | null = null;
+  /** Replaces the users repository that reserves the restored aliases and removes a rolled-back account when set (tests). */
+  usersRepository: {
+    restoreAliases (username: string, userId: string, aliases: string[]): Promise<string[]>;
+    deleteOne (userId: string, username: string): Promise<void>;
+  } | null = null;
+
   /** How long a restore waits for an attachment it does not restore to close (default 10 s; tests). */
   discardTimeoutMs: number | null = null;
   /** The core's record of account erasures in progress (not set: not consulted). */
@@ -539,8 +545,22 @@ class RestoreOrchestrator {
       for await (const entry of userReader.readExternalIds()) externalIds.push(entry);
     }
 
+    // SSO bindings (a single-account backup; none in a backup written without
+    // them): written with the account's platform rows when the backup has none.
+    const ssoBindings: SsoBinding[] = [];
+    let invalidBindings = 0;
+    if (typeof userReader.readSsoBindings === 'function') {
+      for await (const entry of userReader.readSsoBindings()) {
+        if (isSsoBinding(entry)) ssoBindings.push({ field: entry.field, value: entry.value });
+        else invalidBindings++;
+      }
+    }
+    if (invalidBindings > 0) {
+      this.logger.warn(`${invalidBindings} SSO binding(s) of user ${targetUserId} in the backup are not SSO bindings (malformed): not restored`);
+    }
+
     this.logger.info(`User restored: ${username} (${targetUserId})`);
-    return { userId: targetUserId, entries: externalIds, verifiedEmails: verifiedEmailsOf(events) };
+    return { userId: targetUserId, entries: externalIds, verifiedEmails: verifiedEmailsOf(events), ssoBindings };
   }
 
   /**
@@ -794,6 +814,24 @@ class RestoreOrchestrator {
     await userAudit.importAllEvents(auditEvents);
   }
 
+  /**
+   * Remove an account this restore wrote and that is not kept (its integrity
+   * check failed, `--verify-integrity`): its data, then the account as its
+   * deletion removes it: its index entry, its platform rows, its routing row
+   * and those of its aliases, its external ids. Without that, the name and
+   * the unique values the restore reserved for it stay taken by an account
+   * whose data is gone. The deletion leaves to another account what that
+   * account holds: only the rows the account owns are removed, and on a
+   * multi-core platform a name routed to another core keeps its rows. Over an
+   * account that existed before the restore (`--overwrite`), the account is
+   * gone too: the restore cleared its data first.
+   */
+  async rollBackAccount (userId: string, username: string): Promise<void> {
+    await this._clearUserData({ id: userId }, userId, username);
+    const repository = this.usersRepository ?? await require('business/src/users/index.ts').getUsersRepository();
+    await repository.deleteOne(userId, username);
+  }
+
   async _clearUserData (user: UserRef, userId: string, username: string) {
     // Clear all user-scoped stores
     const collections = ['streams', 'accesses', 'profile', 'webhooks'];
@@ -996,12 +1034,16 @@ class RestoreOrchestrator {
     const withRows = new Set(rows.data.map((entry) => rows.ownerNames?.get(entry.username)));
     for (const account of accounts) {
       if (withRows.has(account.username)) continue;
-      const verifiedEmails = imported.find((i) => i.userId === account.userId)?.verifiedEmails ?? [];
-      const derived = await this._derivedPlatformRows(account, verifiedEmails);
-      if (derived.length === 0) continue;
-      rows.data.push(...derived);
+      const importedAccount = imported.find((i) => i.userId === account.userId);
+      const derived = await this._derivedPlatformRows(account, importedAccount?.verifiedEmails ?? []);
+      // The SSO bindings a single-account backup carries, in storage form
+      // like the rows of a whole backup (a backup written without them has none).
+      const owner = this.coreRouting?.hashFor('username', account.username) ?? account.username;
+      const bindings: PlatformEntry[] = (importedAccount?.ssoBindings ?? []).map((b) => ({ username: owner, field: b.field, value: b.value, isUnique: true }));
+      if (derived.length + bindings.length === 0) continue;
+      rows.data.push(...derived, ...bindings);
       this.logger.info(`Platform rows of user ${account.username}: none in the backup, ${derived.length} derived from the restored account ` +
-        '(as its registration writes them; no SSO binding, which only the platform rows of a whole backup carry)');
+        `(as its registration writes them), ${bindings.length} SSO binding(s) from its single-account backup`);
     }
     return rows;
   }
@@ -1078,7 +1120,10 @@ class RestoreOrchestrator {
     for (const entry of read.data) {
       if (!entry.isUnique) {
         await this.platformDB.setUserIndexedField(entry.username, entry.field, entry.value);
-      } else if (!await this.platformDB.setUserUniqueFieldIfNotExists(entry.username, entry.field, entry.value)) {
+      } else if ((this.coreRouting != null && await this.coreRouting.isUniqueValueHeldByAnother(entry.username, entry.field, entry.value)) ||
+          !await this.platformDB.setUserUniqueFieldIfNotExists(entry.username, entry.field, entry.value)) {
+        // Held by another account, also in another spelling (cleartext mode:
+        // an email in another case).
         uniqueValuesLost++;
         lostFields.add(entry.field);
         const name = read.ownerNames?.get(entry.username);
@@ -1308,10 +1353,8 @@ type CoreRoutingLike = {
   deleteUserCoreIfValue (username: string, coreId: string): Promise<boolean>;
   /** The storage form of a value (its token in hashed mode, itself otherwise). */
   hashFor (field: string, value: string): string;
-  /** The owner of a unique value, in storage form (null: no account holds it). */
-  getUsersUniqueField (field: string, value: string): Promise<string | null>;
-  /** True in hashed mode (row keys normalised); cleartext otherwise. */
-  readonly piiModeIsHashed?: boolean;
+  /** True when an account other than `ownerToken` holds the unique value, in any of its spellings (all in storage form). */
+  isUniqueValueHeldByAnother (ownerToken: string, field: string, storedValue: string): Promise<boolean>;
 };
 /** The platform part of a backup, read and checked before anything is written. */
 type PlatformRead = {
@@ -1334,13 +1377,14 @@ type UserReader = {
   readAudit (): AsyncIterable<unknown>;
   readSeries (): AsyncIterable<unknown>;
   readExternalIds? (): AsyncIterable<unknown>;
+  readSsoBindings? (): AsyncIterable<unknown>;
 };
 /**
  * A restored account, as its import read it: its external ids (`entries`,
  * linked after the platform rows) and the addresses its email container holds
  * as verified (reserved with its platform rows when the backup has none).
  */
-type ImportedAccount = { userId: string; entries: unknown[]; verifiedEmails?: string[] };
+type ImportedAccount = { userId: string; entries: unknown[]; verifiedEmails?: string[]; ssoBindings?: SsoBinding[] };
 type AccountRef = { userId: string; username: string };
 type BackupReaderLike = {
   readManifest (): Promise<Manifest>;

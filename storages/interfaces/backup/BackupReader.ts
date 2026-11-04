@@ -46,6 +46,8 @@ export interface UserBackupReader {
   readAccountData (): Promise<UserAccountStorageExport | null>;
   /** The account's external ids; nothing for a backup written without them. */
   readExternalIds (): AsyncIterable<unknown>;
+  /** The account's SSO bindings (`{ field, value }`); nothing for a backup written without them. */
+  readSsoBindings (): AsyncIterable<unknown>;
 }
 
 /**
@@ -124,7 +126,8 @@ const UserBackupReader: UserBackupReader = {
   readSeries (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
   readAttachments (): AsyncIterable<{ eventId: string | null, fileId: string, stream: Readable }> { throw new Error('Not implemented'); },
   async readAccountData (): Promise<UserAccountStorageExport | null> { throw new Error('Not implemented'); },
-  readExternalIds (): AsyncIterable<unknown> { throw new Error('Not implemented'); }
+  readExternalIds (): AsyncIterable<unknown> { throw new Error('Not implemented'); },
+  readSsoBindings (): AsyncIterable<unknown> { throw new Error('Not implemented'); }
 };
 
 for (const propName of Object.getOwnPropertyNames(UserBackupReader)) {

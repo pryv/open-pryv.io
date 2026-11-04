@@ -29,6 +29,7 @@ import type {
   PlatformIntegrityReport
 } from '../../../interfaces/platformStorage/PlatformDB.ts';
 const require = createRequire(import.meta.url);
+const { anyCaseLikePattern, TRIMMED_CHARS } = require('../../../interfaces/platformStorage/anyCase.ts') as typeof import('../../../interfaces/platformStorage/anyCase.ts');
 
 interface PgQueryResult { rows: Array<Record<string, unknown>>; rowCount?: number | null }
 interface DbLike {
@@ -116,6 +117,17 @@ class DBpostgresql {
 
   async getUsersUniqueField (field: string, value: string): Promise<string | null> {
     return await this.#get(getUserUniqueKey(field, value));
+  }
+
+  async getUsersUniqueFieldAnyCase (field: string, value: string): Promise<Array<{ value: string, username: string }>> {
+    const prefix = getUserUniqueKey(field, '');
+    // A prefix compared as is (`left`: the column's collation does not order
+    // keys byte by byte), then ILIKE, which compares letters in any case.
+    const res = await this.db.query(
+      "SELECT key, value FROM platform_kv WHERE left(key, $1::int) = $2 AND btrim(substr(key, $3::int), $4) ILIKE $5 ESCAPE '\\'",
+      [prefix.length, prefix, prefix.length + 1, TRIMMED_CHARS, anyCaseLikePattern(value)]
+    );
+    return (res.rows as Row[]).map((row) => ({ value: row.key.slice(prefix.length), username: row.value }));
   }
 
   async getAllWithPrefix (prefix: string): Promise<PlatformEntry[]> {

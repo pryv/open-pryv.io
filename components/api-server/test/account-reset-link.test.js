@@ -147,18 +147,20 @@ describe('[RSLK] password-reset link', function () {
   });
 
   it('[RSLK6] in cleartext mode, another spelling of the address held by another account counts as held: no mail', async function () {
-    // The platform seen in cleartext mode (rows keyed by the address as
-    // written): the account holds the stored spelling, another account the
-    // lowercase one (a registration by whoever controls that inbox now).
+    // The platform in cleartext mode (rows keyed by the address as written,
+    // over the same store): the account holds the stored spelling, another
+    // account the lowercase one (a registration by whoever controls that
+    // inbox now).
     const { res, captured } = await resetWith(async (platform, address, username) => {
-      const rows = { [address]: username, [address.toLowerCase()]: 'rslholder' };
-      Object.defineProperty(platform, 'piiModeIsHashed', { value: false, configurable: true });
-      platform.hashFor = (field, value) => value;
-      platform.getUsersUniqueField = async (field, value) => field === 'email' ? (rows[value] ?? null) : null;
+      const platformDB = require('storages').platformDB;
+      const config = await require('@pryv/boiler').getConfig();
+      const { PiiHasher } = require('platform/src/PiiHasher.ts');
+      platform._setDependenciesForTests(platformDB, null);
+      await platformDB.setUserUniqueField(username, 'email', address);
+      await platformDB.setUserUniqueField('rslholder', 'email', address.toLowerCase());
       return async () => {
-        delete platform.piiModeIsHashed;
-        delete platform.hashFor;
-        delete platform.getUsersUniqueField;
+        for (const value of [address, address.toLowerCase()]) await platformDB.deleteUserUniqueField('email', value);
+        platform._setDependenciesForTests(platformDB, new PiiHasher(config.get('platform:piiHmacKey'), config.get('platform:piiAlgorithm') || undefined));
       };
     }, (username) => 'Rsl' + username.slice(3) + '@Reset.example.com');
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));

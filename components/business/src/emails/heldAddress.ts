@@ -19,40 +19,27 @@
  */
 
 import { getPlatform } from 'platform';
-import { PiiHasher } from 'platform/src/PiiHasher.ts';
 import { UNIQUE_FIELD } from './constants.ts';
 
 type WarnLogger = { warn (msg: string): void };
 /** The Platform methods the check reads. */
 type UniqueRows = {
-  readonly piiModeIsHashed?: boolean;
   hashFor (field: string, value: string): string;
-  getUsersUniqueField (field: string, value: string): Promise<string | null>;
+  isUniqueValueHeldByAnother (ownerToken: string, field: string, storedValue: string): Promise<boolean>;
 };
 
 /**
- * The spellings of `email` under which a row may hold it. In hashed mode the
- * row key is normalised (trimmed, lowercased) already: one lookup. In
- * cleartext mode the row key is the address as written, so `User@x` and
- * `user@x` are two rows: the stored spelling and its normalised forms.
- */
-export function emailSpellings (email: string, hashed: boolean): string[] {
-  if (hashed) return [email];
-  return [...new Set([email, PiiHasher.normalize(UNIQUE_FIELD, email), email.toLowerCase()])];
-}
-
-/**
- * True when another account holds `email` on the platform, under any of its
- * spellings (see `emailSpellings`). An absent row, or one `username` holds,
- * answers false. Throws when the platform store cannot be read.
+ * True when another account holds `email` on the platform, in any case and
+ * with or without surrounding spaces: in hashed mode the row key is
+ * normalised already; in cleartext mode the row key is the address as
+ * written (`User@x`, `USER@x` and `user@x` are three rows), and every one is
+ * looked at (`Platform.getUniqueValueOwners`). An absent row, or one
+ * `username` holds, answers false; a row of another spelling held by another
+ * account answers true even when `username` holds its own spelling. Throws
+ * when the platform store cannot be read.
  */
 export async function isEmailHeldByAnother (platform: UniqueRows, username: string, email: string): Promise<boolean> {
-  const own = platform.hashFor('username', username);
-  for (const spelling of emailSpellings(email, platform.piiModeIsHashed === true)) {
-    const owner = await platform.getUsersUniqueField(UNIQUE_FIELD, spelling);
-    if (owner != null && owner !== own) return true;
-  }
-  return false;
+  return await platform.isUniqueValueHeldByAnother(platform.hashFor('username', username), UNIQUE_FIELD, platform.hashFor(UNIQUE_FIELD, email));
 }
 
 /**

@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Email any-case uniqueness (cleartext piiMode); restore rollback; SSO bindings in single-account backups
+
+- New `PlatformDB.getUsersUniqueFieldAnyCase(field, value)` (rqlite: key range of the field, then
+  `trim(substr(key, n), chars) LIKE pattern ESCAPE '\'`, SQLite's LIKE being ASCII-case-insensitive;
+  PostgreSQL: `left(key, n) = prefix` and `btrim(...) ILIKE pattern`): the field's rows matching
+  `anyCaseLikePattern(value)` (`storages/interfaces/platformStorage/anyCase.ts`: the trimmed value,
+  `%` `_` `\` escaped, a non-ASCII character as `_`), a superset the caller narrows. Conformance
+  tests `[ANYC1-2]`.
+- `Platform.getUniqueValueOwners(field, storedValue)`: hashed mode or a field compared as written:
+  the exact row's owner; cleartext mode and a `CASE_INSENSITIVE_FIELDS` field (email): the owners of
+  the rows whose value `PiiHasher.normalize`s to the same. `isUniqueValueHeldByAnother(ownerToken,
+  field, storedValue)`. The claims consult it first in cleartext mode (`#otherSpellingHeldByAnother`,
+  no extra read in hashed mode): `#claimUniqueValue` (`updateUser` create/update),
+  `#reserveForRegistration` step 8, `setUserUniqueFieldIfNotExists` (emails container, `/system`
+  reservations, alias rows are not email), `checkUpdateOperationUniqueness`; registration step 3
+  lists the email conflict in any case. Check-then-claim: two concurrent claims of two spellings
+  can both pass (the held-address check then flags both accounts).
+- `heldAddress.isEmailHeldByAnother` is `platform.isUniqueValueHeldByAnother` on the email;
+  `emailSpellings` removed. A row of another spelling held by another account still counts as held
+  when the account holds its own spelling (unchanged rule).
+- Restore `_writePlatform`: a unique row is not written when `coreRouting.isUniqueValueHeldByAnother`
+  (another spelling of an email in cleartext mode), counted in `uniqueValuesLost`.
+- `RestoreOrchestrator.rollBackAccount(userId, username)`: `_clearUserData` then
+  `usersRepository.deleteOne` (index entry, platform rows owned, routing rows of the name and its
+  aliases, access index, reset requests, external ids); used by `bin/backup.js` for the
+  `--verify-integrity` rollback (replaces the bare `_clearUserData`; the erasure put back as before).
+- Backup: `UserBackupWriter.writeSsoBindings` / `UserBackupReader.readSsoBindings`
+  (`sso-bindings.jsonl`, newest run of a chain); `BackupOrchestrator.backupUser` writes the
+  account's unique `sso-*` rows (`ssoBindingsOf(platformDB.getAllForUser(token))`, storage form;
+  option `withSsoBindings`, not for whole backups, whose platform rows hold them). Restore: read in
+  `_importUser` (`isSsoBinding`: an `sso-<provider>` field and a value, anything else warned and
+  dropped), added to the derived rows of an account the backup has no platform rows of.
+- Tests: `[RXCR24]` (rollback, multi-core CLI), `[RXCR27]` (bindings, CLI), `[RXCR25-26]`
+  (business unit), `[EMCI1-3]` (the core's platform switched to cleartext mode over the test store:
+  registration, email change, emails container, reset mail), `[RSLK6]` now on a cleartext platform
+  over the store (was a stub). `[WHBK] [WB08]`: the clock (`Date`) is stopped from the first send
+  until `[OZGP]` moves it past the interval (sinon, `Date` only), so a slow store no longer lets the
+  throttled sends through nor the retry fire before the assertions.
+
 ### Adapter routes: dispatcher, shared proxy core, validator
 
 - New `business/src/adapterRoutes.ts`: the single `adapterRoutes` validator

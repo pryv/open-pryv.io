@@ -58,6 +58,15 @@ function makeFakePlatformDB () {
       const k = field + SEP + value;
       return unique.has(k) ? unique.get(k) : null;
     },
+    // As the engines: the rows of the field whose trimmed value matches in any case.
+    async getUsersUniqueFieldAnyCase (field, value) {
+      const out = [];
+      for (const [k, username] of unique.entries()) {
+        const [f, v] = k.split(SEP);
+        if (f === field && v.trim().toLowerCase() === value.trim().toLowerCase()) out.push({ value: v, username });
+      }
+      return out;
+    },
     async setUserIndexedField (username, field, value) { indexed.set(username + SEP + field, value); },
     async deleteUserIndexedField (username, field) { indexed.delete(username + SEP + field); },
     async getUserIndexedField (username, field) {
@@ -165,6 +174,28 @@ for (const hashed of [false, true]) {
         platform.updateUser('erin', [{ action: 'create', key: 'email', value: X, isUnique: true, isActive: true }]),
         (err) => err.id === 'item-already-exists');
       assert.equal(await ownerOf(platform, X), platform.hashFor('username', 'dave'));
+    });
+
+    it('[PLUC6] an email another account holds in another case or with surrounding spaces is refused on every claim path; another case of its own is accepted; a field compared as written is not', async () => {
+      const { platform } = makePlatform(hashed);
+      const token = (name) => platform.hashFor('username', name);
+      assert.equal(await platform.reserveUserUniqueValue('gina', 'email', 'Gina@X.com'), true);
+      for (const spelling of ['gina@x.com', 'GINA@X.COM', ' Gina@X.com ']) {
+        assert.equal(await platform.reserveUserUniqueValue('hank', 'email', spelling), false, spelling);
+        await assert.rejects(platform.updateUser('hank', [{ action: 'create', key: 'email', value: spelling, isUnique: true, isActive: true }]),
+          (err) => err.id === 'item-already-exists', spelling);
+        await assert.rejects(platform.updateUser('hank', emailUpdate(spelling, 'hank@x.com')), (err) => err.id === 'item-already-exists', spelling);
+        assert.deepEqual(await platform.checkUpdateOperationUniqueness('hank', [{ action: 'create', key: 'email', value: spelling, isUnique: true }]), { email: spelling });
+        assert.equal(await platform.isUniqueValueHeldByAnother(token('hank'), 'email', platform.hashFor('email', spelling)), true, spelling);
+        assert.deepEqual(await platform.getUniqueValueOwners('email', platform.hashFor('email', spelling)), [token('gina')], spelling);
+      }
+      assert.equal(await platform.isUniqueValueHeldByAnother(token('gina'), 'email', platform.hashFor('email', 'GINA@x.com')), false, 'its own');
+      await platform.updateUser('gina', emailUpdate('GINA@X.COM', 'Gina@X.com'));
+      assert.equal(await ownerOf(platform, 'GINA@X.COM'), token('gina'));
+      if (!hashed) assert.equal(await ownerOf(platform, 'Gina@X.com'), null, 'the previous spelling is released');
+      // An SSO binding is compared as written: another case is another value.
+      assert.equal(await platform.reserveUserUniqueValue('gina', 'sso-acme', 'Sub'), true);
+      assert.equal(await platform.reserveUserUniqueValue('hank', 'sso-acme', 'sub'), true);
     });
 
     it('[PLUC5] an update to the current value keeps its row', async () => {

@@ -21,7 +21,7 @@ const { ErrorIds } = require('errors/src/ErrorIds.ts');
 const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 
 const getPlatformDB = require('./getPlatformDB.ts').default;
-const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM } = require('./PiiHasher.ts');
+const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM, CASE_INSENSITIVE_FIELDS } = require('./PiiHasher.ts');
 
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
@@ -288,6 +288,47 @@ class Platform {
   }
 
   /**
+   * The owners (storage form) of the rows of the unique `field` that hold
+   * `storedValue` (in storage form: in cleartext mode, the value as written).
+   * In hashed mode, and for a field compared as written, the owner of its row
+   * (a token is of the normalised value already). In cleartext mode, for a
+   * field compared in any case (`CASE_INSENSITIVE_FIELDS`: the email), the
+   * owners of every row that holds it in another case or with surrounding
+   * spaces too (`User@x` and `user@x` are two rows), as hashed mode compares
+   * it. Throws when the platform store cannot be read.
+   */
+  async getUniqueValueOwners (field: string, storedValue: string): Promise<string[]> {
+    if (this.#piiInitError != null) throw this.#piiInitError;
+    if (this.#piiHasher != null || !CASE_INSENSITIVE_FIELDS.has(field) || typeof storedValue !== 'string') {
+      const owner = await this.#db.getUsersUniqueField(field, storedValue);
+      return owner == null ? [] : [owner];
+    }
+    const normalized = PiiHasher.normalize(field, storedValue);
+    const rows = await this.#db.getUsersUniqueFieldAnyCase(field, normalized);
+    return [...new Set(rows.filter((row) => PiiHasher.normalize(field, row.value) === normalized).map((row) => row.username))];
+  }
+
+  /**
+   * True when an account other than `ownerToken` holds `storedValue` of the
+   * unique `field` (both in storage form), in any of its spellings
+   * (`getUniqueValueOwners`).
+   */
+  async isUniqueValueHeldByAnother (ownerToken: string, field: string, storedValue: string): Promise<boolean> {
+    return (await this.getUniqueValueOwners(field, storedValue)).some((owner) => owner !== ownerToken);
+  }
+
+  /**
+   * Before a unique value is claimed, in cleartext mode: true when another
+   * account holds it in another spelling (another case, surrounding spaces),
+   * which its own row does not show. Always false in hashed mode (one row per
+   * normalised value) and for a field compared as written.
+   */
+  async #otherSpellingHeldByAnother (usernameToken: string, field: string, valueToken: string): Promise<boolean> {
+    if (this.#piiHasher != null || !CASE_INSENSITIVE_FIELDS.has(field)) return false;
+    return await this.isUniqueValueHeldByAnother(usernameToken, field, valueToken);
+  }
+
+  /**
    * Check uniqueness of operations against PlatformDB.
    * Used by repository.insertOne to gather all conflicts before throwing.
    */
@@ -296,8 +337,11 @@ class Platform {
     const usernameToken = this.hashFor(USERNAME_FIELD, username);
     for (const op of operations) {
       if (op.action !== 'delete' && op.isUnique) {
-        const owner = await this.#db.getUsersUniqueField(op.key, this.hashFor(op.key, op.value as string));
-        if (owner != null && owner !== usernameToken) uniquenessErrors[op.key] = op.value as string;
+        const valueToken = this.hashFor(op.key, op.value as string);
+        const owner = await this.#db.getUsersUniqueField(op.key, valueToken);
+        if ((owner != null && owner !== usernameToken) || await this.#otherSpellingHeldByAnother(usernameToken, op.key, valueToken)) {
+          uniquenessErrors[op.key] = op.value as string;
+        }
       }
     }
     return uniquenessErrors;
@@ -323,7 +367,8 @@ class Platform {
    */
   async #claimUniqueValue (usernameToken: string, field: string, value: unknown): Promise<string> {
     const valueToken = this.hashFor(field, value as string);
-    const claimed = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
+    const claimed = !await this.#otherSpellingHeldByAnother(usernameToken, field, valueToken) &&
+      await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
     if (!claimed) {
       throw (errors.itemAlreadyExists('user', { [field]: value }));
     }
@@ -874,11 +919,10 @@ class Platform {
    * the (field, value) pair. Plaintext inputs; hashed internally.
    */
   async setUserUniqueFieldIfNotExists (username: string, field: string, value: string): Promise<boolean> {
-    return await this.#db.setUserUniqueFieldIfNotExists(
-      this.hashFor(USERNAME_FIELD, username),
-      field,
-      this.hashFor(field, value)
-    );
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
+    const valueToken = this.hashFor(field, value);
+    if (await this.#otherSpellingHeldByAnother(usernameToken, field, valueToken)) return false;
+    return await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
   }
 
   /**
@@ -1191,8 +1235,7 @@ class Platform {
       const allConflicts: Record<string, string> = { username };
       for (const [field, value] of Object.entries(uniqueFields)) {
         if (field === 'username') continue;
-        const existingUsername = await this.#db.getUsersUniqueField(field, this.hashFor(field, value));
-        if (existingUsername != null) {
+        if ((await this.getUniqueValueOwners(field, this.hashFor(field, value))).length > 0) {
           allConflicts[field] = value;
         }
       }
@@ -1256,7 +1299,10 @@ class Platform {
       if (field === 'username') continue;
       if (value == null) continue;
       const valueToken = this.hashFor(field, value);
-      const success = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
+      // In cleartext mode, another spelling of the value (an email in another
+      // case) held by another account is the same value: refused too.
+      const success = !await this.#otherSpellingHeldByAnother(usernameToken, field, valueToken) &&
+        await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
       if (success) {
         reservedHere.push([field, valueToken]);
       } else {

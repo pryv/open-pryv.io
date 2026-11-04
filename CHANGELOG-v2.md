@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Email uniqueness in cleartext piiMode; backup restore follow-ups
+
+- **Fixed: with `platform.piiMode: cleartext`, an email is unique in any case.** The platform keys
+  an email row by the address as written in that mode, so registration, an email change and adding
+  an email accepted an address another account held under another spelling (`User@x` next to
+  `user@x`). They now refuse it in any case and with surrounding spaces (`item-already-exists`,
+  as for the same spelling), as hashed mode already did. The check that sends no password reset,
+  MFA-change or auto-deletion notice to an address another account holds now finds every spelling,
+  where it looked at three (the stored one, its lowercase and its trimmed lowercase form): a
+  reset mail could reach the holder of `USER@x` for an account that stores `User@x`. Accounts that
+  already share an address up to case get none of these mails until one of them changes its email;
+  `bin/reconcile-user-cores.js --emails --dry-run` lists them (held elsewhere). Nothing is migrated.
+  Hashed mode (the default) is unchanged.
+- **Fixed: an account rolled back by `bin/backup.js --restore --verify-integrity` is removed.** The
+  rollback cleared the account's data but left its index entry, its platform rows (its email
+  reserved) and its routing row: the name and the address stayed taken by an account with no data.
+  It now removes the account as its deletion does; a value another account holds is not touched,
+  and on a multi-core platform a name routed to another core keeps its rows. A rollback over an
+  account that existed before the restore (`--overwrite`) removes that account too: the restore
+  had cleared its data.
+- **Fixed: a single-account backup carries the account's SSO bindings** (a new file of the
+  account, `sso-bindings.jsonl`), and a `--user` restore of it links them again; a binding another
+  account holds now stays with it (counted with the unique values not restored). Before, the
+  bindings were only in the platform rows of a whole backup. Backups written before carry none.
+
 ### Adapter routes: a sidecar served under `/adapter/<name>/`
 
 - **Added: adapter routes (`adapterRoutes`).** A configured sidecar on the same host (a resource
