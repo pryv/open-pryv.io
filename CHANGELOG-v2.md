@@ -65,6 +65,10 @@
   answers, so the OAuth surface works on any issuer host the core receives (a user host such as
   `alice.<dns.domain>/oauth2/...` answers the platform's endpoints too; the discovery document always
   names the configured issuer).
+- **Fixed: the third-party sign-in routes (`/auth/sso/*`) and the account creation and deletion
+  routes (`POST /users`, `DELETE /users/:username`) answered 404 on such a host** for the same reason.
+  They are root-only on every host too. A user's own routes (`/auth/login` on `alice.<dns.domain>`)
+  are unchanged.
 - **Changed: the label of `oauth.issuer` is refused as a username** when the issuer host is
   `<label>.<dns.domain>` (registration and `check_username`), like a core id or a static entry.
 - **Changed: a runtime DNS record name (`/reg/records`, `bin/dns-records.js`) is skipped by the
