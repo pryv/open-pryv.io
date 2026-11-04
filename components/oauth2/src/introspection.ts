@@ -27,6 +27,11 @@
  * `permissions` (the stream permissions the session holds now, as the core
  * enforces them): extension members, answered only to the confidential
  * callers above, never in a token response.
+ *
+ * A derived token (token exchange) answers the client whose authorization it
+ * carries as `client_id`, and the resource server holding it as `act`
+ * (`{ client_id }`, RFC 8693 § 4.1); it has no `aud`. Both clients must be
+ * available for it to be active.
  */
 
 import type { Request, Response } from 'express';
@@ -124,7 +129,7 @@ type Answer = {
   status: number;
   body: Record<string, unknown>;
   /** What the audit row adds (never the token). */
-  trail?: { userId?: string; tokenClientId?: string; reason?: string };
+  trail?: { userId?: string; tokenClientId?: string; actorClientId?: string; reason?: string };
 };
 
 async function introspectToken (deps: IntrospectDeps, token: string, issuer: string): Promise<Answer> {
@@ -142,9 +147,19 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
     ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
   });
   if (session == null) return { status: 200, body: INACTIVE };
-  const revokedAt = await storage.getRevokedAt(deps.platform, row.clientId);
-  if (revokedAt != null && session.created * 1000 <= revokedAt) return { status: 200, body: INACTIVE };
-  const client = await getClient(deps.platform, row.clientId);
+  // A derived session (token exchange) is the resource server's, and carries
+  // the authorization of the client the subject token was issued to: both
+  // must be available. The resource server by its status only (as at the
+  // exchange), the subject's client by its status and regions.
+  const exchange = row.exchange ?? null;
+  const tokenClientId = exchange?.subjectClientId ?? row.clientId;
+  if (exchange != null) {
+    if (await revokedSince(deps, row.clientId, session.created)) return { status: 200, body: INACTIVE };
+    const actor = await getClient(deps.platform, row.clientId);
+    if (actor == null || clientUnavailable(actor, null) != null) return { status: 200, body: INACTIVE };
+  }
+  if (await revokedSince(deps, tokenClientId, session.created)) return { status: 200, body: INACTIVE };
+  const client = await getClient(deps.platform, tokenClientId);
   if (client == null || clientUnavailable(client, deps.config) != null) return { status: 200, body: INACTIVE };
 
   // The stored session permissions without the session-only selfRevoke
@@ -172,6 +187,7 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
         permissions,
         issuer,
         ...(row.audience != null ? { audience: row.audience } : {}),
+        ...(exchange != null ? { actor: { clientId: row.clientId } } : {}),
       };
       extra = await runHook('introspectionClaims', ctx);
     } catch (err: unknown) {
@@ -187,7 +203,10 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
       // Omitted (RFC 7662: OPTIONAL) when the session carries no grammar
       // tokens (an app-account session): an empty scope would read as "none".
       ...(registry || (row.grammarTokens?.length ?? 0) > 0 ? { scope: scopeTokens.join(' ') } : {}),
-      client_id: row.clientId,
+      // A derived token: the client whose authorization it carries, and the
+      // resource server holding it as the actor (RFC 8693 § 4.1).
+      client_id: tokenClientId,
+      ...(exchange != null ? { act: { client_id: row.clientId } } : {}),
       exp: Math.floor(session.expires),
       iat: Math.floor(session.created),
       ...(session.subject != null ? { sub: session.subject } : {}),
@@ -202,8 +221,14 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
       ...(row.audience != null ? { aud: row.audience } : {}),
       ...(session.dpopJkt != null ? { cnf: { jkt: session.dpopJkt } } : {}),
     },
-    trail: { userId: row.userId, tokenClientId: row.clientId },
+    trail: { userId: row.userId, tokenClientId, ...(exchange != null ? { actorClientId: row.clientId } : {}) },
   };
+}
+
+/** Whether `clientId` was revoked by the operator after a session created at `createdSeconds`. */
+async function revokedSince (deps: IntrospectDeps, clientId: string, createdSeconds: number): Promise<boolean> {
+  const revokedAt = await storage.getRevokedAt(deps.platform, clientId);
+  return revokedAt != null && createdSeconds * 1000 <= revokedAt;
 }
 
 /** Stream entries only (features are not the resource server's business). */

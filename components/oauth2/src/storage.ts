@@ -204,6 +204,12 @@ export interface OAuthClient {
    */
   canIntrospect?: boolean;
   /**
+   * Resource-server role: may exchange (RFC 8693) a subject token whose
+   * audience is one of `allowedAudiences` for a derived session of the same
+   * user. Registry clients only, confidential, with a non-empty audience list.
+   */
+  canExchange?: boolean;
+  /**
    * The secret the last `rotate-secret` replaced (bcrypt hash), accepted at
    * client authentication until `previousSecretExpiresAt` (ms since epoch).
    */
@@ -618,6 +624,12 @@ export interface OAuthSessionIndex {
    * when no refresh token was issued, and on rows written before it existed.
    */
   refreshTokenHash?: string;
+  /**
+   * A derived session (token exchange): `clientId` is the resource server
+   * that exchanged, `subjectClientId` the client the subject token was
+   * issued to, `subjectAccessId` the subject session. Never a subject itself.
+   */
+  exchange?: { subjectClientId: string; subjectAccessId: string };
 }
 
 export async function setSessionIndex (

@@ -152,6 +152,12 @@ export type CreateAccess = (params: {
    * undefined removes it).
    */
   grantState?: { name: string | null; value: unknown };
+  /**
+   * The resource server the authorization names (`aud` / `resource`): the
+   * session records it (server-owned), so the data API can refuse the token
+   * when `oauth:audienceBoundSessions` is on.
+   */
+  audience?: string;
 }) => Promise<{
   accessId: string;
   accessToken: string;
@@ -465,6 +471,7 @@ export function handleAccept (deps: AcceptDeps) {
           : payload.offer!,
         grantedPermissions,
         ...(grantPermissions != null ? { grantPermissions, subjectChange, grantState } : {}),
+        ...(payload.audience != null ? { audience: payload.audience } : {}),
       });
     } catch (err: unknown) {
       // The effective-permission guard (hierarchical consent masking) runs

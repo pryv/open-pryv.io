@@ -13,7 +13,8 @@
  * pre-parsed as `application/x-www-form-urlencoded` (api-server's
  * existing body parser handles both that and `application/json`).
  *
- * Wired grants: authorization_code, refresh_token, client_credentials.
+ * Wired grants: authorization_code, refresh_token, client_credentials, and
+ * token exchange (RFC 8693) for registry clients registered for it.
  * Each grant handler returns either {ok:true, body} or {ok:false,
  * status, error, description?}; the dispatcher translates to HTTP.
  */
@@ -25,6 +26,8 @@ import type { AuthCodeAccessResolver, AuthCodeAccessRevoker, UsernameResolver, G
 import { handleRefreshToken } from '../grants/refresh_token.ts';
 import type { MintRefreshedAccess, RetireSession } from '../grants/refresh_token.ts';
 import { handleClientCredentials } from '../grants/client_credentials.ts';
+import { handleTokenExchange, TOKEN_EXCHANGE } from '../grants/token_exchange.ts';
+import type { ReadSubjectSession, IssueDerivedSession } from '../grants/token_exchange.ts';
 import { verifyDPoPProof, DPoPProofError } from '../dpop.ts';
 import { externalRequestUri } from '../externalUri.ts';
 import { markDPoPJtiUsed, getDpopKeyRevokedAt, recordDpopKeySeen } from '../storage.ts';
@@ -66,7 +69,17 @@ export type TokenDeps = {
   resolveUsername: UsernameResolver;
   /** Registry clients: the id the app sees for the user. */
   resolveGrantSubject?: GrantSubjectResolver;
+  /** Token exchange: the subject session re-read on its home core. */
+  readSubjectSession?: ReadSubjectSession;
+  /** Token exchange: find or mint the derived session. */
+  issueDerivedSession?: IssueDerivedSession;
+  /** Public URL of a core (token exchange's wrong-core answer). */
+  coreUrlFor?: (coreId: string) => string | Promise<string>;
 };
+
+type TokenOutcome =
+  | { ok: true; body: Record<string, unknown> }
+  | { ok: false; status: number; error: string; description?: string; extra?: Record<string, unknown> };
 
 export function handleToken (deps: TokenDeps) {
   return async function token (req: Request, res: Response): Promise<void> {
@@ -81,7 +94,7 @@ export function handleToken (deps: TokenDeps) {
       : rawBody;
     const grantType = typeof body.grant_type === 'string' ? body.grant_type : '';
 
-    let outcome;
+    let outcome: TokenOutcome | undefined;
     // RFC 7521 §4.2 / RFC 7523 §3: next to a client_assertion, client_id is
     // optional; the client is then the one the assertion names (its iss, read
     // unverified here). The grant authenticates that client exactly as it
@@ -221,6 +234,23 @@ export function handleToken (deps: TokenDeps) {
           { ...body, basic }
         );
       }
+    } else if (grantType === TOKEN_EXCHANGE) {
+      // RFC 8693. A DPoP proof never reaches here: the exchanging client is a
+      // registry client, refused above.
+      if (typeof deps.readSubjectSession !== 'function' || typeof deps.issueDerivedSession !== 'function') {
+        outcome = { ok: false, status: 500, error: 'server_error', description: 'token exchange is not wired on this deployment' };
+      } else {
+        outcome = await handleTokenExchange(
+          {
+            config: deps.config,
+            platform: deps.platform,
+            readSubjectSession: deps.readSubjectSession,
+            issueDerivedSession: deps.issueDerivedSession,
+            ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+          },
+          { ...body, basic }
+        );
+      }
     } else if (grantType === '') {
       outcome = { ok: false, status: 400, error: 'invalid_request', description: 'grant_type is required' };
     } else {
@@ -258,6 +288,8 @@ export function handleToken (deps: TokenDeps) {
       res.statusCode = outcome.status;
       const resBody: Record<string, unknown> = { error: outcome.error };
       if (outcome.description) resBody.error_description = outcome.description;
+      // e.g. the wrong-core answer's `coreUrl`
+      if (outcome.extra != null) Object.assign(resBody, outcome.extra);
       res.end(JSON.stringify(resBody));
     }
   };

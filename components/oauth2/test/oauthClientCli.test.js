@@ -703,6 +703,48 @@ describe('[OCLI] operator CLI: registry clients', () => {
       assert.equal(await statusOf(platform, 'Cli.lt'), 'active');
     });
 
+    it('[OCLI24] --can-exchange: confidential clients with an audience list only; a vetted change (review unless --approve); show; "false" withdraws it with the purge hint', async () => {
+      const platform = fakePlatform();
+      let r = await run(cli.runCreateRegistry, platform, createArgs('Cli.x.pub', ['--subject-type', 'public', '--can-exchange']));
+      assert.match(r.error?.message ?? '', /--can-exchange needs a confidential client/);
+      assert.equal(await getClient(platform, 'Cli.x.pub'), null);
+      r = await run(cli.runCreateRegistry, platform, ['create-registry', 'Cli.x.any', '--redirect-uri', REDIRECT, '--scope', 'read/a', '--any-audience',
+        '--subject-type', 'public', '--auth-method', 'client_secret_basic', '--can-exchange']);
+      assert.match(r.error?.message ?? '', /--can-exchange needs --audience/);
+      assert.equal(await getClient(platform, 'Cli.x.any'), null);
+      r = await run(cli.runCreateRegistry, platform, createArgs('Cli.x', ['--subject-type', 'public', '--auth-method', 'client_secret_basic', '--can-exchange']));
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /token exchange: allowed for the tokens issued for https:\/\/resource\.example\.com\/base/);
+      assert.equal((await getClient(platform, 'Cli.x')).canExchange, true);
+      const shown = await run((p, a) => cli.runShow(p, a, getClient, () => ''), platform, ['show', 'Cli.x']);
+      assert.match(shown.out, /can exchange: {3}yes \(audiences: https:\/\/resource\.example\.com\/base\)/);
+      // Withdrawn: a vetted change, and the derived sessions issued live on.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.x', '--can-exchange', 'false']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /token exchange: withdrawn/);
+      assert.match(r.out, /status: {8}review \(canExchange changed\)/);
+      assert.match(r.out, /live grants: {3}keep what they were given \(canExchange narrowed\)/);
+      assert.match(r.out, /purge-grants Cli\.x --yes/);
+      assert.equal((await getClient(platform, 'Cli.x')).canExchange, undefined);
+      // Given back with --approve: active, the trail names the field.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.x', '--can-exchange', '--approve']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.equal(await statusOf(platform, 'Cli.x'), 'active');
+      assert.deepEqual((await getClient(platform, 'Cli.x')).statusLog.at(-1).fields, ['canExchange']);
+      // The rules hold on update: --any-audience and a public method are refused while the role is on.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.x', '--any-audience']);
+      assert.match(r.error?.message ?? '', /--can-exchange needs --audience/);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.x', '--auth-method', 'none', '--yes']);
+      assert.match(r.error?.message ?? '', /--can-exchange needs a confidential client/);
+      assert.equal((await getClient(platform, 'Cli.x')).tokenEndpointAuthMethod, 'client_secret_basic');
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.x', '--can-exchange', 'maybe']);
+      assert.match(r.error?.message ?? '', /--can-exchange takes no value, or true \/ false/);
+      // Registry clients only.
+      await setClient(platform, { clientId: 'Cli.app', redirectUris: [REDIRECT], scope: ['pryv:read'], grantTypes: ['authorization_code'], updatedAt: 0 });
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.app', '--can-exchange']);
+      assert.match(r.error?.message ?? '', /--can-exchange applies to registry clients only/);
+    });
+
     it('[OCLI20] the registry profile: localized name, description, software id, entry ceiling, regions, logo on an allowed host; show; none clears', async () => {
       const platform = fakePlatform();
       let r = await run(cli.runCreateRegistry, platform, createArgs('Cli.prof', [

@@ -188,6 +188,14 @@ export type HookCtx = {
    * spelling `resource`); absent when none (optional context field).
    */
   audience?: string;
+  /**
+   * Token exchange (RFC 8693): the resource server that exchanged the
+   * client's token and holds the derived one (optional context field). Set
+   * with `grantType: 'token-exchange'` and at the introspection of a derived
+   * token; `clientId`, `client`, the subject and the scope are then the
+   * subject token's client and grant.
+   */
+  actor?: { clientId: string };
 };
 
 export type OAuthExtension = {
@@ -223,9 +231,9 @@ export type HookName = 'tokenResponse' | 'idTokenClaims' | 'introspectionClaims'
 
 /** Keys a hook may not set: the core owns them. */
 export const RESERVED_KEYS: Record<HookName, string[]> = {
-  tokenResponse: ['access_token', 'token_type', 'expires_in', 'refresh_token', 'scope', 'id_token', 'apiEndpoint'],
+  tokenResponse: ['access_token', 'token_type', 'expires_in', 'refresh_token', 'scope', 'id_token', 'apiEndpoint', 'api_base'],
   idTokenClaims: ['iss', 'sub', 'aud', 'exp', 'iat', 'nonce', 'auth_time', 'azp'],
-  introspectionClaims: ['active', 'scope', 'client_id', 'exp', 'iat', 'sub', 'iss', 'token_type', 'aud', 'cnf', 'api_base', 'permissions'],
+  introspectionClaims: ['active', 'scope', 'client_id', 'exp', 'iat', 'sub', 'iss', 'token_type', 'aud', 'cnf', 'api_base', 'permissions', 'act'],
 };
 
 const HOOK_NAMES: HookName[] = ['tokenResponse', 'idTokenClaims', 'introspectionClaims'];

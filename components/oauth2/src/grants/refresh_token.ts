@@ -111,6 +111,11 @@ export type MintRefreshedAccess = (params: {
    * server can enforce proof-of-possession on every request.
    */
   jkt?: string;
+  /**
+   * The resource server the chain was authorized for (`aud` / `resource`):
+   * the new session records it, as the first one did.
+   */
+  audience?: string;
 }) => Promise<{
   accessId: string;
   accessToken: string;
@@ -467,6 +472,7 @@ export async function handleRefreshToken (
       ...(row.dataGrantAccessId != null ? { dataGrantAccessId: row.dataGrantAccessId } : {}),
       ...(row.permissions != null ? { permissions: row.permissions } : {}),
       ...(boundJkt != null ? { jkt: boundJkt } : {}),
+      ...(row.audience != null ? { audience: row.audience } : {}),
     });
   } catch (err: unknown) {
     if ((err as { code?: string } | null)?.code === 'data-grant-revoked') {

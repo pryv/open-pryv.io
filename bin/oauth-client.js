@@ -329,6 +329,15 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   if (canIntrospect && authMethod === 'none') {
     throw new Error('create-registry: --can-introspect needs a confidential client (--auth-method client_secret_basic or private_key_jwt)');
   }
+  // The resource-server role of token exchange: an authenticating client, and
+  // the audiences whose tokens it may exchange.
+  const canExchange = parseBooleanFlag(args, 'can-exchange', 'create-registry') === true;
+  if (canExchange && authMethod === 'none') {
+    throw new Error('create-registry: --can-exchange needs a confidential client (--auth-method client_secret_basic or private_key_jwt)');
+  }
+  if (canExchange && anyAudience) {
+    throw new Error('create-registry: --can-exchange needs --audience (the audiences whose tokens it may exchange), not --any-audience');
+  }
   await persistClient(platform, {
     clientId,
     kind: 'registry',
@@ -355,6 +364,7 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
     subjectType,
     ...(allowFeatures != null && allowFeatures.length > 0 ? { allowFeatures } : {}),
     ...(canIntrospect ? { canIntrospect: true } : {}),
+    ...(canExchange ? { canExchange: true } : {}),
     ...(secret != null ? { clientSecretHash: secret.hash } : {}),
     ...(jwks != null ? { jwks } : {}),
     ...(jwksUri != null ? { jwksUri } : {}),
@@ -363,6 +373,7 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
   });
   console.log('OK   registry client created: ' + clientId);
   if (canIntrospect) console.log('     introspection: allowed (resource-server role)');
+  if (canExchange) console.log('     token exchange: allowed for the tokens issued for ' + audiences.join(', '));
   console.log('     redirect_uris: ' + args.flags['redirect-uri'].join(', '));
   console.log('     grant_types:   ' + grantTypes.join(', '));
   console.log('     auth method:   ' + authMethod);
@@ -526,6 +537,9 @@ async function runShow (platform, args, getClient, computeThumbprint) {
   }
   if (client.kind === 'registry') {
     printCeilings(client, '');
+    if (client.canExchange === true) {
+      console.log('can exchange:   yes (audiences: ' + (client.allowedAudiences ?? []).join(', ') + ')');
+    }
     if (client.subjectType == null) {
       console.log('subjectType: unset, reads as public (set it with update --subject-type)');
     }
@@ -630,16 +644,16 @@ const CREATE_FLAGS = {
 };
 const CREATE_REGISTRY_FLAGS = {
   values: [...COMMON_VALUES, ...REGISTRY_VALUES],
-  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'can-introspect'],
+  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'can-introspect', 'can-exchange'],
   own: ['subject-type', 'allow-feature'],
 };
 const UPDATE_FLAGS = {
   values: [...COMMON_VALUES, ...REGISTRY_VALUES, ...APP_ACCOUNT_VALUES],
-  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'yes', 'can-introspect', 'approve'],
+  booleans: [...COMMON_BOOLEANS, 'any-audience', 'allow-insecure-redirect', 'yes', 'can-introspect', 'can-exchange', 'approve'],
   own: ['subject-type', 'allow-feature', 'client-id'],
 };
 // Flags that only mean something on a registry row.
-const REGISTRY_ONLY_FLAGS = [...REGISTRY_VALUES, 'any-audience', 'allow-insecure-redirect', 'subject-type', 'allow-feature', 'approve'];
+const REGISTRY_ONLY_FLAGS = [...REGISTRY_VALUES, 'any-audience', 'allow-insecure-redirect', 'subject-type', 'allow-feature', 'approve', 'can-exchange'];
 
 function checkFlags (args, command, known) {
   for (const name of [...Object.keys(args.flags), ...Object.keys(args.flagsScalar)]) {
@@ -934,6 +948,21 @@ async function runUpdate (platform, args, getClient, persistClient) {
   } else if (canIntrospect === false) {
     delete merged.canIntrospect;
   }
+  // `--can-exchange` (bare / true / false): the token exchange role. Checked
+  // on the row as it will be written (auth method and audiences included).
+  const canExchange = parseBooleanFlag(args, 'can-exchange', 'update');
+  if (canExchange === true) merged.canExchange = true;
+  else if (canExchange === false) delete merged.canExchange;
+  if (merged.canExchange === true) {
+    if (merged.tokenEndpointAuthMethod !== 'client_secret_basic' && merged.tokenEndpointAuthMethod !== 'private_key_jwt') {
+      throw new Error('update: --can-exchange needs a confidential client (--auth-method client_secret_basic or private_key_jwt)' +
+        (canExchange == null ? '; or withdraw the role with --can-exchange false' : ''));
+    }
+    if (merged.anyAudience === true || !Array.isArray(merged.allowedAudiences) || merged.allowedAudiences.length === 0) {
+      throw new Error('update: --can-exchange needs --audience (the audiences whose tokens it may exchange), not --any-audience' +
+        (canExchange == null ? '; or withdraw the role with --can-exchange false' : ''));
+    }
+  }
   // A row written before accountUserId: convert it when the account is on this
   // core (same operation as the master-boot migration), so this whole-row write
   // does not re-install the old field after the boot converted it.
@@ -973,6 +1002,11 @@ async function runUpdate (platform, args, getClient, persistClient) {
   if (row.canIntrospect === true && !(typeof row.clientSecretHash === 'string' && row.clientSecretHash.length > 0) && !hasKeys(row)) {
     console.log('     WARN introspection role kept on a public client: refused until it has a secret or a key set ' +
       '(--can-introspect false withdraws it)');
+  }
+  if (canExchange != null) {
+    console.log('     token exchange: ' + (row.canExchange === true
+      ? 'allowed for the tokens issued for ' + (row.allowedAudiences ?? []).join(', ')
+      : 'withdrawn'));
   }
   // The flags that widen what the client may do, echoed as create-registry does.
   if (args.flags.audience != null || args.flagsScalar['any-audience'] != null) {
@@ -1474,7 +1508,7 @@ function printUsage (stream) {
     'Status: active, suspended (suspend / resume) or review. On update, a change of\n' +
     'a registry client\'s vetted fields (--redirect-uri, --scope, the key set, --auth-method,\n' +
     '--signing-alg, --grant-type, --audience, --any-audience, --allow-feature,\n' +
-    '--can-introspect, the lifetimes, --offline-access) moves an active client to\n' +
+    '--can-introspect, --can-exchange, the lifetimes, --offline-access) moves an active client to\n' +
     'review, unless --approve is given; "update <id> --approve" approves a client\n' +
     'under review, or the changes made to a suspended one (resume refuses until then).\n' +
     'A client suspended or under review gets no redirect from /authorize (HTML 400) and\n' +
@@ -1520,6 +1554,11 @@ function printUsage (stream) {
     '  --can-introspect          (also on update, any client; "false" withdraws it) the\n' +
     '                            resource-server role: may call /oauth2/introspect.\n' +
     '                            Confidential clients only (a secret or a key set)\n' +
+    '  --can-exchange            (also on update; "false" withdraws it) the resource-server\n' +
+    '                            role of token exchange (RFC 8693): may exchange at /token\n' +
+    '                            a token issued for one of its --audience values for a\n' +
+    '                            session of its own. Needs --auth-method client_secret_basic\n' +
+    '                            or private_key_jwt and --audience (not --any-audience)\n' +
     '  --localized-name <lang>=<text>   (multi; "none" clears) the name per language\n' +
     '                            (--name stays the plain fallback); shown on the\n' +
     '                            consent screen, before sign-in too\n' +

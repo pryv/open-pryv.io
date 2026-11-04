@@ -281,6 +281,9 @@ class MethodContext {
       // whose client was revoked, even before the token expires. Same choke
       // point as DPoP so it covers every transport.
       await this.checkClientNotRevoked();
+      // A session minted for a resource server is that resource server's to
+      // exchange, not a credential for this API (when the core says so).
+      this.checkAudienceBinding();
       // Check if the session is valid.
       await this.checkSessionValid(storage);
       // Perform the custom auth step.
@@ -548,13 +551,25 @@ class MethodContext {
    * oauth session during a platform hiccup would be worse than the ≤TTL window.
    */
   async checkClientNotRevoked () {
-    const access = this.access as { name?: unknown; created?: unknown } | null;
+    const access = this.access as { name?: unknown; created?: unknown; clientData?: { oauth?: { exchange?: { subjectClientId?: unknown } } } } | null;
     const name = access?.name;
     if (typeof name !== 'string' || !name.startsWith('oauth:')) return;
     const clientId = name.slice('oauth:'.length);
     if (clientId.length === 0) return;
     const platform = require('storages').platformDB;
     if (platform == null) return;
+    await this.checkOAuthClient(platform, clientId, access?.created);
+    // A derived session (token exchange) carries the authorization of the
+    // client the subject token was issued to: that client must not be
+    // revoked, suspended or under review either.
+    const subjectClientId = access?.clientData?.oauth?.exchange?.subjectClientId;
+    if (typeof subjectClientId === 'string' && subjectClientId.length > 0 && subjectClientId !== clientId) {
+      await this.checkOAuthClient(platform, subjectClientId, access?.created);
+    }
+  }
+
+  /** The revoke epoch and status check of `checkClientNotRevoked`, for one client. */
+  async checkOAuthClient (platform: unknown, clientId: string, created: unknown) {
     // Clamp the configured TTL: a non-numeric value would make the cache's
     // `now - loadedAt > NaN` always false (never refresh → revoke never takes
     // effect); a non-positive value would refresh on every request.
@@ -570,13 +585,36 @@ class MethodContext {
     // SECONDS; `revokedAt` is ms. When `created` is missing (shouldn't happen
     // for a minted oauth access), fail safe = treat as revoked.
     if (revokedAt != null) {
-      const createdMs = typeof access?.created === 'number' ? access.created * 1000 : 0;
+      const createdMs = typeof created === 'number' ? created * 1000 : 0;
       if (createdMs < revokedAt) {
         throw errors.invalidAccessToken('The application access has been revoked.', 403);
       }
     }
     // Suspended or under review: refused while so, within the same TTL.
     await this.checkClientActive(clientId, ttlSeconds);
+  }
+
+  /**
+   * Refuse an OAuth session minted for a resource server (its server-owned
+   * `clientData.oauth.audience`: the authorization named an `aud` /
+   * `resource`) while `oauth:audienceBoundSessions` is true: such a token is
+   * meant for that resource server, which exchanges it (token exchange) for
+   * a session of its own; presented here by whoever holds it, it is refused
+   * like an invalid token, on every transport (shared choke point). Off by
+   * default; a session without the field (minted before it existed, or for
+   * no resource server, or a derived session) is never refused here.
+   */
+  checkAudienceBinding () {
+    const audience = (this.access as { clientData?: { oauth?: { audience?: unknown } } } | null)?.clientData?.oauth?.audience;
+    if (typeof audience !== 'string' || audience.length === 0) return;
+    let enforced = false;
+    try {
+      enforced = require('@pryv/boiler').getConfigSync().get('oauth:audienceBoundSessions') === true;
+    } catch { /* config not booted (unit contexts): not enforced */ }
+    if (!enforced) return;
+    const err = errors.invalidAccessToken('The access token is bound to a resource server: that resource server exchanges it for its own token.', 403);
+    err.httpHeaders = { 'WWW-Authenticate': 'Bearer error="invalid_token"' };
+    throw err;
   }
 
   /**

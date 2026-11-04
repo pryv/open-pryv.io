@@ -857,6 +857,11 @@ function oauthWarnings (config) {
   } else if (Number(idTokenTTL) > OAUTH_MAX_ID_TOKEN_TTL) {
     warnings.push(`'oauth.idTokenTTL' is ${idTokenTTL} s, above the ${OAUTH_MAX_ID_TOKEN_TTL} s maximum: id_tokens live ${OAUTH_MAX_ID_TOKEN_TTL} s.`);
   }
+  const audienceBound = config.get('oauth:audienceBoundSessions');
+  if (audienceBound != null && typeof audienceBound !== 'boolean') {
+    warnings.push(`'oauth.audienceBoundSessions' is ${JSON.stringify(audienceBound)}: true or false is expected; ` +
+      'as it is, the sessions minted for a resource server stay usable at the data API (false).');
+  }
   // A client retrying a refresh within the reuse grace (a double-submit) gets
   // no new token; the token it holds must still work meanwhile.
   const retireGrace = Number(config.get('oauth:refreshRetireGraceSeconds') ?? 60);

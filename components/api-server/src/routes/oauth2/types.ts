@@ -18,6 +18,12 @@ export const REGISTRY_GRANT_PREFIX = 'oauth-grant:';
 export const REGISTRY_GRANT_DEVICE = 'oauth-grant';
 /** The name of every access minted for a client (sessions, client_credentials): this prefix and the client id. */
 export const SESSION_NAME_PREFIX = 'oauth:';
+/**
+ * The device name of a derived session (token exchange): this prefix and the
+ * subject session's id, so (type, name, deviceName) is one row per subject
+ * session and resource server.
+ */
+export const DERIVED_DEVICE_PREFIX = 'oauth-exchange:';
 
 /**
  * Structural view of the members this module touches on a business
@@ -76,6 +82,10 @@ export type DataGrant = {
       chain?: Array<Record<string, unknown>>;
       /** A registry grant's state, by extension name (written at each consent). */
       extensionData?: Record<string, unknown>;
+      /** A session minted for a resource server (`aud` / `resource`): that resource server. */
+      audience?: string;
+      /** A derived session (token exchange): the subject session and its client. */
+      exchange?: { subjectClientId?: string; subjectAccessId?: string };
     };
     dpop?: { jkt?: string };
     cmc?: {

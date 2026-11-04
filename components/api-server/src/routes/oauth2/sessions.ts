@@ -34,12 +34,15 @@ import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
-import { withSessionSelfRevoke, accessesRepo } from './types.ts';
+import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
 import { notifyScopedAccessChange, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
 import { isDeepStrictEqual } from 'node:util';
+
+/** What a derived session (token exchange) is derived from. */
+type DerivedFrom = { subjectClientId: string; subjectAccessId: string };
 
 export function createSessions (env: GlueEnv) {
   const { storageLayer } = env;
@@ -72,10 +75,19 @@ export function createSessions (env: GlueEnv) {
   // consent (`chain`: what the user granted, as the refresh row holds it), so
   // a change of the grant re-cuts it to what its next refresh would mint
   // (oauthSessionReconcile.ts). Written only here; accesses.update refuses to
-  // change it.
-  function sessionClientData (dataGrantAccessId: string, chainPermissions: Array<Record<string, unknown>>, dpopJkt?: string): Record<string, unknown> {
+  // change it. A session minted for a resource server records it
+  // (`audience`: the data API refuses such a session while
+  // `oauth:audienceBoundSessions` is on); a derived session records the
+  // subject session it was exchanged for (`exchange`).
+  function sessionClientData (dataGrantAccessId: string, chainPermissions: Array<Record<string, unknown>>, dpopJkt?: string,
+    more: { audience?: string; exchange?: DerivedFrom } = {}): Record<string, unknown> {
     return {
-      oauth: { dataGrantId: parseAccessRef(dataGrantAccessId).base, chain: chainOf(chainPermissions) },
+      oauth: {
+        dataGrantId: parseAccessRef(dataGrantAccessId).base,
+        chain: chainOf(chainPermissions),
+        ...(typeof more.audience === 'string' && more.audience.length > 0 ? { audience: more.audience } : {}),
+        ...(more.exchange != null ? { exchange: { subjectClientId: more.exchange.subjectClientId, subjectAccessId: more.exchange.subjectAccessId } } : {}),
+      },
       ...(dpopJkt != null ? { dpop: { jkt: dpopJkt } } : {}),
     };
   }
@@ -105,7 +117,7 @@ export function createSessions (env: GlueEnv) {
     return canonicalPermissions((permissions ?? []).filter((p) => p?.feature !== 'selfRevoke'));
   }
 
-  async function mintAccessDirect ({ userId, username, clientId, permissions: rawPermissions, expiresAt, dpopJkt, dataGrantAccessId, chainPermissions, alias }: {
+  async function mintAccessDirect ({ userId, username, clientId, permissions: rawPermissions, expiresAt, dpopJkt, dataGrantAccessId, chainPermissions, alias, audience, deviceName, exchange }: {
     userId: string;
     username: string;
     clientId: string;
@@ -122,12 +134,21 @@ export function createSessions (env: GlueEnv) {
      * releases nothing while the grant or another session still holds it.
      */
     alias?: string | null;
+    /** A session of a grant: the resource server the authorization named. */
+    audience?: string;
+    /** The row's device name; default: a fresh `oauth-session-<cuid>`. */
+    deviceName?: string;
+    /** A session of a grant: the subject session it is derived from (token exchange). */
+    exchange?: DerivedFrom;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
     if (typeof username !== 'string' || username.length === 0) {
       throw new Error('mintAccessDirect: username required');
     }
     if (dataGrantAccessId != null && !Array.isArray(chainPermissions)) {
       throw new Error('mintAccessDirect: a session of a grant needs its chain permissions');
+    }
+    if (dataGrantAccessId == null && (audience != null || exchange != null)) {
+      throw new Error('mintAccessDirect: an audience or an exchange belongs to a session of a grant');
     }
     const permissions = canonicalPermissions(rawPermissions);
     const accessesRepository = accessesRepo(storageLayer, 'mintAccessDirect');
@@ -139,8 +160,8 @@ export function createSessions (env: GlueEnv) {
     const newToken = accessesRepository.generateToken();
     const newAccessRow: Record<string, unknown> = {
       type: 'app',
-      name: 'oauth:' + clientId,
-      deviceName: 'oauth-session-' + cuid(),
+      name: SESSION_NAME_PREFIX + clientId,
+      deviceName: deviceName ?? 'oauth-session-' + cuid(),
       token: newToken,
       permissions,
       created: now,
@@ -152,7 +173,12 @@ export function createSessions (env: GlueEnv) {
       // Sender-constrained sessions carry the key thumbprint the
       // resource layer checks the per-request proof against.
       ...(dataGrantAccessId != null
-        ? { clientData: sessionClientData(dataGrantAccessId, chainPermissions!, dpopJkt) }
+        ? {
+            clientData: sessionClientData(dataGrantAccessId, chainPermissions!, dpopJkt, {
+              ...(audience != null ? { audience } : {}),
+              ...(exchange != null ? { exchange } : {}),
+            }),
+          }
         : (dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {})),
     };
     const minted: { accessId: string; accessToken: string; apiEndpoint: string } = await new Promise((resolve, reject) => {
@@ -265,7 +291,7 @@ export function createSessions (env: GlueEnv) {
   // (revoked → typed throw the grant maps to invalid_grant) and mint from
   // its CURRENT permissions (scope-updates propagate).
   // ---------------------------------------------------------------------
-  async function mintRefreshedAccess ({ userId, username, clientId, expiresAt, dataGrantAccessId, permissions, jkt }: {
+  async function mintRefreshedAccess ({ userId, username, clientId, expiresAt, dataGrantAccessId, permissions, jkt, audience }: {
     userId: string;
     username: string;
     clientId: string;
@@ -274,6 +300,7 @@ export function createSessions (env: GlueEnv) {
     dataGrantAccessId?: string;
     permissions?: Array<Record<string, unknown>>;
     jkt?: string;
+    audience?: string;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string; permissions: Array<Record<string, unknown>>; subject: string; aliased: boolean; grantState?: unknown }> {
     if (dataGrantAccessId == null || !Array.isArray(permissions) || permissions.length === 0) {
       const revoked = new Error('refresh chain carries no consent data-grant binding') as Error & { code: string };
@@ -296,7 +323,18 @@ export function createSessions (env: GlueEnv) {
     // Session selfRevoke override AFTER the intersection: the intersection
     // compares the chain's granted subset against the data-grant verbatim;
     // the override only shapes the minted session row.
-    const minted = await mintAccessDirect({ userId, username, clientId, permissions: withSessionSelfRevoke(effective), expiresAt, dataGrantAccessId, chainPermissions: permissions, alias: dataGrant.alias, ...(jkt != null ? { dpopJkt: jkt } : {}) });
+    const minted = await mintAccessDirect({
+      userId,
+      username,
+      clientId,
+      permissions: withSessionSelfRevoke(effective),
+      expiresAt,
+      dataGrantAccessId,
+      chainPermissions: permissions,
+      alias: dataGrant.alias,
+      ...(jkt != null ? { dpopJkt: jkt } : {}),
+      ...(audience != null ? { audience } : {}),
+    });
     // The scope echo reads what the session row stores (minus the override).
     return { ...minted, ...grantSubject(dataGrant, userId), permissions: storedSessionPermissions(effective) };
   }
@@ -434,6 +472,145 @@ export function createSessions (env: GlueEnv) {
     return Math.min(Math.max(0, Math.floor(grace)), Number.isFinite(ttl) ? ttl : 3600);
   }
 
+  // ---------------------------------------------------------------------
+  // Token exchange (RFC 8693). The subject session is re-read on its home
+  // core (live, not itself derived, its grant live); the derived session is
+  // a session of the same grant, named after the resource server, one per
+  // (subject session, resource server): the identity (type, name,
+  // deviceName) is unique among live rows, so a repeated exchange finds it
+  // and answers its token, and of two concurrent first exchanges the second
+  // insert fails on the slot and reuses the first's row.
+  // ---------------------------------------------------------------------
+  async function liveSubjectRow (userId: string, username: string, accessId: string, clientId: string): Promise<DataGrant | null> {
+    const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
+    if (access == null || access.deleted != null || typeof access.token !== 'string') return null;
+    if (typeof access.expires !== 'number' || access.expires <= Date.now() / 1000) return null;
+    const oauth = access.clientData?.oauth;
+    if (typeof oauth?.dataGrantId !== 'string' || oauth.exchange != null) return null;
+    return access;
+  }
+
+  async function readSubjectSession ({ userId, accessId, clientId, dataGrantAccessId }: {
+    userId: string; accessId: string; clientId: string; dataGrantAccessId?: string;
+  }): Promise<{
+    username: string;
+    created: number;
+    expires: number;
+    permissions: Array<Record<string, unknown>>;
+    subject: string;
+    aliased: boolean;
+    grantState?: unknown;
+    apiBase: string;
+  } | null> {
+    const username = await resolveUsername(userId);
+    if (username == null) return null;
+    const access = await liveSubjectRow(userId, username, accessId, clientId);
+    if (access == null) return null;
+    let grant: DataGrant;
+    try {
+      grant = await readDataGrantHead(userId, username, dataGrantAccessId ?? access.clientData!.oauth!.dataGrantId!);
+    } catch (err: unknown) {
+      if ((err as { code?: string } | null)?.code === 'data-grant-revoked') return null;
+      throw err;
+    }
+    const s = grantSubject(grant, userId);
+    return {
+      username,
+      created: typeof access.created === 'number' ? access.created : 0,
+      expires: access.expires as number,
+      permissions: storedSessionPermissions(access.permissions),
+      ...s,
+      // No credential in it; the alias when the grant is aliased.
+      apiBase: ApiEndpoint.build(s.aliased ? s.subject : username, undefined),
+    };
+  }
+
+  async function findDerivedSession (userId: string, username: string, clientId: string, subjectAccessId: string): Promise<DataGrant | null> {
+    const accessesRepository = accessesRepo(storageLayer, 'oauth2.findDerivedSession');
+    // Live head rows (not deleted), expired ones included: an expired row
+    // still holds the identity slot.
+    const row = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
+      accessesRepository.findOne({ id: userId, username },
+        { type: 'app', name: SESSION_NAME_PREFIX + clientId, deviceName: DERIVED_DEVICE_PREFIX + subjectAccessId }, null, cb));
+    if (row == null || row.deleted != null || typeof row.token !== 'string') return null;
+    if (row.clientData?.oauth?.exchange?.subjectAccessId !== subjectAccessId) return null;
+    return row;
+  }
+
+  // The derived row follows its subject on reuse: the subject's permissions
+  // when a re-cut changed them in between, and a later expiry (never an
+  // earlier one, so a lagging exchange never shortens a token another
+  // instance holds; never past the bound, which is at most the subject's).
+  async function touchDerivedSession (userId: string, username: string, row: DataGrant, subject: DataGrant, expiresAt: number): Promise<number> {
+    const update: Record<string, unknown> = {};
+    const subjectPermissions = canonicalPermissions(subject.permissions ?? []);
+    const permissionsChanged = !samePermissionKeys(row.permissions ?? [], subjectPermissions);
+    if (permissionsChanged) update.permissions = subjectPermissions;
+    const current = typeof row.expires === 'number' ? row.expires : 0;
+    const expires = Math.max(current, Math.floor(expiresAt / 1000));
+    if (expires > current) update.expires = expires;
+    if (Object.keys(update).length === 0) return current;
+    const modified = Date.now() / 1000;
+    const accessesRepository = accessesRepo(storageLayer, 'oauth2.touchDerivedSession');
+    // `modified` makes the integrity-aware updateOne recompute the row hash.
+    await fromCallback((cb: (e: unknown, r?: unknown) => void) =>
+      accessesRepository.updateOne({ id: userId, username }, { id: row.id }, { ...update, modified }, cb));
+    // The access cache validates on `expires` and holds the permissions.
+    cache.unsetUserData(userId);
+    if (permissionsChanged) {
+      notifyScopedAccessChange(username, { id: row.id, type: 'app', permissions: subjectPermissions as Array<{ streamId?: string }> }, 'update');
+      await reindexAccessNonFatal(username, { id: row.id, type: 'app', expires, modified });
+      pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
+    }
+    return expires;
+  }
+
+  async function issueDerivedSession ({ userId, username, clientId, subjectAccessId, subjectClientId, expiresAt }: {
+    userId: string; username: string; clientId: string; subjectAccessId: string; subjectClientId: string; expiresAt: number;
+  }): Promise<{ accessId: string; accessToken: string; expires: number; reused: boolean }> {
+    const subject = await liveSubjectRow(userId, username, subjectAccessId, subjectClientId);
+    if (subject == null) {
+      const gone = new Error('the subject session is no longer live') as Error & { code: string };
+      gone.code = 'subject-inactive';
+      throw gone;
+    }
+    let row = await findDerivedSession(userId, username, clientId, subjectAccessId);
+    if (row == null) {
+      const oauth = subject.clientData!.oauth!;
+      try {
+        // The subject's reach exactly (its stored permissions, the session
+        // selfRevoke override re-applied), under the same grant and chain,
+        // with its alias; no audience (it is meant for the data API), no
+        // DPoP binding.
+        const minted = await mintAccessDirect({
+          userId,
+          username,
+          clientId,
+          permissions: withSessionSelfRevoke(subject.permissions ?? []),
+          expiresAt,
+          dataGrantAccessId: oauth.dataGrantId!,
+          chainPermissions: Array.isArray(oauth.chain) ? oauth.chain : storedSessionPermissions(subject.permissions),
+          alias: subject.alias,
+          deviceName: DERIVED_DEVICE_PREFIX + subjectAccessId,
+          exchange: { subjectClientId, subjectAccessId },
+        });
+        return { accessId: minted.accessId, accessToken: minted.accessToken, expires: Math.floor(expiresAt / 1000), reused: false };
+      } catch (err: unknown) {
+        // A concurrent first exchange won the slot: reuse its row.
+        if (!isDuplicateSlot(err)) throw err;
+        row = await findDerivedSession(userId, username, clientId, subjectAccessId);
+        if (row == null) throw err;
+      }
+    }
+    const expires = await touchDerivedSession(userId, username, row, subject, expiresAt);
+    return { accessId: row.id, accessToken: row.token as string, expires, reused: true };
+  }
+
+  function isDuplicateSlot (err: unknown): boolean {
+    const isDuplicateIndex = (err as { isDuplicateIndex?: unknown } | null)?.isDuplicateIndex;
+    return typeof isDuplicateIndex === 'function' && isDuplicateIndex.call(err, 'deviceName') === true;
+  }
+
   async function mintClientAccess ({ userId, username, clientId, expiresAt }: {
     userId: string; username: string; clientId: string; scope: string[]; expiresAt: number;
   }): Promise<{ accessId: string; accessToken: string; apiEndpoint: string }> {
@@ -475,5 +652,7 @@ export function createSessions (env: GlueEnv) {
     findOAuthSessionAccess,
     grantSubject,
     mintClientAccess,
+    readSubjectSession,
+    issueDerivedSession,
   };
 }

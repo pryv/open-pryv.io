@@ -52,6 +52,7 @@ type SessionHelpers = {
     dataGrantAccessId?: string;
     chainPermissions?: Array<Record<string, unknown>>;
     alias?: string | null;
+    audience?: string;
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
   setGrantState: (userId: string, username: string, grantId: string, name: string, value: unknown) => Promise<void>;
@@ -309,7 +310,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // subset; the data-grant is the consent ceiling that revocation and
   // scope-update govern.
   // ---------------------------------------------------------------------
-  async function createAccess ({ session, clientId, expiresAt, offer, grantedPermissions, grantPermissions, subjectChange, grantState }: {
+  async function createAccess ({ session, clientId, expiresAt, offer, grantedPermissions, grantPermissions, subjectChange, grantState, audience }: {
     session: { userId: string; username: string; _context?: Ctx };
     clientId: string;
     scope: string[];
@@ -319,6 +320,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     grantPermissions?: Array<Record<string, unknown>>;
     subjectChange?: unknown;
     grantState?: { name: string | null; value: unknown };
+    /** The resource server the authorization names, recorded on the session. */
+    audience?: string;
   }): Promise<{
     accessId: string;
     accessToken: string;
@@ -400,6 +403,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       dataGrantAccessId: dataGrant.id,
       // An aliased (pseudonymous) grant: the session carries the same alias.
       alias: dataGrant.alias,
+      ...(audience != null ? { audience } : {}),
     });
     return {
       ...minted,

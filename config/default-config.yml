@@ -1165,6 +1165,16 @@ oauth:
   idTokenTTL: 300                  # seconds; id_token lifetime (at most 3600)
   grantTypesSupported:             # advertised in the discovery doc
     - authorization_code
+  # Token exchange (RFC 8693): a resource server in front of this core (a
+  # registry client registered with `--can-exchange`) exchanges the token a
+  # user's client sent it for a session of its own. To advertise it, add
+  # urn:ietf:params:oauth:grant-type:token-exchange to grantTypesSupported.
+  # audienceBoundSessions: true refuses at the data API every session minted
+  # for a resource server (an authorization naming `aud` / `resource`): such
+  # a token works only through that resource server's exchange. false (the
+  # default in this release) keeps such tokens usable at the API; the next
+  # release defaults it to true. Per core.
+  audienceBoundSessions: false
   # Options handed as-is to the OAuth extension (customExtensions:oauthExtension).
   extensionOptions: {}
   # Bound on each asynchronous OAuth extension hook (e.g. the token-response

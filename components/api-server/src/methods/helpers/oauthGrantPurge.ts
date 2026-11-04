@@ -39,7 +39,7 @@ type AccessRow = {
   type?: string;
   name?: string;
   deviceName?: string;
-  clientData?: { oauth?: { grantOf?: unknown; dataGrantId?: unknown } } | null;
+  clientData?: { oauth?: { grantOf?: unknown; dataGrantId?: unknown; exchange?: unknown } } | null;
 };
 type NodeCallback = (err: Error | null, result?: unknown) => void;
 
@@ -68,9 +68,14 @@ function isMintedFor (a: AccessRow, clientId: string): boolean {
   return a?.type === 'app' && a.name === SESSION_NAME_PREFIX + clientId;
 }
 
-/** The grants of `clientId` among an account's accesses: registry grants, and those its sessions are bound to. */
+/**
+ * The grants of `clientId` among an account's accesses: registry grants, and
+ * those its sessions are bound to. Not the grant of a derived session (token
+ * exchange): it is the grant of the client the subject token was issued to,
+ * and purging the resource server deletes its derived sessions only.
+ */
 function grantsOf (all: AccessRow[], clientId: string): AccessRow[] {
-  const bound = new Set(all.filter((a) => isMintedFor(a, clientId))
+  const bound = new Set(all.filter((a) => isMintedFor(a, clientId) && a.clientData?.oauth?.exchange == null)
     .map((a) => a.clientData?.oauth?.dataGrantId)
     .filter((id): id is string => typeof id === 'string')
     .map((id) => parseAccessRef(id).base));

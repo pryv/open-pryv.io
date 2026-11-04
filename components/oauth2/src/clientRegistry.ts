@@ -132,6 +132,7 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
     validateRegistryClient(client);
   } else {
     validateCmcOffers(client);
+    if (client.canExchange != null) throw new Error('token exchange is available to registry clients only');
   }
   validateVettingAndDisplay(client);
   const validated = { ...client, updatedAt: Date.now() };
@@ -291,6 +292,19 @@ function validateRegistryClient (client: OAuthClient): void {
     let u: URL;
     try { u = new URL(a); } catch { throw new Error(`allowedAudiences: "${a}" is not a valid URL`); }
     if (u.protocol !== 'https:' || u.hash !== '') throw new Error(`allowedAudiences: "${a}" must be an absolute https URL without fragment`);
+  }
+  // The resource-server role of token exchange: the caller authenticates, and
+  // a subject token is matched against its own audience list.
+  if (client.canExchange != null && typeof client.canExchange !== 'boolean') {
+    throw new Error('registry client: canExchange must be true or false');
+  }
+  if (client.canExchange === true) {
+    if (client.tokenEndpointAuthMethod !== 'client_secret_basic' && client.tokenEndpointAuthMethod !== 'private_key_jwt') {
+      throw new Error('registry client: token exchange needs a confidential client (client_secret_basic or private_key_jwt)');
+    }
+    if (client.anyAudience === true || audiences.length === 0) {
+      throw new Error('registry client: token exchange needs an audience list (not "any audience"): the audiences it may exchange tokens for');
+    }
   }
   const insecure = insecureRedirectUris(client.redirectUris);
   if (insecure.length > 0 && client.allowInsecureRedirect !== true) {
@@ -476,13 +490,15 @@ export function clientUnavailable (client: OAuthClient, config?: { get (key: str
  * The fields whose change (in any direction) moves an active registry client
  * to review: where its codes and tokens land, how it proves who it is, what
  * it may reach and for how long. The launch types count too: the core does
- * not act on them, but an extension may grant on them. Not the subject type
+ * not act on them, but an extension may grant on them. The token exchange
+ * role too: it decides which users' authorizations the client may reach (every
+ * one issued for an audience it lists). Not the subject type
  * (its own confirmation and the user's acknowledgement), the display texts,
  * regions nor the entry ceiling.
  */
 export const VETTED_FIELDS = [
   'redirectUris', 'scope', 'jwks', 'jwksUri', 'tokenEndpointAuthMethod', 'tokenEndpointAuthSigningAlgs', 'grantTypes',
-  'allowedAudiences', 'anyAudience', 'allowFeatures', 'canIntrospect', 'launchTypes',
+  'allowedAudiences', 'anyAudience', 'allowFeatures', 'canIntrospect', 'canExchange', 'launchTypes',
   'accessTokenTTL', 'refreshTokenTTL', 'refreshTokenAbsoluteTTL', 'offlineAccessAllowed',
 ] as const;
 
@@ -498,7 +514,9 @@ function vettedValue (v: unknown): unknown {
 }
 
 const GRANT_LIST_FIELDS = ['scope', 'allowedAudiences', 'allowFeatures', 'launchTypes'] as const;
-const GRANT_FLAG_FIELDS = ['anyAudience'] as const;
+// `canExchange` withdrawn: the derived sessions already issued live out their
+// (short) lifetime, as a narrowed grant's sessions do.
+const GRANT_FLAG_FIELDS = ['anyAudience', 'canExchange'] as const;
 
 /**
  * The fields of what a client may be granted that an update narrowed (an

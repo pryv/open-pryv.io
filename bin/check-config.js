@@ -486,6 +486,15 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   }
 }
 
+// oauth.audienceBoundSessions: a boolean (the boot reads anything else as false).
+{
+  const audienceBound = get('oauth.audienceBoundSessions');
+  if (audienceBound != null && typeof audienceBound !== 'boolean') {
+    warnings.push(`oauth.audienceBoundSessions is ${JSON.stringify(audienceBound)}: true or false is expected; ` +
+      'as it is, the sessions minted for a resource server stay usable at the data API (false).');
+  }
+}
+
 // services.mfa: the same check master.js runs at boot, on the merged
 // configuration: a partial block is judged by the configuration it produces.
 try {
