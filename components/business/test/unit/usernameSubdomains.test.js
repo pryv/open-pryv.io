@@ -58,6 +58,22 @@ describe('[USUB] username subdomains ignored by the rewriter', () => {
     assert.strictEqual(routed('alice.example.com', '/events'), '/alice/events');
   });
 
+  it('[USUB-05] the root sign-in and account routes stay at the root on any host; a user\'s own sign-in is still rewritten', () => {
+    const ignored = ignoredUsernameSubdomains(config({ 'core:id': 'core-a' }));
+    const routed = (host, url) => {
+      const req = { url, headers: { host } };
+      subdomainToPath(['/system', '/reg'].concat(ROOT_ONLY_PATHS), ignored)(req, {}, () => {});
+      return req.url;
+    };
+    for (const host of ['auth-eu.example.com', 'alice.example.com']) {
+      for (const url of ['/auth/sso/providers', '/auth/sso/google/start?x=1', '/users', '/users?x=1', '/users/bob']) {
+        assert.strictEqual(routed(host, url), url, host + url);
+      }
+    }
+    assert.strictEqual(routed('alice.example.com', '/auth/login'), '/alice/auth/login');
+    assert.strictEqual(routed('alice.example.com', '/accesses'), '/alice/accesses');
+  });
+
   it('[USUB-03] `single` cannot be registered as a username (its host is the core)', () => {
     const reserved = require('platform/src/reserved-words.json').list;
     assert.ok(reserved.includes('single'));

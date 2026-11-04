@@ -46,12 +46,15 @@ function ignoredUsernameSubdomains (config: ConfigReader): string[] {
 /**
  * Path prefixes the api-server serves at the root on every host it answers,
  * which `routes/Paths.ts` does not list: the OAuth 2 endpoints and the
- * discovery documents. The issuer host is any name the core answers (its own
- * host, a `dns.staticEntries` name, a runtime DNS record), never a user, so
- * the username-rewriter must leave these alone whatever the Host. Prefix
- * matches (trailing slash on purpose: `/oauth2x` is still a user path); a new
- * root route family has to be added here explicitly.
+ * discovery documents, the third-party sign-in routes (`/auth/sso/*`) and the
+ * account creation and deletion routes (`POST /users`,
+ * `DELETE /users/:username`). The issuer host is any name the core answers
+ * (its own host, a `dns.staticEntries` name, a runtime DNS record), never a
+ * user, so the username-rewriter must leave these alone whatever the Host.
+ * Prefix matches (trailing slash on purpose: `/oauth2x` is still a user path;
+ * `/users` has none, so `POST /users` matches, and no user route starts with
+ * it); a new root route family has to be added here explicitly.
  */
-const ROOT_ONLY_PATHS: readonly string[] = Object.freeze(['/oauth2/', '/.well-known/']);
+const ROOT_ONLY_PATHS: readonly string[] = Object.freeze(['/oauth2/', '/.well-known/', '/auth/sso/', '/users']);
 
 export { usernameInHost, ignoredUsernameSubdomains, ROOT_ONLY_PATHS };

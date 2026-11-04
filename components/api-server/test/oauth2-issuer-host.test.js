@@ -73,6 +73,22 @@ describe('[OAIH] OAuth endpoints on any host of a DNS-topology core', function (
     assert.deepStrictEqual(res.body, atRoot.body);
   });
 
+  it('[OAIH4] account creation and deletion reach their root routes on a user host', async function () {
+    // An invalid creation and an unauthenticated deletion: the routes' own answers, not a 404 of the user router.
+    const host = username + '.' + DOMAIN;
+    const created = await front.post('/users').set('Host', host).send({});
+    const createdAtRoot = await coreRequest.post('/users').send({});
+    assert.notStrictEqual(created.status, 404, created.text);
+    assert.strictEqual(created.status, createdAtRoot.status, created.text);
+    // An account that does not exist, without credentials: refused either way, nothing to delete.
+    const nobody = 'oaihnone' + cuid().slice(-6).toLowerCase();
+    const deleted = await front.delete('/users/' + nobody).set('Host', host);
+    const deletedAtRoot = await coreRequest.delete('/users/' + nobody);
+    // The root route names the unknown account; rewritten, the request would hit the user router instead.
+    assert.strictEqual(deleted.status, deletedAtRoot.status, deleted.text);
+    assert.deepStrictEqual(deleted.body.error, deletedAtRoot.body.error);
+  });
+
   it('[OAIH3] other paths of a user host are still the user\'s', async function () {
     const res = await front.get('/events').set('Host', username + '.' + DOMAIN).set('Authorization', token);
     assert.strictEqual(res.status, 200, res.text);
