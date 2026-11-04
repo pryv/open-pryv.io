@@ -787,6 +787,18 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #     proxy: https://example.github.io/docs/
 # #     frameAncestors: ["'self'", "https://app.example.com"]
 
+# # adapterRoutes: expose a sidecar container (a resource server for this core's
+# # accounts) under /adapter/<name>/ on every host. The core forwards every method,
+# # header and body and authenticates nothing on those paths: the sidecar must.
+# # The sidecar sees X-Forwarded-For / -Proto / -Host set by this core; it is the
+# # upstream, not a proxy in front, so http.trustedProxies does not list it.
+# # adapterRoutes:
+# #   calendar:
+# #     upstream: http://172.17.0.1:7450   # Docker bridge gateway, or a container name
+# #     paths: ['/adapter/calendar/', '/.well-known/oauth-protected-resource/adapter/calendar/']
+# #     maxBodyBytes: 1048576
+# #     idleTimeoutMs: 60000
+
 ${HOSTINGS_BLOCK}
 ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # custom.systemStreams — extend the account schema (e.g. add 'phone',

@@ -455,6 +455,17 @@ try {
   warnings.push(`hostedSites could not be checked here (${err.message}); master.js still checks it at boot.`);
 }
 
+// adapterRoutes: shape only (the `adapter` account check needs the database;
+// master.js runs it at boot).
+try {
+  const { describeAdapterRoutes, adapterRoutesInputFromConfig } = require('../components/business/src/adapterRoutes.ts');
+  const report = describeAdapterRoutes(adapterRoutesInputFromConfig(configReader));
+  for (const p of report.problems) problems.push(p);
+  for (const w of report.warnings) warnings.push(w);
+} catch (err) {
+  warnings.push(`adapterRoutes could not be checked here (${err.message}); master.js still checks it at boot.`);
+}
+
 // access.defaultAuthUrl — not required at boot (master.js starts fine
 // without it) but the /reg/access flow silently returns `authUrl: null`,
 // which leaves every SDK unable to open the auth popup. Surface as a

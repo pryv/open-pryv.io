@@ -20,7 +20,7 @@ const { Platform } = require('../../src/Platform.ts');
 describe('[PLRR] reserved usernames: routing names vs the word list', () => {
   it('[PLRR1] the names the platform routes are routing-reserved, whatever their length or case', () => {
     const platform = new Platform();
-    for (const name of ['reg', 'access', 'mfa', 'lsc', 'LSC', 'users', 'oauth2', 'system', 'pryv', 'pryvsupport', 'PryvSupport']) {
+    for (const name of ['reg', 'access', 'mfa', 'lsc', 'LSC', 'users', 'oauth2', 'system', 'adapter', 'Adapter', 'pryv', 'pryvsupport', 'PryvSupport']) {
       assert.equal(platform.isUsernameRoutingReserved(name), true, name);
       assert.equal(platform.isUsernameInReservedList(name), true, name);
     }

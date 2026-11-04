@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Adapter routes: a sidecar served under `/adapter/<name>/`
+
+- **Added: adapter routes (`adapterRoutes`).** A configured sidecar on the same host (a resource
+  server for this core's accounts) is served under `/adapter/<name>/` and the route's optional
+  `/.well-known/<label>/adapter/<name>/` prefixes, on every host the core serves and in both
+  topologies, without an nginx in front. Every method, the body and every header except the
+  hop-by-hop ones are forwarded, streamed both ways (`Authorization`, `Cookie`, preflight `OPTIONS`
+  included; `Host` kept; `X-Forwarded-For` / `-Proto` / `-Host` set by the core); the answer comes
+  back unchanged (`WWW-Authenticate`, `Set-Cookie`, `Access-Control-*` included), with no header
+  added by the core. **The core authenticates nothing on those paths** (no CORS, audit or rate limit
+  either): the sidecar must. Per route: `upstream` (an origin), `paths`, `maxBodyBytes` (default
+  1 MiB, 413 past it) and `idleTimeoutMs` (default 60 s, 504). Encoded separators in the path answer
+  400, an unreachable sidecar 502. WebSocket upgrades are not forwarded. See `docs/adapter-routes.md`.
+- **Changed: `adapter` is a reserved username** on every core (registration and rename refuse it,
+  as do hosted-site names in dnsLess); a core with adapter routes refuses to boot while an account
+  named `adapter` exists.
+
 ### OAuth: token exchange (RFC 8693) for resource servers
 
 - **Added: OAuth 2.0 Token Exchange (RFC 8693) for registry clients registered `--can-exchange`.**

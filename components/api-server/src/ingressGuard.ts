@@ -49,3 +49,19 @@ export function guardIngress (handler: Handler, logger: Logger): Handler {
     }
   };
 }
+
+/**
+ * Whether a proxied path holds an encoded `/` or `\`, or a segment that is a
+ * dot segment once decoded (the URL parser already removed the literal ones).
+ * An upstream that decodes the path before normalising it would read
+ * `%2F..%2F` as `/../` and serve outside the prefix it was given.
+ */
+export function hasEncodedSeparatorOrDotSegment (subPath: string): boolean {
+  if (/%(2f|5c)/i.test(subPath)) return true;
+  for (const segment of subPath.split('/')) {
+    let decoded: string;
+    try { decoded = decodeURIComponent(segment); } catch { return true; }
+    if (decoded === '.' || decoded === '..') return true;
+  }
+  return false;
+}

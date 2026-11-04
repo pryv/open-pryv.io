@@ -896,6 +896,24 @@ hostedSites: {}
 #                                             # always when a proxy in front terminates TLS and the
 #                                             # site is HTTPS-only, never
 
+# === PER-CORE (the NAME SET and the `paths` are PLATFORM-WIDE by intent) ===
+# --- Adapter routes (a sidecar served under /adapter/<name>/ on every host this core serves) ---
+# Keep the names and paths identical on every core (the same adapter at the same URL on each);
+# `upstream` is per-core. The core forwards every method, header and body to the upstream and
+# AUTHENTICATES NOTHING on these paths: the upstream (a resource server) must. No CORS, no audit.
+# `adapter` is a reserved username; a core with a route refuses to boot while a user is named
+# `adapter`. Operator guide: docs/adapter-routes.md.
+adapterRoutes: {}
+#  calendar:
+#    upstream: http://172.17.0.1:7450      # origin on this host (Docker bridge gateway, or a container
+#                                          # name on a shared network); https allowed; no path
+#    paths: ['/adapter/calendar/', '/.well-known/oauth-protected-resource/adapter/calendar/']
+#                                          # optional; /adapter/<name>/ is always included; others
+#                                          # must be /.well-known/<label>/adapter/<name>/
+#    maxBodyBytes: 1048576                 # optional; 413 past it; default 1 MiB
+#    idleTimeoutMs: 60000                  # optional; 504 when no byte moves for this long
+#                                          # (streams must keep alive); default 60 s
+
 # === PLATFORM-WIDE (targeted for PlatformDB migration before v2) ===
 # --- Hostings (regions/zones/providers) ---
 # Structure matches legacy /reg/hostings response for backward compatibility.

@@ -8,16 +8,20 @@
 // tooling that patches http.request and later restores it (nock) only restores
 // the CommonJS object, and a namespace binding can keep the wrapped function.
 import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
 import { pipeline } from 'node:stream';
 import type { Logger } from '@pryv/boiler';
 import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
+import type { TLSSocket } from 'node:tls';
 import { clientIp, trustedProxyFn } from 'middleware/src/clientIp.ts';
 import { redactUrl } from 'utils/src/redactUrl.ts';
 import { failIngress } from './ingressGuard.ts';
 
 /**
  * Proxy core shared by the in-process dispatchers that route part of the
- * public port's traffic to a local worker (HFS series, image previews).
+ * public port's traffic to a local worker (HFS series, image previews) or to
+ * a sidecar on the same host (adapter routes).
  *
  * Raw deploys (master.js terminating TLS itself) have no external ingress
  * layer in front of the workers: these dispatchers are that layer. For
@@ -30,6 +34,16 @@ import { failIngress } from './ingressGuard.ts';
 // documented nginx front applies to the same traffic.
 const DEFAULT_UPSTREAM_IDLE_TIMEOUT_MS = 60_000;
 
+/**
+ * Hop-by-hop headers (RFC 7230 § 6.1), plus `proxy-connection` (legacy) and
+ * `expect` (this server already answered `100 Continue`; the client would
+ * wait on the upstream otherwise). Also every header `connection` names.
+ */
+const HOP_BY_HOP_REQUEST = ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-authenticate', 'proxy-authorization', 'expect'];
+const HOP_BY_HOP_RESPONSE = ['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'trailer', 'upgrade', 'proxy-authenticate'];
+
+const JSON_ERROR_HEADERS = { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
+
 type WorkerProxyOptions = {
   /** Log prefix, e.g. `hfs` -> `[hfs-ingress]`. */
   name: string,
@@ -39,8 +53,60 @@ type WorkerProxyOptions = {
   port: number,
   logger: Logger,
   /** For tests; deployments use the default. */
-  upstreamIdleTimeoutMs?: number
+  upstreamIdleTimeoutMs?: number,
+  /** Upstream scheme; `http:` (the workers) unless set. */
+  protocol?: 'http:' | 'https:',
+  /** Trusted CA for an `https:` upstream; for tests (deployments use the system store). */
+  ca?: string,
+  /**
+   * Remove the hop-by-hop headers in both directions and re-frame the body
+   * (off for the workers: they are loopback peers that get every header).
+   */
+  stripHopByHop?: boolean,
+  /**
+   * `worker` (default): X-Forwarded-For set, X-Forwarded-Host / -Proto
+   * dropped unless from a trusted peer. `adapter`: X-Forwarded-Host and
+   * X-Forwarded-Proto also set from the request (a trusted peer's own values
+   * are kept), `Forwarded` and `X-Forwarded-Port` removed.
+   */
+  forwardedHeaders?: 'worker' | 'adapter',
+  /** Request body cap in bytes: past it the answer is 413. No cap unless set. */
+  maxBodyBytes?: number,
+  /** Client-facing error messages; the defaults name `label`. */
+  messages?: { timedOut?: string, unreachable?: string, tooLarge?: string },
+  /** Log the path without its query (the workers log the redacted URL). */
+  logPathOnly?: boolean,
+  /** Release the upstream request when the client leaves before the answer is complete. */
+  releaseOnClientClose?: boolean
 };
+
+/** Headers named by `connection` (and the hop-by-hop list), lowercased. */
+function hopByHopOf (headers: IncomingHttpHeaders, base: string[]): Set<string> {
+  const names = new Set(base);
+  const connection = headers.connection;
+  const values = Array.isArray(connection) ? connection : (connection != null ? [connection] : []);
+  for (const v of values) {
+    for (const token of v.split(',')) {
+      const t = token.trim().toLowerCase();
+      if (t !== '') names.add(t);
+    }
+  }
+  return names;
+}
+
+function withoutHopByHop (headers: IncomingHttpHeaders, base: string[]): IncomingHttpHeaders {
+  const drop = hopByHopOf(headers, base);
+  const out: IncomingHttpHeaders = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!drop.has(name)) out[name] = value;
+  }
+  return out;
+}
+
+function sendJsonError (res: ServerResponse, status: number, message: string, id: string, extra: Record<string, string> = {}) {
+  res.writeHead(status, { ...JSON_ERROR_HEADERS, ...extra });
+  res.end(JSON.stringify({ error: { id, message } }));
+}
 
 /**
  * Returns `proxy(req, res, targetPath)`: forwards the request to the worker
@@ -51,27 +117,68 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
   const { name, label, host, port, logger } = opts;
   const upstreamIdleTimeoutMs = opts.upstreamIdleTimeoutMs ?? DEFAULT_UPSTREAM_IDLE_TIMEOUT_MS;
   const tag = `[${name}-ingress]`;
+  const transport = opts.protocol === 'https:' ? https : http;
+  // Without an explicit server name, Node takes the TLS server name from the
+  // Host header (the client's public host): check the upstream's own instead.
+  // An IP is verified against the certificate's IP entries ('' = no SNI).
+  const tlsOptions = opts.protocol === 'https:'
+    ? { servername: net.isIP(host) ? '' : host, ...(opts.ca != null ? { ca: opts.ca } : {}) }
+    : {};
+  const stripHopByHop = opts.stripHopByHop === true;
+  const adapterHeaders = opts.forwardedHeaders === 'adapter';
+  const maxBodyBytes = opts.maxBodyBytes;
+  const messages = {
+    timedOut: opts.messages?.timedOut ?? `${label} upstream timed out`,
+    unreachable: opts.messages?.unreachable ?? `${label} upstream unreachable`,
+    tooLarge: opts.messages?.tooLarge ?? `${label} request body too large`
+  };
 
   return function proxy (req: IncomingMessage, res: ServerResponse, targetPath: string): void {
-    const shownUrl = redactUrl(req.url);
+    const shownUrl = opts.logPathOnly === true ? redactUrl((req.url ?? '').replace(/[?#].*$/s, '')) : redactUrl(req.url);
     // The worker sees this hop as a loopback peer, which it trusts: hand it the
     // client address resolved here, never the client's own X-Forwarded-For.
-    const headers: IncomingHttpHeaders = { ...req.headers };
+    const headers: IncomingHttpHeaders = stripHopByHop ? withoutHopByHop(req.headers, HOP_BY_HOP_REQUEST) : { ...req.headers };
     const client = clientIp(req);
     if (client == null) delete headers['x-forwarded-for'];
     else headers['x-forwarded-for'] = client;
     // Host / scheme forwarding headers likewise only pass on from a trusted peer.
     const peer = req.socket?.remoteAddress;
-    if (peer == null || !trustedProxyFn()(peer, 0)) {
+    const trustedPeer = peer != null && trustedProxyFn()(peer, 0);
+    if (!trustedPeer) {
       delete headers['x-forwarded-host'];
       delete headers['x-forwarded-proto'];
     }
-    const proxyReq: ClientRequest = http.request({
+    if (adapterHeaders) {
+      // One convention, the X-Forwarded-* triple, always set by this core.
+      delete headers.forwarded;
+      delete headers['x-forwarded-port'];
+      if (headers['x-forwarded-host'] == null && req.headers.host != null) headers['x-forwarded-host'] = req.headers.host;
+      if (headers['x-forwarded-proto'] == null) headers['x-forwarded-proto'] = (req.socket as TLSSocket | undefined)?.encrypted === true ? 'https' : 'http';
+    }
+    // The client's body arrives decoded from its chunked framing: re-frame it
+    // as chunked whatever the method (Node frames only some methods by default,
+    // and an unframed body would be read by the upstream as a next request).
+    if (stripHopByHop && req.headers['transfer-encoding'] != null && req.headers['content-length'] == null) {
+      headers['transfer-encoding'] = 'chunked';
+    }
+
+    let bodyTooLarge = false;
+    const declaredLength = Number(req.headers['content-length']);
+    if (maxBodyBytes != null && Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
+      // The upstream is not contacted; the client may still be sending.
+      logger.warn(`${tag} request body over ${maxBodyBytes} bytes (content-length ${declaredLength}) ${req.method} ${shownUrl}`);
+      req.resume();
+      sendJsonError(res, 413, messages.tooLarge, 'invalid-request-structure', { connection: 'close' });
+      return;
+    }
+
+    const proxyReq: ClientRequest = transport.request({
       host,
       port,
       method: req.method,
       path: targetPath,
-      headers
+      headers,
+      ...tlsOptions
     }, (proxyRes: IncomingMessage) => {
       // The client may have left while the worker was still working on the
       // request (its body was complete, so the request-side hook below did not
@@ -95,7 +202,7 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
         }
       });
       try {
-        res.writeHead(proxyRes.statusCode ?? 500, proxyRes.headers);
+        res.writeHead(proxyRes.statusCode ?? 500, stripHopByHop ? withoutHopByHop(proxyRes.headers, HOP_BY_HOP_RESPONSE) : proxyRes.headers);
       } catch (err) {
         // A throw here is in the client request's callback: it would end the worker.
         proxyRes.destroy();
@@ -131,34 +238,22 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       logger.warn(`${tag} no data moved on the worker connection for ${upstreamIdleTimeoutMs} ms${res.writableNeedDrain ? ' (client not reading)' : ''} ${req.method} ${shownUrl}`);
       proxyReq.destroy();
       if (!res.headersSent) {
-        res.writeHead(504, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' });
-        res.end(JSON.stringify({
-          error: {
-            id: 'unexpected-error',
-            message: `${label} upstream timed out`
-          }
-        }));
+        sendJsonError(res, 504, messages.timedOut, 'unexpected-error');
       } else {
         res.destroy();
       }
     });
 
     proxyReq.on('error', (err: Error) => {
-      if (upstreamTimedOut || res.destroyed) {
-        // Most often the proxy's own teardown (a timeout, or a client that went
-        // away), which Node reports as 'socket hang up'. Nothing to answer.
-        logger.debug(`${tag} upstream request dropped (${upstreamTimedOut ? 'timed out' : 'client went away'}) ${req.method} ${shownUrl}: ${err.message}`);
+      if (upstreamTimedOut || bodyTooLarge || res.destroyed) {
+        // Most often the proxy's own teardown (a timeout, a body cap, or a client
+        // that went away), which Node reports as 'socket hang up'. Nothing to answer.
+        logger.debug(`${tag} upstream request dropped (${upstreamTimedOut ? 'timed out' : (bodyTooLarge ? 'body too large' : 'client went away')}) ${req.method} ${shownUrl}: ${err.message}`);
         return;
       }
       logger.warn(`${tag} upstream error ${req.method} ${shownUrl}: ${err.message}`);
       if (!res.headersSent) {
-        res.writeHead(502, { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' });
-        res.end(JSON.stringify({
-          error: {
-            id: 'unexpected-error',
-            message: `${label} upstream unreachable`
-          }
-        }));
+        sendJsonError(res, 502, messages.unreachable, 'unexpected-error');
       } else {
         res.destroy();
       }
@@ -174,6 +269,32 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
     req.once('close', () => {
       if (!req.complete) { proxyReq.destroy(); }
     });
+    if (opts.releaseOnClientClose === true) {
+      // The client left before the answer was complete (e.g. a stream
+      // subscriber): end the upstream request too, whether or not it answered.
+      res.once('close', () => {
+        if (!res.writableFinished) proxyReq.destroy();
+      });
+    }
+    if (maxBodyBytes != null) {
+      // A body without a declared length (chunked) is counted as it flows.
+      // Registered before the pipe, so the chunk that crosses the cap is
+      // seen here first and the upstream request is gone before it is written.
+      let received = 0;
+      const count = (chunk: Buffer) => {
+        received += chunk.length;
+        if (received <= maxBodyBytes || bodyTooLarge) return;
+        bodyTooLarge = true;
+        logger.warn(`${tag} request body over ${maxBodyBytes} bytes ${req.method} ${shownUrl}`);
+        req.unpipe(proxyReq);
+        req.removeListener('data', count);
+        proxyReq.destroy();
+        req.resume();
+        if (!res.headersSent) sendJsonError(res, 413, messages.tooLarge, 'invalid-request-structure', { connection: 'close' });
+        else res.destroy();
+      };
+      req.on('data', count);
+    }
     req.pipe(proxyReq);
   };
 }

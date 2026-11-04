@@ -607,6 +607,25 @@ Known limitation: `/socket.io/` on a site host is still answered by the API's So
 endpoint, which takes that path before any other handler.
 
 
+## Adapter routes (a sidecar under `/adapter/<name>/`)
+
+`adapterRoutes` exposes a sidecar container on the same host (a resource server for this core's
+accounts) under `/adapter/<name>/` (and optional `/.well-known/<label>/adapter/<name>/` prefixes) on
+every host the core serves, in both topologies, without an nginx in front. The core forwards every
+method, header and body, streamed, and **authenticates nothing on those paths: the sidecar must**
+(no core CORS, audit or rate limit there either). `adapter` is a reserved username; a core with a
+route refuses to boot while an account named `adapter` exists.
+
+```yaml
+adapterRoutes:
+  calendar:
+    upstream: http://172.17.0.1:7450   # the sidecar's origin (bridge gateway or a container name)
+    paths: ['/adapter/calendar/', '/.well-known/oauth-protected-resource/adapter/calendar/']
+```
+
+Keys, forwarded and stripped headers, the 400 / 413 / 502 / 504 answers, a Docker example and
+troubleshooting: [docs/adapter-routes.md](docs/adapter-routes.md).
+
 ## Data directories
 
 | Path | Content |

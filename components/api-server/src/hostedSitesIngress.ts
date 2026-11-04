@@ -15,7 +15,7 @@ import type { TLSSocket } from 'node:tls';
 import type { Logger } from '@pryv/boiler';
 import type { HostedSite, ProxySite, StaticSite } from 'business/src/hostedSites.ts';
 import { redactUrl } from 'utils/src/redactUrl.ts';
-import { failIngress } from './ingressGuard.ts';
+import { failIngress, hasEncodedSeparatorOrDotSegment } from './ingressGuard.ts';
 
 /**
  * In-process dispatcher for hosted sites: a reserved platform name that
@@ -117,20 +117,6 @@ function sendsHsts (req: IncomingMessage, site: HostedSite): boolean {
   if (site.hsts === 'always') return true;
   if (site.hsts === 'never') return false;
   return (req.socket as TLSSocket).encrypted === true;
-}
-
-/**
- * Whether a proxied path holds an encoded `/` or `\`, or a segment that is a
- * dot segment once decoded (the URL parser already removed the literal ones).
- */
-function hasEncodedSeparatorOrDotSegment (subPath: string): boolean {
-  if (/%(2f|5c)/i.test(subPath)) return true;
-  for (const segment of subPath.split('/')) {
-    let decoded: string;
-    try { decoded = decodeURIComponent(segment); } catch { return true; }
-    if (decoded === '.' || decoded === '..') return true;
-  }
-  return false;
 }
 
 function plain (res: ServerResponse, status: number, message: string, extra: OutgoingHttpHeaders = {}, head = false) {
