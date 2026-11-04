@@ -54,6 +54,12 @@
 // empty local table facing rows of this core is refused (exit 3) unless
 // --force-empty-local: it usually means the table was lost, and deleting the
 // rows would free every id of the core.
+//
+// With --emails it checks the email row of each of this core's accounts: a
+// missing row (an account restored with `--user` by a release that wrote
+// none) is claimed for the account, never over another holder; an account
+// whose email another account holds is listed (no password reset or notice is
+// mailed to it until its email is changed). --dry-run lists without claiming.
 
 const path = require('path');
 
@@ -148,6 +154,20 @@ require('@pryv/boiler').init({
       process.exit(0);
     }
 
+    if (args.emails) {
+      const s = await usersRepository.reconcileEmailRows(args.dryRun);
+      console.log('reconcile-user-cores --emails: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
+        ' on core "' + platform.coreId + '"');
+      console.log('  accounts with an email  ' + s.scanned);
+      console.log('  email row missing       ' + s.missing.length + (s.missing.length > 0 ? ': ' + s.missing.join(', ') : ''));
+      console.log('  email row claimed       ' + s.claimed.length);
+      console.log('  held by another account ' + s.heldElsewhere.length + (s.heldElsewhere.length > 0 ? ': ' + s.heldElsewhere.join(', ') : ''));
+      if (s.heldElsewhere.length > 0) {
+        console.log('    ! no password reset or notice is mailed to these accounts until their email is changed');
+      }
+      process.exit(0);
+    }
+
     const summary = await usersRepository.reconcileUserCoreMap(args.dryRun, { forceEmptyLocal: args.forceEmptyLocal });
 
     console.log('reconcile-user-cores: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
@@ -178,11 +198,12 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { dryRun: false, extIds: false, oldPepper: null, forceEmptyLocal: false };
+  const args = { dryRun: false, extIds: false, emails: false, oldPepper: null, forceEmptyLocal: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--ext-ids') args.extIds = true;
+    else if (a === '--emails') args.emails = true;
     else if (a === '--force-empty-local') args.forceEmptyLocal = true;
     else if (a === '--old-pepper') {
       args.oldPepper = argv[++i];
@@ -213,6 +234,10 @@ function printUsage (stream) {
     '                                              # run with this core\'s API stopped;',
     '                                              # --force-empty-local: allow deleting this',
     '                                              # core\'s rows when its local table is empty)',
+    '  node bin/reconcile-user-cores.js --emails [--dry-run]',
+    '                                              # claim the missing email rows of this core\'s',
+    '                                              # accounts (never over another holder); list',
+    '                                              # the accounts whose email another account holds',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

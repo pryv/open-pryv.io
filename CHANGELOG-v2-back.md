@@ -146,27 +146,61 @@
   `repository.insertOne`), unique for `uniqueFieldNames`, plus a unique `email` row per address the
   account's `:_emails:` container holds as `verified` (`verifiedEmailsOf` over the imported events:
   heads only, not deleted, not trashed); storage form through `coreRouting.hashFor`. Written by
-  `_writePlatform` (same held-value protection and count).
-  `_importUser` returns `ImportedAccount` (external-id `entries`, `verifiedEmails`).
+  `_writePlatform` (same held-value protection and count). Unique rows are deduplicated by storage
+  form (two spellings of one address are one row in hashed mode); indexed values are passed as
+  registration passes them (not coerced to strings). `_importUser` returns `ImportedAccount`
+  (external-id `entries`, `verifiedEmails`). A pending address gets no row: the email methods
+  reserve a row when an address is proved, not when it is added. Derived rows trust the backup's
+  email list as a whole backup's platform rows were already trusted.
+- `restoreUser` from a whole backup also writes its external-id namespace rows (`_platformRowsOf`
+  keeps `extIdNamespaces`; `importNamespaceRows` writes absent ones only) and returns
+  `extIdNamespaceSaltMismatch` like `restoreAllUsers` (`bin/backup.js` prints it for both).
+  `_writePlatform` skips, with a warning, the register server mappings of restored accounts
+  (`read.ownerNames` set) when `defaultCoreId` is not `coreRouting.coreId`: `_claimUserCore` routed
+  them here, the mapping would re-route them to the platform's single available core (another one
+  when this core is unavailable). A platform-only restore writes the mappings as before.
 - `_emailsHeldElsewhere(restored)`, both paths, after the platform rows: an account whose stored
   `email` field `coreRouting.getUsersUniqueField` gives to another owner is listed in
   `emailsHeldElsewhere` (report; `bin/backup.js` prints it, filtered of rolled-back accounts) and
   warned. A failed lookup is a warning, never a failed restore.
-- Tests `[RXCR1-5, 15]` (api-server: `bin/backup.js` run as a member of a multi-core platform over
-  the test platform store), `[RXCR6-17]` (business unit), `[DXCR1-2]` (api-server: the users
-  repository over the test platform store as a member of a multi-core platform).
-  `reg-multicore.test.js` puts back `core:id` with the single-core config (it left `core-a` for the
-  later suites of the process); `[RXCR4]` asserts the routing row names `platform.coreId` again.
+- `restoreUser` callers: `bin/backup.js` only (it passes no `skipPlatform`, so it takes the new
+  default).
+- `usersRepository.reconcileEmailRows(dryRun)`, `bin/reconcile-user-cores.js --emails [--dry-run]`:
+  for each account of the local index (skipped: no email, the email field not unique, a name routed
+  to another core), the stored primary email's row: absent -> `missing`, claimed with
+  `platform.setUserUniqueFieldIfNotExists` unless dry run (`claimed`; a lost claim is listed as
+  held); another owner -> `heldElsewhere`. Never overwrites a row.
+- Not changed: a `--verify-integrity` rollback (`_clearUserData`) leaves the platform rows, the
+  routing row and the index entry of a rolled-back account; a rolled-back `--user` restore now
+  leaves its email reserved too, and `uniqueValuesLost` still counts its values.
+- Tests `[RXCR1-5, 18-20]` (api-server: `bin/backup.js` run as a member of a multi-core platform
+  over the test platform store; `[RXCR19]` compares the derived rows with the rows registration
+  wrote; `[RXCR20]` the email reconcile), `[RXCR6-17, 21-22]` (business unit), `[DXCR1-2]`
+  (api-server: the users repository over the test platform store as a member of a multi-core
+  platform). `reg-multicore.test.js` puts back `core:id` with the single-core config (it left
+  `core-a` for the later suites of the process); `[RXCR4]` asserts the routing row names
+  `platform.coreId` again.
 
-### Password reset: no mail to an address another account holds
+### Password reset and notices: no mail to an address another account holds
 
-- `account.requestPasswordReset`, step `sendPasswordResetMail` (now async): before sending,
-  `emailsContainer.isRowFreeFor(username, email)`; false (another owner): warn naming the username,
-  `next()` with no mail (the same result as a sent mail; the reset token is generated and expires
-  unused). A lookup error answers `unexpectedError` (fails closed). The other mails to the stored
-  email were checked: the MFA-change notice and the auto-deletion notices carry no credential (not
-  guarded); the verification and registration-challenge mails go to the address being proved, not
-  the stored one. Test `[RSLK3]`.
+- `business/src/emails/heldAddress.ts` `isStoredEmailHeldElsewhere(username, email, what, logger)`:
+  `!emailsContainer.isRowFreeFor(username, email)` (an absent row or the account's own answers
+  false), warns naming the username, throws when the platform store cannot be read. Used by:
+  - `account.requestPasswordReset`, step `sendPasswordResetMail` (now async; a rejected step is
+    answered as an error by the API runner): held -> `next()` with no mail (same status and body as
+    a sent mail, the reset token generated and unused; sooner, no delivery round trip). A lookup
+    error answers `unexpectedError` (fails closed).
+  - `mfaChange.ts` `sendMfaChangeNotice`: held -> not sent; a lookup error is the notice's failure
+    (logged, the MFA change stands).
+  - `autoDeletion.ts` `sendAutoDeletionMail`, stored-email branch only (`to == null`): held ->
+    `'off'` (as an account without an address: the sweep counts reminders off, a transfer's
+    "started" notice counts as told); a lookup error is `'failed'` (retried at the next pass).
+    `facts.notifiable` is unchanged: whether an operator preset applies does not depend on it.
+- Checked, not guarded: the verification and registration-challenge mails go to the address being
+  proved, the transfer claim mails to the beneficiary's address, the welcome mail to the address
+  just registered. No other sender mails a credential to the stored email (`sendmail(` callers).
+- Tests `[RSLK3-5]` (held: no mail, same status and body; absent row: sent; lookup error: fails, no
+  mail), `[MSN4]`, `[ACST15D]`.
 
 ### CMC: background writes check the account first
 

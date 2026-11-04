@@ -444,5 +444,27 @@ describe('[ACST] account auto-deletion setting', function () {
         assert.equal(b.firstNoticeAt, undefined);
       });
     });
+
+    it('[ACST15D] no confirmation to the account\'s email when another account holds that address', async function () {
+      const { platform } = require('platform');
+      await withInjectedConfig(MAIL_ON, async () => {
+        const u = await freshUser();
+        const email = u.username + '@acst.example.com';
+        await platform.deleteUserUniqueField('email', email);
+        await platform.setUserUniqueField('acstholder' + cuid().toLowerCase().slice(-8), 'email', email);
+        try {
+          const captured = capture();
+          const res = await set(u, { mode: 'inactivity', inactivityDays: 365, password: PASSWORD });
+          assert.equal(res.status, 200, JSON.stringify(res.body));
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          assert.equal(captured.length, 0, JSON.stringify(captured));
+          const b = await state.getBookkeeping(u.id);
+          assert.equal(b.firstNoticeAt, undefined, 'no notice recorded');
+        } finally {
+          await platform.deleteUserUniqueField('email', email);
+          await platform.setUserUniqueField(u.username, 'email', email);
+        }
+      });
+    });
   });
 });

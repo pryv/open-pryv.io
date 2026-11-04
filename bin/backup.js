@@ -402,6 +402,9 @@ async function runRestore (args) {
   if (report.uniqueValuesLost > 0) {
     console.log(`  Unique values of the platform rows: ${report.uniqueValuesLost} held by another account (not restored)`);
   }
+  if (report.extIdNamespaceSaltMismatch && report.extIdNamespaceSaltMismatch.length > 0) {
+    console.log(`  External-id namespaces kept with a salt that differs from the backup: ${report.extIdNamespaceSaltMismatch.join(', ')}`);
+  }
   if (report.emailsHeldElsewhere && report.emailsHeldElsewhere.length > 0) {
     console.log(`  Email held by another account (password reset does not send to it until the account's email is changed): ${report.emailsHeldElsewhere.length} users`);
     for (const u of report.emailsHeldElsewhere) {

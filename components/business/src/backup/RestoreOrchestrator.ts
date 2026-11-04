@@ -261,13 +261,18 @@ class RestoreOrchestrator {
     const imported = await this._restoreSingleUser(reader, userId, username, opts, targetUserId, erasuresWithdrawn);
 
     const restored = [{ userId: targetUserId, username }];
-    const uniqueValuesLost = platformRead != null ? (await this._writePlatform(await this._accountPlatformRows(platformRead, restored, [imported]))).uniqueValuesLost : 0;
+    // From a whole backup, its external-id namespace rows too (absent ones
+    // written, a present one kept): the account's ids need their namespace.
+    const written = platformRead != null
+      ? await this._writePlatform(await this._accountPlatformRows(platformRead, restored, [imported]))
+      : { uniqueValuesLost: 0, extIdNamespaceSaltMismatch: [] };
+    const { uniqueValuesLost, extIdNamespaceSaltMismatch } = written;
     const emailsHeldElsewhere = await this._emailsHeldElsewhere(restored);
     const externalIds = await this._restoreExternalIds([imported]);
     const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
 
     this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
-    return { restored, skipped: [], conflicts, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn };
+    return { restored, skipped: [], conflicts, extIdNamespaceSaltMismatch, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn };
   }
 
   /**
@@ -984,7 +989,8 @@ class RestoreOrchestrator {
    * writes, built from the account as restored (see `_derivedPlatformRows`).
    */
   async _accountPlatformRows (read: PlatformRead, accounts: AccountRef[], imported: ImportedAccount[]): Promise<PlatformRead> {
-    const rows = this._platformRowsOf(read, accounts);
+    // A read `_readPlatform` already kept to these accounts is not filtered again.
+    const rows = read.ownerNames != null ? { ...read, data: [...read.data] } : this._platformRowsOf(read, accounts);
     if (!this.platformDB) return rows;
     const withRows = new Set(rows.data.map((entry) => rows.ownerNames?.get(entry.username)));
     for (const account of accounts) {
@@ -993,7 +999,8 @@ class RestoreOrchestrator {
       const derived = await this._derivedPlatformRows(account, verifiedEmails);
       if (derived.length === 0) continue;
       rows.data.push(...derived);
-      this.logger.info(`Platform rows of user ${account.username}: none in the backup, ${derived.length} written from the restored account`);
+      this.logger.info(`Platform rows of user ${account.username}: none in the backup, ${derived.length} derived from the restored account ` +
+        '(as its registration writes them; no SSO binding, which only the platform rows of a whole backup carry)');
     }
     return rows;
   }
@@ -1010,22 +1017,23 @@ class RestoreOrchestrator {
     const fields = await this.userAccountStorage.getAccountFields(account.userId);
     const uniqueFields = new Set<string>(accountStreams.uniqueFieldNames ?? []);
     const rows: PlatformEntry[] = [];
-    const uniqueValues = new Set<string>();
+    // By storage form: two spellings of one address (case, spaces) are one
+    // row in hashed mode.
+    const uniqueRows = new Set<string>();
+    const addUnique = (field: string, value: string) => {
+      const stored = hash(field, value);
+      if (uniqueRows.has(field + '/' + stored)) return;
+      uniqueRows.add(field + '/' + stored);
+      rows.push({ username: owner, field, value: stored, isUnique: true });
+    };
     for (const field of (accountStreams.indexedFieldNames ?? []) as string[]) {
-      const value = fields[field] ?? accountStreams.accountMap[accountStreams.toStreamId(field)]?.default;
+      // The value as registration passes it (not coerced to a string).
+      const value = (fields[field] ?? accountStreams.accountMap[accountStreams.toStreamId(field)]?.default) as string;
       if (value == null) continue;
-      if (uniqueFields.has(field)) {
-        uniqueValues.add(field + '/' + String(value));
-        rows.push({ username: owner, field, value: hash(field, String(value)), isUnique: true });
-      } else {
-        rows.push({ username: owner, field, value: String(value), isUnique: false });
-      }
+      if (uniqueFields.has(field)) addUnique(field, value);
+      else rows.push({ username: owner, field, value, isUnique: false });
     }
-    const emailField = emailsConstants.UNIQUE_FIELD;
-    for (const email of new Set(verifiedEmails)) {
-      if (uniqueValues.has(emailField + '/' + email)) continue;
-      rows.push({ username: owner, field: emailField, value: hash(emailField, email), isUnique: true });
-    }
+    for (const email of verifiedEmails) addUnique(emailsConstants.UNIQUE_FIELD, email);
     return rows;
   }
 
@@ -1092,7 +1100,15 @@ class RestoreOrchestrator {
       }
     }
     let serverMappingsCount = 0;
-    if (read.defaultCoreId != null && read.mappingUsernames.length > 0) {
+    // The accounts restored here are routed to this core (`_claimUserCore`):
+    // their mappings never re-route them to another core (the platform's
+    // single available core is another one when this core is unavailable).
+    const routing = this.coreRouting;
+    if (read.ownerNames != null && routing != null && read.defaultCoreId != null &&
+        read.defaultCoreId !== routing.coreId && read.mappingUsernames.length > 0) {
+      this.logger.warn(`Register server mappings of the restored accounts not written: they name core "${read.defaultCoreId}", ` +
+        `the accounts are restored on this core ("${routing.coreId}") and stay routed to it (${read.mappingUsernames.join(', ')})`);
+    } else if (read.defaultCoreId != null && read.mappingUsernames.length > 0) {
       try {
         // Write through the Platform hashing layer (not the raw engine) so
         // the user-core key is the HMAC token in hashed mode — otherwise a

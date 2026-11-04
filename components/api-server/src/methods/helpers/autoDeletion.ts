@@ -9,6 +9,7 @@ import type { ConfigLike } from '@pryv/boiler';
 import { getStorageLayer, getUserAccountStorage } from 'storage';
 import { store as delegationStore, STATUS as DELEGATION_STATUS } from 'delegation';
 import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { isStoredEmailHeldElsewhere } from 'business/src/emails/heldAddress.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import type { AutoDeletionConfig } from 'business/src/autoDeletion/config.ts';
 import { createAutoDeletionState } from 'business/src/autoDeletion/state.ts';
@@ -252,6 +253,9 @@ export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeleti
     if (to != null && (facts.mail === 'not-configured' || to.email === '')) return 'off';
     const enabled = emailSettings.enabled;
     if (enabled != null && typeof enabled === 'object' && (enabled as Record<string, unknown>)[mail.flag] === false) return 'off';
+    // The account's own address held by another account: as an account
+    // without an address (a failed lookup is a failed send, retried).
+    if (to == null && await isStoredEmailHeldElsewhere(user.username, facts.email, `auto-deletion ${kind} mail`, logger)) return 'off';
     const lang = facts.language || emailSettings.defaultLang || 'en';
     const configured = (emailSettings as Record<string, unknown>)[mail.templateKey];
     const template = typeof configured === 'string' && configured !== '' ? configured : mail.template;

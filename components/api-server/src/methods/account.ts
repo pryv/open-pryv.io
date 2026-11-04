@@ -61,6 +61,7 @@ const ErrorIds = require('errors').ErrorIds;
 const { getUsersRepository, UserRepositoryOptions, getPasswordRules } = require('business/src/users/index.ts');
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
+const { isStoredEmailHeldElsewhere } = require('business/src/emails/heldAddress.ts') as typeof import('business/src/emails/heldAddress.ts');
 const emailsOperations = require('business/src/emails/operations.ts');
 const registrationPolicy = require('business/src/emails/registrationPolicy.ts');
 const { isAddressProved } = require('business/src/emails/status.ts');
@@ -459,13 +460,11 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     // An address the platform reserves for another account (it changed hands,
     // e.g. since the backup this account was restored from) is not this
     // account's inbox: the reset link would hand the account to its holder.
-    // Answered as a sent mail (the caller learns nothing about the address).
+    // Answered with the same status and body as a sent mail; it answers
+    // sooner (no delivery round trip). The row holder is trusted whether or
+    // not it proved the address. A failed lookup sends nothing.
     try {
-      if (typeof account.email === 'string' && account.email !== '' &&
-          !(await emailsContainer.isRowFreeFor(account.username, account.email))) {
-        logger.warn(`Password reset of user "${account.username}": its email is held by another account, the reset mail is not sent (the account's email must be changed)`);
-        return next();
-      }
+      if (await isStoredEmailHeldElsewhere(account.username, account.email, 'Password reset mail', logger)) return next();
     } catch (err) {
       return next(errors.unexpectedError(err));
     }

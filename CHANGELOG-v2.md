@@ -155,9 +155,21 @@
   whole backup, they are the account's rows of the backup (the other accounts' rows are neither
   written nor checked). A backup made with `--output --user` carries no platform rows: the rows are
   then the ones registration writes, built from the account as restored (its indexed account
-  fields, its email, and the addresses its email list holds as verified). The same applies to a
-  whole-backup restore for an account the backup holds no platform rows of.
-  `RestoreOrchestrator.restoreUser` now defaults `skipPlatform` to false.
+  fields, its email, and the addresses its email list holds as verified; no SSO binding, which
+  only the platform rows of a whole backup carry). The same applies to a whole-backup restore for
+  an account the backup holds no platform rows of. From a whole backup, a `--user` restore now
+  also writes the external-id namespace rows the backup carries (absent ones only; a namespace
+  kept with another salt is listed in the report) and the account's register server mapping of a
+  v1 backup; a mapping never routes an account restored here to another core (it is skipped with a
+  warning when the platform's single available core is another one).
+- **Accounts restored with `--user` by an earlier release have no email row.** Their email is not
+  reserved: another account can register that address (registration does not prove an address by
+  default), and from this release the password reset and notices of the restored account are then
+  not mailed to it (next section). List and repair them on each core with
+  `node bin/reconcile-user-cores.js --emails --dry-run`, then without `--dry-run`: it claims the
+  missing email row for each of the core's accounts (never over another account) and lists the
+  accounts whose email another account holds (change those accounts' email). Restoring the account
+  again with `--user --overwrite` from its backup also writes the row.
 - **A restored account whose email another account holds now is listed** in the report ("Email held
   by another account (password reset does not send to it until the account's email is changed)"),
   with a warning naming the account. The address changed hands since the backup: the restored
@@ -170,19 +182,29 @@
   core now keeps them: this core's data of the account is deleted, and a warning names the other
   core.
 
-### Password reset: no mail to an address another account holds
+### Password reset and notices: no mail to an address another account holds
 
 - **Fixed: a password reset sent its mail to the account's stored email even when the platform
   reserves that address for another account.** This happens when the address changed hands after
   the account stored it (an account restored from a backup older than the change): the address's
   current holder received a reset link for the account and could take it over. The reset now looks
   the address up in the platform rows first: held by another account, no mail is sent, the caller
-  gets the same answer as when it is sent, and a warning names the account (not the address).
-  Absent or held by the account itself, the mail is sent as before. The lookup goes through the
-  platform store, so it is the same on every core of a multi-core platform; when the platform store
-  cannot be read, the request fails instead of sending.
-- Not changed: the notices sent to the stored email without a credential (MFA changes, account
-  auto-deletion notices) are still sent to it.
+  gets the same status and body as when it is sent (it answers sooner, without the delivery round
+  trip, and it answers success where a send would have failed on a mail server down), and a warning
+  names the account (not the address). Absent or held by the account itself, the mail is sent as
+  before. The lookup goes through the platform store, so it is the same on every core of a
+  multi-core platform; when the platform store cannot be read, the request fails instead of
+  sending.
+- **Trade-off: the row's holder is trusted, whether or not it proved the address.** Registration
+  does not prove an address by default (`account.emailVerification.requireAtRegistration: false`):
+  anyone who registers an address an account stores without holding its row (see the restore
+  section above for how that happens) stops the reset mails of that account. A reset link sent to
+  the wrong person is worse than none: the account's owner signs in and changes the email, or the
+  operator does; `bin/reconcile-user-cores.js --emails` lists these accounts.
+- **The MFA-change notice and the account auto-deletion notices follow the same rule**: not sent to
+  the account's address when another account holds it (a warning names the account). For the
+  auto-deletion mails this counts as an account without an address. Mails to an address the account
+  is proving (verification, registration challenge) and to a transfer beneficiary are unchanged.
 
 ### CMC: nothing is written for an account erased while a consent operation runs
 

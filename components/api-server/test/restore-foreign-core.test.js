@@ -101,7 +101,9 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     await stream.event({ type: 'note/txt', content: 'backed up' });
     const dir = path.join(tmpDir, username);
     assertOk(runCli(['--output', dir, '--user', username]), 'backup');
-    const u = { id: fu.attrs.id, username, dir };
+    // Its platform rows as its registration wrote them (storage form).
+    const rows = await platformDB.getAllForUser(platform.hashFor('username', username));
+    const u = { id: fu.attrs.id, username, dir, rows };
     accounts.push(u);
     await usersRepository.deleteOne(u.id, u.username);
     assert.strictEqual(await exists(u), false, 'removed from this core');
@@ -227,9 +229,9 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     }
   });
 
-  it('[RXCR15] a single-account restore of a backup of that account reserves its email and writes its indexed values; an email another account holds now stays with it and the account is listed', async function () {
+  it('[RXCR18] a single-account restore of a backup of that account reserves its email and writes its indexed values; an email another account holds now stays with it and the account is listed', async function () {
     const token = (name) => platform.hashFor('username', name);
-    const email = 'rxcr15-' + cuid.slug().toLowerCase() + '@rxcr.example';
+    const email = 'rxcr18-' + cuid.slug().toLowerCase() + '@rxcr.example';
     const u = await backedUpAccount({ email, language: 'fr' });
     assert.strictEqual(await platform.getUsersUniqueField('email', email), null, 'removed with the account');
 
@@ -239,8 +241,15 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
     assert.strictEqual(await platformDB.getUserIndexedField(token(u.username), 'language'), 'fr', 'its indexed values are written');
     assert.doesNotMatch(res.stdout, /Email held by another account/);
 
+    // An account restored by a release that wrote no email row: a restore
+    // over it with --overwrite writes the row.
+    await platform.deleteUserUniqueField('email', email);
+    const over = runCliMultiCore(['--restore', u.dir, '--user', u.username, '--overwrite']);
+    assertOk(over, 'restore with --overwrite');
+    assert.strictEqual(await platform.getUsersUniqueField('email', email), token(u.username), 'the row is written again');
+
     // The email of another backed-up account changed hands meanwhile.
-    const heldEmail = 'rxcr15h-' + cuid.slug().toLowerCase() + '@rxcr.example';
+    const heldEmail = 'rxcr18h-' + cuid.slug().toLowerCase() + '@rxcr.example';
     const v = await backedUpAccount({ email: heldEmail });
     const holder = 'rxcrholder' + cuid.slug().toLowerCase();
     await platform.setUserUniqueField(holder, 'email', heldEmail);
@@ -253,6 +262,48 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
       assert.match(held.stdout, new RegExp(`Email held by another account \\(password reset does not send to it until the account's email is changed\\): 1 users\\s+- ${v.username} \\(${v.id}\\)`));
     } finally {
       await platform.deleteUserUniqueField('email', heldEmail);
+    }
+  });
+
+  it('[RXCR19] the platform rows a single-account restore derives are the rows its registration wrote', async function () {
+    const u = await backedUpAccount({ email: 'rxcr19-' + cuid.slug().toLowerCase() + '@rxcr.example', language: 'de' });
+    assert.ok(u.rows.length > 0, 'registration wrote rows');
+    const res = runCliMultiCore(['--restore', u.dir, '--user', u.username]);
+    assertOk(res, 'restore');
+    const sorted = (rows) => rows.map((r) => JSON.stringify([r.field, r.isUnique, r.value, r.username])).sort();
+    const restored = await platformDB.getAllForUser(platform.hashFor('username', u.username));
+    assert.deepStrictEqual(sorted(restored), sorted(u.rows));
+    // Registration writes no `username` row (the name is routed by its user-core row).
+    assert.ok(!restored.some((r) => r.field === 'username'), JSON.stringify(restored));
+  });
+
+  it('[RXCR20] bin/reconcile-user-cores.js --emails claims the missing email rows of this core\'s accounts and lists those another account holds', async function () {
+    const token = (name) => platform.hashFor('username', name);
+    const slug = cuid.slug().toLowerCase();
+    const fx = getNewFixture();
+    fixtures.push(fx);
+    const missing = { username: 'rxcrmiss' + slug, email: 'rxcr20m-' + slug + '@rxcr.example' };
+    const held = { username: 'rxcrheld' + slug, email: 'rxcr20h-' + slug + '@rxcr.example' };
+    const holder = 'rxcrhold' + slug;
+    for (const a of [missing, held]) a.id = (await fx.user(a.username, { email: a.email })).attrs.id;
+    // As restored by a release that wrote no email row; the other address changed hands.
+    await platform.deleteUserUniqueField('email', missing.email);
+    await platform.deleteUserUniqueField('email', held.email);
+    await platform.setUserUniqueField(holder, 'email', held.email);
+    try {
+      const dry = await usersRepository.reconcileEmailRows(true);
+      assert.ok(dry.missing.includes(missing.username) && dry.heldElsewhere.includes(held.username), JSON.stringify(dry));
+      assert.strictEqual(await platform.getUsersUniqueField('email', missing.email), null, 'a dry run writes nothing');
+
+      const applied = await usersRepository.reconcileEmailRows(false);
+      assert.ok(applied.claimed.includes(missing.username), JSON.stringify(applied));
+      assert.ok(applied.heldElsewhere.includes(held.username), JSON.stringify(applied));
+      assert.strictEqual(await platform.getUsersUniqueField('email', missing.email), token(missing.username), 'the missing row is claimed');
+      assert.strictEqual(await platform.getUsersUniqueField('email', held.email), token(holder), 'a held row is never taken');
+    } finally {
+      await platform.deleteUserUniqueField('email', held.email);
+      await platform.setUserUniqueField(held.username, 'email', held.email);
+      for (const a of [missing, held]) await usersRepository.deleteOne(a.id, a.username);
     }
   });
 });

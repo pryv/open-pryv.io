@@ -766,9 +766,12 @@ describe('[RXPR] restore: the platform rows of a single-account restore, and the
   });
 
   it('[RXCR16] an account the backup has no platform rows of gets the rows its registration writes, from the account as restored: indexed fields, its email and its verified addresses', async function () {
-    const hashFor = (field, value) => field === 'username' ? 'tok-' + value : 'h-' + value;
+    // Hashed mode lowercases an address before hashing it.
+    const hashFor = (field, value) => field === 'username' ? 'tok-' + value : 'h-' + value.toLowerCase();
     const events = [
       emailEvent('valid@example.com', 'verified', { content: { value: 'valid@example.com', primary: true, status: 'verified' } }),
+      // The primary spelled otherwise: the same row in hashed mode, counted once.
+      emailEvent('Valid@Example.com', 'verified'),
       emailEvent('second@example.com', 'verified'),
       emailEvent('taken@example.com', 'verified'),
       emailEvent('pending@example.com', 'pending'),
@@ -778,7 +781,8 @@ describe('[RXPR] restore: the platform rows of a single-account restore, and the
       { id: 'e-note', streamIds: ['diary'], type: 'note/txt', content: 'not an email' }
     ];
     const reader = makeReader(users, makeUserReader({ events }));
-    const fields = { email: 'valid@example.com', language: 'fr' };
+    // `username` is an account field but not an indexed one: registration writes no row for it.
+    const fields = { email: 'valid@example.com', language: 'fr', username: 'validname' };
 
     for (const restore of [
       (o) => o.restoreUser(CUID2_ID, reader),
@@ -798,6 +802,7 @@ describe('[RXPR] restore: the platform rows of a single-account restore, and the
       assert.ok(rows.includes('indexed:tok-validname:language:fr'), JSON.stringify(rows));
       assert.ok(rows.includes('indexed:tok-validname:invitationToken:no-token'), 'an absent field with a default: ' + JSON.stringify(rows));
       assert.ok(rows.every((w) => w.startsWith('unique:tok-validname:') || w.startsWith('indexed:tok-validname:')), JSON.stringify(rows));
+      assert.ok(!rows.some((w) => /:username:/.test(w)), 'no username row, as registration: ' + JSON.stringify(rows));
       assert.strictEqual(report.uniqueValuesLost, 1);
     }
   });
@@ -817,5 +822,50 @@ describe('[RXPR] restore: the platform rows of a single-account restore, and the
       assert.ok(warnings.some((w) => w === 'The email of validname is held by another account: password reset will not send to it until the account\'s email is changed'), JSON.stringify(warnings));
       assert.ok(!warnings.some((w) => w.includes('firstuser')), JSON.stringify(warnings));
     }
+  });
+
+  it('[RXCR21] a failed lookup of a restored account\'s email is a warning: the restore completes', async function () {
+    const { o, writes } = makeOrchestrator();
+    const { warnings, logger } = recordingLogger();
+    o.logger = logger;
+    o.coreRouting = fakeCoreRouting(writes);
+    o.coreRouting.getUsersUniqueField = async () => { throw new Error('platform store unreachable'); };
+    o.accountFields[CUID2_ID] = { email: 'valid@example.com' };
+    const report = await o.restoreUser(CUID2_ID, makeReader(users));
+    assert.deepStrictEqual(report.restored, [users[1]]);
+    assert.deepStrictEqual(report.emailsHeldElsewhere, []);
+    assert.ok(warnings.some((w) => w === 'The email of validname could not be checked against the platform rows (platform store unreachable)'), JSON.stringify(warnings));
+  });
+
+  it('[RXCR22] the register server mapping of a restored account never routes it to another core; a platform-only restore writes it as before', async function () {
+    const platformRows = [{ username: 'validname', field: 'language', value: 'fr', isUnique: false }];
+    const serverMappings = [{ username: 'validname' }];
+    const storeWithCores = (writes, cores) => ({ ...rowStore(writes), async getAllCoreInfos () { return cores; } });
+
+    // The platform's single available core is another one (this core is full).
+    const { o, writes } = makeOrchestrator();
+    const { warnings, logger } = recordingLogger();
+    o.logger = logger;
+    o.coreRouting = fakeCoreRouting(writes);
+    o.platformDB = storeWithCores(writes, [{ id: 'core-a', available: false }, { id: 'core-b', available: true }]);
+    const report = await o.restoreUser(CUID2_ID, makeReaderWithPlatform(users, { platformRows, serverMappings }));
+    assert.strictEqual(o.coreRouting.rows.validname, 'core-a', 'still routed to this core');
+    assert.ok(!writes.includes('routing.set:validname=core-b'), JSON.stringify(writes));
+    assert.ok(warnings.some((w) => /Register server mappings of the restored accounts not written: they name core "core-b"/.test(w)), JSON.stringify(warnings));
+    assert.deepStrictEqual(report.extIdNamespaceSaltMismatch, []);
+
+    // This core is the single available one: written (to this core).
+    const { o: here, writes: hereWrites } = makeOrchestrator();
+    here.coreRouting = fakeCoreRouting(hereWrites);
+    here.platformDB = storeWithCores(hereWrites, [{ id: 'core-a', available: true }]);
+    await here.restoreUser(CUID2_ID, makeReaderWithPlatform(users, { platformRows, serverMappings }));
+    assert.ok(hereWrites.includes('routing.set:validname=core-a'), JSON.stringify(hereWrites));
+
+    // A platform-only restore (no account restored here) writes the mapping as it did.
+    const { o: only, writes: onlyWrites } = makeOrchestrator();
+    only.coreRouting = fakeCoreRouting(onlyWrites);
+    only.platformDB = storeWithCores(onlyWrites, [{ id: 'core-b', available: true }]);
+    await only.restorePlatform(makeReaderWithPlatform(users, { platformRows, serverMappings }));
+    assert.ok(onlyWrites.includes('routing.set:validname=core-b'), JSON.stringify(onlyWrites));
   });
 });

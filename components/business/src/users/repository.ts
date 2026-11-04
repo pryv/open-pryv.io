@@ -1084,6 +1084,38 @@ class UsersRepository {
     return summary;
   }
 
+  /**
+   * The email rows of this core's accounts (`bin/reconcile-user-cores.js
+   * --emails`). An account whose stored email has no platform row (one
+   * restored with `--user` by a release that wrote none) gets it claimed,
+   * never over another holder (`missing`, `claimed` once written); one whose
+   * email another account holds is listed (`heldElsewhere`: no password reset
+   * or notice is mailed to it until its email is changed). The primary email
+   * only; accounts routed to another core are skipped.
+   */
+  async reconcileEmailRows (dryRun = false): Promise<{ scanned: number; missing: string[]; claimed: string[]; heldElsewhere: string[] }> {
+    const summary: { scanned: number; missing: string[]; claimed: string[]; heldElsewhere: string[] } = { scanned: 0, missing: [], claimed: [], heldElsewhere: [] };
+    const field = emailsConstants.UNIQUE_FIELD;
+    if (!accountStreams.uniqueFieldNames.includes(field)) return summary;
+    for (const { id, username } of await this.getAllUsersIdAndName()) {
+      const email = await this.getOnePropertyValue(id, field);
+      if (typeof email !== 'string' || email === '' || await this.#otherCoreOf(username) != null) continue;
+      summary.scanned++;
+      const owner = await this.platform.getUsersUniqueField(field, email);
+      if (owner === this.platform.hashFor('username', username)) continue;
+      if (owner == null) {
+        summary.missing.push(username);
+        if (dryRun) continue;
+        if (await this.platform.setUserUniqueFieldIfNotExists(username, field, email)) {
+          summary.claimed.push(username);
+          continue;
+        }
+      }
+      summary.heldElsewhere.push(username);
+    }
+    return summary;
+  }
+
   // -------------------- Password Management ------------------- //
 
   async checkUserPassword (userId: string, password: string) {
