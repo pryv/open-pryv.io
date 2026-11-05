@@ -184,9 +184,24 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
   });
 
   describe('[CEPB] failed-password backoff per account', function () {
-    // One free failure, then a one-second delay; long window.
-    const attempts = { auth: { passwordAttempts: { freeFailures: 1, baseSeconds: 1, maxSeconds: 1, windowSeconds: 3600 } } };
+    // One free failure, then a delay long enough that it cannot lapse before
+    // the next login is checked, however slow the run; long window.
+    const attempts = { auth: { passwordAttempts: { freeFailures: 1, baseSeconds: 60, maxSeconds: 60, windowSeconds: 3600 } } };
+    // Tests about a delay running out use short ones and sleep past them; a
+    // 429 under a short delay is never asserted (the next login may outlast
+    // it), the delay is read from storage instead.
+    const short = { auth: { passwordAttempts: { freeFailures: 1, baseSeconds: 1, maxSeconds: 1, windowSeconds: 3600 } } };
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /** The stored failed-password delay of the account in ms (0: none). */
+    async function storedDelayMs () {
+      const userRow = await (await getUsersRepository()).getUserByUsername(username);
+      const layer = await storage.getStorageLayer();
+      const item = await new Promise((resolve, reject) =>
+        layer.profile.findOne(userRow, { id: 'private' }, null, (err, res) => err ? reject(err) : resolve(res)));
+      const t = item?.data?.passwordThrottle;
+      return t?.notBefore ? t.notBefore - t.lastFailureAt : 0;
+    }
 
     function assertDelayed (res, maxSeconds) {
       assert.strictEqual(res.status, 429, JSON.stringify(res.body));
@@ -201,15 +216,24 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
       assert.strictEqual(res.body.error.id, 'invalid-credentials');
     }
 
-    it('[CEPB1] past the free failures the next login is delayed, even with the right password; after the delay it succeeds', async function () {
+    it('[CEPB1] past the free failures the next login is delayed, even with the right password', async function () {
       await withInjectedConfig(attempts, async () => {
         assertWrongPassword(await login('wrong-1'));
         assertWrongPassword(await login('wrong-2'));
-        assertDelayed(await login(password), 1);
+        assertDelayed(await login(password), 60);
+      });
+    });
+
+    it('[CEPB1B] after the delay a login with the right password succeeds, and the success clears the tally', async function () {
+      await withInjectedConfig(short, async () => {
+        assertWrongPassword(await login('wrong-1'));
+        assertWrongPassword(await login('wrong-2'));
+        assert.strictEqual(await storedDelayMs(), 1000, 'the failure past the free one sets a delay');
         await sleep(1100);
         const ok = await login(password);
         assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
-        // The success cleared the tally: the next failure is free again.
+        // The success cleared the tally: no delay stored, and the next failure is free again.
+        assert.strictEqual(await storedDelayMs(), 0, 'the success clears the stored delay');
         assertWrongPassword(await login('wrong-3'));
         assertWrongPassword(await login('wrong-4'));
       });
@@ -221,7 +245,7 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
           .send({ oldPassword: 'wrong-old', newPassword: password + '-x' });
         assert.strictEqual(change.status, 400, JSON.stringify(change.body));
         assertWrongPassword(await login('wrong-1'));
-        assertDelayed(await login(password), 1);
+        assertDelayed(await login(password), 60);
       });
     });
 
@@ -232,7 +256,7 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
         assert.strictEqual(deactivate.status, 403, JSON.stringify(deactivate.body));
         assert.strictEqual(deactivate.body.error.id, 'invalid-step-up');
         assertWrongPassword(await login('wrong-1'));
-        assertDelayed(await login(password), 1);
+        assertDelayed(await login(password), 60);
       });
     });
 
@@ -242,25 +266,22 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
           .send({ username, password: 'wrong-recover', recoveryCode: 'not-a-code' });
         assertWrongPassword(recover);
         assertWrongPassword(await login('wrong-1'));
-        assertDelayed(await login(password), 1);
+        assertDelayed(await login(password), 60);
       });
     });
 
     it('[CEPB5] the delay never exceeds maxSeconds, however many failures accrue', async function () {
       const capped = { auth: { passwordAttempts: { freeFailures: 0, baseSeconds: 1, maxSeconds: 2, windowSeconds: 3600 } } };
       await withInjectedConfig(capped, async () => {
+        // Each delay is read from storage and waited out (see `short`).
+        const delays = [];
         for (let i = 0; i < 4; i++) {
-          let res = await login('wrong-' + i);
-          if (res.status === 429) {
-            assertDelayed(res, 2);
-            await sleep(res.body.error.data.retryAfterSeconds * 1000 + 100);
-            res = await login('wrong-' + i);
-          }
-          assertWrongPassword(res);
+          assertWrongPassword(await login('wrong-' + i));
+          const delay = await storedDelayMs();
+          delays.push(delay);
+          await sleep(delay + 100);
         }
-        const delayed = await login(password);
-        assertDelayed(delayed, 2);
-        await sleep(delayed.body.error.data.retryAfterSeconds * 1000 + 100);
+        assert.deepStrictEqual(delays, [1000, 2000, 2000, 2000], 'the delay doubles, then stays at maxSeconds');
         assert.strictEqual((await login(password)).status, 200, 'the owner is slowed, never locked out');
       });
     });
@@ -408,12 +429,14 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
 
     it('[CEPI7] the refusal ends with its window', async function () {
       const A = '198.51.100.3';
-      // Start at the beginning of a two-second window.
-      await sleep(2000 - (Date.now() % 2000) + 50);
-      await withInjectedConfig(perIp(1, 2), async () => {
+      // Start at the beginning of a six-second window: the two logins below
+      // fall in it even when a slow run takes seconds per login.
+      const WINDOW_MS = 6000;
+      await sleep(WINDOW_MS - (Date.now() % WINDOW_MS) + 50);
+      await withInjectedConfig(perIp(1, WINDOW_MS / 1000), async () => {
         assertWrongPassword(await loginAs(pool[0], 'wrong-1', A));
         const refused = await loginAs(pool[1], password, A);
-        assertAddressRefused(refused, 2);
+        assertAddressRefused(refused, WINDOW_MS / 1000);
         await sleep(refused.body.error.data.retryAfterSeconds * 1000 + 100);
         assert.strictEqual((await loginAs(pool[1], password, A)).status, 200);
       });

@@ -499,16 +499,34 @@ describe('[SK01] Socket.IO', function () {
       const tokens = [token, testData.accesses[2].token];
       const socketConnections = tokens.map((token) => connect(namespace, { auth: token }));
       const createConnection = socketConnections[0];
-      const donePromises = socketConnections.map((conn) => {
+      const counts = socketConnections.map(() => 0);
+      const donePromises = socketConnections.map((conn, i) => {
         const [promise, cb] = expectNCalls(2);
-        conn.on('streamsChanged', cb);
+        conn.on('streamsChanged', () => { counts[i]++; cb(); });
         return promise;
       });
+      // A socket only receives the changes made once it is connected: wait for
+      // every one of them before changing anything.
+      await Promise.all(socketConnections.map((conn) => new Promise((resolve, reject) => {
+        conn.once('connect', resolve);
+        conn.once('connect_error', reject);
+      })));
       await createStream(createConnection, { name: 'foo' });
       await createStream(createConnection, { name: 'bar' });
-      return Promise.all(donePromises);
+      let timer;
+      const missing = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('streamsChanged received per socket: ' + JSON.stringify(counts) + ', expected 2 each')), 10000);
+      });
+      try {
+        await Promise.race([Promise.all(donePromises), missing]);
+      } finally {
+        clearTimeout(timer);
+      }
       function createStream (conn, params) {
-        return new Promise((resolve) => conn.emit('streams.create', params, resolve));
+        return new Promise((resolve, reject) => conn.emit('streams.create', params, (err, res) => {
+          if (err) return reject(new Error('streams.create failed: ' + JSON.stringify(err)));
+          resolve(res);
+        }));
       }
     });
   });

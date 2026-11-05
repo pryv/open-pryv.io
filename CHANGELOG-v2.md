@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Socket.IO: no lost notifications for a client that connects while another leaves
+
+- **Fixed: a Socket.IO client could stop receiving change notifications** (`eventsChanged`,
+  `streamsChanged`, ...) for good when it connected to an account while the last other client of that
+  account was disconnecting. It stayed connected and could still call methods, but no notification
+  reached it until it reconnected. Every connected client now receives them.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

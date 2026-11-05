@@ -302,8 +302,12 @@ describe('[ACST] account auto-deletion setting', function () {
 
   it('[ACST18] the password step-up counts on the sign-in tally: wrong passwords delay it like a login, a success clears it', async function () {
     const u = await freshUser();
-    const attempts = { auth: { passwordAttempts: { freeFailures: 1, baseSeconds: 1, maxSeconds: 1, windowSeconds: 3600 } } };
+    // A delay long enough that it cannot lapse before the next attempt is
+    // checked, however slow the run; it is then run out by moving its end
+    // into the past in storage.
+    const attempts = { auth: { passwordAttempts: { freeFailures: 1, baseSeconds: 60, maxSeconds: 60, windowSeconds: 3600 } } };
     const arm = (password) => set(u, { mode: 'inactivity', inactivityDays: 365, password });
+    const userRef = { id: u.id, username: u.username };
     await withInjectedConfig(attempts, async () => {
       assert.equal(errorId(await arm('wrong-1')), 'auto-deletion-wrong-password');
       assert.equal(errorId(await arm('wrong-2')), 'auto-deletion-wrong-password');
@@ -311,7 +315,12 @@ describe('[ACST] account auto-deletion setting', function () {
       assert.equal(delayed.status, 429, JSON.stringify(delayed.body));
       assert.equal(errorId(delayed), 'too-many-attempts', 'the right password is delayed too: no oracle');
       assert.equal(await state.getSetting(u.id), null, 'nothing written');
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+      const item = await new Promise((resolve, reject) =>
+        storageLayer.profile.findOne(userRef, { id: 'private' }, null, (err, res) => err ? reject(err) : resolve(res)));
+      const tally = item.data.passwordThrottle;
+      assert.ok(tally.notBefore > Date.now(), 'a delay runs');
+      await new Promise((resolve, reject) => storageLayer.profile.updateOne(userRef, { id: 'private' },
+        { data: { passwordThrottle: { ...tally, notBefore: Date.now() - 1 } } }, (err) => err ? reject(err) : resolve()));
       assert.equal((await arm(PASSWORD)).status, 200);
       // the success cleared the tally: the next failure is free again
       assert.equal(errorId(await set(u, { mode: 'inactivity', inactivityDays: 200, password: 'wrong-3' })), 'auto-deletion-wrong-password');

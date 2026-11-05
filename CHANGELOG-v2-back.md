@@ -108,6 +108,31 @@
 - Tests: `[ADRC]` (validator), `[ADRI]` (dispatcher against a fake upstream), `[ADRE]` (the real
   api-server, both topologies, PG and SQLite).
 
+### socket.io: notifications reach a socket authenticated while its namespace was released
+
+- `socket-io/Manager.ts`: namespace contexts are keyed by the namespace object, not its name.
+  socket.io releases a namespace once its last connected socket leaves, even while another
+  socket of it is still in the handshake; that socket joins the released object and the next
+  connection gets a new object under the same name. A context keyed by name was rebound to the
+  newer object, and the sockets of the older one received no notifications. Each object now
+  keeps its own context and subscription (`[SION7]`).
+
+### Tests: no 429 asserted under a delay that a slow run can outlast
+
+- `mfa.test.js` `[MA12]`, `credential-entry-dispatch.test.js` `[CEPB]`,
+  `account-auto-deletion.test.js` `[ACST18]`: a delayed attempt is asserted under a delay of 60 s
+  or more; a test about a delay running out reads the delay from storage and sleeps past it (or
+  moves its end into the past). A 1 s delay could lapse during the next login + verify on a busy
+  run, answering 400 / 200 instead of 429. `[CEPB1]` is split (`[CEPB1B]` waits the delay out).
+- `mfa.test.js` `[MSMS12]`: a re-sent challenge is asserted accepted only when its answer came back
+  within the session lifetime (3 s), and the final verify is sent past the lifetime counted from
+  the login answer.
+- `sockets.test.js` `[JC99]`: waits until every socket is connected before changing anything,
+  fails a refused `streams.create` at once, and names the notifications each socket received when
+  one is missing.
+- `account.test.js` `[ACCO]`: a refused before-all login also reports the stored account state
+  (does the stored password match, its time, the failed-password tally).
+
 ### OAuth token exchange: derived sessions, audience on sessions
 
 - New `oauth2/src/grants/token_exchange.ts` (`handleTokenExchange`, `TOKEN_EXCHANGE`), dispatched by

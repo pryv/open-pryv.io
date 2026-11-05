@@ -1243,17 +1243,32 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
     it('[MSMS12] re-sent challenges do not extend a login session past its lifetime', async function () {
       await setUp();
-      const restoreTtl = injectTestConfigSnapshot({ services: { mfa: { sessions: { ttlSeconds: 2 } } } });
+      const TTL_MS = 3000;
+      const restoreTtl = injectTestConfigSnapshot({ services: { mfa: { sessions: { ttlSeconds: TTL_MS / 1000 } } } });
       try {
         await _resetMFASingletons();
         await enrol();
+        // The session starts while the login runs: between these two instants.
+        const loginSent = Date.now();
         const loginRes = await login();
+        const loginAnswered = Date.now();
+        // A challenge is only asserted when its answer came back before the
+        // lifetime could have ended: on a slow run a later one may find the
+        // session over, which is not what this test is about.
+        let accepted = 0;
         for (let i = 0; i < 3; i++) {
           await sleep(700);
           const again = await challenge(loginRes.body.mfaToken);
-          if (i < 2) assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+          if (Date.now() - loginSent < TTL_MS) {
+            assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+            accepted++;
+          }
         }
-        // 2.1 s after the login: the session is over, whatever was sent since.
+        assert.ok(accepted > 0, 'no challenge answered within the session lifetime: the run was too slow for this ' +
+          'test (login and first challenge took over ' + TTL_MS + ' ms), not a lifetime defect');
+        // Past the lifetime counted from the login, whatever was sent since:
+        // a challenge extending it would make this verify succeed.
+        await sleep(Math.max(0, loginAnswered + TTL_MS + 100 - Date.now()));
         const late = await verify(loginRes.body.mfaToken, lastCode());
         assert.strictEqual(late.status, 401, `the session outlived its lifetime: ${JSON.stringify(late.body)}`);
         assert.strictEqual(late.body.token, undefined);
@@ -2378,7 +2393,12 @@ describe('[MFAA] MFA acceptance (seq)', function () {
                 // test on a slow run.
                 perAccountWindowSeconds: 3600,
                 ...attempts,
-                backoff: { freeFailures: FREE, baseSeconds: 1, maxSeconds: 2, ...backoff }
+                // Delays long enough that none lapses before the next guess is
+                // checked, however slow the run: a test observing a 429 must not
+                // depend on a login + verify round trip fitting in the delay.
+                // Tests about a delay running out use short ones and sleep past
+                // them (never assert a 429 under a short delay).
+                backoff: { freeFailures: FREE, baseSeconds: 60, maxSeconds: 3600, ...backoff }
               }
             }
           }
@@ -2434,8 +2454,19 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.ok(res.headers['retry-after'] != null, 'a Retry-After header should be set');
         const seconds = res.body.error.data.retryAfterSeconds;
         assert.ok(Number.isInteger(seconds) && seconds >= 1, `retryAfterSeconds: ${seconds}`);
-        if (expectedSeconds != null) assert.strictEqual(seconds, expectedSeconds);
+        if (expectedSeconds != null) {
+          // The remaining wait: the full delay less the time the request took to
+          // arrive. Within half of it, so a doubled delay never passes for this one.
+          assert.ok(seconds <= expectedSeconds && seconds > expectedSeconds / 2,
+            `retryAfterSeconds ${seconds} should be the remainder of a ${expectedSeconds} s delay`);
+        }
         return seconds;
+      }
+
+      /** The stored tally's current delay in ms (0: none), read from storage. */
+      async function storedDelayMs () {
+        const t = (await storedProfile()).data.mfaThrottle;
+        return t.notBefore ? t.notBefore - t.lastFailureAt : 0;
       }
 
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -2454,18 +2485,21 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(breaching.status, 400, 'the failing guess itself is answered as a failure');
         // ...and delays the NEXT attempt, whatever the code.
         const correct = await guessOnFreshLogin(totpCodeFor(secret, 0));
-        assertDelayed(correct, 1);
+        assertDelayed(correct, 60);
       });
 
+      // A delay short enough to sleep through cannot also be observed as a 429
+      // reliably (the next login + verify may outlast it on a slow run), so the
+      // delay is read from storage, and the test sleeps past it.
       it('[MA12B] the delay lifts on its own and doubles on the next failure', async function () {
-        await setUp({}, { maxSeconds: 60 });
+        await setUp({}, { baseSeconds: 1, maxSeconds: 60 });
         await freeWrongGuesses(FREE + 1);
-        assertDelayed(await guessOnFreshLogin(), 1);
+        assert.strictEqual(await storedDelayMs(), 1000, 'the first failure past the free ones sets a baseSeconds delay');
         await sleep(1100);
         const next = await guessOnFreshLogin();
         assert.strictEqual(next.status, 400, `after the delay a guess is verified again: ${JSON.stringify(next.body)}`);
-        const doubled = assertDelayed(await guessOnFreshLogin(), 2);
-        await sleep(doubled * 1000 + 100);
+        assert.strictEqual(await storedDelayMs(), 2000, 'the next failure doubles the delay');
+        await sleep(2100);
         const ok = await guessOnFreshLogin(totpCodeFor(secret, 0));
         assert.strictEqual(ok.status, 200, `a correct code logs in once the delay ran out: ${JSON.stringify(ok.body)}`);
       });
@@ -2528,23 +2562,18 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         this.timeout(30000);
         await setUp({}, { baseSeconds: 1, maxSeconds: 2 });
         // An attacker keeps guessing, waiting out each delay: failures past the
-        // free ones grow the delay 1, 2, 2, 2, ... (capped).
-        let failures = 0;
-        let lastDelay = 0;
-        while (failures < FREE + 5) {
+        // free ones grow the delay 1, 2, 2, 2, ... (capped). The delays are read
+        // from storage, see [MA12B].
+        const delays = [];
+        for (let i = 0; i < FREE + 5; i++) {
           const res = await guessOnFreshLogin();
-          if (res.status === 429) {
-            lastDelay = assertDelayed(res);
-            assert.ok(lastDelay <= 2, `a delay never exceeds maxSeconds (got ${lastDelay})`);
-            await sleep(lastDelay * 1000 + 100);
-            continue;
-          }
           assert.ok(res.status === 400 || res.status === 401, `a verified wrong guess: ${res.status} ${JSON.stringify(res.body)}`);
-          failures++;
+          const delay = await storedDelayMs();
+          delays.push(delay);
+          if (delay > 0) await sleep(delay + 100);
         }
-        const refused = await guessOnFreshLogin(totpCodeFor(secret, 0));
-        const wait = assertDelayed(refused, 2);
-        await sleep(wait * 1000 + 100);
+        assert.deepStrictEqual(delays, [0, 0, 0, 1000, 2000, 2000, 2000, 2000], 'the delay grows, then stays at maxSeconds');
+        // The real user, having waited maxSeconds (slept above), logs in.
         const ok = await guessOnFreshLogin(totpCodeFor(secret, 0));
         assert.strictEqual(ok.status, 200, `the real user logs in after at most maxSeconds: ${JSON.stringify(ok.body)}`);
       });
@@ -2616,7 +2645,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const guess = await guessOnFreshLogin();
         assert.strictEqual(guess.status, 400, `a former lock must not be honoured: ${JSON.stringify(guess.body)}`);
         // ...and the former count carried over: that was failure FREE + 1.
-        assertDelayed(await guessOnFreshLogin(), 1);
+        assertDelayed(await guessOnFreshLogin(), 60);
         const { data } = await storedProfile();
         assert.strictEqual(data.mfaThrottle.failures, FREE + 1);
         assert.strictEqual(data.mfaThrottle.lockedUntil, undefined, 'the former shape is replaced');
