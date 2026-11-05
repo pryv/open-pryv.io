@@ -23,11 +23,12 @@
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from './storage.ts';
 import * as storage from './storage.ts';
-import { checkMaxSet } from './scopeGrammar.ts';
+import { checkMaxSet, canonicalJson } from './scopeGrammar.ts';
 import { insecureRedirectUris } from './clientRegistry.ts';
 import { validatePublicJwkSet } from './jwks.ts';
 import { logServerWarning } from './serverLog.ts';
 import { audienceBoundSessions } from './audienceBinding.ts';
+import { clientMetadataSettings } from './clientMetadataConfig.ts';
 
 /**
  * Check every registry client of the platform. Resolves to the number of
@@ -84,4 +85,39 @@ export async function checkRegistryClients (platform: PlatformDB, config?: { get
       'the tokens issued for a resource server (oauth.audienceBoundSessions is not true): set it once those resource servers exchange');
   }
   return warnings;
+}
+
+/**
+ * The template of metadata-document clients (`oauth.clientMetadataDocuments
+ * .client`), checked like a registry row's maximum scope set against the
+ * installed grammar. A template the grammar refuses is reported (every such
+ * client's /oauth2/authorize then answers `invalid_scope`), never fatal.
+ * Returns the number of warnings (0 or 1).
+ */
+export function checkClientMetadataTemplate (config: { get (key: string): unknown }): number {
+  const settings = clientMetadataSettings(config);
+  if (settings.mode === 'off') return 0;
+  const t = settings.client;
+  const probe = {
+    // One id per template, so the grammar's memo never answers for another.
+    clientId: 'metadata-document-template-' + canonicalJson(t).length + '-' + t.scope.join('+'),
+    kind: 'registry',
+    redirectUris: ['https://client.invalid/cb'],
+    grantTypes: ['authorization_code'],
+    scope: t.scope,
+    allowedAudiences: t.allowedAudiences,
+    launchTypes: t.launchTypes,
+    subjectType: t.subjectType,
+    updatedAt: 0,
+  } as OAuthClient;
+  let max: ReturnType<typeof checkMaxSet>;
+  try {
+    max = checkMaxSet(probe);
+  } catch (err) {
+    max = { ok: false, description: 'could not be checked: ' + (err as Error).message };
+  }
+  if (max.ok) return 0;
+  logServerWarning(`oauth.clientMetadataDocuments.client: its scope ${max.description}; /oauth2/authorize will refuse every ` +
+    'metadata-document client (invalid_scope) until the template is fixed');
+  return 1;
 }

@@ -43,6 +43,7 @@ import { revokeOrphanAccess } from '../orphanAccess.ts';
 import { logServerError, logServerWarning } from '../serverLog.ts';
 import { clientLifetimes, offlineAccessAllowed } from '../clientLifetimes.ts';
 import { checkTokenResource } from '../resourceIndicator.ts';
+import { reassertPermanentRow } from '../clientMetadata.ts';
 
 /** RFC 7636 §4.1 code_verifier: 43 to 128 unreserved characters. */
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
@@ -219,6 +220,20 @@ export async function handleAuthorizationCode (
       .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
     if (computed !== row.codeChallenge) {
       return { ok: false, status: 400, error: 'invalid_grant', description: 'PKCE verification failed' };
+    }
+    // A client revoked at or after this code was issued (or up to the
+    // epoch's clock margin before, `issuedBeforeClientRevoke`): the code is void,
+    // whatever became of the client since (registered again, or a metadata
+    // document's row re-created). Read directly, not from the per-core cache.
+    let revokedAt: number | null;
+    try {
+      revokedAt = await storage.getRevokedAt(deps.platform, row.clientId);
+    } catch (err) {
+      logServerError('authorization_code: reading the client revoke epoch failed', err);
+      return { ok: false, status: 500, error: 'server_error', description: 'failed to read the client' };
+    }
+    if (storage.issuedBeforeClientRevoke(storage.codeIssuedAt(row as { issuedAt?: number; expiresAt: number }), revokedAt)) {
+      return { ok: false, status: 400, error: 'invalid_grant', description: 'code is invalid or already used' };
     }
 
     if (params.client_id !== row.clientId) {
@@ -417,6 +432,8 @@ export async function handleAuthorizationCode (
       accessId: row.accessId,
       ...(dpopJkt != null ? { dpopJkt } : {}),
     });
+    // A token for this client exists now: its row must not read as provisional.
+    await reassertPermanentRow(deps.platform, client);
 
     if (registry != null) {
       return {

@@ -35,6 +35,8 @@ import { markDPoPJtiUsed, getDpopKeyRevokedAt, recordDpopKeySeen } from '../stor
 import { logServerError } from '../serverLog.ts';
 import { getClient, isRegistryClient } from '../clientRegistry.ts';
 import { decodeBasicAuth, clientIdFromAssertion, hasKeySet } from '../clientAuth.ts';
+import { clientKeyOf } from '../clientMetadataId.ts';
+import { reportClientAuthRefusal } from '../clientMetadata.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -90,9 +92,11 @@ export function handleToken (deps: TokenDeps) {
     // are given and differ, the grant refuses the request (invalid_client).
     const rawBody = req.body ?? {};
     const noBodyClientId = typeof rawBody.client_id !== 'string' || rawBody.client_id === '';
+    // A metadata-document client names itself by its URL (never in Basic: it
+    // has no secret); from here on it is its row key.
     let body = basic != null && noBodyClientId
       ? { ...rawBody, client_id: basic.client_id }
-      : rawBody;
+      : (noBodyClientId ? rawBody : { ...rawBody, client_id: clientKeyOf(rawBody.client_id) });
     const grantType = typeof body.grant_type === 'string' ? body.grant_type : '';
 
     let outcome: TokenOutcome | undefined;
@@ -109,9 +113,13 @@ export function handleToken (deps: TokenDeps) {
     // client_credentials grants already tell it apart for a body client_id.
     let assertedClient: Awaited<ReturnType<typeof getClient>> | undefined;
     if (basic == null && noBodyClientId && typeof rawBody.client_assertion === 'string' && rawBody.client_assertion !== '') {
-      const assertedId = clientIdFromAssertion(rawBody.client_assertion, rawBody.client_assertion_type);
+      // A metadata-document client's assertion names its URL: its row key here.
+      const assertedIss = clientIdFromAssertion(rawBody.client_assertion, rawBody.client_assertion_type);
+      const assertedId = assertedIss != null ? clientKeyOf(assertedIss) : null;
       const asserted = assertedId != null ? await getClient(deps.platform, assertedId) : null;
       if (assertedId == null || !hasKeySet(asserted)) {
+        // Recorded for a metadata-document client (its row may be gone: the URL the assertion named is the hint).
+        if (assertedId != null) await reportClientAuthRefusal(deps.platform, assertedId, 'token', grantType, assertedIss);
         outcome = { ok: false as const, status: 401, error: 'invalid_client', description: 'client authentication failed' };
       } else {
         assertedClient = asserted;
@@ -286,6 +294,11 @@ export function handleToken (deps: TokenDeps) {
       res.statusCode = 200;
       res.end(JSON.stringify(outcome.body));
     } else {
+      if (outcome.error === 'invalid_client' && typeof body.client_id === 'string') {
+        // The body's URL is the hint for a row gone (e.g. a revoked public client).
+        await reportClientAuthRefusal(deps.platform, body.client_id, 'token', grantType,
+          typeof rawBody.client_id === 'string' ? rawBody.client_id : null);
+      }
       res.statusCode = outcome.status;
       const resBody: Record<string, unknown> = { error: outcome.error };
       if (outcome.description) resBody.error_description = outcome.description;

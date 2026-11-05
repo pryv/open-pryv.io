@@ -1200,6 +1200,57 @@ oauth:
   # hook). A hook that does not answer in time fails the request (500,
   # server_error) before any refresh token is stored.
   extensionHookTimeoutMs: 5000     # milliseconds
+  # Client metadata documents: a client may name itself, as client_id, by the
+  # https URL of a JSON document it publishes (RFC 7591 member names). The core
+  # fetches it at /oauth2/authorize (https only, no redirect followed, private
+  # addresses refused, maxDocumentBytes, fetchTimeoutMs) and serves the client
+  # as a registry client: identity and display from the document, what it may
+  # be granted from `client` below (never from the document). The consent UI
+  # must show the document's host next to the client's name.
+  # PLATFORM-WIDE: identical on every core, except client.allowedAudiences.
+  clientMetadataDocuments:
+    # off: a URL client_id is an unknown client. allowList: only documents on
+    # allowedHosts (the cautious setting). any: any https host (any party can
+    # present a client to the consent screen; the host shown, the template, the
+    # deny-list and the fetch budgets are the controls).
+    mode: 'off'
+    # Lower-case hosts; "host:port" for another port than 443; "*.example.com"
+    # for exactly one more label. deniedHosts applies in both modes and
+    # matches wider: an entry without a port denies every port, "*.d" denies
+    # d itself and every depth below it.
+    allowedHosts: []
+    deniedHosts: []
+    cacheSeconds: 3600             # a fetched document is reused this long (HTTP cache headers are not read)
+    staleGraceSeconds: 86400       # a client whose refetch fails stays usable this long past its last fetch
+    negativeCacheSeconds: 60       # per core: a refused or invalid URL is not fetched again within this time
+    fetchTimeoutMs: 5000
+    maxDocumentBytes: 16384
+    fetchesPerMinute: 60           # per core, all hosts (10 per host)
+    # A client row is written at the first authorization request, before any
+    # consent: provisional until a user consents (or the operator runs
+    # refresh-metadata). New rows per minute and core, and the age past which
+    # a provisional row is deleted (no revoke tombstone: nothing was issued).
+    newClientsPerMinute: 10        # at most fetchesPerMinute
+    unconsentedRowSeconds: 3600    # at least 600
+    # What a document may declare as token_endpoint_auth_method (drop
+    # private_key_jwt to accept public clients only).
+    authMethods: [none, private_key_jwt]
+    # What such a client may be granted: a registry client row without an
+    # identity. `bin/oauth-client.js template-from <clientId>` prints this block
+    # from an existing registry client. Required when mode is not off: scope
+    # (the maximum scope set, in the extension's grammar) and allowedAudiences
+    # (the resource URLs such a client may name: aud / resource).
+    client:
+      scope: ''
+      allowedAudiences: []
+      launchTypes: []
+      subjectType: pairwise        # pairwise (an alias per user and client) or public
+      maxEntries: 200
+      offlineAccessAllowed: true
+      accessTokenTTL: null         # seconds; null: the platform's
+      refreshTokenTTL: null
+      refreshTokenAbsoluteTTL: null
+      regions: []                  # empty: every region
 
 # Shared secrets — hand a secret to a third party by one-time key instead of
 # by URL query parameter. Inert unless a client calls it: no listener, no

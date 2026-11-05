@@ -43,6 +43,7 @@ The module exports a factory `(host: { apiVersion, options, logger }) => { apiVe
 - The whole offer (permissions, texts, labels, groups) is bounded to 256 KiB of canonical JSON (`MAX_SYNTH_OFFER_BYTES`); an offer that is not JSON (a BigInt, a cycle) is a contract error too.
 - **These checks hold on every parse**, not only the request's: the registered scope (`purpose: 'max'`; a failure refuses every request of the client before any consent, and the boot check warns) and the echo (a failure comes after the consent: the code exchange, every refresh and introspection answer `500 server_error`). The `max` offer is never shown and is the largest one a grammar produces: emit no `entryLabels` / `entryGroups` / texts when `ctx.purpose === 'max'`, measure that offer first, then your largest request offer, and keep both well under the bound.
 - `openid` and `offline_access` are the core's tokens: the grammar never sees them.
+- **Metadata-document clients** (a client named by the https URL of its client metadata document, `docs/oauth2.md` § 1f) are registry clients too: `ctx.client` carries `origin: 'metadata-document'` and `metadataUrl` (the client's id on the wire; `ctx.clientId` / `ctx.client.clientId` is its stored key, `url~…`), and its `scope`, audiences, launch types and subject type are the operator's template, the same for every such client. A grammar may tell them apart (for instance refuse a launch type to them); the core acts on none of it.
 
 `scopeGrammar.echo({ permissions, requestedTokens, client, aliased?, grantState? })` answers the scope tokens naming what `permissions` (the minted session's) hold; `aliased` (optional) tells whether the subject is the grant's alias, so the echo can name a pseudonym marker for a `pairwise` client that did not ask for one. The core parses the echoed string **whole**, with `purpose: 'request'`, so every request rule above applies to it, and then checks:
 
@@ -112,6 +113,10 @@ Every grant + revoke path calls into `src/audit.ts`. Available event types:
 | `oauth.token.introspected` | `{ clientId, active, userId?, tokenClientId?, actorClientId?, reason? }`: syslog only, never the token |
 | `oauth.token.exchanged` | `{ clientId, userId, accessId, dataGrantAccessId?, subjectClientId, subjectAccessId, reused, grantedScope }`: a token exchange (`clientId` the resource server, `accessId` the derived session) |
 | `oauth.token.exchange_refused` | `{ clientId, reason }`: an authenticated token exchange refused (`not-entitled`, `request-shape`, `subject-inactive`, `subject-client-unavailable`, `foreign-audience`, `wrong-core`); syslog only |
+| `oauth.client.metadata_fetched` | `{ clientId, metadataUrl, host, outcome, changedFields? }`: a client metadata document fetched (`outcome`: `created`, `refreshed`, `unchanged`); syslog only |
+| `oauth.client.metadata_refused` | `{ clientId, metadataUrl, host, reason, detail, suppressed?, dropped? }`: a client metadata document URL refused, its document unusable, or such a client refused `invalid_client` at the token, revocation or introspection endpoint (`reason`: `url`, `host-policy`, `unreachable`, `invalid`, `budget`, `client-auth`; never the document); sampled per host (or client), reason and minute (`suppressed`: that key's refusals not recorded in its minute before), and capped at 60 per reason and minute per core (`dropped`: what the cap dropped in the capped minute before); syslog only |
+
+`oauth.consent.shown` adds `metadataUrl` and `metadataHost` for a metadata-document client.
 
 The type list and payload fields are `OAuthAuditEvent` / `OAuthAuditPayload` in `src/audit.ts`; the events without a resolvable user (`USERLESS_EVENTS`) go to syslog only.
 

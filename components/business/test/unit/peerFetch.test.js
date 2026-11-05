@@ -150,6 +150,19 @@ describe('[PFRT] counterparty calls (peerFetch)', function () {
     assert.ok(!(err instanceof PeerFetchRefusedError));
   });
 
+  it('[PFR12] the timeout bounds the body too: headers sent, then a body that stalls, rejects within the signal', async function () {
+    this.timeout(5000);
+    const stall = await receiver((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"a":'); // and nothing more, never ended
+    });
+    const started = Date.now();
+    const err = await failure(peerFetch(`http://127.0.0.1:${stall.port}/doc`, { signal: AbortSignal.timeout(300) }, settings(['127.0.0.1'])));
+    assert.ok(Date.now() - started < 2000, 'settled within the timeout, not left pending');
+    assert.ok(['TimeoutError', 'AbortError'].includes(err.name) || /abort/i.test(String(err.message)), String(err));
+    stall.server.closeAllConnections();
+  });
+
   it('[PFR8] platformHostMatcher: core url host, dns domain and below, service.api host', function () {
     const sub = platformHostMatcher({ coreUrl: 'https://core-a.example.org/', dnsDomain: 'pryv.me', serviceApi: 'https://{username}.pryv.me/' });
     for (const h of ['core-a.example.org', 'pryv.me', 'alice.pryv.me', 'reg.pryv.me', 'Core-A.example.org.']) assert.equal(sub(h), true, h);

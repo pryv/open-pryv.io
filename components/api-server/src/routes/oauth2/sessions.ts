@@ -39,6 +39,10 @@ import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } f
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
+import { getClient as getOAuthClient, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
+import { isMetadataClientKey, metadataClientStamp } from 'oauth2/src/clientMetadataId.ts';
+import type { MetadataClientStamp } from 'oauth2/src/clientMetadataId.ts';
+import * as storages from 'storages';
 import { isDeepStrictEqual } from 'node:util';
 
 /** What a derived session (token exchange) is derived from (`subjectCreated`: seconds). */
@@ -80,12 +84,13 @@ export function createSessions (env: GlueEnv) {
   // `oauth:audienceBoundSessions` is on); a derived session records the
   // subject session it was exchanged for (`exchange`).
   function sessionClientData (dataGrantAccessId: string, chainPermissions: Array<Record<string, unknown>>, dpopJkt?: string,
-    more: { audience?: string; exchange?: DerivedFrom } = {}): Record<string, unknown> {
+    more: { audience?: string; exchange?: DerivedFrom; client?: MetadataClientStamp | null } = {}): Record<string, unknown> {
     return {
       oauth: {
         dataGrantId: parseAccessRef(dataGrantAccessId).base,
         chain: chainOf(chainPermissions),
         ...(typeof more.audience === 'string' && more.audience.length > 0 ? { audience: more.audience } : {}),
+        ...(more.client != null ? { client: more.client } : {}),
         ...(more.exchange != null
           ? {
               exchange: {
@@ -159,6 +164,9 @@ export function createSessions (env: GlueEnv) {
       throw new Error('mintAccessDirect: an audience or an exchange belongs to a session of a grant');
     }
     const permissions = canonicalPermissions(rawPermissions);
+    // A session of a metadata-document client's grant (not a derived one) is
+    // stamped with the client's display fields, as the client row says now.
+    const client = dataGrantAccessId != null && exchange == null ? await metadataClientStampOf(clientId) : null;
     const accessesRepository = accessesRepo(storageLayer, 'mintAccessDirect');
     // Millisecond precision, like every other access (timestamp.now()): the
     // client-revoke check compares `created` with a revoke epoch in ms, so a
@@ -185,6 +193,7 @@ export function createSessions (env: GlueEnv) {
             clientData: sessionClientData(dataGrantAccessId, chainPermissions!, dpopJkt, {
               ...(audience != null ? { audience } : {}),
               ...(exchange != null ? { exchange } : {}),
+              client,
             }),
           }
         : (dpopJkt != null ? { clientData: { dpop: { jkt: dpopJkt } } } : {})),
@@ -241,6 +250,26 @@ export function createSessions (env: GlueEnv) {
   // consent grant.
   async function setGrantOf (userId: string, username: string, grantId: string, clientId: string): Promise<void> {
     await updateGrantOauth(userId, username, grantId, 'oauth2.setGrantOf', (oauth) => ({ ...oauth, grantOf: clientId }));
+  }
+
+  // The display stamp of a metadata-document client (`clientData.oauth.client`:
+  // name, host, url), from its row as it stands; null for any other client.
+  // A snapshot: what the account app names the connected app by, the row key
+  // (`oauth:url~…`) being no name.
+  async function metadataClientStampOf (clientId: string): Promise<MetadataClientStamp | null> {
+    if (!isMetadataClientKey(clientId)) return null;
+    const platform = storages.platformDB as Parameters<typeof getOAuthClient>[0] | null | undefined;
+    if (platform == null) return null;
+    return metadataClientStamp(await getOAuthClient(platform, clientId));
+  }
+
+  // setGrantClient: stamp (again, at each consent) a metadata-document
+  // client's grant with its display fields; written only when they changed.
+  async function setGrantClient (userId: string, username: string, grantId: string, clientId: string): Promise<void> {
+    const stamp = await metadataClientStampOf(clientId);
+    if (stamp == null) return;
+    await updateGrantOauth(userId, username, grantId, 'oauth2.setGrantClient', (oauth) =>
+      (isDeepStrictEqual(oauth.client, stamp) ? null : { ...oauth, client: stamp }));
   }
 
   // setGrantState: the grant's state after a consent, under the extension's
@@ -581,10 +610,14 @@ export function createSessions (env: GlueEnv) {
     return expires;
   }
 
-  /** A found derived row may be answered again: alive, and made after the resource server's revoke epoch. */
+  /**
+   * A found derived row may be answered again: alive, and made after the
+   * resource server's revoke epoch and its clock margin (the data API refuses
+   * a session within it).
+   */
   function reusableDerived (row: DataGrant, notBefore: number | null): boolean {
     if (typeof row.expires !== 'number' || row.expires <= Date.now() / 1000) return false;
-    return notBefore == null || (typeof row.created === 'number' && row.created * 1000 > notBefore);
+    return notBefore == null || (typeof row.created === 'number' && !issuedBeforeClientRevoke(row.created * 1000, notBefore));
   }
 
   function subjectInactive (): Error {
@@ -691,6 +724,7 @@ export function createSessions (env: GlueEnv) {
     sessionClientData,
     mintAccessDirect,
     setGrantOf,
+    setGrantClient,
     setGrantState,
     resolveAccountUserId,
     resolveUsername,

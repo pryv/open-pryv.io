@@ -22,6 +22,7 @@
  *
  * Key prefixes are owned here, not the engine:
  *   - oauth-client/<clientId>             — indefinite
+ *     (a metadata-document client's id is `url~` + a digest of its URL)
  *   - oauth-ac/<sha256(code)>             — 600s TTL; the exchange is served by
  *                                           the issuing core (`coreId` in the row)
  *   - oauth-rt/<coreId>/<sha256(token)>   — sliding 30d, cap 90d absolute (per-core:
@@ -233,7 +234,45 @@ export interface OAuthClient {
   /** `false`: no refresh token is issued to, or redeemed by, this client. */
   offlineAccessAllowed?: boolean;
   dpopBoundAccessTokens?: boolean;
+  /**
+   * `metadata-document`: a client whose `client_id` is the https URL of its
+   * client metadata document (`metadataUrl`), stored under a key derived from
+   * it (`url~` + digest). Its identity and display fields come from the
+   * document, what it may be granted from the operator's template. Absent:
+   * a client registered by the operator.
+   */
+  origin?: 'metadata-document';
+  /** The client's id on the wire (a metadata-document client). */
+  metadataUrl?: string;
+  /** The document's cache state (a metadata-document client), ms since epoch. */
+  metadata?: ClientMetadataState;
   updatedAt: number;
+}
+
+/** The cache state of a metadata-document client row. */
+export interface ClientMetadataState {
+  /** Last successful fetch. */
+  fetchedAt: number;
+  /** The row is used without a fetch until then. */
+  expiresAt: number;
+  /** Digest of what the row derives from the document and the template. */
+  contentDigest: string;
+  /** Last authorization request naming the client (written at most once an hour). */
+  lastUsedAt: number;
+  /** Where the client authentication method was read: the singular member, the plural one, or neither (`none`). */
+  authMethodSource?: 'singular' | 'plural' | 'default';
+  /** The first consent a user gave this client: from then on the row is permanent (else provisional). */
+  firstConsentAt?: number;
+  /** The operator fetched the document by hand (`refresh-metadata`): the row is permanent. */
+  operatorRefreshedAt?: number;
+}
+
+/** Authorization-code lifetime: 10 minutes per RFC 6749 §4.1.2. */
+export const CODE_TTL_SECONDS = 600;
+
+/** When a code was issued: its `issuedAt`, or (a row written before it carried one) its expiry minus the code lifetime. */
+export function codeIssuedAt (row: { issuedAt?: number; expiresAt: number }): number {
+  return Number.isFinite(row.issuedAt) ? row.issuedAt as number : row.expiresAt - CODE_TTL_SECONDS * 1000;
 }
 
 /** Authorization code row (per-issuing-core, ≤10-min TTL). */
@@ -245,6 +284,8 @@ export interface OAuthCode {
   userId: string;
   scope: string[];
   expiresAt: number;
+  /** Issue time (ms); a row without it reads `expiresAt - CODE_TTL_SECONDS` (`codeIssuedAt`). */
+  issuedAt?: number;
   /**
    * The access is created at /accept time (when the user is
    * authenticated) on the user's core; its id rides here to the /token
@@ -404,6 +445,8 @@ export function clientIdError (clientId: unknown): string | null {
   if (!/^[A-Za-z0-9.~-]+$/.test(clientId)) {
     return 'client_id may only hold letters, digits, and the characters . ~ -';
   }
+  // The keys of metadata-document clients (a URL as client_id) start with it.
+  if (clientId.startsWith('url~')) return 'client_id may not start with "url~" (reserved for metadata-document clients)';
   return null;
 }
 
@@ -421,6 +464,19 @@ export async function getClient (platform: PlatformDB, clientId: string): Promis
   if (typeof clientId !== 'string' || clientId.length === 0) return null;
   const raw = await platform.getPlatformKv(PREFIX_CLIENT + clientId);
   return raw == null ? null : JSON.parse(raw) as OAuthClient;
+}
+
+/**
+ * Delete a provisional metadata-document client row (one no consent ever
+ * reached), with no revoke tombstone: nothing was issued for it (the first
+ * code is minted at the first consent), and a tombstone per discarded row
+ * would load every core's revoke cache. Refuses any other id.
+ */
+export async function deleteClientRow (platform: PlatformDB, clientId: string): Promise<void> {
+  if (typeof clientId !== 'string' || !clientId.startsWith('url~')) {
+    throw new Error('deleteClientRow: a metadata-document client key (url~...) is expected');
+  }
+  await platform.deletePlatformKv(PREFIX_CLIENT + clientId);
 }
 
 export async function deleteClient (platform: PlatformDB, clientId: string): Promise<void> {
@@ -519,6 +575,30 @@ export async function getRevokedAt (platform: PlatformDB, clientId: string): Pro
   const raw = await platform.getPlatformKv(PREFIX_CLIENT_REVOKED + clientId);
   if (raw == null) return null;
   try { const at = Number(JSON.parse(raw).revokedAt); return Number.isFinite(at) ? at : 0; } catch { return 0; }
+}
+
+/**
+ * Clock margin of the revoke epoch (ms): the epoch is the clock of the process
+ * that ran the revoke (an operator's shell, maybe not a core), an artefact the
+ * clock of the core that issued it. The CLI host and the cores are expected
+ * NTP-synced; a skew above this is an operations fault the margin does not cover.
+ */
+export const REVOKE_CLOCK_MARGIN_MS = 5000;
+let revokeClockMarginMs = REVOKE_CLOCK_MARGIN_MS;
+
+/**
+ * Whether an artefact (code, refresh token, session, derived session,
+ * consent grant) issued at `issuedMs` is void under the client's revoke epoch
+ * `revokedAt` (ms, null: never revoked): issued at or before it, or up to
+ * `REVOKE_CLOCK_MARGIN_MS` after it. The one comparison every check uses.
+ */
+export function issuedBeforeClientRevoke (issuedMs: number, revokedAt: number | null): boolean {
+  return revokedAt != null && issuedMs <= revokedAt + revokeClockMarginMs;
+}
+
+/** Tests: another revoke clock margin (null: back to `REVOKE_CLOCK_MARGIN_MS`). */
+export function _setRevokeClockMarginForTests (ms: number | null): void {
+  revokeClockMarginMs = ms ?? REVOKE_CLOCK_MARGIN_MS;
 }
 
 /** True when the clientId carries a revoke tombstone (any epoch). */

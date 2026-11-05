@@ -92,6 +92,9 @@ type ClientAuthView = {
   jwks?: { keys: unknown[] };
   jwksUri?: unknown;
   tokenEndpointAuthSigningAlgs?: unknown;
+  /** A metadata-document client: its URL, the `iss` / `sub` its assertions carry. */
+  origin?: unknown;
+  metadataUrl?: unknown;
 } | null | undefined;
 
 /**
@@ -157,9 +160,15 @@ export async function authenticateClient (params: {
     const jwksUri = jwks != null && Array.isArray(jwks.keys) && jwks.keys.length > 0
       ? null
       : params.client?.jwksUri as string;
+    // A metadata-document client is known by its URL on the wire: its
+    // assertions name it (`iss` = `sub` = the URL); the request's client id
+    // is its row key, under which the jti is burnt.
+    const assertedAs: string = params.client?.origin === 'metadata-document' && typeof params.client.metadataUrl === 'string'
+      ? params.client.metadataUrl
+      : params.clientId as string;
     try {
       const verifyWith = async (keys: { keys: unknown[] }) => await verifyClientAssertion(params.assertion, {
-        clientId: params.clientId as string,
+        clientId: assertedAs,
         jwks: keys,
         allowedAlgs: Array.isArray(algs) ? algs.filter((a): a is string => typeof a === 'string') : undefined,
         expectedAudiences: params.expectedAudiences ?? [],

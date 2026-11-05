@@ -48,6 +48,8 @@ export type DiscoveryConfig = {
   introspection?: boolean;
   /** `/oauth2/revoke` is mounted (RFC 7009). */
   revocation?: boolean;
+  /** An https URL is accepted as `client_id` (client metadata documents). */
+  clientMetadataDocuments?: boolean;
 };
 
 /** The id_token claims the core itself sets. */
@@ -94,6 +96,9 @@ export function buildDiscoveryDocument (cfg: DiscoveryConfig): Record<string, un
           revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt', 'none'],
         }
       : {}),
+    // A client may name itself by the https URL of its client metadata
+    // document (`oauth.clientMetadataDocuments.mode` allowList or any).
+    ...(cfg.clientMetadataDocuments === true ? { client_id_metadata_document_supported: true } : {}),
     // Cache headers + non-standard `apiEndpoint` extension are
     // implementation details, not advertised in the discovery doc.
   };

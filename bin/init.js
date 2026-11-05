@@ -771,6 +771,28 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #   logoHosts:
 # #     - logos.example.com
 
+# # Client metadata documents: a client names itself by the https URL of a JSON
+# # document it publishes; the core serves it as a registry client with the reach
+# # of the template below (never the document's). allowList (the cautious
+# # setting) accepts the listed hosts only; any accepts any https host (the
+# # consent screen must show the host next to the name). Off by default. Print
+# # the template from an existing registry client with
+# # bin/oauth-client.js template-from <clientId>. Under the oauth: block above;
+# # identical on every core except client.allowedAudiences (this core's resource URL).
+# #   clientMetadataDocuments:
+# #     mode: allowList
+# #     allowedHosts:
+# #       - client.example
+# #     deniedHosts: []   # any port, any depth under a wildcard, the apex included
+# #     authMethods: [none, private_key_jwt]   # drop private_key_jwt to accept public clients only
+# #     newClientsPerMinute: 10       # new client rows per core and minute, before any consent
+# #     unconsentedRowSeconds: 3600   # a row no consent reached is deleted past this age
+# #     client:
+# #       scope: '<the maximum scope set, in the extension grammar>'
+# #       allowedAudiences:
+# #         - https://<this core host>/adapter/<name>
+# #       subjectType: pairwise
+
 # # hostedSites: a reserved name that serves a static folder (e.g. an auth /
 # # account UI bundle) or proxies a fixed upstream, instead of a user account.
 # # ${dnsLess ? 'dnsLess: served under <publicUrl>/<name>/, same origin as the API (build the bundle with that base).' : 'Served on <name>.<dns.domain>, its own origin. Deploy the folder on every core listing it.'}

@@ -44,6 +44,8 @@ import { authenticateClient } from './clientSecret.ts';
 import { decodeBasicAuth, clientIdFromAssertion, isConfidentialClient as isConfidential } from './clientAuth.ts';
 import { issuerFromConfig } from './issuer.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
+import { clientKeyOf, publicClientId } from './clientMetadataId.ts';
+import { reportClientAuthRefusal } from './clientMetadata.ts';
 import { runHook, toClientView, EXCHANGE_RESERVED_KEYS } from './extension.ts';
 import { logServerError } from './serverLog.ts';
 import { audit } from './audit.ts';
@@ -89,14 +91,19 @@ export function handleIntrospect (deps: IntrospectDeps) {
     const bodyClientId = typeof body.client_id === 'string' ? body.client_id : '';
     // Next to a client_assertion, client_id is optional (RFC 7523 §3): the
     // assertion's iss names the client, authenticated below as any other.
-    const clientId = basic?.client_id ?? (bodyClientId !== ''
+    // A metadata-document client names itself by its URL (body or assertion):
+    // its row key here (such a client is never allowed to introspect: refused below).
+    const clientId = basic?.client_id ?? clientKeyOf(bodyClientId !== ''
       ? bodyClientId
       : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
     // Uniform refusal: unknown, public, not allowed, not active, or bad credentials.
     // The caller's regions are not checked: they say where its users are
     // served, not where it may ask about a token (whose home core this is).
-    const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
-      { 'WWW-Authenticate': 'Basic realm="oauth2"' });
+    const refuse = async (): Promise<void> => {
+      await reportClientAuthRefusal(deps.platform, clientId, 'introspect');
+      sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
+        { 'WWW-Authenticate': 'Basic realm="oauth2"' });
+    };
     if (clientId === '' || (basic != null && bodyClientId !== '' && bodyClientId !== basic.client_id)) return refuse();
     const caller = await getClient(deps.platform, clientId);
     if (caller == null || !isConfidentialClient(caller) || caller.canIntrospect !== true || clientUnavailable(caller, null) != null) {
@@ -210,8 +217,9 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
       // tokens (an app-account session): an empty scope would read as "none".
       ...(registry || (row.grammarTokens?.length ?? 0) > 0 ? { scope: scopeTokens.join(' ') } : {}),
       // A derived token: the client whose authorization it carries, and the
-      // resource server holding it as the actor (RFC 8693 § 4.1).
-      client_id: tokenClientId,
+      // resource server holding it as the actor (RFC 8693 § 4.1). A
+      // metadata-document client is answered by its URL.
+      client_id: publicClientId(client),
       ...(exchange != null ? { act: { client_id: row.clientId } } : {}),
       exp: Math.floor(session.expires),
       iat: Math.floor(session.created),
@@ -234,7 +242,7 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
 /** Whether `clientId` was revoked by the operator after a session created at `createdSeconds`. */
 async function revokedSince (deps: IntrospectDeps, clientId: string, createdSeconds: number): Promise<boolean> {
   const revokedAt = await storage.getRevokedAt(deps.platform, clientId);
-  return revokedAt != null && createdSeconds * 1000 <= revokedAt;
+  return storage.issuedBeforeClientRevoke(createdSeconds * 1000, revokedAt);
 }
 
 /** Stream entries only (features are not the resource server's business). */

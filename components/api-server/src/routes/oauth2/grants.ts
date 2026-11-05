@@ -36,7 +36,7 @@ import { awaitConsentOutcome } from '../consentPoll.ts';
 import { withSessionSelfRevoke, samePermissionKeys, REGISTRY_GRANT_PREFIX, REGISTRY_GRANT_DEVICE } from './types.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import * as storages from 'storages';
-import { getRevokedAt } from 'oauth2/src/storage.ts';
+import { getRevokedAt, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -56,6 +56,7 @@ type SessionHelpers = {
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
   setGrantState: (userId: string, username: string, grantId: string, name: string, value: unknown) => Promise<void>;
+  setGrantClient: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
   storedSessionPermissions: (permissions: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
 };
 
@@ -300,7 +301,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     if (revokedAt == null) return false;
     // `created` is in seconds; a grant without it is treated as old.
     const createdMs = typeof grant.created === 'number' ? grant.created * 1000 : 0;
-    return createdMs < revokedAt;
+    // At or before the epoch, within its clock margin (one comparison with the grants).
+    return issuedBeforeClientRevoke(createdMs, revokedAt);
   }
 
   // ---------------------------------------------------------------------
@@ -372,6 +374,9 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     if (registry && grantState != null && typeof grantState.name === 'string') {
       await sessions.setGrantState(context.user.id, context.user.username, dataGrant.id, grantState.name, grantState.value);
     }
+    // A metadata-document client's grant names it (display fields from its
+    // document as they stand at this consent); server-owned, storage-direct.
+    if (registry) await sessions.setGrantClient(context.user.id, context.user.username, dataGrant.id, clientId);
 
     // The minted row additionally carries the session selfRevoke override
     // (see withSessionSelfRevoke); the CHAIN keeps the granted subset

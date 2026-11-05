@@ -471,7 +471,14 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     await storage.deleteClient(platformDB, cid);
     await new Promise((resolve) => setTimeout(resolve, 5));
     await oauth2.persistClient(platformDB, { ...row, updatedAt: Date.now() });
-    const t2 = await runFlow('read/health ctx/user', cid);
+    // The new flow follows within the revoke epoch's clock margin: run without it.
+    storage._setRevokeClockMarginForTests(0);
+    let t2;
+    try {
+      t2 = await runFlow('read/health ctx/user', cid);
+    } finally {
+      storage._setRevokeClockMarginForTests(null);
+    }
     const fresh = await grantOf(cid);
     assert.notEqual(baseOf(fresh.id), baseOf(old.id));
     assert.notEqual(fresh.alias, old.alias);

@@ -143,11 +143,32 @@ const http = require('node:http');
   // answer them from the core that hosts the account (the platform says
   // which), at its listening URL. This replaces the guarded peer client
   // (its URL checks still run).
+  // Client metadata documents: the document host of the suite
+  // (CLIENT_METADATA_HOST) answered by its stub (CLIENT_METADATA_STUB, the
+  // path prefixed with the host), with an allow-list and a template.
+  const metadataHost = process.env.CLIENT_METADATA_HOST || null;
+  const metadataStub = process.env.CLIENT_METADATA_STUB || null;
+  if (metadataHost != null && metadataStub != null) {
+    config.set('oauth:clientMetadataDocuments', JSON.parse(process.env.CLIENT_METADATA_CONFIG_JSON || '{}'));
+  }
+  const viaMetadataStub = async (rawUrl, init) => {
+    const u = new URL(rawUrl);
+    if (metadataHost != null && metadataStub != null && u.hostname === metadataHost) {
+      return await fetch(metadataStub + '/' + u.host + u.pathname + u.search, init);
+    }
+    return null;
+  };
+  if (metadataHost != null && !(domain && process.env.CMC_PEERS_VIA_PLATFORM === '1')) {
+    const { setPeerTransportForTests } = require('business/src/outbound/peerFetch.ts');
+    setPeerTransportForTests(async (rawUrl, init) => (await viaMetadataStub(rawUrl, init)) ?? await fetch(rawUrl, init));
+  }
   if (domain && process.env.CMC_PEERS_VIA_PLATFORM === '1') {
     const { setPeerTransportForTests } = require('business/src/outbound/peerFetch.ts');
     const { getPlatform } = require('platform');
     const suffix = '.' + domain;
     setPeerTransportForTests(async (rawUrl, init) => {
+      const viaStub = await viaMetadataStub(rawUrl, init);
+      if (viaStub != null) return viaStub;
       const u = new URL(rawUrl);
       if (u.hostname.endsWith(suffix)) {
         const username = u.hostname.slice(0, -suffix.length);

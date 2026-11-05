@@ -66,6 +66,7 @@ import { createRequire } from 'node:module';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { UsernameResolver, AuthCodeAccessRevoker } from './authorization_code.ts';
 import { checkTokenResource } from '../resourceIndicator.ts';
+import { reassertPermanentRow } from '../clientMetadata.ts';
 const require = createRequire(import.meta.url);
 
 // Kept on the require shim: a typed `storage` import surfaces a pre-existing
@@ -395,6 +396,24 @@ export async function handleRefreshToken (
     return { ok: false as const, status: 500, error: 'server_error', description };
   };
 
+  // A client revoked at or after this token was issued (or up to the epoch's
+  // clock margin before, `issuedBeforeClientRevoke`): the token is void,
+  // whatever became of the client since (registered again, or a metadata
+  // document's row re-created). Read directly, not from the per-core cache.
+  // Nothing newer exists on this chain, so only this token is ended.
+  let revokedAt: number | null;
+  try {
+    revokedAt = await storage.getRevokedAt(deps.platform, row.clientId);
+  } catch (err: unknown) {
+    logServerError('refresh_token: reading the client revoke epoch failed', err);
+    return await serverError('failed to read the client');
+  }
+  if (storage.issuedBeforeClientRevoke(row.issuedAt, revokedAt)) {
+    await endChain();
+    await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, reason: 'refresh denied: client revoked' });
+    return INVALID;
+  }
+
   // Defence for a peek/consume interleaving (checked on the peek above): a
   // wrong resource is the request's fault, not the chain's, so the row goes
   // back and the token stays usable.
@@ -635,6 +654,8 @@ export async function handleRefreshToken (
     accessId: access.accessId,
     ...(boundJkt != null ? { dpopJkt: boundJkt } : {}),
   });
+  // A token for this client exists now: its row must not read as provisional.
+  await reassertPermanentRow(deps.platform, client);
 
   if (registry != null) {
     return {

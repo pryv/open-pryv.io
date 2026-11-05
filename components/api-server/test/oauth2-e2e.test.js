@@ -937,7 +937,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(sameRes.status, 200, describeRes(sameRes));
     });
 
-    it('[OE35] clientData.oauth is server-owned: refused on accesses.create, and set or changed on accesses.update (403)', async function () {
+    it('[OE38] clientData.oauth is server-owned: refused on accesses.create, and set or changed on accesses.update (403)', async function () {
       const create = await coreRequest.post('/' + username + '/accesses').set('Authorization', personalToken)
         .send({ name: 'oe35-' + cuid(), type: 'app', permissions: [{ streamId: 'health', level: 'read' }], clientData: { oauth: { mine: 1 } } });
       assert.equal(create.status, 403, describeRes(create));
@@ -1162,7 +1162,22 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(eventsRes.status, 200);
     });
 
-    it('[OE35] a client revoked and re-registered within the same second: a token minted right after works', async function () {
+    it('[OE35] a client revoked and re-registered within the same second: the epoch is compared to the millisecond (no clock margin: a token minted right after works; with it: refused)', async function () {
+      // The epoch's precision, without its clock margin; the margin is restored at the end.
+      storage._setRevokeClockMarginForTests(0);
+      try {
+        await sameSecondRevoke();
+      } finally {
+        storage._setRevokeClockMarginForTests(null);
+      }
+      const basic = 'Basic ' + Buffer.from(ccClientId + ':' + ccSecret).toString('base64');
+      const inMargin = await coreRequest.post('/oauth2/token').type('form').set('Authorization', basic).send({ grant_type: 'client_credentials' });
+      assert.equal(inMargin.status, 200, describeRes(inMargin));
+      const refused = await coreRequest.get('/' + username + '/events').set('Authorization', inMargin.body.access_token);
+      assert.equal(refused.status, 403, 'minted within five seconds of the revoke: ' + describeRes(refused));
+    });
+
+    async function sameSecondRevoke () {
       const platformDB = require('storages').platformDB;
       const revokedCache = require('oauth2/src/revokedClientsCache.ts');
       const existing = await storage.getClient(platformDB, ccClientId);
@@ -1183,7 +1198,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.ok(Date.now() - revokedAt < 1000 - (revokedAt % 1000), 'premise: minted within the second of the revoke');
       const eventsRes = await coreRequest.get('/' + username + '/events').set('Authorization', tokenRes.body.access_token);
       assert.equal(eventsRes.status, 200, 'the token minted after the revoke works: ' + describeRes(eventsRes));
-    });
+    }
   });
 
   describe('[OAUTH-E2E-DPOP] DPoP sender-constrained round-trip (RFC 9449)', function () {

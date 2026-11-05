@@ -23,6 +23,52 @@
   account was disconnecting. It stayed connected and could still call methods, but no notification
   reached it until it reconnected. Every connected client now receives them.
 
+### OAuth: client metadata documents (an https URL as `client_id`)
+
+- **Added: client metadata documents (`oauth.clientMetadataDocuments`, default `off`).** With
+  `mode: allowList` (the hosts listed in `allowedHosts`) or `mode: any`, `/oauth2/authorize`,
+  `/oauth2/token` and `/oauth2/revoke` accept an https URL as the `client_id` of a client that is
+  public (PKCE) or confidential (`private_key_jwt` against the document's `jwks_uri` or inline
+  `jwks`). The server fetches the JSON document at that URL (https only, no redirect followed,
+  16 KiB, 5 s, private addresses refused, 10 fetches a minute per host), takes the client's identity
+  and display fields from it and what the client may be granted from the operator's template
+  (`oauth.clientMetadataDocuments.client`: scope, audiences, launch types, subject type, ceiling,
+  lifetimes, regions), never from the document. Such a client never holds more than a registry
+  client may: no introspection, no token exchange, no allowed feature, an audience list. The URL rules
+  (normal form, a path, no IP literal, not a host of the platform, ...) and the document rules are in
+  `docs/oauth2.md` § 1f; the URL is the client's id on the wire (introspection's `client_id`, an
+  id_token's `aud` / `azp`). The URL needs a path other than `/`; the document may be served as
+  `application/json` or an `application/<subtype>+json` type; its redirect URIs are https (or plain
+  http on a loopback host) only. The auth method is the singular `token_endpoint_auth_method` when
+  present, else taken from `token_endpoint_auth_methods_supported` preferring `private_key_jwt`,
+  else `none`. A `deniedHosts` entry without a port denies every port, and a `*.d` deny entry denies
+  `d` and every depth below it (allow entries stay as narrow as written). A row written before any
+  consent is provisional: at most `newClientsPerMinute` (10) new rows a minute per core, deleted
+  past `unconsentedRowSeconds` (3600) unless a user consented or the operator ran
+  `refresh-metadata`.
+- **Added: `client.origin`, `client.metadataUrl`, `client.metadataHost` (and `metadataHostUnicode`)
+  in the `/oauth2/authorize/offer` answer** for such a client. A consent UI must show the host next
+  to the client's name, never the name alone.
+- **Added: `clientData.oauth.client` (`{ name?, host, url }`) on the grant and every session minted
+  for such a client** (not on a derived session), server-owned like the rest of `clientData.oauth`:
+  an account app names the connected app by it.
+- **Added: `client_id_metadata_document_supported: true`** in both discovery documents while the mode
+  is not `off`.
+- **Added: `RS256`** joins the accepted `private_key_jwt` assertion algorithms for every client
+  (bound to RSA keys of 2048 bits or more), advertised in `token_endpoint_auth_signing_alg_values_supported`.
+- **Added: audit events `oauth.client.metadata_fetched` and `oauth.client.metadata_refused`**
+  (syslog only); `oauth.consent.shown` carries `metadataUrl` and `metadataHost` for such a client.
+- **Added: `bin/oauth-client.js check-metadata`, `refresh-metadata`, `template-from`, and `list
+  --origin metadata-document [--host <h>]`;** `show`, `revoke`, `suspend`, `resume` and `purge-grants`
+  take such a client's URL; `update` and `rotate-secret` refuse it.
+- **Changed: a client id may not start with `url~`** (reserved for these clients' stored keys).
+- **Changed: a revoked client's authorization codes and refresh tokens issued before the revoke are
+  refused even when the client id is registered again** (or, for a client metadata document, when
+  its row is re-created); a pre-revoke consent is not reused, the user is asked again. Every client
+  kind. The epoch carries a five-second clock margin: codes, refresh tokens, sessions and consents
+  issued up to five seconds after the revoke are void too (keep the CLI host and the cores
+  NTP-synced).
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

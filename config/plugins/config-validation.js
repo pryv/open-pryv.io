@@ -507,6 +507,15 @@ function checkAdapterRoutes (config, problems) {
   }
 }
 
+// oauth.clientMetadataDocuments: mode, host lists, bounds, the template (shape
+// only; its scope is checked against the extension's grammar at boot).
+function checkClientMetadataDocuments (config, problems) {
+  const { describeClientMetadataConfig } = require('../../components/oauth2/src/clientMetadataConfig.ts');
+  for (const message of describeClientMetadataConfig(config.get('oauth:clientMetadataDocuments')).problems) {
+    problems.push({ message, path: ['oauth', 'clientMetadataDocuments'], payload: {} });
+  }
+}
+
 // http.trustedProxies: every entry must compile (IP, CIDR or a proxy-addr name).
 function checkTrustedProxies (config, problems) {
   const { checkTrustedProxiesConfig } = require('../../components/middleware/src/clientIp.ts');
@@ -684,6 +693,7 @@ async function validate (config) {
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
   checkAudienceBoundSessions(config, problems);
+  checkClientMetadataDocuments(config, problems);
 
   return problems;
 }
@@ -833,6 +843,8 @@ function collectWarnings (config) {
   warnings.push(...revocationLagWarnings(config));
   warnings.push(...describeAutoDeletion(config).warnings);
   warnings.push(...oauthWarnings(config));
+  const { describeClientMetadataConfig } = require('../../components/oauth2/src/clientMetadataConfig.ts');
+  warnings.push(...describeClientMetadataConfig(config.get('oauth:clientMetadataDocuments')).warnings);
   warnings.push(...ssoWarnings(config));
   return warnings;
 }
@@ -967,6 +979,7 @@ module.exports = {
   checkMfaConfig,
   checkHostedSites,
   checkAdapterRoutes,
+  checkClientMetadataDocuments,
   checkTrustedProxies,
   checkIntegrityAlgorithm,
   checkAutoDeletion,

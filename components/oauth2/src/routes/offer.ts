@@ -45,6 +45,7 @@ import type { CurrentGrant } from '../consentComposition.ts';
 import { composeShownOffer, subjectModeOf } from '../consentComposition.ts';
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
+import { metadataHostOf } from '../clientMetadata.ts';
 
 /** A signed-in user, as the host app's resolver answers it. */
 export type OfferSession = {
@@ -186,9 +187,11 @@ export function handleOffer (deps: OfferDeps) {
     if (!r.ok) return sendJson(res, r.status, { error: r.error, error_description: r.description });
     const c = r.client;
     const answer: Record<string, unknown> = {
-      // Operator-registered display fields only. `name` / `description`: a
-      // text or a map by language code (`clientName`, the plain fallback);
-      // the logo only when https and on the `oauth:logoHosts` allow-list.
+      // Operator-registered display fields only (a metadata-document
+      // client's come from its document, the links only on its host).
+      // `name` / `description`: a text or a map by language code
+      // (`clientName`, the plain fallback); the logo only when https and on
+      // the `oauth:logoHosts` allow-list.
       client: {
         clientId: c.clientId,
         clientName: c.clientName,
@@ -198,6 +201,11 @@ export function handleOffer (deps: OfferDeps) {
         clientUri: c.clientUri,
         policyUri: c.policyUri,
         tosUri: c.tosUri,
+        // A metadata-document client: the host its document came from, which
+        // every consent screen shows next to the name (never the name alone).
+        ...(c.origin === 'metadata-document' && typeof c.metadataUrl === 'string'
+          ? { origin: c.origin, metadataUrl: c.metadataUrl, ...metadataHostOf(c.metadataUrl) }
+          : {}),
       },
       offer: { allowUserChoice: false, ...r.resolved.offer },
       scope: r.resolved.requested,

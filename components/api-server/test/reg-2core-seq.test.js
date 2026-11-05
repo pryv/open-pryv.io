@@ -90,6 +90,15 @@ const SITE_A_ONLY = 'siteonly';
 const OAUTH_CONSENT_URL = 'https://consent.2core.test/authorize';
 const OAUTH_REDIRECT = 'https://app.2core.test/redirect';
 const OAUTH_AUD = 'https://resource.2core.test/';
+// Client metadata documents: the document host the cores reach through the
+// suite's stub server (its port follows the workspace offset).
+const METADATA_HOST = 'client.example';
+const METADATA_STUB_PORT = 13030 + PORT_SHIFT;
+const METADATA_CONFIG = {
+  mode: 'allowList',
+  allowedHosts: [METADATA_HOST],
+  client: { scope: 'read/notes', allowedAudiences: [OAUTH_AUD], subjectType: 'public' }
+};
 
 // Helper: HTTP request (no external deps)
 async function httpRequest (port, method, path, body, headers = {}) {
@@ -326,7 +335,11 @@ describe('[RG2C] Two-core integration tests', function () {
       CMC_DELIVERY_BACKOFF_BASE_MS: '500',
       CMC_PEERS_VIA_PLATFORM: '1',
       // OAuth registry clients (toy grammar), for the OAuth tests below
-      OAUTH_TOY_EXTENSION: '1'
+      OAUTH_TOY_EXTENSION: '1',
+      // Client metadata documents, for the tests below
+      CLIENT_METADATA_HOST: METADATA_HOST,
+      CLIENT_METADATA_STUB: `http://127.0.0.1:${METADATA_STUB_PORT}`,
+      CLIENT_METADATA_CONFIG_JSON: JSON.stringify(METADATA_CONFIG)
     };
 
     coreAEnv = {
@@ -1392,6 +1405,93 @@ describe('[RG2C] Two-core integration tests', function () {
       const res = await asResourceServer(CORE_B_PORT, '/oauth2/introspect', { token: session.access_token });
       assert.strictEqual(res.status, 200);
       assert.deepStrictEqual(res.body, { active: false });
+    });
+  });
+
+  describe('Client metadata documents across cores', () => {
+    const crypto = require('node:crypto');
+    const { metadataClientKey } = require('oauth2/src/clientMetadataId.ts');
+    const DOC_PATH = '/apps/2core-' + Date.now().toString(36) + '.json';
+    const DOC_URL = 'https://' + METADATA_HOST + DOC_PATH;
+    const REDIRECT = 'https://' + METADATA_HOST + '/cb';
+    let stub;
+    let fetches = 0;
+
+    before(async () => {
+      stub = require('node:http').createServer((req, res) => {
+        if (req.url !== '/' + METADATA_HOST + DOC_PATH) { res.statusCode = 404; return res.end(); }
+        fetches++;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ client_id: DOC_URL, client_name: 'Two-core agent', redirect_uris: [REDIRECT] }));
+      });
+      await new Promise((resolve) => stub.listen(METADATA_STUB_PORT, '127.0.0.1', resolve));
+    });
+
+    after(async () => {
+      try { await require('oauth2/src/storage.ts').deleteClient(platformDB, metadataClientKey(DOC_URL)); } catch (_) { /* best-effort */ }
+      if (stub != null) await new Promise((resolve) => stub.close(resolve));
+    });
+
+    function authorizeOn (port, challenge) {
+      const q = new URLSearchParams({
+        client_id: DOC_URL,
+        redirect_uri: REDIRECT,
+        response_type: 'code',
+        state: 'cm',
+        scope: 'read/notes',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        resource: OAUTH_AUD
+      });
+      return fetch(`http://127.0.0.1:${port}/oauth2/authorize?${q}`, { redirect: 'manual' });
+    }
+
+    it('[OCMDE10] the row written by one core serves the other: no fetch there, and the flow completes on the home core', async () => {
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        const disc = await httpRequest(port, 'GET', '/.well-known/oauth-authorization-server');
+        assert.strictEqual(disc.body.client_id_metadata_document_supported, true, String(port));
+      }
+      // A user on Core B
+      const username = 'cmd' + Date.now().toString(36);
+      const reg = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_B_HOSTING
+      });
+      assert.strictEqual(reg.status, 201, JSON.stringify(reg.body));
+      const userToken = new URL(reg.body.apiEndpoint).username;
+      const stream = await httpRequest(CORE_B_PORT, 'POST', '/' + username + '/streams', { id: 'notes', name: 'notes' }, { Authorization: userToken });
+      assert.strictEqual(stream.status, 201, JSON.stringify(stream.body));
+
+      // Core A fetches the document and writes the row (cluster-wide).
+      const onA = await authorizeOn(CORE_A_PORT, crypto.randomBytes(32).toString('base64url').slice(0, 43));
+      assert.strictEqual(onA.status, 302, await onA.text());
+      assert.strictEqual(fetches, 1);
+      assert.notStrictEqual(await platformDB.getPlatformKv('oauth-client/' + metadataClientKey(DOC_URL)), null);
+
+      // Core B (the user's home core) serves the whole flow from that row.
+      const verifier = crypto.randomBytes(32).toString('base64url');
+      const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+      const onB = await authorizeOn(CORE_B_PORT, challenge);
+      assert.strictEqual(onB.status, 302, await onB.text());
+      const state = new URL(onB.headers.get('location')).searchParams.get('state');
+      const offer = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/authorize/offer', { state });
+      assert.strictEqual(offer.status, 200, JSON.stringify(offer.body));
+      assert.strictEqual(offer.body.client.metadataHost, METADATA_HOST);
+      const accept = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/authorize/accept', {
+        state, username, userToken, grantedPermissions: offer.body.offer.permissions
+      });
+      assert.strictEqual(accept.status, 200, JSON.stringify(accept.body));
+      const code = new URL(accept.body.redirectTo).searchParams.get('code');
+      const token = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/token', {
+        grant_type: 'authorization_code', code, code_verifier: verifier, client_id: DOC_URL, redirect_uri: REDIRECT, resource: OAUTH_AUD
+      });
+      assert.strictEqual(token.status, 200, JSON.stringify(token.body));
+      assert.strictEqual(fetches, 1, 'Core B never fetched the document');
     });
   });
 

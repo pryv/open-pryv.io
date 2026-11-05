@@ -599,8 +599,9 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     await setClient(platform, row);
     await setRevokedAt(platform, 'conn-app', Date.now());
     await expectUnavailable('revoked');
-    // A session minted after the revoke (a client registered again): accepted.
-    assert.equal((await exchange(platform, { subject: subjectSession({ created: Date.now() / 1000 + 1 }) })).statusCode, 200);
+    // A session minted after the revoke and its clock margin (a client registered again): accepted.
+    assert.equal((await exchange(platform, { subject: subjectSession({ created: Date.now() / 1000 + 4 }) })).statusCode, 400, 'within the margin');
+    assert.equal((await exchange(platform, { subject: subjectSession({ created: Date.now() / 1000 + 10 }) })).statusCode, 200);
     await platform.deletePlatformKv('oauth-client/conn-app');
     await expectUnavailable('gone');
     await setClient(platform, { clientId: 'conn-app', redirectUris: ['https://x.example.com/r'], scope: ['pryv:read'], grantTypes: ['authorization_code'], updatedAt: 0 });

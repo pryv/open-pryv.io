@@ -86,7 +86,16 @@ async function run () {
         await runShow(platform, args, getClient, computeThumbprint);
         break;
       case 'list':
-        await runList(platform, getClient);
+        await runList(platform, getClient, args);
+        break;
+      case 'check-metadata':
+        await runCheckMetadata(platform, args);
+        break;
+      case 'refresh-metadata':
+        await runRefreshMetadata(platform, args, getClient);
+        break;
+      case 'template-from':
+        await runTemplateFrom(platform, args, getClient);
         break;
       case 'update':
         await runUpdate(platform, args, getClient, persistClient);
@@ -395,8 +404,8 @@ async function runCreateRegistry (platform, args, persistClient, getClient) {
 }
 
 async function runSetStatus (platform, args, getClient, persistClient) {
-  const clientId = args.positional[0];
-  if (!clientId) throw new Error(args.command + ': <clientId> required');
+  if (!args.positional[0]) throw new Error(args.command + ': <clientId> required');
+  const clientId = cliClientKey(args.positional[0]);
   const existing = await getClient(platform, clientId);
   if (existing == null) throw new Error(args.command + ': no client "' + clientId + '"');
   const status = args.command === 'suspend' ? 'suspended' : 'active';
@@ -420,6 +429,14 @@ async function runSetStatus (platform, args, getClient, persistClient) {
     const row = withStatusChange({ ...existing, status, updatedAt: Date.now() }, { from, to: status, reason: args.command });
     await oauthStorage().setClient(platform, row);
     console.log('OK   client ' + clientId + ' is ' + status);
+  }
+  // A client metadata document row no consent reached yet.
+  if (existing.origin === 'metadata-document' && existing.metadata?.firstConsentAt == null && existing.metadata?.operatorRefreshedAt == null) {
+    console.log(status === 'suspended'
+      ? 'NOTE this client is provisional (no consent yet): kept while suspended; to keep its host out for good add it to\n' +
+        '     oauth.clientMetadataDocuments.deniedHosts'
+      : 'NOTE provisional again: pruned after oauth.clientMetadataDocuments.unconsentedRowSeconds unless a consent or\n' +
+        '     refresh-metadata pins it');
   }
   if (status === 'suspended') printPurgeHint(clientId);
 }
@@ -456,8 +473,8 @@ function withStatusChange (row, change) {
 
 async function runPurgeGrants (platform, args, purgeClientGrants) {
   checkFlags(args, 'purge-grants', PURGE_FLAGS);
-  const clientId = args.positional[0];
-  if (!clientId) throw new Error('purge-grants: <clientId> required');
+  if (!args.positional[0]) throw new Error('purge-grants: <clientId> required');
+  const clientId = cliClientKey(args.positional[0]);
   if (!isYes(args)) {
     throw new Error('purge-grants: refuses to run without --yes (it deletes every grant, session and refresh chain of "' +
       clientId + '" on this core; each user must consent again)');
@@ -478,8 +495,8 @@ async function runPurgeGrants (platform, args, purgeClientGrants) {
 const PURGE_FLAGS = { values: [], booleans: ['yes'], own: [] };
 
 async function runShow (platform, args, getClient, computeThumbprint) {
-  const clientId = args.positional[0];
-  if (!clientId) throw new Error('show: <clientId> required');
+  if (!args.positional[0]) throw new Error('show: <clientId> required');
+  const clientId = cliClientKey(args.positional[0]);
   const client = await getClient(platform, clientId);
   if (!client) {
     console.error('NOT FOUND: ' + clientId);
@@ -505,6 +522,7 @@ async function runShow (platform, args, getClient, computeThumbprint) {
     };
   }
   console.log(JSON.stringify(view, null, 2));
+  if (client.origin === 'metadata-document') printMetadataClient(client);
   if (typeof client.previousSecretExpiresAt === 'number') {
     console.log('previous secret: ' + (client.previousSecretExpiresAt > Date.now()
       ? 'accepted until ' + new Date(client.previousSecretExpiresAt).toISOString()
@@ -513,7 +531,7 @@ async function runShow (platform, args, getClient, computeThumbprint) {
   if (client.tokenEndpointAuthMethod === 'private_key_jwt' || client.jwks != null || client.jwksUri != null) {
     console.log('assertion algorithms: ' + (Array.isArray(client.tokenEndpointAuthSigningAlgs) && client.tokenEndpointAuthSigningAlgs.length > 0
       ? client.tokenEndpointAuthSigningAlgs.join(', ') + ' (pinned)'
-      : 'any of ES256, ES384, RS384 that fits a key of the set'));
+      : 'any of ' + require('oauth2/src/jwks.ts').CLIENT_ASSERTION_ALGS.join(', ') + ' that fits a key of the set'));
   }
   printLifetimes(client, '');
   if (client.status === 'review') {
@@ -572,8 +590,14 @@ function safeThumbprint (computeThumbprint, jwk) {
 }
 
 // One line per client: `<clientId>  <kind>  <status>  <subjectType|->`, so
-// `list | grep public` is the audit of the public registry clients.
-async function runList (platform, getClient) {
+// `list | grep public` is the audit of the public registry clients. A
+// metadata-document client adds `metadata-document <url>`. `--origin
+// metadata-document` lists those only, `--host <h>` those of one host.
+async function runList (platform, getClient, args = { flags: {}, flagsScalar: {}, positional: [] }) {
+  const origin = args.flagsScalar?.origin;
+  const host = args.flagsScalar?.host;
+  if (origin != null && origin !== 'metadata-document') throw new Error('list: --origin takes metadata-document');
+  if (host != null && (typeof host !== 'string' || origin == null)) throw new Error('list: --host <host> goes with --origin metadata-document');
   const ids = await oauthStorage().listClientIds(platform);
   if (ids.length === 0) {
     console.log('(no clients registered)');
@@ -582,10 +606,144 @@ async function runList (platform, getClient) {
   for (const id of ids) {
     const c = await getClient(platform, id);
     if (c == null) continue;
+    if (origin != null && c.origin !== origin) continue;
+    if (host != null && metadataHostOfRow(c) !== host.toLowerCase()) continue;
     const kind = c.kind ?? 'app-account';
     const subject = kind === 'registry' ? (c.subjectType ?? '-') : '-';
-    console.log(id + '  ' + kind + '  ' + (c.status ?? 'active') + '  ' + subject);
+    console.log(id + '  ' + kind + '  ' + (c.status ?? 'active') + '  ' + subject +
+      (c.origin === 'metadata-document'
+        ? '  ' + (c.metadata?.firstConsentAt == null && c.metadata?.operatorRefreshedAt == null ? 'provisional ' : '') +
+          'metadata-document ' + c.metadataUrl
+        : ''));
   }
+}
+
+function metadataHostOfRow (row) {
+  try { return new URL(row.metadataUrl).hostname; } catch { return null; }
+}
+
+// A client named by its metadata document URL is stored under a derived key.
+function cliClientKey (raw) {
+  return require('oauth2/src/clientMetadataId.ts').clientKeyOf(String(raw));
+}
+
+// The commands that edit what an operator registered do not apply to a
+// metadata-document client: its document and the template decide.
+function refuseMetadataClientId (command, raw) {
+  const { isMetadataClientKey, isMetadataClientUrl } = require('oauth2/src/clientMetadataId.ts');
+  if (isMetadataClientKey(raw) || isMetadataClientUrl(raw)) {
+    throw new Error(command + ': "' + raw + '" is a metadata-document client: edit its document, or the template ' +
+      '(oauth.clientMetadataDocuments.client); refresh it with refresh-metadata');
+  }
+}
+
+// The client authentication method of a metadata-document client and the
+// document member it was read from (why a row is confidential).
+function authMethodLine (row) {
+  const from = {
+    singular: 'from token_endpoint_auth_method',
+    plural: 'from token_endpoint_auth_methods_supported',
+    default: 'the document names none',
+  }[row.metadata?.authMethodSource] ?? 'source not recorded';
+  return 'method: ' + row.tokenEndpointAuthMethod + ', ' + from;
+}
+
+// What `show` adds for a metadata-document client.
+function printMetadataClient (client) {
+  const m = client.metadata ?? {};
+  const at = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : '-');
+  console.log('metadata document: ' + client.metadataUrl);
+  console.log('     host:          ' + (metadataHostOfRow(client) ?? '-'));
+  console.log('     fetched:       ' + at(m.fetchedAt) + '; reused without a fetch until ' + at(m.expiresAt));
+  console.log('     last used:     ' + at(m.lastUsedAt));
+  console.log('     first consent: ' + (m.firstConsentAt != null ? at(m.firstConsentAt) : '-') +
+    (m.operatorRefreshedAt != null ? '; refreshed by the operator ' + at(m.operatorRefreshedAt) : ''));
+  if (m.firstConsentAt == null && m.operatorRefreshedAt == null) {
+    console.log('     provisional:   no consent yet; deleted (no tombstone) past oauth.clientMetadataDocuments.unconsentedRowSeconds');
+  }
+  console.log('     ' + authMethodLine(client));
+  console.log('     reach:         the template (oauth.clientMetadataDocuments.client), applied at each fetch');
+}
+
+// check-metadata <url>: fetch and validate the document now (no cache, no
+// budget), print the client row it would give, write nothing.
+async function runCheckMetadata (platform, args) {
+  const url = args.positional[0];
+  if (!url) throw new Error('check-metadata: <url> required');
+  const config = await cliEnv.config();
+  const meta = require('oauth2/src/clientMetadata.ts');
+  const { clientMetadataSettings } = require('oauth2/src/clientMetadataConfig.ts');
+  const settings = clientMetadataSettings(config);
+  if (settings.mode === 'off') {
+    console.log('NOTE oauth.clientMetadataDocuments is off on this core (mode: off, or the block has problems): such a client');
+    console.log('     is refused here, and the template is not in force: the reach printed below is empty.');
+  }
+  const refused = meta.clientIdUrlProblem(url, settings.mode === 'off' ? { ...settings, mode: 'any' } : settings, config);
+  if (refused != null) throw new Error('check-metadata: ' + refused.detail + ' (' + refused.reason + ')');
+  const checked = await meta.fetchAndCheckClientMetadata(url, settings);
+  if (!checked.ok) throw new Error('check-metadata: document ' + checked.kind + ': ' + checked.detail);
+  const row = meta.buildMetadataClientRow(url, checked.fields, settings, null, Date.now());
+  console.log('OK   document valid: ' + url);
+  console.log('     ' + authMethodLine(row));
+  if (checked.ignored.length > 0) console.log('     members ignored: ' + checked.ignored.join(', '));
+  if (checked.dropped.length > 0) console.log('     dropped (not on the document\'s host, or malformed): ' + checked.dropped.join(', '));
+  const { metadata: _m, updatedAt: _u, registeredAt: _r, ...shown } = row;
+  console.log(JSON.stringify(shown, null, 2));
+}
+
+// refresh-metadata <url|key>: fetch the document now (no cache, no budget)
+// and rewrite the client row; prints what changed.
+async function runRefreshMetadata (platform, args, getClient) {
+  const raw = args.positional[0];
+  if (!raw) throw new Error('refresh-metadata: <url|key> required');
+  let url = raw;
+  if (require('oauth2/src/clientMetadataId.ts').isMetadataClientKey(raw)) {
+    const row = await getClient(platform, raw);
+    if (row == null || row.origin !== 'metadata-document') throw new Error('refresh-metadata: no metadata-document client "' + raw + '"');
+    url = row.metadataUrl;
+  }
+  const config = await cliEnv.config();
+  const outcome = await require('oauth2/src/clientMetadata.ts').refreshMetadataClient(platform, config, url);
+  if (!outcome.ok) throw new Error('refresh-metadata: ' + outcome.reason + ': ' + outcome.detail);
+  console.log('OK   ' + (outcome.created ? 'created' : 'refreshed') + ': ' + outcome.client.clientId + '  ' + url);
+  console.log('     changed: ' + (outcome.changedFields.length > 0 ? outcome.changedFields.join(', ') : '(nothing)'));
+}
+
+// template-from <clientId>: the oauth.clientMetadataDocuments.client block
+// that grants a metadata-document client what this registry client may be
+// granted (scope, audiences, launch types, subject type, ceiling, lifetimes,
+// regions), so the two cannot drift by hand. YAML (flow style), to paste.
+async function runTemplateFrom (platform, args, getClient) {
+  const clientId = args.positional[0];
+  if (!clientId) throw new Error('template-from: <clientId> required');
+  const row = await getClient(platform, clientId);
+  if (row == null) throw new Error('template-from: client "' + clientId + '" not found');
+  if (row.kind !== 'registry' || row.origin === 'metadata-document') {
+    throw new Error('template-from: "' + clientId + '" is not a registry client registered by the operator');
+  }
+  if (row.anyAudience === true || !Array.isArray(row.allowedAudiences) || row.allowedAudiences.length === 0) {
+    throw new Error('template-from: "' + clientId + '" has no audience list; a template needs one (the resource URLs of this core)');
+  }
+  const { MAX_SYNTH_ENTRIES } = require('oauth2/src/scopeGrammar.ts');
+  const q = (v) => JSON.stringify(v);
+  const lines = [
+    'oauth:',
+    '  clientMetadataDocuments:',
+    '    client:',
+    '      scope: ' + q((row.scope ?? []).join(' ')),
+    '      allowedAudiences: ' + q(row.allowedAudiences),
+    '      launchTypes: ' + q(row.launchTypes ?? []),
+    '      subjectType: ' + (row.subjectType === 'pairwise' ? 'pairwise' : 'public'),
+    '      maxEntries: ' + (Number.isInteger(row.maxEntries) ? row.maxEntries : MAX_SYNTH_ENTRIES),
+    '      offlineAccessAllowed: ' + (row.offlineAccessAllowed !== false),
+    '      accessTokenTTL: ' + (row.accessTokenTTL ?? 'null'),
+    '      refreshTokenTTL: ' + (row.refreshTokenTTL ?? 'null'),
+    '      refreshTokenAbsoluteTTL: ' + (row.refreshTokenAbsoluteTTL ?? 'null'),
+    '      regions: ' + q(row.regions ?? []),
+  ];
+  console.log(lines.join('\n'));
+  if (row.subjectType == null) console.error('WARN "' + clientId + '" has no subject type (reads as public, as the template above): check it');
+  console.error('NOTE allowedAudiences differs per core: each core names its own resource URL');
 }
 
 const SUBJECT_TYPES = ['public', 'pairwise'];
@@ -828,6 +986,7 @@ async function runUpdate (platform, args, getClient, persistClient) {
       'with --client-id (its existing tokens and refresh chains die with the revoke).'
     );
   }
+  refuseMetadataClientId('update', clientId);
   checkFlags(args, 'update', UPDATE_FLAGS);
   const existing = await getClient(platform, clientId);
   if (!existing) throw new Error('update: client "' + clientId + '" not found');
@@ -1152,13 +1311,23 @@ function hasKeys (row) {
 }
 
 async function runRevoke (platform, args, removeClient) {
-  const clientId = args.positional[0];
-  if (!clientId) throw new Error('revoke: <clientId> required');
+  const raw = args.positional[0];
+  if (!raw) throw new Error('revoke: <clientId> required');
   if (!args.flags['yes'] && !args.flagsScalar['yes']) {
     throw new Error('revoke: refuses to run without --yes (operator-revoke is a footgun, see)');
   }
+  const clientId = cliClientKey(raw);
+  const existing = await oauthStorage().getClient(platform, clientId);
   await removeClient(platform, clientId);
   console.log('OK   client revoked: ' + clientId);
+  console.log('     every code, refresh token, session and consent issued for this client before now is void.');
+  if (existing?.origin === 'metadata-document') {
+    console.log();
+    console.log('NOTE: a metadata-document client (' + existing.metadataUrl + '): the URL may register again');
+    console.log('      (the next authorization naming it creates the client again) and will be asked for a new');
+    console.log('      consent. To keep it out, add its host to oauth.clientMetadataDocuments.deniedHosts');
+    console.log('      (or remove it from allowedHosts).');
+  }
   console.log();
   console.log('NOTE: the client row is removed (no new grants, refresh dies) AND a');
   console.log('      cluster-wide revoke tombstone is written. Every core stops the');
@@ -1243,6 +1412,7 @@ async function runRotateSecret (platform, args, getClient, persistClient) {
   if (args.flagsScalar['client-id'] != null) {
     throw new Error('rotate-secret: client_id cannot be changed here; name the client as the argument');
   }
+  refuseMetadataClientId('rotate-secret', clientId);
   checkFlags(args, 'rotate-secret', ROTATE_SECRET_FLAGS);
   const windowSeconds = parsePreviousValidFor(args);
   const existing = await getClient(platform, clientId);
@@ -1504,7 +1674,19 @@ function printUsage (stream) {
     '  node bin/oauth-client.js create-registry <clientId> --redirect-uri <uri> --scope <s> --subject-type public|pairwise\n' +
     '      (--audience <url> | --any-audience) [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n' +
-    '  node bin/oauth-client.js purge-grants <clientId> --yes\n\n' +
+    '  node bin/oauth-client.js purge-grants <clientId> --yes\n' +
+    '  node bin/oauth-client.js list --origin metadata-document [--host <host>]\n' +
+    '  node bin/oauth-client.js check-metadata <url>\n' +
+    '  node bin/oauth-client.js refresh-metadata <url|key>\n' +
+    '  node bin/oauth-client.js template-from <clientId>\n\n' +
+    'Metadata-document clients (oauth.clientMetadataDocuments): a client named by\n' +
+    'the https URL of its client metadata document is stored under a derived key\n' +
+    '(url~...); show, revoke, suspend, resume and purge-grants take the URL or the\n' +
+    'key; update and rotate-secret refuse such a client (its document and the\n' +
+    'template decide). check-metadata fetches and validates a document and prints\n' +
+    'the client it gives, writing nothing; refresh-metadata fetches it now and\n' +
+    'rewrites the client; template-from prints the oauth.clientMetadataDocuments\n' +
+    '.client block that grants such clients what a registry client may be granted.\n\n' +
     'Status: active, suspended (suspend / resume) or review. On update, a change of\n' +
     'a registry client\'s vetted fields (--redirect-uri, --scope, the key set, --auth-method,\n' +
     '--signing-alg, --grant-type, --audience, --any-audience, --allow-feature,\n' +
@@ -1597,7 +1779,7 @@ function printUsage (stream) {
     '                            above): fetched by the core, https only, no redirect,\n' +
     '                            private addresses refused, cached 5 minutes\n' +
     '  --signing-alg <alg>       (multi; "none" clears on update) pin the algorithms\n' +
-    '                            the client\'s assertions may use: ES256, ES384, RS384\n' +
+    '                            the client\'s assertions may use: ES256, ES384, RS256, RS384\n' +
     '                            (default: any that fits a key of its set)\n' +
     '  --access-token-ttl <s>  --refresh-token-ttl <s>  --refresh-token-absolute-ttl <s>\n' +
     '                            this client\'s token lifetimes in seconds ("none" clears\n' +
@@ -1653,6 +1835,7 @@ const cliEnv = {
   logoHosts: () => configLogoHosts(),
   platformRegions: () => configRegions(),
   purgeClientGrants: (clientId) => purgeOnThisCore(clientId),
+  config: async () => await require('@pryv/boiler').getConfig(),
 };
 
 module.exports = {
@@ -1666,6 +1849,9 @@ module.exports = {
   runRotateSecret,
   runRevoke,
   runPurgeGrants,
+  runCheckMetadata,
+  runRefreshMetadata,
+  runTemplateFrom,
   cliEnv,
 };
 

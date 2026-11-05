@@ -1,0 +1,1152 @@
+/**
+ * @license
+ * Copyright (C) Pryv https://pryv.com
+ * This file is part of Pryv.io and released under BSD-Clause-3 License
+ * Refer to LICENSE file
+ */
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
+/**
+ * [OCMD] Client metadata documents (an https URL as client_id): the URL
+ * rules and host policy, the row key, the fetch and its guards, the document
+ * validation, the client row derived from it, the caches and budgets, the
+ * configuration, the prune, the discovery flag, the operator CLI and the
+ * access stamp. The counterparty transport is replaced by an in-memory
+ * document server, except where the address guard itself is checked.
+ */
+
+const assert = require('node:assert/strict');
+const yaml = require('js-yaml');
+const meta = require('../src/clientMetadata.ts');
+const ids = require('../src/clientMetadataId.ts');
+const conf = require('../src/clientMetadataConfig.ts');
+const { persistClient, getClient } = require('../src/clientRegistry.ts');
+const storage = require('../src/storage.ts');
+const { buildDiscoveryDocument } = require('../src/wellKnown.ts');
+const { setPeerTransportForTests, getPeerTransportForTests } = require('business/src/outbound/peerFetch.ts');
+const cli = require('../../../bin/oauth-client.js');
+const crypto = require('node:crypto');
+const jwks = require('../src/jwks.ts');
+const { authenticateClient } = require('../src/clientSecret.ts');
+const { verifyClientAssertion, CLIENT_ASSERTION_TYPE } = require('../src/clientAssertion.ts');
+const { isConfidentialClient } = require('../src/clientAuth.ts');
+
+const ISSUER = 'https://issuer.example.net';
+
+/** A signing key for `alg` (RS* an RSA 2048 key, ES256 a P-256 key), with its public JWK. */
+function makeKey (alg, kid) {
+  const { privateKey, publicKey } = alg.startsWith('RS')
+    ? crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+    : crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pub = publicKey.export({ format: 'jwk' });
+  const jwk = pub.kty === 'RSA' ? { kty: 'RSA', n: pub.n, e: pub.e } : { kty: 'EC', crv: pub.crv, x: pub.x, y: pub.y };
+  return { alg, privateKey, publicJwk: { ...jwk, kid }, rawPublic: pub };
+}
+
+/** A client assertion naming `clientId` (iss = sub), signed by `key` (`signAs`: the algorithm actually used). */
+function signedAssertion (key, clientId, { alg = key.alg, signAs = key.alg, aud = ISSUER + '/oauth2/token' } = {}) {
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const input = enc({ alg, typ: 'JWT', kid: key.publicJwk.kid }) + '.' +
+    enc({ iss: clientId, sub: clientId, aud, jti: 'j-' + crypto.randomUUID(), exp: now + 120, iat: now });
+  const hash = signAs.endsWith('384') ? 'sha384' : 'sha256';
+  const sig = signAs.startsWith('RS')
+    ? crypto.sign(hash, Buffer.from(input), key.privateKey)
+    : crypto.sign(hash, Buffer.from(input), { key: key.privateKey, dsaEncoding: 'ieee-p1363' });
+  return input + '.' + sig.toString('base64url');
+}
+
+const URL1 = 'https://client.example/oauth/client.json';
+const URL2 = 'https://tools.example/agent/metadata.json';
+const AUD = 'https://core.example.org/adapter/x/';
+
+function fakePlatform () {
+  const kv = new Map();
+  return {
+    kv,
+    async setPlatformKv (k, v) { kv.set(k, v); },
+    async getPlatformKv (k) { return kv.has(k) ? kv.get(k) : null; },
+    async deletePlatformKv (k) { kv.delete(k); },
+    async listPlatformKvKeys (p) { return [...kv.keys()].filter((k) => k.startsWith(p)); },
+    async listPlatformKvEntries (p) { return [...kv.entries()].filter(([k]) => k.startsWith(p)).map(([key, value]) => ({ key, value })); },
+    state: new Map(),
+    async setAccessStateIfAbsent (k, v, exp) {
+      if (this.state.has(k)) return false;
+      this.state.set(k, { value: v, expiresAt: exp });
+      return true;
+    },
+  };
+}
+
+function block (overrides = {}, client = {}) {
+  return {
+    mode: 'any',
+    allowedHosts: [],
+    deniedHosts: [],
+    ...overrides,
+    client: { scope: 'read/a read/b', allowedAudiences: [AUD], subjectType: 'pairwise', maxEntries: 50, ...client },
+  };
+}
+
+function fakeConfig (cmd = block(), extra = {}) {
+  const m = {
+    'service:api': 'https://{username}.pryv.example/',
+    'core:url': 'https://core-a.pryv.example/',
+    'dns:domain': 'pryv.example',
+    'dnsLess:publicUrl': 'https://public.example.net/',
+    'oauth:issuer': 'https://issuer.example.net',
+    'oauth:refreshTokenAbsoluteTTL': 90 * 24 * 3600,
+    'oauth:clientMetadataDocuments': cmd,
+    ...extra,
+  };
+  return { get: (k) => m[k] };
+}
+
+function doc (url = URL1, extra = {}) {
+  return { client_id: url, client_name: 'Example agent', redirect_uris: ['https://client.example/cb'], ...extra };
+}
+
+/** An in-memory document server: path -> answer; counts the calls. */
+function docServer () {
+  const answers = new Map();
+  const server = {
+    calls: 0,
+    set (url, answer) { answers.set(url, answer); },
+    async transport (url, init) {
+      server.calls++;
+      const a = answers.get(url);
+      if (a == null) return new Response('not found', { status: 404, headers: { 'content-type': 'text/plain' } });
+      if (typeof a === 'function') return await a(init);
+      const body = typeof a.body === 'string' ? a.body : JSON.stringify(a.body ?? a);
+      return new Response(body, { status: a.status ?? 200, headers: a.headers ?? { 'content-type': 'application/json' } });
+    },
+  };
+  return server;
+}
+
+const settingsOf = (cmd = block()) => conf.clientMetadataSettings(fakeConfig(cmd));
+
+describe('[OCMD] client metadata documents', function () {
+  let savedTransport;
+  before(() => { savedTransport = getPeerTransportForTests(); });
+  after(() => { setPeerTransportForTests(savedTransport); });
+  beforeEach(() => { meta._resetClientMetadataForTests(); });
+
+  it('[OCMD01] URL rules and host policy, before any network call', () => {
+    const syntaxRefused = [
+      'http://client.example/c.json', // not https
+      'https://192.0.2.10/c.json', 'https://[2001:db8::1]/c.json', // IP literals
+      'https://user@client.example/c.json', 'https://u:p@client.example/c.json', // userinfo
+      'https://client.example/c.json#x', 'https://client.example/c.json#', // fragment
+      'https://client.example', 'https://client.example?x=1', // no path
+      'https://client.example/', 'https://client.example/?x=1', // the root path
+      'https://client.example/a/./c.json', 'https://client.example/a/../c.json', 'https://client.example//c.json',
+      'https://client.example/%2e%2e/c.json', 'https://client.example/a%41.json', // dot segments, empty segment, escapes
+      'https://Client.example/c.json', 'https://client.example:443/c.json', 'https://client.example./c.json', // spellings
+      'https://client.example/c .json', 'https://client.example/c\t.json', 'https://client.example/c\u202e.json', // control / spaces
+      'https://client.example/' + 'a'.repeat(2048), // length
+      'https://bücher.example/c.json', // a host not in its ASCII form
+    ];
+    for (const raw of syntaxRefused) {
+      assert.notEqual(ids.clientIdUrlSyntaxProblem(raw), null, 'refused: ' + JSON.stringify(raw));
+      assert.equal(ids.isMetadataClientUrl(raw), false);
+    }
+    for (const ok of ['https://client.example/c', URL1, 'https://client.example/c.json?v=2', 'https://client.example:8443/c.json', 'https://xn--bcher-kva.example/c.json']) {
+      assert.equal(ids.clientIdUrlSyntaxProblem(ok), null, 'accepted: ' + ok);
+    }
+    const config = fakeConfig();
+    const any = settingsOf();
+    // This platform's hosts: the API hosts, the public URL's, the issuer's.
+    for (const host of ['core-a.pryv.example', 'pryv.example', 'alice.pryv.example', 'public.example.net', 'issuer.example.net']) {
+      const r = meta.clientIdUrlProblem('https://' + host + '/c.json', any, config);
+      assert.deepEqual(r && r.reason, 'url', host);
+    }
+    assert.equal(meta.clientIdUrlProblem(URL1, any, config), null);
+    // Allow-list: exact, one-label wildcard (never the apex, never two labels), explicit port.
+    const list = settingsOf(block({ mode: 'allowList', allowedHosts: ['client.example', '*.tools.example', 'port.example:8443'] }));
+    assert.equal(meta.clientIdUrlProblem(URL1, list, config), null);
+    assert.equal(meta.clientIdUrlProblem('https://a.tools.example/m.json', list, config), null);
+    assert.equal(meta.clientIdUrlProblem('https://tools.example/m.json', list, config).reason, 'host-policy');
+    assert.equal(meta.clientIdUrlProblem('https://a.b.tools.example/m.json', list, config).reason, 'host-policy');
+    assert.equal(meta.clientIdUrlProblem('https://port.example:8443/m.json', list, config), null);
+    assert.equal(meta.clientIdUrlProblem('https://port.example/m.json', list, config).reason, 'host-policy');
+    assert.equal(meta.clientIdUrlProblem('https://client.example:8443/m.json', list, config).reason, 'host-policy');
+    assert.equal(meta.clientIdUrlProblem(URL2, list, config).reason, 'host-policy');
+    // The deny-list wins, in both modes.
+    const denied = settingsOf(block({ mode: 'allowList', allowedHosts: ['client.example'], deniedHosts: ['client.example'] }));
+    assert.equal(meta.clientIdUrlProblem(URL1, denied, config).detail, 'the host is denied');
+    const deniedAny = settingsOf(block({ deniedHosts: ['*.client.example'] }));
+    assert.equal(deniedAny.mode, 'any', 'a valid block');
+    // A deny wildcard covers the apex and every depth; an allow wildcard one label only.
+    for (const u of [URL1, 'https://a.client.example/m.json', 'https://a.b.client.example/m.json']) {
+      assert.equal(meta.clientIdUrlProblem(u, deniedAny, config)?.detail, 'the host is denied', u);
+    }
+    assert.equal(meta.clientIdUrlProblem('https://otherclient.example/m.json', deniedAny, config), null, 'not a sub-domain');
+    const allowWild = settingsOf(block({ mode: 'allowList', allowedHosts: ['*.client.example'] }));
+    assert.equal(meta.clientIdUrlProblem('https://a.client.example/m.json', allowWild, config), null);
+    for (const u of [URL1, 'https://a.b.client.example/m.json', 'https://a.client.example:8443/m.json']) {
+      assert.equal(meta.clientIdUrlProblem(u, allowWild, config)?.reason, 'host-policy', u);
+    }
+    // A denied host without a port is denied on every port; with a port, on that one only.
+    for (const s of [settingsOf(block({ deniedHosts: ['client.example'] })),
+      settingsOf(block({ mode: 'allowList', allowedHosts: ['client.example:8443'], deniedHosts: ['client.example'] })),
+      settingsOf(block({ deniedHosts: ['*.client.example'] }))]) {
+      const url = s.deniedHosts[0].startsWith('*.') ? 'https://a.client.example:8443/m.json' : 'https://client.example:8443/m.json';
+      assert.equal(meta.clientIdUrlProblem(url, s, config)?.detail, 'the host is denied', s.mode + ' ' + s.deniedHosts[0]);
+    }
+    const deniedPort = settingsOf(block({ deniedHosts: ['client.example:8443'] }));
+    assert.equal(meta.clientIdUrlProblem('https://client.example:8443/m.json', deniedPort, config).detail, 'the host is denied');
+    assert.equal(meta.clientIdUrlProblem(URL1, deniedPort, config), null);
+    // off: nothing is accepted.
+    assert.equal(meta.clientIdUrlProblem(URL1, settingsOf({ mode: 'off' }), config).reason, 'host-policy');
+  });
+
+  it('[OCMD02] the row key and the wire id', () => {
+    const key = ids.metadataClientKey(URL1);
+    assert.match(key, /^url~[0-9a-f]{40}$/);
+    assert.equal(storage.clientIdError(key.replace('url~', 'abc~')), null, 'the key shape passes the id rules');
+    assert.match(storage.clientIdError(key), /reserved/, 'the prefix is reserved for such clients');
+    assert.deepEqual(ids.clientRef(URL1), { key, url: URL1 });
+    assert.deepEqual(ids.clientRef('my-app'), { key: 'my-app', url: null });
+    assert.deepEqual(ids.clientRef('http://client.example/c.json'), { key: 'http://client.example/c.json', url: null });
+    assert.notEqual(ids.metadataClientKey(URL1 + '?v=2'), key, 'two spellings are two clients');
+    assert.equal(ids.publicClientId({ clientId: key, metadataUrl: URL1 }), URL1);
+    assert.equal(ids.publicClientId({ clientId: 'my-app' }), 'my-app');
+  });
+
+  describe('[OCMD03] fetch', () => {
+    let server;
+    beforeEach(() => {
+      server = docServer();
+      setPeerTransportForTests(server.transport);
+    });
+
+    it('[OCMD03A] a 200 application/json document (a charset parameter passes)', async () => {
+      server.set(URL1, { body: doc(), headers: { 'content-type': 'application/json; charset=utf-8' } });
+      const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
+      assert.equal(r.ok, true);
+      assert.equal(r.doc.client_id, URL1);
+    });
+
+    it('[OCMD03B] a redirect is not followed, other statuses refused', async () => {
+      server.set(URL1, { status: 302, body: doc(), headers: { 'content-type': 'application/json', location: URL2 } });
+      server.set(URL2, { body: doc(URL2) });
+      const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
+      assert.deepEqual([r.ok, r.kind], [false, 'unreachable']);
+      assert.match(r.detail, /302/);
+      assert.equal(server.calls, 1, 'the location is not fetched');
+      for (const status of [404, 500]) {
+        server.set(URL1, { status, body: doc() });
+        assert.equal((await meta.fetchClientMetadataDocument(URL1, settingsOf())).ok, false, String(status));
+      }
+    });
+
+    it('[OCMD03C] content type: application/json or an application/<subtype>+json type, parameters ignored', async () => {
+      for (const ct of ['application/vnd.client.example+json', 'Application/JSON; charset=utf-8', 'application/ld+json']) {
+        server.set(URL1, { body: JSON.stringify(doc()), headers: { 'content-type': ct } });
+        const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
+        assert.equal(r.ok, true, ct);
+      }
+      for (const ct of ['text/plain', 'text/json', 'application/+json', 'application/jsonx', 'application/json+xml', '']) {
+        server.set(URL1, { body: JSON.stringify(doc()), headers: ct === '' ? {} : { 'content-type': ct } });
+        const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
+        assert.deepEqual([r.ok, r.kind], [false, 'invalid'], ct);
+        assert.match(r.detail, /\(application\/json or application\/\*\+json expected\)/, ct);
+      }
+    });
+
+    it('[OCMD03D] size: a declared length over the cap is refused before the body is read; an undeclared body is counted', async () => {
+      const settings = settingsOf(block({ maxDocumentBytes: 1024 }));
+      const big = JSON.stringify(doc(URL1, { padding: 'x'.repeat(2000) }));
+      let pulled = 0;
+      server.set(URL1, () => new Response(new ReadableStream({
+        pull (c) { pulled++; c.enqueue(new TextEncoder().encode(big)); c.close(); },
+      }, { highWaterMark: 0 }), { status: 200, headers: { 'content-type': 'application/json', 'content-length': String(big.length) } }));
+      const declared = await meta.fetchClientMetadataDocument(URL1, settings);
+      assert.deepEqual([declared.ok, declared.kind], [false, 'invalid']);
+      assert.match(declared.detail, /declared/);
+      assert.equal(pulled, 0, 'the body is not read');
+      server.set(URL1, () => new Response(new ReadableStream({
+        start (c) { for (let i = 0; i < 4; i++) c.enqueue(new TextEncoder().encode('x'.repeat(400))); c.close(); },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      const counted = await meta.fetchClientMetadataDocument(URL1, settings);
+      assert.deepEqual([counted.ok, counted.kind], [false, 'invalid']);
+      assert.match(counted.detail, /larger than 1024 bytes$/);
+    });
+
+    it('[OCMD03E] a byte order mark, bad UTF-8, non-JSON and a non-object are invalid', async () => {
+      const bodies = [
+        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(doc()))]),
+        Buffer.from([0x7b, 0xff, 0x7d]),
+        Buffer.from('not json'),
+        Buffer.from('[1,2]'),
+      ];
+      for (const body of bodies) {
+        server.set(URL1, () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }));
+        const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
+        assert.deepEqual([r.ok, r.kind], [false, 'invalid'], body.toString('hex').slice(0, 16));
+      }
+    });
+
+    it('[OCMD03F] a server that does not answer within fetchTimeoutMs', async () => {
+      server.set(URL1, (init) => new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(init.signal.reason));
+      }));
+      const t0 = Date.now();
+      const r = await meta.fetchClientMetadataDocument(URL1, settingsOf(block({ fetchTimeoutMs: 50 })));
+      assert.deepEqual([r.ok, r.kind, r.detail], [false, 'unreachable', 'timed out']);
+      assert.ok(Date.now() - t0 < 2000);
+    });
+
+    it('[OCMD03G] the counterparty guards: a host resolving to a loopback address is refused before any connection', async () => {
+      // The real guarded transport (no test transport), with a production
+      // allow-list (the test configuration allows the loopback hosts):
+      // `localhost` resolves to a loopback address, which the checked lookup
+      // refuses; nothing listens on 443 there, so any other outcome is a
+      // connection attempt.
+      setPeerTransportForTests(null);
+      const { compileAllowList } = require('business/src/webhooks/destination.ts');
+      const strict = { allow: compileAllowList([]), allowInsecure: false, isPlatformHost: () => false };
+      const r = await meta.fetchClientMetadataDocument('https://localhost/client.json', settingsOf(), { peerSettings: strict });
+      assert.deepEqual([r.ok, r.kind, r.detail], [false, 'unreachable', 'refused: address']);
+      // http is refused whatever the insecure-peer setting says.
+      const h = await meta.fetchClientMetadataDocument('http://client.example/c.json', settingsOf(),
+        { peerSettings: { ...strict, allowInsecure: true } });
+      assert.equal(h.ok, false);
+    });
+
+    it('[OCMD03H] budgets: 10 fetches a minute per host, fetchesPerMinute per core; concurrent misses share one fetch', async () => {
+      const platform = fakePlatform();
+      const config = fakeConfig(block({ fetchesPerMinute: 12, newClientsPerMinute: 12, negativeCacheSeconds: 0 }));
+      const now = Date.now();
+      // Every fetch fails (404): the URL is fetched again (no negative cache).
+      for (let i = 0; i < 10; i++) {
+        const r = await meta.resolveMetadataClient({ platform, config }, URL1, { now: now + i });
+        assert.equal(r.reason, 'unreachable', 'fetch ' + i);
+      }
+      assert.equal(server.calls, 10);
+      const spent = await meta.resolveMetadataClient({ platform, config }, URL1, { now: now + 10 });
+      assert.deepEqual([spent.reason, server.calls], ['budget', 10], 'per host');
+      await meta.resolveMetadataClient({ platform, config }, URL2, { now: now + 11 });
+      await meta.resolveMetadataClient({ platform, config }, URL2, { now: now + 12 });
+      const core = await meta.resolveMetadataClient({ platform, config }, 'https://other.example/m.json', { now: now + 13 });
+      assert.deepEqual([core.reason, server.calls], ['budget', 12], 'per core');
+      // A minute later the window has moved on.
+      const later = await meta.resolveMetadataClient({ platform, config }, URL1, { now: now + 61000 });
+      assert.equal(later.reason, 'unreachable');
+
+      meta._resetClientMetadataForTests();
+      server.calls = 0;
+      let release;
+      const gate = new Promise((resolve) => { release = resolve; });
+      server.set(URL1, async () => {
+        await gate;
+        return new Response(JSON.stringify(doc()), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      const pending = [1, 2, 3, 4, 5].map(() => meta.resolveMetadataClient({ platform, config }, URL1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      release();
+      const results = await Promise.all(pending);
+      assert.ok(results.every((r) => r.ok === true));
+      assert.equal(server.calls, 1, 'one fetch for concurrent misses');
+    });
+  });
+
+  it('[OCMD04] document validation', () => {
+    const s = settingsOf();
+    const check = (d, url = URL1) => meta.clientMetadataProblem(d, url, s);
+    const refused = (d, re, why) => {
+      const r = check(d);
+      assert.equal(r.ok, false, why);
+      assert.match(r.detail, re, why);
+    };
+    refused({ ...doc(), client_id: URL1 + '/' }, /client-id-mismatch/, 'trailing slash');
+    refused({ ...doc(), client_id: URL1.replace('client.example', 'CLIENT.example') }, /client-id-mismatch/, 'case');
+    refused({ ...doc(), client_id: undefined }, /client-id-mismatch/, 'absent');
+    refused({ ...doc(), redirect_uris: [] }, /redirect_uris/, 'none');
+    refused({ ...doc(), redirect_uris: Array.from({ length: 33 }, (_, i) => 'https://client.example/cb' + i) }, /redirect_uris/, '33');
+    refused({ ...doc(), redirect_uris: ['https://client.example/cb#f'] }, /fragment/, 'fragment');
+    refused({ ...doc(), redirect_uris: ['https://client.example/c\nb'] }, /control/, 'control');
+    refused({ ...doc(), redirect_uris: ['not a uri'] }, /absolute/, 'relative');
+    refused({ ...doc(), redirect_uris: ['http://client.example/cb'] }, /loopback/, 'plain http elsewhere');
+    refused({ ...doc(), token_endpoint_auth_method: 'client_secret_basic' }, /unsupported-auth-method/, 'secret');
+    refused({ ...doc(), grant_types: ['refresh_token'] }, /unsupported-grant-types/, 'no code grant');
+    refused({ ...doc(), grant_types: 'authorization_code' }, /grant_types/, 'not a list');
+    refused({ ...doc(), response_types: ['token'] }, /unsupported-response-types/, 'implicit');
+    refused({ ...doc(), client_name: 'x'.repeat(129) }, /client_name/, 'long name');
+    refused({ ...doc(), client_name: 'bad\u202ename' }, /client_name/, 'bidi');
+    refused({ ...doc(), 'client_name#xx_1': 'Nom' }, /client_name#/, 'bad language code');
+
+    // Only web addresses: a script, data, file or private-use scheme is refused.
+    for (const uri of ['javascript:alert(1)//x', 'data:text/html,x', 'vbscript:x', 'file:///etc/passwd', 'blob:https://client.example/x', 'com.example.app:/cb']) {
+      refused({ ...doc(), redirect_uris: ['https://client.example/cb', uri] }, /only https/, uri);
+    }
+    // Loopback plain http passes (any port at /authorize).
+    const ok = check(doc(URL1, { redirect_uris: ['http://localhost/callback', 'http://127.0.0.1/callback', 'https://client.example/cb'] }));
+    assert.equal(ok.ok, true);
+    // Absent auth method reads as none; grant types: RFC 7591 default, the intersection.
+    assert.equal(ok.fields.tokenEndpointAuthMethod, 'none');
+    assert.deepEqual(ok.fields.grantTypes, ['authorization_code']);
+    const g = check(doc(URL1, { token_endpoint_auth_method: 'none', grant_types: ['urn:ietf:params:oauth:grant-type:jwt-bearer', 'refresh_token', 'authorization_code'] }));
+    assert.deepEqual(g.fields.grantTypes, ['authorization_code', 'refresh_token']);
+    // Names: a string and a per-language set.
+    const n = check(doc(URL1, { 'client_name#fr': 'Agent exemple', 'client_name#de': 'Beispiel' }));
+    assert.equal(n.fields.clientName, 'Example agent');
+    assert.deepEqual(n.fields.name, { fr: 'Agent exemple', de: 'Beispiel' });
+    // Links: kept on the document's host only (the port counts); the logo too.
+    const links = check(doc(URL1, {
+      client_uri: 'https://client.example/about',
+      policy_uri: 'https://elsewhere.example/policy',
+      tos_uri: 'https://client.example:8443/tos',
+      logo_uri: 'https://cdn.example/logo.png',
+    }));
+    assert.equal(links.fields.clientUri, 'https://client.example/about');
+    assert.equal(links.fields.policyUri, undefined);
+    assert.equal(links.fields.tosUri, undefined);
+    assert.equal(links.fields.logoUri, undefined);
+    assert.deepEqual(links.dropped.sort(), ['logo_uri', 'policy_uri', 'tos_uri']);
+    assert.equal(check(doc(URL1, { logo_uri: 'https://client.example/logo.png' })).fields.logoUri, 'https://client.example/logo.png');
+    // Reach and anything unknown is ignored (and named for the log).
+    const ignored = check(doc(URL1, { scope: 'read/everything', dpop_bound_access_tokens: true, require_signed_request_object: true, extra: 1 }));
+    assert.equal(ignored.ok, true);
+    assert.deepEqual(ignored.ignored.sort(), ['dpop_bound_access_tokens', 'extra', 'require_signed_request_object', 'scope']);
+    assert.equal(ignored.fields.scope, undefined);
+    // software_id and contacts: bounded, dropped when out of bounds.
+    const sw = check(doc(URL1, { software_id: 'agent', contacts: Array.from({ length: 9 }, () => 'a@b.example') }));
+    assert.equal(sw.fields.softwareId, 'agent');
+    assert.equal(sw.fields.contacts, undefined);
+  });
+
+  it('[OCMD05] the client row: the template, the hard-coded limits; the registry refuses what such a row may not hold', async () => {
+    const s = settingsOf(block({}, { launchTypes: ['agent'], regions: ['eu'], offlineAccessAllowed: false, accessTokenTTL: 600 }));
+    const checked = meta.clientMetadataProblem(doc(URL1, { grant_types: ['authorization_code', 'refresh_token'] }), URL1, s);
+    const row = meta.buildMetadataClientRow(URL1, checked.fields, s, null, 1000);
+    assert.equal(row.clientId, ids.metadataClientKey(URL1));
+    assert.deepEqual([row.kind, row.origin, row.metadataUrl, row.status], ['registry', 'metadata-document', URL1, 'active']);
+    assert.deepEqual(row.scope, ['read/a', 'read/b']);
+    assert.deepEqual(row.allowedAudiences, [AUD]);
+    assert.deepEqual([row.launchTypes, row.subjectType, row.maxEntries, row.regions], [['agent'], 'pairwise', 50, ['eu']]);
+    assert.deepEqual([row.offlineAccessAllowed, row.accessTokenTTL], [false, 600]);
+    assert.deepEqual(row.allowFeatures, []);
+    assert.equal(row.tokenEndpointAuthMethod, 'none');
+    for (const k of ['canIntrospect', 'canExchange', 'anyAudience', 'allowInsecureRedirect', 'dpopBoundAccessTokens', 'clientSecretHash']) {
+      assert.equal(row[k], undefined, k);
+    }
+    assert.deepEqual([row.metadata.fetchedAt, row.metadata.expiresAt, row.metadata.lastUsedAt], [1000, 1000 + 3600 * 1000, 1000]);
+    assert.equal(row.updatedAt, 1000);
+    const platform = fakePlatform();
+    await persistClient(platform, row);
+    assert.equal((await getClient(platform, row.clientId)).metadataUrl, URL1);
+    for (const [k, v] of [['canIntrospect', true], ['allowFeatures', ['webhooks']], ['clientSecretHash', 'h'],
+      ['allowInsecureRedirect', true]]) {
+      await assert.rejects(persistClient(platform, { ...row, [k]: v }), /not available to such a client/, k);
+    }
+    // (A public row is refused the exchange role by the registry rule first.)
+    await assert.rejects(persistClient(platform, { ...row, canExchange: true }), /confidential client/);
+    await assert.rejects(persistClient(platform, { ...row, allowedAudiences: [], anyAudience: true }), /not available to such a client: anyAudience/);
+    await assert.rejects(persistClient(platform, { ...row, clientId: ids.metadataClientKey(URL2) }), /derived from its URL/);
+    await assert.rejects(persistClient(platform, { ...row, origin: undefined }), /reserved/);
+    await assert.rejects(persistClient(platform, { ...row, clientId: 'plain-id' }), /derived from its URL/);
+    await assert.rejects(persistClient(platform, { ...row, tokenEndpointAuthMethod: 'client_secret_basic' }), /needs a client secret|none or private_key_jwt/);
+  });
+
+  describe('[OCMD06] the row as the cache', () => {
+    let server, platform, config;
+    beforeEach(() => {
+      server = docServer();
+      setPeerTransportForTests(server.transport);
+      platform = fakePlatform();
+      config = fakeConfig(block({ cacheSeconds: 60, staleGraceSeconds: 600, negativeCacheSeconds: 30 }));
+    });
+    const resolve = (now) => meta.resolveMetadataClient({ platform, config }, URL1, { now });
+
+    it('[OCMD06D] a write never undoes what changed during the request: a suspend or a revoke during the refetch, a suspend before the hourly touch', async () => {
+      const key = ids.metadataClientKey(URL1);
+      const rowKey = 'oauth-client/' + key;
+      const t0 = 1_000_000_000_000;
+      const mutateRow = (f) => {
+        const row = JSON.parse(platform.kv.get(rowKey));
+        platform.kv.set(rowKey, JSON.stringify(f(row)));
+      };
+      server.set(URL1, doc());
+      assert.equal((await resolve(t0)).ok, true);
+      // Suspended by the operator while the stale row is fetched again.
+      server.set(URL1, async () => {
+        mutateRow((r) => ({ ...r, status: 'suspended' }));
+        return new Response(JSON.stringify(doc(URL1, { client_name: 'Renamed' })), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      await resolve(t0 + 61_000);
+      const after = await storage.getClient(platform, key);
+      assert.deepEqual([after.status, after.clientName], ['suspended', 'Renamed']);
+      // Revoked while fetched: not written again, not served.
+      server.set(URL1, async () => {
+        platform.kv.delete(rowKey);
+        return new Response(JSON.stringify(doc()), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      const gone = await resolve(t0 + 122_000);
+      assert.equal(gone.ok, false);
+      assert.equal(await storage.getClient(platform, key), null);
+      // The hourly touch over a row suspended since the request read it.
+      const long = fakeConfig(block({ cacheSeconds: 7200 }));
+      server.set(URL1, doc());
+      assert.equal((await meta.resolveMetadataClient({ platform, config: long }, URL1, { now: t0 })).ok, true);
+      const read = platform.getPlatformKv.bind(platform);
+      let reads = 0;
+      platform.getPlatformKv = async (k) => {
+        const v = await read(k);
+        if (k === rowKey && ++reads === 1) mutateRow((r) => ({ ...r, status: 'suspended' }));
+        return v;
+      };
+      await meta.resolveMetadataClient({ platform, config: long }, URL1, { now: t0 + 3_700_000 });
+      const touched = await storage.getClient(platform, key);
+      assert.deepEqual([touched.status, touched.metadata.lastUsedAt], ['suspended', t0 + 3_700_000]);
+    });
+
+    it('[OCMD06A] a fresh row is used without a fetch; a stale one is fetched again; unchanged content keeps updatedAt, a change bumps it', async () => {
+      server.set(URL1, doc());
+      const t = 1_000_000;
+      const first = await resolve(t);
+      assert.equal(first.ok, true);
+      assert.equal(server.calls, 1);
+      await resolve(t + 59000);
+      assert.equal(server.calls, 1, 'fresh: no fetch');
+      const again = await resolve(t + 61000);
+      assert.equal(server.calls, 2, 'stale: fetched');
+      assert.equal(again.client.updatedAt, first.client.updatedAt, 'same content, same updatedAt');
+      assert.equal(again.client.metadata.fetchedAt, t + 61000);
+      server.set(URL1, doc(URL1, { client_name: 'Renamed agent' }));
+      const changed = await resolve(t + 130000);
+      assert.equal(changed.client.clientName, 'Renamed agent');
+      assert.equal(changed.client.updatedAt, t + 130000);
+    });
+
+    it('[OCMD06B] a failed refetch keeps the row within the stale grace, refuses past it, and keeps the row', async () => {
+      server.set(URL1, doc());
+      const t = 2_000_000;
+      await resolve(t);
+      server.set(URL1, { status: 503, body: 'down' });
+      const within = await resolve(t + 120000);
+      assert.equal(within.ok, true, 'within grace');
+      assert.equal(server.calls, 2);
+      // The negative cache: no fetch within 30 s, the row still served.
+      assert.equal((await resolve(t + 125000)).ok, true);
+      assert.equal(server.calls, 2);
+      const past = await resolve(t + 700000);
+      assert.deepEqual([past.ok, past.reason, past.message], [false, 'stale', meta.METADATA_STALE]);
+      assert.notEqual(await getClient(platform, ids.metadataClientKey(URL1)), null, 'the row is kept');
+    });
+
+    it('[OCMD06C] an invalid or unreachable document is negatively cached; the operator status survives a refetch; a use is recorded hourly', async () => {
+      server.set(URL1, doc(URL1, { client_id: URL2 }));
+      const t = 3_000_000;
+      const bad = await resolve(t);
+      assert.deepEqual([bad.ok, bad.reason, bad.message], [false, 'invalid', meta.METADATA_INVALID]);
+      assert.equal((await resolve(t + 1000)).reason, 'invalid');
+      assert.equal(server.calls, 1, 'not fetched again within negativeCacheSeconds');
+      server.set(URL1, doc());
+      const ok = await resolve(t + 31000);
+      assert.equal(ok.ok, true);
+      const key = ok.client.clientId;
+      await storage.setClient(platform, { ...ok.client, status: 'suspended', statusLog: [{ at: 1, by: 'op', from: 'active', to: 'suspended', reason: 'suspend' }] });
+      const refetched = await resolve(t + 31000 + 61000);
+      assert.equal(refetched.client.status, 'suspended');
+      assert.equal(refetched.client.statusLog.length, 1);
+      // lastUsedAt: written at most once an hour.
+      await storage.setClient(platform, { ...refetched.client, status: 'active', metadata: { ...refetched.client.metadata, expiresAt: t + 10 ** 9 } });
+      const before = (await getClient(platform, key)).metadata.lastUsedAt;
+      await resolve(before + 1000);
+      assert.equal((await getClient(platform, key)).metadata.lastUsedAt, before);
+      await resolve(before + 3600 * 1000 + 1);
+      assert.equal((await getClient(platform, key)).metadata.lastUsedAt, before + 3600 * 1000 + 1);
+    });
+  });
+
+  it('[OCMD07] configuration', () => {
+    const problems = (raw) => conf.describeClientMetadataConfig(raw).problems;
+    assert.deepEqual(problems(undefined), []);
+    assert.deepEqual(problems({ mode: 'off' }), []);
+    assert.deepEqual(problems({ mode: false }), [], 'off as YAML 1.1 reads it');
+    assert.deepEqual(problems({ mode: 'off', client: { nonsense: 1 } }), [], 'off ignores the rest');
+    assert.match(conf.describeClientMetadataConfig({ mode: 'off', allowedHosts: ['a.example'] }).warnings[0], /allowedHosts/);
+    assert.deepEqual(problems(block()), []);
+    assert.deepEqual(problems(block({ newClientsPerMinute: 60, unconsentedRowSeconds: 600 })), []);
+    assert.deepEqual([settingsOf().newClientsPerMinute, settingsOf().unconsentedRowSeconds], [10, 3600]);
+    assert.deepEqual(problems(block({ mode: 'allowList', allowedHosts: ['client.example', '*.tools.example', 'port.example:8443'] })), []);
+    const table = [
+      [{ mode: 'open' }, /mode/],
+      [block({ mode: 'allowList' }), /nothing would be accepted/],
+      [block({ allowedHosts: ['Client.example'] }), /lower-case/],
+      [block({ allowedHosts: ['https://client.example'] }), /host name|port/],
+      [block({ allowedHosts: ['client.example:443'] }), /443/],
+      [block({ allowedHosts: ['*.example'] }), /two labels/],
+      [block({ deniedHosts: ['10.0.0.1'] }), /IP address/],
+      [block({ cacheSeconds: 0 }), /cacheSeconds/],
+      [block({ maxDocumentBytes: 10 }), /maxDocumentBytes/],
+      [block({ newClientsPerMinute: 0 }), /newClientsPerMinute/],
+      [block({ newClientsPerMinute: 61 }), /must not exceed fetchesPerMinute/],
+      [block({ unconsentedRowSeconds: 599 }), /unconsentedRowSeconds/],
+      [block({ authMethods: ['client_secret_basic'] }), /authMethods/],
+      [block({ unknown: 1 }), /not a setting/],
+      [block({}, { scope: '' }), /scope is required/],
+      [block({}, { allowedAudiences: [] }), /allowedAudiences is required/],
+      [block({}, { allowedAudiences: ['http://x.example/'] }), /https URL/],
+      [block({}, { anyAudience: true }), /not a template setting/],
+      [block({}, { canExchange: true }), /not a template setting/],
+      [block({}, { subjectType: 'other' }), /subjectType/],
+      [block({}, { maxEntries: 1001 }), /maxEntries/],
+      [block({}, { refreshTokenTTL: 10, refreshTokenAbsoluteTTL: 5 }), /must not exceed/],
+      [block({}, { regions: ['a', 'a'] }), /twice/],
+    ];
+    for (const [raw, re] of table) {
+      const p = problems(raw);
+      assert.ok(p.some((m) => re.test(m)), JSON.stringify(raw) + ' -> ' + JSON.stringify(p));
+    }
+    // A block with problems reads as off at runtime.
+    assert.equal(conf.clientMetadataSettings(fakeConfig(block({ mode: 'allowList' }))).mode, 'off');
+    assert.equal(conf.MAX_TEMPLATE_ENTRIES, require('../src/scopeGrammar.ts').MAX_SYNTH_ENTRIES);
+    assert.match(conf.describeClientMetadataConfig(block()).warnings[0], /any party on the internet/);
+  });
+
+  it('[OCMD08] prune: a permanent row unused past the absolute refresh lifetime + 7 days is deleted with a tombstone; a provisional row past unconsentedRowSeconds without one; a suspended row never', async () => {
+    const platform = fakePlatform();
+    const s = settingsOf();
+    const now = Date.now();
+    const horizon = 90 * 24 * 3600 * 1000 + 7 * 24 * 3600 * 1000;
+    const rowAt = (url, at, extra = {}, meta2 = { firstConsentAt: at }) => {
+      const r = meta.buildMetadataClientRow(url, meta.clientMetadataProblem(doc(url), url, s).fields, s, null, at);
+      return { ...r, ...extra, metadata: { ...r.metadata, ...meta2 } };
+    };
+    const URL3 = 'https://recent.example/m.json';
+    const P1 = 'https://prov.example/old.json';
+    const P2 = 'https://prov.example/young.json';
+    const P3 = 'https://prov.example/operator.json';
+    const P4 = 'https://prov.example/suspended.json';
+    await persistClient(platform, rowAt(URL1, now - horizon - 1000));
+    await persistClient(platform, rowAt(URL2, now - horizon - 1000, { status: 'suspended' }));
+    await persistClient(platform, rowAt(URL3, now - 1000));
+    await persistClient(platform, rowAt(P1, now - 3601 * 1000, {}, {}));
+    await persistClient(platform, rowAt(P2, now - 3599 * 1000, {}, {}));
+    await persistClient(platform, rowAt(P3, now - 7200 * 1000, {}, { operatorRefreshedAt: now - 7200 * 1000 }));
+    await persistClient(platform, rowAt(P4, now - 7200 * 1000, { status: 'suspended' }, {}));
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now), { pruned: 2, provisional: 1 });
+    const key = ids.metadataClientKey;
+    assert.equal(await getClient(platform, key(URL1)), null);
+    assert.notEqual(await storage.getRevokedAt(platform, key(URL1)), null, 'a permanent row: tombstone written');
+    assert.equal(await getClient(platform, key(P1)), null, P1);
+    assert.equal(await storage.getRevokedAt(platform, key(P1)), null, 'a provisional row: no tombstone');
+    for (const u of [URL2, URL3, P2, P3, P4]) assert.notEqual(await getClient(platform, key(u)), null, u);
+    // A suspended provisional row is kept, pass after pass; resumed, it is pruned at the next one, without a tombstone.
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now + 200), { pruned: 0, provisional: 0 });
+    assert.notEqual(await getClient(platform, key(P4)), null, 'kept while suspended');
+    assert.equal(await storage.getRevokedAt(platform, key(P4)), null);
+    await storage.setClient(platform, { ...(await getClient(platform, key(P4))), status: 'active' });
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now + 400), { pruned: 1, provisional: 1 });
+    assert.equal(await getClient(platform, key(P4)), null);
+    assert.equal(await storage.getRevokedAt(platform, key(P4)), null, 'no tombstone');
+    assert.notEqual(await getClient(platform, key(URL2)), null, 'a permanent suspended row is kept');
+    await assert.rejects(storage.deleteClientRow(platform, 'curated'), /url~/);
+  });
+
+  it('[OCMD08B] prune: a provisional row made permanent, or suspended, between the listing and the delete is read again and kept', async () => {
+    const platform = fakePlatform();
+    const s = settingsOf();
+    const now = Date.now();
+    const row = meta.buildMetadataClientRow(URL1, meta.clientMetadataProblem(doc(), URL1, s).fields, s, null, now - 7200 * 1000);
+    await persistClient(platform, row);
+    const rowKey = 'oauth-client/' + ids.metadataClientKey(URL1);
+    // The first read sees the provisional row; a consent marks it right after.
+    let reads = 0;
+    const get = platform.getPlatformKv.bind(platform);
+    platform.getPlatformKv = async (k) => {
+      const v = await get(k);
+      if (k === rowKey && ++reads === 1) {
+        const marked = JSON.parse(v);
+        marked.metadata.firstConsentAt = now;
+        await platform.setPlatformKv(k, JSON.stringify(marked));
+      }
+      return v;
+    };
+    let deletes = 0;
+    const del = platform.deletePlatformKv.bind(platform);
+    platform.deletePlatformKv = async (k) => { if (k === rowKey) deletes++; return await del(k); };
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now), { pruned: 0, provisional: 0 });
+    assert.equal(deletes, 0, 'no deleteClientRow');
+    assert.equal((await getClient(platform, ids.metadataClientKey(URL1))).metadata.firstConsentAt, now);
+    // Suspended by the operator in the same window: kept as well.
+    const p2 = fakePlatform();
+    const row2 = meta.buildMetadataClientRow(URL2, meta.clientMetadataProblem(doc(URL2), URL2, s).fields, s, null, now - 7200 * 1000);
+    await persistClient(p2, row2);
+    const key2 = 'oauth-client/' + ids.metadataClientKey(URL2);
+    let reads2 = 0;
+    const get2 = p2.getPlatformKv.bind(p2);
+    p2.getPlatformKv = async (k) => {
+      const v = await get2(k);
+      if (k === key2 && ++reads2 === 1) await p2.setPlatformKv(k, JSON.stringify({ ...JSON.parse(v), status: 'suspended' }));
+      return v;
+    };
+    assert.deepEqual(await meta.pruneMetadataClients(p2, fakeConfig(), now), { pruned: 0, provisional: 0 });
+    assert.equal((await getClient(p2, ids.metadataClientKey(URL2))).status, 'suspended');
+  });
+
+  it('[OCMD15] a new client row takes a unit of newClientsPerMinute (a creation that writes no row keeps none); a refetch of an existing row does not', async () => {
+    const server = docServer();
+    setPeerTransportForTests(server.transport);
+    const platform = fakePlatform();
+    const config = fakeConfig(block({ cacheSeconds: 1 }));
+    const t0 = 3_000_000_000_000;
+    const hosts = Array.from({ length: 11 }, (_, i) => `https://h${i}.example/c.json`);
+    for (const u of hosts) server.set(u, doc(u, { redirect_uris: ['https://h.example/cb'] }));
+    // Ten creations whose documents answer 404 (ten hosts): no row written, so no unit kept.
+    for (let i = 0; i < 10; i++) {
+      const r = await meta.resolveMetadataClient({ platform, config }, `https://gone${i}.example/c.json`, { now: t0 });
+      assert.equal(r.ok, false);
+      assert.notEqual(r.reason, 'budget');
+    }
+    for (const u of hosts.slice(0, 10)) assert.equal((await meta.resolveMetadataClient({ platform, config }, u, { now: t0 })).ok, true, u);
+    const calls = server.calls;
+    const eleventh = await meta.resolveMetadataClient({ platform, config }, hosts[10], { now: t0 + 1 });
+    assert.deepEqual([eleventh.ok, eleventh.reason, server.calls], [false, 'budget', calls], 'refused without a fetch');
+    // A stale existing row is fetched again although the creation budget is spent.
+    assert.equal((await meta.resolveMetadataClient({ platform, config }, hosts[0], { now: t0 + 2000 })).ok, true);
+    assert.equal(server.calls, calls + 1, 'the refetch');
+    const fresh = await storage.getClient(platform, ids.metadataClientKey(hosts[0]));
+    assert.equal(fresh.metadata.fetchedAt, t0 + 2000);
+    // A minute later, a new client is accepted again.
+    assert.equal((await meta.resolveMetadataClient({ platform, config }, hosts[10], { now: t0 + 61_000 })).ok, true);
+    // One unit a minute: a creation whose derived row is refused (the write
+    // fails) keeps none, and the next creation is accepted.
+    meta._resetClientMetadataForTests();
+    const one = fakeConfig(block({ newClientsPerMinute: 1 }));
+    const p2 = fakePlatform();
+    const refusedUrl = 'https://refused.example/c.json';
+    const okUrl = 'https://accepted.example/c.json';
+    server.set(refusedUrl, doc(refusedUrl));
+    server.set(okUrl, doc(okUrl));
+    const set = p2.setPlatformKv.bind(p2);
+    p2.setPlatformKv = async (k, v) => {
+      if (k === 'oauth-client/' + ids.metadataClientKey(refusedUrl)) throw new Error('the derived row is refused');
+      return await set(k, v);
+    };
+    const refused = await meta.resolveMetadataClient({ platform: p2, config: one }, refusedUrl, { now: t0 });
+    assert.deepEqual([refused.ok, refused.reason], [false, 'invalid']);
+    assert.equal((await meta.resolveMetadataClient({ platform: p2, config: one }, okUrl, { now: t0 + 1 })).ok, true, 'created');
+  });
+
+  it('[OCMD09] discovery: the flag per mode; none and the iss parameter are always advertised', () => {
+    for (const on of [false, true]) {
+      const d = buildDiscoveryDocument({ issuer: 'https://x', scopesSupported: [], clientMetadataDocuments: on });
+      assert.equal(d.client_id_metadata_document_supported, on ? true : undefined);
+      assert.ok(d.token_endpoint_auth_methods_supported.includes('none'));
+      assert.equal(d.authorization_response_iss_parameter_supported, true);
+    }
+    assert.equal(conf.clientMetadataDocumentsOn(fakeConfig({ mode: 'off' })), false);
+    assert.equal(conf.clientMetadataDocumentsOn(fakeConfig(block({ mode: 'allowList', allowedHosts: ['client.example'] }))), true);
+    assert.equal(conf.clientMetadataDocumentsOn(fakeConfig(block())), true);
+  });
+
+  describe('[OCMD10] operator CLI', () => {
+    let server, platform;
+    const savedConfig = cli.cliEnv.config;
+    beforeEach(() => {
+      server = docServer();
+      setPeerTransportForTests(server.transport);
+      platform = fakePlatform();
+      cli.cliEnv.config = async () => fakeConfig();
+    });
+    afterEach(() => { cli.cliEnv.config = savedConfig; });
+
+    async function run (fn, argv, ...rest) {
+      const args = cli.parseArgs(argv);
+      const lines = [];
+      const log = console.log;
+      const err = console.error;
+      console.log = (...a) => { lines.push(a.join(' ')); };
+      console.error = (...a) => { lines.push(a.join(' ')); };
+      let error = null;
+      try {
+        await fn(platform, args, ...rest);
+      } catch (e) {
+        error = e;
+      } finally {
+        console.log = log;
+        console.error = err;
+      }
+      return { out: lines.join('\n'), error };
+    }
+
+    it('[OCMD10A] check-metadata prints the derived client and writes nothing; refresh-metadata writes it', async () => {
+      server.set(URL1, doc(URL1, { scope: 'x' }));
+      const c = await run(cli.runCheckMetadata, ['check-metadata', URL1]);
+      assert.equal(c.error, null, c.out);
+      assert.match(c.out, /OK {3}document valid/);
+      assert.match(c.out, /members ignored: scope/);
+      assert.match(c.out, /"origin": "metadata-document"/);
+      assert.equal(platform.kv.size, 0, 'nothing written');
+      server.set(URL2, doc(URL2, { redirect_uris: ['http://app.example/cb'] }));
+      const bad = await run(cli.runCheckMetadata, ['check-metadata', URL2]);
+      assert.match(bad.error.message, /invalid: redirect_uris/);
+      const r = await run(cli.runRefreshMetadata, ['refresh-metadata', URL1], getClient);
+      assert.equal(r.error, null, r.out);
+      assert.match(r.out, /OK {3}created: url~/);
+      server.set(URL1, doc(URL1, { client_name: 'New name' }));
+      const r2 = await run(cli.runRefreshMetadata, ['refresh-metadata', ids.metadataClientKey(URL1)], getClient);
+      assert.match(r2.out, /refreshed: .*\n.*changed: clientName/);
+      // Off: no template in force, nothing fetched, a clear reason.
+      cli.cliEnv.config = async () => fakeConfig({ mode: 'off' });
+      const calls = server.calls;
+      const off = await run(cli.runRefreshMetadata, ['refresh-metadata', URL1], getClient);
+      assert.match(off.error.message, /off on this core.*template is not in force/);
+      assert.equal(server.calls, calls, 'nothing fetched');
+    });
+
+    it('[OCMD10B] list --origin, show, revoke (with the deny-list hint), suspend by URL (a provisional row: the notes of suspend and resume); update and rotate-secret refuse such a client', async () => {
+      server.set(URL1, doc());
+      await run(cli.runRefreshMetadata, ['refresh-metadata', URL1], getClient);
+      await persistClient(platform, {
+        clientId: 'curated',
+        kind: 'registry',
+        redirectUris: ['https://app.example/cb'],
+        grantTypes: ['authorization_code'],
+        tokenEndpointAuthMethod: 'none',
+        scope: ['read/a'],
+        allowedAudiences: [AUD],
+        subjectType: 'pairwise',
+      });
+      const all = await run((p, a) => cli.runList(p, getClient, a), ['list']);
+      assert.match(all.out, /curated {2}registry/);
+      assert.match(all.out, /url~[0-9a-f]{40} {2}registry {2}active {2}pairwise {2}metadata-document https:\/\/client\.example/);
+      const only = await run((p, a) => cli.runList(p, getClient, a), ['list', '--origin', 'metadata-document', '--host', 'client.example']);
+      assert.doesNotMatch(only.out, /curated/);
+      const none = await run((p, a) => cli.runList(p, getClient, a), ['list', '--origin', 'metadata-document', '--host', 'tools.example']);
+      assert.doesNotMatch(none.out, /url~/);
+      const shown = await run((p, a) => cli.runShow(p, a, getClient, () => 'TP'), ['show', URL1]);
+      assert.match(shown.out, /metadata document: https:\/\/client\.example\/oauth\/client\.json/);
+      assert.match(shown.out, /host: {10}client\.example/);
+      const susp = await run((p, a) => cli.runSetStatus(p, a, getClient, persistClient), ['suspend', URL1]);
+      assert.equal(susp.error, null, susp.out);
+      assert.equal((await getClient(platform, ids.metadataClientKey(URL1))).status, 'suspended');
+      assert.doesNotMatch(susp.out, /provisional/, 'a row the operator fetched is permanent');
+      // A provisional row (no consent, no operator fetch): suspend and resume say what becomes of it.
+      const s2 = settingsOf();
+      await persistClient(platform, meta.buildMetadataClientRow(URL2, meta.clientMetadataProblem(doc(URL2), URL2, s2).fields, s2, null, Date.now()));
+      const ps = await run((p, a) => cli.runSetStatus(p, a, getClient, persistClient), ['suspend', URL2]);
+      assert.match(ps.out, /provisional \(no consent yet\): kept while suspended/, ps.out);
+      assert.match(ps.out, /deniedHosts/);
+      const pr = await run((p, a) => cli.runSetStatus(p, a, getClient, persistClient), ['resume', URL2]);
+      assert.match(pr.out, /provisional again: pruned after oauth\.clientMetadataDocuments\.unconsentedRowSeconds/, pr.out);
+      for (const [fn, cmd] of [[cli.runUpdate, 'update'], [cli.runRotateSecret, 'rotate-secret']]) {
+        for (const id of [URL1, ids.metadataClientKey(URL1)]) {
+          const r = await run((p, a) => fn(p, a, getClient, persistClient), [cmd, id]);
+          assert.match(r.error.message, /metadata-document client/, cmd + ' ' + id);
+        }
+      }
+      const revoked = await run((p, a) => cli.runRevoke(p, a, require('../src/clientRegistry.ts').removeClient), ['revoke', URL1, '--yes']);
+      assert.equal(revoked.error, null, revoked.out);
+      assert.match(revoked.out, /deniedHosts/);
+      assert.equal(await getClient(platform, ids.metadataClientKey(URL1)), null);
+    });
+
+    it('[OCMD10C] template-from prints a block that validates and reproduces the registry client\'s reach', async () => {
+      await persistClient(platform, {
+        clientId: 'connector',
+        kind: 'registry',
+        redirectUris: ['https://app.example/cb'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+        tokenEndpointAuthMethod: 'none',
+        scope: ['read/a', 'write/b'],
+        allowedAudiences: [AUD],
+        subjectType: 'pairwise',
+        launchTypes: ['agent'],
+        maxEntries: 120,
+        refreshTokenTTL: 3600,
+        refreshTokenAbsoluteTTL: 7200,
+        regions: ['eu'],
+      });
+      const r = await run((p, a) => cli.runTemplateFrom(p, a, getClient), ['template-from', 'connector']);
+      assert.equal(r.error, null, r.out);
+      const parsed = yaml.load(r.out.split('\nNOTE')[0]);
+      const block2 = { mode: 'any', ...parsed.oauth.clientMetadataDocuments };
+      assert.deepEqual(conf.describeClientMetadataConfig(block2).problems, []);
+      const t = conf.clientMetadataSettings(fakeConfig(block2)).client;
+      assert.deepEqual([t.scope, t.allowedAudiences, t.launchTypes, t.subjectType, t.maxEntries, t.offlineAccessAllowed],
+        [['read/a', 'write/b'], [AUD], ['agent'], 'pairwise', 120, true]);
+      assert.deepEqual([t.accessTokenTTL, t.refreshTokenTTL, t.refreshTokenAbsoluteTTL, t.regions], [null, 3600, 7200, ['eu']]);
+      await persistClient(platform, {
+        clientId: 'anyaud',
+        kind: 'registry',
+        redirectUris: ['https://app.example/cb'],
+        grantTypes: ['authorization_code'],
+        tokenEndpointAuthMethod: 'none',
+        scope: ['read/a'],
+        anyAudience: true,
+        allowedAudiences: [],
+        subjectType: 'public',
+      });
+      const refused = await run((p, a) => cli.runTemplateFrom(p, a, getClient), ['template-from', 'anyaud']);
+      assert.match(refused.error.message, /no audience list/);
+    });
+  });
+
+  describe('[OCMD11] confidential documents (private_key_jwt)', () => {
+    const s = settingsOf();
+    const check = (d, settings = s) => meta.clientMetadataProblem(d, URL1, settings);
+    const pkj = (extra = {}) => doc(URL1, { token_endpoint_auth_method: 'private_key_jwt', ...extra });
+    let rsa, ec;
+    before(() => {
+      rsa = makeKey('RS256', 'rsa-1');
+      ec = makeKey('ES256', 'ec-1');
+    });
+
+    it('[OCMD11A] the key set: jwks_uri on the document\'s host, or an inline jwks; jwks_uri wins over jwks', () => {
+      const byUri = check(pkj({ jwks_uri: 'https://client.example/jwks.json' }));
+      assert.equal(byUri.ok, true, byUri.detail);
+      assert.deepEqual([byUri.fields.tokenEndpointAuthMethod, byUri.fields.jwksUri, byUri.fields.jwks], ['private_key_jwt', 'https://client.example/jwks.json', undefined]);
+      for (const [uri, re] of [['https://keys.example/jwks.json', /host of the metadata document/], ['https://core-a.pryv.example/jwks', /host of the metadata document/],
+        ['https://client.example:8443/jwks', /host of the metadata document/], ['http://client.example/jwks', /https/], ['https://client.example/j#k', /fragment/]]) {
+        const r = check(pkj({ jwks_uri: uri }));
+        assert.equal(r.ok, false, uri);
+        assert.match(r.detail, re, uri);
+      }
+      const inline = check(pkj({ jwks: { keys: [rsa.publicJwk] } }));
+      assert.equal(inline.ok, true, inline.detail);
+      assert.deepEqual(inline.fields.jwks.keys.map((k) => k.kid), ['rsa-1']);
+      assert.equal(check(pkj({ jwks: { keys: [{ ...rsa.rawPublic, d: 'secret' }] } })).ok, false, 'private material refused');
+      const both = check(pkj({ jwks_uri: 'https://client.example/jwks.json', jwks: { keys: [rsa.publicJwk] } }));
+      assert.equal(both.fields.jwksUri, 'https://client.example/jwks.json');
+      assert.equal(both.fields.jwks, undefined);
+      assert.ok(both.ignored.includes('jwks'));
+      assert.match(check(pkj()).detail, /needs a jwks_uri or a jwks/);
+    });
+
+    it('[OCMD11B] the signing algorithm pins the row; the plural methods member is ignored; authMethods may refuse confidential documents', () => {
+      const pinned = check(pkj({ jwks: { keys: [rsa.publicJwk] }, token_endpoint_auth_signing_alg: 'RS256' }));
+      assert.deepEqual(pinned.fields.tokenEndpointAuthSigningAlgs, ['RS256']);
+      assert.match(check(pkj({ jwks: { keys: [rsa.publicJwk] }, token_endpoint_auth_signing_alg: 'PS256' })).detail, /token_endpoint_auth_signing_alg/);
+      assert.match(check(pkj({ jwks: { keys: [ec.publicJwk] }, token_endpoint_auth_signing_alg: 'RS256' })).detail, /no key of the jwks fits/);
+      const plural = ['none', 'private_key_jwt'];
+      const pub = check(doc(URL1, { token_endpoint_auth_method: 'none', token_endpoint_auth_methods_supported: plural, jwks_uri: 'https://client.example/jwks.json' }));
+      assert.equal(pub.fields.tokenEndpointAuthMethod, 'none');
+      assert.equal(pub.fields.jwksUri, undefined, 'a public document\'s key members are not read');
+      assert.ok(!pub.ignored.includes('token_endpoint_auth_methods_supported') && pub.ignored.includes('jwks_uri'));
+      const conf2 = check(pkj({ token_endpoint_auth_methods_supported: plural, jwks_uri: 'https://client.example/jwks.json' }));
+      assert.equal(conf2.fields.tokenEndpointAuthMethod, 'private_key_jwt');
+      const publicOnly = settingsOf(block({ authMethods: ['none'] }));
+      assert.match(check(pkj({ jwks_uri: 'https://client.example/jwks.json' }), publicOnly).detail, /unsupported-auth-method/);
+      assert.equal(check(doc(), publicOnly).ok, true);
+    });
+
+    it('[OCMD11D] the method: the singular member decides, else the plural one (private_key_jwt first), else none', () => {
+      const KEYS = { jwks_uri: 'https://client.example/jwks.json' };
+      const P = (p, extra = {}) => doc(URL1, { token_endpoint_auth_methods_supported: p, ...extra });
+      const S = (s, p, extra = {}) => doc(URL1, { token_endpoint_auth_method: s, ...(p != null ? { token_endpoint_auth_methods_supported: p } : {}), ...extra });
+      const publicOnly = settingsOf(block({ authMethods: ['none'] }));
+      const cases = [
+        [P(['private_key_jwt'], KEYS), s, ['private_key_jwt', 'plural']],
+        [P(['none']), s, ['none', 'plural']],
+        [P(['none', 'private_key_jwt'], KEYS), s, ['private_key_jwt', 'plural']],
+        [P(['none', 'private_key_jwt'], KEYS), publicOnly, ['none', 'plural']],
+        [P(['client_secret_basic']), s, /unsupported-auth-method/],
+        [P(['client_secret_basic', 'none']), s, ['none', 'plural']],
+        [P('none'), s, /unsupported-auth-method/],
+        [P([]), s, /unsupported-auth-method/],
+        [P(Array.from({ length: 9 }, (_, i) => 'm' + i)), s, /unsupported-auth-method/],
+        [P(['none', 'none']), s, /unsupported-auth-method/],
+        [S('none', ['private_key_jwt'], KEYS), s, /auth-method-inconsistent/],
+        [S('none', ['none', 'private_key_jwt'], KEYS), s, ['none', 'singular']],
+        [S('private_key_jwt', ['none', 'private_key_jwt'], KEYS), s, ['private_key_jwt', 'singular']],
+        [S('private_key_jwt', null, KEYS), s, ['private_key_jwt', 'singular']],
+        [doc(), s, ['none', 'default']],
+      ];
+      for (const [d, settings, want] of cases) {
+        const r = check(d, settings);
+        const label = JSON.stringify([d.token_endpoint_auth_method, d.token_endpoint_auth_methods_supported, settings.authMethods]);
+        if (want instanceof RegExp) {
+          assert.equal(r.ok, false, label);
+          assert.match(r.detail, want, label);
+        } else {
+          assert.equal(r.ok, true, label + ' ' + r.detail);
+          assert.deepEqual([r.fields.tokenEndpointAuthMethod, r.fields.authMethodSource], want, label);
+        }
+      }
+      // The source rides on the row's metadata, never as a row field.
+      const row = meta.buildMetadataClientRow(URL1, check(P(['private_key_jwt'], KEYS)).fields, s, null, 1000);
+      assert.deepEqual([row.metadata.authMethodSource, row.authMethodSource], ['plural', undefined]);
+    });
+
+    it('[OCMD11C] the row authenticates by its URL (iss = sub), burns the jti under its key, and still holds no role', async () => {
+      const checked = check(pkj({ jwks: { keys: [rsa.publicJwk] } }));
+      const row = meta.buildMetadataClientRow(URL1, checked.fields, s, null, Date.now());
+      const platform = fakePlatform();
+      await persistClient(platform, row);
+      const stored = await getClient(platform, row.clientId);
+      assert.equal(isConfidentialClient(stored), true);
+      for (const [k, v] of [['canExchange', true], ['canIntrospect', true]]) {
+        await assert.rejects(persistClient(platform, { ...row, [k]: v }), new RegExp('not available to such a client: ' + k), k);
+      }
+      await assert.rejects(persistClient(platform, { ...row, jwks: undefined, jwksUri: 'https://keys.example/jwks.json' }), /host of its metadata document/);
+      const authAs = (token) => authenticateClient({
+        client: stored, clientId: row.clientId, assertion: token, assertionType: CLIENT_ASSERTION_TYPE, platform, expectedAudiences: [ISSUER, ISSUER + '/oauth2/token'],
+      });
+      const good = signedAssertion(rsa, URL1);
+      assert.equal((await authAs(good)).ok, true);
+      assert.equal((await authAs(good)).ok, false, 'replayed');
+      assert.ok([...platform.state.keys()].some((k) => k.includes('/' + row.clientId + '/')), 'jti burnt under the row key');
+      assert.equal((await authAs(signedAssertion(rsa, row.clientId))).ok, false, 'iss = the row key');
+      assert.equal((await authAs(signedAssertion(rsa, URL2))).ok, false, 'another URL');
+      assert.equal((await authenticateClient({ client: stored, clientId: row.clientId, platform })).ok, false, 'no assertion: refused');
+    });
+  });
+
+  it('[OCMD12] RS256: accepted for RSA keys only, advertised; an EC key never verifies it, nor an RSA key an ES256 header', async () => {
+    assert.ok(jwks.CLIENT_ASSERTION_ALGS.includes('RS256'));
+    assert.ok(buildDiscoveryDocument({ issuer: 'https://x', scopesSupported: [] }).token_endpoint_auth_signing_alg_values_supported.includes('RS256'));
+    const rsa = makeKey('RS256', 'rsa-1');
+    const ec = makeKey('ES256', 'ec-1');
+    assert.equal(jwks.keyMatchesAlg(rsa.publicJwk, 'RS256'), true);
+    assert.equal(jwks.keyMatchesAlg(rsa.publicJwk, 'RS384'), true);
+    assert.equal(jwks.keyMatchesAlg({ ...rsa.publicJwk, alg: 'RS384' }, 'RS256'), false, 'a key pinned to RS384');
+    assert.equal(jwks.keyMatchesAlg(ec.publicJwk, 'RS256'), false);
+    assert.equal(jwks.keyMatchesAlg(rsa.publicJwk, 'ES256'), false);
+    const opts = (keys) => ({ clientId: URL1, jwks: { keys }, expectedAudiences: [ISSUER, ISSUER + '/oauth2/token'] });
+    assert.ok((await verifyClientAssertion(signedAssertion(rsa, URL1), opts([rsa.publicJwk]))).jti);
+    // An RS256 header naming the EC key, and an ES256 header naming the RSA key.
+    await assert.rejects(verifyClientAssertion(signedAssertion(ec, URL1, { alg: 'RS256' }), opts([ec.publicJwk])));
+    await assert.rejects(verifyClientAssertion(signedAssertion(rsa, URL1, { alg: 'ES256' }), opts([rsa.publicJwk])));
+    // An RS384 signature under an RS256 header does not verify.
+    await assert.rejects(verifyClientAssertion(signedAssertion(rsa, URL1, { alg: 'RS256', signAs: 'RS384' }), opts([rsa.publicJwk])));
+  });
+
+  it('[OCMD14] a code row\'s issue time: its issuedAt, else (written before it carried one) its expiry minus the code lifetime', () => {
+    assert.equal(storage.CODE_TTL_SECONDS, 600);
+    assert.equal(storage.codeIssuedAt({ expiresAt: 5_000_000, issuedAt: 4_999_000 }), 4_999_000);
+    assert.equal(storage.codeIssuedAt({ expiresAt: 5_000_000 }), 5_000_000 - 600_000);
+  });
+
+  it('[OCMD18] the revoke epoch\'s clock margin: issued up to five seconds after it is void', () => {
+    const E = 1_000_000_000_000;
+    assert.equal(storage.REVOKE_CLOCK_MARGIN_MS, 5000);
+    assert.equal(storage.issuedBeforeClientRevoke(E + 4999, E), true);
+    assert.equal(storage.issuedBeforeClientRevoke(E + 5001, E), false);
+    assert.equal(storage.issuedBeforeClientRevoke(E - 1, E), true);
+    assert.equal(storage.issuedBeforeClientRevoke(E, null), false);
+  });
+
+  it('[OCMD16] refusals are audited at most once per host, reason and minute (count suppressed), at most 60 per reason and minute (count dropped); the URL, the host key and the detail are cut to 256', async () => {
+    const rows = [];
+    const savedDebug = console.debug;
+    const savedEnv = process.env.OAUTH_AUDIT_DEBUG;
+    process.env.OAUTH_AUDIT_DEBUG = '1';
+    console.debug = (tag, event, payload) => { if (event === 'oauth.client.metadata_refused') rows.push(payload); };
+    try {
+      setPeerTransportForTests(docServer().transport); // every document: 404
+      const platform = fakePlatform();
+      const config = fakeConfig(block({ mode: 'allowList', allowedHosts: ['client.example'] }));
+      const at = (url, now) => meta.resolveMetadataClient({ platform, config }, url, { now });
+      const t0 = 2_000_000_000_000;
+      for (let i = 0; i < 50; i++) await at(`https://tools.example/a${i}.json`, t0 + i);
+      assert.equal(rows.length, 1, 'one row for 50 refusals');
+      await at('https://tools.example/late.json', t0 + 61_000);
+      assert.deepEqual([rows.length, rows[1].suppressed, rows[1].reason], [2, 49, 'host-policy']);
+      await at('https://other.example/x.json', t0 + 61_001);
+      assert.equal(rows.length, 3, 'another host');
+      await at('https://tools.example/a/../b.json', t0 + 61_002);
+      assert.deepEqual([rows.length, rows[3].reason], [4, 'url'], 'another reason');
+      await at('https://far.example/' + 'a'.repeat(2000) + '.json', t0 + 61_003);
+      assert.equal(rows[4].metadataUrl.length, 256);
+      // Fetch failures and the budget refusal go through the same helper.
+      rows.length = 0;
+      for (let i = 0; i < 13; i++) await at(`https://client.example/c${i}.json`, t0 + 70_000 + i);
+      assert.deepEqual(rows.map((r) => r.reason), ['unreachable', 'budget']);
+
+      // The cap: at most 60 records per reason and minute over every host.
+      meta._resetClientMetadataForTests();
+      rows.length = 0;
+      const t1 = t0 + 1_000_000;
+      for (let i = 0; i < 100; i++) await at(`https://h${i}.tools.example/c.json`, t1 + i);
+      assert.equal(rows.filter((r) => r.reason === 'host-policy').length, 60, 'capped');
+      // Reasons are capped independently: a url refusal in the same minute is recorded.
+      await at('https://tools.example/a/../b.json', t1 + 200);
+      assert.deepEqual(rows.at(-1).reason, 'url');
+      await at('https://h0.tools.example/c.json', t1 + 61_000);
+      assert.deepEqual([rows.at(-1).reason, rows.at(-1).dropped, rows.at(-1).suppressed], ['host-policy', 40, undefined]);
+      // The sampling key keeps 256 characters of the host: two hosts alike that far share one key.
+      meta._resetClientMetadataForTests();
+      rows.length = 0;
+      const longHost = Array.from({ length: 5 }, () => 'a'.repeat(60)).join('.');
+      await at(`https://${longHost}.one.example/c.json`, t1);
+      await at(`https://${longHost}.two.example/c.json`, t1 + 1);
+      assert.equal(rows.length, 1, 'one key');
+      await at(`https://${longHost}.one.example/c.json`, t1 + 61_000);
+      assert.deepEqual([rows.length, rows[1].suppressed], [2, 1]);
+      // A document-chosen detail is cut to 256 characters.
+      meta._resetClientMetadataForTests();
+      rows.length = 0;
+      const server = docServer();
+      setPeerTransportForTests(server.transport);
+      const any = fakeConfig(block());
+      const long = 'https://client.example/long.json';
+      server.set(long, doc(long, { token_endpoint_auth_method: 'm'.repeat(2048) }));
+      assert.equal((await meta.resolveMetadataClient({ platform, config: any }, long, { now: t1 })).reason, 'invalid');
+      assert.equal(rows.length, 1);
+      assert.ok(rows[0].detail.length <= 256, String(rows[0].detail.length));
+      // A client-auth refusal with a garbage grant type names `other`, under the one reason.
+      rows.length = 0;
+      const s = settingsOf();
+      await persistClient(platform, meta.buildMetadataClientRow(URL1, meta.clientMetadataProblem(doc(), URL1, s).fields, s, null, Date.now()));
+      await meta.reportClientAuthRefusal(platform, ids.metadataClientKey(URL1), 'token', 'x\u0000'.repeat(100));
+      assert.deepEqual(rows.map((r) => [r.reason, r.detail]), [['client-auth', '/oauth2/token other: client authentication failed']]);
+    } finally {
+      console.debug = savedDebug;
+      if (savedEnv == null) delete process.env.OAUTH_AUDIT_DEBUG;
+      else process.env.OAUTH_AUDIT_DEBUG = savedEnv;
+    }
+  });
+
+  it('[OCMD17] a client authentication refusal is recorded only for a real metadata-document client, bounded, never failing', async () => {
+    const rows = [];
+    const savedDebug = console.debug;
+    const savedEnv = process.env.OAUTH_AUDIT_DEBUG;
+    process.env.OAUTH_AUDIT_DEBUG = '1';
+    console.debug = (tag, event, payload) => { if (event === 'oauth.client.metadata_refused') rows.push(payload); };
+    try {
+      const platform = fakePlatform();
+      const s = settingsOf();
+      const row = meta.buildMetadataClientRow(URL1, meta.clientMetadataProblem(doc(), URL1, s).fields, s, null, Date.now());
+      await persistClient(platform, row);
+      const key = ids.metadataClientKey(URL1);
+      // Caller-chosen text, a well-formed key with no row, a hint that is not its URL: nothing.
+      for (const id of ['url~' + 'x\n'.repeat(5000), 'url~ABCDEF' + '0'.repeat(34), ids.metadataClientKey(URL2), 'curated']) {
+        await meta.reportClientAuthRefusal(platform, id, 'revoke');
+      }
+      await meta.reportClientAuthRefusal(platform, ids.metadataClientKey(URL2), 'token', 'refresh_token', URL1);
+      assert.equal(rows.length, 0, JSON.stringify(rows));
+      // The row's client, and a gone row whose assertion named its URL.
+      await meta.reportClientAuthRefusal(platform, key, 'token', 'authorization_code\n' + 'g'.repeat(500));
+      await meta.reportClientAuthRefusal(platform, ids.metadataClientKey(URL2), 'token', 'refresh_token', URL2);
+      assert.deepEqual(rows.map((r) => [r.clientId, r.metadataUrl, r.reason]), [[key, URL1, 'client-auth'], [ids.metadataClientKey(URL2), URL2, 'client-auth']]);
+      assert.ok(rows[0].detail.length <= 256 && !rows[0].detail.includes('\n'), rows[0].detail);
+      // A failing store never breaks the caller.
+      const broken = { ...platform, getPlatformKv: async () => { throw new Error('down'); } };
+      await meta.reportClientAuthRefusal(broken, key, 'introspect');
+    } finally {
+      console.debug = savedDebug;
+      if (savedEnv == null) delete process.env.OAUTH_AUDIT_DEBUG;
+      else process.env.OAUTH_AUDIT_DEBUG = savedEnv;
+    }
+  });
+
+  it('[OCMD13] the access stamp: name (first language of a set), host, url; none for a curated client', () => {
+    const key = ids.metadataClientKey(URL1);
+    assert.deepEqual(ids.metadataClientStamp({ origin: 'metadata-document', metadataUrl: URL1, clientName: 'Agent' }),
+      { name: 'Agent', host: 'client.example', url: URL1 });
+    assert.deepEqual(ids.metadataClientStamp({ origin: 'metadata-document', metadataUrl: URL1, name: { fr: 'Agent FR', de: 'Agent DE' } }),
+      { name: 'Agent FR', host: 'client.example', url: URL1 });
+    assert.deepEqual(ids.metadataClientStamp({ origin: 'metadata-document', metadataUrl: 'https://xn--bcher-kva.example/c.json' }),
+      { host: 'xn--bcher-kva.example', url: 'https://xn--bcher-kva.example/c.json' });
+    assert.equal(ids.metadataClientStamp({ clientId: 'curated', clientName: 'Curated' }), null);
+    assert.equal(ids.isMetadataClientKey(key), true);
+    assert.deepEqual(meta.metadataHostOf('https://xn--bcher-kva.example/c.json'),
+      { metadataHost: 'xn--bcher-kva.example', metadataHostUnicode: 'bücher.example' });
+  });
+});

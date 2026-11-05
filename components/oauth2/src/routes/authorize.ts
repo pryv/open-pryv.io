@@ -32,6 +32,7 @@ import { createRequire } from 'node:module';
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { ParsedScope } from '../scopeRegistry.ts';
+import type { OAuthClient } from '../storage.ts';
 import { MAX_RESOURCE_BYTES, isValidResource, sameResource, withinResourceCap } from '../resourceIndicator.ts';
 const require = createRequire(import.meta.url);
 
@@ -48,6 +49,9 @@ const { isNonceUsed } = require('../storage.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
 const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
+const { resolveMetadataClient, metadataHostOf } = require('../clientMetadata.ts');
+const { clientMetadataDocumentsOn } = require('../clientMetadataConfig.ts');
+const { isMetadataClientKey } = require('../clientMetadataId.ts');
 
 /** An S256 code_challenge: base64url (no padding) of a SHA-256 digest. */
 const PKCE_S256_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -102,10 +106,26 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     //    anywhere. An invalid redirect_uri renders HTML 400; we never
     //    bounce the user-agent to an unverified URL (open-redirector
     //    defense — T-04).
-    const client = await getClient(deps.platform, q.client_id);
-    if (client == null) {
+    // A client metadata document URL (when this core accepts them): the
+    // row is read, or fetched and written, before anything else; a refusal
+    // says why (URL rules) or only that the document is unusable.
+    // Such a client is named by its URL only: its stored key (`url~…`) is no
+    // client_id here, or it would skip the URL rules, the host policy and
+    // the document's freshness.
+    let found: OAuthClient | null;
+    if (isMetadataClientKey(q.client_id)) {
+      found = null;
+    } else if (clientMetadataDocumentsOn(deps.config) && /^https?:\/\//i.test(String(q.client_id))) {
+      const resolved = await resolveMetadataClient({ platform: deps.platform, config: deps.config }, String(q.client_id));
+      if (!resolved.ok) return sendHtmlError(res, 400, resolved.message);
+      found = resolved.client;
+    } else {
+      found = await getClient(deps.platform, q.client_id);
+    }
+    if (found == null) {
       return sendHtmlError(res, 400, `Unknown client_id: ${q.client_id}`);
     }
+    const client: OAuthClient = found;
     // Suspended or under review: no redirect at all. Under review, the
     // registered redirect URIs may be the very change awaiting approval, so
     // nothing may bounce the user-agent there (not even an error).
@@ -297,6 +317,9 @@ export function handleAuthorize (deps: AuthorizeDeps) {
         clientId: client.clientId,
         requestedScope: resolved.requested,
         offerKind: 'synthesised',
+        ...(client.origin === 'metadata-document'
+          ? { metadataUrl: client.metadataUrl, metadataHost: metadataHostOf(client.metadataUrl).metadataHost }
+          : {}),
       });
       const signed = signState(stateKey, {
         clientId: client.clientId,
