@@ -748,6 +748,81 @@ describe('[OCMDE] client metadata documents end to end', function () {
     assert.match(lines.join('\n'), /first consent: \d{4}-/);
   });
 
+  /** Run `body` with some platform store methods wrapped (`wrap(original)`), restored after. */
+  async function withPlatformHooks (hooks, body) {
+    const own = {};
+    for (const [name, wrap] of Object.entries(hooks)) {
+      own[name] = Object.prototype.hasOwnProperty.call(platformDB, name) ? platformDB[name] : undefined;
+      platformDB[name] = wrap(platformDB[name].bind(platformDB));
+    }
+    try {
+      return await body();
+    } finally {
+      for (const name of Object.keys(hooks)) {
+        if (own[name] === undefined) delete platformDB[name];
+        else platformDB[name] = own[name];
+      }
+    }
+  }
+
+  it('[OCMDE19] permanence is written before the code (a failed or impossible write mints none) and healed by the code and refresh grants', async () => {
+    const who = await newUser();
+    const codeWrites = [];
+    const watchCodes = (orig) => async (k, ...rest) => {
+      if (String(k).startsWith('oauth-ac/')) codeWrites.push(k);
+      return await orig(k, ...rest);
+    };
+    // (a) The marker write fails: server_error, no code, the row still provisional.
+    const a = publish();
+    const resA = await authorize(a);
+    assert.equal(resA.status, 302);
+    let failures = 0;
+    const acceptA = await withPlatformHooks({
+      setPlatformKv: (orig) => async (k, v) => {
+        if (k === 'oauth-client/' + metadataClientKey(a) && failures++ === 0) throw new Error('store down');
+        return await orig(k, v);
+      },
+      setAccessState: watchCodes,
+    }, async () => (await consent(who, new URL(resA.headers.location).searchParams.get('state'))).accept);
+    assert.deepEqual([acceptA.status, acceptA.body.error, failures], [500, 'server_error', 1], JSON.stringify(acceptA.body));
+    assert.deepEqual(codeWrites, [], 'no code row');
+    assert.equal((await rowFor(a)).metadata.firstConsentAt, undefined, 'still provisional');
+    // (b) The row gone between the state's read and the marker: 400, no code.
+    const b = publish();
+    const resB = await authorize(b);
+    assert.equal(resB.status, 302);
+    const acceptB = await withPlatformHooks({
+      setAccessState: (orig) => async (k, ...rest) => {
+        // The session index write of /accept: the row vanishes right then.
+        if (String(k).startsWith('oauth-at/')) await storage.deleteClientRow(platformDB, metadataClientKey(b));
+        return await watchCodes(orig)(k, ...rest);
+      },
+    }, async () => (await consent(who, new URL(resB.headers.location).searchParams.get('state'))).accept);
+    assert.equal(acceptB.status, 400, JSON.stringify(acceptB.body));
+    assert.match(acceptB.body.error_description, /client metadata document unavailable/);
+    assert.deepEqual(codeWrites, [], 'no code row');
+    // (c) A consented row whose marker was lost: the code exchange marks it
+    // again; lost again, the refresh does.
+    const c = publish();
+    const pending = await codeFor(who, c);
+    const strip = async () => {
+      const row = await rowFor(c);
+      const { firstConsentAt: _f, ...rest } = row.metadata;
+      await storage.setClient(platformDB, { ...row, metadata: rest });
+      assert.equal((await rowFor(c)).metadata.firstConsentAt, undefined);
+    };
+    await strip();
+    const t = await coreRequest.post('/oauth2/token').type('form').send({
+      grant_type: 'authorization_code', code: pending.code, code_verifier: pending.verifier, client_id: c, redirect_uri: REDIRECT_URI, resource: RS_AUD,
+    });
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    assert.ok(Number.isFinite((await rowFor(c)).metadata.firstConsentAt), 'the code exchange marks it again');
+    await strip();
+    const r = await refresh(t.body.refresh_token, c);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.ok(Number.isFinite((await rowFor(c)).metadata.firstConsentAt), 'the refresh marks it again');
+  });
+
   it('[OCMDE17] mode any: an arbitrary host is accepted; this platform\'s hosts (public URL, issuer) and a denied host are refused before any fetch', async () => {
     const anyCmd = { ...CMD, mode: 'any', allowedHosts: [], deniedHosts: ['tools.example'] };
     await withInjectedConfig({

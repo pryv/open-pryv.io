@@ -641,6 +641,33 @@ describe('[OCMD] client metadata documents', function () {
     await assert.rejects(storage.deleteClientRow(platform, 'curated'), /url~/);
   });
 
+  it('[OCMD08B] prune: a provisional row made permanent between the listing and the delete is read again and kept', async () => {
+    const platform = fakePlatform();
+    const s = settingsOf();
+    const now = Date.now();
+    const row = meta.buildMetadataClientRow(URL1, meta.clientMetadataProblem(doc(), URL1, s).fields, s, null, now - 7200 * 1000);
+    await persistClient(platform, row);
+    const rowKey = 'oauth-client/' + ids.metadataClientKey(URL1);
+    // The first read sees the provisional row; a consent marks it right after.
+    let reads = 0;
+    const get = platform.getPlatformKv.bind(platform);
+    platform.getPlatformKv = async (k) => {
+      const v = await get(k);
+      if (k === rowKey && ++reads === 1) {
+        const marked = JSON.parse(v);
+        marked.metadata.firstConsentAt = now;
+        await platform.setPlatformKv(k, JSON.stringify(marked));
+      }
+      return v;
+    };
+    let deletes = 0;
+    const del = platform.deletePlatformKv.bind(platform);
+    platform.deletePlatformKv = async (k) => { if (k === rowKey) deletes++; return await del(k); };
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now), { pruned: 0, provisional: 0 });
+    assert.equal(deletes, 0, 'no deleteClientRow');
+    assert.equal((await getClient(platform, ids.metadataClientKey(URL1))).metadata.firstConsentAt, now);
+  });
+
   it('[OCMD15] a new client takes a unit of newClientsPerMinute; a refetch of an existing row does not', async () => {
     const server = docServer();
     setPeerTransportForTests(server.transport);

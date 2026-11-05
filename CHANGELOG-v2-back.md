@@ -55,6 +55,12 @@
   that deletes it past `unconsentedRowSeconds` through `storage.deleteClientRow` (no tombstone,
   `url~` keys only: nothing can reference a row no consent reached, and a tombstone per discarded
   row would load every core's revoke cache).
+- Permanence comes before the code: `/accept` calls `recordFirstConsent` (`marked` / `already` /
+  `gone`, a store error thrown) before `setCode`; a failed write answers `server_error`, a row gone
+  meanwhile 400, and no code is written either way. The code and refresh grants re-mark a row read
+  as provisional at their success exit (`reassertPermanentRow`, best-effort), and the sweep reads a
+  provisional row again right before deleting it. Both grants wrap their revoke-epoch read (a store
+  error answers `server_error` after the orphan revoke / the consumed-row restore).
 - Refusals (`metadata_refused` rows and their warnings) go through `sampledRefusal`: one per
   (host, reason) and minute per core, the count in `suppressed`, `metadataUrl` cut to 256; reason
   `client-auth` records an `invalid_client` of such a client at the token, revocation and

@@ -952,6 +952,7 @@ any consent (another core may serve the consent and reads it there), and stays
 `newClientsPerMinute` new rows a minute (a refetch of an existing row does not
 count), and the master's periodic sweep deletes a provisional row older than
 `unconsentedRowSeconds`, with no revoke tombstone (nothing was ever issued for
+it: a row is made permanent by the first consent, before any code is issued for
 it). That bounds the provisional rows to about `newClientsPerMinute ×
 (unconsentedRowSeconds + the sweep interval) / 60` per core (some 750 with the
 defaults). A permanent row unused for the absolute refresh lifetime plus 7 days

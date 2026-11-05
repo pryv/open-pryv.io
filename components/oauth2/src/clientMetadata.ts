@@ -899,11 +899,16 @@ export function isProvisionalRow (row: OAuthClient): boolean {
   return row.metadata?.firstConsentAt == null && row.metadata?.operatorRefreshedAt == null;
 }
 
+function provisionalPastHorizon (row: OAuthClient, now: number, horizonMs: number): boolean {
+  return now - (row.registeredAt ?? row.metadata?.fetchedAt ?? 0) > horizonMs;
+}
+
 /**
  * Master sweep over the metadata-document rows:
  * - provisional rows (no consent, no operator refresh) older than
  *   `unconsentedRowSeconds` are deleted with no tombstone (`deleteClientRow`:
- *   nothing was issued for them), whatever their status;
+ *   nothing was issued for them: a consent marks the row before its code),
+ *   whatever their status, each read again right before its delete;
  * - permanent rows not used for the absolute refresh lifetime (the
  *   template's, else the platform's) plus 7 days are deleted through
  *   `deleteClient` (a revoke tombstone is written: every session of theirs
@@ -924,7 +929,13 @@ Promise<{ pruned: number; provisional: number }> {
     try { row = await storage.getClient(platform, id); } catch { continue; }
     if (row == null || row.origin !== 'metadata-document') continue;
     if (isProvisionalRow(row)) {
-      if (now - (row.registeredAt ?? row.metadata?.fetchedAt ?? 0) <= provisionalHorizon) continue;
+      if (!provisionalPastHorizon(row, now, provisionalHorizon)) continue;
+      // Read again right before the delete: a consent may have made it
+      // permanent since the listing.
+      let again: OAuthClient | null;
+      try { again = await storage.getClient(platform, id); } catch { continue; }
+      if (again == null || again.origin !== 'metadata-document' || !isProvisionalRow(again) ||
+          !provisionalPastHorizon(again, now, provisionalHorizon)) continue;
       await storage.deleteClientRow(platform, id);
       pruned++;
       provisional++;
@@ -940,20 +951,37 @@ Promise<{ pruned: number; provisional: number }> {
 }
 
 /**
- * `/oauth2/authorize/accept`: the first consent a user gives a
- * metadata-document client makes its row permanent (`firstConsentAt`, one
- * write per client). Written over the row as it stands now (its status and
- * a concurrent refetch kept), skipped when the row is gone; `updatedAt`
- * unchanged. Never fails the consent.
+ * `/oauth2/authorize/accept`, before the code is written: the first consent
+ * a user gives a metadata-document client makes its row permanent
+ * (`firstConsentAt`, one write per client), so no code is ever issued for a
+ * provisional row. Written over the row as it stands now (its status and a
+ * concurrent refetch kept); `updatedAt` unchanged. Resolves to `marked`,
+ * `already` (marked before, or not a metadata-document client: nothing to
+ * mark) or `gone` (the row vanished: a sweep or a revoke); a store error
+ * throws (the caller decides).
  */
-export async function recordFirstConsent (platform: PlatformDB, clientId: string, now: number = Date.now()): Promise<void> {
-  if (!isMetadataClientKey(clientId)) return;
+export async function recordFirstConsent (platform: PlatformDB, clientId: string, now: number = Date.now()):
+Promise<'marked' | 'already' | 'gone'> {
+  if (!isMetadataClientKey(clientId)) return 'already';
+  const current = await storage.getClient(platform, clientId);
+  if (current == null) return 'gone';
+  if (current.origin !== 'metadata-document' || current.metadata == null || current.metadata.firstConsentAt != null) return 'already';
+  await storage.setClient(platform, { ...current, metadata: { ...current.metadata, firstConsentAt: now } });
+  return 'marked';
+}
+
+/**
+ * The code and refresh grants, at their success exit: an artefact of this
+ * client exists, so a metadata-document row read as provisional (its marker
+ * lost to a concurrent refetch) is made permanent again. One write, only on
+ * such a row; a failure is logged and never fails the token answer.
+ */
+export async function reassertPermanentRow (platform: PlatformDB, client: OAuthClient | null): Promise<void> {
+  if (client?.origin !== 'metadata-document' || !isProvisionalRow(client)) return;
   try {
-    const current = await storage.getClient(platform, clientId);
-    if (current?.origin !== 'metadata-document' || current.metadata == null || current.metadata.firstConsentAt != null) return;
-    await storage.setClient(platform, { ...current, metadata: { ...current.metadata, firstConsentAt: now } });
+    await recordFirstConsent(platform, client.clientId);
   } catch (err) {
-    logServerError('client metadata: could not record the first consent of ' + clientId, err);
+    logServerError('client metadata: could not record that ' + client.clientId + ' is in use', err);
   }
 }
 
