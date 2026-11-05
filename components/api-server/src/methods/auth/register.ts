@@ -289,9 +289,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
     // Resolve email → username via PlatformDB unique field. The returned
     // value is the row VALUE: plaintext username in cleartext mode,
-    // HMAC-username token in hashed mode (B.2 chained-lookup contract).
+    // HMAC-username token in hashed mode (B.2 chained-lookup contract). In
+    // cleartext mode the address is found in any case, as hashed mode does.
     if (params.email != null) {
-      username = await platform.getUsersUniqueField('email', params.email);
+      username = await platform.getUniqueValueOwner('email', params.email);
       if (username == null) {
         // Unknown email — return self URL (client can attempt registration)
         result.core = { url: (withTrailingSlash(platform.coreUrl || ApiEndpoint.build('', null)) || '') as string };

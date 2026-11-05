@@ -296,6 +296,26 @@ class Platform {
   }
 
   /**
+   * The account holding `value` (plaintext) of the unique `field`, as a lookup
+   * answers it (which account holds this email address). The answer is in
+   * storage form, as `getUsersUniqueField` gives it. In cleartext mode, for a
+   * field compared in any case (`CASE_INSENSITIVE_FIELDS`: the email): the
+   * owner of the row spelled exactly as asked when there is one; else the
+   * single owner of the other spellings; else null (no row, or several
+   * accounts holding other spellings, which only data written before the
+   * any-case uniqueness can show). In hashed mode, and for a field compared as
+   * written, the exact read (one row per normalised value already).
+   */
+  async getUniqueValueOwner (field: string, value: string): Promise<string | null> {
+    const stored = this.hashFor(field, value);
+    const rows = await this.getUniqueValueRows(field, stored);
+    const exact = rows.find((row) => row.value === stored);
+    if (exact != null) return exact.username;
+    const owners = [...new Set(rows.map((row) => row.username))];
+    return owners.length === 1 ? owners[0] : null;
+  }
+
+  /**
    * The owners (storage form) of the rows of the unique `field` that hold
    * `storedValue` (in storage form: in cleartext mode, the value as written).
    * In hashed mode, and for a field compared as written, the owner of its row

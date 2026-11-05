@@ -82,9 +82,10 @@ export default function (expressApp: ExpressApp, app: App) {
   Promise<{ username?: string; redirect?: string; notFound?: boolean }> {
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
-    // `getUsersUniqueField` hashes `email` internally in hashed mode and
-    // returns the row VALUE (cleartext username, or HMAC username token).
-    const usernameOrToken = await platform.getUsersUniqueField('email', email);
+    // `getUniqueValueOwner` hashes `email` internally in hashed mode and
+    // returns the row VALUE (cleartext username, or HMAC username token); in
+    // cleartext mode it finds the address in any case, as hashed mode does.
+    const usernameOrToken = await platform.getUniqueValueOwner('email', email);
     if (usernameOrToken == null) return { notFound: true };
 
     if (!platform.piiModeIsHashed) return { username: usernameOrToken };

@@ -9,7 +9,8 @@
  * OAuth2 — `POST /oauth2/token` handler.
  *
  * Dispatches by `grant_type` to a grant-specific handler. CORS is
- * applied by the route mount (corsMiddleware); the body is expected
+ * applied on the whole OAuth surface (corsMiddleware, mounted by the app
+ * before the body parsers and by registerRoutes); the body is expected
  * pre-parsed as `application/x-www-form-urlencoded` (api-server's
  * existing body parser handles both that and `application/json`).
  *

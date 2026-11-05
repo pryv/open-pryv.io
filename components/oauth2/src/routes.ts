@@ -42,7 +42,7 @@ const { handleAuthorize } = require('./routes/authorize.ts');
 const { handleAccept } = require('./routes/accept.ts');
 const { handleRefuse } = require('./routes/refuse.ts');
 const { handleToken } = require('./routes/token.ts');
-const { corsMiddleware } = require('./cors.ts');
+const { corsMiddleware, OAUTH_CORS_PATHS } = require('./cors.ts');
 const { issuerFromConfig } = require('./issuer.ts');
 const { logServerError } = require('./serverLog.ts');
 
@@ -192,7 +192,7 @@ export type Deps = {
  * (/oauth2/authorize, /accept, /token) mount only when their required
  * deps (platform + resolveUser + createAccess) are provided.
  */
-export function registerRoutes (app: { get?: Function; post?: Function; options?: Function }, deps: Deps): void {
+export function registerRoutes (app: { get?: Function; post?: Function; use?: Function }, deps: Deps): void {
   if (typeof app?.get !== 'function') {
     throw new Error('registerRoutes: app must be an Express-like instance');
   }
@@ -217,6 +217,14 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
     typeof deps.createAccess === 'function' && typeof deps.resolveUsername === 'function';
   const introspection = flowWired && typeof deps.introspectAccess === 'function';
   const revocation = flowWired && typeof deps.revokeSession === 'function';
+
+  // The OAuth CORS policy (any origin, no credentials) on the whole surface:
+  // every answer carries it and every preflight is answered by it, including
+  // the consent screen's POSTs from its own origin and the public clients'
+  // token and revocation calls.
+  if (typeof app.use === 'function') {
+    for (const prefix of OAUTH_CORS_PATHS) app.use(prefix.replace(/\/$/, ''), corsMiddleware);
+  }
 
   // The discovery documents follow the live configuration (signing keys) and
   // the installed extension (its advertised scopes and claims).
@@ -287,10 +295,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
   app.post!('/oauth2/authorize/refuse',
     guardRoute(handleRefuse({ config: deps.config })));
 
-  if (typeof app.options === 'function') {
-    app.options!('/oauth2/token', corsMiddleware);
-  }
-  app.post!('/oauth2/token', corsMiddleware,
+  app.post!('/oauth2/token',
     guardRoute(handleToken({
       config: deps.config,
       platform: deps.platform,
@@ -319,11 +324,9 @@ export function registerRoutes (app: { get?: Function; post?: Function; options?
       })));
   }
   if (revocation) {
-    // Public clients (browser apps) revoke on sign-out: same CORS as /token.
-    if (typeof app.options === 'function') {
-      app.options!('/oauth2/revoke', corsMiddleware);
-    }
-    app.post!('/oauth2/revoke', corsMiddleware,
+    // Public clients (browser apps) revoke on sign-out: same CORS as /token
+    // (the surface-wide mount above).
+    app.post!('/oauth2/revoke',
       guardRoute(handleRevoke({
         config: deps.config,
         platform: deps.platform,
