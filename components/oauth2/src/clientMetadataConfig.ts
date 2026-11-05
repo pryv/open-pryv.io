@@ -160,23 +160,29 @@ export function hostEntryProblem (entry: unknown): string | null {
 
 /**
  * Whether a URL's host (lower-case host name, port, '' for 443) matches one
- * of `entries`. An entry with a port matches that port only. An entry
- * without one matches port 443 only (`allowedHosts`: a client on another
- * port is listed with it), or every port with `anyPort` (`deniedHosts`: a
- * denied host stays denied on whatever port its owner serves).
+ * of `entries`. One syntax, two semantics:
+ * - `allow` (narrow, it grants): an entry without a port matches port 443
+ *   only; a wildcard `*.d` matches exactly one label below `d`, never `d`.
+ * - `deny` (wide, it withdraws trust from an owner, who mints ports and
+ *   sub-domains at will): an entry without a port matches every port; a
+ *   wildcard `*.d` matches `d` and every depth below it.
+ * An entry with a port matches that port only, in both lists.
  */
-export function hostListed (hostname: string, port: string, entries: string[], opts: { anyPort?: boolean } = {}): boolean {
+export function hostListed (hostname: string, port: string, entries: string[], list: 'allow' | 'deny' = 'allow'): boolean {
   const p = port === '' || port === '443' ? '443' : port;
+  const deny = list === 'deny';
   for (const entry of entries) {
     if (hostEntryProblem(entry) != null) continue;
     const colon = entry.lastIndexOf(':');
     const entryHost = colon >= 0 ? entry.slice(0, colon) : entry;
-    const entryPort = colon >= 0 ? entry.slice(colon + 1) : (opts.anyPort === true ? p : '443');
+    const entryPort = colon >= 0 ? entry.slice(colon + 1) : (deny ? p : '443');
     if (entryPort !== p) continue;
     if (entryHost.startsWith('*.')) {
-      const domain = entryHost.slice(1); // '.example.com'
-      if (hostname.endsWith(domain)) {
-        const label = hostname.slice(0, -domain.length);
+      const apex = entryHost.slice(2); // 'example.com'
+      if (deny) {
+        if (hostname === apex || hostname.endsWith('.' + apex)) return true;
+      } else if (hostname.endsWith('.' + apex)) {
+        const label = hostname.slice(0, -(apex.length + 1));
         if (label.length > 0 && !label.includes('.')) return true;
       }
     } else if (hostname === entryHost) {

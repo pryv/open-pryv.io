@@ -1215,8 +1215,9 @@ oauth:
     # deny-list and the fetch budgets are the controls).
     mode: 'off'
     # Lower-case hosts; "host:port" for another port than 443; "*.example.com"
-    # for exactly one more label. deniedHosts applies in both modes; a denied
-    # entry without a port denies the host on every port.
+    # for exactly one more label. deniedHosts applies in both modes and
+    # matches wider: an entry without a port denies every port, "*.d" denies
+    # d itself and every depth below it.
     allowedHosts: []
     deniedHosts: []
     cacheSeconds: 3600             # a fetched document is reused this long (HTTP cache headers are not read)

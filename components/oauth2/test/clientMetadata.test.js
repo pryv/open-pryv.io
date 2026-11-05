@@ -178,8 +178,16 @@ describe('[OCMD] client metadata documents', function () {
     assert.equal(meta.clientIdUrlProblem(URL1, denied, config).detail, 'the host is denied');
     const deniedAny = settingsOf(block({ deniedHosts: ['*.client.example'] }));
     assert.equal(deniedAny.mode, 'any', 'a valid block');
-    assert.equal(meta.clientIdUrlProblem('https://a.client.example/m.json', deniedAny, config).detail, 'the host is denied');
-    assert.equal(meta.clientIdUrlProblem(URL1, deniedAny, config), null, 'a one-label wildcard never denies the apex');
+    // A deny wildcard covers the apex and every depth; an allow wildcard one label only.
+    for (const u of [URL1, 'https://a.client.example/m.json', 'https://a.b.client.example/m.json']) {
+      assert.equal(meta.clientIdUrlProblem(u, deniedAny, config)?.detail, 'the host is denied', u);
+    }
+    assert.equal(meta.clientIdUrlProblem('https://otherclient.example/m.json', deniedAny, config), null, 'not a sub-domain');
+    const allowWild = settingsOf(block({ mode: 'allowList', allowedHosts: ['*.client.example'] }));
+    assert.equal(meta.clientIdUrlProblem('https://a.client.example/m.json', allowWild, config), null);
+    for (const u of [URL1, 'https://a.b.client.example/m.json', 'https://a.client.example:8443/m.json']) {
+      assert.equal(meta.clientIdUrlProblem(u, allowWild, config)?.reason, 'host-policy', u);
+    }
     // A denied host without a port is denied on every port; with a port, on that one only.
     for (const s of [settingsOf(block({ deniedHosts: ['client.example'] })),
       settingsOf(block({ mode: 'allowList', allowedHosts: ['client.example:8443'], deniedHosts: ['client.example'] })),

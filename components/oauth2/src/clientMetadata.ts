@@ -98,8 +98,8 @@ export function clientIdUrlProblem (url: string, settings: ClientMetadataSetting
   if (syntax != null) return { reason: 'url', detail: 'the client_id ' + syntax };
   const u = new URL(url);
   if (isPlatformHost(u.hostname, config)) return { reason: 'url', detail: 'the client_id names a host of this platform' };
-  if (hostListed(u.hostname, u.port, settings.deniedHosts, { anyPort: true })) return { reason: 'host-policy', detail: 'the host is denied' };
-  if (settings.mode === 'allowList' && !hostListed(u.hostname, u.port, settings.allowedHosts)) {
+  if (hostListed(u.hostname, u.port, settings.deniedHosts, 'deny')) return { reason: 'host-policy', detail: 'the host is denied' };
+  if (settings.mode === 'allowList' && !hostListed(u.hostname, u.port, settings.allowedHosts, 'allow')) {
     return { reason: 'host-policy', detail: 'the host is not on the allow-list' };
   }
   if (settings.mode === 'off') return { reason: 'host-policy', detail: 'client metadata documents are off' };

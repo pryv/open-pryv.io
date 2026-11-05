@@ -1243,7 +1243,17 @@ The settings of § 1f. Platform-wide (identical on every core), except
 |---|---|
 | `mode` | `off` (default), `allowList` or `any` (§ 1f, policy) |
 | `allowedHosts` | `allowList`: the hosts whose documents are accepted. Lower-case host names (exact match), `host:port` for another port than 443, `*.example.com` for exactly one more label (never the apex). An empty list with `allowList` stops the boot |
-| `deniedHosts` | both modes: never accepted (same syntax; an entry without a port denies the host on every port); checked first |
+| `deniedHosts` | both modes: never accepted (same syntax, wider match, below); checked first |
+
+One entry syntax, two matches: an allow entry grants, so it is as narrow as
+written; a deny entry withdraws trust from an owner, who mints ports and
+sub-domains at will, so it is wide.
+
+| Entry | in `allowedHosts` matches | in `deniedHosts` matches |
+|---|---|---|
+| `client.example` | that host on port 443 | that host on every port |
+| `client.example:8443` | that host on port 8443 | that host on port 8443 |
+| `*.client.example` | one label below (`a.client.example`), port 443; never the apex | the apex and every depth below (`client.example`, `a.b.client.example`), every port |
 | `cacheSeconds` | a fetched document is reused this long (default 3600) |
 | `staleGraceSeconds` | a client whose refetch fails stays usable this long past its last fetch (default 86400) |
 | `negativeCacheSeconds` | per core: a refused or invalid URL is not fetched again within this time (default 60) |
