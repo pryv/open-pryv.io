@@ -39,6 +39,7 @@ import { getClient } from './clientRegistry.ts';
 import { authenticateClient } from './clientSecret.ts';
 import { decodeBasicAuth, clientIdFromAssertion } from './clientAuth.ts';
 import { clientKeyOf } from './clientMetadataId.ts';
+import { reportClientAuthRefusal } from './clientMetadata.ts';
 import { issuerFromConfig } from './issuer.ts';
 import { logServerError } from './serverLog.ts';
 import { audit } from './audit.ts';
@@ -68,8 +69,11 @@ export function handleRevoke (deps: RevocationDeps) {
     const clientId = basic?.client_id ?? clientKeyOf(bodyClientId !== ''
       ? bodyClientId
       : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
-    const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
-      basic != null ? { 'WWW-Authenticate': 'Basic realm="oauth2"' } : {});
+    const refuse = async (): Promise<void> => {
+      await reportClientAuthRefusal(deps.platform, clientId, 'revoke');
+      sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
+        basic != null ? { 'WWW-Authenticate': 'Basic realm="oauth2"' } : {});
+    };
     if (clientId === '' || (basic != null && bodyClientId !== '' && bodyClientId !== basic.client_id)) return refuse();
     const client = await getClient(deps.platform, clientId);
     if (client == null) return refuse();

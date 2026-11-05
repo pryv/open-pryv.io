@@ -812,6 +812,36 @@ async function touchLastUsed (platform: PlatformDB, row: OAuthClient, now: numbe
 }
 
 /**
+ * A metadata-document client refused `invalid_client` at `/oauth2/token`,
+ * `/oauth2/revoke` or `/oauth2/introspect`: logged and audited
+ * (`oauth.client.metadata_refused`, reason `client-auth`) with the endpoint
+ * and grant type, sampled per client, endpoint, grant type and minute, so an
+ * operator sees why a connector fails. Any other client: nothing.
+ */
+export async function reportClientAuthRefusal (platform: PlatformDB, clientId: string, endpoint: 'token' | 'revoke' | 'introspect',
+  grantType: string = ''): Promise<void> {
+  if (!isMetadataClientKey(clientId)) return;
+  const what = endpoint + (grantType !== '' ? ' ' + grantType.slice(0, 128) : '');
+  const s = sampledRefusal(clientId, 'client-auth|' + what, Date.now());
+  if (!s.emit) return;
+  let row: OAuthClient | null = null;
+  try { row = await storage.getClient(platform, clientId); } catch { row = null; }
+  const url = row?.metadataUrl ?? '';
+  let host = '';
+  try { host = url !== '' ? new URL(url).host : ''; } catch { host = ''; }
+  logServerWarning(`client metadata document client ${url !== '' ? url : clientId}: invalid_client at /oauth2/${what}` +
+    (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
+  await audit('oauth.client.metadata_refused', {
+    clientId,
+    metadataUrl: url.slice(0, MAX_REFUSED_URL_LENGTH),
+    host,
+    reason: 'client-auth',
+    detail: '/oauth2/' + what + ': client authentication failed',
+    ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
+  });
+}
+
+/**
  * Operator: fetch the document now (no cache, no budget) and write the row.
  * Resolves to the row and the fields that changed, or the refusal.
  */

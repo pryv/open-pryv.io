@@ -45,6 +45,7 @@ import { decodeBasicAuth, clientIdFromAssertion, isConfidentialClient as isConfi
 import { issuerFromConfig } from './issuer.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
 import { clientKeyOf, publicClientId } from './clientMetadataId.ts';
+import { reportClientAuthRefusal } from './clientMetadata.ts';
 import { runHook, toClientView, EXCHANGE_RESERVED_KEYS } from './extension.ts';
 import { logServerError } from './serverLog.ts';
 import { audit } from './audit.ts';
@@ -98,8 +99,11 @@ export function handleIntrospect (deps: IntrospectDeps) {
     // Uniform refusal: unknown, public, not allowed, not active, or bad credentials.
     // The caller's regions are not checked: they say where its users are
     // served, not where it may ask about a token (whose home core this is).
-    const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
-      { 'WWW-Authenticate': 'Basic realm="oauth2"' });
+    const refuse = async (): Promise<void> => {
+      await reportClientAuthRefusal(deps.platform, clientId, 'introspect');
+      sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
+        { 'WWW-Authenticate': 'Basic realm="oauth2"' });
+    };
     if (clientId === '' || (basic != null && bodyClientId !== '' && bodyClientId !== basic.client_id)) return refuse();
     const caller = await getClient(deps.platform, clientId);
     if (caller == null || !isConfidentialClient(caller) || caller.canIntrospect !== true || clientUnavailable(caller, null) != null) {

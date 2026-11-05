@@ -36,6 +36,7 @@ import { logServerError } from '../serverLog.ts';
 import { getClient, isRegistryClient } from '../clientRegistry.ts';
 import { decodeBasicAuth, clientIdFromAssertion, hasKeySet } from '../clientAuth.ts';
 import { clientKeyOf } from '../clientMetadataId.ts';
+import { reportClientAuthRefusal } from '../clientMetadata.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -291,6 +292,9 @@ export function handleToken (deps: TokenDeps) {
       res.statusCode = 200;
       res.end(JSON.stringify(outcome.body));
     } else {
+      if (outcome.error === 'invalid_client' && typeof body.client_id === 'string') {
+        await reportClientAuthRefusal(deps.platform, body.client_id, 'token', grantType);
+      }
       res.statusCode = outcome.status;
       const resBody: Record<string, unknown> = { error: outcome.error };
       if (outcome.description) resBody.error_description = outcome.description;

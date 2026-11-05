@@ -630,10 +630,17 @@ describe('[OCMDE] client metadata documents end to end', function () {
     assert.deepEqual([replay.status, replay.body.error], [401, 'invalid_client']);
     // A code exchange without the assertion: the client must authenticate.
     const second = await codeFor(who, url);
-    const bare = await coreRequest.post('/oauth2/token').type('form').send({
-      grant_type: 'authorization_code', code: second.code, code_verifier: second.verifier, redirect_uri: REDIRECT_URI, resource: RS_AUD, client_id: url,
+    let bare;
+    const authRows = await auditRows(async () => {
+      bare = await coreRequest.post('/oauth2/token').type('form').send({
+        grant_type: 'authorization_code', code: second.code, code_verifier: second.verifier, redirect_uri: REDIRECT_URI, resource: RS_AUD, client_id: url,
+      });
     });
     assert.deepEqual([bare.status, bare.body.error], [401, 'invalid_client']);
+    // Recorded for the operator, with the endpoint and grant type.
+    const authRefused = authRows.filter((r) => r.event === 'oauth.client.metadata_refused').map((r) => r.record);
+    assert.deepEqual(authRefused.map((r) => [r.reason, r.metadataUrl, r.detail]),
+      [['client-auth', url, '/oauth2/token authorization_code: client authentication failed']]);
     // The key rotated at the client's host (another kid, another algorithm):
     // the set is fetched again and the new key verifies, the withdrawn one no
     // longer does (the cache lapse is simulated).

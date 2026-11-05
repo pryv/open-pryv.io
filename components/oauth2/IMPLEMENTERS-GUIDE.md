@@ -114,7 +114,7 @@ Every grant + revoke path calls into `src/audit.ts`. Available event types:
 | `oauth.token.exchanged` | `{ clientId, userId, accessId, dataGrantAccessId?, subjectClientId, subjectAccessId, reused, grantedScope }`: a token exchange (`clientId` the resource server, `accessId` the derived session) |
 | `oauth.token.exchange_refused` | `{ clientId, reason }`: an authenticated token exchange refused (`not-entitled`, `request-shape`, `subject-inactive`, `subject-client-unavailable`, `foreign-audience`, `wrong-core`); syslog only |
 | `oauth.client.metadata_fetched` | `{ clientId, metadataUrl, host, outcome, changedFields? }`: a client metadata document fetched (`outcome`: `created`, `refreshed`, `unchanged`); syslog only |
-| `oauth.client.metadata_refused` | `{ clientId, metadataUrl, host, reason, detail }`: a client metadata document URL refused, or its document unusable (`reason`: `url`, `host-policy`, `unreachable`, `invalid`, `budget`; never the document); syslog only |
+| `oauth.client.metadata_refused` | `{ clientId, metadataUrl, host, reason, detail, suppressed? }`: a client metadata document URL refused, its document unusable, or such a client refused `invalid_client` at the token, revocation or introspection endpoint (`reason`: `url`, `host-policy`, `unreachable`, `invalid`, `budget`, `client-auth`; never the document); sampled per host (or client), reason and minute; syslog only |
 
 `oauth.consent.shown` adds `metadataUrl` and `metadataHost` for a metadata-document client.
 
