@@ -1,6 +1,27 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.73 - 2026-11-05
+
+> **Upgrade advice for operators.** No BREAKING API change. Two new configuration keys, both off by
+> default: `adapterRoutes` (`{}`: a sidecar served under `/adapter/<name>/`, see
+> `docs/adapter-routes.md`) and `oauth.audienceBoundSessions` (`false`). **The next release defaults
+> `oauth.audienceBoundSessions` to `true`:** on a core where registry clients authorize for a
+> resource server that does not exchange tokens yet, set it to `false` explicitly now. The boot
+> stops on a value of `oauth.audienceBoundSessions` other than `true` / `false`, and on a core with
+> adapter routes while an account named `adapter` exists (`adapter` is now a reserved username; in
+> dnsLess mode a hosted site named `adapter` is refused): run `node bin/check-config.js` on the new
+> code before switching. Token exchange is advertised only once its URN is added to
+> `oauth.grantTypesSupported`. No schema migration, so `migrations.autoRunOnStart: false` needs no
+> step; with the PostgreSQL platform engine the core creates the index `platform_kv_key_c` at its
+> first boot. On a platform with the embedded DNS, `bin/check-config.js` and the boot log now check
+> the `oauth.issuer` host (boot warnings only; check-config reports an issuer that is not an
+> absolute http(s) URL, or whose label the core serves otherwise, as a problem), and the issuer's
+> label is refused as a new username. After deploying, on a cleartext platform
+> (`platform.piiMode: cleartext`): run `node bin/reconcile-user-cores.js --emails --dry-run` on
+> each core and resolve the pairs it lists before the next auto-deletion sweep (see the first entry
+> below). A `bin/backup.js --restore --verify-integrity` rollback run by an earlier release left
+> the accounts it created in place without their data, their name and address still taken: delete
+> such an account (`DELETE /users/<name>` with the admin key) or restore it again.
 
 ### Email uniqueness in cleartext piiMode; backup restore follow-ups; values holding `/`
 
