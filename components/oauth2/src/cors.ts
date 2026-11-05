@@ -28,9 +28,12 @@ const MAX_AGE = '3600';
 /** Path prefixes the OAuth policy owns (the API's CORS middleware leaves them alone). */
 export const OAUTH_CORS_PATHS: readonly string[] = Object.freeze(['/oauth2/', '/.well-known/']);
 
-/** True for a request path on the OAuth surface (`OAUTH_CORS_PATHS`). */
+/**
+ * True for a request path on the OAuth surface (`OAUTH_CORS_PATHS`), the bare
+ * prefix included (`/oauth2`, `/.well-known`: Express mounts on it too).
+ */
 export function isOAuthSurface (path: string): boolean {
-  return OAUTH_CORS_PATHS.some((prefix) => path.startsWith(prefix));
+  return OAUTH_CORS_PATHS.some((prefix) => path.startsWith(prefix) || path === prefix.slice(0, -1));
 }
 
 /**

@@ -28,11 +28,11 @@ function fakeRes () {
 }
 
 describe('[OACS] OAuth CORS policy', () => {
-  it('[OACS1] isOAuthSurface: the /oauth2/ and /.well-known/ paths only', () => {
-    for (const path of ['/oauth2/token', '/oauth2/authorize/offer', '/oauth2/jwks', '/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
+  it('[OACS1] isOAuthSurface: the /oauth2/ and /.well-known/ paths only, the bare prefixes included', () => {
+    for (const path of ['/oauth2/token', '/oauth2/authorize/offer', '/oauth2/jwks', '/.well-known/oauth-authorization-server', '/.well-known/openid-configuration', '/oauth2', '/.well-known']) {
       assert.equal(isOAuthSurface(path), true, path);
     }
-    for (const path of ['/oauth2x', '/oauth2', '/users', '/auth/sso/x/callback', '/alice/events', '/reg/cores', '/alice/oauth2/token']) {
+    for (const path of ['/oauth2x', '/users', '/auth/sso/x/callback', '/alice/events', '/reg/cores', '/alice/oauth2/token', '/.well-knownx']) {
       assert.equal(isOAuthSurface(path), false, path);
     }
     assert.deepEqual([...OAUTH_CORS_PATHS], ['/oauth2/', '/.well-known/']);

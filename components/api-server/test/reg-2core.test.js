@@ -776,9 +776,14 @@ describe('[RG2C] Two-core integration tests', function () {
   describe('External ids across cores', () => {
     const ns = 'ehr-2c-' + Date.now().toString(36);
 
-    it('[2C50] a namespace created through Core A is visible through Core B, without its salt', async () => {
+    // Every test of this block uses the namespace: created here, not by [2C50],
+    // so a selection of the block's tests runs without it.
+    before(async () => {
       const created = await httpRequest(CORE_A_PORT, 'PUT', '/system/admin/ext-id-ns/' + ns, { label: 'Two-core EHR' }, { Authorization: ADMIN_KEY });
       assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+    });
+
+    it('[2C50] a namespace created through Core A is visible through Core B, without its salt', async () => {
       const seen = await httpRequest(CORE_B_PORT, 'GET', '/system/admin/ext-id-ns/' + ns, null, { Authorization: ADMIN_KEY });
       assert.strictEqual(seen.status, 200, JSON.stringify(seen.body));
       assert.strictEqual(seen.body.namespace.label, 'Two-core EHR');

@@ -14,7 +14,7 @@ const { getConfig } = require('@pryv/boiler');
 const { usernameInHost, ignoredUsernameSubdomains, ROOT_ONLY_PATHS } = require('business/src/usernameSubdomains.ts');
 const { configureTrustedProxies, expressTrustProxy } = require('middleware/src/clientIp.ts');
 const { effectiveMaxSizeMb } = require('./middleware/uploads.ts');
-const { isOAuthSurface } = require('oauth2/src/cors.ts');
+const { isOAuthSurface, corsMiddleware: oauthCorsMiddleware } = require('oauth2/src/cors.ts');
 // ------------------------------------------------------------ express app init
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
@@ -95,6 +95,12 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   // Before the body parsers: the answers to their errors (malformed or
   // oversized body) carry the CORS, Vary and cache headers too.
   app.use(commonHeadersMiddleware);
+  // The OAuth surface's own CORS, before the body parsers as well: the answers
+  // to their errors there carry that policy (the routes mount it too).
+  app.use(function oauthSurfaceCors (req: Request, res: Response, next: NextFunction) {
+    if (isOAuthSurface(req.path)) return oauthCorsMiddleware(req, res, next);
+    next();
+  });
   // Parse JSON bodies (same size default as multipart uploads when the
   // setting is absent):
   app.use(express.json({

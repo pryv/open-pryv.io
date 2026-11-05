@@ -98,6 +98,17 @@ describe('[OACO] OAuth CORS on the api-server', function () {
     assertOAuthPolicy(await preflight('/oauth2/revoke'), { preflight: true });
   });
 
+  it('[OACO7] a body the parsers refuse, and the bare prefixes, answer under the OAuth policy too', async function () {
+    const malformed = await coreRequest.post('/oauth2/authorize/offer').set('Origin', ORIGIN)
+      .set('Content-Type', 'application/json').send('{');
+    assert.equal(malformed.status, 400, describeRes(malformed));
+    assertOAuthPolicy(malformed, { preflight: false });
+    for (const path of ['/oauth2', '/.well-known']) {
+      const bare = await coreRequest.get(path).set('Origin', ORIGIN);
+      assertOAuthPolicy(bare, { preflight: false });
+    }
+  });
+
   it('[OACO6] the other routes keep the API\'s CORS: origin echoed, credentials allowed, preflight 200', async function () {
     for (const path of ['/users', '/auth/sso/x/callback', '/reg/cores']) {
       const res = await preflight(path, 'content-type, authorization');
