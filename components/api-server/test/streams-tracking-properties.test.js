@@ -228,4 +228,41 @@ describe('[STRK] stream tracking properties', function () {
     const sub = await localStore.getOne(userId, sharedSecrets.streamIdForAccess(personalAccessId), { includeTrashed: true, childrenDepth: 0 });
     assert.strictEqual(sub.createdBy, personalAccessId);
   });
+
+  it('[STRK6] untrashing a stream of another store for a new access permission leaves the local stream with the same id alone', async function () {
+    const id = 'strk-store-' + cuid().toLowerCase().slice(-8);
+    const created = await coreRequest.post(basePath).set('Authorization', personal).send({ id, name: 'Local ' + id });
+    assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+    const trashed = await coreRequest.delete(basePath + '/' + id).set('Authorization', personal);
+    assert.strictEqual(trashed.status, 200, JSON.stringify(trashed.body));
+
+    // The test store answers a trashed stream with the same item id, as a store
+    // that supports trash would.
+    const dummy = mall.streams.streamsStores.get('dummy');
+    const origGetOne = dummy.getOne;
+    const origUpdate = dummy.update;
+    const updates = [];
+    dummy.getOne = async (u, sid, q) => (sid === id
+      ? { id, name: 'Store ' + id, parentId: null, trashed: true, children: [] }
+      : origGetOne.call(dummy, u, sid, q));
+    dummy.update = async (u, data) => { updates.push(data); return origUpdate.call(dummy, u, data); };
+    let acc;
+    try {
+      acc = await coreRequest.post('/' + username + '/accesses').set('Authorization', personal)
+        .send({ name: 'strk-' + cuid(), type: 'app', permissions: [{ streamId: ':dummy:' + id, level: 'read', defaultName: 'Store' }] });
+    } finally {
+      dummy.getOne = origGetOne;
+      dummy.update = origUpdate;
+    }
+    assert.strictEqual(acc.status, 201, JSON.stringify(acc.body));
+    // The untrash went to the store that holds the stream.
+    assert.strictEqual(updates.length, 1, JSON.stringify(updates));
+    assert.strictEqual(updates[0].id, id);
+    assert.strictEqual(updates[0].trashed, false);
+    assert.strictEqual(updates[0].modifiedBy, personalAccessId);
+    // The local stream is untouched.
+    const local = await mall.streams.streamsStores.get('local').getOne(userId, id, { includeTrashed: true, childrenDepth: 0 });
+    assert.ok(local != null, 'premise: the local stream is stored');
+    assert.strictEqual(local.trashed, true, 'local stream: ' + JSON.stringify(local));
+  });
 });
