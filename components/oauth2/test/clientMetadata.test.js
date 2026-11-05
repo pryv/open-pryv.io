@@ -608,7 +608,7 @@ describe('[OCMD] client metadata documents', function () {
     assert.match(conf.describeClientMetadataConfig(block()).warnings[0], /any party on the internet/);
   });
 
-  it('[OCMD08] prune: a permanent row unused past the absolute refresh lifetime + 7 days is deleted with a tombstone; a provisional row past unconsentedRowSeconds without one', async () => {
+  it('[OCMD08] prune: a permanent row unused past the absolute refresh lifetime + 7 days is deleted with a tombstone; a provisional row past unconsentedRowSeconds without one; a suspended row never', async () => {
     const platform = fakePlatform();
     const s = settingsOf();
     const now = Date.now();
@@ -629,15 +629,22 @@ describe('[OCMD] client metadata documents', function () {
     await persistClient(platform, rowAt(P2, now - 3599 * 1000, {}, {}));
     await persistClient(platform, rowAt(P3, now - 7200 * 1000, {}, { operatorRefreshedAt: now - 7200 * 1000 }));
     await persistClient(platform, rowAt(P4, now - 7200 * 1000, { status: 'suspended' }, {}));
-    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now), { pruned: 3, provisional: 2 });
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now), { pruned: 2, provisional: 1 });
     const key = ids.metadataClientKey;
     assert.equal(await getClient(platform, key(URL1)), null);
     assert.notEqual(await storage.getRevokedAt(platform, key(URL1)), null, 'a permanent row: tombstone written');
-    for (const u of [P1, P4]) {
-      assert.equal(await getClient(platform, key(u)), null, u);
-      assert.equal(await storage.getRevokedAt(platform, key(u)), null, 'a provisional row: no tombstone ' + u);
-    }
-    for (const u of [URL2, URL3, P2, P3]) assert.notEqual(await getClient(platform, key(u)), null, u);
+    assert.equal(await getClient(platform, key(P1)), null, P1);
+    assert.equal(await storage.getRevokedAt(platform, key(P1)), null, 'a provisional row: no tombstone');
+    for (const u of [URL2, URL3, P2, P3, P4]) assert.notEqual(await getClient(platform, key(u)), null, u);
+    // A suspended provisional row is kept, pass after pass; resumed, it is pruned at the next one, without a tombstone.
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now + 200), { pruned: 0, provisional: 0 });
+    assert.notEqual(await getClient(platform, key(P4)), null, 'kept while suspended');
+    assert.equal(await storage.getRevokedAt(platform, key(P4)), null);
+    await storage.setClient(platform, { ...(await getClient(platform, key(P4))), status: 'active' });
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now + 400), { pruned: 1, provisional: 1 });
+    assert.equal(await getClient(platform, key(P4)), null);
+    assert.equal(await storage.getRevokedAt(platform, key(P4)), null, 'no tombstone');
+    assert.notEqual(await getClient(platform, key(URL2)), null, 'a permanent suspended row is kept');
     await assert.rejects(storage.deleteClientRow(platform, 'curated'), /url~/);
   });
 
@@ -756,7 +763,7 @@ describe('[OCMD] client metadata documents', function () {
       assert.equal(server.calls, calls, 'nothing fetched');
     });
 
-    it('[OCMD10B] list --origin, show, revoke (with the deny-list hint), suspend by URL; update and rotate-secret refuse such a client', async () => {
+    it('[OCMD10B] list --origin, show, revoke (with the deny-list hint), suspend by URL (a provisional row: the notes of suspend and resume); update and rotate-secret refuse such a client', async () => {
       server.set(URL1, doc());
       await run(cli.runRefreshMetadata, ['refresh-metadata', URL1], getClient);
       await persistClient(platform, {
@@ -782,6 +789,15 @@ describe('[OCMD] client metadata documents', function () {
       const susp = await run((p, a) => cli.runSetStatus(p, a, getClient, persistClient), ['suspend', URL1]);
       assert.equal(susp.error, null, susp.out);
       assert.equal((await getClient(platform, ids.metadataClientKey(URL1))).status, 'suspended');
+      assert.doesNotMatch(susp.out, /provisional/, 'a row the operator fetched is permanent');
+      // A provisional row (no consent, no operator fetch): suspend and resume say what becomes of it.
+      const s2 = settingsOf();
+      await persistClient(platform, meta.buildMetadataClientRow(URL2, meta.clientMetadataProblem(doc(URL2), URL2, s2).fields, s2, null, Date.now()));
+      const ps = await run((p, a) => cli.runSetStatus(p, a, getClient, persistClient), ['suspend', URL2]);
+      assert.match(ps.out, /provisional \(no consent yet\): kept while suspended/, ps.out);
+      assert.match(ps.out, /deniedHosts/);
+      const pr = await run((p, a) => cli.runSetStatus(p, a, getClient, persistClient), ['resume', URL2]);
+      assert.match(pr.out, /provisional again: pruned after oauth\.clientMetadataDocuments\.unconsentedRowSeconds/, pr.out);
       for (const [fn, cmd] of [[cli.runUpdate, 'update'], [cli.runRotateSecret, 'rotate-secret']]) {
         for (const id of [URL1, ids.metadataClientKey(URL1)]) {
           const r = await run((p, a) => fn(p, a, getClient, persistClient), [cmd, id]);

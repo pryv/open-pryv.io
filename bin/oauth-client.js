@@ -430,6 +430,14 @@ async function runSetStatus (platform, args, getClient, persistClient) {
     await oauthStorage().setClient(platform, row);
     console.log('OK   client ' + clientId + ' is ' + status);
   }
+  // A client metadata document row no consent reached yet.
+  if (existing.origin === 'metadata-document' && existing.metadata?.firstConsentAt == null && existing.metadata?.operatorRefreshedAt == null) {
+    console.log(status === 'suspended'
+      ? 'NOTE this client is provisional (no consent yet): kept while suspended; to keep its host out for good add it to\n' +
+        '     oauth.clientMetadataDocuments.deniedHosts'
+      : 'NOTE provisional again: pruned after oauth.clientMetadataDocuments.unconsentedRowSeconds unless a consent or\n' +
+        '     refresh-metadata pins it');
+  }
   if (status === 'suspended') printPurgeHint(clientId);
 }
 

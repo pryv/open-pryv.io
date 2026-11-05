@@ -904,15 +904,17 @@ function provisionalPastHorizon (row: OAuthClient, now: number, horizonMs: numbe
 }
 
 /**
- * Master sweep over the metadata-document rows:
+ * Master sweep over the active metadata-document rows (a suspended row, or
+ * one under review, is never pruned: an operator decision; once resumed it
+ * is back under its rule):
  * - provisional rows (no consent, no operator refresh) older than
  *   `unconsentedRowSeconds` are deleted with no tombstone (`deleteClientRow`:
  *   nothing was issued for them: a consent marks the row before its code),
- *   whatever their status, each read again right before its delete;
+ *   each read again right before its delete;
  * - permanent rows not used for the absolute refresh lifetime (the
  *   template's, else the platform's) plus 7 days are deleted through
  *   `deleteClient` (a revoke tombstone is written: every session of theirs
- *   is dead by then); suspended ones are kept (an operator decision).
+ *   is dead by then).
  * Returns the number of rows deleted, and how many of them were provisional.
  */
 export async function pruneMetadataClients (platform: PlatformDB, config: Config, now: number = Date.now()):
@@ -928,6 +930,8 @@ Promise<{ pruned: number; provisional: number }> {
     let row: OAuthClient | null;
     try { row = await storage.getClient(platform, id); } catch { continue; }
     if (row == null || row.origin !== 'metadata-document') continue;
+    // Suspended or under review: an operator decision, never pruned.
+    if ((row.status ?? 'active') !== 'active') continue;
     if (isProvisionalRow(row)) {
       if (!provisionalPastHorizon(row, now, provisionalHorizon)) continue;
       // Read again right before the delete: a consent may have made it
@@ -941,7 +945,6 @@ Promise<{ pruned: number; provisional: number }> {
       provisional++;
       continue;
     }
-    if ((row.status ?? 'active') !== 'active') continue;
     const lastUsed = row.metadata?.lastUsedAt ?? row.metadata?.fetchedAt ?? 0;
     if (now - lastUsed <= horizon) continue;
     await storage.deleteClient(platform, id);

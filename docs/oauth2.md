@@ -956,8 +956,9 @@ it: a row is made permanent by the first consent, before any code is issued for
 it). That bounds the provisional rows to about `newClientsPerMinute ×
 (unconsentedRowSeconds + the sweep interval) / 60` per core (some 750 with the
 defaults). A permanent row unused for the absolute refresh lifetime plus 7 days
-is deleted by the same sweep, with a tombstone (suspended permanent rows are
-kept).
+is deleted by the same sweep, with a tombstone. A suspended row (or one under
+review) is never pruned, provisional or not; once resumed, it is back under its
+rule.
 
 **Operator tools** (§ 3b): `show`, `revoke`, `suspend`, `resume` and
 `purge-grants` take the URL or the key; `revoke` deletes the row and is an

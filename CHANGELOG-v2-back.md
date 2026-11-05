@@ -61,6 +61,9 @@
   as provisional at their success exit (`reassertPermanentRow`, best-effort), and the sweep reads a
   provisional row again right before deleting it. Both grants wrap their revoke-epoch read (a store
   error answers `server_error` after the orphan revoke / the consumed-row restore).
+- `pruneMetadataClients` skips every row that is not `active` before the provisional rule (a
+  suspended provisional row is kept); `suspend` / `resume` on a provisional row print what becomes
+  of it.
 - Refusals (`metadata_refused` rows and their warnings) go through `sampledRefusal`: one per
   (host, reason) and minute per core, the count in `suppressed`, `metadataUrl` cut to 256; reason
   `client-auth` records an `invalid_client` of such a client at the token, revocation and
