@@ -1156,7 +1156,7 @@ oauth:
   # for a resource server (a registry client's authorization naming `aud` /
   # `resource`): such a token works only through that resource server's
   # exchange. false (the default in this release) keeps such tokens usable at
-  # the API; the next release defaults it to true. Per core; true or false
+  # the API; a later release is planned to default it to true. Per core; true or false
   # (the strings "true" / "false" too), any other value stops the boot.
   audienceBoundSessions: false
   # Options handed as-is to the OAuth extension (customExtensions:oauthExtension).

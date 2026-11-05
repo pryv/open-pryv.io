@@ -751,8 +751,8 @@ minted before this release carry no such record and keep working until they
 expire or their chain refreshes; sessions issued for no resource server are
 never refused (and cannot be exchanged), nor are app-account clients'
 sessions (they record no audience: they have no exchange to replace them).
-`false` (the default in this release) keeps every token usable at the API; the
-next release defaults it to `true`. Turn it on once every resource server whose
+`false` (the default in this release) keeps every token usable at the API; a
+later release is planned to default it to `true`. Turn it on once every resource server whose
 clients use this core exchanges; while it is off and a client is registered
 with `--can-exchange`, the core warns at boot. The setting is read from the
 configuration (it changes with a restart): a socket.io connection opened

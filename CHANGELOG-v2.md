@@ -4,8 +4,8 @@
 
 > **Upgrade advice for operators.** No BREAKING API change. Two new configuration keys, both off by
 > default: `adapterRoutes` (`{}`: a sidecar served under `/adapter/<name>/`, see
-> `docs/adapter-routes.md`) and `oauth.audienceBoundSessions` (`false`). **The next release defaults
-> `oauth.audienceBoundSessions` to `true`:** on a core where registry clients authorize for a
+> `docs/adapter-routes.md`) and `oauth.audienceBoundSessions` (`false`). **A later release is planned
+> to default `oauth.audienceBoundSessions` to `true`:** on a core where registry clients authorize for a
 > resource server that does not exchange tokens yet, set it to `false` explicitly now. The boot
 > stops on a value of `oauth.audienceBoundSessions` other than `true` / `false`, and on a core with
 > adapter routes while an account named `adapter` exists (`adapter` is now a reserved username; in
@@ -126,8 +126,8 @@
   new per-core setting `oauth.audienceBoundSessions: true` (or the string `"true"`; a value that is
   neither `true` nor `false` stops the boot), the data API refuses such a token
   (`403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`): it is meant to be
-  exchanged by that resource server. Default `false` in this release; **the next release defaults it
-  to `true`**: set it explicitly to `false` on a core whose resource servers do not exchange yet.
+  exchanged by that resource server. Default `false` in this release; **a later release is planned to
+  default it to `true`**: set it explicitly to `false` on a core whose resource servers do not exchange yet.
   Sessions minted before this release, and sessions issued for no resource server, are never
   refused. The core warns at boot while a client is registered `--can-exchange` and the setting is off.
 - **Added: `bin/oauth-client.js` `--can-exchange`** on `create-registry` and `update` (`false`
