@@ -231,6 +231,63 @@ describe('[SION] socket.io namespaces', function () {
     }
   });
 
+  // socket.io releases a namespace when its last CONNECTED socket leaves,
+  // even while another socket of that namespace is still being authenticated:
+  // that socket then joins the released namespace object, and the next
+  // connection gets a new one under the same name. Both must be notified.
+  it('[SION7] a socket authenticated while the namespace was released still receives notifications next to a later one', async function () {
+    const { MethodContext } = require('business');
+    const ns = '/' + username;
+    const original = MethodContext.prototype.retrieveExpandedAccess;
+    let releaseGate;
+    const gate = new Promise((resolve) => { releaseGate = resolve; });
+    let gateReached;
+    const reached = new Promise((resolve) => { gateReached = resolve; });
+    let armed = false;
+    MethodContext.prototype.retrieveExpandedAccess = async function (...args) {
+      if (armed) {
+        armed = false;
+        gateReached();
+        await gate;
+      }
+      return original.apply(this, args);
+    };
+    const conns = [];
+    try {
+      const first = connectClient(ns);
+      conns.push(first);
+      await onceEvent(first, 'connect');
+      // The next handshake is held in its authentication step.
+      armed = true;
+      const held = connectClient(ns);
+      conns.push(held);
+      const heldConnected = onceEvent(held, 'connect');
+      await reached;
+      first.disconnect();
+      const open = await pollUntil(async () => io._nsps.has(ns), (isOpen) => !isOpen, { timeoutMs: 5000 });
+      assert.strictEqual(open, false, 'the namespace was released while a handshake was pending');
+      releaseGate();
+      await heldConnected;
+      const later = connectClient(ns);
+      conns.push(later);
+      await onceEvent(later, 'connect');
+
+      const notified = (conn, label) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no streamsChanged on the ' + label + ' socket')), 5000);
+        conn.once('streamsChanged', () => { clearTimeout(timer); resolve(); });
+      });
+      const both = Promise.all([notified(held, 'held'), notified(later, 'later')]);
+      const streamId = 'sion7-' + cuid.slug();
+      const created = await coreRequest.post(`/${username}/streams`).set('Authorization', personalToken).send({ id: streamId, name: streamId });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      await both;
+    } finally {
+      MethodContext.prototype.retrieveExpandedAccess = original;
+      releaseGate();
+      for (const conn of conns) conn.disconnect();
+    }
+  });
+
   function emitWithAck (conn, method, params) {
     return new Promise((resolve) => conn.emit(method, params, (err, result) => resolve({ err, result })));
   }

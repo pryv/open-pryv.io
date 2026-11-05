@@ -54,7 +54,7 @@ function getSocketAudit () {
 //
 
 class Manager {
-  contexts: Map<string, NamespaceContext>;
+  contexts: Map<SocketNamespace, NamespaceContext>;
 
   logger: Logger;
 
@@ -119,34 +119,34 @@ class Manager {
 
   // The context of the namespace `socketNs` a socket just connected to.
   //
-  // Contexts are keyed by namespace NAME (`/alice` and `/alice/alice` are two
-  // namespaces of one user, each needing its own notifications), and dropped
-  // when their last connection leaves: socket.io then deletes the namespace
-  // itself, and the next connection gets a new namespace object. Should a
-  // context outlive its namespace anyway, it is rebound to the live one here,
-  // so notifications never go to a deleted namespace.
+  // Contexts are keyed by namespace OBJECT (`/alice` and `/alice/alice` are
+  // two namespaces of one user, each needing its own notifications), and
+  // dropped when their last connection leaves. Not by name: socket.io
+  // releases a namespace once its last connected socket leaves, even while
+  // another socket of it is still in the handshake; that socket then joins
+  // the released object, and the next connection gets a new object under the
+  // same name. Both objects hold live sockets, so each keeps its own context
+  // (a context keyed by name would follow the newer object and leave the
+  // older one's sockets without notifications).
   //
   // The context listens to the notifications of `username`, the account's
   // canonical username as the handshake resolved it: the namespace may name
   // the account by an alias, while every notification is emitted under the
-  // canonical username. A context already open under that namespace name
-  // for another account (an alias released and reassigned meanwhile) is
-  // not joined.
+  // canonical username. A context already open on that namespace for
+  // another account (an alias released and reassigned meanwhile) is not
+  // joined.
   //
   // Everything after the first await runs without yielding to I/O, so a
   // disconnect cannot interleave between the lookup and the caller's
   // `onConnect`.
   async ensureInitNamespace (socketNs: SocketNamespace, username: string): Promise<NamespaceContext> {
     await initAsyncProps.call(this);
-    const namespaceName = socketNs.name;
-    let context = this.contexts.get(namespaceName);
+    let context = this.contexts.get(socketNs);
     if (typeof context === 'undefined') {
       context = new NamespaceContext(username, socketNs, this.api, this.logger, this.apiVersion, this.hostname, this.storageLayer, this);
-      this.contexts.set(namespaceName, context);
+      this.contexts.set(socketNs, context);
     } else if (context.username !== username) {
-      throw new Error(`namespace '${namespaceName}' is open for another account`);
-    } else if (context.socketNs !== socketNs) {
-      context.socketNs = socketNs;
+      throw new Error(`namespace '${socketNs.name}' is open for another account`);
     }
     await context.open();
     return context;
@@ -174,10 +174,9 @@ class Manager {
   }
 
   // Forget the context of a namespace whose last connection left (only if it
-  // is still the one registered under that name).
+  // is still the one registered for that namespace).
   dropContext (context: NamespaceContext): void {
-    const name = context.socketNs.name;
-    if (this.contexts.get(name) === context) this.contexts.delete(name);
+    if (this.contexts.get(context.socketNs) === context) this.contexts.delete(context.socketNs);
   }
 }
 
