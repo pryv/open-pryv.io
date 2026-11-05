@@ -465,13 +465,13 @@ describe('[ACST] account auto-deletion setting', function () {
           const b = await state.getBookkeeping(u.id);
           assert.equal(b.firstNoticeAt, undefined, 'no notice recorded');
           // A mail to the account itself is a notice not given (not one switched
-          // off): the sweep does not record it, e.g. the owner told of a transfer start.
+          // off): the sweep does not record it, e.g. a reminder.
           const config = await require('@pryv/boiler').getConfig();
           const facts = await loadAccountFacts(config, { id: u.id, username: u.username });
           assert.equal(facts.emailHeld, true);
           assert.equal(facts.notifiable, false);
           assert.equal(facts.presetApplies, false, 'an operator preset does not apply, as for an account without an address');
-          assert.equal(await sendAutoDeletionMail(config, 'transferStarted', { id: u.id, username: u.username }, facts, () => ({})), 'rejected');
+          assert.equal(await sendAutoDeletionMail(config, 'reminder', { id: u.id, username: u.username }, facts, () => ({})), 'rejected');
           assert.equal(captured.length, 0, JSON.stringify(captured));
         } finally {
           await platform.deleteUserUniqueField('email', email);
