@@ -57,8 +57,8 @@ const UNSAFE_CHARS_RE = /[\u0000-\u0020\u007f-\u009f\u00a0\u200b-\u200f\u202a-\u
  *   is cannot then name the same document as another spelling;
  * - a host name, not an IP literal, without a trailing dot;
  * - no user information, no fragment;
- * - a path (a bare origin is refused), without empty segments (`//`) and
- *   without percent-encoded characters;
+ * - a path other than `/` (a bare origin and the domain root are refused),
+ *   without empty segments (`//`) and without percent-encoded characters;
  * - a query is allowed (kept verbatim).
  */
 export function clientIdUrlSyntaxProblem (raw: unknown): string | null {
@@ -79,6 +79,8 @@ export function clientIdUrlSyntaxProblem (raw: unknown): string | null {
   const slash = afterScheme.search(/[/?]/);
   if (slash < 0 || afterScheme[slash] !== '/') return 'must contain a path (e.g. https://client.example/client.json)';
   const pathPart = afterScheme.slice(slash).split('?')[0];
+  // The domain root is where a site's own content lives: never a client id.
+  if (pathPart === '/') return 'must contain a path other than / (e.g. https://client.example/client.json)';
   if (pathPart.includes('%')) return 'must not carry percent-encoded characters in its path';
   if (pathPart.includes('//')) return 'must not carry an empty path segment (//)';
   if (pathPart.split('/').some((s) => s === '.' || s === '..')) return 'must not carry a dot segment in its path';

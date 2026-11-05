@@ -816,7 +816,8 @@ token exchange by a resource server, the client checks at the data API,
 is an HTML 400 that says why):
 
 - an absolute `https:` URL of at most 2048 characters, with a path
-  (`https://client.example/` passes, `https://client.example` does not), a
+  other than `/` (`https://client.example/client.json` passes,
+  `https://client.example` and `https://client.example/` do not), a
   query allowed;
 - a host name (no IP literal, no trailing dot), not a host of this platform
   (its API hosts, `dnsLess.publicUrl`'s, the issuer's);

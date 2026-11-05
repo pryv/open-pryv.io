@@ -140,6 +140,7 @@ describe('[OCMD] client metadata documents', function () {
       'https://user@client.example/c.json', 'https://u:p@client.example/c.json', // userinfo
       'https://client.example/c.json#x', 'https://client.example/c.json#', // fragment
       'https://client.example', 'https://client.example?x=1', // no path
+      'https://client.example/', 'https://client.example/?x=1', // the root path
       'https://client.example/a/./c.json', 'https://client.example/a/../c.json', 'https://client.example//c.json',
       'https://client.example/%2e%2e/c.json', 'https://client.example/a%41.json', // dot segments, empty segment, escapes
       'https://Client.example/c.json', 'https://client.example:443/c.json', 'https://client.example./c.json', // spellings
@@ -151,7 +152,7 @@ describe('[OCMD] client metadata documents', function () {
       assert.notEqual(ids.clientIdUrlSyntaxProblem(raw), null, 'refused: ' + JSON.stringify(raw));
       assert.equal(ids.isMetadataClientUrl(raw), false);
     }
-    for (const ok of ['https://client.example/', URL1, 'https://client.example/c.json?v=2', 'https://client.example:8443/c.json', 'https://xn--bcher-kva.example/c.json']) {
+    for (const ok of ['https://client.example/c', URL1, 'https://client.example/c.json?v=2', 'https://client.example:8443/c.json', 'https://xn--bcher-kva.example/c.json']) {
       assert.equal(ids.clientIdUrlSyntaxProblem(ok), null, 'accepted: ' + ok);
     }
     const config = fakeConfig();
