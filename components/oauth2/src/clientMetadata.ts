@@ -587,7 +587,7 @@ function takeFetchBudget (host: string, settings: ClientMetadataSettings, now: n
 
 type RefreshOutcome =
   | { ok: true; client: OAuthClient }
-  | { ok: false; kind: 'unreachable' | 'invalid'; detail: string };
+  | { ok: false; kind: 'unreachable' | 'invalid'; detail: string; gone?: true };
 
 /**
  * Fetch the document, validate it and write the row (the template applied
@@ -606,6 +606,14 @@ async function refreshRow (platform: PlatformDB, url: string, settings: ClientMe
   }
   if (checked.ignored.length > 0) logServerDebug(`client metadata document on ${host}: members ignored: ${checked.ignored.join(', ')}`);
   if (checked.dropped.length > 0) logServerDebug(`client metadata document on ${host}: dropped (not on the document's host, or malformed): ${checked.dropped.join(', ')}`);
+  // The row as it stands now, not as read before the fetch: an operator
+  // suspend, a revoke or another core's write during the fetch wins.
+  const current = await storage.getClient(platform, metadataClientKey(url));
+  if (existing != null && current == null) {
+    logServerWarning(`client metadata document on ${host}: the client was removed during the fetch; not written again`);
+    return { ok: false, kind: 'invalid', detail: 'the client was removed during the fetch', gone: true };
+  }
+  existing = current;
   const row = buildMetadataClientRow(url, checked.fields, settings, existing, now);
   try {
     await persistMetadataClient(platform, row);
@@ -704,6 +712,8 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
   }
   const outcome = await sharedRefresh(deps.platform, url, settings, existing, now);
   if (outcome.ok) return outcome;
+  // Revoked during the fetch: the stale copy is not served, nothing is cached.
+  if (outcome.gone === true) return { ok: false, reason: 'invalid', message: METADATA_UNAVAILABLE };
   rememberNegative(url, { kind: outcome.kind, detail: outcome.detail, until: now + settings.negativeCacheSeconds * 1000 });
   if (withinGrace) return await keepStale(outcome.kind);
   return { ok: false, reason: existing != null ? 'stale' : outcome.kind, message: messageFor(outcome.kind, existing) };
@@ -719,7 +729,12 @@ async function touchLastUsed (platform: PlatformDB, row: OAuthClient, now: numbe
   const m = row.metadata;
   if (m == null || now - m.lastUsedAt < LAST_USED_WRITE_INTERVAL_MS) return;
   try {
-    await storage.setClient(platform, { ...row, metadata: { ...m, lastUsedAt: now } });
+    // Written over the row as it stands now (an operator status change or a
+    // refetch since the request's read is kept); skipped when the row is gone
+    // or its content changed meanwhile (that writer recorded the use).
+    const current = await storage.getClient(platform, row.clientId);
+    if (current?.metadata == null || current.metadata.contentDigest !== m.contentDigest) return;
+    await storage.setClient(platform, { ...current, metadata: { ...current.metadata, lastUsedAt: now } });
   } catch (err) {
     logServerError('client metadata: could not record a use of ' + row.clientId, err);
   }

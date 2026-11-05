@@ -460,6 +460,48 @@ describe('[OCMD] client metadata documents', function () {
     });
     const resolve = (now) => meta.resolveMetadataClient({ platform, config }, URL1, { now });
 
+    it('[OCMD06D] a write never undoes what changed during the request: a suspend or a revoke during the refetch, a suspend before the hourly touch', async () => {
+      const key = ids.metadataClientKey(URL1);
+      const rowKey = 'oauth-client/' + key;
+      const t0 = 1_000_000_000_000;
+      const mutateRow = (f) => {
+        const row = JSON.parse(platform.kv.get(rowKey));
+        platform.kv.set(rowKey, JSON.stringify(f(row)));
+      };
+      server.set(URL1, doc());
+      assert.equal((await resolve(t0)).ok, true);
+      // Suspended by the operator while the stale row is fetched again.
+      server.set(URL1, async () => {
+        mutateRow((r) => ({ ...r, status: 'suspended' }));
+        return new Response(JSON.stringify(doc(URL1, { client_name: 'Renamed' })), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      await resolve(t0 + 61_000);
+      const after = await storage.getClient(platform, key);
+      assert.deepEqual([after.status, after.clientName], ['suspended', 'Renamed']);
+      // Revoked while fetched: not written again, not served.
+      server.set(URL1, async () => {
+        platform.kv.delete(rowKey);
+        return new Response(JSON.stringify(doc()), { status: 200, headers: { 'content-type': 'application/json' } });
+      });
+      const gone = await resolve(t0 + 122_000);
+      assert.equal(gone.ok, false);
+      assert.equal(await storage.getClient(platform, key), null);
+      // The hourly touch over a row suspended since the request read it.
+      const long = fakeConfig(block({ cacheSeconds: 7200 }));
+      server.set(URL1, doc());
+      assert.equal((await meta.resolveMetadataClient({ platform, config: long }, URL1, { now: t0 })).ok, true);
+      const read = platform.getPlatformKv.bind(platform);
+      let reads = 0;
+      platform.getPlatformKv = async (k) => {
+        const v = await read(k);
+        if (k === rowKey && ++reads === 1) mutateRow((r) => ({ ...r, status: 'suspended' }));
+        return v;
+      };
+      await meta.resolveMetadataClient({ platform, config: long }, URL1, { now: t0 + 3_700_000 });
+      const touched = await storage.getClient(platform, key);
+      assert.deepEqual([touched.status, touched.metadata.lastUsedAt], ['suspended', t0 + 3_700_000]);
+    });
+
     it('[OCMD06A] a fresh row is used without a fetch; a stale one is fetched again; unchanged content keeps updatedAt, a change bumps it', async () => {
       server.set(URL1, doc());
       const t = 1_000_000;
