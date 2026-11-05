@@ -89,6 +89,10 @@
   for the store streams fixed in 2.0.0-rc.73; nothing to migrate.
 - A stream taken out of the trash because a new access names it in a permission (with
   `defaultName`) now records that change (`modified`, `modifiedBy` the acting access).
+- **Fixed:** when that permission names a trashed stream of another data store (`:<store>:<id>`), the
+  stream is now taken out of the trash in its own store. Before, a local stream with the same id was
+  untrashed instead, or the request failed when there was none. Only data stores that support trash
+  are concerned; the stores shipped with the server do not.
 
 ## 2.0.0-rc.73 - 2026-11-05
 
