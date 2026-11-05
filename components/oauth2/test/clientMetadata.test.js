@@ -890,6 +890,39 @@ describe('[OCMD] client metadata documents', function () {
     await assert.rejects(verifyClientAssertion(signedAssertion(rsa, URL1, { alg: 'RS256', signAs: 'RS384' }), opts([rsa.publicJwk])));
   });
 
+  it('[OCMD16] refusals are audited at most once per host, reason and minute, with the count suppressed; the URL is cut to 256', async () => {
+    const rows = [];
+    const savedDebug = console.debug;
+    const savedEnv = process.env.OAUTH_AUDIT_DEBUG;
+    process.env.OAUTH_AUDIT_DEBUG = '1';
+    console.debug = (tag, event, payload) => { if (event === 'oauth.client.metadata_refused') rows.push(payload); };
+    try {
+      setPeerTransportForTests(docServer().transport); // every document: 404
+      const platform = fakePlatform();
+      const config = fakeConfig(block({ mode: 'allowList', allowedHosts: ['client.example'] }));
+      const at = (url, now) => meta.resolveMetadataClient({ platform, config }, url, { now });
+      const t0 = 2_000_000_000_000;
+      for (let i = 0; i < 50; i++) await at(`https://tools.example/a${i}.json`, t0 + i);
+      assert.equal(rows.length, 1, 'one row for 50 refusals');
+      await at('https://tools.example/late.json', t0 + 61_000);
+      assert.deepEqual([rows.length, rows[1].suppressed, rows[1].reason], [2, 49, 'host-policy']);
+      await at('https://other.example/x.json', t0 + 61_001);
+      assert.equal(rows.length, 3, 'another host');
+      await at('https://tools.example/a/../b.json', t0 + 61_002);
+      assert.deepEqual([rows.length, rows[3].reason], [4, 'url'], 'another reason');
+      await at('https://far.example/' + 'a'.repeat(2000) + '.json', t0 + 61_003);
+      assert.equal(rows[4].metadataUrl.length, 256);
+      // Fetch failures and the budget refusal go through the same helper.
+      rows.length = 0;
+      for (let i = 0; i < 13; i++) await at(`https://client.example/c${i}.json`, t0 + 70_000 + i);
+      assert.deepEqual(rows.map((r) => r.reason), ['unreachable', 'budget']);
+    } finally {
+      console.debug = savedDebug;
+      if (savedEnv == null) delete process.env.OAUTH_AUDIT_DEBUG;
+      else process.env.OAUTH_AUDIT_DEBUG = savedEnv;
+    }
+  });
+
   it('[OCMD13] the access stamp: name (first language of a set), host, url; none for a curated client', () => {
     const key = ids.metadataClientKey(URL1);
     assert.deepEqual(ids.metadataClientStamp({ origin: 'metadata-document', metadataUrl: URL1, clientName: 'Agent' }),

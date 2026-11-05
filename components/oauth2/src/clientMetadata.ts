@@ -543,8 +543,59 @@ type Negative = { kind: 'unreachable' | 'invalid'; detail: string; until: number
 const negativeCache = new Map<string, Negative>();
 const fetchTimes: number[] = [];
 const hostFetchTimes = new Map<string, number[]>();
-const budgetWarned = new Map<string, number>();
+const refusalSamples = new Map<string, { since: number; suppressed: number }>();
 const inflight = new Map<string, Promise<RefreshOutcome>>();
+
+const REFUSAL_WINDOW_MS = 60 * 1000;
+const MAX_REFUSAL_SAMPLE_KEYS = 4096;
+const MAX_REFUSED_URL_LENGTH = 256;
+
+/**
+ * Refusals cost an unauthenticated caller nothing: their log lines and audit
+ * rows are sampled, at most one per (host, reason) and minute on this core.
+ * The first refusal of a window is emitted and carries the count of those
+ * suppressed in the window before it.
+ */
+export function sampledRefusal (host: string, reason: string, now: number): { emit: boolean; suppressed: number } {
+  const key = host + '|' + reason;
+  const entry = refusalSamples.get(key);
+  if (entry != null && now - entry.since < REFUSAL_WINDOW_MS) {
+    entry.suppressed++;
+    return { emit: false, suppressed: 0 };
+  }
+  refusalSamples.delete(key);
+  refusalSamples.set(key, { since: now, suppressed: 0 });
+  if (refusalSamples.size > MAX_REFUSAL_SAMPLE_KEYS) {
+    for (const [k, e] of refusalSamples) if (now - e.since >= REFUSAL_WINDOW_MS) refusalSamples.delete(k);
+    while (refusalSamples.size > MAX_REFUSAL_SAMPLE_KEYS) {
+      const oldest = refusalSamples.keys().next().value;
+      if (oldest === undefined) break;
+      refusalSamples.delete(oldest);
+    }
+  }
+  return { emit: true, suppressed: entry?.suppressed ?? 0 };
+}
+
+type Refusal = { clientId: string; metadataUrl: string; host: string; reason: string; detail: string };
+
+/**
+ * Audit (and, with `warning`, log) a refused metadata document URL or
+ * document; sampled unless `sampled` is false (the operator CLI). The URL is
+ * cut to 256 characters; the document body never reaches either.
+ */
+async function reportRefusal (refusal: Refusal, now: number, warning: string | null, sampled: boolean = true): Promise<void> {
+  const s = sampled ? sampledRefusal(refusal.host, refusal.reason, now) : { emit: true, suppressed: 0 };
+  if (!s.emit) return;
+  if (warning != null) logServerWarning(warning + (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
+  await audit('oauth.client.metadata_refused', {
+    clientId: refusal.clientId,
+    metadataUrl: refusal.metadataUrl.slice(0, MAX_REFUSED_URL_LENGTH),
+    host: refusal.host,
+    reason: refusal.reason,
+    detail: refusal.detail,
+    ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
+  });
+}
 
 function rememberNegative (url: string, entry: Negative): void {
   negativeCache.delete(url);
@@ -594,14 +645,12 @@ type RefreshOutcome =
  * again). Audited once per fetch; concurrent callers share it.
  */
 async function refreshRow (platform: PlatformDB, url: string, settings: ClientMetadataSettings,
-  existing: OAuthClient | null, now: number): Promise<RefreshOutcome> {
+  existing: OAuthClient | null, now: number, sampled: boolean = true): Promise<RefreshOutcome> {
   const host = new URL(url).host;
   const checked = await fetchAndCheckClientMetadata(url, settings);
   if (!checked.ok) {
-    logServerWarning(`client metadata document on ${host}: ${checked.kind} (${checked.detail})`);
-    await audit('oauth.client.metadata_refused', {
-      clientId: metadataClientKey(url), metadataUrl: url, host, reason: checked.kind, detail: checked.detail,
-    });
+    await reportRefusal({ clientId: metadataClientKey(url), metadataUrl: url, host, reason: checked.kind, detail: checked.detail }, now,
+      `client metadata document on ${host}: ${checked.kind} (${checked.detail})`, sampled);
     return checked;
   }
   if (checked.ignored.length > 0) logServerDebug(`client metadata document on ${host}: members ignored: ${checked.ignored.join(', ')}`);
@@ -620,10 +669,10 @@ async function refreshRow (platform: PlatformDB, url: string, settings: ClientMe
   } catch (err: unknown) {
     // The document passed; the row is refused by the registry rules (the
     // template, most likely): an operator matter.
-    logServerError(`client metadata document on ${host}: the derived client row is refused`, err);
-    await audit('oauth.client.metadata_refused', {
-      clientId: row.clientId, metadataUrl: url, host, reason: 'invalid', detail: 'derived row refused: ' + (err as Error).message,
-    });
+    const s = sampled ? sampledRefusal(host, 'derived-row', now) : { emit: true, suppressed: 0 };
+    if (s.emit) logServerError(`client metadata document on ${host}: the derived client row is refused`, err);
+    await reportRefusal({ clientId: row.clientId, metadataUrl: url, host, reason: 'invalid', detail: 'derived row refused: ' + (err as Error).message },
+      now, null, sampled);
     return { ok: false, kind: 'invalid', detail: 'derived row refused: ' + (err as Error).message };
   }
   const changedFields = changedMetadataFields(existing, row);
@@ -664,13 +713,13 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
   if (refused != null) {
     let host = '';
     try { host = new URL(url).host; } catch { host = ''; }
-    await audit('oauth.client.metadata_refused', {
+    await reportRefusal({
       clientId: refused.reason === 'url' && clientIdUrlSyntaxProblem(url) != null ? '' : metadataClientKey(url),
-      metadataUrl: url.slice(0, 2048),
+      metadataUrl: url,
       host,
       reason: refused.reason,
       detail: refused.detail,
-    });
+    }, now, null);
     return {
       ok: false,
       reason: refused.reason,
@@ -690,7 +739,11 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
   }
   const withinGrace = existing?.metadata != null && now < existing.metadata.fetchedAt + settings.staleGraceSeconds * 1000;
   const keepStale = async (why: string): Promise<ResolveOutcome> => {
-    logServerWarning(`client metadata document on ${new URL(url).host}: ${why}; the stored client is used until its stale grace ends`);
+    const s = sampledRefusal(new URL(url).host, 'stale', now);
+    if (s.emit) {
+      logServerWarning(`client metadata document on ${new URL(url).host}: ${why}; the stored client is used until its stale grace ends` +
+        (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
+    }
     await touchLastUsed(deps.platform, existing!, now);
     return { ok: true, client: existing! };
   };
@@ -702,11 +755,8 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
   const host = new URL(url).host;
   // A fetch of this URL in flight is joined, without taking a budget unit.
   if (!inflight.has(url) && !takeFetchBudget(host, settings, now)) {
-    if ((budgetWarned.get(host) ?? 0) <= now - BUDGET_WINDOW_MS) {
-      budgetWarned.set(host, now);
-      logServerWarning(`client metadata documents: fetch budget spent (host ${host}); refused without a fetch`);
-      await audit('oauth.client.metadata_refused', { clientId: key, metadataUrl: url, host, reason: 'budget', detail: 'fetch budget spent' });
-    }
+    await reportRefusal({ clientId: key, metadataUrl: url, host, reason: 'budget', detail: 'fetch budget spent' }, now,
+      `client metadata documents: fetch budget spent (host ${host}); refused without a fetch`);
     if (withinGrace) return { ok: true, client: existing! };
     return { ok: false, reason: 'budget', message: METADATA_UNAVAILABLE };
   }
@@ -753,7 +803,7 @@ Promise<{ ok: true; client: OAuthClient; changedFields: string[]; created: boole
   const now = opts.now ?? Date.now();
   const existing = await storage.getClient(platform, metadataClientKey(url));
   negativeCache.delete(url);
-  const outcome = await refreshRow(platform, url, settings, existing, now);
+  const outcome = await refreshRow(platform, url, settings, existing, now, false);
   if (!outcome.ok) return { ok: false, reason: outcome.kind, detail: outcome.detail };
   return { ok: true, client: outcome.client, changedFields: changedMetadataFields(existing, outcome.client), created: existing == null };
 }
@@ -795,7 +845,7 @@ export function _resetClientMetadataForTests (): void {
   negativeCache.clear();
   fetchTimes.length = 0;
   hostFetchTimes.clear();
-  budgetWarned.clear();
+  refusalSamples.clear();
   inflight.clear();
 }
 

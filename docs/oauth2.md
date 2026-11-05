@@ -1782,7 +1782,7 @@ Collect these for security monitoring and incident response.
 | `oauth.token.exchanged` | a resource server exchanged a client's token (§ 1e): `clientId` the resource server, `subjectClientId`, `accessId` (the derived session), `subjectAccessId`, `dataGrantAccessId`, `reused`, `grantedScope`; never a token |
 | `oauth.token.exchange_refused` | an authenticated exchange was refused (`reason`: `not-entitled`, `request-shape`, `subject-inactive`, `subject-client-unavailable`, `foreign-audience`, `wrong-core`; syslog only) |
 | `oauth.client.metadata_fetched` | a client metadata document was fetched (§ 1f): `clientId` (the row key), `metadataUrl`, `host`, `outcome` (`created`, `refreshed`, `unchanged`), `changedFields`; syslog only |
-| `oauth.client.metadata_refused` | a client metadata document URL was refused or its document unusable: `metadataUrl`, `host`, `reason` (`url`, `host-policy`, `unreachable`, `invalid`, `budget`), `detail` (the server-side reason, never the document); syslog only |
+| `oauth.client.metadata_refused` | a client metadata document URL was refused or its document unusable: `metadataUrl`, `host`, `reason` (`url`, `host-policy`, `unreachable`, `invalid`, `budget`), `detail` (the server-side reason, never the document), `suppressed`; syslog only. Sampled: at most one row (and one warning line) per host, reason and minute on each core, carrying in `suppressed` the count of refusals not emitted in the minute before; `metadataUrl` cut to 256 characters |
 
 `oauth.consent.shown` carries `metadataUrl` and `metadataHost` for a
 metadata-document client. Registry clients emit the same events. `oauth.consent.granted` carries

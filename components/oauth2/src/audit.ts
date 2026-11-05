@@ -121,6 +121,8 @@ export type OAuthAuditPayload = {
   outcome?: 'created' | 'refreshed' | 'unchanged'; // oauth.client.metadata_fetched
   changedFields?: string[]; // oauth.client.metadata_fetched: the row fields a refetch changed
   detail?: string; // oauth.client.metadata_refused: the server-side reason (never the document)
+  suppressed?: number; // oauth.client.metadata_refused: refusals of the same host and reason not emitted in the minute before
+  provisional?: boolean; // oauth.client.metadata_fetched: a row no consent has reached yet (a creation)
 };
 
 /** The subset of AuditEventLike (components/audit/) we build here. */
