@@ -103,6 +103,11 @@ compares the four bundles on counts and content; run it before a release and aft
 `components/business/src/backup/` or to an engine's `exportAll` / `importAll` /
 `exportDatabase` / `importDatabase`. It cleans the local test data on every leg.
 
+The suites that start their own rqlited (`[RG2C]` two cores in api-server, `[RQMTLS]` in
+`storages:rqlite`) need `bin-ext/rqlited` (`./storages/engines/rqlite/scripts/setup`; a git
+worktree has no `bin-ext/`: link it from the main checkout). Without it they **fail**; set
+`SKIP_2CORE=1` to skip them explicitly (the run then prints a `SKIPPED` line naming the variable).
+
 **Production-ish single node**:
 
 ```bash
