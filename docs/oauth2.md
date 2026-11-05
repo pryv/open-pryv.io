@@ -950,7 +950,9 @@ any consent (another core may serve the consent and reads it there), and stays
 **provisional** until a user consents (`firstConsentAt`) or the operator runs
 `refresh-metadata` (`operatorRefreshedAt`): a core writes at most
 `newClientsPerMinute` new rows a minute (a refetch of an existing row does not
-count), and the master's periodic sweep deletes a provisional row older than
+count; the budget counts rows written, not attempts: a fetch that writes no row
+gives its unit back; a sustained starvation by valid documents is answered with
+`mode: allowList` or a deny entry, not a bigger budget), and the master's periodic sweep deletes a provisional row older than
 `unconsentedRowSeconds`, with no revoke tombstone (nothing was ever issued for
 it: a row is made permanent by the first consent, before any code is issued for
 it). That bounds the provisional rows to about `newClientsPerMinute ×

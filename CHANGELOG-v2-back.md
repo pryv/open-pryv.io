@@ -64,6 +64,8 @@
 - `pruneMetadataClients` skips every row that is not `active` before the provisional rule (a
   suspended provisional row is kept); `suspend` / `resume` on a provisional row print what becomes
   of it.
+- The creation budget's unit is reserved before the fetch and refunded when no row is written
+  (unreachable, invalid, derived row refused): it bounds rows written, not attempts.
 - Refusals (`metadata_refused` rows and their warnings) go through `sampledRefusal`: one per
   (host, reason) and minute per core, the count in `suppressed`, `metadataUrl` cut to 256; reason
   `client-auth` records an `invalid_client` of such a client at the token, revocation and

@@ -773,7 +773,7 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
     return { ok: false, reason: negative.kind, message: messageFor(negative.kind, existing) };
   }
   const host = new URL(url).host;
-  // A new client (no row yet) also takes a unit of the smaller creation
+  // A new client (no row yet) also needs a unit of the smaller creation
   // budget: rows written before any consent are what an unauthenticated
   // caller could pile up. A refetch of an existing row never takes one.
   const creating = existing == null && !inflight.has(url);
@@ -789,8 +789,15 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
     if (withinGrace) return { ok: true, client: existing! };
     return { ok: false, reason: 'budget', message: METADATA_UNAVAILABLE };
   }
+  // The creation unit is reserved before the fetch (two creations in flight
+  // cannot both pass one check) and refunded when no row was written: the
+  // budget counts rows, not attempts.
   if (creating) creationTimes.push(now);
   const outcome = await sharedRefresh(deps.platform, url, settings, existing, now);
+  if (creating && !outcome.ok) {
+    const i = creationTimes.indexOf(now);
+    if (i >= 0) creationTimes.splice(i, 1);
+  }
   if (outcome.ok) return outcome;
   // Revoked during the fetch: the stale copy is not served, nothing is cached.
   if (outcome.gone === true) return { ok: false, reason: 'invalid', message: METADATA_UNAVAILABLE };

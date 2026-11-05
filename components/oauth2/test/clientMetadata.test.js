@@ -675,7 +675,7 @@ describe('[OCMD] client metadata documents', function () {
     assert.equal((await getClient(platform, ids.metadataClientKey(URL1))).metadata.firstConsentAt, now);
   });
 
-  it('[OCMD15] a new client takes a unit of newClientsPerMinute; a refetch of an existing row does not', async () => {
+  it('[OCMD15] a new client row takes a unit of newClientsPerMinute (a creation that writes no row keeps none); a refetch of an existing row does not', async () => {
     const server = docServer();
     setPeerTransportForTests(server.transport);
     const platform = fakePlatform();
@@ -683,6 +683,12 @@ describe('[OCMD] client metadata documents', function () {
     const t0 = 3_000_000_000_000;
     const hosts = Array.from({ length: 11 }, (_, i) => `https://h${i}.example/c.json`);
     for (const u of hosts) server.set(u, doc(u, { redirect_uris: ['https://h.example/cb'] }));
+    // Ten creations whose documents answer 404 (ten hosts): no row written, so no unit kept.
+    for (let i = 0; i < 10; i++) {
+      const r = await meta.resolveMetadataClient({ platform, config }, `https://gone${i}.example/c.json`, { now: t0 });
+      assert.equal(r.ok, false);
+      assert.notEqual(r.reason, 'budget');
+    }
     for (const u of hosts.slice(0, 10)) assert.equal((await meta.resolveMetadataClient({ platform, config }, u, { now: t0 })).ok, true, u);
     const calls = server.calls;
     const eleventh = await meta.resolveMetadataClient({ platform, config }, hosts[10], { now: t0 + 1 });
@@ -694,6 +700,23 @@ describe('[OCMD] client metadata documents', function () {
     assert.equal(fresh.metadata.fetchedAt, t0 + 2000);
     // A minute later, a new client is accepted again.
     assert.equal((await meta.resolveMetadataClient({ platform, config }, hosts[10], { now: t0 + 61_000 })).ok, true);
+    // One unit a minute: a creation whose derived row is refused (the write
+    // fails) keeps none, and the next creation is accepted.
+    meta._resetClientMetadataForTests();
+    const one = fakeConfig(block({ newClientsPerMinute: 1 }));
+    const p2 = fakePlatform();
+    const refusedUrl = 'https://refused.example/c.json';
+    const okUrl = 'https://accepted.example/c.json';
+    server.set(refusedUrl, doc(refusedUrl));
+    server.set(okUrl, doc(okUrl));
+    const set = p2.setPlatformKv.bind(p2);
+    p2.setPlatformKv = async (k, v) => {
+      if (k === 'oauth-client/' + ids.metadataClientKey(refusedUrl)) throw new Error('the derived row is refused');
+      return await set(k, v);
+    };
+    const refused = await meta.resolveMetadataClient({ platform: p2, config: one }, refusedUrl, { now: t0 });
+    assert.deepEqual([refused.ok, refused.reason], [false, 'invalid']);
+    assert.equal((await meta.resolveMetadataClient({ platform: p2, config: one }, okUrl, { now: t0 + 1 })).ok, true, 'created');
   });
 
   it('[OCMD09] discovery: the flag per mode; none and the iss parameter are always advertised', () => {
