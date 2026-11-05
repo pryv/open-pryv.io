@@ -152,7 +152,9 @@ describe('[SYER] system (ex-register)', function () {
 
   let fixtures;
 
-  this.timeout(5000);
+  // Several tests restart the server child process with new settings; a
+  // restart under load can outlast 5 s.
+  this.timeout(20_000);
   function basePath () {
     return new URL('/system', server.url).toString();
   }
