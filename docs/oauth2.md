@@ -1242,7 +1242,7 @@ The settings of § 1f. Platform-wide (identical on every core), except
 |---|---|
 | `mode` | `off` (default), `allowList` or `any` (§ 1f, policy) |
 | `allowedHosts` | `allowList`: the hosts whose documents are accepted. Lower-case host names (exact match), `host:port` for another port than 443, `*.example.com` for exactly one more label (never the apex). An empty list with `allowList` stops the boot |
-| `deniedHosts` | both modes: never accepted (same syntax); checked first |
+| `deniedHosts` | both modes: never accepted (same syntax; an entry without a port denies the host on every port); checked first |
 | `cacheSeconds` | a fetched document is reused this long (default 3600) |
 | `staleGraceSeconds` | a client whose refetch fails stays usable this long past its last fetch (default 86400) |
 | `negativeCacheSeconds` | per core: a refused or invalid URL is not fetched again within this time (default 60) |

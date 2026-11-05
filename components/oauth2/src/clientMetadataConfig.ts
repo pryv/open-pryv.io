@@ -158,14 +158,20 @@ export function hostEntryProblem (entry: unknown): string | null {
   return null;
 }
 
-/** Whether a URL's host (lower-case host name, port, '' for 443) matches one of `entries`. */
-export function hostListed (hostname: string, port: string, entries: string[]): boolean {
+/**
+ * Whether a URL's host (lower-case host name, port, '' for 443) matches one
+ * of `entries`. An entry with a port matches that port only. An entry
+ * without one matches port 443 only (`allowedHosts`: a client on another
+ * port is listed with it), or every port with `anyPort` (`deniedHosts`: a
+ * denied host stays denied on whatever port its owner serves).
+ */
+export function hostListed (hostname: string, port: string, entries: string[], opts: { anyPort?: boolean } = {}): boolean {
   const p = port === '' || port === '443' ? '443' : port;
   for (const entry of entries) {
     if (hostEntryProblem(entry) != null) continue;
     const colon = entry.lastIndexOf(':');
     const entryHost = colon >= 0 ? entry.slice(0, colon) : entry;
-    const entryPort = colon >= 0 ? entry.slice(colon + 1) : '443';
+    const entryPort = colon >= 0 ? entry.slice(colon + 1) : (opts.anyPort === true ? p : '443');
     if (entryPort !== p) continue;
     if (entryHost.startsWith('*.')) {
       const domain = entryHost.slice(1); // '.example.com'

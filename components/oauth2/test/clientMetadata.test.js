@@ -175,8 +175,20 @@ describe('[OCMD] client metadata documents', function () {
     // The deny-list wins, in both modes.
     const denied = settingsOf(block({ mode: 'allowList', allowedHosts: ['client.example'], deniedHosts: ['client.example'] }));
     assert.equal(meta.clientIdUrlProblem(URL1, denied, config).detail, 'the host is denied');
-    const deniedAny = settingsOf(block({ deniedHosts: ['*.example'] }));
-    assert.equal(meta.clientIdUrlProblem(URL1, deniedAny, config).reason, 'host-policy');
+    const deniedAny = settingsOf(block({ deniedHosts: ['*.client.example'] }));
+    assert.equal(deniedAny.mode, 'any', 'a valid block');
+    assert.equal(meta.clientIdUrlProblem('https://a.client.example/m.json', deniedAny, config).detail, 'the host is denied');
+    assert.equal(meta.clientIdUrlProblem(URL1, deniedAny, config), null, 'a one-label wildcard never denies the apex');
+    // A denied host without a port is denied on every port; with a port, on that one only.
+    for (const s of [settingsOf(block({ deniedHosts: ['client.example'] })),
+      settingsOf(block({ mode: 'allowList', allowedHosts: ['client.example:8443'], deniedHosts: ['client.example'] })),
+      settingsOf(block({ deniedHosts: ['*.client.example'] }))]) {
+      const url = s.deniedHosts[0].startsWith('*.') ? 'https://a.client.example:8443/m.json' : 'https://client.example:8443/m.json';
+      assert.equal(meta.clientIdUrlProblem(url, s, config)?.detail, 'the host is denied', s.mode + ' ' + s.deniedHosts[0]);
+    }
+    const deniedPort = settingsOf(block({ deniedHosts: ['client.example:8443'] }));
+    assert.equal(meta.clientIdUrlProblem('https://client.example:8443/m.json', deniedPort, config).detail, 'the host is denied');
+    assert.equal(meta.clientIdUrlProblem(URL1, deniedPort, config), null);
     // off: nothing is accepted.
     assert.equal(meta.clientIdUrlProblem(URL1, settingsOf({ mode: 'off' }), config).reason, 'host-policy');
   });
