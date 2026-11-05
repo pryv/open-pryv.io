@@ -456,6 +456,19 @@ export async function getClient (platform: PlatformDB, clientId: string): Promis
   return raw == null ? null : JSON.parse(raw) as OAuthClient;
 }
 
+/**
+ * Delete a provisional metadata-document client row (one no consent ever
+ * reached), with no revoke tombstone: nothing was issued for it (the first
+ * code is minted at the first consent), and a tombstone per discarded row
+ * would load every core's revoke cache. Refuses any other id.
+ */
+export async function deleteClientRow (platform: PlatformDB, clientId: string): Promise<void> {
+  if (typeof clientId !== 'string' || !clientId.startsWith('url~')) {
+    throw new Error('deleteClientRow: a metadata-document client key (url~...) is expected');
+  }
+  await platform.deletePlatformKv(PREFIX_CLIENT + clientId);
+}
+
 export async function deleteClient (platform: PlatformDB, clientId: string): Promise<void> {
   if (typeof clientId !== 'string' || clientId.length === 0) {
     throw new Error('deleteClient: clientId required');

@@ -542,6 +542,7 @@ export function changedMetadataFields (before: OAuthClient | null, after: OAuthC
 type Negative = { kind: 'unreachable' | 'invalid'; detail: string; until: number };
 const negativeCache = new Map<string, Negative>();
 const fetchTimes: number[] = [];
+const creationTimes: number[] = [];
 const hostFetchTimes = new Map<string, number[]>();
 const refusalSamples = new Map<string, { since: number; suppressed: number }>();
 const inflight = new Map<string, Promise<RefreshOutcome>>();
@@ -636,6 +637,13 @@ function takeFetchBudget (host: string, settings: ClientMetadataSettings, now: n
   return true;
 }
 
+/** Whether this core may write another new client row this minute (`newClientsPerMinute`); the caller pushes the unit. */
+function creationBudgetLeft (settings: ClientMetadataSettings, now: number): boolean {
+  const since = now - BUDGET_WINDOW_MS;
+  while (creationTimes.length > 0 && creationTimes[0] <= since) creationTimes.shift();
+  return creationTimes.length < settings.newClientsPerMinute;
+}
+
 type RefreshOutcome =
   | { ok: true; client: OAuthClient }
   | { ok: false; kind: 'unreachable' | 'invalid'; detail: string; gone?: true };
@@ -645,7 +653,7 @@ type RefreshOutcome =
  * again). Audited once per fetch; concurrent callers share it.
  */
 async function refreshRow (platform: PlatformDB, url: string, settings: ClientMetadataSettings,
-  existing: OAuthClient | null, now: number, sampled: boolean = true): Promise<RefreshOutcome> {
+  existing: OAuthClient | null, now: number, sampled: boolean = true, operator: boolean = false): Promise<RefreshOutcome> {
   const host = new URL(url).host;
   const checked = await fetchAndCheckClientMetadata(url, settings);
   if (!checked.ok) {
@@ -664,6 +672,8 @@ async function refreshRow (platform: PlatformDB, url: string, settings: ClientMe
   }
   existing = current;
   const row = buildMetadataClientRow(url, checked.fields, settings, existing, now);
+  // The operator fetched it by hand: the row is permanent (never pruned as provisional).
+  if (operator && row.metadata != null) row.metadata.operatorRefreshedAt = now;
   try {
     await persistMetadataClient(platform, row);
   } catch (err: unknown) {
@@ -682,6 +692,7 @@ async function refreshRow (platform: PlatformDB, url: string, settings: ClientMe
     host,
     outcome: existing == null ? 'created' : (row.updatedAt === existing.updatedAt ? 'unchanged' : 'refreshed'),
     ...(changedFields.length > 0 ? { changedFields } : {}),
+    ...(existing == null && isProvisionalRow(row) ? { provisional: true } : {}),
   });
   return { ok: true, client: row };
 }
@@ -753,6 +764,15 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
     return { ok: false, reason: negative.kind, message: messageFor(negative.kind, existing) };
   }
   const host = new URL(url).host;
+  // A new client (no row yet) also takes a unit of the smaller creation
+  // budget: rows written before any consent are what an unauthenticated
+  // caller could pile up. A refetch of an existing row never takes one.
+  const creating = existing == null && !inflight.has(url);
+  if (creating && !creationBudgetLeft(settings, now)) {
+    await reportRefusal({ clientId: key, metadataUrl: url, host, reason: 'budget', detail: 'new client budget spent' }, now,
+      `client metadata documents: new client budget spent (host ${host}); refused without a fetch`);
+    return { ok: false, reason: 'budget', message: METADATA_UNAVAILABLE };
+  }
   // A fetch of this URL in flight is joined, without taking a budget unit.
   if (!inflight.has(url) && !takeFetchBudget(host, settings, now)) {
     await reportRefusal({ clientId: key, metadataUrl: url, host, reason: 'budget', detail: 'fetch budget spent' }, now,
@@ -760,6 +780,7 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
     if (withinGrace) return { ok: true, client: existing! };
     return { ok: false, reason: 'budget', message: METADATA_UNAVAILABLE };
   }
+  if (creating) creationTimes.push(now);
   const outcome = await sharedRefresh(deps.platform, url, settings, existing, now);
   if (outcome.ok) return outcome;
   // Revoked during the fetch: the stale copy is not served, nothing is cached.
@@ -803,34 +824,72 @@ Promise<{ ok: true; client: OAuthClient; changedFields: string[]; created: boole
   const now = opts.now ?? Date.now();
   const existing = await storage.getClient(platform, metadataClientKey(url));
   negativeCache.delete(url);
-  const outcome = await refreshRow(platform, url, settings, existing, now, false);
+  const outcome = await refreshRow(platform, url, settings, existing, now, false, true);
   if (!outcome.ok) return { ok: false, reason: outcome.kind, detail: outcome.detail };
   return { ok: true, client: outcome.client, changedFields: changedMetadataFields(existing, outcome.client), created: existing == null };
 }
 
+/** Whether a metadata-document row is provisional: no consent reached it and the operator never fetched it by hand. */
+export function isProvisionalRow (row: OAuthClient): boolean {
+  return row.metadata?.firstConsentAt == null && row.metadata?.operatorRefreshedAt == null;
+}
+
 /**
- * Master sweep: delete the metadata-document rows not used for the absolute
- * refresh lifetime (the template's, else the platform's) plus 7 days: every
- * session of theirs is dead by then. Suspended rows are kept (an operator
- * decision). Goes through `deleteClient` (a revoke tombstone is written).
- * Returns the number of rows deleted.
+ * Master sweep over the metadata-document rows:
+ * - provisional rows (no consent, no operator refresh) older than
+ *   `unconsentedRowSeconds` are deleted with no tombstone (`deleteClientRow`:
+ *   nothing was issued for them), whatever their status;
+ * - permanent rows not used for the absolute refresh lifetime (the
+ *   template's, else the platform's) plus 7 days are deleted through
+ *   `deleteClient` (a revoke tombstone is written: every session of theirs
+ *   is dead by then); suspended ones are kept (an operator decision).
+ * Returns the number of rows deleted, and how many of them were provisional.
  */
-export async function pruneMetadataClients (platform: PlatformDB, config: Config, now: number = Date.now()): Promise<number> {
+export async function pruneMetadataClients (platform: PlatformDB, config: Config, now: number = Date.now()):
+Promise<{ pruned: number; provisional: number }> {
   const settings = clientMetadataSettings(config);
   const absolute = settings.client.refreshTokenAbsoluteTTL ?? (Number(config.get('oauth:refreshTokenAbsoluteTTL')) || 90 * 24 * 3600);
   const horizon = absolute * 1000 + PRUNE_EXTRA_MS;
+  const provisionalHorizon = settings.unconsentedRowSeconds * 1000;
   let pruned = 0;
+  let provisional = 0;
   for (const id of await storage.listClientIds(platform)) {
     if (!isMetadataClientKey(id)) continue;
     let row: OAuthClient | null;
     try { row = await storage.getClient(platform, id); } catch { continue; }
-    if (row == null || row.origin !== 'metadata-document' || (row.status ?? 'active') !== 'active') continue;
+    if (row == null || row.origin !== 'metadata-document') continue;
+    if (isProvisionalRow(row)) {
+      if (now - (row.registeredAt ?? row.metadata?.fetchedAt ?? 0) <= provisionalHorizon) continue;
+      await storage.deleteClientRow(platform, id);
+      pruned++;
+      provisional++;
+      continue;
+    }
+    if ((row.status ?? 'active') !== 'active') continue;
     const lastUsed = row.metadata?.lastUsedAt ?? row.metadata?.fetchedAt ?? 0;
     if (now - lastUsed <= horizon) continue;
     await storage.deleteClient(platform, id);
     pruned++;
   }
-  return pruned;
+  return { pruned, provisional };
+}
+
+/**
+ * `/oauth2/authorize/accept`: the first consent a user gives a
+ * metadata-document client makes its row permanent (`firstConsentAt`, one
+ * write per client). Written over the row as it stands now (its status and
+ * a concurrent refetch kept), skipped when the row is gone; `updatedAt`
+ * unchanged. Never fails the consent.
+ */
+export async function recordFirstConsent (platform: PlatformDB, clientId: string, now: number = Date.now()): Promise<void> {
+  if (!isMetadataClientKey(clientId)) return;
+  try {
+    const current = await storage.getClient(platform, clientId);
+    if (current?.origin !== 'metadata-document' || current.metadata == null || current.metadata.firstConsentAt != null) return;
+    await storage.setClient(platform, { ...current, metadata: { ...current.metadata, firstConsentAt: now } });
+  } catch (err) {
+    logServerError('client metadata: could not record the first consent of ' + clientId, err);
+  }
 }
 
 /** The host a consent screen shows next to the client's name: ASCII form, and the Unicode form when it differs. */
@@ -844,6 +903,7 @@ export function metadataHostOf (url: string): { metadataHost: string; metadataHo
 export function _resetClientMetadataForTests (): void {
   negativeCache.clear();
   fetchTimes.length = 0;
+  creationTimes.length = 0;
   hostFetchTimes.clear();
   refusalSamples.clear();
   inflight.clear();

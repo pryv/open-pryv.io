@@ -785,6 +785,8 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #       - client.example
 # #     deniedHosts: []   # any port, any depth under a wildcard, the apex included
 # #     authMethods: [none, private_key_jwt]   # drop private_key_jwt to accept public clients only
+# #     newClientsPerMinute: 10       # new client rows per core and minute, before any consent
+# #     unconsentedRowSeconds: 3600   # a row no consent reached is deleted past this age
 # #     client:
 # #       scope: '<the maximum scope set, in the extension grammar>'
 # #       allowedAudiences:

@@ -603,7 +603,10 @@ async function runList (platform, getClient, args = { flags: {}, flagsScalar: {}
     const kind = c.kind ?? 'app-account';
     const subject = kind === 'registry' ? (c.subjectType ?? '-') : '-';
     console.log(id + '  ' + kind + '  ' + (c.status ?? 'active') + '  ' + subject +
-      (c.origin === 'metadata-document' ? '  metadata-document ' + c.metadataUrl : ''));
+      (c.origin === 'metadata-document'
+        ? '  ' + (c.metadata?.firstConsentAt == null && c.metadata?.operatorRefreshedAt == null ? 'provisional ' : '') +
+          'metadata-document ' + c.metadataUrl
+        : ''));
   }
 }
 
@@ -645,6 +648,11 @@ function printMetadataClient (client) {
   console.log('     host:          ' + (metadataHostOfRow(client) ?? '-'));
   console.log('     fetched:       ' + at(m.fetchedAt) + '; reused without a fetch until ' + at(m.expiresAt));
   console.log('     last used:     ' + at(m.lastUsedAt));
+  console.log('     first consent: ' + (m.firstConsentAt != null ? at(m.firstConsentAt) : '-') +
+    (m.operatorRefreshedAt != null ? '; refreshed by the operator ' + at(m.operatorRefreshedAt) : ''));
+  if (m.firstConsentAt == null && m.operatorRefreshedAt == null) {
+    console.log('     provisional:   no consent yet; deleted (no tombstone) past oauth.clientMetadataDocuments.unconsentedRowSeconds');
+  }
   console.log('     ' + authMethodLine(client));
   console.log('     reach:         the template (oauth.clientMetadataDocuments.client), applied at each fetch');
 }

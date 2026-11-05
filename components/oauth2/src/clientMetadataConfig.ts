@@ -17,7 +17,8 @@
  *   label, never the apex).
  * - The cache and fetch bounds (`cacheSeconds`, `staleGraceSeconds`,
  *   `negativeCacheSeconds`, `fetchTimeoutMs`, `maxDocumentBytes`,
- *   `fetchesPerMinute`).
+ *   `fetchesPerMinute`), and the bounds of rows written before any consent
+ *   (`newClientsPerMinute`, `unconsentedRowSeconds`).
  * - `authMethods`: the client authentication methods a document may declare.
  * - `client`: the template, what such a client may be granted (a registry
  *   client row without an identity). The document never adds to it.
@@ -55,6 +56,10 @@ export type ClientMetadataSettings = {
   fetchTimeoutMs: number;
   maxDocumentBytes: number;
   fetchesPerMinute: number;
+  /** New client rows per minute on this core (rows written before any consent). */
+  newClientsPerMinute: number;
+  /** A row no consent reached is deleted (no tombstone) once older than this. */
+  unconsentedRowSeconds: number;
   /** Fetches per minute and host (fixed). */
   fetchesPerMinutePerHost: number;
   authMethods: string[];
@@ -69,7 +74,7 @@ export const MAX_TEMPLATE_ENTRIES = 1000;
 
 const MODES: readonly string[] = ['off', 'allowList', 'any'];
 const TOP_KEYS = ['mode', 'allowedHosts', 'deniedHosts', 'cacheSeconds', 'staleGraceSeconds', 'negativeCacheSeconds',
-  'fetchTimeoutMs', 'maxDocumentBytes', 'fetchesPerMinute', 'authMethods', 'client'];
+  'fetchTimeoutMs', 'maxDocumentBytes', 'fetchesPerMinute', 'newClientsPerMinute', 'unconsentedRowSeconds', 'authMethods', 'client'];
 const TEMPLATE_KEYS = ['scope', 'allowedAudiences', 'launchTypes', 'subjectType', 'maxEntries', 'offlineAccessAllowed',
   'accessTokenTTL', 'refreshTokenTTL', 'refreshTokenAbsoluteTTL', 'regions'];
 const REGION_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -84,6 +89,8 @@ const NUMBER_BOUNDS: Record<string, [number, number]> = {
   fetchTimeoutMs: [1, 60000],
   maxDocumentBytes: [256, 1024 * 1024],
   fetchesPerMinute: [1, 100000],
+  newClientsPerMinute: [1, 100000],
+  unconsentedRowSeconds: [600, 30 * 24 * 3600],
 };
 
 export const DEFAULT_CLIENT_METADATA_SETTINGS: Readonly<ClientMetadataSettings> = Object.freeze({
@@ -97,6 +104,8 @@ export const DEFAULT_CLIENT_METADATA_SETTINGS: Readonly<ClientMetadataSettings> 
   maxDocumentBytes: 16384,
   fetchesPerMinute: 60,
   fetchesPerMinutePerHost: 10,
+  newClientsPerMinute: 10,
+  unconsentedRowSeconds: 3600,
   authMethods: ['none', 'private_key_jwt'],
   client: {
     scope: [],
@@ -302,6 +311,10 @@ export function describeClientMetadataConfig (raw: unknown): { problems: string[
       problems.push(`oauth.clientMetadataDocuments.${k} must be an integer from ${min} to ${max}`);
     }
   }
+  const fetches = Number.isInteger(raw.fetchesPerMinute) ? raw.fetchesPerMinute as number : DEFAULT_CLIENT_METADATA_SETTINGS.fetchesPerMinute;
+  if (Number.isInteger(raw.newClientsPerMinute) && (raw.newClientsPerMinute as number) > fetches) {
+    problems.push(`oauth.clientMetadataDocuments.newClientsPerMinute must not exceed fetchesPerMinute (${fetches})`);
+  }
   const methods = raw.authMethods;
   if (methods != null) {
     if (!Array.isArray(methods) || methods.length === 0 || methods.some((m) => !METADATA_AUTH_METHODS.includes(m as string))) {
@@ -356,6 +369,8 @@ function buildSettings (raw: unknown): ClientMetadataSettings {
     maxDocumentBytes: num('maxDocumentBytes', d.maxDocumentBytes),
     fetchesPerMinute: num('fetchesPerMinute', d.fetchesPerMinute),
     fetchesPerMinutePerHost: d.fetchesPerMinutePerHost,
+    newClientsPerMinute: num('newClientsPerMinute', d.newClientsPerMinute),
+    unconsentedRowSeconds: num('unconsentedRowSeconds', d.unconsentedRowSeconds),
     authMethods: Array.isArray(raw.authMethods) ? [...raw.authMethods as string[]] : [...d.authMethods],
     client: {
       scope: scopeTokens(t.scope) ?? [],

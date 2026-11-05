@@ -1226,6 +1226,12 @@ oauth:
     fetchTimeoutMs: 5000
     maxDocumentBytes: 16384
     fetchesPerMinute: 60           # per core, all hosts (10 per host)
+    # A client row is written at the first authorization request, before any
+    # consent: provisional until a user consents (or the operator runs
+    # refresh-metadata). New rows per minute and core, and the age past which
+    # a provisional row is deleted (no revoke tombstone: nothing was issued).
+    newClientsPerMinute: 10        # at most fetchesPerMinute
+    unconsentedRowSeconds: 3600    # at least 600
     # What a document may declare as token_endpoint_auth_method (drop
     # private_key_jwt to accept public clients only).
     authMethods: [none, private_key_jwt]

@@ -639,6 +639,33 @@ describe('[OCMDE] client metadata documents end to end', function () {
     assert.equal(other.token.refresh_token, undefined, 'RFC 7591 default: authorization_code only');
   });
 
+  it('[OCMDE18] a row is provisional until the first consent, which records firstConsentAt once; its /offer works before', async () => {
+    const url = publish();
+    const who = await newUser();
+    const res = await authorize(url);
+    assert.equal(res.status, 302);
+    const row0 = await rowFor(url);
+    assert.equal(row0.metadata.firstConsentAt, undefined, 'provisional');
+    const state = new URL(res.headers.location).searchParams.get('state');
+    const { offer, accept } = await consent(who, state);
+    assert.equal(offer.client.metadataUrl, url, '/offer on a provisional row');
+    assert.equal(accept.status, 200, JSON.stringify(accept.body));
+    const first = (await rowFor(url)).metadata.firstConsentAt;
+    assert.ok(Number.isFinite(first));
+    assert.equal((await rowFor(url)).updatedAt, row0.updatedAt, 'not a derived field');
+    await connect(who, url);
+    assert.equal((await rowFor(url)).metadata.firstConsentAt, first, 'written once');
+    const lines = [];
+    const log = console.log;
+    console.log = (...a) => { lines.push(a.join(' ')); };
+    try {
+      await cli.runShow(platformDB, cli.parseArgs(['show', url]), storage.getClient, () => 'TP');
+    } finally {
+      console.log = log;
+    }
+    assert.match(lines.join('\n'), /first consent: \d{4}-/);
+  });
+
   it('[OCMDE17] mode any: an arbitrary host is accepted; this platform\'s hosts (public URL, issuer) and a denied host are refused before any fetch', async () => {
     const anyCmd = { ...CMD, mode: 'any', allowedHosts: [], deniedHosts: ['tools.example'] };
     await withInjectedConfig({

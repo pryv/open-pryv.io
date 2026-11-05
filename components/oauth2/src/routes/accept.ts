@@ -79,6 +79,7 @@ const { generateToken } = require('../secureToken.ts');
 const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
 const { setCode } = require('../storage.ts');
+const { recordFirstConsent } = require('../clientMetadata.ts');
 const { grantedScopeTokens, entryCeiling, grantTooLarge } = require('../scopeGrammar.ts');
 const { computeGrantState, toClientView } = require('../extension.ts');
 const { indexSession } = require('../sessionIndex.ts');
@@ -594,6 +595,9 @@ export function handleAccept (deps: AcceptDeps) {
       ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
       ...(subjectChange != null ? { subjectChange } : {}),
     });
+
+    // A metadata-document client's first consent makes its row permanent.
+    await recordFirstConsent(deps.platform, payload.clientId);
 
     const sep = payload.redirectUri.indexOf('?') >= 0 ? '&' : '?';
     const redirectTo = payload.redirectUri + sep +

@@ -945,8 +945,18 @@ until `staleGraceSeconds` after its last fetch, then `/oauth2/authorize`
 refuses it ("client metadata document unavailable") while its grants, refresh
 chains and introspection go on: nothing ends because a client's web host is
 down. Fetches happen at `/oauth2/authorize` and in the CLI only; the other
-endpoints read the row. A row unused for the absolute refresh lifetime plus 7
-days is deleted by the master's periodic sweep (suspended rows are kept).
+endpoints read the row. A row is written at the first `/oauth2/authorize`, before
+any consent (another core may serve the consent and reads it there), and stays
+**provisional** until a user consents (`firstConsentAt`) or the operator runs
+`refresh-metadata` (`operatorRefreshedAt`): a core writes at most
+`newClientsPerMinute` new rows a minute (a refetch of an existing row does not
+count), and the master's periodic sweep deletes a provisional row older than
+`unconsentedRowSeconds`, with no revoke tombstone (nothing was ever issued for
+it). That bounds the provisional rows to about `newClientsPerMinute ×
+(unconsentedRowSeconds + the sweep interval) / 60` per core (some 750 with the
+defaults). A permanent row unused for the absolute refresh lifetime plus 7 days
+is deleted by the same sweep, with a tombstone (suspended permanent rows are
+kept).
 
 **Operator tools** (§ 3b): `show`, `revoke`, `suspend`, `resume` and
 `purge-grants` take the URL or the key; `revoke` deletes the row and ends its
@@ -1259,6 +1269,8 @@ sub-domains at will, so it is wide.
 | `negativeCacheSeconds` | per core: a refused or invalid URL is not fetched again within this time (default 60) |
 | `fetchTimeoutMs`, `maxDocumentBytes` | the fetch bounds (5000 ms, 16384 bytes) |
 | `fetchesPerMinute` | per core, all hosts (default 60); 10 per host |
+| `newClientsPerMinute` | per core: new client rows written per minute, before any consent (default 10, at most `fetchesPerMinute`) |
+| `unconsentedRowSeconds` | a row no consent reached (and no `refresh-metadata` pinned) is deleted, without a tombstone, once older than this (default 3600, at least 600) |
 | `authMethods` | what a document may declare as `token_endpoint_auth_method`: `none`, `private_key_jwt` |
 | `client` | the template (§ 1f): `scope` and `allowedAudiences` are required when the mode is not `off`; `subjectType` (`pairwise` by default), `launchTypes`, `maxEntries` (1 to 1000, default 200), `offlineAccessAllowed`, `accessTokenTTL` / `refreshTokenTTL` / `refreshTokenAbsoluteTTL` (seconds, `null`: the platform's), `regions` |
 

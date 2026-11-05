@@ -317,7 +317,7 @@ describe('[OCMD] client metadata documents', function () {
 
     it('[OCMD03H] budgets: 10 fetches a minute per host, fetchesPerMinute per core; concurrent misses share one fetch', async () => {
       const platform = fakePlatform();
-      const config = fakeConfig(block({ fetchesPerMinute: 12, negativeCacheSeconds: 0 }));
+      const config = fakeConfig(block({ fetchesPerMinute: 12, newClientsPerMinute: 12, negativeCacheSeconds: 0 }));
       const now = Date.now();
       // Every fetch fails (404): the URL is fetched again (no negative cache).
       for (let i = 0; i < 10; i++) {
@@ -569,6 +569,8 @@ describe('[OCMD] client metadata documents', function () {
     assert.deepEqual(problems({ mode: 'off', client: { nonsense: 1 } }), [], 'off ignores the rest');
     assert.match(conf.describeClientMetadataConfig({ mode: 'off', allowedHosts: ['a.example'] }).warnings[0], /allowedHosts/);
     assert.deepEqual(problems(block()), []);
+    assert.deepEqual(problems(block({ newClientsPerMinute: 60, unconsentedRowSeconds: 600 })), []);
+    assert.deepEqual([settingsOf().newClientsPerMinute, settingsOf().unconsentedRowSeconds], [10, 3600]);
     assert.deepEqual(problems(block({ mode: 'allowList', allowedHosts: ['client.example', '*.tools.example', 'port.example:8443'] })), []);
     const table = [
       [{ mode: 'open' }, /mode/],
@@ -580,6 +582,9 @@ describe('[OCMD] client metadata documents', function () {
       [block({ deniedHosts: ['10.0.0.1'] }), /IP address/],
       [block({ cacheSeconds: 0 }), /cacheSeconds/],
       [block({ maxDocumentBytes: 10 }), /maxDocumentBytes/],
+      [block({ newClientsPerMinute: 0 }), /newClientsPerMinute/],
+      [block({ newClientsPerMinute: 61 }), /must not exceed fetchesPerMinute/],
+      [block({ unconsentedRowSeconds: 599 }), /unconsentedRowSeconds/],
       [block({ authMethods: ['client_secret_basic'] }), /authMethods/],
       [block({ unknown: 1 }), /not a setting/],
       [block({}, { scope: '' }), /scope is required/],
@@ -602,23 +607,58 @@ describe('[OCMD] client metadata documents', function () {
     assert.match(conf.describeClientMetadataConfig(block()).warnings[0], /any party on the internet/);
   });
 
-  it('[OCMD08] prune: a row unused past the absolute refresh lifetime + 7 days is deleted with a tombstone; suspended and recent rows are kept', async () => {
+  it('[OCMD08] prune: a permanent row unused past the absolute refresh lifetime + 7 days is deleted with a tombstone; a provisional row past unconsentedRowSeconds without one', async () => {
     const platform = fakePlatform();
     const s = settingsOf();
     const now = Date.now();
     const horizon = 90 * 24 * 3600 * 1000 + 7 * 24 * 3600 * 1000;
-    const rowAt = (url, lastUsedAt, extra = {}) => {
-      const r = meta.buildMetadataClientRow(url, meta.clientMetadataProblem(doc(url), url, s).fields, s, null, lastUsedAt);
-      return { ...r, ...extra };
+    const rowAt = (url, at, extra = {}, meta2 = { firstConsentAt: at }) => {
+      const r = meta.buildMetadataClientRow(url, meta.clientMetadataProblem(doc(url), url, s).fields, s, null, at);
+      return { ...r, ...extra, metadata: { ...r.metadata, ...meta2 } };
     };
+    const URL3 = 'https://recent.example/m.json';
+    const P1 = 'https://prov.example/old.json';
+    const P2 = 'https://prov.example/young.json';
+    const P3 = 'https://prov.example/operator.json';
+    const P4 = 'https://prov.example/suspended.json';
     await persistClient(platform, rowAt(URL1, now - horizon - 1000));
     await persistClient(platform, rowAt(URL2, now - horizon - 1000, { status: 'suspended' }));
-    await persistClient(platform, rowAt('https://recent.example/m.json', now - 1000));
-    assert.equal(await meta.pruneMetadataClients(platform, fakeConfig(), now), 1);
-    assert.equal(await getClient(platform, ids.metadataClientKey(URL1)), null);
-    assert.notEqual(await storage.getRevokedAt(platform, ids.metadataClientKey(URL1)), null, 'tombstone written');
-    assert.notEqual(await getClient(platform, ids.metadataClientKey(URL2)), null);
-    assert.notEqual(await getClient(platform, ids.metadataClientKey('https://recent.example/m.json')), null);
+    await persistClient(platform, rowAt(URL3, now - 1000));
+    await persistClient(platform, rowAt(P1, now - 3601 * 1000, {}, {}));
+    await persistClient(platform, rowAt(P2, now - 3599 * 1000, {}, {}));
+    await persistClient(platform, rowAt(P3, now - 7200 * 1000, {}, { operatorRefreshedAt: now - 7200 * 1000 }));
+    await persistClient(platform, rowAt(P4, now - 7200 * 1000, { status: 'suspended' }, {}));
+    assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now), { pruned: 3, provisional: 2 });
+    const key = ids.metadataClientKey;
+    assert.equal(await getClient(platform, key(URL1)), null);
+    assert.notEqual(await storage.getRevokedAt(platform, key(URL1)), null, 'a permanent row: tombstone written');
+    for (const u of [P1, P4]) {
+      assert.equal(await getClient(platform, key(u)), null, u);
+      assert.equal(await storage.getRevokedAt(platform, key(u)), null, 'a provisional row: no tombstone ' + u);
+    }
+    for (const u of [URL2, URL3, P2, P3]) assert.notEqual(await getClient(platform, key(u)), null, u);
+    await assert.rejects(storage.deleteClientRow(platform, 'curated'), /url~/);
+  });
+
+  it('[OCMD15] a new client takes a unit of newClientsPerMinute; a refetch of an existing row does not', async () => {
+    const server = docServer();
+    setPeerTransportForTests(server.transport);
+    const platform = fakePlatform();
+    const config = fakeConfig(block({ cacheSeconds: 1 }));
+    const t0 = 3_000_000_000_000;
+    const hosts = Array.from({ length: 11 }, (_, i) => `https://h${i}.example/c.json`);
+    for (const u of hosts) server.set(u, doc(u, { redirect_uris: ['https://h.example/cb'] }));
+    for (const u of hosts.slice(0, 10)) assert.equal((await meta.resolveMetadataClient({ platform, config }, u, { now: t0 })).ok, true, u);
+    const calls = server.calls;
+    const eleventh = await meta.resolveMetadataClient({ platform, config }, hosts[10], { now: t0 + 1 });
+    assert.deepEqual([eleventh.ok, eleventh.reason, server.calls], [false, 'budget', calls], 'refused without a fetch');
+    // A stale existing row is fetched again although the creation budget is spent.
+    assert.equal((await meta.resolveMetadataClient({ platform, config }, hosts[0], { now: t0 + 2000 })).ok, true);
+    assert.equal(server.calls, calls + 1, 'the refetch');
+    const fresh = await storage.getClient(platform, ids.metadataClientKey(hosts[0]));
+    assert.equal(fresh.metadata.fetchedAt, t0 + 2000);
+    // A minute later, a new client is accepted again.
+    assert.equal((await meta.resolveMetadataClient({ platform, config }, hosts[10], { now: t0 + 61_000 })).ok, true);
   });
 
   it('[OCMD09] discovery: the flag per mode; none and the iss parameter are always advertised', () => {

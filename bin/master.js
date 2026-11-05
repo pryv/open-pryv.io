@@ -463,7 +463,9 @@ if (cluster.isPrimary) {
       // Metadata-document client rows unused for the absolute refresh
       // lifetime plus 7 days (their sessions are all dead by then).
       require('../components/oauth2/src/clientMetadata.ts').pruneMetadataClients(platformDB, config)
-        .then((pruned) => { if (pruned > 0) log(`[metadata-client-prune] removed ${pruned} unused client row(s)`); })
+        .then(({ pruned, provisional }) => {
+          if (pruned > 0) log(`[metadata-client-prune] removed ${pruned} client row(s), ${provisional} of them never consented to`);
+        })
         .catch((err) => log(`[metadata-client-prune] failed: ${err.message}`));
     }, sweepIntervalMs);
     accessStateSweep.unref(); // keepAlive holds the master; the sweep must not
