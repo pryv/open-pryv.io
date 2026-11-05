@@ -40,7 +40,7 @@ import type { OAuthClient } from './storage.ts';
 import * as storage from './storage.ts';
 import { peerFetch, platformHostMatcher, type PeerSettings } from 'business/src/outbound/peerFetch.ts';
 import { clientMetadataSettings, hostListed, type ClientMetadataSettings } from './clientMetadataConfig.ts';
-import { clientIdUrlSyntaxProblem, metadataClientKey, isMetadataClientKey, METADATA_KEY_PREFIX } from './clientMetadataId.ts';
+import { clientIdUrlSyntaxProblem, metadataClientKey, isMetadataClientKey, isMetadataClientUrl, METADATA_KEY_PREFIX } from './clientMetadataId.ts';
 import { localizedTextProblem, logoUriProblem, insecureRedirectUris, persistMetadataClient } from './clientRegistry.ts';
 import { validatePublicJwkSet, keyMatchesAlg, CLIENT_ASSERTION_ALGS, type PublicJwkSet } from './jwks.ts';
 import { jwksUriProblem } from './jwksUri.ts';
@@ -403,7 +403,7 @@ export async function fetchClientMetadataDocument (url: string, settings: Client
   const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
   if (!JSON_MEDIA_TYPE_RE.test(contentType)) {
     await discardBody(res);
-    return { ok: false, kind: 'invalid', detail: 'content type ' + JSON.stringify(contentType) + ' (application/json expected)' };
+    return { ok: false, kind: 'invalid', detail: 'content type ' + JSON.stringify(contentType) + ' (application/json or application/*+json expected)' };
   }
   const declared = res.headers.get('content-length');
   if (declared != null && Number(declared) > settings.maxDocumentBytes) {
@@ -679,10 +679,19 @@ async function refreshRow (platform: PlatformDB, url: string, settings: ClientMe
   } catch (err: unknown) {
     // The document passed; the row is refused by the registry rules (the
     // template, most likely): an operator matter.
+    // One sampling key for the error line and the audit row (reason `invalid`).
     const s = sampled ? sampledRefusal(host, 'derived-row', now) : { emit: true, suppressed: 0 };
-    if (s.emit) logServerError(`client metadata document on ${host}: the derived client row is refused`, err);
-    await reportRefusal({ clientId: row.clientId, metadataUrl: url, host, reason: 'invalid', detail: 'derived row refused: ' + (err as Error).message },
-      now, null, sampled);
+    if (s.emit) {
+      logServerError(`client metadata document on ${host}: the derived client row is refused`, err);
+      await audit('oauth.client.metadata_refused', {
+        clientId: row.clientId,
+        metadataUrl: url.slice(0, MAX_REFUSED_URL_LENGTH),
+        host,
+        reason: 'invalid',
+        detail: ('derived row refused: ' + (err as Error).message).slice(0, MAX_REFUSED_URL_LENGTH),
+        ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
+      });
+    }
     return { ok: false, kind: 'invalid', detail: 'derived row refused: ' + (err as Error).message };
   }
   const changedFields = changedMetadataFields(existing, row);
@@ -819,27 +828,45 @@ async function touchLastUsed (platform: PlatformDB, row: OAuthClient, now: numbe
  * operator sees why a connector fails. Any other client: nothing.
  */
 export async function reportClientAuthRefusal (platform: PlatformDB, clientId: string, endpoint: 'token' | 'revoke' | 'introspect',
-  grantType: string = ''): Promise<void> {
-  if (!isMetadataClientKey(clientId)) return;
-  const what = endpoint + (grantType !== '' ? ' ' + grantType.slice(0, 128) : '');
-  const s = sampledRefusal(clientId, 'client-auth|' + what, Date.now());
-  if (!s.emit) return;
-  let row: OAuthClient | null = null;
-  try { row = await storage.getClient(platform, clientId); } catch { row = null; }
-  const url = row?.metadataUrl ?? '';
-  let host = '';
-  try { host = url !== '' ? new URL(url).host : ''; } catch { host = ''; }
-  logServerWarning(`client metadata document client ${url !== '' ? url : clientId}: invalid_client at /oauth2/${what}` +
-    (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
-  await audit('oauth.client.metadata_refused', {
-    clientId,
-    metadataUrl: url.slice(0, MAX_REFUSED_URL_LENGTH),
-    host,
-    reason: 'client-auth',
-    detail: '/oauth2/' + what + ': client authentication failed',
-    ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
-  });
+  grantType: string = '', urlHint?: string | null): Promise<void> {
+  // A record never changes the answer: every failure here is swallowed.
+  try {
+    // Only a well-formed key (no caller-chosen text reaches a log, an audit
+    // row or the sampling map), and only for a client that is one: its row
+    // exists, or (the row gone, e.g. revoked) the URL its assertion named
+    // hashes to that key.
+    if (typeof clientId !== 'string' || !METADATA_KEY_RE.test(clientId)) return;
+    let row: OAuthClient | null = null;
+    try { row = await storage.getClient(platform, clientId); } catch { row = null; }
+    let url: string | null = null;
+    if (row?.origin === 'metadata-document' && typeof row.metadataUrl === 'string') {
+      url = row.metadataUrl;
+    } else if (row == null && typeof urlHint === 'string' && isMetadataClientUrl(urlHint) && metadataClientKey(urlHint) === clientId) {
+      url = urlHint;
+    }
+    if (url == null) return;
+    const grant = String(grantType ?? '').slice(0, 64).replace(/[^\x21-\x7e]/g, '?');
+    const what = endpoint + (grant !== '' ? ' ' + grant : '');
+    const s = sampledRefusal(clientId, 'client-auth|' + what, Date.now());
+    if (!s.emit) return;
+    const shownUrl = url.slice(0, MAX_REFUSED_URL_LENGTH);
+    logServerWarning(`client metadata document client ${shownUrl}: invalid_client at /oauth2/${what}` +
+      (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
+    await audit('oauth.client.metadata_refused', {
+      clientId,
+      metadataUrl: shownUrl,
+      host: new URL(url).host,
+      reason: 'client-auth',
+      detail: ('/oauth2/' + what + ': client authentication failed').slice(0, MAX_REFUSED_URL_LENGTH),
+      ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
+    });
+  } catch (err) {
+    logServerError('client metadata: could not record a client authentication refusal', err);
+  }
 }
+
+/** A metadata-document client key exactly: the prefix and 40 lower-case hexadecimal characters. */
+const METADATA_KEY_RE = /^url~[0-9a-f]{40}$/;
 
 /**
  * Operator: fetch the document now (no cache, no budget) and write the row.

@@ -493,17 +493,28 @@ describe('[OCMDE] client metadata documents end to end', function () {
     const who = await newUser();
     const before = await connect(who, url);
     const oldGrant = (await accesses(who)).find((a) => a.name === 'oauth-grant:' + metadataClientKey(url));
+    const sessionIds = async () => (await accesses(who)).filter((a) => a.name === 'oauth:' + metadataClientKey(url)).map((a) => a.id);
+    const idsBefore = await sessionIds();
     const pending = await codeFor(who, url);
+    const pendingAccess = (await sessionIds()).filter((id) => !idsBefore.includes(id));
+    assert.equal(pendingAccess.length, 1, 'the access minted at /accept for the pending code');
     const log = console.log;
     console.log = () => {};
     try { await cli.runRevoke(platformDB, cli.parseArgs(['revoke', url, '--yes']), oauth2.removeClient); } finally { console.log = log; }
     assert.equal((await authorize(url)).status, 302, 'the row is created again');
+    // No consent in between: only the refresh grant's epoch check refuses the old token here.
+    const oldRefresh = await refresh(before.token.refresh_token, url);
+    assert.deepEqual([oldRefresh.status, oldRefresh.body.error], [400, 'invalid_grant']);
     const t = await coreRequest.post('/oauth2/token').type('form').send({
       grant_type: 'authorization_code', code: pending.code, code_verifier: pending.verifier, client_id: url, redirect_uri: REDIRECT_URI, resource: RS_AUD,
     });
     assert.deepEqual([t.status, t.body.error], [400, 'invalid_grant']);
+    assert.ok(!(await sessionIds()).includes(pendingAccess[0]), 'its accept-time access is gone');
     const intro = await introspect(before.token.access_token);
     assert.equal(intro.body.active, false, 'a pre-revoke session is inactive');
+    await withInjectedConfig({ oauth: { ...OAUTH, clientRevokeCheckSeconds: 1 } }, async () => {
+      assert.equal(await eventually(() => readStream(before.token.access_token, 'a', oldGrant.alias), 403), 403, 'a pre-revoke session is 403 after the re-creation');
+    });
     // A new flow: a full consent (nothing kept from the old grant), a new grant, end to end.
     const { verifier, challenge } = pkce();
     const res = await authorize(url, { challenge });
@@ -658,6 +669,15 @@ describe('[OCMDE] client metadata documents end to end', function () {
     const intro = await coreRequest.post('/oauth2/introspect').type('form')
       .send({ token: r.body.access_token, client_assertion_type: CLIENT_ASSERTION_TYPE_URN, client_assertion: assertion(ec) });
     assert.equal(intro.status, 401);
+    // An assertion alone, naming a URL no row exists for (never authorized, or revoked): 401, recorded with the URL.
+    const unseen = `https://client.example/apps/unseen-${cuid().slice(-8)}.json`;
+    let noRow;
+    const noRowRows = await auditRows(async () => {
+      noRow = await withAssertion({ grant_type: 'refresh_token', refresh_token: 'x' }, clientAssertion(ec, unseen, tokenEndpoint));
+    });
+    assert.deepEqual([noRow.status, noRow.body.error], [401, 'invalid_client']);
+    assert.deepEqual(noRowRows.filter((r) => r.event === 'oauth.client.metadata_refused').map((r) => [r.record.reason, r.record.metadataUrl, r.record.detail]),
+      [['client-auth', unseen, '/oauth2/token refresh_token: client authentication failed']]);
     // A key set on another host makes the document invalid.
     const elsewhere = publish({ token_endpoint_auth_method: 'private_key_jwt', jwks_uri: 'https://tools.example/keys.json' });
     assert.equal((await authorize(elsewhere)).status, 400);

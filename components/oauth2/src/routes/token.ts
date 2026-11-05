@@ -118,6 +118,8 @@ export function handleToken (deps: TokenDeps) {
       const assertedId = assertedIss != null ? clientKeyOf(assertedIss) : null;
       const asserted = assertedId != null ? await getClient(deps.platform, assertedId) : null;
       if (assertedId == null || !hasKeySet(asserted)) {
+        // Recorded for a metadata-document client (its row may be gone: the URL the assertion named is the hint).
+        if (assertedId != null) await reportClientAuthRefusal(deps.platform, assertedId, 'token', grantType, assertedIss);
         outcome = { ok: false as const, status: 401, error: 'invalid_client', description: 'client authentication failed' };
       } else {
         assertedClient = asserted;

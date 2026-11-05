@@ -252,6 +252,7 @@ describe('[OCMD] client metadata documents', function () {
         server.set(URL1, { body: JSON.stringify(doc()), headers: ct === '' ? {} : { 'content-type': ct } });
         const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
         assert.deepEqual([r.ok, r.kind], [false, 'invalid'], ct);
+        assert.match(r.detail, /\(application\/json or application\/\*\+json expected\)/, ct);
       }
     });
 
@@ -968,6 +969,39 @@ describe('[OCMD] client metadata documents', function () {
       rows.length = 0;
       for (let i = 0; i < 13; i++) await at(`https://client.example/c${i}.json`, t0 + 70_000 + i);
       assert.deepEqual(rows.map((r) => r.reason), ['unreachable', 'budget']);
+    } finally {
+      console.debug = savedDebug;
+      if (savedEnv == null) delete process.env.OAUTH_AUDIT_DEBUG;
+      else process.env.OAUTH_AUDIT_DEBUG = savedEnv;
+    }
+  });
+
+  it('[OCMD17] a client authentication refusal is recorded only for a real metadata-document client, bounded, never failing', async () => {
+    const rows = [];
+    const savedDebug = console.debug;
+    const savedEnv = process.env.OAUTH_AUDIT_DEBUG;
+    process.env.OAUTH_AUDIT_DEBUG = '1';
+    console.debug = (tag, event, payload) => { if (event === 'oauth.client.metadata_refused') rows.push(payload); };
+    try {
+      const platform = fakePlatform();
+      const s = settingsOf();
+      const row = meta.buildMetadataClientRow(URL1, meta.clientMetadataProblem(doc(), URL1, s).fields, s, null, Date.now());
+      await persistClient(platform, row);
+      const key = ids.metadataClientKey(URL1);
+      // Caller-chosen text, a well-formed key with no row, a hint that is not its URL: nothing.
+      for (const id of ['url~' + 'x\n'.repeat(5000), 'url~ABCDEF' + '0'.repeat(34), ids.metadataClientKey(URL2), 'curated']) {
+        await meta.reportClientAuthRefusal(platform, id, 'revoke');
+      }
+      await meta.reportClientAuthRefusal(platform, ids.metadataClientKey(URL2), 'token', 'refresh_token', URL1);
+      assert.equal(rows.length, 0, JSON.stringify(rows));
+      // The row's client, and a gone row whose assertion named its URL.
+      await meta.reportClientAuthRefusal(platform, key, 'token', 'authorization_code\n' + 'g'.repeat(500));
+      await meta.reportClientAuthRefusal(platform, ids.metadataClientKey(URL2), 'token', 'refresh_token', URL2);
+      assert.deepEqual(rows.map((r) => [r.clientId, r.metadataUrl, r.reason]), [[key, URL1, 'client-auth'], [ids.metadataClientKey(URL2), URL2, 'client-auth']]);
+      assert.ok(rows[0].detail.length <= 256 && !rows[0].detail.includes('\n'), rows[0].detail);
+      // A failing store never breaks the caller.
+      const broken = { ...platform, getPlatformKv: async () => { throw new Error('down'); } };
+      await meta.reportClientAuthRefusal(broken, key, 'introspect');
     } finally {
       console.debug = savedDebug;
       if (savedEnv == null) delete process.env.OAUTH_AUDIT_DEBUG;
