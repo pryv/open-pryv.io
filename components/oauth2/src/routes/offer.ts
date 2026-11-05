@@ -24,7 +24,9 @@
  * (`offer` entries flagged `currentlyGranted`), with `shownDigest` (to post
  * back at /accept), `currentGrant: { subjectMode } | null` and
  * `subjectChange`; never memoised. A token that does not sign in answers the
- * request alone, plus `authenticated: false`.
+ * request alone, plus `authenticated: false`; an account the platform places
+ * on another core answers 421 `wrong_core` with that core's URL, as /accept
+ * does (see wrongCore.ts).
  */
 
 import crypto from 'node:crypto';
@@ -41,6 +43,8 @@ import { resolveRequestedScope, entryCeiling, grantTooLarge } from '../scopeGram
 import { extensionGeneration } from '../extension.ts';
 import type { CurrentGrant } from '../consentComposition.ts';
 import { composeShownOffer, subjectModeOf } from '../consentComposition.ts';
+import type { WrongCoreSession } from '../wrongCore.ts';
+import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 
 /** A signed-in user, as the host app's resolver answers it. */
 export type OfferSession = {
@@ -57,7 +61,7 @@ export type OfferDeps = {
   platform: PlatformDB;
   /** Optional sign-in for the composed answer (same resolver as /accept). */
   resolveUser?: (params: { username: string; userToken: string }) =>
-  Promise<OfferSession | { refused: true; description: string } | null>;
+  Promise<OfferSession | { refused: true; description: string } | WrongCoreSession | null>;
   /** The user's current grant for the client, or null. */
   readRegistryGrant?: (params: { session: OfferSession; clientId: string }) => Promise<CurrentGrant | null>;
 };
@@ -149,17 +153,19 @@ export async function resolveStateOffer (
  * The signed-in user behind an optional `username` + `userToken` pair: the
  * session of a valid PERSONAL token, else null (any failure, a refused or a
  * non-personal token alike: no oracle beyond what /accept already gives).
+ * An account served by another core is told apart, as /accept tells it.
  */
-async function personalSession (deps: OfferDeps, body: Record<string, unknown>): Promise<OfferSession | null> {
+async function personalSession (deps: OfferDeps, body: Record<string, unknown>): Promise<OfferSession | WrongCoreSession | null> {
   if (deps.resolveUser == null) return null;
   if (typeof body.username !== 'string' || body.username.length === 0 ||
       typeof body.userToken !== 'string' || body.userToken.length === 0) return null;
-  let s: OfferSession | { refused: true } | null;
+  let s: OfferSession | { refused: true } | WrongCoreSession | null;
   try {
     s = await deps.resolveUser({ username: body.username, userToken: body.userToken });
   } catch {
     return null;
   }
+  if (isWrongCoreSession(s)) return s;
   if (s == null || (s as { refused?: unknown }).refused === true) return null;
   const session = s as OfferSession;
   return session.personal === true ? session : null;
@@ -203,6 +209,10 @@ export function handleOffer (deps: OfferDeps) {
     // (what /accept will check a `shownDigest` against). Never memoised.
     const session = await personalSession(deps, body);
     if (session == null) return sendJson(res, 200, { ...answer, authenticated: false });
+    if (isWrongCoreSession(session)) {
+      await auditWrongCore(verified.payload);
+      return sendJson(res, 421, wrongCoreBody(session));
+    }
     const current = deps.readRegistryGrant != null
       ? await deps.readRegistryGrant({ session, clientId: c.clientId })
       : null;

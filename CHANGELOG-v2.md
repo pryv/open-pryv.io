@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### OAuth consent: an account served by another core gets its own answer
+
+- **Fixed: the consent of an account served by another core looped back to the sign-in.** On a
+  multi-core platform, a user who opened an authorization issued by another core than their own
+  (an app using another region's address) signed in successfully, then the signed-in
+  `/oauth2/authorize/offer` and `/oauth2/authorize/accept` answered the uniform `authenticated:
+  false` / `401`, which a consent UI reads as an ended session. Both now answer `421 { "error":
+  "wrong_core", "error_description", "coreUrl" }` (the account's core) when the name is not an
+  account of this core and the platform names another core with a usable URL for it; a name no
+  core serves keeps the uniform answers. The flow cannot move to that core (the state is bound to the issuing core): a
+  consent UI ends it with a message and a way back to the app. The answer says no more than the
+  wrong-core answer of `/:username/*` already says. Audited as `oauth.consent.refused` with
+  `reason: "wrong-core"`. See `docs/oauth2.md` § 1, "Accounts served by another core".
+
 ### Socket.IO: no lost notifications for a client that connects while another leaves
 
 - **Fixed: a Socket.IO client could stop receiving change notifications** (`eventsChanged`,
