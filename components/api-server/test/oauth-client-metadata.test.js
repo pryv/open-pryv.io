@@ -710,6 +710,19 @@ describe('[OCMDE] client metadata documents end to end', function () {
     // A key set on another host makes the document invalid.
     const elsewhere = publish({ token_endpoint_auth_method: 'private_key_jwt', jwks_uri: 'https://tools.example/keys.json' });
     assert.equal((await authorize(elsewhere)).status, 400);
+    // Revoked (its row gone), the client names itself by its URL in the body
+    // next to its assertion: 401, recorded with the body's URL.
+    const log = console.log;
+    console.log = () => {};
+    try { await cli.runRevoke(platformDB, cli.parseArgs(['revoke', url, '--yes']), oauth2.removeClient); } finally { console.log = log; }
+    _resetClientMetadataForTests(); // this client's earlier refusals were sampled within the minute
+    let gone;
+    const goneRows = await auditRows(async () => {
+      gone = await withAssertion({ grant_type: 'refresh_token', refresh_token: 'x', client_id: url }, assertion(ec));
+    });
+    assert.deepEqual([gone.status, gone.body.error], [401, 'invalid_client'], JSON.stringify(gone.body));
+    assert.deepEqual(goneRows.filter((x) => x.event === 'oauth.client.metadata_refused').map((x) => [x.record.reason, x.record.metadataUrl, x.record.detail]),
+      [['client-auth', url, '/oauth2/token refresh_token: client authentication failed']]);
   });
 
   it('[OCMDE15] the access stamp: grant and sessions carry clientData.oauth.client, refreshed on refresh; the API refuses to change it; a derived session carries none', async () => {

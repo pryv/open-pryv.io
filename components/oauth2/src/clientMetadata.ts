@@ -994,11 +994,11 @@ Promise<{ pruned: number; provisional: number }> {
     if (isProvisionalRow(row)) {
       if (!provisionalPastHorizon(row, now, provisionalHorizon)) continue;
       // Read again right before the delete: a consent may have made it
-      // permanent since the listing.
+      // permanent, or the operator suspended it, since the listing.
       let again: OAuthClient | null;
       try { again = await storage.getClient(platform, id); } catch { continue; }
-      if (again == null || again.origin !== 'metadata-document' || !isProvisionalRow(again) ||
-          !provisionalPastHorizon(again, now, provisionalHorizon)) continue;
+      if (again == null || again.origin !== 'metadata-document' || (again.status ?? 'active') !== 'active' ||
+          !isProvisionalRow(again) || !provisionalPastHorizon(again, now, provisionalHorizon)) continue;
       await storage.deleteClientRow(platform, id);
       pruned++;
       provisional++;

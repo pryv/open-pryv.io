@@ -295,7 +295,9 @@ export function handleToken (deps: TokenDeps) {
       res.end(JSON.stringify(outcome.body));
     } else {
       if (outcome.error === 'invalid_client' && typeof body.client_id === 'string') {
-        await reportClientAuthRefusal(deps.platform, body.client_id, 'token', grantType);
+        // The body's URL is the hint for a row gone (e.g. a revoked public client).
+        await reportClientAuthRefusal(deps.platform, body.client_id, 'token', grantType,
+          typeof rawBody.client_id === 'string' ? rawBody.client_id : null);
       }
       res.statusCode = outcome.status;
       const resBody: Record<string, unknown> = { error: outcome.error };

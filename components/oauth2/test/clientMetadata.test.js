@@ -648,7 +648,7 @@ describe('[OCMD] client metadata documents', function () {
     await assert.rejects(storage.deleteClientRow(platform, 'curated'), /url~/);
   });
 
-  it('[OCMD08B] prune: a provisional row made permanent between the listing and the delete is read again and kept', async () => {
+  it('[OCMD08B] prune: a provisional row made permanent, or suspended, between the listing and the delete is read again and kept', async () => {
     const platform = fakePlatform();
     const s = settingsOf();
     const now = Date.now();
@@ -673,6 +673,20 @@ describe('[OCMD] client metadata documents', function () {
     assert.deepEqual(await meta.pruneMetadataClients(platform, fakeConfig(), now), { pruned: 0, provisional: 0 });
     assert.equal(deletes, 0, 'no deleteClientRow');
     assert.equal((await getClient(platform, ids.metadataClientKey(URL1))).metadata.firstConsentAt, now);
+    // Suspended by the operator in the same window: kept as well.
+    const p2 = fakePlatform();
+    const row2 = meta.buildMetadataClientRow(URL2, meta.clientMetadataProblem(doc(URL2), URL2, s).fields, s, null, now - 7200 * 1000);
+    await persistClient(p2, row2);
+    const key2 = 'oauth-client/' + ids.metadataClientKey(URL2);
+    let reads2 = 0;
+    const get2 = p2.getPlatformKv.bind(p2);
+    p2.getPlatformKv = async (k) => {
+      const v = await get2(k);
+      if (k === key2 && ++reads2 === 1) await p2.setPlatformKv(k, JSON.stringify({ ...JSON.parse(v), status: 'suspended' }));
+      return v;
+    };
+    assert.deepEqual(await meta.pruneMetadataClients(p2, fakeConfig(), now), { pruned: 0, provisional: 0 });
+    assert.equal((await getClient(p2, ids.metadataClientKey(URL2))).status, 'suspended');
   });
 
   it('[OCMD15] a new client row takes a unit of newClientsPerMinute (a creation that writes no row keeps none); a refetch of an existing row does not', async () => {
