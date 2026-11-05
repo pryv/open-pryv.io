@@ -16,7 +16,8 @@
  *     `retrieveExpandedAccess`, returns a session handle carrying the
  *     populated context. Returns null on validation failure (errors from the
  *     access lookup surface as APIError; we swallow into null so the OAuth
- *     endpoint can render a 401 cleanly).
+ *     endpoint can render a 401 cleanly), or `{ wrongCore, coreUrl }` for an
+ *     account the platform places on another core (the endpoint answers 421).
  *   - the consent records and the session minted at /accept
  *     (`oauth2/grants.ts`);
  *   - the storage-direct session paths used at /token (`oauth2/sessions.ts`);
@@ -37,6 +38,7 @@ import type { Application as ExpressApp } from 'express';
 import type { AppLike } from './_types.ts';
 import type { Ctx, OAuthMethodResult, GlueEnv } from './oauth2/types.ts';
 import { createRequire } from 'node:module';
+import { getPlatform } from 'platform';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
@@ -80,6 +82,16 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     context.bypassAccessCache = true;
     try {
       await context.init();
+    } catch (err) {
+      // Not an account of this core: on a multi-core platform it may be
+      // served by another one (the consent page signs in on the user's own
+      // core, then posts here, to the core that issued the authorization).
+      const elsewhere = await otherCoreOf(username);
+      if (elsewhere != null) return elsewhere;
+      logger.warn('resolveUser: context init/access lookup failed', err);
+      return null;
+    }
+    try {
       await context.retrieveExpandedAccess(storageLayer);
     } catch (err) {
       // Swallowed on purpose: the endpoint renders a clean 401 rather
@@ -122,6 +134,24 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       // Carry the live context through so createAccess can call api on it.
       _context: context,
     };
+  }
+
+  // The core the platform names for a username this core does not serve, or
+  // null (single core, unknown name, this core, or a lookup failure: the
+  // uniform answer then stands). Says no more than the wrong-core answer of
+  // `/:username/*` already says for any name.
+  async function otherCoreOf (username: string): Promise<{ wrongCore: true; coreUrl: string } | null> {
+    try {
+      const platform = await getPlatform();
+      if (platform.isSingleCore) return null;
+      const coreId = await platform.getUserCore(username);
+      if (coreId == null || coreId === platform.coreId) return null;
+      const coreUrl = platform.coreIdToUrl(coreId);
+      return typeof coreUrl === 'string' && coreUrl.length > 0 ? { wrongCore: true as const, coreUrl } : null;
+    } catch (err) {
+      logger.warn('resolveUser: platform lookup of the account\'s core failed', err);
+      return null;
+    }
   }
 
   function authTimeOf (access: { created?: number; lastLogin?: number | null }): { authTime?: number } {

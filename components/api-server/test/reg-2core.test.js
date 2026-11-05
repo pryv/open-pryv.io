@@ -1342,6 +1342,48 @@ describe('[RG2C] Two-core integration tests', function () {
       }
     });
 
+    it('[2C79] a consent for an account of the other core: /offer and /accept answer 421 wrong_core with its home core; an unknown name keeps the uniform answer', async () => {
+      const verifier = crypto.randomBytes(32).toString('base64url');
+      const q = new URLSearchParams({
+        client_id: appId,
+        redirect_uri: REDIRECT,
+        response_type: 'code',
+        state: 'wc',
+        scope: 'read/notes',
+        code_challenge: crypto.createHash('sha256').update(verifier).digest('base64url'),
+        code_challenge_method: 'S256'
+      });
+      // The authorization is issued by Core A; the account lives on Core B.
+      const auth = await fetch(`http://127.0.0.1:${CORE_A_PORT}/oauth2/authorize?${q}`, { redirect: 'manual' });
+      assert.strictEqual(auth.status, 302, await auth.text());
+      const state = new URL(auth.headers.get('location')).searchParams.get('state');
+      const signedOut = await httpRequest(CORE_A_PORT, 'POST', '/oauth2/authorize/offer', { state });
+      assert.strictEqual(signedOut.status, 200, JSON.stringify(signedOut.body));
+      const grantedPermissions = signedOut.body.offer.permissions;
+      const offerAs = (username, userToken) => httpRequest(CORE_A_PORT, 'POST', '/oauth2/authorize/offer', { state, username, userToken });
+      const acceptAs = (username, userToken) => httpRequest(CORE_A_PORT, 'POST', '/oauth2/authorize/accept', { state, username, userToken, grantedPermissions });
+      for (const res of [await offerAs(user.username, user.token), await acceptAs(user.username, user.token)]) {
+        assert.strictEqual(res.status, 421, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error, 'wrong_core');
+        assert.strictEqual(trim(res.body.coreUrl), trim(CORE_B_URL));
+        assert.ok(!JSON.stringify(res.body).includes(user.username), 'the answer does not name the account');
+      }
+      // A name no core serves: the uniform answers, as before.
+      const nobody = 'tcnone' + Date.now().toString(36);
+      const offerNobody = await offerAs(nobody, 'not-a-token');
+      assert.strictEqual(offerNobody.status, 200, JSON.stringify(offerNobody.body));
+      assert.strictEqual(offerNobody.body.authenticated, false);
+      const acceptNobody = await acceptAs(nobody, 'not-a-token');
+      assert.strictEqual(acceptNobody.status, 401, JSON.stringify(acceptNobody.body));
+      // On the home core, a wrong token of the account keeps the uniform 401.
+      const onB = await fetch(`http://127.0.0.1:${CORE_B_PORT}/oauth2/authorize?${q}`, { redirect: 'manual' });
+      assert.strictEqual(onB.status, 302, await onB.text());
+      const stateB = new URL(onB.headers.get('location')).searchParams.get('state');
+      const badOnB = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/authorize/accept', { state: stateB, username: user.username, userToken: 'not-a-token', grantedPermissions });
+      assert.strictEqual(badOnB.status, 401, JSON.stringify(badOnB.body));
+      assert.deepStrictEqual(badOnB.body, acceptNobody.body);
+    });
+
     it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {
       const list = await httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/accesses', null, { Authorization: user.token });
       const grant = list.body.accesses.find((a) => a.name === 'oauth-grant:' + appId);

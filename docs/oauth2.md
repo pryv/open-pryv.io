@@ -491,6 +491,31 @@ App-account clients keep the offer inside the state, unchanged.
 `/oauth2/authorize/accept` accepts only the account owner's **personal**
 token; another token of the user answers `403 access_denied`.
 
+### Accounts served by another core
+
+On a multi-core platform the consent UI signs the user in on the user's own
+core (through the `service.api` template), then posts the signed-in `/offer`
+and `/accept` to the core that issued the authorization. When the platform
+places the account on another core, both answer:
+
+```
+421 { "error": "wrong_core", "error_description": "…", "coreUrl": "https://<the account's core>/" }
+```
+
+instead of the uniform `401` (`/accept`) or `authenticated: false` (`/offer`).
+The signed state is bound to the issuing core, so the flow cannot be moved
+there: the consent UI ends the flow with a message (the host of `coreUrl`
+may be shown), offers only "back to the app" (`/refuse`), and must not send
+the user back to the sign-in (signing in again would end the same way). The
+user starts again from the app, with the address of their own core.
+
+The answer is given only when the name is not an account of this core and
+the platform's user-to-core map names another core; it does not depend on the
+token, and says no more than the wrong-core answer of `/:username/*` and
+`GET /reg/cores?username=` already say for any name. A name no core serves
+keeps the uniform answers. It is audited as `oauth.consent.refused` with
+`reason: "wrong-core"` (the account is not named).
+
 ### Composed re-consent (`shownDigest`)
 
 When the user already has a grant for the client, the consent screen should
@@ -1508,7 +1533,7 @@ Collect these for security monitoring and incident response.
 |---|---|
 | `oauth.consent.shown` | consent screen presented to the user |
 | `oauth.consent.granted` | user approved the authorization request |
-| `oauth.consent.refused` | user declined the authorization request |
+| `oauth.consent.refused` | user declined the authorization request, or the core refused the consent (`reason`, e.g. `user-declined`, `permission-level-conflict`, `wrong-core`) |
 | `oauth.code.exchanged` | authorization code successfully exchanged for tokens |
 | `oauth.code.reused` | an already-consumed authorization code was presented again (attack signal) |
 | `oauth.nonce.reused` | an OpenID Connect nonce already used by the client came back at a code exchange (refused; the code by its hash, never the nonce) |
@@ -1554,6 +1579,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 | token exchange: `400 invalid_grant` for a token that works at the API | the token was issued for no resource server (no `aud` / `resource` at `/oauth2/authorize`): not exchangeable (§ 1e) |
 | data API `403` "The access token is bound to a resource server" | `oauth.audienceBoundSessions` is on and the token was issued for a resource server: call through that resource server, which exchanges it (§ 1e) |
 | consent UI: `400 invalid_scope` with `reason: grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (§ 3b) |
+| consent UI: `421 wrong_core` on `/oauth2/authorize/offer` or `/accept` | the account is served by another core than the one that issued the authorization (the app used another region's address): start again from the app with the address of the account's core, named by `coreUrl` (§ 1d) |
 
 ---
 

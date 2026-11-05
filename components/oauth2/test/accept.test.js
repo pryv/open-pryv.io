@@ -280,6 +280,21 @@ describe('[OAUTH-ACCEPT] /oauth2/authorize/accept handler', () => {
       await handler({ body: validBody({ userToken: 'unknown' }) }, res);
       assert.equal(res.statusCode, 401);
     });
+    it('[OAC-U4] an account served by another core → 421 wrong_core with that core\'s URL, nothing created', async () => {
+      let created = false;
+      const handler = mkHandler({
+        resolveUser: async () => ({ wrongCore: true, coreUrl: 'https://core-b.example.com/' }),
+        createAccess: async (p) => { created = true; return createAccessFake(p); },
+      });
+      const res = fakeRes();
+      await handler({ body: validBody() }, res);
+      assert.equal(res.statusCode, 421);
+      assert.equal(res.body.error, 'wrong_core');
+      assert.equal(res.body.coreUrl, 'https://core-b.example.com/');
+      assert.equal(typeof res.body.error_description, 'string');
+      assert.ok(!JSON.stringify(res.body).includes('alice'), 'the answer does not name the account');
+      assert.equal(created, false);
+    });
   });
 
   describe('[OAUTH-ACCEPT-SCOPE] consent-downgrade enforcement (granted ⊆ offered, full lexicon)', () => {

@@ -574,6 +574,28 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(acceptRes.status, 401);
     });
 
+    it('[OE38] on a single core, /accept for an unknown username answers the same 401 as a wrong token, never 421', async function () {
+      const { challenge } = pkce();
+      const authRes = await coreRequest
+        .get('/oauth2/authorize')
+        .query({
+          client_id: clientId,
+          redirect_uri: REDIRECT_URI,
+          response_type: 'code',
+          state: 'csrf-unknown-user',
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+          scope: 'cmc:' + OFFER_NAME,
+        });
+      const signedState = decodeURIComponent(authRes.headers.location.split('state=')[1].split('&')[0]);
+      const post = (body) => coreRequest.post('/oauth2/authorize/accept')
+        .send({ state: signedState, grantedPermissions: DEFAULT_GRANTED, ...body });
+      const unknown = await post({ username: 'nobody' + cuid().slice(0, 8), userToken: 'not-a-real-token' });
+      const wrongToken = await post({ username, userToken: 'not-a-real-token' });
+      assert.equal(unknown.status, 401, describeRes(unknown));
+      assert.deepEqual(unknown.body, wrongToken.body);
+    });
+
     it('[OE29] a state signature with a non-ASCII character → 400 on /accept and /refuse, and the server keeps answering', async function () {
       // 43 characters (the length of a real signature), 44 bytes once UTF-8 encoded.
       const state = 'x.' + 'é' + 'a'.repeat(42);

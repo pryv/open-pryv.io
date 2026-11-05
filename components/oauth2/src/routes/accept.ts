@@ -50,6 +50,9 @@
  * or without `shownDigest`). Both fields are ignored for app-account
  * clients.
  *
+ * An account the platform places on another core answers 421 `wrong_core`
+ * with that core's URL instead of the uniform 401 (see wrongCore.ts).
+ *
  * Refuse path: when the user declines, the consent UI does NOT call
  * this endpoint — it calls `POST /oauth2/authorize/refuse` (see
  * refuse.ts), which verifies the signed state and returns the
@@ -63,6 +66,8 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
 import type { ResolvedScope } from '../scopeGrammar.ts';
 import type { OAuthClient } from '../storage.ts';
 import type { CurrentGrant, Composition, SubjectChange } from '../consentComposition.ts';
+import type { WrongCoreSession } from '../wrongCore.ts';
+import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
@@ -99,9 +104,12 @@ export type UserSession = {
 /** The token is valid but may not grant OAuth access; `description` says why. */
 export type RefusedSession = { refused: true; description: string };
 
-/** Resolver provided by the route mount: {username, userToken} → session, refusal, or null. */
+/**
+ * Resolver provided by the route mount: {username, userToken} → session,
+ * refusal, an account served by another core (see wrongCore.ts), or null.
+ */
 export type ResolveUser = (params: { username: string; userToken: string })
-=> Promise<UserSession | RefusedSession | null>;
+=> Promise<UserSession | RefusedSession | WrongCoreSession | null>;
 
 function isRefusedSession (session: UserSession | RefusedSession): session is RefusedSession {
   return session.refused === true;
@@ -187,7 +195,7 @@ export type AcceptDeps = {
   readRegistryGrant?: ReadRegistryGrant;
 };
 
-type Refusal = { status: number; body: { error: string; error_description: string; reason?: string } };
+type Refusal = { status: number; body: { error: string; error_description: string; reason?: string; coreUrl?: string } };
 
 /** The consent-grant rule's refusal (granted against the offer the screen showed), or null. */
 function consentRefusal (
@@ -362,6 +370,10 @@ export function handleAccept (deps: AcceptDeps) {
           status: 401,
           body: { error: 'invalid_request', error_description: 'username + userToken did not resolve to a valid user session' },
         };
+      }
+      if (isWrongCoreSession(s)) {
+        await auditWrongCore(payload);
+        return { status: 421, body: wrongCoreBody(s) };
       }
       if (isRefusedSession(s)) return { status: 403, body: { error: 'access_denied', error_description: String(s.description) } };
       return s;

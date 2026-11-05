@@ -1916,6 +1916,27 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
       assert.equal(res.body.authenticated, true);
     });
 
+    it('[OWC1] the signed-in /offer of an account served by another core answers 421 wrong_core with that core\'s URL; signed out, the offer as before', async () => {
+      const platform = fakePlatform(); await seed(platform);
+      let read = false;
+      const deps = {
+        config: fakeConfig(),
+        platform,
+        resolveUser: async () => ({ wrongCore: true, coreUrl: 'https://core-b.example.com/' }),
+        readRegistryGrant: async () => { read = true; return null; },
+      };
+      const { signed } = await authorize(deps, authorizeQuery({ scope: 'data/a.read' }));
+      const res = fakeRes();
+      await handleOffer(deps)({ body: { state: signed, username: 'alice', userToken: 'personal' } }, res);
+      assert.equal(res.statusCode, 421, res.raw);
+      assert.equal(res.body.error, 'wrong_core');
+      assert.equal(res.body.coreUrl, 'https://core-b.example.com/');
+      assert.equal(res.body.offer, undefined, 'no consent screen for an account of another core');
+      assert.ok(!JSON.stringify(res.body).includes('alice'), 'the answer does not name the account');
+      assert.equal(read, false, 'no grant read');
+      assert.equal((await postOffer(deps, signed)).statusCode, 200);
+    });
+
     it('[OGBD1] /accept without shownDigest is bounded too: a consent joined past the ceiling is refused and nothing is minted; exclusion masks and the default forbids do not count', async () => {
       const platform = fakePlatform(); await seed(platform, { maxEntries: 1 });
       const config = fakeConfig();

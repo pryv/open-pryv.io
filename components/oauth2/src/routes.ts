@@ -91,9 +91,13 @@ export type Deps = {
    * Resolve a user's personal access token to a session handle, or
    * null on failure. Wired by the host app from the existing
    * personal-token validation path. Required for /oauth2/authorize/accept.
+   * May answer `{ refused: true, description }` (a valid token that may
+   * not consent) or `{ wrongCore: true, coreUrl }` (the account is served
+   * by another core, see wrongCore.ts).
    */
   resolveUser?: (params: { username: string; userToken: string })
-  => Promise<{ userId: string; username: string; [key: string]: unknown } | null>;
+  => Promise<{ userId: string; username: string; [key: string]: unknown } | { refused: true; description: string } |
+  { wrongCore: true; coreUrl: string } | null>;
   /**
    * Mint an app access under the resolved user. Wired by the host app
    * to api.call('accesses.create', ...) (or equivalent). Required for
