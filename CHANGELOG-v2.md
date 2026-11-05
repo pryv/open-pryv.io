@@ -37,7 +37,15 @@
   client may: no introspection, no token exchange, no allowed feature, an audience list. The URL rules
   (normal form, a path, no IP literal, not a host of the platform, ...) and the document rules are in
   `docs/oauth2.md` § 1f; the URL is the client's id on the wire (introspection's `client_id`, an
-  id_token's `aud` / `azp`).
+  id_token's `aud` / `azp`). The URL needs a path other than `/`; the document may be served as
+  `application/json` or an `application/<subtype>+json` type; its redirect URIs are https (or plain
+  http on a loopback host) only. The auth method is the singular `token_endpoint_auth_method` when
+  present, else taken from `token_endpoint_auth_methods_supported` preferring `private_key_jwt`,
+  else `none`. A `deniedHosts` entry without a port denies every port, and a `*.d` deny entry denies
+  `d` and every depth below it (allow entries stay as narrow as written). A row written before any
+  consent is provisional: at most `newClientsPerMinute` (10) new rows a minute per core, deleted
+  past `unconsentedRowSeconds` (3600) unless a user consented or the operator ran
+  `refresh-metadata`.
 - **Added: `client.origin`, `client.metadataUrl`, `client.metadataHost` (and `metadataHostUnicode`)
   in the `/oauth2/authorize/offer` answer** for such a client. A consent UI must show the host next
   to the client's name, never the name alone.
@@ -54,6 +62,10 @@
   --origin metadata-document [--host <h>]`;** `show`, `revoke`, `suspend`, `resume` and `purge-grants`
   take such a client's URL; `update` and `rotate-secret` refuse it.
 - **Changed: a client id may not start with `url~`** (reserved for these clients' stored keys).
+- **Changed: a revoked client's authorization codes and refresh tokens issued before the revoke are
+  refused even when the client id is registered again** (or, for a client metadata document, when
+  its row is re-created); a pre-revoke consent is not reused, the user is asked again. Every client
+  kind.
 
 ### Account transfer to a beneficiary
 

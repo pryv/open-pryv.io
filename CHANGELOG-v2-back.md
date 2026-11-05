@@ -49,6 +49,22 @@
   `grants.ts` stamps the grant at each registry consent (`setGrantClient`).
 - Audit events `oauth.client.metadata_fetched` / `oauth.client.metadata_refused` (user-less, declared
   in `audit/src/ApiMethods.ts`); `ClientView` gains `origin` and `metadataUrl`.
+- `metadata` also carries `authMethodSource`, `firstConsentAt` (written once by `/accept`,
+  `recordFirstConsent`, over the row re-read) and `operatorRefreshedAt` (`refresh-metadata`). A row
+  without either is provisional: a per-core creation budget (`newClientsPerMinute`) and a sweep pass
+  that deletes it past `unconsentedRowSeconds` through `storage.deleteClientRow` (no tombstone,
+  `url~` keys only: nothing can reference a row no consent reached, and a tombstone per discarded
+  row would load every core's revoke cache).
+- Refusals (`metadata_refused` rows and their warnings) go through `sampledRefusal`: one per
+  (host, reason) and minute per core, the count in `suppressed`, `metadataUrl` cut to 256; reason
+  `client-auth` records an `invalid_client` of such a client at the token, revocation and
+  introspection endpoints (endpoint and grant type in `detail`).
+- A refetch and the hourly use record re-read the row before writing (status, trail and a
+  concurrent refetch kept; a row removed during the fetch is not written again).
+- Codes carry `issuedAt` (`storage.codeIssuedAt`: a row without it reads `expiresAt - 600 s`;
+  `CODE_TTL_SECONDS` moved to `storage.ts`); the code and refresh grants read the revoke epoch
+  directly (`getRevokedAt`) and refuse what was issued at or before it; the consent's
+  `madeBeforeClientRevoke` compares with `<=`.
 
 ### Email any-case uniqueness (cleartext piiMode); restore rollback; SSO bindings in single-account backups; values holding `/`
 
