@@ -61,7 +61,7 @@ describe('[ACCO] account', function () {
       server.ensureStarted.bind(server, helpers.dependencies.settings),
       function (stepDone) {
         request = helpers.request(server.url);
-        request.login(user, stepDone);
+        login().then(() => stepDone(), stepDone);
       }
     ], done);
   });
@@ -150,7 +150,7 @@ describe('[ACCO] account', function () {
         server.ensureStarted.bind(server, helpers.dependencies.settings),
         function (stepDone) {
           request = helpers.request(server.url);
-          request.login(user, stepDone);
+          login().then(() => stepDone(), stepDone);
         }
       ], done);
     });
@@ -309,8 +309,7 @@ describe('[ACCO] account', function () {
     // Re-login here so the test is cache-independent.
     before(async () => {
       await resetUsers();
-      await new Promise((resolve, reject) =>
-        request.login(user, (err) => err ? reject(err) : resolve()));
+      await login();
     });
 
     const path = basePath + '/change-password';
@@ -354,8 +353,7 @@ describe('[ACCO] account', function () {
         // hold a stale token after resetUsers. The restart with new
         // settings also resets the in-process server state, so re-login
         // is required for the [APWD] tests below.
-        await new Promise((resolve, reject) =>
-          request.login(user, (err) => err ? reject(err) : resolve()));
+        await login();
       });
 
       describe('[ACT05] Complexity rules:', function () {
@@ -783,6 +781,39 @@ describe('[ACCO] account', function () {
   async function resetUsers () {
     accountNotifCount = 0;
     await testData.resetUsers();
+  }
+
+  /**
+   * `request.login(user)`; a refused login also reports what the database
+   * holds for the account at that moment (does the stored password match the
+   * one sent, when was it written and by whom, is a failed-password delay
+   * running), so an intermittent refusal names its cause: a stored state
+   * that differs from the fixture, or a server refusing the right password.
+   */
+  async function login (loginUser = user) {
+    try {
+      await new Promise((resolve, reject) =>
+        request.login(loginUser, (err) => err ? reject(err) : resolve()));
+    } catch (err) {
+      let state;
+      try {
+        const passwordMatches = await usersRepository.checkUserPassword(loginUser.id, loginUser.password);
+        const passwordTime = await userAccountStorage.getCurrentPasswordTime(loginUser.id).catch((e) => 'none: ' + e.message);
+        const profile = (await require('storage').getStorageLayer()).profile;
+        const privateProfile = await new Promise((resolve, reject) =>
+          profile.findOne(loginUser, { id: 'private' }, null, (e, res) => e ? reject(e) : resolve(res)));
+        state = JSON.stringify({
+          passwordMatches,
+          passwordTime,
+          now: timestamp.now(),
+          passwordThrottle: privateProfile?.data?.passwordThrottle ?? null
+        });
+      } catch (stateErr) {
+        state = 'unavailable: ' + stateErr.message;
+      }
+      err.message += ' | stored account state: ' + state;
+      throw err;
+    }
   }
 
   function cleanUpDetails (accountDetails) {
