@@ -518,8 +518,12 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const existingStream = await context.streamForStreamId(permission.streamId, null);
     if (existingStream != null) {
       if (!existingStream.trashed) { return; }
-      // untrash stream
-      const update = { id: existingStream.id, trashed: false };
+      // untrash stream; the store answers its own (unprefixed) id, so address
+      // the update to that store, not to the local stream with the same id
+      const [existingStoreId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
+      const fullId = storeDataUtils.getFullItemId(existingStoreId, existingStream.id);
+      const update: { id: string; trashed: boolean; modified?: number; modifiedBy?: string } = { id: fullId, trashed: false };
+      context.updateTrackingProperties(update);
       try {
         await mall.streams.update(context.user.id, update);
       } catch (err) {
