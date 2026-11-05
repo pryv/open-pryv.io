@@ -1,6 +1,33 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.74 - 2026-11-05
+
+> **Upgrade advice for operators.** No BREAKING API change. One new configuration block, off by
+> default: `oauth.clientMetadataDocuments` (`mode: 'off'`; `allowList` serves the hosts of
+> `allowedHosts` only, `any` serves any https host). Its other keys and defaults: `allowedHosts: []`,
+> `deniedHosts: []`, `cacheSeconds: 3600`, `staleGraceSeconds: 86400`, `negativeCacheSeconds: 60`,
+> `fetchTimeoutMs: 5000`, `maxDocumentBytes: 16384`, `fetchesPerMinute: 60`,
+> `newClientsPerMinute: 10`, `unconsentedRowSeconds: 3600`, `authMethods: [none, private_key_jwt]`,
+> and the `client` template (`scope: ''`, `allowedAudiences: []`, `launchTypes: []`,
+> `subjectType: pairwise`, `maxEntries: 200`, `offlineAccessAllowed: true`, `accessTokenTTL`,
+> `refreshTokenTTL`, `refreshTokenAbsoluteTTL` `null`, `regions: []`). The block is platform-wide
+> (identical on every core, except `client.allowedAudiences`); with a mode other than `off`,
+> `client.scope` and `client.allowedAudiences` are required and the boot stops on a block that
+> does not check: run `node bin/check-config.js` on the new code before switching.
+> `bin/oauth-client.js template-from <clientId>` prints a `client` block from an existing registry
+> client, and `check-metadata <url>` fetches and checks a document without writing anything. A
+> consent UI must show `client.metadataHost` next to the name of such a client. `RS256` joins the
+> accepted `private_key_jwt` assertion algorithms of every client (nothing to configure). A
+> client id may no longer start with `url~`. A revoked client's codes and refresh tokens stay
+> refused when its id is registered again; the revoke time carries a five-second margin, so keep
+> the CLI host and the cores NTP-synced. On a multi-core platform, `/oauth2/authorize/offer` and
+> `/accept` answer `421 wrong_core` (with `coreUrl`) for an account of another core: a consent UI
+> ends the flow there with a message and a way back to the app. The OAuth surface (`/oauth2/*`,
+> `/.well-known/*`) answers CORS without credentials. Server-created streams carry `created`,
+> `createdBy`, `modified`, `modifiedBy`; those stored earlier read with the data store defaults
+> (nothing to migrate). No schema migration, so `migrations.autoRunOnStart: false` needs no step.
+> As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
 
 ### OAuth consent: an account served by another core gets its own answer
 
@@ -99,8 +126,8 @@
   (`no-account`). They now find the account in any case and without surrounding white space, as
   hashed mode does; the sign-in still links only an address the account proved, and only one the
   identity provider asserts as verified. When two accounts hold one address in two spellings (data
-  written before the uniqueness of 2.0.0-rc.73), the one spelled as asked is answered, and none when neither
-  is. `bin/reconcile-user-cores.js --emails` no longer reports as missing, nor claims a second row
+  written before the uniqueness of 2.0.0-rc.73), the one spelled as asked is answered, and none
+  when neither is. `bin/reconcile-user-cores.js --emails` no longer reports as missing, nor claims a second row
   for, an account whose own row spells its address in another case than its stored email.
 
 ### OAuth CORS
