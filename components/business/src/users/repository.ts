@@ -1128,7 +1128,10 @@ class UsersRepository {
           continue;
         }
         // Not held by another account: the row is this account's, or absent.
-        if (await this.platform.getUsersUniqueField(field, email) != null) continue;
+        // In cleartext mode its own row may spell the address in another case
+        // than the stored email (data written before the any-case uniqueness):
+        // that row is the account's address, no second row is claimed.
+        if (await this.platform.getUniqueValueOwner(field, email) != null) continue;
         summary.missing.push(username);
         if (dryRun) continue;
         if (await this.platform.setUserUniqueFieldIfNotExists(username, field, email)) summary.claimed.push(username);

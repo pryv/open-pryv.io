@@ -214,5 +214,38 @@ for (const hashed of [false, true]) {
       await platform.renameUser('alice', 'alice2');
       await platform.deleteUser('alice2', null);
     });
+
+    it('[PLAT-UV-08] getUniqueValueOwner finds the holder of an email in any case; a binding is compared as written', async () => {
+      const { platform, db, hasher } = makePlatform({ hashed });
+      await platform.reserveUserUniqueValue('alice', 'email', 'alice@x.com');
+      await platform.reserveUserUniqueValue('alice', 'sso-idp', 'Sub-1');
+      const alice = stored(hasher, 'username', 'alice');
+      for (const spelling of ['alice@x.com', 'Alice@X.com', 'ALICE@X.COM', ' alice@x.com ']) {
+        assert.strictEqual(await platform.getUniqueValueOwner('email', spelling), alice, JSON.stringify(spelling));
+      }
+      assert.strictEqual(await platform.getUniqueValueOwner('email', 'bob@x.com'), null);
+      assert.strictEqual(await platform.getUniqueValueOwner('sso-idp', 'Sub-1'), alice);
+      assert.strictEqual(await platform.getUniqueValueOwner('sso-idp', 'sub-1'), null);
+      if (hashed) {
+        // One row per normalised value: the exact read, never the any-case query.
+        db.getUsersUniqueFieldAnyCase = async () => { throw new Error('any-case query in hashed mode'); };
+        assert.strictEqual(await platform.getUniqueValueOwner('email', 'ALICE@x.com'), alice);
+      }
+    });
+
+    if (!hashed) {
+      it('[PLAT-UV-09] getUniqueValueOwner, several accounts holding one address in several spellings: the exact spelling, else none', async () => {
+        const { platform, db } = makePlatform({ hashed });
+        await db.setUserUniqueField('alice', 'email', 'User@x.com');
+        await db.setUserUniqueField('bob', 'email', 'user@x.com');
+        assert.strictEqual(await platform.getUniqueValueOwner('email', 'User@x.com'), 'alice');
+        assert.strictEqual(await platform.getUniqueValueOwner('email', 'user@x.com'), 'bob');
+        assert.strictEqual(await platform.getUniqueValueOwner('email', 'USER@x.com'), null);
+        // One account holding two spellings is still one owner.
+        await db.setUserUniqueField('carol', 'email', 'Carol@x.com');
+        await db.setUserUniqueField('carol', 'email', 'carol@x.com');
+        assert.strictEqual(await platform.getUniqueValueOwner('email', 'CAROL@x.com'), 'carol');
+      });
+    }
   });
 }

@@ -10,11 +10,13 @@
  *
  * Policy: allow-all origins, NO credentials. Browser clients use PKCE
  * for binding; cookies must not cross. Same policy as Google/Auth0/
- * Okta on equivalent endpoints. Applied to:
- *   - `POST /oauth2/token` (preflight + response)
- *   - `OPTIONS /oauth2/token` (preflight only)
- *   - `GET /oauth2/authorize` (no preflight; safe-method, no headers required)
- *   - `GET /.well-known/oauth-authorization-server` (handled inline in wellKnown.ts)
+ * Okta on equivalent endpoints. Applied to the whole OAuth surface
+ * (`OAUTH_CORS_PATHS`: every `/oauth2/*` route, among them the token,
+ * revocation and consent-screen endpoints, and the `/.well-known/*`
+ * discovery documents): each answer carries it and every preflight is
+ * answered by it (204). The API's own CORS middleware leaves that
+ * surface alone (`isOAuthSurface`), so no credentials header and no
+ * echoed origin reach these answers.
  */
 
 import type { Request, Response } from 'express';
@@ -22,6 +24,14 @@ import type { Request, Response } from 'express';
 const ALLOW_HEADERS = 'Content-Type, Authorization, DPoP';
 const ALLOW_METHODS = 'POST, GET, OPTIONS';
 const MAX_AGE = '3600';
+
+/** Path prefixes the OAuth policy owns (the API's CORS middleware leaves them alone). */
+export const OAUTH_CORS_PATHS: readonly string[] = Object.freeze(['/oauth2/', '/.well-known/']);
+
+/** True for a request path on the OAuth surface (`OAUTH_CORS_PATHS`). */
+export function isOAuthSurface (path: string): boolean {
+  return OAUTH_CORS_PATHS.some((prefix) => path.startsWith(prefix));
+}
 
 /**
  * Apply the CORS response headers. Idempotent; safe to call before any

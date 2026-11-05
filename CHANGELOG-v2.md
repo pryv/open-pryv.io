@@ -114,6 +114,17 @@
   `bin/reconcile-user-cores.js --emails --dry-run` lists them and, in cleartext mode, names the other
   holder and its spelling. Nothing is migrated. Hashed mode (the default, `piiMode: hashed`) is
   unchanged.
+- **Fixed: with `platform.piiMode: cleartext`, the lookups of the account holding an email find it
+  in any case.** The username recovery (`GET /reg/{email}/username` and `/uid`), the core lookup
+  (`GET /reg/cores?email=`) and the third-party sign-in's account matching found only the spelling
+  as written: `USER@x` for an account holding `user@x` answered "unknown email", the core lookup
+  answered as for a free address, and a sign-in whose identity provider gave `User@x` was refused
+  (`no-account`). They now find the account in any case and without surrounding white space, as
+  hashed mode does; the sign-in still links only an address the account proved, and only one the
+  identity provider asserts as verified. When two accounts hold one address in two spellings (data
+  written before the uniqueness above), the one spelled as asked is answered, and none when neither
+  is. `bin/reconcile-user-cores.js --emails` no longer reports as missing, nor claims a second row
+  for, an account whose own row spells its address in another case than its stored email.
 - **Fixed: a `bin/backup.js --restore --verify-integrity` rollback no longer leaves an account the
   restore created.** The rollback cleared the account's data but left its index entry, its platform
   rows (its email reserved) and its routing row: the name and the address stayed taken by an account
@@ -145,6 +156,18 @@
 > sweep treats each as an account without an address (`no-email`): it can be deleted without any
 > notice reaching its holder, so resolve such pairs before the next sweep. Hashed platforms need no
 > step.
+
+### OAuth CORS
+
+- **Fixed: the OAuth endpoints (`/oauth2/*`) and the discovery documents (`/.well-known/*`) answer
+  CORS with their own policy only:** any origin, no credentials, `POST, GET, OPTIONS`,
+  `Content-Type, Authorization, DPoP`; a preflight answers `204` (cached an hour). The API's CORS
+  answered their preflights (the request's origin echoed, `200`) and added
+  `Access-Control-Allow-Credentials: true` next to `Access-Control-Allow-Origin: *` on their answers
+  (browsers refused that pair for a credentialed call anyway). The consent screen's
+  `POST /oauth2/authorize/{offer,accept,refuse}` follow the same policy.
+  `Access-Control-Expose-Headers: API-Version` is no longer sent on this surface. The other routes
+  keep the API's CORS (origin echoed, credentials allowed).
 
 ### Adapter routes: a sidecar served under `/adapter/<name>/`
 

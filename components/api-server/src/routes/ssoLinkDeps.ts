@@ -22,7 +22,7 @@ export const bindingField = (provider: string): string => `sso-${provider}`;
 
 /** The platform surface this adapter needs (structural subset of Platform). */
 type PlatformLike = {
-  getUsersUniqueField: (field: string, value: string) => Promise<string | null>;
+  getUniqueValueOwner: (field: string, value: string) => Promise<string | null>;
   resolveLocalUsernameFromToken: (token: string) => Promise<string | null>;
   reserveUserUniqueValue: (username: string, field: string, value: string) => Promise<boolean>;
   releaseUserUniqueValue: (username: string, field: string, value: string) => Promise<boolean>;
@@ -37,12 +37,14 @@ export function buildSsoLinkDeps (
   usersRepository: UsersRepositoryLike,
   logger?: { warn: (msg: string) => void }
 ): LinkDeps {
-  // getUsersUniqueField returns the HMAC username TOKEN in hashed piiMode;
+  // getUniqueValueOwner returns the HMAC username TOKEN in hashed piiMode;
   // resolveLocalUsernameFromToken turns it back into a cleartext username (and
-  // is a no-op in cleartext mode). v1 SSO is single-core (config forbids
-  // dns.active), so no cross-core redirect is needed.
+  // is a no-op in cleartext mode). The email is found in any case in both
+  // modes; a binding (`sso-<provider>`) is compared as written. v1 SSO is
+  // single-core (config forbids dns.active), so no cross-core redirect is
+  // needed.
   async function resolveUsername (field: string, value: string): Promise<string | null> {
-    const tokenOrName = await platform.getUsersUniqueField(field, value);
+    const tokenOrName = await platform.getUniqueValueOwner(field, value);
     if (tokenOrName == null) return null;
     return await platform.resolveLocalUsernameFromToken(tokenOrName);
   }
@@ -76,8 +78,8 @@ export function buildSsoLinkDeps (
       const userId = await usersRepository.getUserIdForUsername(username);
       if (userId == null) return false;
       // A LIVE (non-trashed), case-insensitively matching, PROVED entry: the
-      // case-insensitive match follows HASHED-mode platform routing (lowercase
-      // + trim), so an IdP claim that still routed to the account verifies.
+      // case-insensitive match follows the platform routing (lowercase + trim,
+      // in both piiModes), so an IdP claim that routed to the account verifies.
       return await isAddressProved(userId, email);
     },
     logger

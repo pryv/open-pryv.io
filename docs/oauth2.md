@@ -42,6 +42,15 @@ Once enabled, each core exposes:
 | `POST /oauth2/introspect` | RFC 7662 token introspection, for resource servers (confidential clients registered with `--can-introspect`) |
 | `POST /oauth2/revoke` | RFC 7009 token revocation, a client revoking its own access or refresh token |
 
+**CORS.** Every `/oauth2/*` endpoint and every `/.well-known/*` document
+answers cross-origin requests with one policy: any origin
+(`Access-Control-Allow-Origin: *`), no credentials (no
+`Access-Control-Allow-Credentials`: browser clients bind their requests with
+PKCE, cookies never cross), methods `POST, GET, OPTIONS`, request headers
+`Content-Type, Authorization, DPoP`; a preflight (`OPTIONS`) answers `204`
+with it, cached for an hour. The rest of the API keeps its own CORS (the
+request's origin echoed, credentials allowed).
+
 **Introspection.** The caller authenticates as at the token endpoint (HTTP
 Basic, `client_secret_post` or `private_key_jwt`) and must be confidential,
 registered with `--can-introspect` and not suspended; anyone else gets one
