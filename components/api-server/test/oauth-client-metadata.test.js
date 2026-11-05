@@ -24,6 +24,7 @@ import * as storage from 'oauth2/src/storage.ts';
 import { mintSecret } from 'oauth2/src/clientSecret.ts';
 import { metadataClientKey } from 'oauth2/src/clientMetadataId.ts';
 import { _resetClientMetadataForTests } from 'oauth2/src/clientMetadata.ts';
+import { resetJwksCacheForTests } from 'oauth2/src/jwksUri.ts';
 import { setPeerTransportForTests, getPeerTransportForTests } from 'business/src/outbound/peerFetch.ts';
 import * as storages from 'storages';
 import { injectTestConfigSnapshot, withInjectedConfig } from 'test-helpers';
@@ -70,6 +71,30 @@ const toyExtension = {
     },
   },
 };
+
+const CLIENT_ASSERTION_TYPE_URN = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+
+/** A signing key for `alg` (RS256: RSA 2048, ES256: P-256) and its public JWK. */
+function signingKey (alg, kid) {
+  const { privateKey, publicKey } = alg === 'RS256'
+    ? crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+    : crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pub = publicKey.export({ format: 'jwk' });
+  const jwk = pub.kty === 'RSA' ? { kty: 'RSA', n: pub.n, e: pub.e } : { kty: 'EC', crv: pub.crv, x: pub.x, y: pub.y };
+  return { alg, kid, privateKey, publicJwk: { ...jwk, kid } };
+}
+
+/** A fresh client assertion (iss = sub = `clientId`, a new jti) for `aud`. */
+function clientAssertion (key, clientId, aud) {
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const input = enc({ alg: key.alg, typ: 'JWT', kid: key.kid }) + '.' +
+    enc({ iss: clientId, sub: clientId, aud, jti: 'j-' + crypto.randomUUID(), exp: now + 120, iat: now });
+  const sig = key.alg === 'RS256'
+    ? crypto.sign('sha256', Buffer.from(input), key.privateKey)
+    : crypto.sign('sha256', Buffer.from(input), { key: key.privateKey, dsaEncoding: 'ieee-p1363' });
+  return input + '.' + sig.toString('base64url');
+}
 
 function pkce () {
   const verifier = crypto.randomBytes(32).toString('base64url');
@@ -207,6 +232,16 @@ describe('[OCMDE] client metadata documents end to end', function () {
     });
     assert.equal(t.status, 200, JSON.stringify(t.body));
     return { token: t.body, offer };
+  }
+
+  /** Authorization and consent: the code and its PKCE verifier. */
+  async function codeFor (who, url) {
+    const { verifier, challenge } = pkce();
+    const res = await authorize(url, { challenge });
+    assert.equal(res.status, 302, res.text);
+    const { accept } = await consent(who, new URL(res.headers.location).searchParams.get('state'));
+    assert.equal(accept.status, 200, JSON.stringify(accept.body));
+    return { code: new URL(accept.body.redirectTo).searchParams.get('code'), verifier };
   }
 
   async function accesses (who, query = {}) {
@@ -502,6 +537,58 @@ describe('[OCMDE] client metadata documents end to end', function () {
     const shown = rows.filter((r) => r.event === 'oauth.consent.shown').map((r) => r.record);
     assert.deepEqual(shown.map((r) => r.metadataHost), ['client.example', 'client.example']);
     assert.ok(!JSON.stringify(rows).includes('Audited agent'), 'the document body never reaches the audit');
+  });
+
+  it('[OCMDE14] a confidential client (private_key_jwt, its key set on its host): assertions by the URL, replay, rotation, refresh, revoke; no introspection', async () => {
+    resetJwksCacheForTests();
+    const disc = await coreRequest.get('/.well-known/oauth-authorization-server');
+    const tokenEndpoint = disc.body.token_endpoint;
+    assert.ok(disc.body.token_endpoint_auth_signing_alg_values_supported.includes('RS256'));
+    const rsa = signingKey('RS256', 'rsa-1');
+    const ec = signingKey('ES256', 'ec-2');
+    const jwksUrl = `https://client.example/keys/${cuid().slice(-8)}.json`;
+    serve(jwksUrl, { keys: [rsa.publicJwk] });
+    const url = publish({ token_endpoint_auth_method: 'private_key_jwt', jwks_uri: jwksUrl });
+    const who = await newUser();
+    const assertion = (key) => clientAssertion(key, url, tokenEndpoint);
+    const withAssertion = (body, a) => coreRequest.post('/oauth2/token').type('form')
+      .send({ ...body, client_assertion_type: CLIENT_ASSERTION_TYPE_URN, client_assertion: a });
+
+    const first = await codeFor(who, url);
+    const codeBody = { grant_type: 'authorization_code', code: first.code, code_verifier: first.verifier, redirect_uri: REDIRECT_URI, resource: RS_AUD };
+    const a1 = assertion(rsa);
+    const t = await withAssertion(codeBody, a1);
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    assert.equal((await rowFor(url)).tokenEndpointAuthMethod, 'private_key_jwt');
+    // The same assertion again: its jti is burnt.
+    const replay = await withAssertion({ grant_type: 'refresh_token', refresh_token: t.body.refresh_token }, a1);
+    assert.deepEqual([replay.status, replay.body.error], [401, 'invalid_client']);
+    // A code exchange without the assertion: the client must authenticate.
+    const second = await codeFor(who, url);
+    const bare = await coreRequest.post('/oauth2/token').type('form').send({
+      grant_type: 'authorization_code', code: second.code, code_verifier: second.verifier, redirect_uri: REDIRECT_URI, resource: RS_AUD, client_id: url,
+    });
+    assert.deepEqual([bare.status, bare.body.error], [401, 'invalid_client']);
+    // The key rotated at the client's host (another kid, another algorithm):
+    // the set is fetched again and the new key verifies, the withdrawn one no
+    // longer does (the cache lapse is simulated).
+    serve(jwksUrl, { keys: [ec.publicJwk] });
+    resetJwksCacheForTests();
+    const old = await withAssertion({ grant_type: 'refresh_token', refresh_token: t.body.refresh_token }, assertion(rsa));
+    assert.equal(old.status, 401, 'the withdrawn key');
+    const r = await withAssertion({ grant_type: 'refresh_token', refresh_token: t.body.refresh_token }, assertion(ec));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    // Revocation (RFC 7009) with an assertion; introspection is refused.
+    const revoked = await coreRequest.post('/oauth2/revoke').type('form')
+      .send({ token: r.body.refresh_token, token_type_hint: 'refresh_token', client_assertion_type: CLIENT_ASSERTION_TYPE_URN, client_assertion: assertion(ec) });
+    assert.equal(revoked.status, 200);
+    assert.equal((await withAssertion({ grant_type: 'refresh_token', refresh_token: r.body.refresh_token }, assertion(ec))).body.error, 'invalid_grant');
+    const intro = await coreRequest.post('/oauth2/introspect').type('form')
+      .send({ token: r.body.access_token, client_assertion_type: CLIENT_ASSERTION_TYPE_URN, client_assertion: assertion(ec) });
+    assert.equal(intro.status, 401);
+    // A key set on another host makes the document invalid.
+    const elsewhere = publish({ token_endpoint_auth_method: 'private_key_jwt', jwks_uri: 'https://tools.example/keys.json' });
+    assert.equal((await authorize(elsewhere)).status, 400);
   });
 
   it('[OCMDE15] the access stamp: grant and sessions carry clientData.oauth.client, refreshed on refresh; the API refuses to change it; a derived session carries none', async () => {

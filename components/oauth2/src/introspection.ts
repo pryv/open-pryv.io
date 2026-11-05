@@ -90,10 +90,10 @@ export function handleIntrospect (deps: IntrospectDeps) {
     const bodyClientId = typeof body.client_id === 'string' ? body.client_id : '';
     // Next to a client_assertion, client_id is optional (RFC 7523 §3): the
     // assertion's iss names the client, authenticated below as any other.
-    // A metadata-document client names itself by its URL: its row key here
-    // (such a client is never allowed to introspect: refused below).
-    const clientId = basic?.client_id ?? (bodyClientId !== ''
-      ? clientKeyOf(bodyClientId)
+    // A metadata-document client names itself by its URL (body or assertion):
+    // its row key here (such a client is never allowed to introspect: refused below).
+    const clientId = basic?.client_id ?? clientKeyOf(bodyClientId !== ''
+      ? bodyClientId
       : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
     // Uniform refusal: unknown, public, not allowed, not active, or bad credentials.
     // The caller's regions are not checked: they say where its users are

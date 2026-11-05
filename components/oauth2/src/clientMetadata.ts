@@ -42,7 +42,8 @@ import { peerFetch, platformHostMatcher, type PeerSettings } from 'business/src/
 import { clientMetadataSettings, hostListed, type ClientMetadataSettings } from './clientMetadataConfig.ts';
 import { clientIdUrlSyntaxProblem, metadataClientKey, isMetadataClientKey, METADATA_KEY_PREFIX } from './clientMetadataId.ts';
 import { localizedTextProblem, logoUriProblem, insecureRedirectUris, persistMetadataClient } from './clientRegistry.ts';
-import type { PublicJwkSet } from './jwks.ts';
+import { validatePublicJwkSet, keyMatchesAlg, CLIENT_ASSERTION_ALGS, type PublicJwkSet } from './jwks.ts';
+import { jwksUriProblem } from './jwksUri.ts';
 import { canonicalJson } from './scopeGrammar.ts';
 import { issuerFromConfig } from './issuer.ts';
 import { audit } from './audit.ts';
@@ -74,6 +75,8 @@ const PRUNE_EXTRA_MS = 7 * 24 * 3600 * 1000;
 // The document members this server reads; any other is ignored.
 const READ_MEMBERS = new Set(['client_id', 'redirect_uris', 'token_endpoint_auth_method', 'grant_types', 'response_types',
   'client_name', 'client_uri', 'policy_uri', 'tos_uri', 'logo_uri', 'software_id', 'contacts']);
+// Read for a `private_key_jwt` document only (ignored with `none`).
+const KEY_MEMBERS = ['jwks_uri', 'jwks', 'token_endpoint_auth_signing_alg'];
 // Control and bidirectional-formatting characters (as for registered display texts).
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/;
@@ -184,15 +187,27 @@ export function clientMetadataProblem (doc: unknown, url: string, settings: Clie
 
   // token_endpoint_auth_method: the singular member decides (the plural
   // `token_endpoint_auth_methods_supported` some documents carry is ignored).
+  // Absent reads as `none` (the documents of public clients state it; RFC
+  // 7591's default, a secret, cannot apply: a document carries no secret).
   const method = doc.token_endpoint_auth_method ?? 'none';
-  if (method !== 'none' || !settings.authMethods.includes(method)) {
-    return { ok: false, detail: 'unsupported-auth-method: ' + JSON.stringify(method) + ' (accepted: none)' };
+  if ((method !== 'none' && method !== 'private_key_jwt') || !settings.authMethods.includes(method)) {
+    return { ok: false, detail: 'unsupported-auth-method: ' + JSON.stringify(method) + ' (accepted: ' + settings.authMethods.join(', ') + ')' };
   }
   const fields: DocumentFields = {
     redirectUris: [...uris as string[]],
     grantTypes: [],
     tokenEndpointAuthMethod: method,
   };
+  // The key members, read for a client that authenticates with its keys only.
+  const keyMembersIgnored: string[] = [];
+  if (method === 'private_key_jwt') {
+    const keys = documentKeys(doc, new URL(url).host);
+    if (!keys.ok) return { ok: false, detail: keys.detail };
+    Object.assign(fields, keys.fields);
+    keyMembersIgnored.push(...keys.ignored);
+  } else {
+    for (const k of KEY_MEMBERS) if (doc[k] != null) keyMembersIgnored.push(k);
+  }
 
   // grant_types: RFC 7591 default, then the ones this server serves.
   const grants = doc.grant_types ?? ['authorization_code'];
@@ -249,8 +264,54 @@ export function clientMetadataProblem (doc: unknown, url: string, settings: Clie
       dropped.push('contacts');
     }
   }
-  const ignored = Object.keys(doc).filter((k) => !READ_MEMBERS.has(k) && !k.startsWith('client_name#'));
+  const ignored = [
+    ...Object.keys(doc).filter((k) => !READ_MEMBERS.has(k) && !KEY_MEMBERS.includes(k) && !k.startsWith('client_name#')),
+    ...keyMembersIgnored,
+  ];
   return { ok: true, fields, ignored, dropped };
+}
+
+/**
+ * The key set of a `private_key_jwt` document: its `jwks_uri` (https, on the
+ * document's own host: the key set is the client's identity and lives where
+ * its document does) or, without one, its inline public `jwks`; `jwks_uri`
+ * wins when both are given (the inline set is then ignored). An optional
+ * `token_endpoint_auth_signing_alg` pins the one algorithm accepted.
+ */
+function documentKeys (doc: Record<string, unknown>, metadataHost: string):
+  { ok: true; fields: Partial<DocumentFields>; ignored: string[] } | { ok: false; detail: string } {
+  const fields: Partial<DocumentFields> = {};
+  const ignored: string[] = [];
+  if (doc.jwks_uri != null) {
+    const problem = jwksUriProblem(doc.jwks_uri);
+    if (problem != null) return { ok: false, detail: 'jwks_uri: ' + problem };
+    const jwksUri = doc.jwks_uri as string;
+    if (CONTROL_RE.test(jwksUri) || jwksUri.includes('#')) return { ok: false, detail: 'jwks_uri: a control character or a fragment' };
+    if (new URL(jwksUri).host !== metadataHost) {
+      return { ok: false, detail: 'jwks_uri must be on the host of the metadata document (' + metadataHost + ')' };
+    }
+    fields.jwksUri = jwksUri;
+    if (doc.jwks != null) ignored.push('jwks');
+  } else if (doc.jwks != null) {
+    try {
+      fields.jwks = validatePublicJwkSet(doc.jwks);
+    } catch (err: unknown) {
+      return { ok: false, detail: 'jwks: ' + (err as Error).message };
+    }
+  } else {
+    return { ok: false, detail: 'private_key_jwt needs a jwks_uri or a jwks' };
+  }
+  const alg = doc.token_endpoint_auth_signing_alg;
+  if (alg != null) {
+    if (typeof alg !== 'string' || !CLIENT_ASSERTION_ALGS.includes(alg)) {
+      return { ok: false, detail: 'token_endpoint_auth_signing_alg ' + JSON.stringify(alg) + ' (accepted: ' + CLIENT_ASSERTION_ALGS.join(', ') + ')' };
+    }
+    if (fields.jwks != null && !fields.jwks.keys.some((k) => keyMatchesAlg(k, alg))) {
+      return { ok: false, detail: 'token_endpoint_auth_signing_alg ' + alg + ': no key of the jwks fits it' };
+    }
+    fields.tokenEndpointAuthSigningAlgs = [alg];
+  }
+  return { ok: true, fields, ignored };
 }
 
 export type FetchOutcome =

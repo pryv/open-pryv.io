@@ -255,6 +255,6 @@ describe('[OCKE] OAuth client keys, algorithms and lifetimes, end to end', funct
   it('[OCKE5] discovery lists the assertion algorithms', async () => {
     const res = await coreRequest.get('/.well-known/oauth-authorization-server');
     assert.equal(res.status, 200);
-    assert.deepEqual(res.body.token_endpoint_auth_signing_alg_values_supported, ['ES256', 'ES384', 'RS384']);
+    assert.deepEqual(res.body.token_endpoint_auth_signing_alg_values_supported, ['ES256', 'ES384', 'RS256', 'RS384']);
   });
 });

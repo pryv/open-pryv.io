@@ -26,6 +26,36 @@ const storage = require('../src/storage.ts');
 const { buildDiscoveryDocument } = require('../src/wellKnown.ts');
 const { setPeerTransportForTests, getPeerTransportForTests } = require('business/src/outbound/peerFetch.ts');
 const cli = require('../../../bin/oauth-client.js');
+const crypto = require('node:crypto');
+const jwks = require('../src/jwks.ts');
+const { authenticateClient } = require('../src/clientSecret.ts');
+const { verifyClientAssertion, CLIENT_ASSERTION_TYPE } = require('../src/clientAssertion.ts');
+const { isConfidentialClient } = require('../src/clientAuth.ts');
+
+const ISSUER = 'https://issuer.example.net';
+
+/** A signing key for `alg` (RS* an RSA 2048 key, ES256 a P-256 key), with its public JWK. */
+function makeKey (alg, kid) {
+  const { privateKey, publicKey } = alg.startsWith('RS')
+    ? crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
+    : crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const pub = publicKey.export({ format: 'jwk' });
+  const jwk = pub.kty === 'RSA' ? { kty: 'RSA', n: pub.n, e: pub.e } : { kty: 'EC', crv: pub.crv, x: pub.x, y: pub.y };
+  return { alg, privateKey, publicJwk: { ...jwk, kid }, rawPublic: pub };
+}
+
+/** A client assertion naming `clientId` (iss = sub), signed by `key` (`signAs`: the algorithm actually used). */
+function signedAssertion (key, clientId, { alg = key.alg, signAs = key.alg, aud = ISSUER + '/oauth2/token' } = {}) {
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const input = enc({ alg, typ: 'JWT', kid: key.publicJwk.kid }) + '.' +
+    enc({ iss: clientId, sub: clientId, aud, jti: 'j-' + crypto.randomUUID(), exp: now + 120, iat: now });
+  const hash = signAs.endsWith('384') ? 'sha384' : 'sha256';
+  const sig = signAs.startsWith('RS')
+    ? crypto.sign(hash, Buffer.from(input), key.privateKey)
+    : crypto.sign(hash, Buffer.from(input), { key: key.privateKey, dsaEncoding: 'ieee-p1363' });
+  return input + '.' + sig.toString('base64url');
+}
 
 const URL1 = 'https://client.example/oauth/client.json';
 const URL2 = 'https://tools.example/agent/metadata.json';
@@ -657,6 +687,97 @@ describe('[OCMD] client metadata documents', function () {
       const refused = await run((p, a) => cli.runTemplateFrom(p, a, getClient), ['template-from', 'anyaud']);
       assert.match(refused.error.message, /no audience list/);
     });
+  });
+
+  describe('[OCMD11] confidential documents (private_key_jwt)', () => {
+    const s = settingsOf();
+    const check = (d, settings = s) => meta.clientMetadataProblem(d, URL1, settings);
+    const pkj = (extra = {}) => doc(URL1, { token_endpoint_auth_method: 'private_key_jwt', ...extra });
+    let rsa, ec;
+    before(() => {
+      rsa = makeKey('RS256', 'rsa-1');
+      ec = makeKey('ES256', 'ec-1');
+    });
+
+    it('[OCMD11A] the key set: jwks_uri on the document\'s host, or an inline jwks; jwks_uri wins over jwks', () => {
+      const byUri = check(pkj({ jwks_uri: 'https://client.example/jwks.json' }));
+      assert.equal(byUri.ok, true, byUri.detail);
+      assert.deepEqual([byUri.fields.tokenEndpointAuthMethod, byUri.fields.jwksUri, byUri.fields.jwks], ['private_key_jwt', 'https://client.example/jwks.json', undefined]);
+      for (const [uri, re] of [['https://keys.example/jwks.json', /host of the metadata document/], ['https://core-a.pryv.example/jwks', /host of the metadata document/],
+        ['https://client.example:8443/jwks', /host of the metadata document/], ['http://client.example/jwks', /https/], ['https://client.example/j#k', /fragment/]]) {
+        const r = check(pkj({ jwks_uri: uri }));
+        assert.equal(r.ok, false, uri);
+        assert.match(r.detail, re, uri);
+      }
+      const inline = check(pkj({ jwks: { keys: [rsa.publicJwk] } }));
+      assert.equal(inline.ok, true, inline.detail);
+      assert.deepEqual(inline.fields.jwks.keys.map((k) => k.kid), ['rsa-1']);
+      assert.equal(check(pkj({ jwks: { keys: [{ ...rsa.rawPublic, d: 'secret' }] } })).ok, false, 'private material refused');
+      const both = check(pkj({ jwks_uri: 'https://client.example/jwks.json', jwks: { keys: [rsa.publicJwk] } }));
+      assert.equal(both.fields.jwksUri, 'https://client.example/jwks.json');
+      assert.equal(both.fields.jwks, undefined);
+      assert.ok(both.ignored.includes('jwks'));
+      assert.match(check(pkj()).detail, /needs a jwks_uri or a jwks/);
+    });
+
+    it('[OCMD11B] the signing algorithm pins the row; the plural methods member is ignored; authMethods may refuse confidential documents', () => {
+      const pinned = check(pkj({ jwks: { keys: [rsa.publicJwk] }, token_endpoint_auth_signing_alg: 'RS256' }));
+      assert.deepEqual(pinned.fields.tokenEndpointAuthSigningAlgs, ['RS256']);
+      assert.match(check(pkj({ jwks: { keys: [rsa.publicJwk] }, token_endpoint_auth_signing_alg: 'PS256' })).detail, /token_endpoint_auth_signing_alg/);
+      assert.match(check(pkj({ jwks: { keys: [ec.publicJwk] }, token_endpoint_auth_signing_alg: 'RS256' })).detail, /no key of the jwks fits/);
+      const plural = ['none', 'private_key_jwt'];
+      const pub = check(doc(URL1, { token_endpoint_auth_method: 'none', token_endpoint_auth_methods_supported: plural, jwks_uri: 'https://client.example/jwks.json' }));
+      assert.equal(pub.fields.tokenEndpointAuthMethod, 'none');
+      assert.equal(pub.fields.jwksUri, undefined, 'a public document\'s key members are not read');
+      assert.ok(pub.ignored.includes('token_endpoint_auth_methods_supported') && pub.ignored.includes('jwks_uri'));
+      const conf2 = check(pkj({ token_endpoint_auth_methods_supported: plural, jwks_uri: 'https://client.example/jwks.json' }));
+      assert.equal(conf2.fields.tokenEndpointAuthMethod, 'private_key_jwt');
+      const publicOnly = settingsOf(block({ authMethods: ['none'] }));
+      assert.match(check(pkj({ jwks_uri: 'https://client.example/jwks.json' }), publicOnly).detail, /unsupported-auth-method/);
+      assert.equal(check(doc(), publicOnly).ok, true);
+    });
+
+    it('[OCMD11C] the row authenticates by its URL (iss = sub), burns the jti under its key, and still holds no role', async () => {
+      const checked = check(pkj({ jwks: { keys: [rsa.publicJwk] } }));
+      const row = meta.buildMetadataClientRow(URL1, checked.fields, s, null, Date.now());
+      const platform = fakePlatform();
+      await persistClient(platform, row);
+      const stored = await getClient(platform, row.clientId);
+      assert.equal(isConfidentialClient(stored), true);
+      for (const [k, v] of [['canExchange', true], ['canIntrospect', true]]) {
+        await assert.rejects(persistClient(platform, { ...row, [k]: v }), new RegExp('not available to such a client: ' + k), k);
+      }
+      await assert.rejects(persistClient(platform, { ...row, jwks: undefined, jwksUri: 'https://keys.example/jwks.json' }), /host of its metadata document/);
+      const authAs = (token) => authenticateClient({
+        client: stored, clientId: row.clientId, assertion: token, assertionType: CLIENT_ASSERTION_TYPE, platform, expectedAudiences: [ISSUER, ISSUER + '/oauth2/token'],
+      });
+      const good = signedAssertion(rsa, URL1);
+      assert.equal((await authAs(good)).ok, true);
+      assert.equal((await authAs(good)).ok, false, 'replayed');
+      assert.ok([...platform.state.keys()].some((k) => k.includes('/' + row.clientId + '/')), 'jti burnt under the row key');
+      assert.equal((await authAs(signedAssertion(rsa, row.clientId))).ok, false, 'iss = the row key');
+      assert.equal((await authAs(signedAssertion(rsa, URL2))).ok, false, 'another URL');
+      assert.equal((await authenticateClient({ client: stored, clientId: row.clientId, platform })).ok, false, 'no assertion: refused');
+    });
+  });
+
+  it('[OCMD12] RS256: accepted for RSA keys only, advertised; an EC key never verifies it, nor an RSA key an ES256 header', async () => {
+    assert.ok(jwks.CLIENT_ASSERTION_ALGS.includes('RS256'));
+    assert.ok(buildDiscoveryDocument({ issuer: 'https://x', scopesSupported: [] }).token_endpoint_auth_signing_alg_values_supported.includes('RS256'));
+    const rsa = makeKey('RS256', 'rsa-1');
+    const ec = makeKey('ES256', 'ec-1');
+    assert.equal(jwks.keyMatchesAlg(rsa.publicJwk, 'RS256'), true);
+    assert.equal(jwks.keyMatchesAlg(rsa.publicJwk, 'RS384'), true);
+    assert.equal(jwks.keyMatchesAlg({ ...rsa.publicJwk, alg: 'RS384' }, 'RS256'), false, 'a key pinned to RS384');
+    assert.equal(jwks.keyMatchesAlg(ec.publicJwk, 'RS256'), false);
+    assert.equal(jwks.keyMatchesAlg(rsa.publicJwk, 'ES256'), false);
+    const opts = (keys) => ({ clientId: URL1, jwks: { keys }, expectedAudiences: [ISSUER, ISSUER + '/oauth2/token'] });
+    assert.ok((await verifyClientAssertion(signedAssertion(rsa, URL1), opts([rsa.publicJwk]))).jti);
+    // An RS256 header naming the EC key, and an ES256 header naming the RSA key.
+    await assert.rejects(verifyClientAssertion(signedAssertion(ec, URL1, { alg: 'RS256' }), opts([ec.publicJwk])));
+    await assert.rejects(verifyClientAssertion(signedAssertion(rsa, URL1, { alg: 'ES256' }), opts([rsa.publicJwk])));
+    // An RS384 signature under an RS256 header does not verify.
+    await assert.rejects(verifyClientAssertion(signedAssertion(rsa, URL1, { alg: 'RS256', signAs: 'RS384' }), opts([rsa.publicJwk])));
   });
 
   it('[OCMD13] the access stamp: name (first language of a set), host, url; none for a curated client', () => {

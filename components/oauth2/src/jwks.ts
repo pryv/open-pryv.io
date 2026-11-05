@@ -11,9 +11,9 @@
  * A registered client MAY carry a public JWK Set (inline, or published at
  * its `jwks_uri`) used to verify `private_key_jwt` client-authentication
  * assertions (RFC 7521/7523). Accepted keys: EC P-256 (ES256), EC P-384
- * (ES384) and RSA of at least 2048 bits (RS384). Each algorithm is bound to
- * one key type, so an assertion is only ever verified with a key of the type
- * its header names (no alg confusion).
+ * (ES384) and RSA of at least 2048 bits (RS256, RS384). Each algorithm is
+ * bound to one key type, so an assertion is only ever verified with a key of
+ * the type its header names (no alg confusion).
  *
  * These keys are PUBLIC, so caching them cluster-wide in PlatformDB does
  * not breach the no-credentials-in-PlatformDB invariant, but a private
@@ -26,7 +26,7 @@ import { createHash, webcrypto } from 'node:crypto';
 const { subtle } = webcrypto;
 
 /** JWS algorithms accepted for a client assertion, in discovery order. */
-export const CLIENT_ASSERTION_ALGS: readonly string[] = Object.freeze(['ES256', 'ES384', 'RS384']);
+export const CLIENT_ASSERTION_ALGS: readonly string[] = Object.freeze(['ES256', 'ES384', 'RS256', 'RS384']);
 
 /** A public EC JWK (P-256 for ES256, P-384 for ES384). */
 export interface EcPublicJwk {
@@ -44,7 +44,7 @@ export interface EcPublicJwk {
 /** A public EC P-256 JWK (the DPoP / legacy shape). */
 export type EcP256PublicJwk = EcPublicJwk & { crv: 'P-256' };
 
-/** A public RSA JWK (RS384). */
+/** A public RSA JWK (RS256, RS384). */
 export interface RsaPublicJwk {
   kty: 'RSA';
   n: string;
@@ -68,10 +68,11 @@ const PRIVATE_MEMBERS = ['d', 'p', 'q', 'dp', 'dq', 'qi', 'oth', 'k'];
 /** Base64url length of an unpadded coordinate, per curve. */
 const COORD_LENGTH: Record<string, number> = { 'P-256': 43, 'P-384': 64 };
 
-/** Curve per EC algorithm, and the one RSA algorithm. */
+/** Curve per EC algorithm; the RSA algorithms (RSASSA-PKCS1-v1_5) differ by hash only. */
 const ALG_KEY: Record<string, { kty: 'EC' | 'RSA'; crv?: 'P-256' | 'P-384'; hash: string }> = {
   ES256: { kty: 'EC', crv: 'P-256', hash: 'SHA-256' },
   ES384: { kty: 'EC', crv: 'P-384', hash: 'SHA-384' },
+  RS256: { kty: 'RSA', hash: 'SHA-256' },
   RS384: { kty: 'RSA', hash: 'SHA-384' },
 };
 
@@ -95,7 +96,7 @@ export const MAX_PUBLISHED_JWKS_KEYS = 100;
 
 const B64URL_RE = /^[A-Za-z0-9_-]+$/;
 
-/** The algorithm a key of this type verifies (one per key type). */
+/** The algorithm a key of this type verifies by default (an RSA key verifies RS256 too). */
 export function algForKey (jwk: ClientPublicJwk): string {
   if (jwk.kty === 'RSA') return 'RS384';
   return jwk.crv === 'P-384' ? 'ES384' : 'ES256';
@@ -158,7 +159,7 @@ export function validatePublicJwk (jwk: unknown): ClientPublicJwk {
   }
   if (k.alg != null) {
     if (typeof k.alg !== 'string' || !CLIENT_ASSERTION_ALGS.includes(k.alg) || !keyMatchesAlg({ ...out }, k.alg)) {
-      throw new Error(`jwk.alg "${String(k.alg)}" does not fit a ${out.kty === 'EC' ? (out as EcPublicJwk).crv : 'RSA'} key (expected ${algForKey(out)})`);
+      throw new Error(`jwk.alg "${String(k.alg)}" does not fit a ${out.kty === 'EC' ? (out as EcPublicJwk).crv : 'RSA'} key (expected ${out.kty === 'RSA' ? 'RS256 or RS384' : algForKey(out)})`);
     }
     out.alg = k.alg;
   }

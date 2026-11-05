@@ -13,8 +13,8 @@
  * token-endpoint's expected audiences. Replay accounting (`jti` single-use)
  * is the CALLER's job: this module only validates shape, signature and claims.
  *
- * Algorithms: ES256, ES384 and RS384, each bound to one key type (EC P-256,
- * EC P-384, RSA). The header's `alg` must be one of them, among the client's
+ * Algorithms: ES256, ES384, RS256 and RS384, each bound to one key type (EC
+ * P-256, EC P-384, RSA). The header's `alg` must be one of them, among the client's
  * pinned list when it has one, and the key used must be of that algorithm's
  * type: `none`, HMAC and any key/algorithm mix are refused by construction.
  * With more than one key in the set the header must name its key (`kid`).
@@ -163,7 +163,7 @@ export async function verifyClientAssertion (
   const [headerB64, payloadB64, signatureB64] = segments;
 
   const header = parseJsonObject(b64urlDecode(headerB64), 'JWS header');
-  // A supported algorithm only (rejects `none`, HS*, RS256, PS*, …), and one
+  // A supported algorithm only (rejects `none`, HS*, PS*, RS512, …), and one
   // the client is pinned to when it has a list.
   const alg = header.alg;
   if (typeof alg !== 'string' || !CLIENT_ASSERTION_ALGS.includes(alg)) fail('header.alg is not a supported algorithm');
@@ -175,7 +175,7 @@ export async function verifyClientAssertion (
   const candidates = selectCandidateKeys(opts.jwks, header.kid, alg);
 
   // ES JWS signatures are the raw r||s concatenation, exactly the form
-  // webcrypto ECDSA verify expects; an RS384 signature is as long as the modulus.
+  // webcrypto ECDSA verify expects; an RS256 / RS384 signature is as long as the modulus.
   const signature = b64urlDecode(signatureB64);
   const ecBytes = EC_SIGNATURE_BYTES[alg];
   if (ecBytes != null && signature.length !== ecBytes) fail('signature is not a raw ' + alg + ' signature');

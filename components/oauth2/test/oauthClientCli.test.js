@@ -489,8 +489,8 @@ describe('[OCLI] operator CLI: registry clients', () => {
     // Refused: a pinned alg with no key, an unknown alg, a key set by reference over plain http, two key sources.
     const noKey = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--signing-alg', 'ES256']);
     assert.match(noKey.error?.message ?? '', /no key of the jwks fits ES256/);
-    const unknown = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--signing-alg', 'RS256']);
-    assert.match(unknown.error?.message ?? '', /--signing-alg must be one of ES256, ES384, RS384/);
+    const unknown = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--signing-alg', 'PS256']);
+    assert.match(unknown.error?.message ?? '', /--signing-alg must be one of ES256, ES384, RS256, RS384/);
     const http = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--jwks-uri', 'http://keys.example.com/jwks']);
     assert.match(http.error?.message ?? '', /https/);
     const both = await run(cli.runUpdate, platform, ['update', 'Cli.pkj', '--jwks-uri', 'https://keys.example.com/jwks', '--jwks-file', file]);

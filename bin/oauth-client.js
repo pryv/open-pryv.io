@@ -523,7 +523,7 @@ async function runShow (platform, args, getClient, computeThumbprint) {
   if (client.tokenEndpointAuthMethod === 'private_key_jwt' || client.jwks != null || client.jwksUri != null) {
     console.log('assertion algorithms: ' + (Array.isArray(client.tokenEndpointAuthSigningAlgs) && client.tokenEndpointAuthSigningAlgs.length > 0
       ? client.tokenEndpointAuthSigningAlgs.join(', ') + ' (pinned)'
-      : 'any of ES256, ES384, RS384 that fits a key of the set'));
+      : 'any of ' + require('oauth2/src/jwks.ts').CLIENT_ASSERTION_ALGS.join(', ') + ' that fits a key of the set'));
   }
   printLifetimes(client, '');
   if (client.status === 'review') {
@@ -1745,7 +1745,7 @@ function printUsage (stream) {
     '                            above): fetched by the core, https only, no redirect,\n' +
     '                            private addresses refused, cached 5 minutes\n' +
     '  --signing-alg <alg>       (multi; "none" clears on update) pin the algorithms\n' +
-    '                            the client\'s assertions may use: ES256, ES384, RS384\n' +
+    '                            the client\'s assertions may use: ES256, ES384, RS256, RS384\n' +
     '                            (default: any that fits a key of its set)\n' +
     '  --access-token-ttl <s>  --refresh-token-ttl <s>  --refresh-token-absolute-ttl <s>\n' +
     '                            this client\'s token lifetimes in seconds ("none" clears\n' +

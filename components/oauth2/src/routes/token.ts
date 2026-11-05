@@ -112,7 +112,9 @@ export function handleToken (deps: TokenDeps) {
     // client_credentials grants already tell it apart for a body client_id.
     let assertedClient: Awaited<ReturnType<typeof getClient>> | undefined;
     if (basic == null && noBodyClientId && typeof rawBody.client_assertion === 'string' && rawBody.client_assertion !== '') {
-      const assertedId = clientIdFromAssertion(rawBody.client_assertion, rawBody.client_assertion_type);
+      // A metadata-document client's assertion names its URL: its row key here.
+      const assertedIss = clientIdFromAssertion(rawBody.client_assertion, rawBody.client_assertion_type);
+      const assertedId = assertedIss != null ? clientKeyOf(assertedIss) : null;
       const asserted = assertedId != null ? await getClient(deps.platform, assertedId) : null;
       if (assertedId == null || !hasKeySet(asserted)) {
         outcome = { ok: false as const, status: 401, error: 'invalid_client', description: 'client authentication failed' };

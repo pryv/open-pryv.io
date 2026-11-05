@@ -63,9 +63,10 @@ export function handleRevoke (deps: RevocationDeps) {
     const bodyClientId = typeof body.client_id === 'string' ? body.client_id : '';
     // Next to a client_assertion, client_id is optional (RFC 7523 §3): the
     // assertion's iss names the client, authenticated below as any other.
-    // A metadata-document client names itself by its URL: its row key here.
-    const clientId = basic?.client_id ?? (bodyClientId !== ''
-      ? clientKeyOf(bodyClientId)
+    // A metadata-document client names itself by its URL (body or assertion):
+    // its row key here.
+    const clientId = basic?.client_id ?? clientKeyOf(bodyClientId !== ''
+      ? bodyClientId
       : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
     const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
       basic != null ? { 'WWW-Authenticate': 'Basic realm="oauth2"' } : {});
