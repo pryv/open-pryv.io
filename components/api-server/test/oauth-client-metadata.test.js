@@ -430,6 +430,16 @@ describe('[OCMDE] client metadata documents end to end', function () {
     assert.match(bad.text, /normal form/);
     const plain = await authorize('http://client.example/apps/x.json');
     assert.match(plain.text, /https URL/);
+    // The stored key is no client_id: an existing row of a denied host, or
+    // with the feature off, is not reached through it.
+    const known = publish();
+    assert.equal((await authorize(known)).status, 302);
+    const byKey = await authorize(metadataClientKey(known));
+    assert.equal(byKey.status, 400);
+    assert.match(byKey.text, /Unknown client_id/);
+    await withInjectedConfig({ oauth: { ...OAUTH, clientMetadataDocuments: { ...CMD, deniedHosts: ['client.example'] } } }, async () => {
+      assert.equal((await authorize(metadataClientKey(known))).status, 400);
+    });
   });
 
   it('[OCMDE07] a document changed between consents: the new name is shown, a new redirect URI works at the next authorization, an old code exchanges against its own', async () => {

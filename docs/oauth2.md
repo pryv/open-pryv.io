@@ -928,7 +928,8 @@ request parameters (`/oauth2/authorize`, `/token` body `client_id`, `/revoke`),
 a client assertion's `iss` / `sub`, introspection's `client_id`, an id_token's `aud` / `azp`, the consent answer,
 audit rows (`metadataUrl`). The row is stored under `url~` and 40 hexadecimal
 characters of the URL's SHA-256 (sessions are named `oauth:url~…`; the prefix
-is reserved; an assertion's `jti` is burnt under it). A client presents its URL
+is reserved; an assertion's `jti` is burnt under it; `/oauth2/authorize`
+answers the key as an unknown client). A client presents its URL
 in the request body or its assertion, never as an HTTP Basic user name (it has
 no secret).
 

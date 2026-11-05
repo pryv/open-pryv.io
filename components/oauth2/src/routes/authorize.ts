@@ -51,6 +51,7 @@ const { audit } = require('../audit.ts');
 const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 const { resolveMetadataClient, metadataHostOf } = require('../clientMetadata.ts');
 const { clientMetadataDocumentsOn } = require('../clientMetadataConfig.ts');
+const { isMetadataClientKey } = require('../clientMetadataId.ts');
 
 /** An S256 code_challenge: base64url (no padding) of a SHA-256 digest. */
 const PKCE_S256_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -108,8 +109,13 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     // A client metadata document URL (when this core accepts them): the
     // row is read, or fetched and written, before anything else; a refusal
     // says why (URL rules) or only that the document is unusable.
+    // Such a client is named by its URL only: its stored key (`url~…`) is no
+    // client_id here, or it would skip the URL rules, the host policy and
+    // the document's freshness.
     let found: OAuthClient | null;
-    if (clientMetadataDocumentsOn(deps.config) && /^https?:\/\//i.test(String(q.client_id))) {
+    if (isMetadataClientKey(q.client_id)) {
+      found = null;
+    } else if (clientMetadataDocumentsOn(deps.config) && /^https?:\/\//i.test(String(q.client_id))) {
       const resolved = await resolveMetadataClient({ platform: deps.platform, config: deps.config }, String(q.client_id));
       if (!resolved.ok) return sendHtmlError(res, 400, resolved.message);
       found = resolved.client;
