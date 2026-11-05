@@ -133,7 +133,7 @@ The discovery document advertises:
   "response_modes_supported": ["query"],
   "grant_types_supported": ["authorization_code"],
   "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
-  "token_endpoint_auth_signing_alg_values_supported": ["ES256", "ES384", "RS384"],
+  "token_endpoint_auth_signing_alg_values_supported": ["ES256", "ES384", "RS256", "RS384"],
   "code_challenge_methods_supported": ["S256"],
   "authorization_response_iss_parameter_supported": true,
   "dpop_signing_alg_values_supported": ["ES256"],
@@ -150,7 +150,7 @@ introspection and revocation members appear only when those endpoints are
 mounted (with the authorization-code flow); `jwks_uri` only when
 `oauth.signingKeys` lists a key (§ 2). A client with a secret may send it
 as HTTP Basic (`client_secret_basic`) or in the form body (`client_secret_post`).
-`private_key_jwt` is RFC 7523 client authentication with an ES256, ES384 or RS384 assertion
+`private_key_jwt` is RFC 7523 client authentication with an ES256, ES384, RS256 or RS384 assertion
 (see § 3c for keys, pinned algorithms and `jwks_uri`; `aud` = the issuer or the token-endpoint URL; `/oauth2/introspect` and
 `/oauth2/revoke` also accept their own URL as `aud`). With an assertion, `client_id` may be left
 out of the request (RFC 7523 § 3): the client is the assertion's `iss`, which must equal its `sub`;
@@ -805,7 +805,8 @@ the document, validates it, and serves the client as a **registry client**
 fields come from the document; **what it may be granted comes from the
 operator's template** (`oauth.clientMetadataDocuments.client`), never from the
 document. From then on every path runs as for a curated registry client:
-consent, code exchange (public client: PKCE S256, no secret), refresh,
+consent, code exchange (PKCE S256; a public client presents no credential, a
+confidential one a `private_key_jwt` assertion), refresh,
 revocation (RFC 7009), introspection by a resource server, the audience binding,
 token exchange by a resource server, the client checks at the data API,
 `purge-grants`. The discovery documents advertise
@@ -844,7 +845,10 @@ fetch. The body never reaches a log or an audit row.
 |---|---|
 | `client_id` | required, exactly the document URL (string equality: a trailing slash or another case is a mismatch) |
 | `redirect_uris` | required, 1 to 32 absolute URIs without fragment; plain `http` on a loopback host only (`http://localhost/callback` then matches any port, § 3), private-use schemes allowed |
-| `token_endpoint_auth_method` | `none`, or absent (read as `none`: a lenient reading of RFC 7591, whose default is `client_secret_basic`, which a document cannot carry); any other value makes the document invalid. The plural `token_endpoint_auth_methods_supported` some documents carry is ignored |
+| `token_endpoint_auth_method` | `none`, absent (read as `none`: a lenient reading of RFC 7591, whose default is `client_secret_basic`, which a document cannot carry) or `private_key_jwt` (a confidential client, below), each only when listed in `oauth.clientMetadataDocuments.authMethods`; any other value makes the document invalid. The plural `token_endpoint_auth_methods_supported` some documents carry is ignored: the singular member decides |
+| `jwks_uri` | with `private_key_jwt`: https, without fragment or credentials, **on the document's own host** (same host and port); ignored with `none` |
+| `jwks` | with `private_key_jwt` and no `jwks_uri`: an inline public JWK Set (as for a registered client: no private member, a distinct `kid` per key when there are several); when both are given `jwks_uri` wins and the inline set is ignored |
+| `token_endpoint_auth_signing_alg` | optional, with `private_key_jwt`: one of the accepted assertion algorithms (§ 3c); pins the client to it |
 | `grant_types` | absent: `authorization_code` (RFC 7591 default); present: the row keeps `authorization_code` and `refresh_token` among them (others, such as a `jwt-bearer` URN, drop out); `authorization_code` is required |
 | `response_types` | absent, or a list including `code` |
 | `client_name`, `client_name#<lang>` | optional display name, and per-language names (at most 128 characters, no control characters) |
@@ -857,6 +861,26 @@ metadata document invalid" or "client metadata document unavailable, retry
 later" (the reason goes to the server log and the audit row); the core does not
 fetch that URL again for `negativeCacheSeconds`. A client developer reads the
 reason with `bin/oauth-client.js check-metadata <url>` (§ 3b).
+
+**Confidential clients (`private_key_jwt`).** A document with
+`token_endpoint_auth_method: private_key_jwt` and its key set (`jwks_uri` on
+its own host, or an inline `jwks`) makes a confidential client. It
+authenticates at `/oauth2/token` and `/oauth2/revoke` with a client assertion
+exactly as a registered `private_key_jwt` client (§ 3c): `iss` = `sub` = **the
+document URL**, `aud` the issuer or the endpoint URL, `exp` within 5 minutes, a
+fresh `jti` (burnt once), an algorithm among `ES256`, `ES384`, `RS256`, `RS384`
+that fits the key the header names (`kid`; required when the set holds several
+keys). `client_id` may be left out next to the assertion. A request of such a
+client without an assertion is refused (401 `invalid_client`), on every grant.
+The key set at a `jwks_uri` is fetched through the same counterparty guards
+(https, 200 only, 64 KiB, 5 s, no redirect), cached 5 minutes per core; an
+assertion naming a `kid` the cached set does not hold fetches it again (at most
+every 30 seconds), so a key rotated in at the client's host verifies at once
+and a key withdrawn stops verifying within 5 minutes. Being confidential never
+widens what the client may do: it gets no introspection and no token exchange
+(introspection answers it 401). `authMethods: [none]` refuses confidential
+documents. Nothing is fetched at `/oauth2/token`: the client must have been
+seen at `/oauth2/authorize` first.
 
 **The template.** Every metadata-document client gets the reach the operator
 configured once in `oauth.clientMetadataDocuments.client`: `scope` (the maximum
@@ -901,11 +925,12 @@ curated clients carry none.
 
 **On the wire and in storage.** The URL is the client's id on the wire:
 request parameters (`/oauth2/authorize`, `/token` body `client_id`, `/revoke`),
-introspection's `client_id`, an id_token's `aud` / `azp`, the consent answer,
+a client assertion's `iss` / `sub`, introspection's `client_id`, an id_token's `aud` / `azp`, the consent answer,
 audit rows (`metadataUrl`). The row is stored under `url~` and 40 hexadecimal
 characters of the URL's SHA-256 (sessions are named `oauth:url~…`; the prefix
-is reserved). A client presents its URL in the request body, never as an HTTP
-Basic user name (it has no secret).
+is reserved; an assertion's `jti` is burnt under it). A client presents its URL
+in the request body or its assertion, never as an HTTP Basic user name (it has
+no secret).
 
 **Caching.** The row is the cluster-wide cache of the document: used without a
 fetch for `cacheSeconds` (HTTP cache headers are not read); then fetched again
@@ -928,10 +953,10 @@ unless its host is denied (`deniedHosts`) or no longer allowed; `update` and
 `rotate-secret` refuse such a client. A document URL that moves is a new client
 (new consent, new alias).
 
-**Departures from the draft specification**, all on the strict side: no
-redirect is followed; HTTP cache headers are not read; an absent
-`token_endpoint_auth_method` reads as `none`; `grant_types` takes the RFC 7591
-default when absent.
+**Departures from the draft specification**: no redirect is followed; HTTP
+cache headers are not read; an absent `token_endpoint_auth_method` reads as
+`none` (the one lenient reading); `grant_types` takes the RFC 7591 default when
+absent; a `jwks_uri` must be on the document's host.
 
 ---
 
@@ -1638,7 +1663,7 @@ These flags work on both client kinds (`create`, `create-registry`, `update`).
 registers an inline public JWK Set; `--jwks-uri <https-url>` registers it by
 reference instead (one excludes the other; on `update` the one given replaces
 the other). Accepted keys: EC P-256 (ES256), EC P-384 (ES384), RSA of 2048 bits
-or more (RS384). A key with private members is refused; a key may carry `kid`,
+or more (RS256, RS384). A key with private members is refused; a key may carry `kid`,
 `alg` (it then verifies that algorithm only), `use` (`sig` only) and `key_ops`
 (must include `verify`). A set of more than one key needs a distinct `kid` on every key, and an assertion must
 then name its key in its `kid` header. An algorithm is verified only with a key
@@ -1660,7 +1685,7 @@ failure. Every failure answers the uniform `invalid_client`; the reason (a
 refused assertion, an unusable `jwks_uri`) is in the server log as a warning.
 
 **Pinned algorithms.** `--signing-alg <alg>` (repeatable: `ES256`, `ES384`,
-`RS384`; `none` clears on `update`) stores `tokenEndpointAuthSigningAlgs`: an
+`RS256`, `RS384`; `none` clears on `update`) stores `tokenEndpointAuthSigningAlgs`: an
 assertion with another algorithm is refused. Without it, any supported
 algorithm that fits a key of the set is accepted. Each pinned algorithm must
 fit a key of an inline set. The list is the stored form of the registration

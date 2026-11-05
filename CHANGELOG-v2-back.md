@@ -37,9 +37,13 @@
 - `clientRegistry.ts`: `persistMetadataClient` (the registry rules plus `validateMetadataClient`,
   `updatedAt` kept); `persistClient` refuses on such a row a secret, `canIntrospect`, `canExchange`,
   allowed features, `anyAudience`, insecure redirects, DPoP and a `jwksUri` off the document's host.
-- `authenticateClient` checks an assertion's `iss` / `sub` against the row's `metadataUrl` when it
-  has one, and burns the `jti` under the row key. `CLIENT_ASSERTION_ALGS` gains `RS256` (`jwks.ts`
-  `keyMatchesAlg` binds it to RSA keys).
+- Confidential documents: `clientMetadataProblem` reads `jwks_uri` (on the document's host),
+  an inline `jwks` (when no `jwks_uri`) and `token_endpoint_auth_signing_alg` for
+  `private_key_jwt` only (ignored with `none`). `authenticateClient` checks an assertion's `iss` /
+  `sub` against the row's `metadataUrl` when it has one, and burns the `jti` under the row key;
+  `/oauth2/token`, `/oauth2/revoke` and `/oauth2/introspect` translate an assertion's URL `iss` to
+  the row key. `CLIENT_ASSERTION_ALGS` gains `RS256` (`jwks.ts` `keyMatchesAlg` binds it to RSA
+  keys).
 - The access stamp: api-server `routes/oauth2/sessions.ts` `mintAccessDirect` stamps
   `clientData.oauth.client` on a session of a `url~` client's grant (not a derived session), and
   `grants.ts` stamps the grant at each registry consent (`setGrantClient`).
