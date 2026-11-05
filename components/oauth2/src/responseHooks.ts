@@ -29,6 +29,7 @@ import type { HookCtx, ExtPermission } from './extension.ts';
 import { runHook, toClientView, RESERVED_KEYS, EXCHANGE_RESERVED_KEYS } from './extension.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
 import { loadSigningKeys, signJwt } from './signingKeys.ts';
+import { publicClientId } from './clientMetadataId.ts';
 
 /** Default id_token lifetime, seconds. */
 export const DEFAULT_ID_TOKEN_TTL = 300;
@@ -141,8 +142,9 @@ async function signIdToken (g: RegistryGrant, ctx: HookCtx): Promise<{ jwt: stri
     ...claims,
     iss: g.issuer,
     sub: g.subject,
-    aud: g.client.clientId,
-    azp: g.client.clientId,
+    // A metadata-document client is known by its URL.
+    aud: publicClientId(g.client),
+    azp: publicClientId(g.client),
     exp,
     iat: now,
     ...(Number.isFinite(g.authTime) ? { auth_time: g.authTime } : {}),

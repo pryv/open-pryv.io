@@ -38,6 +38,7 @@ import * as storage from './storage.ts';
 import { getClient } from './clientRegistry.ts';
 import { authenticateClient } from './clientSecret.ts';
 import { decodeBasicAuth, clientIdFromAssertion } from './clientAuth.ts';
+import { clientKeyOf } from './clientMetadataId.ts';
 import { issuerFromConfig } from './issuer.ts';
 import { logServerError } from './serverLog.ts';
 import { audit } from './audit.ts';
@@ -62,8 +63,9 @@ export function handleRevoke (deps: RevocationDeps) {
     const bodyClientId = typeof body.client_id === 'string' ? body.client_id : '';
     // Next to a client_assertion, client_id is optional (RFC 7523 §3): the
     // assertion's iss names the client, authenticated below as any other.
+    // A metadata-document client names itself by its URL: its row key here.
     const clientId = basic?.client_id ?? (bodyClientId !== ''
-      ? bodyClientId
+      ? clientKeyOf(bodyClientId)
       : clientIdFromAssertion(body.client_assertion, body.client_assertion_type) ?? '');
     const refuse = (): void => sendJson(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' },
       basic != null ? { 'WWW-Authenticate': 'Basic realm="oauth2"' } : {});

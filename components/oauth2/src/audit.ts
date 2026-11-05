@@ -21,7 +21,8 @@
  *    token.issued.authorization_code, token.refreshed, token.revoked) — carry
  *    a `userId` and are persisted to that user's audit storage (+ syslog).
  *  - user-less (consent.shown, consent.refused, code.reused,
- *    token.introspected, token.exchange_refused): no user is known (pre-consent / reuse of an
+ *    token.introspected, token.exchange_refused, client.metadata_fetched,
+ *    client.metadata_refused): no user is known (pre-consent / reuse of an
  *    already-consumed code or refresh token / a resource server asking about
  *    any token), so they go to syslog only (per-user storage needs a user to
  *    key on).
@@ -56,7 +57,9 @@ export type OAuthAuditEvent =
   | 'oauth.token.revoked'
   | 'oauth.token.introspected'
   | 'oauth.token.exchanged'
-  | 'oauth.token.exchange_refused';
+  | 'oauth.token.exchange_refused'
+  | 'oauth.client.metadata_fetched'
+  | 'oauth.client.metadata_refused';
 
 /**
  * OAuth events for which no user is resolvable at emit time (pre-consent
@@ -76,7 +79,10 @@ export const USERLESS_EVENTS: ReadonlySet<OAuthAuditEvent> = new Set([
   // user at all (unknown, expired or another core's token).
   'oauth.token.introspected',
   // A refused token exchange: the subject token may name no user at all.
-  'oauth.token.exchange_refused'
+  'oauth.token.exchange_refused',
+  // A client metadata document fetched or refused at /authorize (no user yet).
+  'oauth.client.metadata_fetched',
+  'oauth.client.metadata_refused'
 ]);
 
 /**
@@ -109,6 +115,12 @@ export type OAuthAuditPayload = {
   subjectClientId?: string; // oauth.token.exchanged: the client the subject token was issued to
   subjectAccessId?: string; // oauth.token.exchanged: the subject session
   reused?: boolean; // oauth.token.exchanged: the derived session existed already
+  metadataUrl?: string; // a metadata-document client: its URL (the client's id on the wire)
+  host?: string; // oauth.client.metadata_*: the document's host
+  metadataHost?: string; // oauth.consent.shown: the host shown next to a metadata-document client's name
+  outcome?: 'created' | 'refreshed' | 'unchanged'; // oauth.client.metadata_fetched
+  changedFields?: string[]; // oauth.client.metadata_fetched: the row fields a refetch changed
+  detail?: string; // oauth.client.metadata_refused: the server-side reason (never the document)
 };
 
 /** The subset of AuditEventLike (components/audit/) we build here. */

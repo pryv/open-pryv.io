@@ -23,7 +23,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
-function resolveLogger (): { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void } | null {
+function resolveLogger (): { error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; debug?: (...args: unknown[]) => void } | null {
   try {
     const { getLogger } = require('@pryv/boiler');
     return getLogger('oauth2');
@@ -56,4 +56,14 @@ export function logServerWarning (message: string): void {
   }
   // eslint-disable-next-line no-console
   console.warn('[oauth2] ' + message);
+}
+
+/**
+ * Record a detail an operator may want when debugging (not a refusal worth
+ * attention). Silent when the logger is not up.
+ */
+export function logServerDebug (message: string): void {
+  const logger = resolveLogger();
+  if (logger?.debug == null) return;
+  try { logger.debug(message); } catch (_e) { /* best-effort */ }
 }

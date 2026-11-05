@@ -794,6 +794,145 @@ before it changed stays until it reconnects, and an HFS series metadata cache
 entry lags it by at most its lifetime (5 minutes), as for a client revoke.
 Accesses a session created while it was off carry no audience and stay usable.
 
+## 1f. Client metadata documents (an https URL as `client_id`)
+
+A client may name itself, as its `client_id`, by the https URL of a JSON
+document it publishes: its **client metadata document**, with the RFC 7591
+member names. When `oauth.clientMetadataDocuments.mode` is `allowList` or
+`any` (§ 2), `/oauth2/authorize` accepts such a `client_id`: the core fetches
+the document, validates it, and serves the client as a **registry client**
+(`kind: registry`, `origin: metadata-document`). Its identity and display
+fields come from the document; **what it may be granted comes from the
+operator's template** (`oauth.clientMetadataDocuments.client`), never from the
+document. From then on every path runs as for a curated registry client:
+consent, code exchange (public client: PKCE S256, no secret), refresh,
+revocation (RFC 7009), introspection by a resource server, the audience binding,
+token exchange by a resource server, the client checks at the data API,
+`purge-grants`. The discovery documents advertise
+`client_id_metadata_document_supported: true` while the mode is not `off`.
+
+**The URL** (checked before any network call; a refusal at `/oauth2/authorize`
+is an HTML 400 that says why):
+
+- an absolute `https:` URL of at most 2048 characters, with a path
+  (`https://client.example/` passes, `https://client.example` does not), a
+  query allowed;
+- a host name (no IP literal, no trailing dot), not a host of this platform
+  (its API hosts, `dnsLess.publicUrl`'s, the issuer's);
+- no user information, no fragment, no `.` / `..` or empty path segment, no
+  percent-encoded character in the path, no control or white-space character;
+- written exactly as the URL standard serialises it (lower-case host in its
+  ASCII `xn--` form, no `:443`): the URL is compared as a string everywhere and
+  never normalised, so two spellings would be two clients;
+- the host passes the policy: not in `deniedHosts`, and in `allowList` mode in
+  `allowedHosts`.
+
+**The fetch.** `GET` with `Accept: application/json`, through the counterparty
+guards (loopback, private, link-local and reserved addresses refused, the host
+name resolved once and pinned to the connection, `cmc.allowedPrivateHosts`
+exceptions apply), `https` only whatever `cluster.allowInsecurePeerUrl` says,
+**no redirect followed** (a 3xx is a refusal), a 200 answer only, content type
+`application/json` (a `charset` parameter passes, `+json` types do not),
+`maxDocumentBytes` (16 KiB) declared and counted, `fetchTimeoutMs` (5 s), UTF-8
+without a byte order mark. At most 10 fetches a minute per host and
+`fetchesPerMinute` (60) per core; concurrent requests naming one URL share one
+fetch. The body never reaches a log or an audit row.
+
+**What is read from the document:**
+
+| Member | Rule |
+|---|---|
+| `client_id` | required, exactly the document URL (string equality: a trailing slash or another case is a mismatch) |
+| `redirect_uris` | required, 1 to 32 absolute URIs without fragment; plain `http` on a loopback host only (`http://localhost/callback` then matches any port, § 3), private-use schemes allowed |
+| `token_endpoint_auth_method` | `none`, or absent (read as `none`: a lenient reading of RFC 7591, whose default is `client_secret_basic`, which a document cannot carry); any other value makes the document invalid. The plural `token_endpoint_auth_methods_supported` some documents carry is ignored |
+| `grant_types` | absent: `authorization_code` (RFC 7591 default); present: the row keeps `authorization_code` and `refresh_token` among them (others, such as a `jwt-bearer` URN, drop out); `authorization_code` is required |
+| `response_types` | absent, or a list including `code` |
+| `client_name`, `client_name#<lang>` | optional display name, and per-language names (at most 128 characters, no control characters) |
+| `client_uri`, `policy_uri`, `tos_uri`, `logo_uri` | kept only when on the document's own host (same host and port); the logo is served only when its host is also on `oauth.logoHosts` |
+| `software_id`, `contacts` | kept when within bounds (256 characters; 8 contacts) |
+| `scope` and anything else | ignored: what a client may be granted never comes from its document |
+
+An invalid document, or one that cannot be fetched, answers HTML 400 "client
+metadata document invalid" or "client metadata document unavailable, retry
+later" (the reason goes to the server log and the audit row); the core does not
+fetch that URL again for `negativeCacheSeconds`. A client developer reads the
+reason with `bin/oauth-client.js check-metadata <url>` (§ 3b).
+
+**The template.** Every metadata-document client gets the reach the operator
+configured once in `oauth.clientMetadataDocuments.client`: `scope` (the maximum
+scope set, in the extension's grammar), `allowedAudiences` (required: the
+resource URLs such a client may name in `aud` / `resource`), `launchTypes`,
+`subjectType` (`pairwise` by default: one alias per user and client),
+`maxEntries`, `offlineAccessAllowed`, lifetimes, `regions`. It never holds
+introspection, token exchange, an allowed feature, "any audience", insecure
+redirects or DPoP; the row refuses them. The template is applied at each fetch,
+so a change reaches every such client within `cacheSeconds` (grants already
+given keep what they hold, as for any narrowing: `purge-grants` ends them).
+`bin/oauth-client.js template-from <clientId>` prints the block from a
+registry client, so the template equals a curated client by construction.
+
+**Policy.** `off` (the default): a URL `client_id` is an unknown client.
+`allowList`: only documents on the listed hosts become clients: the operator
+vets hosts, each document on a listed host is a client with the template's
+reach. `any`: any https host that passes the URL rules; any party on the
+internet can present a client to the consent screen, where the host shown next
+to the name is what protects the user, with the template's ceiling, the
+deny-list and the fetch budgets. `allowList` is the cautious setting.
+
+**The consent screen must show the host.** `/oauth2/authorize/offer` answers,
+for such a client, `client.origin: "metadata-document"`, `client.metadataUrl`
+and `client.metadataHost` (ASCII form; `client.metadataHostUnicode` too when
+the host has a Unicode form). Every consent UI the operator serves must show
+the host in its own element next to the name, on the sign-in screen, the
+consent panel and the connected-apps list: never the name alone (the host
+alone when there is no name; the ASCII form, the Unicode form at most in a
+tooltip). The name is never a link; the only links are `clientUri`,
+`policyUri`, `tosUri`, which the server keeps on the document's host. A logo,
+when served, is smaller than the host and never replaces it.
+
+**The access stamp.** The grant and every session minted for such a client
+carry, server-owned, `clientData.oauth.client = { name?, host, url }` (the
+document's name as a plain string, the first language of a set; the host in
+ASCII form; the URL): an account app names a connected app by it, the access
+name `oauth:url~…` being no name. It is a snapshot: a refresh stamps the new
+session from the client as it stands, a consent stamps the grant again; the API
+refuses to change it. A derived session (token exchange) and the accesses of
+curated clients carry none.
+
+**On the wire and in storage.** The URL is the client's id on the wire:
+request parameters (`/oauth2/authorize`, `/token` body `client_id`, `/revoke`),
+introspection's `client_id`, an id_token's `aud` / `azp`, the consent answer,
+audit rows (`metadataUrl`). The row is stored under `url~` and 40 hexadecimal
+characters of the URL's SHA-256 (sessions are named `oauth:url~…`; the prefix
+is reserved). A client presents its URL in the request body, never as an HTTP
+Basic user name (it has no secret).
+
+**Caching.** The row is the cluster-wide cache of the document: used without a
+fetch for `cacheSeconds` (HTTP cache headers are not read); then fetched again
+at the next `/oauth2/authorize` naming it. A refetch that finds the same content
+leaves the client as it was (a consent in progress stays valid); a changed
+document replaces the derived fields (a changed name shows at the next consent;
+a new redirect URI works from the next authorization; a code keeps the
+redirect URI it was issued for). If a refetch fails, the client stays usable
+until `staleGraceSeconds` after its last fetch, then `/oauth2/authorize`
+refuses it ("client metadata document unavailable") while its grants, refresh
+chains and introspection go on: nothing ends because a client's web host is
+down. Fetches happen at `/oauth2/authorize` and in the CLI only; the other
+endpoints read the row. A row unused for the absolute refresh lifetime plus 7
+days is deleted by the master's periodic sweep (suspended rows are kept).
+
+**Operator tools** (§ 3b): `show`, `revoke`, `suspend`, `resume` and
+`purge-grants` take the URL or the key; `revoke` deletes the row and ends its
+sessions, and the next authorization naming the URL creates the client again
+unless its host is denied (`deniedHosts`) or no longer allowed; `update` and
+`rotate-secret` refuse such a client. A document URL that moves is a new client
+(new consent, new alias).
+
+**Departures from the draft specification**, all on the strict side: no
+redirect is followed; HTTP cache headers are not read; an absent
+`token_endpoint_auth_method` reads as `none`; `grant_types` takes the RFC 7591
+default when absent.
+
 ---
 
 ## 2. Configuration
@@ -824,6 +963,20 @@ oauth:
   audienceBoundSessions: false     # true: the data API refuses tokens issued for a resource server (§ 1e)
   extensionOptions: {}             # handed as is to the OAuth extension (see below)
   extensionHookTimeoutMs: 5000     # bound on each asynchronous extension hook, milliseconds
+  clientMetadataDocuments:         # an https URL as client_id (§ 1f; see below)
+    mode: 'off'                    # off | allowList | any
+    allowedHosts: []
+    deniedHosts: []
+    cacheSeconds: 3600
+    staleGraceSeconds: 86400
+    negativeCacheSeconds: 60
+    fetchTimeoutMs: 5000
+    maxDocumentBytes: 16384
+    fetchesPerMinute: 60
+    authMethods: [none, private_key_jwt]
+    client: { scope: '', allowedAudiences: [], launchTypes: [], subjectType: pairwise, maxEntries: 200,
+              offlineAccessAllowed: true, accessTokenTTL: null, refreshTokenTTL: null,
+              refreshTokenAbsoluteTTL: null, regions: [] }
 
 customExtensions:
   oauthExtension: ''               # module path of the OAuth extension (see below)
@@ -1054,6 +1207,32 @@ revoke settings) produces inconsistent token behaviour depending on which core
 served the user. Treat it as a deployment-wide invariant and roll it out to
 all cores together.
 
+### `clientMetadataDocuments` (an https URL as `client_id`)
+
+The settings of § 1f. Platform-wide (identical on every core), except
+`client.allowedAudiences`, where each core names its own resource URL.
+
+| Key | Meaning |
+|---|---|
+| `mode` | `off` (default), `allowList` or `any` (§ 1f, policy) |
+| `allowedHosts` | `allowList`: the hosts whose documents are accepted. Lower-case host names (exact match), `host:port` for another port than 443, `*.example.com` for exactly one more label (never the apex). An empty list with `allowList` stops the boot |
+| `deniedHosts` | both modes: never accepted (same syntax); checked first |
+| `cacheSeconds` | a fetched document is reused this long (default 3600) |
+| `staleGraceSeconds` | a client whose refetch fails stays usable this long past its last fetch (default 86400) |
+| `negativeCacheSeconds` | per core: a refused or invalid URL is not fetched again within this time (default 60) |
+| `fetchTimeoutMs`, `maxDocumentBytes` | the fetch bounds (5000 ms, 16384 bytes) |
+| `fetchesPerMinute` | per core, all hosts (default 60); 10 per host |
+| `authMethods` | what a document may declare as `token_endpoint_auth_method`: `none`, `private_key_jwt` |
+| `client` | the template (§ 1f): `scope` and `allowedAudiences` are required when the mode is not `off`; `subjectType` (`pairwise` by default), `launchTypes`, `maxEntries` (1 to 1000, default 200), `offlineAccessAllowed`, `accessTokenTTL` / `refreshTokenTTL` / `refreshTokenAbsoluteTTL` (seconds, `null`: the platform's), `regions` |
+
+The boot refuses a malformed block (an unknown key, a malformed host entry, a
+template without scope or audience, ...); with `mode: off` the rest is not
+checked and a warning names what is set but unused. The template's `scope` is
+checked against the installed extension's grammar when the core starts (a
+warning names a template the grammar refuses: every such client's
+authorization then answers `invalid_scope`). `bin/check-config.js` runs the
+same shape check.
+
 ---
 
 ## 3. Registering application accounts — `bin/oauth-client.js`
@@ -1193,7 +1372,26 @@ via `client_secret_basic`. PKCE is mandatory either way.
 A registry client (§ 1c) needs no account: run `create-registry` on any core.
 The `client_id` follows the same rules as `--client-id` above (4 to 64
 characters of `A-Z a-z 0-9 . ~ -`, not an existing client, not an account name
-on the platform).
+on the platform, not starting with `url~`).
+
+Registry clients are of two origins: **curated** rows, which the operator
+registers with `create-registry`, and **metadata-document** rows, which the core
+writes from a client's metadata document (§ 1f; `list` shows them with
+`metadata-document <url>`). The commands for the latter:
+
+```bash
+node bin/oauth-client.js list --origin metadata-document [--host <host>]
+node bin/oauth-client.js show <url|key>          # the URL, the host, last fetch and use
+node bin/oauth-client.js check-metadata <url>    # fetch and validate now, print the client it gives, write nothing
+node bin/oauth-client.js refresh-metadata <url|key>   # fetch now and rewrite the client, print what changed
+node bin/oauth-client.js template-from <clientId>     # the oauth.clientMetadataDocuments.client block of a curated client
+node bin/oauth-client.js revoke <url|key> --yes  # prints the deny-list hint: the URL would create the client again
+```
+
+`suspend`, `resume` and `purge-grants` take the URL or the key too; a suspension
+survives refetches. `update` and `rotate-secret` refuse such a client: its
+document and the template decide. `check-metadata` and `refresh-metadata`
+bypass the caches and the fetch budgets (operator actions).
 
 ```
 node bin/oauth-client.js create-registry <clientId> \
@@ -1546,8 +1744,11 @@ Collect these for security monitoring and incident response.
 | `oauth.token.introspected` | a resource server introspected a token (caller, `active`; `actorClientId` for a derived token; never the token; syslog only) |
 | `oauth.token.exchanged` | a resource server exchanged a client's token (§ 1e): `clientId` the resource server, `subjectClientId`, `accessId` (the derived session), `subjectAccessId`, `dataGrantAccessId`, `reused`, `grantedScope`; never a token |
 | `oauth.token.exchange_refused` | an authenticated exchange was refused (`reason`: `not-entitled`, `request-shape`, `subject-inactive`, `subject-client-unavailable`, `foreign-audience`, `wrong-core`; syslog only) |
+| `oauth.client.metadata_fetched` | a client metadata document was fetched (§ 1f): `clientId` (the row key), `metadataUrl`, `host`, `outcome` (`created`, `refreshed`, `unchanged`), `changedFields`; syslog only |
+| `oauth.client.metadata_refused` | a client metadata document URL was refused or its document unusable: `metadataUrl`, `host`, `reason` (`url`, `host-policy`, `unreachable`, `invalid`, `budget`), `detail` (the server-side reason, never the document); syslog only |
 
-Registry clients emit the same events. `oauth.consent.granted` carries
+`oauth.consent.shown` carries `metadataUrl` and `metadataHost` for a
+metadata-document client. Registry clients emit the same events. `oauth.consent.granted` carries
 `subjectChange` when the consent switched the grant's subject mode (§ 1d).
 
 `oauth.code.reused` in particular should page: per RFC 6749 a code is
@@ -1580,6 +1781,13 @@ single-use, so a reuse means either a broken client or a stolen code.
 | data API `403` "The access token is bound to a resource server" | `oauth.audienceBoundSessions` is on and the token was issued for a resource server: call through that resource server, which exchanges it (§ 1e) |
 | consent UI: `400 invalid_scope` with `reason: grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (§ 3b) |
 | consent UI: `421 wrong_core` on `/oauth2/authorize/offer` or `/accept` | the account is served by another core than the one that issued the authorization (the app used another region's address): start again from the app with the address of the account's core, named by `coreUrl` (§ 1, accounts served by another core) |
+| `/oauth2/authorize` with a URL `client_id` → HTML 400 "Unknown client_id" | `oauth.clientMetadataDocuments.mode` is `off` on this core (§ 2) |
+| HTML 400 "client_id is not an accepted client metadata document URL: ..." | the URL breaks a rule (§ 1f): not https, no path, an IP address, a host of this platform, not in its normal form, ... |
+| HTML 400 "the host of this client_id is not accepted here" | the host is in `deniedHosts`, or not in `allowedHosts` with `mode: allowList` |
+| HTML 400 "client metadata document invalid" | the document breaks a rule (its `client_id`, a plain-http redirect URI, an auth method, ...): `check-metadata <url>` prints the reason, the server log and the `oauth.client.metadata_refused` row too |
+| HTML 400 "client metadata document unavailable, retry later" | the document could not be fetched (address refused, redirect, status, timeout, size), or the fetch budget is spent; retried after `negativeCacheSeconds` |
+| HTML 400 "client metadata document unavailable" for a client that worked | its document could not be fetched for longer than `staleGraceSeconds`: its grants keep working, new authorizations wait for the document |
+| a metadata-document client gets `invalid_scope` on every authorization | the template's `scope` is refused by the extension's grammar (warned at boot) or does not cover the request |
 
 ---
 

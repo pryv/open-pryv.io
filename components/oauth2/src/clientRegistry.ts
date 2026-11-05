@@ -33,6 +33,7 @@ import { validatePublicJwkSet, keyMatchesAlg, CLIENT_ASSERTION_ALGS } from './jw
 import { jwksUriProblem } from './jwksUri.ts';
 import { isLifetime } from './clientLifetimes.ts';
 import { MAX_PREVIOUS_SECRET_WINDOW_MS } from './clientSecret.ts';
+import { isMetadataClientKey, metadataClientKey, clientIdUrlSyntaxProblem } from './clientMetadataId.ts';
 const require = createRequire(import.meta.url);
 
 const storage = require('./storage.ts');
@@ -106,8 +107,36 @@ function matchLoopback (registered: string, presented: string): boolean {
  * cache-row format + validation.
  */
 export async function persistClient (platform: PlatformDB, client: OAuthClient): Promise<void> {
+  await storage.setClient(platform, checkedClientRow(client, Date.now()));
+}
+
+/**
+ * Persist a metadata-document client row (written at `/oauth2/authorize` and
+ * by the CLI from the client's document): the same rules as `persistClient`,
+ * and the row's `updatedAt` is kept as given. It changes only when what the
+ * row derives from the document or the template changed, so a refetch that
+ * finds the same content does not invalidate a consent in progress (the
+ * synthesised offer's digest covers `updatedAt`).
+ */
+export async function persistMetadataClient (platform: PlatformDB, client: OAuthClient): Promise<void> {
+  if (client?.origin !== 'metadata-document') throw new Error('persistMetadataClient: a metadata-document client row is expected');
+  if (typeof client.updatedAt !== 'number' || !Number.isFinite(client.updatedAt)) throw new Error('persistMetadataClient: updatedAt required');
+  await storage.setClient(platform, checkedClientRow(client, client.updatedAt));
+}
+
+/** The row as stored: validated, with `updatedAt`, a sanitized key set and no expired rotated secret. */
+function checkedClientRow (client: OAuthClient, updatedAt: number): OAuthClient {
   if (typeof client?.clientId !== 'string' || client.clientId.length === 0) {
     throw new Error('clientId required');
+  }
+  // The `url~` keys belong to metadata-document clients, and only them.
+  if (isMetadataClientKey(client.clientId) !== (client.origin === 'metadata-document')) {
+    throw new Error(client.origin === 'metadata-document'
+      ? 'a metadata-document client is stored under the key derived from its URL'
+      : 'client ids starting with "url~" are reserved for metadata-document clients');
+  }
+  if (client.origin != null && (client.origin !== 'metadata-document' || client.kind !== 'registry')) {
+    throw new Error('origin: only "metadata-document", on a registry client');
   }
   if (!Array.isArray(client.redirectUris) || client.redirectUris.length === 0) {
     throw new Error('redirectUris required (at least one)');
@@ -130,12 +159,13 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
   }
   if (client.kind === 'registry') {
     validateRegistryClient(client);
+    if (client.origin === 'metadata-document') validateMetadataClient(client);
   } else {
     validateCmcOffers(client);
     if (client.canExchange != null) throw new Error('token exchange is available to registry clients only');
   }
   validateVettingAndDisplay(client);
-  const validated = { ...client, updatedAt: Date.now() };
+  const validated = { ...client, updatedAt };
   // Inline public JWK Set (private_key_jwt): validate on write; any key
   // carrying private material is rejected outright, so the
   // no-credentials-in-PlatformDB invariant holds. Store the sanitized set
@@ -153,7 +183,46 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
     delete validated.previousSecretExpiresAt;
   }
   validateAuthAndLifetimes(validated);
-  await storage.setClient(platform, validated);
+  return validated;
+}
+
+/**
+ * The rules of a metadata-document client row on top of the registry rules:
+ * its key derives from its URL, it authenticates with nothing or its own key
+ * set (published on the document's host), and it holds none of the roles,
+ * features or exceptions an operator grants a curated client.
+ */
+function validateMetadataClient (client: OAuthClient): void {
+  const problem = clientIdUrlSyntaxProblem(client.metadataUrl);
+  if (problem != null) throw new Error('metadataUrl ' + problem);
+  if (metadataClientKey(client.metadataUrl as string) !== client.clientId) {
+    throw new Error('a metadata-document client is stored under the key derived from its URL');
+  }
+  if (client.tokenEndpointAuthMethod !== 'none' && client.tokenEndpointAuthMethod !== 'private_key_jwt') {
+    throw new Error('metadata-document client: tokenEndpointAuthMethod must be none or private_key_jwt');
+  }
+  const refused: Array<[string, boolean]> = [
+    ['a client secret', client.clientSecretHash != null || client.previousSecretHash != null],
+    ['canIntrospect', client.canIntrospect === true],
+    ['canExchange', client.canExchange === true],
+    ['allowFeatures', Array.isArray(client.allowFeatures) && client.allowFeatures.length > 0],
+    ['anyAudience', client.anyAudience === true],
+    ['allowInsecureRedirect', client.allowInsecureRedirect === true],
+    ['dpopBoundAccessTokens', client.dpopBoundAccessTokens === true],
+  ];
+  const set = refused.filter(([, on]) => on).map(([name]) => name);
+  if (set.length > 0) throw new Error('metadata-document client: not available to such a client: ' + set.join(', '));
+  // Its key set is published where its document is (and is not the platform's).
+  if (client.jwksUri != null) {
+    let same = false;
+    try { same = new URL(client.jwksUri).host === new URL(client.metadataUrl as string).host; } catch { same = false; }
+    if (!same) throw new Error('metadata-document client: its jwks_uri must be on the host of its metadata document');
+  }
+  const m = client.metadata;
+  if (m == null || typeof m !== 'object' || !['fetchedAt', 'expiresAt', 'lastUsedAt'].every((k) => Number.isFinite((m as unknown as Record<string, unknown>)[k])) ||
+      typeof m.contentDigest !== 'string') {
+    throw new Error('metadata-document client: metadata (fetchedAt, expiresAt, contentDigest, lastUsedAt) required');
+  }
 }
 
 /**

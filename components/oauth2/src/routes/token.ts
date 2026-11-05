@@ -35,6 +35,7 @@ import { markDPoPJtiUsed, getDpopKeyRevokedAt, recordDpopKeySeen } from '../stor
 import { logServerError } from '../serverLog.ts';
 import { getClient, isRegistryClient } from '../clientRegistry.ts';
 import { decodeBasicAuth, clientIdFromAssertion, hasKeySet } from '../clientAuth.ts';
+import { clientKeyOf } from '../clientMetadataId.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -90,9 +91,11 @@ export function handleToken (deps: TokenDeps) {
     // are given and differ, the grant refuses the request (invalid_client).
     const rawBody = req.body ?? {};
     const noBodyClientId = typeof rawBody.client_id !== 'string' || rawBody.client_id === '';
+    // A metadata-document client names itself by its URL (never in Basic: it
+    // has no secret); from here on it is its row key.
     let body = basic != null && noBodyClientId
       ? { ...rawBody, client_id: basic.client_id }
-      : rawBody;
+      : (noBodyClientId ? rawBody : { ...rawBody, client_id: clientKeyOf(rawBody.client_id) });
     const grantType = typeof body.grant_type === 'string' ? body.grant_type : '';
 
     let outcome: TokenOutcome | undefined;

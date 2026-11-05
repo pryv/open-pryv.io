@@ -14,6 +14,38 @@
 - The two-core suite file is `reg-2core-seq.test.js` again: without the `-seq` suffix the parallel
   test mode (`just test-parallel`, local only) ran it alongside other files.
 
+### OAuth client metadata documents
+
+- A metadata-document client is a registry row `oauth-client/url~<first 40 hex of sha256(URL)>`
+  (`components/oauth2/src/clientMetadataId.ts`: `metadataClientKey`, `clientRef` / `clientKeyOf`,
+  `publicClientId`, `metadataClientStamp`; the `url~` prefix is reserved: `clientIdError` and
+  `persistClient` refuse it on any other row). New row fields: `origin: 'metadata-document'`,
+  `metadataUrl`, `metadata = { fetchedAt, expiresAt, contentDigest, lastUsedAt }`. The translation
+  from the URL to the key happens at `/oauth2/authorize`, at `/oauth2/token` (body `client_id` and a
+  client assertion's `iss`), `/oauth2/revoke`, `/oauth2/introspect` and in the CLI; everything after
+  (signed state, codes, refresh rows, the session index, session names `oauth:url~…`, the nonce and
+  assertion `jti` keyspaces) uses the key.
+- `clientMetadata.ts`: the URL policy (`clientIdUrlProblem`), the fetch through `peerFetch`, the
+  document check (`clientMetadataProblem`), the row (`buildMetadataClientRow`: the template applied at
+  every fetch, `updatedAt` changed only when `contentDigest` over the derived fields changes, so a
+  content-identical refetch keeps a consent in progress valid), per-core budgets, negative cache and
+  in-flight sharing, `resolveMetadataClient` (`/oauth2/authorize`), `refreshMetadataClient` (CLI) and
+  `pruneMetadataClients` (master sweep: unused for the absolute refresh lifetime + 7 days, suspended
+  rows kept). `clientMetadataConfig.ts`: the settings and their validation (`config-validation.js`
+  `checkClientMetadataDocuments` and warnings, `bin/check-config.js`); the template's scope is checked
+  against the grammar at boot (`registryBootCheck.ts` `checkClientMetadataTemplate`, a warning).
+- `clientRegistry.ts`: `persistMetadataClient` (the registry rules plus `validateMetadataClient`,
+  `updatedAt` kept); `persistClient` refuses on such a row a secret, `canIntrospect`, `canExchange`,
+  allowed features, `anyAudience`, insecure redirects, DPoP and a `jwksUri` off the document's host.
+- `authenticateClient` checks an assertion's `iss` / `sub` against the row's `metadataUrl` when it
+  has one, and burns the `jti` under the row key. `CLIENT_ASSERTION_ALGS` gains `RS256` (`jwks.ts`
+  `keyMatchesAlg` binds it to RSA keys).
+- The access stamp: api-server `routes/oauth2/sessions.ts` `mintAccessDirect` stamps
+  `clientData.oauth.client` on a session of a `url~` client's grant (not a derived session), and
+  `grants.ts` stamps the grant at each registry consent (`setGrantClient`).
+- Audit events `oauth.client.metadata_fetched` / `oauth.client.metadata_refused` (user-less, declared
+  in `audit/src/ApiMethods.ts`); `ClientView` gains `origin` and `metadataUrl`.
+
 ### Email any-case uniqueness (cleartext piiMode); restore rollback; SSO bindings in single-account backups; values holding `/`
 
 - New `PlatformDB.getUsersUniqueFieldAnyCase(field, value)`: the field's rows matching

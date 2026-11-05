@@ -22,6 +22,7 @@
  *
  * Key prefixes are owned here, not the engine:
  *   - oauth-client/<clientId>             — indefinite
+ *     (a metadata-document client's id is `url~` + a digest of its URL)
  *   - oauth-ac/<sha256(code)>             — 600s TTL; the exchange is served by
  *                                           the issuing core (`coreId` in the row)
  *   - oauth-rt/<coreId>/<sha256(token)>   — sliding 30d, cap 90d absolute (per-core:
@@ -233,7 +234,31 @@ export interface OAuthClient {
   /** `false`: no refresh token is issued to, or redeemed by, this client. */
   offlineAccessAllowed?: boolean;
   dpopBoundAccessTokens?: boolean;
+  /**
+   * `metadata-document`: a client whose `client_id` is the https URL of its
+   * client metadata document (`metadataUrl`), stored under a key derived from
+   * it (`url~` + digest). Its identity and display fields come from the
+   * document, what it may be granted from the operator's template. Absent:
+   * a client registered by the operator.
+   */
+  origin?: 'metadata-document';
+  /** The client's id on the wire (a metadata-document client). */
+  metadataUrl?: string;
+  /** The document's cache state (a metadata-document client), ms since epoch. */
+  metadata?: ClientMetadataState;
   updatedAt: number;
+}
+
+/** The cache state of a metadata-document client row. */
+export interface ClientMetadataState {
+  /** Last successful fetch. */
+  fetchedAt: number;
+  /** The row is used without a fetch until then. */
+  expiresAt: number;
+  /** Digest of what the row derives from the document and the template. */
+  contentDigest: string;
+  /** Last authorization request naming the client (written at most once an hour). */
+  lastUsedAt: number;
 }
 
 /** Authorization code row (per-issuing-core, ≤10-min TTL). */
@@ -404,6 +429,8 @@ export function clientIdError (clientId: unknown): string | null {
   if (!/^[A-Za-z0-9.~-]+$/.test(clientId)) {
     return 'client_id may only hold letters, digits, and the characters . ~ -';
   }
+  // The keys of metadata-document clients (a URL as client_id) start with it.
+  if (clientId.startsWith('url~')) return 'client_id may not start with "url~" (reserved for metadata-document clients)';
   return null;
 }
 

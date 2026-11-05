@@ -460,6 +460,11 @@ if (cluster.isPrimary) {
       oauthStorage.pruneDpopKeysSeen(platformDB, maxTokenTtlMs)
         .then((pruned) => { if (pruned > 0) log(`[dpop-key-inventory-prune] removed ${pruned} stale row(s)`); })
         .catch((err) => log(`[dpop-key-inventory-prune] failed: ${err.message}`));
+      // Metadata-document client rows unused for the absolute refresh
+      // lifetime plus 7 days (their sessions are all dead by then).
+      require('../components/oauth2/src/clientMetadata.ts').pruneMetadataClients(platformDB, config)
+        .then((pruned) => { if (pruned > 0) log(`[metadata-client-prune] removed ${pruned} unused client row(s)`); })
+        .catch((err) => log(`[metadata-client-prune] failed: ${err.message}`));
     }, sweepIntervalMs);
     accessStateSweep.unref(); // keepAlive holds the master; the sweep must not
 

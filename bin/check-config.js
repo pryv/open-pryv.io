@@ -515,6 +515,16 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   if (message != null) problems.push(message);
 }
 
+// oauth.clientMetadataDocuments: the same shape check as the boot. The
+// template's scope is checked against the OAuth extension's grammar when the
+// core starts (this script does not load the extension).
+{
+  const { describeClientMetadataConfig } = require('../components/oauth2/src/clientMetadataConfig.ts');
+  const report = describeClientMetadataConfig(get('oauth.clientMetadataDocuments'));
+  for (const p of report.problems) problems.push(p);
+  for (const w of report.warnings) warnings.push(w);
+}
+
 // services.mfa: the same check master.js runs at boot, on the merged
 // configuration: a partial block is judged by the configuration it produces.
 try {

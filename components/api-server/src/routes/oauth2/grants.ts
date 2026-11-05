@@ -56,6 +56,7 @@ type SessionHelpers = {
   }) => Promise<{ accessId: string; accessToken: string; apiEndpoint: string }>;
   setGrantOf: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
   setGrantState: (userId: string, username: string, grantId: string, name: string, value: unknown) => Promise<void>;
+  setGrantClient: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
   storedSessionPermissions: (permissions: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
 };
 
@@ -372,6 +373,9 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     if (registry && grantState != null && typeof grantState.name === 'string') {
       await sessions.setGrantState(context.user.id, context.user.username, dataGrant.id, grantState.name, grantState.value);
     }
+    // A metadata-document client's grant names it (display fields from its
+    // document as they stand at this consent); server-owned, storage-direct.
+    if (registry) await sessions.setGrantClient(context.user.id, context.user.username, dataGrant.id, clientId);
 
     // The minted row additionally carries the session selfRevoke override
     // (see withSessionSelfRevoke); the CHAIN keeps the granted subset

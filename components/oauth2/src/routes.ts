@@ -29,6 +29,8 @@ import type { RevokeSession } from './revocation.ts';
 import type { ReadSubjectSession, IssueDerivedSession } from './grants/token_exchange.ts';
 import { handleIntrospect } from './introspection.ts';
 import { handleRevoke } from './revocation.ts';
+import { clientMetadataDocumentsOn } from './clientMetadataConfig.ts';
+import { checkClientMetadataTemplate } from './registryBootCheck.ts';
 import type { NextFunction, Request, Response } from 'express';
 const require = createRequire(import.meta.url);
 
@@ -240,6 +242,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
     claimsSupported: string[];
     introspection: boolean;
     revocation: boolean;
+    clientMetadataDocuments: boolean;
   } {
     const oidc = hasSigningKeys(deps.config);
     return {
@@ -250,6 +253,8 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       claimsSupported: getExtension()?.claimsSupported ?? [],
       introspection,
       revocation,
+      // Only where /oauth2/authorize is mounted to serve them.
+      clientMetadataDocuments: flowWired && clientMetadataDocumentsOn(deps.config),
     };
   }
 
@@ -344,6 +349,8 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
   // row is reported, never fatal (one client must not take the core down).
   checkRegistryClients(deps.platform, deps.config).catch((err: unknown) =>
     logServerError('oauth2: registry client check at boot failed', err));
+  // The template of metadata-document clients, against the same grammar.
+  checkClientMetadataTemplate(deps.config);
 }
 
 /**
