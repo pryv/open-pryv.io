@@ -834,7 +834,7 @@ guards (loopback, private, link-local and reserved addresses refused, the host
 name resolved once and pinned to the connection, `cmc.allowedPrivateHosts`
 exceptions apply), `https` only whatever `cluster.allowInsecurePeerUrl` says,
 **no redirect followed** (a 3xx is a refusal), a 200 answer only, content type
-`application/json` (a `charset` parameter passes, `+json` types do not),
+`application/json` or an `application/*+json` type (parameters ignored),
 `maxDocumentBytes` (16 KiB) declared and counted, `fetchTimeoutMs` (5 s), UTF-8
 without a byte order mark. At most 10 fetches a minute per host and
 `fetchesPerMinute` (60) per core; concurrent requests naming one URL share one

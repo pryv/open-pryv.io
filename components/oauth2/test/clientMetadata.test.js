@@ -242,8 +242,13 @@ describe('[OCMD] client metadata documents', function () {
       }
     });
 
-    it('[OCMD03C] content type: application/json only (+json suffixes refused)', async () => {
-      for (const ct of ['text/plain', 'application/jwk-set+json', 'application/ld+json', '']) {
+    it('[OCMD03C] content type: application/json or an application/<subtype>+json type, parameters ignored', async () => {
+      for (const ct of ['application/vnd.client.example+json', 'Application/JSON; charset=utf-8', 'application/ld+json']) {
+        server.set(URL1, { body: JSON.stringify(doc()), headers: { 'content-type': ct } });
+        const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
+        assert.equal(r.ok, true, ct);
+      }
+      for (const ct of ['text/plain', 'text/json', 'application/+json', 'application/jsonx', 'application/json+xml', '']) {
         server.set(URL1, { body: JSON.stringify(doc()), headers: ct === '' ? {} : { 'content-type': ct } });
         const r = await meta.fetchClientMetadataDocument(URL1, settingsOf());
         assert.deepEqual([r.ok, r.kind], [false, 'invalid'], ct);

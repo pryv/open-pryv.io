@@ -75,6 +75,8 @@ const PRUNE_EXTRA_MS = 7 * 24 * 3600 * 1000;
 // The document members this server reads; any other is ignored.
 const READ_MEMBERS = new Set(['client_id', 'redirect_uris', 'token_endpoint_auth_method', 'grant_types', 'response_types',
   'client_name', 'client_uri', 'policy_uri', 'tos_uri', 'logo_uri', 'software_id', 'contacts']);
+/** `application/json`, or a more specific `application/<subtype>+json` (RFC 6838 restricted name); lower-cased, no parameters. */
+const JSON_MEDIA_TYPE_RE = /^application\/(?:json|[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\+json)$/;
 /** The redirect URI schemes a metadata document may list (http on a loopback host only, checked apart). */
 export const REDIRECT_SCHEMES: readonly string[] = Object.freeze(['https:', 'http:']);
 // Read for a `private_key_jwt` document only (ignored with `none`).
@@ -356,7 +358,7 @@ export async function fetchClientMetadataDocument (url: string, settings: Client
     return { ok: false, kind: 'unreachable', detail: 'HTTP status ' + res.status + (res.status >= 300 && res.status < 400 ? ' (redirects are not followed)' : '') };
   }
   const contentType = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-  if (contentType !== 'application/json') {
+  if (!JSON_MEDIA_TYPE_RE.test(contentType)) {
     await discardBody(res);
     return { ok: false, kind: 'invalid', detail: 'content type ' + JSON.stringify(contentType) + ' (application/json expected)' };
   }
