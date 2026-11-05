@@ -1264,7 +1264,8 @@ describe('[MFAA] MFA acceptance (seq)', function () {
             accepted++;
           }
         }
-        assert.ok(accepted > 0, 'at least one challenge was re-sent within the lifetime');
+        assert.ok(accepted > 0, 'no challenge answered within the session lifetime: the run was too slow for this ' +
+          'test (login and first challenge took over ' + TTL_MS + ' ms), not a lifetime defect');
         // Past the lifetime counted from the login, whatever was sent since:
         // a challenge extending it would make this verify succeed.
         await sleep(Math.max(0, loginAnswered + TTL_MS + 100 - Date.now()));

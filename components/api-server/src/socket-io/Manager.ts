@@ -50,7 +50,9 @@ function getSocketAudit () {
 }
 // Manages contexts for socket-io. A NamespaceContext is created when the first
 // client connects to a namespace and dropped when its last client leaves.
-// Keyed by namespace name.
+// Keyed by namespace object, not name: socket.io can release a namespace while
+// a socket is still in its handshake and create a new object under the same
+// name, and each live object needs its own context.
 //
 
 class Manager {

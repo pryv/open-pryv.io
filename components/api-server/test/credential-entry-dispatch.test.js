@@ -232,7 +232,8 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
         await sleep(1100);
         const ok = await login(password);
         assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
-        // The success cleared the tally: the next failure is free again.
+        // The success cleared the tally: no delay stored, and the next failure is free again.
+        assert.strictEqual(await storedDelayMs(), 0, 'the success clears the stored delay');
         assertWrongPassword(await login('wrong-3'));
         assertWrongPassword(await login('wrong-4'));
       });
@@ -428,12 +429,14 @@ describe('[CEDP] credential entry methods and batch bounds', function () {
 
     it('[CEPI7] the refusal ends with its window', async function () {
       const A = '198.51.100.3';
-      // Start at the beginning of a two-second window.
-      await sleep(2000 - (Date.now() % 2000) + 50);
-      await withInjectedConfig(perIp(1, 2), async () => {
+      // Start at the beginning of a six-second window: the two logins below
+      // fall in it even when a slow run takes seconds per login.
+      const WINDOW_MS = 6000;
+      await sleep(WINDOW_MS - (Date.now() % WINDOW_MS) + 50);
+      await withInjectedConfig(perIp(1, WINDOW_MS / 1000), async () => {
         assertWrongPassword(await loginAs(pool[0], 'wrong-1', A));
         const refused = await loginAs(pool[1], password, A);
-        assertAddressRefused(refused, 2);
+        assertAddressRefused(refused, WINDOW_MS / 1000);
         await sleep(refused.body.error.data.retryAfterSeconds * 1000 + 100);
         assert.strictEqual((await loginAs(pool[1], password, A)).status, 200);
       });
