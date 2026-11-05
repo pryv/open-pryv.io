@@ -26,7 +26,6 @@ export function requireRqlited (binPath: string, ctx: { skip: () => void }, suit
   if (process.env[SKIP_2CORE_ENV] === '1') {
     console.warn(`  SKIPPED ${suite}: ${SKIP_2CORE_ENV}=1 is set and rqlited is not at ${binPath}`);
     ctx.skip();
-    return;
   }
   throw new Error(`${suite} needs rqlited at ${binPath}: run ./storages/engines/rqlite/scripts/setup ` +
     `(or link bin-ext/ as in the main checkout), or set ${SKIP_2CORE_ENV}=1 to skip these tests explicitly`);

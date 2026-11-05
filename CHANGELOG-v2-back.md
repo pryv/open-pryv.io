@@ -4,13 +4,15 @@
 
 ### Tests: the suites that need rqlited fail without it
 
-- The two-core suite (`[RG2C]`, api-server `reg-2core.test.js`) and the two-node mTLS cluster test
+- The two-core suite (`[RG2C]`, api-server `reg-2core-seq.test.js`) and the two-node mTLS cluster test
   (`[RQMTLS]`, `storages/engines/rqlite`) skipped with one console line when `bin-ext/rqlited` was
   missing, so a local run (a git worktree has no `bin-ext/`) read green without them. They now fail
   with a message naming the binary's path and the way out; `SKIP_2CORE=1` skips them explicitly,
-  with a `SKIPPED` line naming the variable (`test-helpers/src/requireRqlited.ts`). CI installs
-  rqlited (`just setup-dev-env`, then `storages/engines/rqlite/scripts/start`, which fails without
-  it), so CI runs them as before.
+  with a `SKIPPED` line naming the variable (`test-helpers/src/requireRqlited.ts`). CI's test job
+  runs `just setup-dev-env`, which installs rqlited and aborts the job when that fails, so CI runs
+  them as before.
+- The two-core suite file is `reg-2core-seq.test.js` again: without the `-seq` suffix the parallel
+  test mode (`just test-parallel`, local only) ran it alongside other files.
 
 ### Email any-case uniqueness (cleartext piiMode); restore rollback; SSO bindings in single-account backups; values holding `/`
 
