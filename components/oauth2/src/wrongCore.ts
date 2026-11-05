@@ -25,7 +25,7 @@ import { audit } from './audit.ts';
 /** The account lives on another core of the platform. */
 export type WrongCoreSession = { wrongCore: true; coreUrl: string };
 
-export const WRONG_CORE_DESCRIPTION = 'this account is served by another core: start the authorization again from the app, with the address of that core';
+export const WRONG_CORE_DESCRIPTION = 'this account is served by another core: start the authorization again from the app, with the address of your account\'s region';
 
 export function isWrongCoreSession (v: unknown): v is WrongCoreSession {
   return v != null && typeof v === 'object' && (v as WrongCoreSession).wrongCore === true &&

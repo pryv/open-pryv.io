@@ -38,7 +38,8 @@ import type { Application as ExpressApp } from 'express';
 import type { AppLike } from './_types.ts';
 import type { Ctx, OAuthMethodResult, GlueEnv } from './oauth2/types.ts';
 import { createRequire } from 'node:module';
-import { getPlatform } from 'platform';
+import type { WrongCore } from './oauth2/wrongCore.ts';
+import { wrongCoreOf } from './oauth2/wrongCore.ts';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
@@ -88,7 +89,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       // core, then posts here, to the core that issued the authorization).
       const elsewhere = await otherCoreOf(username);
       if (elsewhere != null) return elsewhere;
-      logger.warn('resolveUser: context init/access lookup failed', err);
+      logger.warn('resolveUser: context init failed (no such name on this core)', err);
       return null;
     }
     try {
@@ -97,7 +98,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
       // Swallowed on purpose: the endpoint renders a clean 401 rather
       // than leaking why. Record it on the server trail: without this,
       // every context/auth failure is an indistinguishable null.
-      logger.warn('resolveUser: context init/access lookup failed', err);
+      logger.warn('resolveUser: access lookup failed', err);
       return null;
     }
     if (context.access == null) {
@@ -137,17 +138,11 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }
 
   // The core the platform names for a username this core does not serve, or
-  // null (single core, unknown name, this core, or a lookup failure: the
-  // uniform answer then stands). Says no more than the wrong-core answer of
-  // `/:username/*` already says for any name.
-  async function otherCoreOf (username: string): Promise<{ wrongCore: true; coreUrl: string } | null> {
+  // null (see oauth2/wrongCore.ts: the uniform answer then stands). Says no
+  // more than the wrong-core answer of `/:username/*` already says.
+  async function otherCoreOf (username: string): Promise<WrongCore | null> {
     try {
-      const platform = await getPlatform();
-      if (platform.isSingleCore) return null;
-      const coreId = await platform.getUserCore(username);
-      if (coreId == null || coreId === platform.coreId) return null;
-      const coreUrl = platform.coreIdToUrl(coreId);
-      return typeof coreUrl === 'string' && coreUrl.length > 0 ? { wrongCore: true as const, coreUrl } : null;
+      return await wrongCoreOf(username);
     } catch (err) {
       logger.warn('resolveUser: platform lookup of the account\'s core failed', err);
       return null;
