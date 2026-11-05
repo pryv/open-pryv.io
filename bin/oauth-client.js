@@ -1309,11 +1309,13 @@ async function runRevoke (platform, args, removeClient) {
   const existing = await oauthStorage().getClient(platform, clientId);
   await removeClient(platform, clientId);
   console.log('OK   client revoked: ' + clientId);
+  console.log('     every code, refresh token, session and consent issued for this client before now is void.');
   if (existing?.origin === 'metadata-document') {
     console.log();
-    console.log('NOTE: a metadata-document client (' + existing.metadataUrl + '): the next authorization');
-    console.log('      naming that URL creates the client again. To keep it out, add its host to');
-    console.log('      oauth.clientMetadataDocuments.deniedHosts (or remove it from allowedHosts).');
+    console.log('NOTE: a metadata-document client (' + existing.metadataUrl + '): the URL may register again');
+    console.log('      (the next authorization naming it creates the client again) and will be asked for a new');
+    console.log('      consent. To keep it out, add its host to oauth.clientMetadataDocuments.deniedHosts');
+    console.log('      (or remove it from allowedHosts).');
   }
   console.log();
   console.log('NOTE: the client row is removed (no new grants, refresh dies) AND a');

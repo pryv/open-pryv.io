@@ -482,6 +482,60 @@ describe('[OCMDE] client metadata documents end to end', function () {
     });
     const again = await connect(who, url);
     assert.equal((await readStream(again.token.access_token, 'a', (await accesses(who)).find((a) => a.name === 'oauth-grant:' + metadataClientKey(url)).alias)).status, 200);
+    // The row is back: the refresh token issued before the revoke is still void.
+    const old = await refresh(token.refresh_token, url);
+    assert.deepEqual([old.status, old.body.error], [400, 'invalid_grant']);
+    assert.equal((await refresh(again.token.refresh_token, url)).status, 200, 'the new chain works');
+  });
+
+  it('[OCMDE08B] revoke epoch: a code issued before the revoke is void after the row is re-created; the old grant is not reused', async () => {
+    const url = publish();
+    const who = await newUser();
+    const before = await connect(who, url);
+    const oldGrant = (await accesses(who)).find((a) => a.name === 'oauth-grant:' + metadataClientKey(url));
+    const pending = await codeFor(who, url);
+    const log = console.log;
+    console.log = () => {};
+    try { await cli.runRevoke(platformDB, cli.parseArgs(['revoke', url, '--yes']), oauth2.removeClient); } finally { console.log = log; }
+    assert.equal((await authorize(url)).status, 302, 'the row is created again');
+    const t = await coreRequest.post('/oauth2/token').type('form').send({
+      grant_type: 'authorization_code', code: pending.code, code_verifier: pending.verifier, client_id: url, redirect_uri: REDIRECT_URI, resource: RS_AUD,
+    });
+    assert.deepEqual([t.status, t.body.error], [400, 'invalid_grant']);
+    const intro = await introspect(before.token.access_token);
+    assert.equal(intro.body.active, false, 'a pre-revoke session is inactive');
+    // A new flow: a full consent (nothing kept from the old grant), a new grant, end to end.
+    const { verifier, challenge } = pkce();
+    const res = await authorize(url, { challenge });
+    const { offer, accept } = await consent(who, new URL(res.headers.location).searchParams.get('state'));
+    assert.ok(offer.offer.permissions.every((p) => p.currentlyGranted !== true), 'no entry kept from the pre-revoke grant');
+    const code = new URL(accept.body.redirectTo).searchParams.get('code');
+    const fresh = await coreRequest.post('/oauth2/token').type('form').send({
+      grant_type: 'authorization_code', code, code_verifier: verifier, client_id: url, redirect_uri: REDIRECT_URI, resource: RS_AUD,
+    });
+    assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+    const newGrant = (await accesses(who)).find((a) => a.name === 'oauth-grant:' + metadataClientKey(url));
+    assert.notEqual(newGrant.id, oldGrant.id);
+    // A curated client revoked, then registered again under the same id: its old refresh token is void too.
+    const curatedId = 'MetaCur.' + cuid().slice(-10);
+    const curated = {
+      clientId: curatedId,
+      kind: 'registry',
+      redirectUris: [REDIRECT_URI],
+      grantTypes: ['authorization_code', 'refresh_token'],
+      tokenEndpointAuthMethod: 'none',
+      allowedAudiences: [RS_AUD],
+      subjectType: 'pairwise',
+      scope: ['read/a', 'read/b', 'write/a'],
+    };
+    await oauth2.persistClient(platformDB, curated);
+    clientIds.push(curatedId);
+    const c1 = await connect(who, curatedId);
+    await storage.deleteClient(platformDB, curatedId);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await oauth2.persistClient(platformDB, curated);
+    const oldCurated = await refresh(c1.token.refresh_token, curatedId);
+    assert.deepEqual([oldCurated.status, oldCurated.body.error], [400, 'invalid_grant']);
   });
 
   it('[OCMDE09] the document host down: a fresh row serves; a stale row within the grace serves; past it the client is refused, the row kept', async () => {
@@ -558,7 +612,8 @@ describe('[OCMDE] client metadata documents end to end', function () {
     const ec = signingKey('ES256', 'ec-2');
     const jwksUrl = `https://client.example/keys/${cuid().slice(-8)}.json`;
     serve(jwksUrl, { keys: [rsa.publicJwk] });
-    const url = publish({ token_endpoint_auth_method: 'private_key_jwt', jwks_uri: jwksUrl });
+    // Both members, as a confidential client publishes them: the singular decides.
+    const url = publish({ token_endpoint_auth_method: 'private_key_jwt', token_endpoint_auth_methods_supported: ['none', 'private_key_jwt'], jwks_uri: jwksUrl });
     const who = await newUser();
     const assertion = (key) => clientAssertion(key, url, tokenEndpoint);
     const withAssertion = (body, a) => coreRequest.post('/oauth2/token').type('form')

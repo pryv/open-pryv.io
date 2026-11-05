@@ -373,6 +373,17 @@ export async function handleRefreshToken (
     return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };
   }
 
+  // A client revoked at or after this token was issued: the token is void,
+  // whatever became of the client since (registered again, or a metadata
+  // document's row re-created). Read directly, not from the per-core cache.
+  // Nothing newer exists on this chain, so only this token is ended.
+  const revokedAt = await storage.getRevokedAt(deps.platform, row.clientId);
+  if (revokedAt != null && row.issuedAt <= revokedAt) {
+    await endChain();
+    await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, reason: 'refresh denied: client revoked' });
+    return INVALID;
+  }
+
   // A server-side failure after the consume means the rotation did not
   // happen: the row goes back and the marker away, so the client's retry is a
   // plain refresh (otherwise a transient failure, e.g. an extension hook

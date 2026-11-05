@@ -267,6 +267,14 @@ export interface ClientMetadataState {
   operatorRefreshedAt?: number;
 }
 
+/** Authorization-code lifetime: 10 minutes per RFC 6749 §4.1.2. */
+export const CODE_TTL_SECONDS = 600;
+
+/** When a code was issued: its `issuedAt`, or (a row written before it carried one) its expiry minus the code lifetime. */
+export function codeIssuedAt (row: { issuedAt?: number; expiresAt: number }): number {
+  return Number.isFinite(row.issuedAt) ? row.issuedAt as number : row.expiresAt - CODE_TTL_SECONDS * 1000;
+}
+
 /** Authorization code row (per-issuing-core, ≤10-min TTL). */
 export interface OAuthCode {
   clientId: string;
@@ -276,6 +284,8 @@ export interface OAuthCode {
   userId: string;
   scope: string[];
   expiresAt: number;
+  /** Issue time (ms); a row without it reads `expiresAt - CODE_TTL_SECONDS` (`codeIssuedAt`). */
+  issuedAt?: number;
   /**
    * The access is created at /accept time (when the user is
    * authenticated) on the user's core; its id rides here to the /token

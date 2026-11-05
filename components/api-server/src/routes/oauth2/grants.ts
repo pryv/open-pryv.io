@@ -301,7 +301,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     if (revokedAt == null) return false;
     // `created` is in seconds; a grant without it is treated as old.
     const createdMs = typeof grant.created === 'number' ? grant.created * 1000 : 0;
-    return createdMs < revokedAt;
+    // At or before the epoch (same-millisecond counts as before, as at the grants).
+    return createdMs <= revokedAt;
   }
 
   // ---------------------------------------------------------------------

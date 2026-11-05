@@ -78,7 +78,7 @@ const { clientLifetimes } = require('../clientLifetimes.ts');
 const { generateToken } = require('../secureToken.ts');
 const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
 const { issuerFromConfig } = require('../issuer.ts');
-const { setCode } = require('../storage.ts');
+const { setCode, CODE_TTL_SECONDS: STORED_CODE_TTL_SECONDS } = require('../storage.ts');
 const { recordFirstConsent } = require('../clientMetadata.ts');
 const { grantedScopeTokens, entryCeiling, grantTooLarge } = require('../scopeGrammar.ts');
 const { computeGrantState, toClientView } = require('../extension.ts');
@@ -255,8 +255,8 @@ export const STALE_SCREEN = 'the consent screen is out of date, restart the auth
 /** A change of subject mode reached /accept without the user's acknowledgement. */
 export const SUBJECT_CHANGE_UNACKNOWLEDGED = 'the change of identity mode must be acknowledged';
 
-/** Authorization-code lifetime — 10 minutes per RFC 6749 §4.1.2. */
-export const CODE_TTL_SECONDS = 600;
+/** Authorization-code lifetime (10 minutes per RFC 6749 §4.1.2), owned by storage. */
+export const CODE_TTL_SECONDS = STORED_CODE_TTL_SECONDS;
 
 /** Express-style handler factory. */
 export function handleAccept (deps: AcceptDeps) {
@@ -555,9 +555,11 @@ export function handleAccept (deps: AcceptDeps) {
     // NOT stored: the platform store is replicated to every core, so the
     // grant reads it back from this core's own storage by id.
     const code = generateToken();
-    const codeExpiresAt = Date.now() + CODE_TTL_SECONDS * 1000;
+    const codeIssuedAt = Date.now();
+    const codeExpiresAt = codeIssuedAt + CODE_TTL_SECONDS * 1000;
     await setCode(deps.platform, code, {
       clientId: payload.clientId,
+      issuedAt: codeIssuedAt,
       redirectUri: payload.redirectUri,
       codeChallenge: payload.codeChallenge,
       codeChallengeMethod: payload.codeChallengeMethod,

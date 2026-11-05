@@ -930,6 +930,12 @@ describe('[OCMD] client metadata documents', function () {
     await assert.rejects(verifyClientAssertion(signedAssertion(rsa, URL1, { alg: 'RS256', signAs: 'RS384' }), opts([rsa.publicJwk])));
   });
 
+  it('[OCMD14] a code row\'s issue time: its issuedAt, else (written before it carried one) its expiry minus the code lifetime', () => {
+    assert.equal(storage.CODE_TTL_SECONDS, 600);
+    assert.equal(storage.codeIssuedAt({ expiresAt: 5_000_000, issuedAt: 4_999_000 }), 4_999_000);
+    assert.equal(storage.codeIssuedAt({ expiresAt: 5_000_000 }), 5_000_000 - 600_000);
+  });
+
   it('[OCMD16] refusals are audited at most once per host, reason and minute, with the count suppressed; the URL is cut to 256', async () => {
     const rows = [];
     const savedDebug = console.debug;

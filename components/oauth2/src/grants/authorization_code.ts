@@ -220,6 +220,13 @@ export async function handleAuthorizationCode (
     if (computed !== row.codeChallenge) {
       return { ok: false, status: 400, error: 'invalid_grant', description: 'PKCE verification failed' };
     }
+    // A client revoked at or after this code was issued: the code is void,
+    // whatever became of the client since (registered again, or a metadata
+    // document's row re-created). Read directly, not from the per-core cache.
+    const revokedAt = await storage.getRevokedAt(deps.platform, row.clientId);
+    if (revokedAt != null && storage.codeIssuedAt(row as { issuedAt?: number; expiresAt: number }) <= revokedAt) {
+      return { ok: false, status: 400, error: 'invalid_grant', description: 'code is invalid or already used' };
+    }
 
     if (params.client_id !== row.clientId) {
       return { ok: false, status: 400, error: 'invalid_grant', description: 'client_id mismatch' };

@@ -959,9 +959,12 @@ is deleted by the same sweep, with a tombstone (suspended permanent rows are
 kept).
 
 **Operator tools** (§ 3b): `show`, `revoke`, `suspend`, `resume` and
-`purge-grants` take the URL or the key; `revoke` deletes the row and ends its
-sessions, and the next authorization naming the URL creates the client again
-unless its host is denied (`deniedHosts`) or no longer allowed; `update` and
+`purge-grants` take the URL or the key; `revoke` deletes the row and is an
+epoch: every code, refresh token, session and consent issued for the client
+before it is void, and stays void when the row comes back (the next
+authorization naming the URL creates the client again, with a new, full
+consent, unless its host is denied (`deniedHosts`) or no longer allowed; the
+same holds for a curated client registered again under its id); `update` and
 `rotate-secret` refuse such a client. A document URL that moves is a new client
 (new consent, new alias).
 
