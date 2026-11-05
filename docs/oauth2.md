@@ -845,7 +845,7 @@ fetch. The body never reaches a log or an audit row.
 | Member | Rule |
 |---|---|
 | `client_id` | required, exactly the document URL (string equality: a trailing slash or another case is a mismatch) |
-| `redirect_uris` | required, 1 to 32 absolute URIs without fragment; plain `http` on a loopback host only (`http://localhost/callback` then matches any port, § 3), private-use schemes allowed |
+| `redirect_uris` | required, 1 to 32 absolute URIs without fragment; `https`, or plain `http` on a loopback host only (`http://localhost/callback` then matches any port, § 3); any other scheme (`javascript:`, `data:`, `file:`, a private-use scheme) makes the document invalid: the consent UI sends the user-agent there |
 | `token_endpoint_auth_method` | `none`, absent (read as `none`: a lenient reading of RFC 7591, whose default is `client_secret_basic`, which a document cannot carry) or `private_key_jwt` (a confidential client, below), each only when listed in `oauth.clientMetadataDocuments.authMethods`; any other value makes the document invalid. The plural `token_endpoint_auth_methods_supported` some documents carry is ignored: the singular member decides |
 | `jwks_uri` | with `private_key_jwt`: https, without fragment or credentials, **on the document's own host** (same host and port); ignored with `none` |
 | `jwks` | with `private_key_jwt` and no `jwks_uri`: an inline public JWK Set (as for a registered client: no private member, a distinct `kid` per key when there are several); when both are given `jwks_uri` wins and the inline set is ignored |

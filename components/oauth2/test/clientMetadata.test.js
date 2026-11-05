@@ -364,8 +364,12 @@ describe('[OCMD] client metadata documents', function () {
     refused({ ...doc(), client_name: 'bad\u202ename' }, /client_name/, 'bidi');
     refused({ ...doc(), 'client_name#xx_1': 'Nom' }, /client_name#/, 'bad language code');
 
-    // Loopback plain http (any port at /authorize) and private-use schemes pass.
-    const ok = check(doc(URL1, { redirect_uris: ['http://localhost/callback', 'http://127.0.0.1/callback', 'com.example.app:/cb'] }));
+    // Only web addresses: a script, data, file or private-use scheme is refused.
+    for (const uri of ['javascript:alert(1)//x', 'data:text/html,x', 'vbscript:x', 'file:///etc/passwd', 'blob:https://client.example/x', 'com.example.app:/cb']) {
+      refused({ ...doc(), redirect_uris: ['https://client.example/cb', uri] }, /only https/, uri);
+    }
+    // Loopback plain http passes (any port at /authorize).
+    const ok = check(doc(URL1, { redirect_uris: ['http://localhost/callback', 'http://127.0.0.1/callback', 'https://client.example/cb'] }));
     assert.equal(ok.ok, true);
     // Absent auth method reads as none; grant types: RFC 7591 default, the intersection.
     assert.equal(ok.fields.tokenEndpointAuthMethod, 'none');

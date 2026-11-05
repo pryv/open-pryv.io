@@ -75,6 +75,8 @@ const PRUNE_EXTRA_MS = 7 * 24 * 3600 * 1000;
 // The document members this server reads; any other is ignored.
 const READ_MEMBERS = new Set(['client_id', 'redirect_uris', 'token_endpoint_auth_method', 'grant_types', 'response_types',
   'client_name', 'client_uri', 'policy_uri', 'tos_uri', 'logo_uri', 'software_id', 'contacts']);
+/** The redirect URI schemes a metadata document may list (http on a loopback host only, checked apart). */
+export const REDIRECT_SCHEMES: readonly string[] = Object.freeze(['https:', 'http:']);
 // Read for a `private_key_jwt` document only (ignored with `none`).
 const KEY_MEMBERS = ['jwks_uri', 'jwks', 'token_endpoint_auth_signing_alg'];
 // Control and bidirectional-formatting characters (as for registered display texts).
@@ -178,7 +180,14 @@ export function clientMetadataProblem (doc: unknown, url: string, settings: Clie
       const c = uri.charCodeAt(i);
       if (c < 0x20 || c === 0x7f) return { ok: false, detail: 'redirect_uris: a redirect URI carries a control character' };
     }
-    try { new URL(uri); } catch { return { ok: false, detail: 'redirect_uris: a redirect URI is not an absolute URI' }; } // eslint-disable-line no-new
+    let parsed: URL;
+    try { parsed = new URL(uri); } catch { return { ok: false, detail: 'redirect_uris: a redirect URI is not an absolute URI' }; }
+    // The document is not the operator's: a consent UI hands the user-agent
+    // to this URI, so only a web address may be one (no javascript:, data:,
+    // file:, a private-use scheme, ...).
+    if (!REDIRECT_SCHEMES.includes(parsed.protocol)) {
+      return { ok: false, detail: 'redirect_uris: only https (and plain http on a loopback host) redirect URIs are accepted' };
+    }
   }
   if (new Set(uris).size !== uris.length) return { ok: false, detail: 'redirect_uris: a URI is listed twice' };
   if (insecureRedirectUris(uris).length > 0) {
