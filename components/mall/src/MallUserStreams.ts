@@ -44,7 +44,8 @@ type GetParams = StreamsGetParams;
  * create path stamped them were stored without; they read with the datastore
  * "unknown" defaults. Only absent or null values are filled; deletion records
  * (`{ id, deleted }`) are left as they are.
- * **Note**: mutates the given streams.
+ * **Note**: mutates the given streams, so stores must return copies, never
+ * their cached objects (the local stores and the account store do).
  */
 function fillMissingTrackingProperties (streams: Array<StreamLike | null | undefined>): void {
   for (const stream of streams) {
@@ -195,6 +196,8 @@ class MallUserStreams implements MallStreams {
       // A store may leave out the tracking properties the stream schema
       // requires (the audit store did): fill the datastore defaults.
       dataStoreDefaults.applyOnStreams(res);
+      // `applyOnStreams` fills undefined values only; a store may also answer null.
+      fillMissingTrackingProperties(res);
       // add Prefix
       streamsUtils.addStoreIdPrefixToStreams(storeId, res);
       if (streamId === '*') {
