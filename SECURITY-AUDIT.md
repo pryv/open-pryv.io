@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 14 (2026-11-04), covering releases 2.0.0-rc.40 to 2.0.0-rc.72.
+**Report revision:** 15 (2026-11-05), covering releases 2.0.0-rc.40 to 2.0.0-rc.73.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -53,7 +53,9 @@ in 2.0.0-rc.70, and a review of the suspension and lifecycle of OAuth2 clients, 
 2026 alongside the work on the vetting status of clients registered by the operator, added those
 fixed in 2.0.0-rc.71, and a review of backup restore on multi-core platforms, of the mails sent to
 an account's stored address and of the background work of an account being erased, made in November
-2026, added those fixed in 2.0.0-rc.72; they were fixed under the same rules (tests that
+2026, added those fixed in 2.0.0-rc.72, and a follow-up review of email uniqueness in cleartext PII
+mode and of backup restore, made in November 2026, added the one fixed in 2.0.0-rc.73; they were
+fixed under the same rules (tests that
 fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
@@ -64,7 +66,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 68 findings, each rated and described individually in
+The review and its follow-ups recorded 69 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -72,9 +74,9 @@ items reported through the public issue tracker, are described but not counted:
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
-| Medium | 37 | 0 | 0 |
+| Medium | 38 | 0 | 0 |
 | Low | 3 | 0 | 0 |
-| **Total** | **68** | **0** | **0** |
+| **Total** | **69** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -121,6 +123,7 @@ its applicability is stated with it.
 | 2.0.0-rc.70 | 2026-11-02 | 2 Medium, lower-severity fixes, completion step of an earlier finding (the state keys are required; the admin-key fallback is removed); operator action: set both state keys where their feature is on, allow `accessCreation` on the registry OAuth2 clients whose sessions create accesses, webhooks or CMC capability requests, give a distinct `kid` to every key of a multi-key inline client key set (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-02) |
 | 2.0.0-rc.71 | 2026-11-03 | 1 Low, lower-severity fixes, completion step of an earlier hardening (a client's suspension reaches the data API); operator action: set `oauth.logoHosts` before upgrading where registry OAuth2 clients have logos, approve vetted client changes with `update --approve`, run `purge-grants` after a revoke (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-03) |
 | 2.0.0-rc.72 | 2026-11-04 | 2 Medium, 1 Low, lower-severity fixes; operator action: run `bin/reconcile-user-cores.js --emails` on each core where accounts were restored with `--user` by an earlier release, look for leftover records with the queries of that release (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-04) |
+| 2.0.0-rc.73 | 2026-11-05 | 1 Medium, lower-severity fixes; operator action: on a platform run with `platform.piiMode: cleartext`, run `bin/reconcile-user-cores.js --emails --dry-run` on each core and resolve the pairs of accounts it lists (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-05) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -223,6 +226,7 @@ workers; the operator's custom authentication step; and the caller id carried fo
 | Embedded DNS (UDP and TCP) | public when enabled |
 | ACME HTTP-01 responder | public when Let's Encrypt is enabled |
 | rqlite platform database: HTTP API (loopback) and Raft (peer cores, mutual TLS) | local / peer cores |
+| Adapter routes (`/adapter/<name>/` on every host, since 2.0.0-rc.73, off unless configured): forwarded to a sidecar on the same host | public, authenticated by the sidecar, not by the core |
 | Local pub/sub broker for cache invalidation | loopback |
 | PostgreSQL, InfluxDB, SQLite files | local |
 
@@ -1880,6 +1884,67 @@ them, found the following in earlier releases.
   to `update --launch-type` on vetted clients; run `purge-grants` for a client whose launch type was
   removed in an earlier release.
 
+### Fixed in 2.0.0-rc.73 (deployed)
+
+2.0.0-rc.73 adds OAuth token exchange for resource servers, with sessions bound to the resource
+server they were issued for (`oauth.audienceBoundSessions`), and adapter routes; it serves the OAuth
+endpoints on a vanity issuer host of a platform with the embedded DNS and completes the backup
+restore work of 2.0.0-rc.72. These are described in `CHANGELOG-v2.md`. A follow-up review of email
+uniqueness in cleartext PII mode and of backup restore, made alongside them, found the following in
+earlier releases.
+
+#### In cleartext PII mode, an email address was unique only as written
+
+- **Severity:** Medium (impact: a password-reset link for an account in another person's inbox,
+  which is an account takeover; low likelihood: it needs a platform run with `platform.piiMode:
+  cleartext`, the opt-out of the default hashed mode, and an address held by one account and
+  written in another case by another). Affected: 2.0.0-rc.72 and earlier releases run in cleartext
+  mode.
+- **What could happen:** on a platform run with `platform.piiMode: cleartext`, an email address was
+  unique only as written: another account could register, add or be sent a verification code or
+  link for an address an account held, written in another case, and a password-reset mail for an
+  account could reach the inbox of another account holding its address in another case. The check
+  added in 2.0.0-rc.72 that sends no reset or notice mail to an address another account holds looked
+  up three spellings of the address, not every one.
+- **What changed:** an address is compared in any case, and without surrounding white space, on
+  every check (registration and its email challenge, the availability check, an email change,
+  adding an email and its resend, the `/system` reservations, a restore), and nothing is mailed to
+  an address another account holds in any spelling. Hashed mode, the default, already compared the
+  normalised address and is unchanged.
+- **Operator action:** on a cleartext platform, run `node bin/reconcile-user-cores.js --emails
+  --dry-run` on each core: it lists the accounts whose address another account holds in another
+  case and names that other holder. Change the email of one account of each pair: until then
+  neither gets a password-reset, MFA-change or auto-deletion mail, and the auto-deletion sweep
+  treats each as an account without an address, so resolve the pairs before its next pass. Hashed
+  platforms need no step.
+
+#### Lower-severity fixes in 2.0.0-rc.73
+
+- **A unique platform value holding `/` was cut at its first `/` when read back** (an email local
+  part such as `a/b@example.com`, an identity provider subject such as `https://idp.example/u/1`):
+  deleting the account removed the row of the cut value and left the real one, so the address or
+  the subject stayed reserved for an account that no longer existed (in cleartext mode, the address
+  itself stayed stored), and backups exported the cut value. Both platform engines now read the
+  value whole.
+- Reported through the public issue tracker, not counted: on a platform with the embedded DNS, the
+  OAuth endpoints, the third-party sign-in routes and the account creation and deletion routes
+  answered 404 on a vanity issuer host such as `auth-eu.<domain>`, whose first label was read as a
+  username, and that label could be registered as a username (open-pryv.io#167). These routes are
+  now served on every host the core answers, the issuer's label is refused as a username, and
+  `bin/check-config.js` checks the issuer host.
+- Not security fixes, listed for operators: a `bin/backup.js --restore --verify-integrity` rollback
+  now removes the accounts the restore created (it left them without data, their name and address
+  still taken); a single-account backup now carries the account's SSO bindings.
+- New in this release, not findings: adapter routes forward `/adapter/<name>/` on every host to a
+  sidecar on the same host, and the core authenticates nothing on those paths (section 3.2; off
+  unless configured); OAuth token exchange lets a resource server exchange the token a user's
+  client sent it, and `oauth.audienceBoundSessions: true` refuses at the data API the sessions
+  issued for a resource server (off by default in this release; a later release is planned to turn it
+  on by default).
+- **Operator action:** run `bin/reconcile-user-cores.js --emails --dry-run` on cleartext platforms
+  as above. Before configuring an adapter route, read `docs/adapter-routes.md`: the sidecar must
+  authenticate every request, and its port must not be reachable from outside the host.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -1979,3 +2044,4 @@ This report is updated with every release that carries a security fix:
 | 12 | 2026-11-02 | 2.0.0-rc.40 to 2.0.0-rc.70 | Adds 2.0.0-rc.70 (review of OAuth2 client authentication, of what an OAuth2 session may create and of the authorization request's audience, alongside client key sets, grant state and resource indicators): 2 Medium findings, lower-severity fixes and the completion step of the 2.0.0-rc.69 state-key item (the admin-key fallback removed). Deployed on the maintainers' platforms (2026-11-02). |
 | 13 | 2026-11-03 | 2.0.0-rc.40 to 2.0.0-rc.71 | Adds 2.0.0-rc.71 (review of the suspension and lifecycle of OAuth2 clients, alongside the vetting status of clients registered by the operator): 1 Low finding, lower-severity fixes and the completion step of the 2.0.0-rc.68 suspension (the data API refuses a suspended client's tokens). Deployed on the maintainers' platforms (2026-11-03). |
 | 14 | 2026-11-04 | 2.0.0-rc.40 to 2.0.0-rc.72 | Adds 2.0.0-rc.72 (review of backup restore on multi-core platforms, of the mails sent to an account's stored address and of the background work of an account being erased): 2 Medium findings, 1 Low finding and lower-severity fixes, among them two completion steps of the 2.0.0-rc.71 client vetting (launch types, withdrawn refresh grant type). Deployed on the maintainers' platforms (2026-11-04). |
+| 15 | 2026-11-05 | 2.0.0-rc.40 to 2.0.0-rc.73 | Adds 2.0.0-rc.73 (follow-up review of email uniqueness in cleartext PII mode and of backup restore): 1 Medium finding and lower-severity fixes; section 3.2 adds the adapter routes. Deployed on the maintainers' platforms (2026-11-05). |
