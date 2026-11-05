@@ -116,7 +116,7 @@ export async function persistClient (platform: PlatformDB, client: OAuthClient):
  * and the row's `updatedAt` is kept as given. It changes only when what the
  * row derives from the document or the template changed, so a refetch that
  * finds the same content does not invalidate a consent in progress (the
- * synthesised offer's digest covers `updatedAt`).
+ * `/offer` memo key covers `updatedAt`; the offer digest covers no row field).
  */
 export async function persistMetadataClient (platform: PlatformDB, client: OAuthClient): Promise<void> {
   if (client?.origin !== 'metadata-document') throw new Error('persistMetadataClient: a metadata-document client row is expected');

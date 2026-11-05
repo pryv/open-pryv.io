@@ -848,8 +848,16 @@ export async function reportClientAuthRefusal (platform: PlatformDB, clientId: s
 export async function refreshMetadataClient (platform: PlatformDB, config: Config, url: string, opts: { now?: number } = {}):
 Promise<{ ok: true; client: OAuthClient; changedFields: string[]; created: boolean } | { ok: false; reason: string; detail: string }> {
   const settings = clientMetadataSettings(config);
-  const effective = settings.mode === 'off' ? { ...settings, mode: 'any' as const } : settings;
-  const refused = clientIdUrlProblem(url, effective, config);
+  // Off (or a block with problems, which reads as off): there is no template
+  // in force to build the client from; nothing is fetched.
+  if (settings.mode === 'off') {
+    return {
+      ok: false,
+      reason: 'mode-off',
+      detail: 'oauth.clientMetadataDocuments is off on this core (mode: off, or the block has problems: check-config): the template is not in force, nothing fetched',
+    };
+  }
+  const refused = clientIdUrlProblem(url, settings, config);
   if (refused != null) return { ok: false, reason: refused.reason, detail: refused.detail };
   const now = opts.now ?? Date.now();
   const existing = await storage.getClient(platform, metadataClientKey(url));

@@ -720,6 +720,12 @@ describe('[OCMD] client metadata documents', function () {
       server.set(URL1, doc(URL1, { client_name: 'New name' }));
       const r2 = await run(cli.runRefreshMetadata, ['refresh-metadata', ids.metadataClientKey(URL1)], getClient);
       assert.match(r2.out, /refreshed: .*\n.*changed: clientName/);
+      // Off: no template in force, nothing fetched, a clear reason.
+      cli.cliEnv.config = async () => fakeConfig({ mode: 'off' });
+      const calls = server.calls;
+      const off = await run(cli.runRefreshMetadata, ['refresh-metadata', URL1], getClient);
+      assert.match(off.error.message, /off on this core.*template is not in force/);
+      assert.equal(server.calls, calls, 'nothing fetched');
     });
 
     it('[OCMD10B] list --origin, show, revoke (with the deny-list hint), suspend by URL; update and rotate-secret refuse such a client', async () => {

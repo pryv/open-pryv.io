@@ -666,7 +666,10 @@ async function runCheckMetadata (platform, args) {
   const meta = require('oauth2/src/clientMetadata.ts');
   const { clientMetadataSettings } = require('oauth2/src/clientMetadataConfig.ts');
   const settings = clientMetadataSettings(config);
-  if (settings.mode === 'off') console.log('NOTE oauth.clientMetadataDocuments.mode is off on this core: such a client is refused here');
+  if (settings.mode === 'off') {
+    console.log('NOTE oauth.clientMetadataDocuments is off on this core (mode: off, or the block has problems): such a client');
+    console.log('     is refused here, and the template is not in force: the reach printed below is empty.');
+  }
   const refused = meta.clientIdUrlProblem(url, settings.mode === 'off' ? { ...settings, mode: 'any' } : settings, config);
   if (refused != null) throw new Error('check-metadata: ' + refused.detail + ' (' + refused.reason + ')');
   const checked = await meta.fetchAndCheckClientMetadata(url, settings);

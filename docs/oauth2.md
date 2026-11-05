@@ -968,10 +968,22 @@ same holds for a curated client registered again under its id); `update` and
 `rotate-secret` refuse such a client. A document URL that moves is a new client
 (new consent, new alias).
 
-**Departures from the draft specification**: no redirect is followed; HTTP
-cache headers are not read; an absent `token_endpoint_auth_method` reads as
-`none` (the one lenient reading); `grant_types` takes the RFC 7591 default when
-absent; a `jwks_uri` must be on the document's host.
+**Departures from the draft specification:**
+
+- no redirect is followed;
+- when both auth-method members are present the singular one decides (the draft
+  reads the plural one first); an absent pair reads as `none`;
+- HTTP cache headers are not read (`cacheSeconds` decides);
+- a refused or invalid URL is not fetched again on that core for
+  `negativeCacheSeconds` (60 s), although the draft says error answers and
+  invalid documents must not be cached: a deliberate brake on an
+  unauthenticated caller making the core fetch;
+- the size cap is 16 KiB, against the draft's recommended 5 KB;
+- `jwks` next to `jwks_uri` is tolerated (the draft says they must not both be
+  present): `jwks_uri` wins;
+- a query string in the URL is accepted (the draft says SHOULD NOT);
+- `grant_types` takes the RFC 7591 default when absent;
+- a `jwks_uri` must be on the document's host.
 
 ---
 
