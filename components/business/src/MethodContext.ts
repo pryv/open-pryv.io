@@ -582,15 +582,17 @@ class MethodContext {
       if (Number.isFinite(configured) && configured > 0) ttlSeconds = configured;
     } catch { /* config not booted (unit contexts) — keep the default */ }
     const { getRevokedAt } = require('oauth2/src/revokedClientsCache.ts');
+    const { issuedBeforeClientRevoke } = require('oauth2/src/storage.ts');
     const revokedAt = await getRevokedAt(platform, clientId, ttlSeconds);
     // Token epoch: a revoke kills tokens minted at or before `revokedAt`
-    // (the same boundary as the token exchange and introspection); tokens
-    // minted after (e.g. after a re-registration) survive. `created` is unix
-    // SECONDS; `revokedAt` is ms. When `created` is missing (shouldn't happen
-    // for a minted oauth access), fail safe = treat as revoked.
+    // plus its clock margin (the one comparison of the grants, the token
+    // exchange and introspection); tokens minted after (e.g. after a
+    // re-registration) survive. `created` is unix SECONDS; `revokedAt` is ms.
+    // When `created` is missing (shouldn't happen for a minted oauth access),
+    // fail safe = treat as revoked.
     if (revokedAt != null) {
       const createdMs = typeof created === 'number' ? created * 1000 : 0;
-      if (createdMs <= revokedAt) {
+      if (issuedBeforeClientRevoke(createdMs, revokedAt)) {
         throw errors.invalidAccessToken('The application access has been revoked.', 403);
       }
     }

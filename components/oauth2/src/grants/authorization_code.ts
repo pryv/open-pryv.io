@@ -221,7 +221,8 @@ export async function handleAuthorizationCode (
     if (computed !== row.codeChallenge) {
       return { ok: false, status: 400, error: 'invalid_grant', description: 'PKCE verification failed' };
     }
-    // A client revoked at or after this code was issued: the code is void,
+    // A client revoked at or after this code was issued (or up to the
+    // epoch's clock margin before, `issuedBeforeClientRevoke`): the code is void,
     // whatever became of the client since (registered again, or a metadata
     // document's row re-created). Read directly, not from the per-core cache.
     let revokedAt: number | null;
@@ -231,7 +232,7 @@ export async function handleAuthorizationCode (
       logServerError('authorization_code: reading the client revoke epoch failed', err);
       return { ok: false, status: 500, error: 'server_error', description: 'failed to read the client' };
     }
-    if (revokedAt != null && storage.codeIssuedAt(row as { issuedAt?: number; expiresAt: number }) <= revokedAt) {
+    if (storage.issuedBeforeClientRevoke(storage.codeIssuedAt(row as { issuedAt?: number; expiresAt: number }), revokedAt)) {
       return { ok: false, status: 400, error: 'invalid_grant', description: 'code is invalid or already used' };
     }
 

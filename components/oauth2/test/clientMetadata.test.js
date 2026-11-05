@@ -1009,6 +1009,15 @@ describe('[OCMD] client metadata documents', function () {
     assert.equal(storage.codeIssuedAt({ expiresAt: 5_000_000 }), 5_000_000 - 600_000);
   });
 
+  it('[OCMD18] the revoke epoch\'s clock margin: issued up to five seconds after it is void', () => {
+    const E = 1_000_000_000_000;
+    assert.equal(storage.REVOKE_CLOCK_MARGIN_MS, 5000);
+    assert.equal(storage.issuedBeforeClientRevoke(E + 4999, E), true);
+    assert.equal(storage.issuedBeforeClientRevoke(E + 5001, E), false);
+    assert.equal(storage.issuedBeforeClientRevoke(E - 1, E), true);
+    assert.equal(storage.issuedBeforeClientRevoke(E, null), false);
+  });
+
   it('[OCMD16] refusals are audited at most once per host, reason and minute (count suppressed), at most 60 per reason and minute (count dropped); the URL, the host key and the detail are cut to 256', async () => {
     const rows = [];
     const savedDebug = console.debug;

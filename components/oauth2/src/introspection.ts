@@ -242,7 +242,7 @@ async function introspectToken (deps: IntrospectDeps, token: string, issuer: str
 /** Whether `clientId` was revoked by the operator after a session created at `createdSeconds`. */
 async function revokedSince (deps: IntrospectDeps, clientId: string, createdSeconds: number): Promise<boolean> {
   const revokedAt = await storage.getRevokedAt(deps.platform, clientId);
-  return revokedAt != null && createdSeconds * 1000 <= revokedAt;
+  return storage.issuedBeforeClientRevoke(createdSeconds * 1000, revokedAt);
 }
 
 /** Stream entries only (features are not the resource server's business). */

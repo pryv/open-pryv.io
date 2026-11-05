@@ -213,7 +213,7 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
     return await refuse('subject-inactive', { ok: false, status: 400, error: 'invalid_grant', description: NOT_ACTIVE });
   }
   const revokedAt = await storage.getRevokedAt(deps.platform, row.clientId);
-  if (subjectClient == null || (revokedAt != null && subject.created * 1000 <= revokedAt) ||
+  if (subjectClient == null || storage.issuedBeforeClientRevoke(subject.created * 1000, revokedAt) ||
       clientUnavailable(subjectClient, deps.config) != null) {
     return await refuse('subject-client-unavailable', { ok: false, status: 400, error: 'invalid_grant', description: CLIENT_NOT_AVAILABLE });
   }

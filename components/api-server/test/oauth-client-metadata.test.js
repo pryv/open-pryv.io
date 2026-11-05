@@ -28,6 +28,7 @@ import { resetJwksCacheForTests } from 'oauth2/src/jwksUri.ts';
 import { setPeerTransportForTests, getPeerTransportForTests } from 'business/src/outbound/peerFetch.ts';
 import * as storages from 'storages';
 import { injectTestConfigSnapshot, withInjectedConfig } from 'test-helpers';
+import { getConfigUnsafe } from '@pryv/boiler';
 import auditModule from 'audit';
 import { purgeClientGrants } from '../src/methods/helpers/oauthGrantPurge.ts';
 import { createRequire } from 'node:module';
@@ -166,6 +167,7 @@ describe('[OCMDE] client metadata documents end to end', function () {
   });
 
   beforeEach(() => { _resetClientMetadataForTests(); });
+  afterEach(() => { storage._setRevokeClockMarginForTests(null); });
 
   after(async function () {
     setPeerTransportForTests(savedTransport);
@@ -463,6 +465,8 @@ describe('[OCMDE] client metadata documents end to end', function () {
   });
 
   it('[OCMDE08] operator revoke: sessions refused, refresh ends; a new authorization creates the client again', async () => {
+    // A flow right after the revoke is inside its clock margin: tested without it here.
+    storage._setRevokeClockMarginForTests(0);
     const url = publish();
     const who = await newUser();
     const { token } = await connect(who, url);
@@ -488,7 +492,8 @@ describe('[OCMDE] client metadata documents end to end', function () {
     assert.equal((await refresh(again.token.refresh_token, url)).status, 200, 'the new chain works');
   });
 
-  it('[OCMDE08B] revoke epoch: a code issued before the revoke is void after the row is re-created; the old grant is not reused', async () => {
+  it('[OCMDE08B] revoke epoch: a code issued before the revoke is void after the row is re-created; the old grant is not reused; the five-second clock margin', async () => {
+    storage._setRevokeClockMarginForTests(0);
     const url = publish();
     const who = await newUser();
     const before = await connect(who, url);
@@ -547,6 +552,30 @@ describe('[OCMDE] client metadata documents end to end', function () {
     await oauth2.persistClient(platformDB, curated);
     const oldCurated = await refresh(c1.token.refresh_token, curatedId);
     assert.deepEqual([oldCurated.status, oldCurated.body.error], [400, 'invalid_grant']);
+
+    // The clock margin (the cases above ran without it: a flow right after a
+    // revoke is inside it): an artefact issued up to five seconds after the
+    // epoch is void too. The epoch is written by hand, relative to each artefact.
+    storage._setRevokeClockMarginForTests(null);
+    const url2 = publish();
+    const tombstone = 'oauth-client-revoked/' + metadataClientKey(url2);
+    const epochAt = (ms) => platformDB.setPlatformKv(tombstone, JSON.stringify({ revokedAt: ms }));
+    const coreId = String(getConfigUnsafe(true).get('core:id') ?? 'single');
+    const a = await connect(who, url2);
+    const b = await connect(who, url2);
+    const issuedOf = async (t) => (await storage.getRefresh(platformDB, coreId, t.refresh_token)).issuedAt;
+    await epochAt((await issuedOf(a.token)) - 3000);
+    const ra = await refresh(a.token.refresh_token, url2);
+    assert.deepEqual([ra.status, ra.body.error], [400, 'invalid_grant'], 'issued 3 s after the epoch: void');
+    await epochAt((await issuedOf(b.token)) - 6000);
+    assert.equal((await refresh(b.token.refresh_token, url2)).status, 200, 'issued 6 s after the epoch: honoured');
+    const created = (await rowOf(who, a.token.access_token)).created;
+    await epochAt(created * 1000 - 3000);
+    assert.equal((await introspect(a.token.access_token)).body.active, false, 'a session made 3 s after the epoch');
+    await epochAt(created * 1000 - 6000);
+    assert.equal((await introspect(a.token.access_token)).body.active, true, 'a session made 6 s after the epoch');
+    await platformDB.deletePlatformKv(tombstone);
+    assert.equal((await refresh(a.token.refresh_token, url2)).body.error, 'invalid_grant', 'the refused token was ended');
   });
 
   it('[OCMDE09] the document host down: a fresh row serves; a stale row within the grace serves; past it the client is refused, the row kept', async () => {

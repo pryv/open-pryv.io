@@ -65,7 +65,9 @@
 - **Changed: a revoked client's authorization codes and refresh tokens issued before the revoke are
   refused even when the client id is registered again** (or, for a client metadata document, when
   its row is re-created); a pre-revoke consent is not reused, the user is asked again. Every client
-  kind.
+  kind. The epoch carries a five-second clock margin: codes, refresh tokens, sessions and consents
+  issued up to five seconds after the revoke are void too (keep the CLI host and the cores
+  NTP-synced).
 
 ### Account transfer to a beneficiary
 

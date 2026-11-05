@@ -968,8 +968,10 @@ epoch: every code, refresh token, session and consent issued for the client
 before it is void, and stays void when the row comes back (the next
 authorization naming the URL creates the client again, with a new, full
 consent, unless its host is denied (`deniedHosts`) or no longer allowed; the
-same holds for a curated client registered again under its id); `update` and
-`rotate-secret` refuse such a client. A document URL that moves is a new client
+same holds for a curated client registered again under its id). Artefacts
+issued up to five seconds after the revoke are void as well (a clock margin:
+the epoch is the clock of the host that ran `revoke`); keep the CLI host and
+the cores NTP-synced. `update` and `rotate-secret` refuse such a client. A document URL that moves is a new client
 (new consent, new alias).
 
 **Departures from the draft specification:**

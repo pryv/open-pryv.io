@@ -627,16 +627,22 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     assert.ok(x.access_token != null, JSON.stringify(x));
     // A revoke of the resource server's id (its row registered again keeps the tombstone).
     await setRevokedAt(epochRs, Date.now());
-    await withInjectedConfig({ oauth: { ...OAUTH, clientRevokeCheckSeconds: 1 } }, async () => {
-      assert.equal(await eventually(() => readStream(who, x.access_token, 'a'), 403), 403);
-      const y = await exchange(t.access_token, [epochRs, rsSecret.plaintext]);
-      assert.equal(y.status, 200, JSON.stringify(y.body));
-      assert.notEqual(y.body.access_token, x.access_token);
-      assert.equal((await readStream(who, y.body.access_token, 'a')).status, 200);
-      assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
-      assert.equal(await storage.getSessionIndex(platformDB, x.access_token), null);
-      assert.equal((await accesses(who, { includeExpired: true })).filter((a) => a.name === 'oauth:' + epochRs).length, 1);
-    });
+    // The next exchange follows within the epoch's clock margin: tested without it.
+    storage._setRevokeClockMarginForTests(0);
+    try {
+      await withInjectedConfig({ oauth: { ...OAUTH, clientRevokeCheckSeconds: 1 } }, async () => {
+        assert.equal(await eventually(() => readStream(who, x.access_token, 'a'), 403), 403);
+        const y = await exchange(t.access_token, [epochRs, rsSecret.plaintext]);
+        assert.equal(y.status, 200, JSON.stringify(y.body));
+        assert.notEqual(y.body.access_token, x.access_token);
+        assert.equal((await readStream(who, y.body.access_token, 'a')).status, 200);
+        assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
+        assert.equal(await storage.getSessionIndex(platformDB, x.access_token), null);
+        assert.equal((await accesses(who, { includeExpired: true })).filter((a) => a.name === 'oauth:' + epochRs).length, 1);
+      });
+    } finally {
+      storage._setRevokeClockMarginForTests(null);
+    }
   });
 
   it('[OTXE16] a reused derived session whose permissions drifted from its subject\'s is brought back to the subject\'s', async () => {

@@ -577,6 +577,30 @@ export async function getRevokedAt (platform: PlatformDB, clientId: string): Pro
   try { const at = Number(JSON.parse(raw).revokedAt); return Number.isFinite(at) ? at : 0; } catch { return 0; }
 }
 
+/**
+ * Clock margin of the revoke epoch (ms): the epoch is the clock of the process
+ * that ran the revoke (an operator's shell, maybe not a core), an artefact the
+ * clock of the core that issued it. The CLI host and the cores are expected
+ * NTP-synced; a skew above this is an operations fault the margin does not cover.
+ */
+export const REVOKE_CLOCK_MARGIN_MS = 5000;
+let revokeClockMarginMs = REVOKE_CLOCK_MARGIN_MS;
+
+/**
+ * Whether an artefact (code, refresh token, session, derived session,
+ * consent grant) issued at `issuedMs` is void under the client's revoke epoch
+ * `revokedAt` (ms, null: never revoked): issued at or before it, or up to
+ * `REVOKE_CLOCK_MARGIN_MS` after it. The one comparison every check uses.
+ */
+export function issuedBeforeClientRevoke (issuedMs: number, revokedAt: number | null): boolean {
+  return revokedAt != null && issuedMs <= revokedAt + revokeClockMarginMs;
+}
+
+/** Tests: another revoke clock margin (null: back to `REVOKE_CLOCK_MARGIN_MS`). */
+export function _setRevokeClockMarginForTests (ms: number | null): void {
+  revokeClockMarginMs = ms ?? REVOKE_CLOCK_MARGIN_MS;
+}
+
 /** True when the clientId carries a revoke tombstone (any epoch). */
 export async function isClientRevoked (platform: PlatformDB, clientId: string): Promise<boolean> {
   return (await getRevokedAt(platform, clientId)) != null;

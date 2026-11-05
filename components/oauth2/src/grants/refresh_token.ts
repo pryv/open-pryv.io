@@ -396,7 +396,8 @@ export async function handleRefreshToken (
     return { ok: false as const, status: 500, error: 'server_error', description };
   };
 
-  // A client revoked at or after this token was issued: the token is void,
+  // A client revoked at or after this token was issued (or up to the epoch's
+  // clock margin before, `issuedBeforeClientRevoke`): the token is void,
   // whatever became of the client since (registered again, or a metadata
   // document's row re-created). Read directly, not from the per-core cache.
   // Nothing newer exists on this chain, so only this token is ended.
@@ -407,7 +408,7 @@ export async function handleRefreshToken (
     logServerError('refresh_token: reading the client revoke epoch failed', err);
     return await serverError('failed to read the client');
   }
-  if (revokedAt != null && row.issuedAt <= revokedAt) {
+  if (storage.issuedBeforeClientRevoke(row.issuedAt, revokedAt)) {
     await endChain();
     await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, reason: 'refresh denied: client revoked' });
     return INVALID;

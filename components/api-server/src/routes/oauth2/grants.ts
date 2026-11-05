@@ -36,7 +36,7 @@ import { awaitConsentOutcome } from '../consentPoll.ts';
 import { withSessionSelfRevoke, samePermissionKeys, REGISTRY_GRANT_PREFIX, REGISTRY_GRANT_DEVICE } from './types.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import * as storages from 'storages';
-import { getRevokedAt } from 'oauth2/src/storage.ts';
+import { getRevokedAt, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -301,8 +301,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     if (revokedAt == null) return false;
     // `created` is in seconds; a grant without it is treated as old.
     const createdMs = typeof grant.created === 'number' ? grant.created * 1000 : 0;
-    // At or before the epoch (same-millisecond counts as before, as at the grants).
-    return createdMs <= revokedAt;
+    // At or before the epoch, within its clock margin (one comparison with the grants).
+    return issuedBeforeClientRevoke(createdMs, revokedAt);
   }
 
   // ---------------------------------------------------------------------

@@ -39,7 +39,7 @@ import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } f
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
-import { getClient as getOAuthClient } from 'oauth2/src/storage.ts';
+import { getClient as getOAuthClient, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
 import { isMetadataClientKey, metadataClientStamp } from 'oauth2/src/clientMetadataId.ts';
 import type { MetadataClientStamp } from 'oauth2/src/clientMetadataId.ts';
 import * as storages from 'storages';
@@ -610,10 +610,14 @@ export function createSessions (env: GlueEnv) {
     return expires;
   }
 
-  /** A found derived row may be answered again: alive, and made after the resource server's revoke epoch. */
+  /**
+   * A found derived row may be answered again: alive, and made after the
+   * resource server's revoke epoch and its clock margin (the data API refuses
+   * a session within it).
+   */
   function reusableDerived (row: DataGrant, notBefore: number | null): boolean {
     if (typeof row.expires !== 'number' || row.expires <= Date.now() / 1000) return false;
-    return notBefore == null || (typeof row.created === 'number' && row.created * 1000 > notBefore);
+    return notBefore == null || (typeof row.created === 'number' && !issuedBeforeClientRevoke(row.created * 1000, notBefore));
   }
 
   function subjectInactive (): Error {

@@ -81,6 +81,10 @@
   `CODE_TTL_SECONDS` moved to `storage.ts`); the code and refresh grants read the revoke epoch
   directly (`getRevokedAt`) and refuse what was issued at or before it; the consent's
   `madeBeforeClientRevoke` compares with `<=`.
+- One epoch comparison, `storage.issuedBeforeClientRevoke(issuedMs, revokedAt)` (issued at or
+  before `revokedAt + REVOKE_CLOCK_MARGIN_MS`, 5000 ms), at the code and refresh grants, the
+  consent's grant reuse, `MethodContext.checkOAuthClient`, the token exchange (subject session and
+  derived-session reuse) and introspection.
 
 ### Email any-case uniqueness (cleartext piiMode); restore rollback; SSO bindings in single-account backups; values holding `/`
 
