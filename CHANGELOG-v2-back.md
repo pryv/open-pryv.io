@@ -469,14 +469,12 @@
     user schedule `no-email` unless `acknowledgedNoReminders`; the preset does not apply;
     `account.setAutoDeletion` asks for `acknowledgeNoReminders`). A lookup error throws (the get/set
     method fails, the sweep skips the account for the pass): an account is not judged on a guess.
-  - `sendAutoDeletionMail`, stored-email branch only (`to == null`), before the switch checks:
+  - `sendAutoDeletionMail`, before the switch checks:
     `facts.emailHeld`, or the address found held at the send (`isStoredEmailHeldElsewhere`) ->
-    `'rejected'`, not `'off'`: a notice not given, never recorded as given (`tellOwnerStarted` keeps
-    `ownerToldAt` unset and retries at each pass, `logRefused` logs once); a lookup error is
-    `'failed'` (retried at the next pass).
+    `'rejected'`, not `'off'`: a notice not given, never recorded as given (retried at each pass);
+    a lookup error is `'failed'` (retried at the next pass).
 - Checked, not guarded: the verification and registration-challenge mails go to the address being
-  proved, the transfer claim mails to the beneficiary's address, the welcome mail to the address
-  just registered. No other sender mails a credential to the stored email (`sendmail(` callers).
+  proved, the welcome mail to the address just registered. No other sender mails a credential to the stored email (`sendmail(` callers).
 - Tests `[RSLK3-6]` (held: no mail, same status and body; absent row: sent; lookup error: fails, no
   mail; cleartext mode, another spelling held: no mail), `[MSN4]`, `[ACST15D]` (view `no-email`,
   acknowledgement asked, no mail, no notice recorded, facts not notifiable, `'rejected'`),
@@ -641,26 +639,6 @@
   page reports the missing page rather than the missing key.
 - Test cores spawned by the multi-core suites set a per-core `oauth:stateKey` with their consent
   page (`OAUTH_STATE_KEY` overrides it).
-
-### Account transfer: the sweep, the record, the links
-
-- The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim
-  window instead of erasing (not counted in `maxDeletionsPerPass`); while a window is open a pass
-  completes the transfer once the claimant controls the account, cancels it on account use before a
-  claim (`inactivity`), lifts the failed-claim lock, re-sends the claim mail at +30 / +60 days, and
-  applies the fallback at its end (erasure trigger `transfer-fallback`). The life of a transfer is a
-  second key-value row next to the schedule (`TransferRecord`, key `transfer`), so a change of
-  schedule never loses it; a closed record is kept as the record.
-- The claim and decline links are derived (HMAC-SHA256 of kind, account id and a per-transfer salt
-  under a key derived from `account.autoDeletion.transfer.identitySecretsKey`, else from
-  `auth.adminAccessKey`, purpose `account-transfer-link-v1`); only the salt is stored, so a re-sent
-  link is the same and a database dump holds none. Rotating the source key invalidates the links in
-  flight.
-- The delegation methods register the owner's side of the handshake for the transfer
-  (`api-server/src/methods/helpers/transferDelegation.ts`: invite, state, withdraw); without
-  delegation on the core, transfers are not offered.
-- The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
-  `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
 
 ### Accesses: last sign-in time
 
