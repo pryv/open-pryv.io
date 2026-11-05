@@ -19,7 +19,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  *
  * Sequential — manages child processes and rqlite lifecycle.
  *
- * Requires: rqlited binary at bin-ext/rqlited
+ * Requires: rqlited binary at bin-ext/rqlited (the suite fails without it,
+ * unless SKIP_2CORE=1 is set to skip it explicitly).
  */
 
 const assert = require('node:assert');
@@ -30,6 +31,7 @@ const rqliteProcess = require('../../../storages/engines/rqlite/src/rqliteProces
 const { createDnsServer } = require('dns-server/src/index.ts');
 const { DBrqlite } = require('../../../storages/engines/rqlite/src/DBrqlite.ts');
 const { childStorageEngineEnv } = require('test-helpers');
+const { requireRqlited } = require('test-helpers/src/requireRqlited.ts');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 const SERVICE_CORE_ROOT = path.resolve(__dirname, '../../../');
@@ -224,12 +226,9 @@ describe('[RG2C] Two-core integration tests', function () {
     // which the parent's SQLite-based check cannot see.
     savedIntegrityCheck = process.env.DISABLE_INTEGRITY_CHECK;
     process.env.DISABLE_INTEGRITY_CHECK = '1';
-    // Check rqlite binary exists
+    // No rqlited: fail (a silent skip reads green), unless SKIP_2CORE=1
     const fs = require('node:fs');
-    if (!fs.existsSync(RQLITE_BIN)) {
-      console.log('rqlited binary not found, skipping 2-core tests');
-      this.skip();
-    }
+    requireRqlited(RQLITE_BIN, this, '[RG2C] two-core tests');
 
     // Each core's own, empty, user data (first: a PostgreSQL failure then
     // leaves nothing running)

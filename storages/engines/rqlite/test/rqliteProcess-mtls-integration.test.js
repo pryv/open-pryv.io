@@ -16,9 +16,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * writes. Validates that the flag names and ordering produced by
  * buildArgs() match what the real rqlited binary accepts.
  *
- * Prerequisites (the test skip()s when any are missing):
- *   - `openssl` on PATH  (to generate a self-signed CA + node certs)
- *   - `./bin-ext/rqlited` binary
+ * Prerequisites:
+ *   - `openssl` on PATH  (to generate a self-signed CA + node certs; the
+ *     test skip()s without it)
+ *   - `./bin-ext/rqlited` binary (the test fails without it, unless
+ *     SKIP_2CORE=1 is set to skip it explicitly)
  *
  * The test uses loopback addresses and non-default ports
  * (14xxx range) so it can run on a developer machine without
@@ -37,6 +39,7 @@ const { buildArgs } = require('../src/rqliteProcess.ts');
 
 // Initialises the test config, so this file reads it when it loads first.
 require('test-helpers/src/api-server-tests-config.ts');
+const { requireRqlited } = require('test-helpers/src/requireRqlited.ts');
 const { getConfigUnsafe } = require('@pryv/boiler');
 
 const RQLITED_BIN = path.resolve(__dirname, '../../../../bin-ext/rqlited');
@@ -58,10 +61,8 @@ describe('[RQMTLS] rqlited two-node mTLS cluster', function () {
   let nodeB = null;
 
   before(function () {
-    if (!fs.existsSync(RQLITED_BIN)) {
-      console.log(`  skipping: rqlited not found at ${RQLITED_BIN}`);
-      this.skip();
-    }
+    // No rqlited: fail (a silent skip reads green), unless SKIP_2CORE=1
+    requireRqlited(RQLITED_BIN, this, '[RQMTLS] two-node rqlited cluster');
     try {
       execFileSync('openssl', ['version'], { stdio: 'ignore' });
     } catch {
