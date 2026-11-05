@@ -550,19 +550,37 @@ const inflight = new Map<string, Promise<RefreshOutcome>>();
 const REFUSAL_WINDOW_MS = 60 * 1000;
 const MAX_REFUSAL_SAMPLE_KEYS = 4096;
 const MAX_REFUSED_URL_LENGTH = 256;
+const MAX_REFUSAL_DETAIL_LENGTH = 256;
+const MAX_REFUSAL_KEY_HOST_LENGTH = 256;
+
+/**
+ * Refusal records (log lines and audit rows) a core emits per reason and
+ * minute, over every host: equal to the default per-core fetch budget, so a
+ * refusal is never recorded more often than a fetch could happen.
+ */
+export const REFUSAL_EMIT_CAP_PER_MINUTE = 60;
+
+/** The reasons refusals are sampled and capped by: a fixed set, never a string a caller chooses. */
+export type RefusalReason = 'url' | 'host-policy' | 'unreachable' | 'invalid' | 'budget' | 'stale' | 'derived-row' | 'client-auth';
+
+const refusalCaps = new Map<RefusalReason, { since: number; emitted: number; dropped: number }>();
 
 /**
  * Refusals cost an unauthenticated caller nothing: their log lines and audit
- * rows are sampled, at most one per (host, reason) and minute on this core.
- * The first refusal of a window is emitted and carries the count of those
- * suppressed in the window before it.
+ * rows are sampled, at most one per (host, reason, `subKey`) and minute on
+ * this core, and capped at `REFUSAL_EMIT_CAP_PER_MINUTE` per reason and
+ * minute over every host (a host is free to choose). The first refusal of a
+ * key's window is emitted and carries the count of those `suppressed` in its
+ * window before; the first emitted after a capped window carries the count
+ * the cap `dropped` in it.
  */
-export function sampledRefusal (host: string, reason: string, now: number): { emit: boolean; suppressed: number } {
-  const key = host + '|' + reason;
+export function sampledRefusal (host: string, reason: RefusalReason, now: number, subKey: string = ''):
+{ emit: boolean; suppressed: number; dropped: number } {
+  const key = host.slice(0, MAX_REFUSAL_KEY_HOST_LENGTH) + '|' + reason + '|' + subKey;
   const entry = refusalSamples.get(key);
   if (entry != null && now - entry.since < REFUSAL_WINDOW_MS) {
     entry.suppressed++;
-    return { emit: false, suppressed: 0 };
+    return { emit: false, suppressed: 0, dropped: 0 };
   }
   refusalSamples.delete(key);
   refusalSamples.set(key, { since: now, suppressed: 0 });
@@ -574,27 +592,53 @@ export function sampledRefusal (host: string, reason: string, now: number): { em
       refusalSamples.delete(oldest);
     }
   }
-  return { emit: true, suppressed: entry?.suppressed ?? 0 };
+  const suppressed = entry?.suppressed ?? 0;
+  let cap = refusalCaps.get(reason);
+  let carried = 0;
+  if (cap == null || now - cap.since >= REFUSAL_WINDOW_MS) {
+    carried = cap?.dropped ?? 0;
+    cap = { since: now, emitted: 0, dropped: 0 };
+    refusalCaps.set(reason, cap);
+  }
+  if (cap.emitted >= REFUSAL_EMIT_CAP_PER_MINUTE) {
+    // This refusal and the ones its key suppressed before go unrecorded.
+    cap.dropped += 1 + suppressed;
+    return { emit: false, suppressed: 0, dropped: 0 };
+  }
+  cap.emitted++;
+  return { emit: true, suppressed, dropped: carried };
 }
 
-type Refusal = { clientId: string; metadataUrl: string; host: string; reason: string; detail: string };
+/** The counts an emitted record carries, as a log-line suffix. */
+function countsSuffix (s: { suppressed: number; dropped: number }): string {
+  return (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : '') +
+    (s.dropped > 0 ? ` (${s.dropped} more of this reason dropped by the per-minute cap before)` : '');
+}
+
+/** The counts an emitted record carries, as audit row members. */
+function countsMembers (s: { suppressed: number; dropped: number }): Record<string, number> {
+  return { ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}), ...(s.dropped > 0 ? { dropped: s.dropped } : {}) };
+}
+
+type Refusal = { clientId: string; metadataUrl: string; host: string; reason: RefusalReason; detail: string };
 
 /**
  * Audit (and, with `warning`, log) a refused metadata document URL or
- * document; sampled unless `sampled` is false (the operator CLI). The URL is
- * cut to 256 characters; the document body never reaches either.
+ * document; sampled and capped unless `sampled` is false (the operator CLI).
+ * The URL and the detail are cut to 256 characters; the document body never
+ * reaches either.
  */
 async function reportRefusal (refusal: Refusal, now: number, warning: string | null, sampled: boolean = true): Promise<void> {
-  const s = sampled ? sampledRefusal(refusal.host, refusal.reason, now) : { emit: true, suppressed: 0 };
+  const s = sampled ? sampledRefusal(refusal.host, refusal.reason, now) : { emit: true, suppressed: 0, dropped: 0 };
   if (!s.emit) return;
-  if (warning != null) logServerWarning(warning + (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
+  if (warning != null) logServerWarning(warning.slice(0, 2 * MAX_REFUSAL_DETAIL_LENGTH) + countsSuffix(s));
   await audit('oauth.client.metadata_refused', {
     clientId: refusal.clientId,
     metadataUrl: refusal.metadataUrl.slice(0, MAX_REFUSED_URL_LENGTH),
-    host: refusal.host,
+    host: refusal.host.slice(0, MAX_REFUSAL_KEY_HOST_LENGTH),
     reason: refusal.reason,
-    detail: refusal.detail,
-    ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
+    detail: refusal.detail.slice(0, MAX_REFUSAL_DETAIL_LENGTH),
+    ...countsMembers(s),
   });
 }
 
@@ -680,16 +724,16 @@ async function refreshRow (platform: PlatformDB, url: string, settings: ClientMe
     // The document passed; the row is refused by the registry rules (the
     // template, most likely): an operator matter.
     // One sampling key for the error line and the audit row (reason `invalid`).
-    const s = sampled ? sampledRefusal(host, 'derived-row', now) : { emit: true, suppressed: 0 };
+    const s = sampled ? sampledRefusal(host, 'derived-row', now) : { emit: true, suppressed: 0, dropped: 0 };
     if (s.emit) {
-      logServerError(`client metadata document on ${host}: the derived client row is refused`, err);
+      logServerError(`client metadata document on ${host}: the derived client row is refused` + countsSuffix(s), err);
       await audit('oauth.client.metadata_refused', {
         clientId: row.clientId,
         metadataUrl: url.slice(0, MAX_REFUSED_URL_LENGTH),
-        host,
+        host: host.slice(0, MAX_REFUSAL_KEY_HOST_LENGTH),
         reason: 'invalid',
-        detail: ('derived row refused: ' + (err as Error).message).slice(0, MAX_REFUSED_URL_LENGTH),
-        ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
+        detail: ('derived row refused: ' + (err as Error).message).slice(0, MAX_REFUSAL_DETAIL_LENGTH),
+        ...countsMembers(s),
       });
     }
     return { ok: false, kind: 'invalid', detail: 'derived row refused: ' + (err as Error).message };
@@ -762,7 +806,7 @@ export async function resolveMetadataClient (deps: { platform: PlatformDB; confi
     const s = sampledRefusal(new URL(url).host, 'stale', now);
     if (s.emit) {
       logServerWarning(`client metadata document on ${new URL(url).host}: ${why}; the stored client is used until its stale grace ends` +
-        (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
+        countsSuffix(s));
     }
     await touchLastUsed(deps.platform, existing!, now);
     return { ok: true, client: existing! };
@@ -852,20 +896,20 @@ export async function reportClientAuthRefusal (platform: PlatformDB, clientId: s
       url = urlHint;
     }
     if (url == null) return;
-    const grant = String(grantType ?? '').slice(0, 64).replace(/[^\x21-\x7e]/g, '?');
+    // The grant type is the caller's text: reduced to the known ones or `other`.
+    const grant = grantType == null || grantType === '' ? '' : (AUTH_REFUSAL_GRANT_TYPES.get(grantType) ?? 'other');
     const what = endpoint + (grant !== '' ? ' ' + grant : '');
-    const s = sampledRefusal(clientId, 'client-auth|' + what, Date.now());
+    const s = sampledRefusal(clientId, 'client-auth', Date.now(), what);
     if (!s.emit) return;
     const shownUrl = url.slice(0, MAX_REFUSED_URL_LENGTH);
-    logServerWarning(`client metadata document client ${shownUrl}: invalid_client at /oauth2/${what}` +
-      (s.suppressed > 0 ? ` (and ${s.suppressed} more in the last minute)` : ''));
+    logServerWarning(`client metadata document client ${shownUrl}: invalid_client at /oauth2/${what}` + countsSuffix(s));
     await audit('oauth.client.metadata_refused', {
       clientId,
       metadataUrl: shownUrl,
-      host: new URL(url).host,
+      host: new URL(url).host.slice(0, MAX_REFUSAL_KEY_HOST_LENGTH),
       reason: 'client-auth',
-      detail: ('/oauth2/' + what + ': client authentication failed').slice(0, MAX_REFUSED_URL_LENGTH),
-      ...(s.suppressed > 0 ? { suppressed: s.suppressed } : {}),
+      detail: ('/oauth2/' + what + ': client authentication failed').slice(0, MAX_REFUSAL_DETAIL_LENGTH),
+      ...countsMembers(s),
     });
   } catch (err) {
     logServerError('client metadata: could not record a client authentication refusal', err);
@@ -874,6 +918,14 @@ export async function reportClientAuthRefusal (platform: PlatformDB, clientId: s
 
 /** A metadata-document client key exactly: the prefix and 40 lower-case hexadecimal characters. */
 const METADATA_KEY_RE = /^url~[0-9a-f]{40}$/;
+
+/** The grant types a client-auth refusal names; any other is `other`. */
+const AUTH_REFUSAL_GRANT_TYPES = new Map<string, string>([
+  ['authorization_code', 'authorization_code'],
+  ['refresh_token', 'refresh_token'],
+  ['client_credentials', 'client_credentials'],
+  ['urn:ietf:params:oauth:grant-type:token-exchange', 'token-exchange'],
+]);
 
 /**
  * Operator: fetch the document now (no cache, no budget) and write the row.
@@ -1009,6 +1061,7 @@ export function _resetClientMetadataForTests (): void {
   creationTimes.length = 0;
   hostFetchTimes.clear();
   refusalSamples.clear();
+  refusalCaps.clear();
   inflight.clear();
 }
 

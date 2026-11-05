@@ -1009,7 +1009,7 @@ describe('[OCMD] client metadata documents', function () {
     assert.equal(storage.codeIssuedAt({ expiresAt: 5_000_000 }), 5_000_000 - 600_000);
   });
 
-  it('[OCMD16] refusals are audited at most once per host, reason and minute, with the count suppressed; the URL is cut to 256', async () => {
+  it('[OCMD16] refusals are audited at most once per host, reason and minute (count suppressed), at most 60 per reason and minute (count dropped); the URL, the host key and the detail are cut to 256', async () => {
     const rows = [];
     const savedDebug = console.debug;
     const savedEnv = process.env.OAUTH_AUDIT_DEBUG;
@@ -1035,6 +1035,44 @@ describe('[OCMD] client metadata documents', function () {
       rows.length = 0;
       for (let i = 0; i < 13; i++) await at(`https://client.example/c${i}.json`, t0 + 70_000 + i);
       assert.deepEqual(rows.map((r) => r.reason), ['unreachable', 'budget']);
+
+      // The cap: at most 60 records per reason and minute over every host.
+      meta._resetClientMetadataForTests();
+      rows.length = 0;
+      const t1 = t0 + 1_000_000;
+      for (let i = 0; i < 100; i++) await at(`https://h${i}.tools.example/c.json`, t1 + i);
+      assert.equal(rows.filter((r) => r.reason === 'host-policy').length, 60, 'capped');
+      // Reasons are capped independently: a url refusal in the same minute is recorded.
+      await at('https://tools.example/a/../b.json', t1 + 200);
+      assert.deepEqual(rows.at(-1).reason, 'url');
+      await at('https://h0.tools.example/c.json', t1 + 61_000);
+      assert.deepEqual([rows.at(-1).reason, rows.at(-1).dropped, rows.at(-1).suppressed], ['host-policy', 40, undefined]);
+      // The sampling key keeps 256 characters of the host: two hosts alike that far share one key.
+      meta._resetClientMetadataForTests();
+      rows.length = 0;
+      const longHost = Array.from({ length: 5 }, () => 'a'.repeat(60)).join('.');
+      await at(`https://${longHost}.one.example/c.json`, t1);
+      await at(`https://${longHost}.two.example/c.json`, t1 + 1);
+      assert.equal(rows.length, 1, 'one key');
+      await at(`https://${longHost}.one.example/c.json`, t1 + 61_000);
+      assert.deepEqual([rows.length, rows[1].suppressed], [2, 1]);
+      // A document-chosen detail is cut to 256 characters.
+      meta._resetClientMetadataForTests();
+      rows.length = 0;
+      const server = docServer();
+      setPeerTransportForTests(server.transport);
+      const any = fakeConfig(block());
+      const long = 'https://client.example/long.json';
+      server.set(long, doc(long, { token_endpoint_auth_method: 'm'.repeat(2048) }));
+      assert.equal((await meta.resolveMetadataClient({ platform, config: any }, long, { now: t1 })).reason, 'invalid');
+      assert.equal(rows.length, 1);
+      assert.ok(rows[0].detail.length <= 256, String(rows[0].detail.length));
+      // A client-auth refusal with a garbage grant type names `other`, under the one reason.
+      rows.length = 0;
+      const s = settingsOf();
+      await persistClient(platform, meta.buildMetadataClientRow(URL1, meta.clientMetadataProblem(doc(), URL1, s).fields, s, null, Date.now()));
+      await meta.reportClientAuthRefusal(platform, ids.metadataClientKey(URL1), 'token', 'x\u0000'.repeat(100));
+      assert.deepEqual(rows.map((r) => [r.reason, r.detail]), [['client-auth', '/oauth2/token other: client authentication failed']]);
     } finally {
       console.debug = savedDebug;
       if (savedEnv == null) delete process.env.OAUTH_AUDIT_DEBUG;

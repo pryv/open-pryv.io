@@ -66,6 +66,11 @@
   of it.
 - The creation budget's unit is reserved before the fetch and refunded when no row is written
   (unreachable, invalid, derived row refused): it bounds rows written, not attempts.
+- `sampledRefusal(host, reason, now, subKey)` also caps refusal records at
+  `REFUSAL_EMIT_CAP_PER_MINUTE` (60) per reason and minute over every key (reasons a fixed set,
+  `RefusalReason`); the next emitted row of that reason carries `dropped`. `detail` and `host` are
+  cut to 256 characters, the sampling key's host part too; `reportClientAuthRefusal` reduces the
+  grant type to the known ones or `other`.
 - Refusals (`metadata_refused` rows and their warnings) go through `sampledRefusal`: one per
   (host, reason) and minute per core, the count in `suppressed`, `metadataUrl` cut to 256; reason
   `client-auth` records an `invalid_client` of such a client at the token, revocation and
