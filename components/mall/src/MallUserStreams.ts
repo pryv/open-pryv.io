@@ -39,6 +39,25 @@ type StoresHolder = {
 type GetParams = StreamsGetParams;
 
 /**
+ * Complete the tracking properties the stream schema requires on streams read
+ * from a store, through the whole tree. Streams written server-side before the
+ * create path stamped them were stored without; they read with the datastore
+ * "unknown" defaults. Only absent or null values are filled; deletion records
+ * (`{ id, deleted }`) are left as they are.
+ * **Note**: mutates the given streams.
+ */
+function fillMissingTrackingProperties (streams: Array<StreamLike | null | undefined>): void {
+  for (const stream of streams) {
+    if (stream == null || stream.deleted != null) continue;
+    stream.created ??= dataStoreDefaults.UnknownDate;
+    stream.modified ??= dataStoreDefaults.UnknownDate;
+    stream.createdBy ??= dataStoreDefaults.UnknownAccessId;
+    stream.modifiedBy ??= dataStoreDefaults.UnknownAccessId;
+    if (Array.isArray(stream.children)) fillMissingTrackingProperties(stream.children as StreamLike[]);
+  }
+}
+
+/**
  * Storage for streams.
  * Dispatches requests to each data store's streams.
  */
@@ -102,6 +121,7 @@ class MallUserStreams implements MallStreams {
       includeTrashed: true,
       childrenDepth: 0
     });
+    fillMissingTrackingProperties([stream]);
     return stream;
   }
 
@@ -167,7 +187,11 @@ class MallUserStreams implements MallStreams {
             excludedIds.length > 0) {
       res = performExclusion(res, excludedIds);
     }
-    if (storeId !== storeDataUtils.LocalStoreId) {
+    if (storeId === storeDataUtils.LocalStoreId) {
+      // Local streams written server-side before the create path stamped the
+      // tracking properties are stored without them.
+      fillMissingTrackingProperties(res);
+    } else {
       // A store may leave out the tracking properties the stream schema
       // requires (the audit store did): fill the datastore defaults.
       dataStoreDefaults.applyOnStreams(res);
@@ -250,6 +274,13 @@ class MallUserStreams implements MallStreams {
     if (streamForStore.deleted === undefined) {
       streamForStore.deleted = null;
     }
+    // Tracking properties: a stream the server creates itself (outside the
+    // streams API, which always sets all four) is stamped here, with
+    // `SystemAccessId` as the author. Only missing values are filled.
+    streamForStore.created ??= Date.now() / 1000;
+    streamForStore.modified ??= streamForStore.created;
+    streamForStore.createdBy ??= dataStoreDefaults.SystemAccessId;
+    streamForStore.modifiedBy ??= streamForStore.createdBy;
     // 1- Check if there is a parent stream
     let parentStoreId = storeDataUtils.LocalStoreId;
     let parentStoreStreamId;
@@ -304,6 +335,7 @@ class MallUserStreams implements MallStreams {
       throw err;
     }
 
+    fillMissingTrackingProperties([res]);
     if (storeId !== storeDataUtils.LocalStoreId) {
       // add Prefix
       streamsUtils.addStoreIdPrefixToStreams(storeId, [res]);
@@ -315,6 +347,10 @@ class MallUserStreams implements MallStreams {
     const streamForStore = structuredClone(streamData);
     const [storeId, storeStreamId] = storeDataUtils.parseStoreIdAndStoreItemId(streamData.id);
     streamForStore.id = storeStreamId;
+    // Tracking properties: a server-side update that does not stamp the
+    // change (the streams API always does) is recorded as a system write.
+    streamForStore.modified ??= Date.now() / 1000;
+    streamForStore.modifiedBy ??= dataStoreDefaults.SystemAccessId;
 
     // 1- Check if there is a parent stream update
     if (streamForStore.parentId != null) {
@@ -333,6 +369,7 @@ class MallUserStreams implements MallStreams {
     // 3 - Insert stream
     const streamsStore = this.streamsStores.get(storeId)!;
     const res = await streamsStore.update(userId, streamForStore);
+    fillMissingTrackingProperties([res]);
     if (storeId !== storeDataUtils.LocalStoreId) {
       // add Prefix
       streamsUtils.addStoreIdPrefixToStreams(storeId, [res]);

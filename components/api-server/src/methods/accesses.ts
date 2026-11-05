@@ -519,7 +519,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     if (existingStream != null) {
       if (!existingStream.trashed) { return; }
       // untrash stream
-      const update = { id: existingStream.id, trashed: false };
+      const update: { id: string; trashed: boolean; modified?: number; modifiedBy?: string } = { id: existingStream.id, trashed: false };
+      context.updateTrackingProperties(update);
       try {
         await mall.streams.update(context.user.id, update);
       } catch (err) {

@@ -74,6 +74,22 @@
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
 
+### System streams carry the properties the stream schema requires
+
+- **Fixed: streams the server creates itself lacked `created`, `createdBy`, `modified` and
+  `modifiedBy`**: the cross-account messaging tree (`:_cmc:`, `:_cmc:inbox`, `:_cmc:apps`, the
+  `:_cmc:_internal…` streams and the streams created on demand under them: app scopes, chat and
+  collector anchors, capability offers and responses), the emails container `:_emails:`, the
+  account-delegation and shared-secrets namespaces, so a client validating `streams.get` against
+  the published stream schema rejected them. Such streams are now stamped when created (the time of
+  creation, `createdBy` / `modifiedBy` `'system'`, or the acting access where one is known), and a
+  server-side update without its own stamp records `modified` and `modifiedBy` `'system'`.
+  **Existing accounts:** streams already stored without these properties read with the data store
+  defaults (`created` / `modified` `10000000.00000001`, `createdBy` / `modifiedBy` `'unknown'`), as
+  for the store streams fixed in 2.0.0-rc.73; nothing to migrate.
+- A stream taken out of the trash because a new access names it in a permission (with
+  `defaultName`) now records that change (`modified`, `modifiedBy` the acting access).
+
 ## 2.0.0-rc.73 - 2026-11-05
 
 > **Upgrade advice for operators.** No BREAKING API change. Two new configuration keys, both off by
