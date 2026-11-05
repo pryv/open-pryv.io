@@ -398,7 +398,9 @@ describe('[RSER] restore of an account with an erasure record', function () {
 
       const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--verify-integrity']);
       assert.strictEqual(res.status, 1, res.stdout + res.stderr);
-      assert.match(res.stdout, /Rolled back: /);
+      // The account was still indexed (its erasure stopped before removing
+      // it): the rollback empties it, the put-back erasure completes it.
+      assert.match(res.stderr, new RegExp(`rolled back ${u.username} \\(${u.id}\\): EMPTIED, NOT REMOVED`));
       assert.doesNotMatch(res.stdout, /Unfinished erasures withdrawn/);
       assertPutBack(await recordOf(u), before);
 

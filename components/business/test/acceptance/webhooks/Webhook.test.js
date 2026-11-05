@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const timestamp = require('unix-timestamp');
 const awaiting = require('awaiting');
+const sinon = require('sinon');
 
 const Webhook = require('../../../src/webhooks/Webhook.ts').default;
 const WebhooksRepository = require('business/src/webhooks/repository.ts').default;
@@ -297,6 +298,23 @@ describe('[WHBK] Webhook', () => {
     });
 
     describe('[WB08] when throttling frequent calls', () => {
+      // Whether a send is too soon is decided on the clock (`Date`): on the
+      // real one, a store slow enough to take the interval between the first
+      // run and the next sends (a loaded runner) let them through, and the
+      // retry timer could fire before the assertions below. The clock is
+      // stopped from before the first send until [OZGP] moves it past the
+      // interval: every later send is too soon, and the retry timer (a real
+      // one) only re-arms itself until then.
+      const minIntervalMs = 100;
+      let clock;
+
+      // Its own hook, run whatever the other hooks do: a fake clock left in
+      // place would reach every later suite of the process.
+      after(() => {
+        clock?.restore();
+        clock = null;
+      });
+
       before(async () => {
         postPath = '/notifs3';
         url = 'http://127.0.0.1:' + PORT + postPath;
@@ -305,7 +323,7 @@ describe('[WHBK] Webhook', () => {
       });
 
       after(() => {
-        webhook.stop();
+        webhook?.stop();
         notificationsServer.close();
       });
 
@@ -316,10 +334,11 @@ describe('[WHBK] Webhook', () => {
       const thirdMessage = 'hello3';
 
       before(async () => {
+        clock = sinon.useFakeTimers({ now: Date.now(), toFake: ['Date'] });
         webhook = new Webhook({
           accessId: 'doesntmatter',
           url,
-          minIntervalMs: 100,
+          minIntervalMs,
           webhooksRepository: repository,
           user
         });
@@ -347,7 +366,10 @@ describe('[WHBK] Webhook', () => {
       });
       it('[OZGP] should send scheduled messages after an interval', async () => {
         notificationsServer.resetMessageReceived();
-        await awaiting.event(notificationsServer, 'received');
+        const received = awaiting.event(notificationsServer, 'received');
+        // The interval is over: the next run of the retry timer sends.
+        clock.tick(minIntervalMs + 1000);
+        await received;
         assert.strictEqual(notificationsServer.isMessageReceived(), true);
         assert.deepEqual(notificationsServer.getMessages(),
           [firstMessage, firstMessage, secondMessage, thirdMessage]);

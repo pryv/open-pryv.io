@@ -21,6 +21,8 @@ import { getTransferDelegation } from './transferDelegation.ts';
 import type { AccountFacts } from './autoDeletion.ts';
 import { autoDeletionConfig } from './autoDeletionPolicy.ts';
 import { Deletion } from 'business/src/auth/deletion.ts';
+import { getPlatform } from 'platform';
+import type { EmailRowsIndex } from 'business/src/emails/heldAddress.ts';
 import { defaultIsLoopWorker } from 'cmc/src/bootRetryLoop.ts';
 
 /**
@@ -94,6 +96,27 @@ async function auditErasure (config: ConfigLike, account: SweepAccount, record: 
   }, ERASURE_AUDIT_ACTION);
 }
 
+/**
+ * The sweep's `loadFacts`, with the email rows read at most once per pass
+ * (`beginPass` starts a pass): in cleartext mode the held-address check of
+ * each account then looks the address up in those rows instead of scanning
+ * the platform's email rows once per account. In hashed mode no rows are read
+ * (each account's check stays one exact read). The rows are read when the
+ * first account needs them; a failed read fails the accounts of the pass that
+ * need them, as a failed lookup did.
+ */
+export function createPassFactsLoader (config: ConfigLike, now: () => number): { beginPass: () => void, loadFacts: (account: SweepAccount) => Promise<AccountFacts> } {
+  let emailRows: Promise<EmailRowsIndex | null> | null = null;
+  const passEmailRows = (): Promise<EmailRowsIndex | null> => {
+    emailRows ??= getPlatform().then((platform) => platform.getUniqueValueIndex('email'));
+    return emailRows;
+  };
+  return {
+    beginPass: () => { emailRows = null; },
+    loadFacts: (account) => loadAccountFacts(config, account, now(), passEmailRows)
+  };
+}
+
 /** The sweep with its real dependencies; tests replace some (clock, mailer, list of accounts). */
 export async function createAccountAutoDeletionSweep (config: ConfigLike, overrides: Partial<SweepDeps<AccountFacts>> = {}): Promise<AutoDeletionSweep> {
   const logger = getLogger('account-auto-deletion');
@@ -102,12 +125,14 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
   const deletion = new Deletion(null, storageLayer, config);
   // Activity is read against the sweep's clock: a use time past it is not use.
   const now = overrides.now ?? (() => timestamp.now());
+  const passFacts = createPassFactsLoader(config, now);
   return createAutoDeletionSweep<AccountFacts>({
     getConfig: () => autoDeletionConfig(config),
     listAccounts: async () => await (await getUsersRepository()).getAllUsersIdAndName() as SweepAccount[],
     listPendingErasures: async () => await (await getErasuresLocal()).listAll(),
     state,
-    loadFacts: (account) => loadAccountFacts(config, account, now()),
+    loadFacts: passFacts.loadFacts,
+    beginPass: passFacts.beginPass,
     readActivity: (account) => getActivity(storageLayer.accesses as unknown as ActivityAccessesRepo, account, now()),
     sendReminder: (account, facts, notice) => sendScheduleMail(config, 'reminder', account, facts, notice),
     sendBlocked: (account, facts, notice) => sendScheduleMail(config, 'blocked', account, facts, notice),

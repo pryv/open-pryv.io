@@ -14,6 +14,8 @@ import type {
   InvitationTokenInfo,
   PlatformIntegrityReport
 } from '../../../interfaces/platformStorage/PlatformDB.ts';
+import { anyCaseLikePattern, TRIMMED_CHARS } from '../../../interfaces/platformStorage/anyCase.ts';
+import { parseUserRowEntry } from '../../../interfaces/platformStorage/userRowKey.ts';
 
 // All queries here hit the `keyValue` table (key TEXT, value TEXT).
 type Row = Record<string, string>;
@@ -164,6 +166,18 @@ class DBrqlite {
     const key = getUserUniqueKey(field, value);
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'strong');
     return rows.length === 0 ? null : rows[0].value;
+  }
+
+  async getUsersUniqueFieldAnyCase (field: string, value: string) {
+    const prefix = getUserUniqueKey(field, '');
+    // The key range of the field's rows (BINARY order: `0` follows `/`), then
+    // SQLite's LIKE, which compares ASCII letters in any case.
+    const rows = await this.query(
+      "SELECT key, value FROM keyValue WHERE key >= ? AND key < ? AND trim(substr(key, ?), ?) LIKE ? ESCAPE '\\'",
+      [prefix, prefix.slice(0, -1) + '0', prefix.length + 1, TRIMMED_CHARS, anyCaseLikePattern(value)],
+      'strong'
+    );
+    return rows.map((row) => ({ value: row.key.slice(prefix.length), username: row.value }));
   }
 
   async getAllWithPrefix (prefix: string) {
@@ -795,14 +809,7 @@ function checkKvPrefix (method: string, prefix: string): void {
 // --- Key helpers (same as SQLite engine) --- //
 
 function parseEntry (entry: Row): PlatformEntry {
-  const [type, field, userNameOrValue] = (entry.key as string).split('/');
-  const isUnique = (type === 'user-unique');
-  return {
-    isUnique,
-    field,
-    username: isUnique ? entry.value : userNameOrValue,
-    value: isUnique ? userNameOrValue : entry.value
-  };
+  return parseUserRowEntry({ key: entry.key, value: entry.value });
 }
 
 function getUserUniqueKey (field: string, value: string) {

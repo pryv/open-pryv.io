@@ -147,29 +147,49 @@ describe('[RSLK] password-reset link', function () {
   });
 
   it('[RSLK6] in cleartext mode, another spelling of the address held by another account counts as held: no mail', async function () {
-    // The platform seen in cleartext mode (rows keyed by the address as
-    // written): the account holds the stored spelling, another account the
-    // lowercase one (a registration by whoever controls that inbox now).
+    // The platform in cleartext mode (rows keyed by the address as written,
+    // over the same store): the account holds the stored spelling, another
+    // account the lowercase one (a registration by whoever controls that
+    // inbox now).
     const { res, captured } = await resetWith(async (platform, address, username) => {
-      const rows = { [address]: username, [address.toLowerCase()]: 'rslholder' };
-      Object.defineProperty(platform, 'piiModeIsHashed', { value: false, configurable: true });
-      platform.hashFor = (field, value) => value;
-      platform.getUsersUniqueField = async (field, value) => field === 'email' ? (rows[value] ?? null) : null;
-      return async () => {
-        delete platform.piiModeIsHashed;
-        delete platform.hashFor;
-        delete platform.getUsersUniqueField;
+      const platformDB = require('storages').platformDB;
+      // The platform's own hasher (null in a cleartext run), put back whatever happens.
+      const originalHasher = platform._piiHasherForTests();
+      const undo = async () => {
+        try {
+          for (const value of [address, address.toLowerCase()]) await platformDB.deleteUserUniqueField('email', value);
+        } finally {
+          platform._setDependenciesForTests(platformDB, originalHasher);
+        }
       };
+      platform._setDependenciesForTests(platformDB, null);
+      try {
+        await platformDB.setUserUniqueField(username, 'email', address);
+        await platformDB.setUserUniqueField('rslholder', 'email', address.toLowerCase());
+      } catch (err) {
+        await undo();
+        throw err;
+      }
+      return undo;
     }, (username) => 'Rsl' + username.slice(3) + '@Reset.example.com');
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.strictEqual(captured.length, 0, 'no mail to the address another account holds under another spelling');
   });
 
   it('[RSLK5] when the platform rows cannot be read, the reset fails and no mail is sent', async function () {
-    const { res, captured } = await resetWith(async (platform) => {
-      const original = platform.getUsersUniqueField;
-      platform.getUsersUniqueField = async () => { throw new Error('platform store unreachable'); };
-      return async () => { platform.getUsersUniqueField = original; };
+    // The platform store's reads of unique rows fail (both lookups the check may use).
+    const { res, captured } = await resetWith(async () => {
+      const platformDB = require('storages').platformDB;
+      const unreachable = async () => { throw new Error('platform store unreachable'); };
+      const methods = ['getUsersUniqueField', 'getUsersUniqueFieldAnyCase'];
+      const saved = methods.map((m) => Object.getOwnPropertyDescriptor(platformDB, m));
+      for (const m of methods) platformDB[m] = unreachable;
+      return async () => {
+        methods.forEach((m, i) => {
+          if (saved[i] != null) Object.defineProperty(platformDB, m, saved[i]);
+          else delete platformDB[m];
+        });
+      };
     });
     assert.ok(res.status >= 500, res.status + ' ' + JSON.stringify(res.body));
     assert.strictEqual(res.body.error?.id, 'unexpected-error', JSON.stringify(res.body));

@@ -21,7 +21,8 @@ const { ErrorIds } = require('errors/src/ErrorIds.ts');
 const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 
 const getPlatformDB = require('./getPlatformDB.ts').default;
-const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM } = require('./PiiHasher.ts');
+const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM, CASE_INSENSITIVE_FIELDS } = require('./PiiHasher.ts');
+const { anyCaseLikeMatches } = require('storages/interfaces/platformStorage/anyCase.ts') as typeof import('../../../storages/interfaces/platformStorage/anyCase.ts');
 
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
@@ -91,7 +92,9 @@ class Platform {
   #platformDnsNames: Set<string> = new Set();
   #platformNamesReadAt: number = 0;
 
-  // Null in `cleartext` mode (default); a PiiHasher instance when
+  // Null in `cleartext` mode (the opt-out; `default-config.yml` sets
+  // `platform.piiMode: hashed`, and a config without the key reads as
+  // cleartext); a PiiHasher instance when
   // `platform.piiMode === 'hashed'`. Wrapped by `#hashFor(field, value)`
   // — every PlatformDB call that takes a PII argument routes through
   // that helper so `cleartext` mode is byte-identical to pre-hashing
@@ -271,6 +274,11 @@ class Platform {
     if (config != null) this.#config = config;
   }
 
+  /** Test-only: the current PII hasher (null in cleartext mode), to put back after `_setDependenciesForTests`. */
+  _piiHasherForTests (): InstanceType<typeof PiiHasher> | null {
+    return this.#piiHasher;
+  }
+
   /** Test-only: run the invitation-token key migration on demand (init() runs it at boot). */
   async _migrateInvitationTokensForTests (): Promise<void> {
     return this.#migrateInvitationTokensToHashedKeys();
@@ -288,6 +296,97 @@ class Platform {
   }
 
   /**
+   * The owners (storage form) of the rows of the unique `field` that hold
+   * `storedValue` (in storage form: in cleartext mode, the value as written).
+   * In hashed mode, and for a field compared as written, the owner of its row
+   * (a token is of the normalised value already). In cleartext mode, for a
+   * field compared in any case (`CASE_INSENSITIVE_FIELDS`: the email), the
+   * owners of every row that holds it in another case or with surrounding
+   * spaces too (`User@x` and `user@x` are two rows), as hashed mode compares
+   * it. Throws when the platform store cannot be read.
+   */
+  async getUniqueValueOwners (field: string, storedValue: string): Promise<string[]> {
+    return [...new Set((await this.getUniqueValueRows(field, storedValue)).map((row) => row.username))];
+  }
+
+  /**
+   * The rows behind `getUniqueValueOwners`: each spelling held (`value`, in
+   * storage form) and its owner (`username`, in storage form). In cleartext
+   * mode both are as written, which lets an operator tool name the holder of
+   * another spelling.
+   */
+  async getUniqueValueRows (field: string, storedValue: string): Promise<Array<{ value: string, username: string }>> {
+    if (this.#piiInitError != null) throw this.#piiInitError;
+    if (this.#piiHasher != null || !CASE_INSENSITIVE_FIELDS.has(field) || typeof storedValue !== 'string') {
+      const owner = await this.#db.getUsersUniqueField(field, storedValue);
+      return owner == null ? [] : [{ value: storedValue, username: owner }];
+    }
+    const normalized = PiiHasher.normalize(field, storedValue);
+    const rows = await this.#db.getUsersUniqueFieldAnyCase(field, normalized);
+    return rows.filter((row) => PiiHasher.normalize(field, row.value) === normalized);
+  }
+
+  /**
+   * For a caller that asks `getUniqueValueRows` for many values in a row (the
+   * auto-deletion sweep, one account after the other): in cleartext mode, for
+   * a field compared in any case, the field's rows read once, and a lookup
+   * that answers each value as `getUniqueValueRows` would at the time of the
+   * read (same normalisation, and the rows the engine's any-case query
+   * selects). Null in hashed mode and for a field compared as written, where
+   * `getUniqueValueRows` is one exact read already. Throws when the platform
+   * store cannot be read.
+   */
+  async getUniqueValueIndex (field: string): Promise<UniqueValueIndex | null> {
+    if (this.#piiInitError != null) throw this.#piiInitError;
+    if (this.#piiHasher != null || !CASE_INSENSITIVE_FIELDS.has(field)) return null;
+    const byNormalized = new Map<string, Array<{ value: string, username: string }>>();
+    for (const row of await this.#db.getAllWithPrefix('user-unique/' + field + '/')) {
+      if (row.isUnique !== true || row.field !== field || typeof row.value !== 'string') continue;
+      const key = PiiHasher.normalize(field, row.value);
+      const rows = byNormalized.get(key);
+      if (rows == null) byNormalized.set(key, [{ value: row.value, username: row.username }]);
+      else rows.push({ value: row.value, username: row.username });
+    }
+    return {
+      rows (storedValue: string) {
+        if (typeof storedValue !== 'string') return [];
+        const normalized = PiiHasher.normalize(field, storedValue);
+        return (byNormalized.get(normalized) ?? []).filter((row) => anyCaseLikeMatches(row.value, normalized));
+      }
+    };
+  }
+
+  /**
+   * True when an account other than `ownerToken` holds `storedValue` of the
+   * unique `field` (both in storage form), in any of its spellings
+   * (`getUniqueValueOwners`).
+   */
+  async isUniqueValueHeldByAnother (ownerToken: string, field: string, storedValue: string): Promise<boolean> {
+    return (await this.getUniqueValueOwners(field, storedValue)).some((owner) => owner !== ownerToken);
+  }
+
+  /**
+   * True when an account holds `value` (plaintext) of the unique `field`, in
+   * any of its spellings (`getUniqueValueOwners`): the answer of the checks
+   * that tell whether a value is free (availability, reservations, a code or
+   * a link to mail).
+   */
+  async isUniqueValueTaken (field: string, value: string): Promise<boolean> {
+    return (await this.getUniqueValueOwners(field, this.hashFor(field, value))).length > 0;
+  }
+
+  /**
+   * Before a unique value is claimed, in cleartext mode: true when another
+   * account holds it in another spelling (another case, surrounding spaces),
+   * which its own row does not show. Always false in hashed mode (one row per
+   * normalised value) and for a field compared as written.
+   */
+  async #otherSpellingHeldByAnother (usernameToken: string, field: string, valueToken: string): Promise<boolean> {
+    if (this.#piiHasher != null || !CASE_INSENSITIVE_FIELDS.has(field)) return false;
+    return await this.isUniqueValueHeldByAnother(usernameToken, field, valueToken);
+  }
+
+  /**
    * Check uniqueness of operations against PlatformDB.
    * Used by repository.insertOne to gather all conflicts before throwing.
    */
@@ -296,8 +395,11 @@ class Platform {
     const usernameToken = this.hashFor(USERNAME_FIELD, username);
     for (const op of operations) {
       if (op.action !== 'delete' && op.isUnique) {
-        const owner = await this.#db.getUsersUniqueField(op.key, this.hashFor(op.key, op.value as string));
-        if (owner != null && owner !== usernameToken) uniquenessErrors[op.key] = op.value as string;
+        const valueToken = this.hashFor(op.key, op.value as string);
+        const owner = await this.#db.getUsersUniqueField(op.key, valueToken);
+        if ((owner != null && owner !== usernameToken) || await this.#otherSpellingHeldByAnother(usernameToken, op.key, valueToken)) {
+          uniquenessErrors[op.key] = op.value as string;
+        }
       }
     }
     return uniquenessErrors;
@@ -323,7 +425,8 @@ class Platform {
    */
   async #claimUniqueValue (usernameToken: string, field: string, value: unknown): Promise<string> {
     const valueToken = this.hashFor(field, value as string);
-    const claimed = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
+    const claimed = !await this.#otherSpellingHeldByAnother(usernameToken, field, valueToken) &&
+      await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
     if (!claimed) {
       throw (errors.itemAlreadyExists('user', { [field]: value }));
     }
@@ -874,11 +977,10 @@ class Platform {
    * the (field, value) pair. Plaintext inputs; hashed internally.
    */
   async setUserUniqueFieldIfNotExists (username: string, field: string, value: string): Promise<boolean> {
-    return await this.#db.setUserUniqueFieldIfNotExists(
-      this.hashFor(USERNAME_FIELD, username),
-      field,
-      this.hashFor(field, value)
-    );
+    const usernameToken = this.hashFor(USERNAME_FIELD, username);
+    const valueToken = this.hashFor(field, value);
+    if (await this.#otherSpellingHeldByAnother(usernameToken, field, valueToken)) return false;
+    return await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
   }
 
   /**
@@ -1191,8 +1293,7 @@ class Platform {
       const allConflicts: Record<string, string> = { username };
       for (const [field, value] of Object.entries(uniqueFields)) {
         if (field === 'username') continue;
-        const existingUsername = await this.#db.getUsersUniqueField(field, this.hashFor(field, value));
-        if (existingUsername != null) {
+        if ((await this.getUniqueValueOwners(field, this.hashFor(field, value))).length > 0) {
           allConflicts[field] = value;
         }
       }
@@ -1256,7 +1357,10 @@ class Platform {
       if (field === 'username') continue;
       if (value == null) continue;
       const valueToken = this.hashFor(field, value);
-      const success = await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
+      // In cleartext mode, another spelling of the value (an email in another
+      // case) held by another account is the same value: refused too.
+      const success = !await this.#otherSpellingHeldByAnother(usernameToken, field, valueToken) &&
+        await this.#db.setUserUniqueFieldIfNotExists(usernameToken, field, valueToken);
       if (success) {
         reservedHere.push([field, valueToken]);
       } else {
@@ -1763,7 +1867,7 @@ function parseJsonString (raw: string): string {
 const platform = new Platform();
 export default platform;
 export { platform, Platform };
-export type { PlatformOperation };
+export type { PlatformOperation, UniqueValueIndex };
 
 // Local type aliases for shapes that aren't formally exported by an interface.
 type PlatformOperation = {
@@ -1773,4 +1877,8 @@ type PlatformOperation = {
   key: string;
   value: string;
   previousValue?: string;
+};
+/** `Platform.getUniqueValueIndex`: the rows holding a value (storage form), as `getUniqueValueRows` answers them. */
+type UniqueValueIndex = {
+  rows (storedValue: string): Array<{ value: string, username: string }>;
 };

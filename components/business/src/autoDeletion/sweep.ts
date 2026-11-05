@@ -134,6 +134,8 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
   listPendingErasures: () => Promise<PendingErasure[]>;
   state: SweepState;
   loadFacts: (account: SweepAccount) => Promise<F>;
+  /** Called at the start of each pass (a `loadFacts` that reads once per pass starts again). */
+  beginPass?: () => void;
   /** Activity only, read again right before an erasure. */
   readActivity: (account: SweepAccount) => Promise<AccountActivity>;
   sendReminder: (account: SweepAccount, facts: F, notice: Notice) => Promise<SendOutcome>;
@@ -264,6 +266,7 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
   }
 
   async function pass (): Promise<PassResult> {
+    deps.beginPass?.();
     const config = deps.getConfig();
     const ctx: PassContext = { config, result: emptyResult(config.dryRun), erasuresStarted: 0, mailDown: false, erasing: new Set() };
     await completeErasures(ctx);

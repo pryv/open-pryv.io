@@ -65,6 +65,15 @@ function generateRandomAlias (): string {
 type UserData = { id: string; username: string; password?: string; [k: string]: unknown };
 /** A step of a username change that did not complete; the change itself stands. */
 export type UsernameChangeWarning = { step: string; message: string };
+/** `reconcileEmailRows`: `heldBy` (cleartext mode) names the other holders of each held address, with the spelling each holds. */
+export type EmailReconcileSummary = {
+  scanned: number;
+  missing: string[];
+  claimed: string[];
+  heldElsewhere: string[];
+  heldBy: Record<string, Array<{ holder: string; spelling: string }>>;
+  failed: string[];
+};
 type Operation = import('platform/src/Platform.ts').PlatformOperation;
 
 class UsersRepository {
@@ -1095,10 +1104,13 @@ class UsersRepository {
    * another spelling of the address counts, as for the mails, and the row is
    * then not claimed). The primary email only; accounts routed to another
    * core are skipped. An account that cannot be read is listed in `failed`,
-   * the others are still done.
+   * the others are still done. In cleartext mode `heldBy` names, for each
+   * account held elsewhere, the other holders and the spelling each holds
+   * (two accounts that registered one address in two cases, before the
+   * address was compared in any case, are listed against each other).
    */
-  async reconcileEmailRows (dryRun = false): Promise<{ scanned: number; missing: string[]; claimed: string[]; heldElsewhere: string[]; failed: string[] }> {
-    const summary: { scanned: number; missing: string[]; claimed: string[]; heldElsewhere: string[]; failed: string[] } = { scanned: 0, missing: [], claimed: [], heldElsewhere: [], failed: [] };
+  async reconcileEmailRows (dryRun = false): Promise<EmailReconcileSummary> {
+    const summary: EmailReconcileSummary = { scanned: 0, missing: [], claimed: [], heldElsewhere: [], heldBy: {}, failed: [] };
     const field = emailsConstants.UNIQUE_FIELD;
     if (!accountStreams.uniqueFieldNames.includes(field)) return summary;
     for (const { id, username } of await this.getAllUsersIdAndName()) {
@@ -1108,6 +1120,11 @@ class UsersRepository {
         summary.scanned++;
         if (await isEmailHeldByAnother(this.platform, username, email)) {
           summary.heldElsewhere.push(username);
+          if (!this.platform.piiModeIsHashed) {
+            const own = this.platform.hashFor('username', username);
+            summary.heldBy[username] = (await this.platform.getUniqueValueRows(field, this.platform.hashFor(field, email)))
+              .filter((row) => row.username !== own).map((row) => ({ holder: row.username, spelling: row.value }));
+          }
           continue;
         }
         // Not held by another account: the row is this account's, or absent.

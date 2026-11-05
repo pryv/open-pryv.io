@@ -246,10 +246,11 @@ interface UserStats {
   series: number;
   attachments: number;
   externalIds: number;
+  ssoBindings: number;
 }
 
 function createFilesystemUserBackupWriter (userDir: string, userId: string, username: string, opts: ResolvedWriterOptions): UserBackupWriter {
-  const stats: UserStats = { streams: 0, accesses: 0, profile: 0, webhooks: 0, events: 0, audit: 0, series: 0, attachments: 0, externalIds: 0 };
+  const stats: UserStats = { streams: 0, accesses: 0, profile: 0, webhooks: 0, events: 0, audit: 0, series: 0, attachments: 0, externalIds: 0, ssoBindings: 0 };
   const chunks: Record<string, string[]> = {};
 
   return createUserBackupWriter({
@@ -322,6 +323,11 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
     async writeExternalIds (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('external-ids', opts.compress));
       stats.externalIds = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+    },
+
+    async writeSsoBindings (items: AsyncIterable<unknown> | unknown[]) {
+      const filePath = path.join(userDir, jsonlFileName('sso-bindings', opts.compress));
+      stats.ssoBindings = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
     },
 
     async close () {

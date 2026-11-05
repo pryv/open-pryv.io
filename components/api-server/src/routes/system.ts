@@ -362,8 +362,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       delete uniqueFields.username;
       const conflicts: Record<string, unknown> = {};
       for (const [field, value] of Object.entries(uniqueFields)) {
-        const existing = await platform.getUsersUniqueField(field, value);
-        if (existing) {
+        if (await platform.isUniqueValueTaken(field, value as string)) {
           conflicts[field] = value;
         }
       }

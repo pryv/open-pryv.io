@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Email uniqueness in cleartext piiMode; backup restore follow-ups; values holding `/`
+
+- **Fixed: with `platform.piiMode: cleartext`, an email is unique in any case.** The platform keys
+  an email row by the address as written in that mode, so registration, the email availability
+  check (`GET /reg/{email}/check_email`), the registration email challenge, an email change, adding
+  an email (`account.update` `emails.add`, and its resend) and the `/system` reservations accepted an
+  address another account held under another spelling (`User@x` next to `user@x`); adding one minted
+  and mailed a verification link to that other account's inbox, the challenge a code. They now answer
+  it as taken in any case and with surrounding white space (`item-already-exists`, as for the same
+  spelling), as hashed mode already did, and mail nothing to it. The check that sends no password
+  reset, MFA-change or auto-deletion notice to an address another account holds now finds every
+  spelling, where it looked at three (the stored one, its lowercase and its trimmed lowercase form):
+  a reset mail could reach the holder of `USER@x` for an account that stores `User@x`. Accounts that
+  already share an address up to case get none of these mails until one of them changes its email;
+  `bin/reconcile-user-cores.js --emails --dry-run` lists them and, in cleartext mode, names the other
+  holder and its spelling. Nothing is migrated. Hashed mode (the default, `piiMode: hashed`) is
+  unchanged.
+- **Fixed: a `bin/backup.js --restore --verify-integrity` rollback no longer leaves an account the
+  restore created.** The rollback cleared the account's data but left its index entry, its platform
+  rows (its email reserved) and its routing row: the name and the address stayed taken by an account
+  with no data. An account the restore created is now removed as its deletion removes it; a value
+  another account holds is not touched, and on a multi-core platform a name routed to another core
+  keeps its rows. An account that existed on the core before the restore (`--overwrite`) is NOT
+  removed: as before, it is left emptied (the restore cleared its data before verifying it) and keeps
+  its name, addresses, aliases, platform rows and routing; the restore says so loudly and tells the
+  operator to restore it from a backup of its own. A rollback that fails is reported as incomplete
+  (no longer "Rollback complete"), with the commands to finish it.
+- **Fixed: a single-account backup carries the account's SSO bindings** (a new file of the
+  account, `sso-bindings.jsonl`), and a `--user` restore of it links them again; a binding another
+  account holds now stays with it (counted with the unique values not restored). Before, the
+  bindings were only in the platform rows of a whole backup. Backups written before carry none. Like
+  the platform rows of a whole backup, the bindings are in the storage form of the platform that
+  wrote them: in hashed mode, restored on a platform with another `piiHmacKey` (or after a key
+  rotation) they are rows no sign-in matches.
+- **Fixed: a unique platform value holding `/` was cut at its first `/` when read back.** An email
+  local part (`a/b@x`) or an identity provider subject (`https://idp/u/1`): the account deletion
+  removed the row of the cut value and left the real one (the address or the subject stayed taken),
+  and backups exported the cut value. Both platform engines now read the value whole (a v1 backup's
+  raw rows too).
+
+> **Upgrade advice for operators (cleartext platforms, `platform.piiMode: cleartext`).** After
+> deploying, run `node bin/reconcile-user-cores.js --emails --dry-run` on each core: it lists the
+> accounts whose address another account holds, now in any case, and names that other holder. Two
+> accounts listed against each other registered one address in two cases: change the email of one of
+> them. Until then neither gets a password-reset, MFA or auto-deletion mail, and the auto-deletion
+> sweep treats each as an account without an address (`no-email`): it can be deleted without any
+> notice reaching its holder, so resolve such pairs before the next sweep. Hashed platforms need no
+> step.
+
 ### Adapter routes: a sidecar served under `/adapter/<name>/`
 
 - **Added: adapter routes (`adapterRoutes`).** A configured sidecar on the same host (a resource

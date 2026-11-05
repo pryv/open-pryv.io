@@ -48,6 +48,13 @@ export interface UserBackupWriter {
    * claim credential.
    */
   writeExternalIds (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
+  /**
+   * The account's SSO bindings, `{ field, value }` each: the platform's
+   * unique `sso-<provider>` rows the account owns, the value in the storage
+   * form of the platform (a whole collection: every run writes all of them).
+   * Written by single-account backups, which carry no platform rows.
+   */
+  writeSsoBindings (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   /** Returns the user manifest (userId, username, chunk inventory, stats). */
   close (): Promise<UserManifest>;
 }
@@ -146,6 +153,7 @@ const UserBackupWriter: UserBackupWriter = {
   async writeAttachment (eventId: string, fileId: string, readStream: Readable): Promise<void> { throw new Error('Not implemented'); },
   async writeAccountData (data: unknown): Promise<void> { throw new Error('Not implemented'); },
   async writeExternalIds (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
+  async writeSsoBindings (items: AsyncIterable<unknown> | unknown[]): Promise<void> { throw new Error('Not implemented'); },
   async close (): Promise<UserManifest> { throw new Error('Not implemented'); }
 };
 

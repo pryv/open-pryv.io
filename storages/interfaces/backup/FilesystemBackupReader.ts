@@ -301,6 +301,10 @@ function createFilesystemUserBackupReader (userDir: string, manifest: Manifest |
 
     readExternalIds () {
       return readUserJsonl(userDir, 'external-ids', compressed, decryptor);
+    },
+
+    readSsoBindings () {
+      return readUserJsonl(userDir, 'sso-bindings', compressed, decryptor);
     }
   });
 }
@@ -414,6 +418,10 @@ function createMergedUserBackupReader (runs: UserRun[]): UserBackupReader {
 
     readExternalIds () {
       return newestFile('external-ids');
+    },
+
+    readSsoBindings () {
+      return newestFile('sso-bindings');
     }
   });
 }

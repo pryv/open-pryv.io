@@ -19,6 +19,7 @@ const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
 const { sinceByUser } = require('storages/interfaces/backup/chain.ts');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { seriesNamespace, formerUsernames } = require('business/src/series/namespace.ts');
+const { ssoBindingsOf } = require('./ssoBindings.ts') as typeof import('./ssoBindings.ts');
 
 /**
  * Orchestrates full backup using existing storage layer methods.
@@ -58,6 +59,8 @@ class BackupOrchestrator {
   seriesConnection: SeriesConnectionLike | null = null;
   /** The accounts' external ids (not set: none backed up). */
   externalIds: Pick<ExternalIdsService, 'exportForUser'> | null = null;
+  /** The storage form of the platform's values (not set: no SSO binding backed up). */
+  platform: { hashFor (field: string, value: string): string } | null = null;
   logger!: Logger;
 
   async init () {
@@ -73,6 +76,8 @@ class BackupOrchestrator {
     this.seriesConnection = storages.seriesConnection;
     const { getExternalIdsService } = await import('business/src/external-ids/service.ts');
     this.externalIds = await getExternalIdsService();
+    const { getPlatform } = require('platform');
+    this.platform = await getPlatform();
     const { getLogger } = require('@pryv/boiler');
     this.logger = getLogger('backup');
     return this;
@@ -138,7 +143,9 @@ class BackupOrchestrator {
 
     this.logger.info(`Starting ${isIncremental ? 'incremental' : 'full'} single-user backup: ${username} (${userId})${since != null ? ' (since ' + since + ')' : ''}`);
 
-    const userManifest = await this._backupSingleUser(writer, userId, username, snapshotBefore, since, options);
+    // A single-account backup carries no platform rows: the account's SSO
+    // bindings are written with it.
+    const userManifest = await this._backupSingleUser(writer, userId, username, snapshotBefore, since, { ...options, withSsoBindings: true });
 
     await writer.writeManifest({
       coreVersion,
@@ -241,6 +248,13 @@ class BackupOrchestrator {
     // are claim credentials: never logged.
     if (this.externalIds != null) {
       await userWriter.writeExternalIds(await this.externalIds.exportForUser(userId));
+    }
+
+    // SSO bindings (no timestamps: every run writes all of them, so a binding
+    // released since an earlier run is not brought back by the restore).
+    if (options.withSsoBindings === true && this.platformDB != null && this.platform != null) {
+      const rows = await this.platformDB.getAllForUser(this.platform.hashFor('username', username));
+      await userWriter.writeSsoBindings(ssoBindingsOf(rows));
     }
 
     // Audit (optional — quiet skip when no engine declares auditStorage;
@@ -501,6 +515,8 @@ type BackupOptions = {
   /** The backup chain this run is appended to: an incremental run. */
   chain?: Chain | null;
   includeEphemeral?: boolean;
+  /** Write the account's SSO bindings with it (a single-account backup). */
+  withSsoBindings?: boolean;
 };
 type UserWriter = {
   writeStreams (items: unknown[]): Promise<void>;
@@ -513,6 +529,7 @@ type UserWriter = {
   writeAudit (items: AsyncIterable<unknown> | unknown[]): Promise<void>;
   writeSeries (items: unknown[]): Promise<void>;
   writeExternalIds (items: unknown[]): Promise<void>;
+  writeSsoBindings (items: unknown[]): Promise<void>;
   close (): Promise<UserManifest>;
 };
 type BackupWriter = {

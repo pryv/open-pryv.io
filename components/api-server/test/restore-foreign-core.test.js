@@ -24,6 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const path = require('node:path');
 const cuid = require('cuid');
 const fs = require('node:fs');
+const zlib = require('node:zlib');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { childStorageEngineEnv } = require('test-helpers');
@@ -92,13 +93,14 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
    * An account backed up with bin/backup.js, then removed from this core
    * (index, data, platform rows): as if it had moved to another core.
    */
-  async function backedUpAccount (attrs = {}) {
+  async function backedUpAccount (attrs = {}, beforeBackup = async () => {}) {
     const fx = getNewFixture();
     fixtures.push(fx);
     const username = ('rxcr' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
     const fu = await fx.user(username, attrs);
     const stream = await fu.stream({ id: 'rxcr-' + cuid().slice(-10), name: 'RXCR ' + cuid().slice(-6) });
     await stream.event({ type: 'note/txt', content: 'backed up' });
+    await beforeBackup(username);
     const dir = path.join(tmpDir, username);
     assertOk(runCli(['--output', dir, '--user', username]), 'backup');
     // Its platform rows as its registration wrote them (storage form).
@@ -262,6 +264,127 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
       assert.match(held.stdout, new RegExp(`Email held by another account \\(password reset does not send to it until the account's email is changed\\): 1 users\\s+- ${v.username} \\(${v.id}\\)`));
     } finally {
       await platform.deleteUserUniqueField('email', heldEmail);
+    }
+  });
+
+  /** Rewrites the events of `u`'s backup so that they no longer match their integrity. */
+  function tamperBackupEvents (u) {
+    const files = fs.readdirSync(u.dir, { recursive: true }).map(String).filter((f) => /(^|\/)events-[0-9]+\.jsonl(\.gz)?$/.test(f));
+    assert.ok(files.length > 0, 'events file of the backup');
+    for (const f of files) {
+      const file = path.join(u.dir, f);
+      const gz = f.endsWith('.gz');
+      const text = gz ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
+      const out = Buffer.from(text.split('\n').map((line) => line.trim() === '' ? line : JSON.stringify({ ...JSON.parse(line), content: 'tampered' })).join('\n'), 'utf8');
+      fs.writeFileSync(file, gz ? zlib.gzipSync(out) : out);
+    }
+  }
+
+  it('[RXCR24] an account a --verify-integrity rollback undoes is removed with its routing row, its platform rows and its index entry when the restore created it (a value another account holds stays with it), emptied but kept when it existed before', async function () {
+    const token = (name) => platform.hashFor('username', name);
+    const slug = () => cuid.slug().toLowerCase();
+    const rolledBack = async (u, args) => {
+      const res = runCliMultiCore(['--restore', u.dir, '--user', u.username, '--verify-integrity', ...args]);
+      assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+      assert.match(res.stdout, new RegExp(`Rolled back: ${u.username} \\(${u.id}\\), the account removed`));
+      assert.strictEqual(await exists(u), false, 'not indexed on this core');
+      assert.strictEqual(await platform.getUserCore(u.username), null, 'its routing row is removed: the name is free');
+      assert.deepStrictEqual(await platformDB.getAllForUser(token(u.username)), [], 'no platform row of the account is left');
+    };
+
+    const email = 'rxcr24-' + slug() + '@rxcr.example';
+    const u = await backedUpAccount({ email, language: 'fr' });
+    tamperBackupEvents(u);
+    await rolledBack(u, []);
+    assert.strictEqual(await platform.getUsersUniqueField('email', email), null, 'its email is free again');
+
+    // Its email changed hands since the backup: the holder keeps it.
+    const heldEmail = 'rxcr24h-' + slug() + '@rxcr.example';
+    const v = await backedUpAccount({ email: heldEmail });
+    const holder = 'rxcrholder' + slug();
+    await platform.setUserUniqueField(holder, 'email', heldEmail);
+    try {
+      tamperBackupEvents(v);
+      await rolledBack(v, []);
+      assert.strictEqual(await platform.getUsersUniqueField('email', heldEmail), token(holder), 'the holder keeps its email');
+    } finally {
+      await platform.deleteUserUniqueField('email', heldEmail);
+    }
+
+    // Over an account that exists on this core (--overwrite): it is emptied,
+    // never removed; it keeps its name, its platform rows, its routing, and
+    // the operator is told to restore it from its own backup.
+    const wEmail = 'rxcr24w-' + slug() + '@rxcr.example';
+    const w = await backedUpAccount({ email: wEmail });
+    assert.match(runCliMultiCore(['--restore', w.dir, '--user', w.username]).stdout, /Restored: 1 users/);
+    const rowsBefore = (await platformDB.getAllForUser(token(w.username))).map((r) => JSON.stringify(r)).sort();
+    assert.ok(rowsBefore.length > 0, 'the restore wrote its rows');
+    tamperBackupEvents(w);
+    const res = runCliMultiCore(['--restore', w.dir, '--user', w.username, '--overwrite', '--verify-integrity']);
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, new RegExp(`rolled back ${w.username} \\(${w.id}\\): EMPTIED, NOT REMOVED`));
+    assert.match(res.stderr, /Restore it from a backup of its own/);
+    assert.match(res.stdout, /left emptied, to restore from their own backup/);
+    assert.strictEqual(await exists(w), true, 'still indexed');
+    assert.strictEqual(await platform.getUserCore(w.username), THIS_CORE, 'still routed to this core');
+    assert.deepStrictEqual((await platformDB.getAllForUser(token(w.username))).map((r) => JSON.stringify(r)).sort(), rowsBefore, 'its platform rows are kept');
+    assert.strictEqual(await platform.getUsersUniqueField('email', wEmail), token(w.username), 'its address is kept');
+    const { getStorageLayer } = require('storage');
+    const streams = await new Promise((resolve, reject) => getStorageLayer().then((s) => s.streams.exportAll({ id: w.id }, (err, r) => err ? reject(err) : resolve(r))));
+    assert.deepStrictEqual(streams, [], 'its data is cleared');
+  });
+
+  it('[RXCR27] a single-account backup carries the account\'s SSO bindings and a single-account restore links them again; a binding another account holds now stays with it', async function () {
+    const token = (name) => platform.hashFor('username', name);
+    // A subject holding `/` (a URL): kept whole by the backup, the restore and the deletion.
+    const sub = 'https://idp.example/u/rxcr27-' + cuid.slug().toLowerCase();
+    const takenSub = 'rxcr27t-' + cuid.slug().toLowerCase();
+    const holder = 'rxcrholder' + cuid.slug().toLowerCase();
+    const u = await backedUpAccount({}, async (username) => {
+      assert.strictEqual(await platform.reserveUserUniqueValue(username, 'sso-rxcr', sub), true);
+      assert.strictEqual(await platform.reserveUserUniqueValue(username, 'sso-rxcrb', takenSub), true);
+    });
+    try {
+      assert.strictEqual(await platform.getUsersUniqueField('sso-rxcr', sub), null, 'released with the account');
+      // One of its bindings changed hands meanwhile.
+      await platform.setUserUniqueField(holder, 'sso-rxcrb', takenSub);
+
+      const res = runCli(['--restore', u.dir, '--user', u.username]);
+      assertOk(res, 'restore');
+      assert.strictEqual(await exists(u), true);
+      assert.strictEqual(await platform.getUsersUniqueField('sso-rxcr', sub), token(u.username), 'its binding is linked again');
+      assert.strictEqual(await platform.getUsersUniqueField('sso-rxcrb', takenSub), token(holder), 'the holder keeps its binding');
+      assert.match(res.stdout, /Unique values of the platform rows: 1 held by another account/);
+    } finally {
+      await platform.deleteUserUniqueField('sso-rxcr', sub);
+      await platform.deleteUserUniqueField('sso-rxcrb', takenSub);
+    }
+  });
+
+  it('[RXCR28] a binding released after a full single-account backup is not brought back by a restore of the chain an incremental run extended', async function () {
+    const token = (name) => platform.hashFor('username', name);
+    const kept = 'rxcr28k-' + cuid.slug().toLowerCase();
+    const released = 'rxcr28r-' + cuid.slug().toLowerCase();
+    const fx = getNewFixture();
+    fixtures.push(fx);
+    const username = ('rxcr' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
+    const fu = await fx.user(username, {});
+    const u = { id: fu.attrs.id, username, dir: path.join(tmpDir, username) };
+    accounts.push(u);
+    await platform.reserveUserUniqueValue(username, 'sso-rxcr', kept);
+    await platform.reserveUserUniqueValue(username, 'sso-rxcrb', released);
+    try {
+      assertOk(runCli(['--output', u.dir, '--user', username]), 'full backup');
+      await platform.releaseUserUniqueValue(username, 'sso-rxcrb', released);
+      assertOk(runCli(['--output', u.dir, '--user', username, '--incremental']), 'incremental backup');
+      await usersRepository.deleteOne(u.id, u.username);
+
+      assertOk(runCli(['--restore', u.dir, '--user', username]), 'restore');
+      assert.strictEqual(await platform.getUsersUniqueField('sso-rxcr', kept), token(username), 'the binding still held is linked again');
+      assert.strictEqual(await platform.getUsersUniqueField('sso-rxcrb', released), null, 'the released binding is not brought back');
+    } finally {
+      await platform.deleteUserUniqueField('sso-rxcr', kept);
+      await platform.deleteUserUniqueField('sso-rxcrb', released);
     }
   });
 

@@ -502,6 +502,15 @@ function fakeCoreRouting (writes, { coreId = 'core-a', isSingleCore = false, row
     rows,
     hashFor,
     async getUsersUniqueField (field, value) { return uniqueOwners[field + '/' + value] ?? null; },
+    // As the platform in cleartext mode: an email row of another spelling
+    // (case, surrounding spaces) holds the same address.
+    async isUniqueValueHeldByAnother (owner, field, value) {
+      const exact = await this.getUsersUniqueField(field, value);
+      if (exact != null && exact !== owner) return true;
+      if (field !== 'email') return false;
+      const norm = (v) => v.trim().toLowerCase();
+      return Object.entries(uniqueOwners).some(([key, holder]) => key.startsWith('email/') && norm(key.slice('email/'.length)) === norm(value) && holder !== owner);
+    },
     async getUserCore (username) { return rows[username] ?? null; },
     async setUserCore (username, id) { writes.push('routing.set:' + username + '=' + id); rows[username] = id; },
     async setUserCoreIfNotExists (username, id) {
@@ -845,6 +854,56 @@ describe('[RXPR] restore: the platform rows of a single-account restore, and the
     o.accountFields[CUID2_ID] = { email: 'Valid@Example.com' };
     const report = await o.restoreUser(CUID2_ID, makeReader(users));
     assert.deepStrictEqual(report.emailsHeldElsewhere, [users[1]]);
+  });
+
+  it('[RXCR25] a single-account restore of a single-account backup writes the account\'s SSO bindings with its rows; a binding another account holds stays with it; an entry that is not a binding is not written', async function () {
+    const bindings = [
+      { field: 'sso-acme', value: 'sub-1' },
+      { field: 'sso-other', value: 'sub-taken' },
+      // Not bindings: a backup must not write another unique value this way.
+      { field: 'email', value: 'smuggled@example.com' },
+      { field: 'sso-', value: 'no-provider' },
+      { field: 'sso-acme', value: '' }
+    ];
+    const userReader = { ...makeUserReader(), async * readSsoBindings () { for (const b of bindings) yield b; } };
+    const { o, writes } = makeOrchestrator();
+    const { warnings, logger } = recordingLogger();
+    o.logger = logger;
+    o.coreRouting = fakeCoreRouting(writes, { hashFor: (field, value) => field === 'username' ? 'tok-' + value : value });
+    o.platformDB = rowStore(writes, new Set(['sub-taken']));
+    o.accountFields[CUID2_ID] = { email: 'valid@example.com', language: 'fr' };
+    const report = await o.restoreUser(CUID2_ID, makeReader(users, userReader));
+    const unique = rowWrites(writes).filter((w) => w.startsWith('unique:'));
+    assert.deepStrictEqual(unique.sort(), [
+      'unique:tok-validname:email:valid@example.com',
+      'unique:tok-validname:sso-acme:sub-1',
+      'unique:tok-validname:sso-other:sub-taken'
+    ], JSON.stringify(unique));
+    assert.strictEqual(report.uniqueValuesLost, 1, 'the binding another account holds');
+    assert.ok(warnings.some((w) => /3 SSO binding\(s\) of user .* are not SSO bindings \(malformed\): not restored/.test(w)), JSON.stringify(warnings));
+
+    // A whole backup has the account's platform rows: those are written, the
+    // bindings file is not read for its rows.
+    const { o: whole, writes: wholeWrites } = makeOrchestrator();
+    whole.coreRouting = fakeCoreRouting(wholeWrites, { hashFor: (field, value) => field === 'username' ? 'tok-' + value : value });
+    whole.platformDB = rowStore(wholeWrites);
+    const platformRows = [{ username: 'tok-validname', field: 'sso-acme', value: 'sub-current', isUnique: true }];
+    await whole.restoreUser(CUID2_ID, { ...makeReaderWithPlatform(users, { platformRows }), async openUser () { return userReader; } });
+    assert.deepStrictEqual(rowWrites(wholeWrites), ['unique:tok-validname:sso-acme:sub-current']);
+  });
+
+  it('[RXCR26] in cleartext mode, a restore leaves to another account an email it holds in another case: no row written, counted', async function () {
+    const { o, writes } = makeOrchestrator();
+    o.logger = recordingLogger().logger;
+    o.coreRouting = fakeCoreRouting(writes, { uniqueOwners: { 'email/VALID@example.com': 'holder' } });
+    o.platformDB = rowStore(writes);
+    const platformRows = [
+      { username: 'validname', field: 'email', value: 'Valid@Example.com', isUnique: true },
+      { username: 'validname', field: 'email', value: 'free@example.com', isUnique: true }
+    ];
+    const report = await o.restoreUser(CUID2_ID, makeReaderWithPlatform(users, { platformRows }));
+    assert.deepStrictEqual(rowWrites(writes), ['unique:validname:email:free@example.com']);
+    assert.strictEqual(report.uniqueValuesLost, 1);
   });
 
   it('[RXCR22] the register server mapping of a restored account never routes it to another core; a platform-only restore writes it as before', async function () {

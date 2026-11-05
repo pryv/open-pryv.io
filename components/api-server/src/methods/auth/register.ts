@@ -139,8 +139,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         return next(errors.itemAlreadyExists('user', { username: params[field] }));
       }
     }
-    const value = await platform.getUsersUniqueField(field, params[field]);
-    if (value != null) {
+    if (await platform.isUniqueValueTaken(field, params[field])) {
       return next(errors.itemAlreadyExists('user', { [field]: params[field] }));
     }
     next();
@@ -187,7 +186,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // challenge only exists to prove an address on the way to creating one.
   async function refuseTakenAddress (_context: MethodContext, params: EmailChallengeParams, _result: ResultBag, next: MethodNext) {
     try {
-      if ((await platform.getUsersUniqueField('email', params.email)) != null) {
+      // In any spelling: no code goes to an address another account holds.
+      if (await platform.isUniqueValueTaken('email', params.email)) {
         return next(errors.itemAlreadyExists('user', { email: params.email }));
       }
       next();
