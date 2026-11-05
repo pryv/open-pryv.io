@@ -626,6 +626,17 @@ function refuseMetadataClientId (command, raw) {
   }
 }
 
+// The client authentication method of a metadata-document client and the
+// document member it was read from (why a row is confidential).
+function authMethodLine (row) {
+  const from = {
+    singular: 'from token_endpoint_auth_method',
+    plural: 'from token_endpoint_auth_methods_supported',
+    default: 'the document names none',
+  }[row.metadata?.authMethodSource] ?? 'source not recorded';
+  return 'method: ' + row.tokenEndpointAuthMethod + ', ' + from;
+}
+
 // What `show` adds for a metadata-document client.
 function printMetadataClient (client) {
   const m = client.metadata ?? {};
@@ -634,6 +645,7 @@ function printMetadataClient (client) {
   console.log('     host:          ' + (metadataHostOfRow(client) ?? '-'));
   console.log('     fetched:       ' + at(m.fetchedAt) + '; reused without a fetch until ' + at(m.expiresAt));
   console.log('     last used:     ' + at(m.lastUsedAt));
+  console.log('     ' + authMethodLine(client));
   console.log('     reach:         the template (oauth.clientMetadataDocuments.client), applied at each fetch');
 }
 
@@ -653,6 +665,7 @@ async function runCheckMetadata (platform, args) {
   if (!checked.ok) throw new Error('check-metadata: document ' + checked.kind + ': ' + checked.detail);
   const row = meta.buildMetadataClientRow(url, checked.fields, settings, null, Date.now());
   console.log('OK   document valid: ' + url);
+  console.log('     ' + authMethodLine(row));
   if (checked.ignored.length > 0) console.log('     members ignored: ' + checked.ignored.join(', '));
   if (checked.dropped.length > 0) console.log('     dropped (not on the document\'s host, or malformed): ' + checked.dropped.join(', '));
   const { metadata: _m, updatedAt: _u, registeredAt: _r, ...shown } = row;

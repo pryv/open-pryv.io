@@ -259,6 +259,12 @@ export interface ClientMetadataState {
   contentDigest: string;
   /** Last authorization request naming the client (written at most once an hour). */
   lastUsedAt: number;
+  /** Where the client authentication method was read: the singular member, the plural one, or neither (`none`). */
+  authMethodSource?: 'singular' | 'plural' | 'default';
+  /** The first consent a user gave this client: from then on the row is permanent (else provisional). */
+  firstConsentAt?: number;
+  /** The operator fetched the document by hand (`refresh-metadata`): the row is permanent. */
+  operatorRefreshedAt?: number;
 }
 
 /** Authorization code row (per-issuing-core, ≤10-min TTL). */

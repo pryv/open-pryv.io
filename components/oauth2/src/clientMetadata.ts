@@ -74,7 +74,7 @@ const PRUNE_EXTRA_MS = 7 * 24 * 3600 * 1000;
 
 // The document members this server reads; any other is ignored.
 const READ_MEMBERS = new Set(['client_id', 'redirect_uris', 'token_endpoint_auth_method', 'grant_types', 'response_types',
-  'client_name', 'client_uri', 'policy_uri', 'tos_uri', 'logo_uri', 'software_id', 'contacts']);
+  'client_name', 'client_uri', 'policy_uri', 'tos_uri', 'logo_uri', 'software_id', 'contacts', 'token_endpoint_auth_methods_supported']);
 /** `application/json`, or a more specific `application/<subtype>+json` (RFC 6838 restricted name); lower-cased, no parameters. */
 const JSON_MEDIA_TYPE_RE = /^application\/(?:json|[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\+json)$/;
 /** The redirect URI schemes a metadata document may list (http on a loopback host only, checked apart). */
@@ -127,6 +127,8 @@ export type DocumentFields = {
   redirectUris: string[];
   grantTypes: string[];
   tokenEndpointAuthMethod: 'none' | 'private_key_jwt';
+  /** Kept on the row's `metadata`, not a row field. */
+  authMethodSource?: AuthMethodSource;
   jwksUri?: string;
   jwks?: PublicJwkSet;
   tokenEndpointAuthSigningAlgs?: string[];
@@ -196,11 +198,9 @@ export function clientMetadataProblem (doc: unknown, url: string, settings: Clie
     return { ok: false, detail: 'redirect_uris: plain http is allowed on a loopback host only (localhost, 127.0.0.1, [::1])' };
   }
 
-  // token_endpoint_auth_method: the singular member decides (the plural
-  // `token_endpoint_auth_methods_supported` some documents carry is ignored).
-  // Absent reads as `none` (the documents of public clients state it; RFC
-  // 7591's default, a secret, cannot apply: a document carries no secret).
-  const method = doc.token_endpoint_auth_method ?? 'none';
+  const selected = selectAuthMethod(doc, settings);
+  if (!selected.ok) return selected;
+  const method = selected.method;
   if ((method !== 'none' && method !== 'private_key_jwt') || !settings.authMethods.includes(method)) {
     return { ok: false, detail: 'unsupported-auth-method: ' + JSON.stringify(method) + ' (accepted: ' + settings.authMethods.join(', ') + ')' };
   }
@@ -208,6 +208,7 @@ export function clientMetadataProblem (doc: unknown, url: string, settings: Clie
     redirectUris: [...uris as string[]],
     grantTypes: [],
     tokenEndpointAuthMethod: method,
+    authMethodSource: selected.source,
   };
   // The key members, read for a client that authenticates with its keys only.
   const keyMembersIgnored: string[] = [];
@@ -280,6 +281,48 @@ export function clientMetadataProblem (doc: unknown, url: string, settings: Clie
     ...keyMembersIgnored,
   ];
   return { ok: true, fields, ignored, dropped };
+}
+
+/** Where a document's client authentication method was read from. */
+export type AuthMethodSource = 'singular' | 'plural' | 'default';
+
+/** In the order the server prefers them, when only the plural member names the methods. */
+const PREFERRED_AUTH_METHODS = ['private_key_jwt', 'none'];
+const MAX_PLURAL_AUTH_METHODS = 8;
+
+/**
+ * The client authentication method of a document, from
+ * `token_endpoint_auth_method` (S) and `token_endpoint_auth_methods_supported`
+ * (P): P, when present, is 1 to 8 distinct strings; S present decides, and
+ * must then be listed in P when P is given; S absent, P present: the first of
+ * `private_key_jwt`, `none` listed in P and accepted by the operator (the
+ * strongest method the client says it can do; it fails closed when it then
+ * does not); both absent: `none` (RFC 7591's default, a secret, cannot apply:
+ * a document carries no secret).
+ */
+function selectAuthMethod (doc: Record<string, unknown>, settings: ClientMetadataSettings):
+  { ok: true; method: unknown; source: AuthMethodSource } | { ok: false; detail: string } {
+  const s = doc.token_endpoint_auth_method;
+  const p = doc.token_endpoint_auth_methods_supported;
+  if (p != null && !(Array.isArray(p) && p.length > 0 && p.length <= MAX_PLURAL_AUTH_METHODS &&
+      p.every((m) => typeof m === 'string' && m.length > 0) && new Set(p).size === p.length)) {
+    return { ok: false, detail: `unsupported-auth-method: token_endpoint_auth_methods_supported must be a list of 1 to ${MAX_PLURAL_AUTH_METHODS} distinct strings` };
+  }
+  const plural = p as string[] | undefined;
+  if (s != null) {
+    if (plural != null && (typeof s !== 'string' || !plural.includes(s))) {
+      return { ok: false, detail: 'auth-method-inconsistent: token_endpoint_auth_method ' + JSON.stringify(s) + ' is not listed in token_endpoint_auth_methods_supported' };
+    }
+    return { ok: true, method: s, source: 'singular' };
+  }
+  if (plural != null) {
+    const method = PREFERRED_AUTH_METHODS.find((m) => plural.includes(m) && settings.authMethods.includes(m));
+    if (method == null) {
+      return { ok: false, detail: 'unsupported-auth-method: token_endpoint_auth_methods_supported lists none of the accepted methods (' + settings.authMethods.join(', ') + ')' };
+    }
+    return { ok: true, method, source: 'plural' };
+  }
+  return { ok: true, method: 'none', source: 'default' };
 }
 
 /**
@@ -447,8 +490,9 @@ function contentDigest (row: Partial<OAuthClient>): string {
 export function buildMetadataClientRow (url: string, fields: DocumentFields, settings: ClientMetadataSettings,
   existing: OAuthClient | null, now: number): OAuthClient {
   const t = settings.client;
+  const { authMethodSource, ...documentFields } = fields;
   const derived: Partial<OAuthClient> = {
-    ...fields,
+    ...documentFields,
     contacts: fields.contacts ?? [],
     scope: [...t.scope],
     allowedAudiences: [...t.allowedAudiences],
@@ -479,6 +523,9 @@ export function buildMetadataClientRow (url: string, fields: DocumentFields, set
       expiresAt: now + settings.cacheSeconds * 1000,
       contentDigest: digest,
       lastUsedAt: Math.max(existing?.metadata?.lastUsedAt ?? 0, now),
+      ...(authMethodSource != null ? { authMethodSource } : {}),
+      ...(existing?.metadata?.firstConsentAt != null ? { firstConsentAt: existing.metadata.firstConsentAt } : {}),
+      ...(existing?.metadata?.operatorRefreshedAt != null ? { operatorRefreshedAt: existing.metadata.operatorRefreshedAt } : {}),
     },
     updatedAt: unchanged ? existing!.updatedAt : now,
   };

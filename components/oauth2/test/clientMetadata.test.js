@@ -759,12 +759,50 @@ describe('[OCMD] client metadata documents', function () {
       const pub = check(doc(URL1, { token_endpoint_auth_method: 'none', token_endpoint_auth_methods_supported: plural, jwks_uri: 'https://client.example/jwks.json' }));
       assert.equal(pub.fields.tokenEndpointAuthMethod, 'none');
       assert.equal(pub.fields.jwksUri, undefined, 'a public document\'s key members are not read');
-      assert.ok(pub.ignored.includes('token_endpoint_auth_methods_supported') && pub.ignored.includes('jwks_uri'));
+      assert.ok(!pub.ignored.includes('token_endpoint_auth_methods_supported') && pub.ignored.includes('jwks_uri'));
       const conf2 = check(pkj({ token_endpoint_auth_methods_supported: plural, jwks_uri: 'https://client.example/jwks.json' }));
       assert.equal(conf2.fields.tokenEndpointAuthMethod, 'private_key_jwt');
       const publicOnly = settingsOf(block({ authMethods: ['none'] }));
       assert.match(check(pkj({ jwks_uri: 'https://client.example/jwks.json' }), publicOnly).detail, /unsupported-auth-method/);
       assert.equal(check(doc(), publicOnly).ok, true);
+    });
+
+    it('[OCMD11D] the method: the singular member decides, else the plural one (private_key_jwt first), else none', () => {
+      const KEYS = { jwks_uri: 'https://client.example/jwks.json' };
+      const P = (p, extra = {}) => doc(URL1, { token_endpoint_auth_methods_supported: p, ...extra });
+      const S = (s, p, extra = {}) => doc(URL1, { token_endpoint_auth_method: s, ...(p != null ? { token_endpoint_auth_methods_supported: p } : {}), ...extra });
+      const publicOnly = settingsOf(block({ authMethods: ['none'] }));
+      const cases = [
+        [P(['private_key_jwt'], KEYS), s, ['private_key_jwt', 'plural']],
+        [P(['none']), s, ['none', 'plural']],
+        [P(['none', 'private_key_jwt'], KEYS), s, ['private_key_jwt', 'plural']],
+        [P(['none', 'private_key_jwt'], KEYS), publicOnly, ['none', 'plural']],
+        [P(['client_secret_basic']), s, /unsupported-auth-method/],
+        [P(['client_secret_basic', 'none']), s, ['none', 'plural']],
+        [P('none'), s, /unsupported-auth-method/],
+        [P([]), s, /unsupported-auth-method/],
+        [P(Array.from({ length: 9 }, (_, i) => 'm' + i)), s, /unsupported-auth-method/],
+        [P(['none', 'none']), s, /unsupported-auth-method/],
+        [S('none', ['private_key_jwt'], KEYS), s, /auth-method-inconsistent/],
+        [S('none', ['none', 'private_key_jwt'], KEYS), s, ['none', 'singular']],
+        [S('private_key_jwt', ['none', 'private_key_jwt'], KEYS), s, ['private_key_jwt', 'singular']],
+        [S('private_key_jwt', null, KEYS), s, ['private_key_jwt', 'singular']],
+        [doc(), s, ['none', 'default']],
+      ];
+      for (const [d, settings, want] of cases) {
+        const r = check(d, settings);
+        const label = JSON.stringify([d.token_endpoint_auth_method, d.token_endpoint_auth_methods_supported, settings.authMethods]);
+        if (want instanceof RegExp) {
+          assert.equal(r.ok, false, label);
+          assert.match(r.detail, want, label);
+        } else {
+          assert.equal(r.ok, true, label + ' ' + r.detail);
+          assert.deepEqual([r.fields.tokenEndpointAuthMethod, r.fields.authMethodSource], want, label);
+        }
+      }
+      // The source rides on the row's metadata, never as a row field.
+      const row = meta.buildMetadataClientRow(URL1, check(P(['private_key_jwt'], KEYS)).fields, s, null, 1000);
+      assert.deepEqual([row.metadata.authMethodSource, row.authMethodSource], ['plural', undefined]);
     });
 
     it('[OCMD11C] the row authenticates by its URL (iss = sub), burns the jti under its key, and still holds no role', async () => {
