@@ -1632,7 +1632,7 @@ class Platform {
   /**
    * Check if a NEW username is refused: a reserved name (see
    * `isUsernameInReservedList`), or a reserved shape: the shape of the
-   * aliases this server mints (`r-` + 8 letters or digits), whose name ->
+   * aliases this server mints (`r-` or `a-` + 8 letters or digits), whose name ->
    * core mapping an alias would claim, and a DNS label with hyphens in the
    * 3rd and 4th positions (`xn--` and the other `??--` prefixes, which
    * IDNA reserves: an `xn--` name displays as another, Unicode, name).

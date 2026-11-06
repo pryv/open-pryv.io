@@ -345,6 +345,9 @@ class AccessLogic {
       case 'account.externalIds.replace':
       case 'account.getAutoDeletion':
       case 'account.setAutoDeletion':
+      case 'account.addressAliases.create':
+      case 'account.addressAliases.list':
+      case 'account.addressAliases.delete':
         return this.isPersonal();
 
       // -- Accesses

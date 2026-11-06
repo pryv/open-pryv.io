@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Address aliases
+
+- `users/aliasShape.ts`: the minted shapes are `r-` + 8 (access aliases) and `a-` + 8 (address
+  aliases); `isMintedAliasShape` covers both (registration refusal, alias-bound addressing, the
+  former-username reading of the alias index), `isAddressAliasShape` the second. The alias index is
+  unchanged: an address alias is an alias of the account of the address shape, so backup and
+  restore, account deletion and username changes carry it like any alias.
+- `UsersRepository.mintAlias(owner, ownerId, kind)`: `kind` `'address'` mints the `a-` shape; every
+  minted value is also checked against the names the platform routes itself and minted again if it
+  is one. `getAddressAliasesForUserId`.
+- `api-server/src/methods/helpers/addressAliases.ts`: the account's address aliases, their holders
+  (live accesses, expired ones included), the ones a consent of a client may bind. The consent's
+  resolver (`resolveUser`, now given the `clientId`) fills `addressAliases` with these; the exchange's
+  subject session with the alias its grant adopted. `accesses.create` adopts an address alias only
+  when the OAuth consent flow sets it on its own context (`addressAliasToAdopt`), never from the
+  request; after creating the grant the flow keeps one holder per alias (the earlier grant wins, the
+  later withdraws its new grant and refuses `audience-account-mismatch`).
+- `consentComposition.composeShownOffer(..., adopt)`: an adopted alias makes the shown offer
+  pseudonymous and a current grant with another alias (or none) a change of subject;
+  `CurrentGrant.alias`.
+- Test core and helpers register `methods/addressAliases.ts`.
+
 ### Mail: `html-to-text` 10, no `deepmerge` left at runtime
 
 - `overrides`: `html-to-text` raised to `^10.0.1` (locked at 10.0.1) under `email-templates` 13.0.1, which

@@ -50,6 +50,8 @@ export type CurrentGrant = {
   permissions: ExtPermission[];
   /** The grant carries an alias (the app sees a pseudonym). */
   aliased: boolean;
+  /** That alias, when known (an address alias a consent may name again). */
+  alias?: string | null;
 };
 
 /** The offer shown on the consent screen; entries may carry `currentlyGranted`. */
@@ -66,12 +68,21 @@ export function subjectModeOf (aliased: boolean): SubjectMode {
 /**
  * Compose the consent screen from the requested offer (as re-derived from the
  * signed state, with its digest) and the user's current grant (null: none).
+ *
+ * `adopt`: the address alias the authorization's audience names (see
+ * audienceAccount.ts `addressAliasOfAudience`). The grant then carries that
+ * alias, so the app sees a pseudonym whatever it asked; a current grant that
+ * carries another alias, or none, is a change of subject the user
+ * acknowledges (from a pseudonym to another pseudonym included: the app
+ * would know the account by another name).
  */
 export function composeShownOffer (
   requested: { offer: SynthOffer; digest: string },
   current: CurrentGrant | null,
-  client: OAuthClient
+  client: OAuthClient,
+  adopt: string | null = null
 ): Composition {
+  if (adopt != null) requested = { ...requested, offer: { ...requested.offer, randomAlias: true } };
   // A feature the request asks to allow that this client's grants forbid by
   // default is shown as the forbid it will be (locked), not as allowed.
   const defaults = new Set<string>(defaultForbiddenFeatures(client));
@@ -87,7 +98,7 @@ export function composeShownOffer (
   } else {
     const from = subjectModeOf(current.aliased);
     const to = subjectModeOf(requested.offer.randomAlias === true);
-    if (from !== to) subjectChange = { from, to };
+    if (from !== to || (adopt != null && current.alias !== adopt)) subjectChange = { from, to };
 
     const requestedStreams = requestedPermissions.filter(isStreamPermission);
     // Exclusion masks of the grant are restrictions, not something to tick:

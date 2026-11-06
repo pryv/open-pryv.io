@@ -49,6 +49,9 @@ export function accessMayBeAddressedAs (access: { type?: unknown; alias?: unknow
  * Invariant the shape test rests on: an access alias is only ever produced by
  * `mintAlias` (the minted shape, which registration and a change of username
  * refuse as a username); `reserveSpecificAlias` backs former usernames only.
+ * An address alias the owner minted is of that shape too: held by no access
+ * it is reached with a personal token only, and once a grant adopts it, it is
+ * that grant's alias like any other.
  * If an access alias were ever reserved by value, this test would have to
  * read the account's accesses instead of the shape.
  */

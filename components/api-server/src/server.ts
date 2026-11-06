@@ -227,6 +227,7 @@ class Server {
     await require('./methods/account.ts').default(app.api);
     await require('./methods/externalIds.ts').default(app.api);
     await require('./methods/accountAutoDeletion.ts').default(app.api);
+    await require('./methods/addressAliases.ts').default(app.api);
     await require('./methods/profile.ts').default(app.api);
     await require('./methods/streams.ts').default(app.api);
     await require('./methods/events.ts').default(app.api);

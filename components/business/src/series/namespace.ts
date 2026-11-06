@@ -32,8 +32,9 @@ type RenamingConnection = { renameDatabase (from: string, to: string): Promise<v
 
 /**
  * The account's former usernames: the names of its alias index that can hold
- * series. Minted access aliases (`r-` + 8 characters) are never a username,
- * so never a namespace; a username that merely starts with `r-` is one.
+ * series. Minted aliases (`r-` or `a-` + 8 characters: an access's alias, an
+ * address alias) are never a username, so never a namespace; a username that
+ * merely starts with `r-` is one.
  * Residual: a username of the exact minted shape, registered before that
  * shape was refused, is taken for an access alias once it is a former name.
  */

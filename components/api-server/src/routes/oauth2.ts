@@ -67,7 +67,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   // customAuthStepFn is resolved lazily on each request (matches the
   // initContext middleware pattern: load only when a request hits).
   // ---------------------------------------------------------------------
-  async function resolveUser ({ username, userToken }: { username: string; userToken: string }) {
+  async function resolveUser ({ username, userToken, clientId }: { username: string; userToken: string; clientId?: string }) {
     const customAuthStepFn = app.getCustomAuthFunction != null
       ? app.getCustomAuthFunction('oauth2.resolveUser')
       : null;
@@ -129,8 +129,9 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return {
       userId: context.user.id,
       username: context.user.username,
-      // A per-user resource may name one of them (see oauth2/audienceAccount.ts).
-      addressAliases: await sessions.addressAliasesOf(context.user.id),
+      // A per-user resource may name one of them (see oauth2/audienceAccount.ts):
+      // those this client's consent may bind.
+      addressAliases: await sessions.addressAliasesOf(context.user.id, clientId),
       personal: true,
       // The OpenID Connect `auth_time`: the last completed sign-in recorded on
       // this personal access (password, password plus second factor, or

@@ -23,7 +23,9 @@
  * the answer is the consent screen composed with the user's current grant
  * (`offer` entries flagged `currentlyGranted`), with `shownDigest` (to post
  * back at /accept), `currentGrant: { subjectMode } | null` and
- * `subjectChange`; never memoised. A token that does not sign in answers the
+ * `subjectChange` (plus `addressAlias` when the authorization's per-user
+ * resource names one of the account's address aliases: the grant adopts
+ * it, the app knows the account by that name); never memoised. A token that does not sign in answers the
  * request alone, plus `authenticated: false`; an account the platform places
  * on another core answers 421 `wrong_core` with that core's URL, as /accept
  * does (see wrongCore.ts).
@@ -47,7 +49,7 @@ import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import { metadataHostOf } from '../clientMetadata.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
-import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience } from '../audienceAccount.ts';
 
 /** A signed-in user, as the host app's resolver answers it. */
 export type OfferSession = {
@@ -65,7 +67,7 @@ export type OfferDeps = {
   config: { get (key: string): unknown };
   platform: PlatformDB;
   /** Optional sign-in for the composed answer (same resolver as /accept). */
-  resolveUser?: (params: { username: string; userToken: string }) =>
+  resolveUser?: (params: { username: string; userToken: string; clientId?: string }) =>
   Promise<OfferSession | { refused: true; description: string } | WrongCoreSession | null>;
   /** The user's current grant for the client, or null. */
   readRegistryGrant?: (params: { session: OfferSession; clientId: string }) => Promise<CurrentGrant | null>;
@@ -162,13 +164,13 @@ export async function resolveStateOffer (
  * non-personal token alike: no oracle beyond what /accept already gives).
  * An account served by another core is told apart, as /accept tells it.
  */
-async function personalSession (deps: OfferDeps, body: Record<string, unknown>): Promise<OfferSession | WrongCoreSession | null> {
+async function personalSession (deps: OfferDeps, body: Record<string, unknown>, clientId: string): Promise<OfferSession | WrongCoreSession | null> {
   if (deps.resolveUser == null) return null;
   if (typeof body.username !== 'string' || body.username.length === 0 ||
       typeof body.userToken !== 'string' || body.userToken.length === 0) return null;
   let s: OfferSession | { refused: true } | WrongCoreSession | null;
   try {
-    s = await deps.resolveUser({ username: body.username, userToken: body.userToken });
+    s = await deps.resolveUser({ username: body.username, userToken: body.userToken, clientId });
   } catch {
     return null;
   }
@@ -221,7 +223,7 @@ export function handleOffer (deps: OfferDeps) {
 
     // Signed in: the composition of the user's current grant and the request
     // (what /accept will check a `shownDigest` against). Never memoised.
-    const session = await personalSession(deps, body);
+    const session = await personalSession(deps, body, c.clientId);
     if (session == null) return sendJson(res, 200, { ...answer, authenticated: false });
     if (isWrongCoreSession(session)) {
       await auditWrongCore(verified.payload);
@@ -238,7 +240,9 @@ export function handleOffer (deps: OfferDeps) {
     const current = deps.readRegistryGrant != null
       ? await deps.readRegistryGrant({ session, clientId: c.clientId })
       : null;
-    const composition = composeShownOffer(r.resolved, current, c);
+    // An address alias the audience names: the grant adopts it (shown here).
+    const adopt = addressAliasOfAudience(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
+    const composition = composeShownOffer(r.resolved, current, c, adopt);
     if (!composition.ok) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
@@ -258,6 +262,7 @@ export function handleOffer (deps: OfferDeps) {
       shownDigest: composition.shownDigest,
       currentGrant: current == null ? null : { subjectMode: subjectModeOf(current.aliased) },
       subjectChange: composition.subjectChange,
+      ...(adopt != null ? { addressAlias: adopt } : {}),
     });
   };
 }

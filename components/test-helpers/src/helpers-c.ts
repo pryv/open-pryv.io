@@ -111,7 +111,7 @@ base.init({
   methods: [
     'events', 'streams', 'service', 'auth/login', 'auth/register',
     'accesses', 'account', 'profile', 'webhooks', 'shared-secrets', 'utility', 'mfa', 'externalIds',
-    'accountAutoDeletion'
+    'accountAutoDeletion', 'addressAliases'
   ]
 });
 

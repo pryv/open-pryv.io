@@ -109,6 +109,9 @@ const ALL_METHODS = [
   // Account auto-deletion setting (personal token).
   'account.getAutoDeletion',
   'account.setAutoDeletion',
+  'account.addressAliases.create',
+  'account.addressAliases.list',
+  'account.addressAliases.delete',
   // Account transfer to a beneficiary: public, the mailed link is the
   // credential (recorded in the owner's trail).
   'account.transferClaim',

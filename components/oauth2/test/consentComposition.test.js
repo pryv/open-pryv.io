@@ -132,6 +132,19 @@ describe('[OCMPU] composed consent of registry clients', () => {
     assert.notEqual(same.shownDigest, pseudoToAccount.shownDigest);
   });
 
+  it('[OCMPU11] an adopted address alias: the offer is shown pseudonymous; a grant with another alias, or none, is a change of subject; the same alias is none', () => {
+    const req = requested([{ streamId: 'a', level: 'read' }]);
+    const fresh = composeShownOffer(req, null, CLIENT, 'a-alias234');
+    assert.deepEqual([fresh.shown.randomAlias, fresh.subjectChange], [true, null]);
+    const fromAccount = composeShownOffer(req, { aliased: false, alias: null, permissions: [] }, CLIENT, 'a-alias234');
+    assert.deepEqual(fromAccount.subjectChange, { from: 'account', to: 'pseudonym' });
+    const fromOther = composeShownOffer(req, { aliased: true, alias: 'r-other234', permissions: [] }, CLIENT, 'a-alias234');
+    assert.deepEqual(fromOther.subjectChange, { from: 'pseudonym', to: 'pseudonym' });
+    const same = composeShownOffer(req, { aliased: true, alias: 'a-alias234', permissions: [] }, CLIENT, 'a-alias234');
+    assert.equal(same.subjectChange, null);
+    assert.notEqual(same.shownDigest, fromOther.shownDigest);
+  });
+
   it('[OCMPU6] determinism: same inputs, same digest; the request\'s entry order does not count', () => {
     const current = { aliased: false, permissions: [{ streamId: 'x', level: 'read' }] };
     const one = composeShownOffer(requested([{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'contribute' }, { feature: 'webhooks', setting: 'forbidden' }]), current, CLIENT);

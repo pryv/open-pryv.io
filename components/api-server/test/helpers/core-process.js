@@ -238,6 +238,7 @@ const http = require('node:http');
   await require('api-server/src/methods/account.ts').default(app.api);
   await require('api-server/src/methods/externalIds.ts').default(app.api);
   await require('api-server/src/methods/accountAutoDeletion.ts').default(app.api);
+  await require('api-server/src/methods/addressAliases.ts').default(app.api);
   await require('api-server/src/methods/profile.ts').default(app.api);
   await require('api-server/src/methods/streams.ts').default(app.api);
   await require('api-server/src/methods/events.ts').default(app.api);

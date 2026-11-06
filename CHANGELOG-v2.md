@@ -64,6 +64,36 @@
   when presented at another's. Checked before the home core is named. `resource` / `audience`
   keep naming this server. See `docs/oauth2.md` § 1c "Per-user addresses" and § 1e.
 
+### Address aliases: addresses of an account other than its username
+
+- **Added: `account.addressAliases.create` / `.list` / `.delete`** (`POST`, `GET
+  /{username}/account/address-aliases`, `DELETE /{username}/account/address-aliases/{alias}`;
+  personal token only). The server mints the name (`a-` + 8 letters or digits; no value is taken
+  from the request), at most 10 per account (`400 invalid-operation`, `data.addressAliasesLimit`,
+  past that; `accesses.maxAliasesPerAccount` bounds it too). An address alias is an address of the
+  account like its username: the platform routes `<alias>.<dns.domain>` to the account's core and
+  the embedded DNS answers it. The list gives each alias with its `apiEndpoint` and `heldBy`
+  (`null`, or the OAuth grant that adopted it: `{ accessId, clientId }`). Deleting one withdraws the
+  grant that holds it (its sessions and refresh chains end; `relatedDeletions` lists the deleted
+  accesses) and releases the name. Signing in, or using a token without that alias, at an address
+  alias is refused.
+- **BREAKING (registration): a new username of the exact shape `a-` + 8 letters or digits is
+  refused** (registration, `account.changeUsername`, `/reg/{name}/check_username` reads it
+  reserved), like the access-alias shape `r-` + 8. Existing accounts keep their name.
+- **Added: an OAuth consent at an address alias adopts it.** A per-user resource
+  (`https://<alias>.<host>/...` under a `{username}` audience entry) whose label is one of the
+  signed-in account's address aliases is accepted at `/offer` and `/accept` when no access holds
+  it, or when this client's grant holds it already (a re-authorization at the same address); the
+  registry grant then carries it as its alias, whatever the client's `subjectType`: the app's
+  subject, `api_base`, the token's address and the audience are that one name, and the tokens are
+  used at that address only. One grant per address alias: an alias another grant holds, another
+  account's, or a former username is refused `403 audience-account-mismatch`. The signed-in
+  `/offer` answers `addressAlias` when the consent adopts one; a current grant that carries
+  another alias, or none, is a change of subject (`subjectChange`, `acknowledgeSubjectChange`
+  required, from `pseudonym` to `pseudonym` included); the replaced grant's alias is released with
+  it. Withdrawing the grant releases its address alias. An app-account (CMC) client is refused an
+  address alias. The token exchange accepts the address alias its subject's grant adopted.
+
 ### `accesses.checkApp` reads stream ids as `accesses.create` stores them
 
 - **`accesses.checkApp` canonicalises the requested stream ids** the way `accesses.create` and

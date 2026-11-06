@@ -98,7 +98,7 @@ export type Deps = {
    * not consent) or `{ wrongCore: true, coreUrl }` (the account is served
    * by another core, see wrongCore.ts).
    */
-  resolveUser?: (params: { username: string; userToken: string })
+  resolveUser?: (params: { username: string; userToken: string; clientId?: string })
   => Promise<{ userId: string; username: string; [key: string]: unknown } | { refused: true; description: string } |
   { wrongCore: true; coreUrl: string } | null>;
   /**

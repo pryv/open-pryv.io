@@ -111,6 +111,37 @@ const __ex_externalIdsRelease = {
   params: helpers.object({ namespace: extIdNamespace }, { required: ['namespace'] })
 };
 export { __ex_externalIdsRelease as externalIdsRelease };
+// Address aliases: minted by the server (no value in the request), deleted by name.
+const addressAliasView = helpers.object({
+  alias: helpers.string(),
+  apiEndpoint: helpers.string(),
+  // The access that holds it (the OAuth grant that adopted it), or null.
+  heldBy: helpers.object({
+    accessId: helpers.string(),
+    clientId: helpers.string()
+  }, { required: ['accessId'], additionalProperties: false, nullable: true })
+}, { required: ['alias', 'apiEndpoint', 'heldBy'], additionalProperties: false });
+const __ex_addressAliasesCreate = {
+  params: helpers.object({}, { additionalProperties: false }),
+  result: helpers.object({ addressAlias: addressAliasView }, { required: ['addressAlias'], additionalProperties: false })
+};
+export { __ex_addressAliasesCreate as addressAliasesCreate };
+const __ex_addressAliasesList = {
+  params: helpers.object({}),
+  result: helpers.object({
+    addressAliases: helpers.array(addressAliasView),
+    addressAliasesLimit: helpers.number()
+  }, { required: ['addressAliases', 'addressAliasesLimit'], additionalProperties: false })
+};
+export { __ex_addressAliasesList as addressAliasesList };
+const __ex_addressAliasesDelete = {
+  params: helpers.object({ alias: helpers.string({ maxLength: 100 }) }, { required: ['alias'], additionalProperties: false }),
+  result: helpers.object({
+    addressAliasDeletion: helpers.object({ alias: helpers.string() }, { required: ['alias'], additionalProperties: false }),
+    relatedDeletions: helpers.array(helpers.object({ id: helpers.string() }, { required: ['id'] }))
+  }, { required: ['addressAliasDeletion', 'relatedDeletions'], additionalProperties: false })
+};
+export { __ex_addressAliasesDelete as addressAliasesDelete };
 const __ex_externalIdCores = {
   params: helpers.object({
     namespace: helpers.string({ maxLength: 100 }),

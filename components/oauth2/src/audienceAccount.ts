@@ -87,6 +87,30 @@ export function consentAudienceRefusal (
   return labelNamesAccount(match.label, account, isPlatformRoutedLabel) ? null : 'mismatch';
 }
 
+/**
+ * The address alias a consent's per-user audience names, when it names one
+ * (not the username): the grant adopts it, so the app knows the account by
+ * that name only, whatever the client's subject type. Null for no audience,
+ * an exact one, a client without a list, or a label that is the username or
+ * no address alias of the account. Run after `consentAudienceRefusal`.
+ */
+export function addressAliasOfAudience (
+  audience: string | undefined,
+  client: OAuthClient | null,
+  account: ConsentAccountNames,
+  isPlatformRoutedLabel?: PlatformRoutedLabel | null
+): string | null {
+  if (audience == null || client == null) return null;
+  const list = Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0 ? client.allowedAudiences : null;
+  if (list == null) return null;
+  const match = withinResourceCap(audience, list) ? matchAudience(audience, list) : null;
+  if (match?.label == null) return null;
+  const l = match.label.toLowerCase();
+  if (isPlatformRoutedLabel != null && isPlatformRoutedLabel(l)) return null;
+  if (typeof account.username === 'string' && account.username.toLowerCase() === l) return null;
+  return (account.addressAliases ?? []).find((a) => typeof a === 'string' && a.toLowerCase() === l) ?? null;
+}
+
 /** The audit row of a consent refused by `consentAudienceRefusal` (no username, no label). */
 export async function auditAudienceRefusal (payload: { clientId: string; scope: string[] }, kind: 'mismatch' | 'unlisted'): Promise<void> {
   await audit('oauth.consent.refused', {
