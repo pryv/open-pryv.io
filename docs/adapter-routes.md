@@ -128,7 +128,7 @@ platform names, no map of cores and no region knowledge:
 
 | Header | Value | Example |
 |---|---|---|
-| `X-Adapter-Name` | the addressed name, lowercased, as addressed (a username, an alias, or a former username, which stays the account's address after a rename) | `alice` |
+| `X-Adapter-Name` | the addressed name, lowercased, as addressed (a username, an alias where the platform offers them, or a former username, which stays the account's address after a rename) | `alice` |
 | `X-Adapter-Base` | the route's base as the client addressed it: the forwarded scheme (`X-Forwarded-Proto` above: this core's TLS or a trusted proxy's first value), the received `Host` lowercased with its port and without a final dot, the route's root path `/adapter/<name>/` (also on its `.well-known` prefixes) | `https://alice.example.com/adapter/calendar/` |
 
 Both are absent on a platform address. **They are an address, not an identity:** the core
@@ -228,8 +228,10 @@ adapterRoutes:
 
 The sidecar's public base URL is then `https://<core host>/adapter/calendar/` at a platform address,
 and `X-Adapter-Base` on a request addressed to an account (`https://alice.<domain>/adapter/calendar/`).
-Configure the platform one in the sidecar, or derive it from `Host` / `X-Forwarded-Proto`, which the
-core sets. Without a shared
+Configure the platform one in the sidecar. A resource server must: its `resource` is a published,
+audience-bound value. An adapter whose links bind no account (a feed whose URL carries its own
+credentials) may instead build the link from `X-Forwarded-Proto` and `Host`, which the core forwards,
+as the request's origin and never as an account. Without a shared
 network, bind the sidecar to the bridge gateway (`-p 172.17.0.1:7450:7450`) and use
 `upstream: http://172.17.0.1:7450`. The sidecar is the upstream, not a proxy in front of the core:
 `http.trustedProxies` does not list it.
@@ -246,11 +248,15 @@ to the sidecar, the core never sees the request: no `421` for an account of anot
 `X-Adapter-Name` / `X-Adapter-Base`. Choose one:
 (a) let the core forward adapter paths (remove those `location` blocks; the core keeps the trusted
 nginx's `X-Forwarded-*`): the per-user triage and the two headers work; or
-(b) keep the bypass, and have the sidecar derive the account from `Host` itself, accepting that a
-misrouted request is not caught. nginx cannot set the two headers (it does not know where the
-platform serves each account), and the sidecar must never accept them from anything but the core:
-with (b), have nginx clear them (`proxy_set_header X-Adapter-Name "";` and the same for
-`X-Adapter-Base`).
+(b) keep the bypass: every request through it is then a platform address, a per-user host included.
+The sidecar must not derive the account from `Host` itself. Which labels name an account is the
+platform's knowledge (its domain, the service names, the core ids, hosted sites, static and runtime
+DNS entries, and where each account lives); the core applies it before it sets the headers, and a
+value the sidecar derived without it would end up in its public URLs and audience checks. nginx
+cannot set the two headers either (it does not know where the platform serves each account), and the
+sidecar accepts them from the core only: with (b), have nginx clear them (`proxy_set_header
+X-Adapter-Name "";` and the same for `X-Adapter-Base`) and expect per-user addresses to work only
+through (a).
 
 ## Troubleshooting
 
