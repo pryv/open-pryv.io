@@ -169,6 +169,8 @@ describe('[OPUA] OAuth2: per-user audiences', () => {
         'https://{username}.u@example.com/api', // user information
         'https://{username}./api', // no host after it
         'https://{username}.:8443/api',
+        'https://{username}.ex%61mple.com/api', // a percent-escape in the host
+        'https://{username}.example.com:443/api', // the default port spelt out
         long,
       ]) {
         const checked = audienceProbe(bad);

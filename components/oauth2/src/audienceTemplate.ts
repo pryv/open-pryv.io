@@ -59,7 +59,11 @@ export function audienceProbe (entry: string): { probe: string } | { problem: st
   const rest = entry.slice(TEMPLATE_PREFIX.length);
   if (!/^[\x21-\x7e]+$/.test(rest) || rest.includes('\\')) return problem;
   const authority = rest.split(/[/?#]/, 1)[0];
-  if (authority === '' || authority.includes('@') || /^[.:]/.test(authority)) return problem;
+  // No percent-escape and no explicit default port: the URL parser would
+  // normalise them in the probe, while values are compared as written.
+  if (authority === '' || authority.includes('@') || authority.includes('%') || /^[.:]/.test(authority) || /:443$/.test(authority)) {
+    return problem;
+  }
   const probe = entry.replace(USERNAME_PLACEHOLDER, PROBE_LABEL);
   let u: URL;
   try { u = new URL(probe); } catch { return problem; }

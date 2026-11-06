@@ -1719,7 +1719,7 @@ function printUsage (stream) {
     '                            https://{username}.<host>/... names each account\'s own\n' +
     '                            address: at consent the label must be the signed-in\n' +
     '                            account\'s username\n' +
-    '  --any-audience          (also on update) register the client explicitly for any\n' +
+    '  --any-audience            (also on update) register the client explicitly for any\n' +
     '                            audience (no list check: a well-formed aud / resource is\n' +
     '                            stored and answered as introspection aud)\n' +
     '  --allow-insecure-redirect (also on update; "false" withdraws it) accept plain-http\n' +

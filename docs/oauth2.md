@@ -380,7 +380,8 @@ literal label `{username}`, e.g.
 `https://{username}.example.com/adapter/calendar/api`, names each account's
 own address (the `{username}` marker of `service:api`). Exactly one
 `{username}`, as the first host label, with at least one label after it; the
-rest follows the usual rules (`https`, no fragment, no user information); at
+rest follows the usual rules (`https`, no fragment, no user information; no
+percent-escape nor an explicit `:443` in the host part); at
 most 462 bytes, so every address it names fits the 512-byte cap. Any other
 placement (`https://example.com/{username}/...`, `x.{username}.example.com`,
 `{username}-x.example.com`, twice) is refused when the client is written,
@@ -405,8 +406,8 @@ with a message naming the accepted form.
   resource names another account's address", `reason:
   "audience-account-mismatch"`, before anything is written, audited as
   `oauth.consent.refused` with that reason and no username. The label names
-  the account when it is its **current** username (or one of its address
-  aliases, none of which is issued yet) and is not a name the platform
+  the account when it is its **current** username (address aliases are
+  reserved for a later release) and is not a name the platform
   answers itself: a service host (`reg`, `access`, `mfa`), a core id, a
   `dns.staticEntries` name or an OAuth issuer label of any core, a runtime DNS
   record or a hosted site. Such a name is refused even for an account that
