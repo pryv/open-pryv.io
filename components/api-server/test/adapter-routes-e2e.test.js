@@ -70,6 +70,7 @@ describe('[ADRE] adapter routes served by the real api-server', function () {
       settings.dnsLess = Object.assign({}, settings.dnsLess, { isActive: false });
       settings.dns = Object.assign({}, settings.dns, { domain: DOMAIN });
       settings.hostedSites = { sitehome: { static: siteRoot } };
+      settings.service = Object.assign({}, settings.service, { adapters: ['http://{username}.' + DOMAIN + '/adapter/calendar/'] });
     }
     settings.adapterRoutes = {
       calendar: {
@@ -239,6 +240,40 @@ describe('[ADRE] adapter routes served by the real api-server', function () {
       assert.ok(closed != null, 'the socket was closed by the server');
       assert.ok(!closed.answer.startsWith('HTTP/1.1 101'), 'no upgrade');
       assert.equal(seen.length, count, 'the upgrade did not reach the upstream');
+    });
+
+    it('[ADRW1] a per-user host names the account to the upstream; a service host does not; the API is unchanged', async function () {
+      const user = testData.users[0].username;
+      const addressed = await call(manager.url, { path: '/adapter/calendar/manifest.json', headers: { host: user + '.' + DOMAIN, 'x-adapter-name': 'mallory' } });
+      assert.equal(addressed.status, 200);
+      assert.equal(seen.at(-1).headers['x-adapter-name'], user);
+      assert.equal(seen.at(-1).headers['x-adapter-base'], 'http://' + user + '.' + DOMAIN + '/adapter/calendar/');
+      for (const host of ['reg.' + DOMAIN, 'sitehome.' + DOMAIN, DOMAIN]) {
+        const res = await call(manager.url, { path: '/adapter/calendar/x', headers: { host, 'x-adapter-base': 'https://mallory.example.com/' } });
+        assert.equal(res.status, 200, host);
+        assert.equal(seen.at(-1).headers['x-adapter-name'], undefined, host);
+        assert.equal(seen.at(-1).headers['x-adapter-base'], undefined, host);
+      }
+      const count = seen.length;
+      for (const [host, p] of [[user + '.' + DOMAIN, '/events'], [DOMAIN, '/' + user + '/events']]) {
+        const api = await call(manager.url, { path: p, headers: { host } });
+        assert.ok(api.headers['api-version'], 'the API answers ' + host + p);
+        assert.ok([401, 403].includes(api.status), String(api.status));
+      }
+      assert.equal(seen.length, count, 'the API calls did not reach the upstream');
+    });
+
+    it('[ADRW3] on a per-user host the core\'s own discovery and Socket.IO stay the core\'s; /service/info lists the adapter base in template form', async function () {
+      const host = testData.users[0].username + '.' + DOMAIN;
+      const count = seen.length;
+      const asMetadata = await call(manager.url, { path: '/.well-known/oauth-authorization-server', headers: { host } });
+      assert.ok(!asMetadata.body.includes('"upstream"'), 'answered by the core');
+      const sio = await call(manager.url, { path: '/socket.io/?EIO=4&transport=polling', headers: { host } });
+      assert.match(sio.body, /^0\{"sid":/, 'an Engine.IO handshake');
+      assert.equal(seen.length, count, 'neither reached the upstream');
+      const info = await call(manager.url, { path: '/service/info', headers: { host: 'reg.' + DOMAIN } });
+      assert.equal(info.status, 200);
+      assert.deepEqual(JSON.parse(info.body).adapters, ['http://{username}.' + DOMAIN + '/adapter/calendar/']);
     });
   });
 

@@ -51,6 +51,17 @@ const NEVER_DROPPED = new Set(['host', 'content-length', 'x-forwarded-for', 'x-f
 
 const JSON_ERROR_HEADERS = { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
 
+/**
+ * The addressed account, as the adapter ingress names it to the sidecar. Never
+ * taken from the client nor from a trusted proxy (a proxy cannot know what the
+ * platform maps): removed from every adapter request, set by this core only.
+ */
+const ADAPTER_NAME_HEADER = 'x-adapter-name';
+const ADAPTER_BASE_HEADER = 'x-adapter-base';
+
+/** The account an adapter request is addressed to: its name and the route's root path. */
+type AdapterAddress = { name: string, rootPath: string };
+
 type WorkerProxyOptions = {
   /** Log prefix, e.g. `hfs` -> `[hfs-ingress]`. */
   name: string,
@@ -74,7 +85,9 @@ type WorkerProxyOptions = {
    * `worker` (default): X-Forwarded-For set, X-Forwarded-Host / -Proto
    * dropped unless from a trusted peer. `adapter`: X-Forwarded-Host and
    * X-Forwarded-Proto also set from the request (a trusted peer's own values
-   * are kept), `Forwarded` and `X-Forwarded-Port` removed.
+   * are kept), `Forwarded` and `X-Forwarded-Port` removed, and
+   * X-Adapter-Name / X-Adapter-Base removed (then set for an addressed
+   * request, see `proxy`).
    */
   forwardedHeaders?: 'worker' | 'adapter',
   /** Request body cap in bytes: past it the answer is 413. No cap unless set. */
@@ -157,7 +170,22 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
     tooLarge: opts.messages?.tooLarge ?? `${label} request body too large`
   };
 
-  return function proxy (req: IncomingMessage, res: ServerResponse, targetPath: string): void {
+  /**
+   * The scheme of the X-Adapter-Base: the X-Forwarded-Proto forwarded (a
+   * trusted proxy's first value, else this socket's), `http` or `https` only.
+   */
+  function baseScheme (forwardedProto: unknown, req: IncomingMessage): string {
+    const first = typeof forwardedProto === 'string' ? forwardedProto.split(',')[0].trim().toLowerCase() : '';
+    if (first === 'http' || first === 'https') return first;
+    return (req.socket as TLSSocket | undefined)?.encrypted === true ? 'https' : 'http';
+  }
+
+  /**
+   * `address` (adapter mode only): the account the request is addressed to;
+   * the upstream then gets X-Adapter-Name (its name) and X-Adapter-Base (the
+   * route's base as the client addressed it: scheme, received Host, root path).
+   */
+  return function proxy (req: IncomingMessage, res: ServerResponse, targetPath: string, address?: AdapterAddress | null): void {
     const shownUrl = opts.logPathOnly === true ? redactUrl((req.url ?? '').replace(/[?#].*$/s, '')) : redactUrl(req.url);
     // The worker sees this hop as a loopback peer, which it trusts: hand it the
     // client address resolved here, never the client's own X-Forwarded-For.
@@ -178,6 +206,12 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       delete headers['x-forwarded-port'];
       if (headers['x-forwarded-host'] == null && req.headers.host != null) headers['x-forwarded-host'] = req.headers.host;
       if (headers['x-forwarded-proto'] == null) headers['x-forwarded-proto'] = (req.socket as TLSSocket | undefined)?.encrypted === true ? 'https' : 'http';
+      delete headers[ADAPTER_NAME_HEADER];
+      delete headers[ADAPTER_BASE_HEADER];
+      if (address != null && req.headers.host != null) {
+        headers[ADAPTER_NAME_HEADER] = address.name;
+        headers[ADAPTER_BASE_HEADER] = baseScheme(headers['x-forwarded-proto'], req) + '://' + req.headers.host.toLowerCase() + address.rootPath;
+      }
     }
     // Framing is derived from the request as received, never from what is left
     // after the strip: the declared length as is, else a chunked body re-framed
@@ -327,4 +361,4 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
 }
 
 export { buildWorkerProxy, redactUrl, DEFAULT_UPSTREAM_IDLE_TIMEOUT_MS };
-export type { WorkerProxyOptions };
+export type { WorkerProxyOptions, AdapterAddress };
