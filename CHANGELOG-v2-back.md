@@ -4,23 +4,30 @@
 
 ### Adapter routes: the addressed account
 
-- `api-server/src/addressedAccount.ts`: `addressedLabelOf(host, isPlatformRoutedLabel)`, the account
-  a request names by its host (first label of a DNS-name `Host`, username shape, not platform-routed;
-  IPs, single labels and malformed hosts are platform addresses). Read by the adapter ingress and
-  by the OAuth wrong-core guard, with the predicate of `platformLabels.ts` (the username
-  rewriter's).
-- `adapterIngress.ts`: with `addressing` (built by `adapterAddressingFor(config)`, null in dnsLess)
-  an addressed request is placed with `resolveUserCore` (no lookup on a single core, on a platform
-  address or for a declared body over the cap): local or unmapped is forwarded with the account,
-  remote answers 421 through `refuse()`, a lookup failure 500. `adapter` is never an account label.
-- `workerIngress.ts` (adapter mode): `X-Adapter-Name` / `X-Adapter-Base` always removed from the
-  incoming headers, then set from the ingress's account; the base's scheme is the forwarded
-  `X-Forwarded-Proto` (first value, `http` / `https` only, else the socket's).
-- `api-server/src/routes/oauth2/hostWrongCore.ts`: the guard on `POST /oauth2/token` and
-  `GET|POST /oauth2/authorize`, mounted ahead of the OAuth routes when the username is in the host.
+- `api-server/src/addressedAccount.ts`: `addressedLabelOf(host, isPlatformRoutedLabel, domain)`, the
+  one reader of "which account a host names" (exactly one label under `dns.domain`, port and final
+  dot aside, username shape, not `adapter`, not platform-routed; any other host is a platform
+  address), shared by the adapter ingress and the OAuth wrong-core guard, with the predicate of
+  `platformLabels.ts` (the username rewriter's, which keeps its own wider rule).
+  `perUserAddressingFor(config, logger?)` builds the reading (predicate, domain, `Retry-After` from
+  `dns.defaultTTL`); null in dnsLess and without `dns.domain` (one boot warning when adapter routes
+  are configured).
+- `adapterIngress.ts`: with `addressing` an addressed request is placed with `resolveUserCore` (no
+  lookup on a single core, on a platform address or for a declared body over the cap): local or
+  unmapped is forwarded with the account, remote answers 421 with `Retry-After` through `refuse()`
+  ("retry the same address"; `coreUrl` diagnostic; its own message when the core has no usable URL),
+  a lookup failure 500.
+- `workerIngress.ts` (adapter mode): every incoming header that reads `x-adapter-name` /
+  `x-adapter-base` once `_` is read as `-` is removed, then the ingress's account is set; the base is
+  the forwarded `X-Forwarded-Proto` (first value, `http` / `https` only, else the socket's), the host
+  as addressed without a final dot, the route root.
+- `api-server/src/routes/oauth2/hostWrongCore.ts`: one guard per endpoint (`token` answers OAuth
+  JSON, `authorize` the static page) on `POST /oauth2/token` and `GET|POST /oauth2/authorize`,
+  mounted ahead of the OAuth routes with the same reading as the ingress; a throw after the answer
+  started is logged, not passed on.
 - Test harness: `core-process.js` serves `ADAPTER_ROUTES_JSON` with the api-server's boot check and
   addressing; `requestWithHost` in the two-core suite. Tests `[ADRU1-5]` (ingress), `[ADRW1]`,
-  `[ADRW3]` (real server), `[ADRW2]`, `[OTKW1-3]` (two cores).
+  `[ADRW3]` (real server), `[ADRW2]`, `[OTKW1-3]` (two cores), `[OTKW4]` (the guard's outcomes).
 - `docs/nginx-ingress-sample.conf`: the adapter `location` blocks clear `X-Adapter-Name` /
   `X-Adapter-Base` and say that routing around the core drops the per-user triage.
 

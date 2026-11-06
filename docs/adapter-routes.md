@@ -75,8 +75,9 @@ the query unchanged. `/adapter/<name>` without its trailing slash is forwarded a
   `X-Forwarded-Host` (the received `Host`). When the TCP peer is a trusted proxy (an nginx in front),
   its own `X-Forwarded-Proto` / `X-Forwarded-Host` are kept;
 - removed, never set: `Forwarded`, `X-Forwarded-Port`. Not set: `Via`, `X-Real-IP`;
-- `X-Adapter-Name` / `X-Adapter-Base`: removed from every request (a client's or a trusted proxy's
-  values never pass), then set by the core on a request addressed to an account (see below).
+- `X-Adapter-Name` / `X-Adapter-Base`: removed from every request, in any `-` / `_` spelling
+  (`X_Adapter_Name` included; a client's or a trusted proxy's values never pass), then set by the
+  core on a request addressed to an account (see below).
 
 **Response:** status and every header except the hop-by-hop ones, `WWW-Authenticate`, `Set-Cookie`,
 `Location` and `Access-Control-*` included, streamed (an event stream is passed on as it is written).
@@ -98,22 +99,26 @@ address is the platform's `service.api` template with the username filled in, fo
 https://alice.example.com/adapter/calendar/...     a per-user address: the account "alice" is addressed
 https://reg.example.com/adapter/calendar/...       a platform address: the adapter, no account
 https://core-a.example.com/adapter/calendar/...    a platform address too
+https://alice.other.org/adapter/calendar/...       a platform address: not under dns.domain (example.com)
 ```
 
-On a platform with per-user hosts (the DNS topology, every multi-core platform), DNS already sends
-`alice.example.com` to alice's core; the wildcard certificate of the built-in ACME covers it. The core's
+On a platform with per-user hosts (the DNS topology, which every platform with regions uses), DNS
+already sends `alice.example.com` to alice's core; the wildcard certificate of the built-in ACME covers it. The core's
 ingress then does the rest of the triage, so the sidecar needs no Host parsing, no list of
 platform names, no map of cores and no region knowledge:
 
-1. **It recognises the addressed account.** The first label of the received `Host` is the account when
-   it has the username shape and the platform does not answer that name itself: `reg`, `access`,
+1. **It recognises the addressed account.** A per-user address is `<name>.<dns.domain>`: the received
+   `Host` (lowercased, port and final dot aside) must be exactly one label under `dns.domain`, and that
+   label is the account when it has the username shape and the platform does not answer that name itself: `reg`, `access`,
    `mfa`, the core ids, `dns.staticEntries` names, hosted sites, runtime DNS records and issuer labels
-   of every core are platform addresses (the same rule as the API's per-user hosts). So are an IP, a
-   single-label host and `adapter`. In dnsLess mode the host is never read: every request is a
+   of every core are platform addresses (the same rule as the API's per-user hosts). So are a host under
+   any other domain (a vanity name pointed at the core, `alice.attacker.tld`), a deeper host
+   (`bob.alice.example.com`), `dns.domain` itself, an IP, a single-label host and `adapter`. Without
+   `dns.domain` no host is an account (the boot logs one warning). In dnsLess mode the host is never read: every request is a
    platform address (a path form, `https://<core host>/<username>/adapter/<name>/...`, is not served
    yet).
-2. **It asks the platform where the account lives.** Another core: **`421`** with that core's URL,
-   for every method, the sidecar not contacted, never a redirect (a cross-origin redirect drops the
+2. **It asks the platform where the account lives.** Another core: **`421`** with `Retry-After`
+   (`dns.defaultTTL`, 300 s by default) and that core's URL, for every method, the sidecar not contacted, never a redirect (a cross-origin redirect drops the
    `Authorization` header, and a request body cannot safely be replayed through one). This core, or a
    name the platform does not map: forwarded (a stranger is refused by the sidecar's own
    authentication, as any request without valid credentials). A single-core platform makes no lookup.
@@ -122,7 +127,7 @@ platform names, no map of cores and no region knowledge:
 | Header | Value | Example |
 |---|---|---|
 | `X-Adapter-Name` | the addressed name, lowercased, as addressed (a username, an alias, or a former username, which stays the account's address after a rename) | `alice` |
-| `X-Adapter-Base` | the route's base as the client addressed it: the forwarded scheme (`X-Forwarded-Proto` above: this core's TLS or a trusted proxy's first value), the received `Host` lowercased with its port, the route's root path `/adapter/<name>/` (also on its `.well-known` prefixes) | `https://alice.example.com/adapter/calendar/` |
+| `X-Adapter-Base` | the route's base as the client addressed it: the forwarded scheme (`X-Forwarded-Proto` above: this core's TLS or a trusted proxy's first value), the received `Host` lowercased with its port and without a final dot, the route's root path `/adapter/<name>/` (also on its `.well-known` prefixes) | `https://alice.example.com/adapter/calendar/` |
 
 Both are absent on a platform address. **They are an address, not an identity:** the core
 authenticates nothing on these paths, the token is the identity. What the sidecar does with them:
@@ -134,9 +139,12 @@ authenticates nothing on these paths, the token is the identity. What the sideca
   serves what needs no account (manifest, status, a sign-in entry), a platform-level resource if it has
   one, or `404`;
 - it never calls `/reg/<username>/server`, never keeps a core map, never matches Host labels against
-  a list of region names; after an account moves to another core its address is unchanged: retry on a
-  `421` or a `503` with `Retry-After`;
-- it accepts the two headers from the core only (see "Behind nginx").
+  a list of region names; after an account moves to another core its address is unchanged: on a
+  `421` or a `503`, retry the same address after `Retry-After`; `coreUrl` says which core should be
+  answering, it is not an address to call (`coreUrl` + the path is a platform address: no account named);
+- it accepts the two headers from the core only (see "Behind nginx");
+- **upgrade each core before the sidecar next to it starts reading the two headers**, core by core: a
+  core of an earlier release forwards client-sent copies.
 
 **Callers that hold a username** build the address from `/service/info`: `api` with `{username}`
 filled, plus `adapter/<name>/`, or an entry of `adapters`. The core lists in `adapters` what the
@@ -155,13 +163,16 @@ account of another core is told to start again from its own address. An adapter 
 "enter your username" page at its platform address, built from `/service/info`, as a link (never
 reflecting a request value into it); the core serves none.
 
-The 421 body (`application/json`, `nosniff`, `no-store`, the connection closed):
+The 421 answer (`application/json`, `nosniff`, `no-store`, `Retry-After`, the connection closed; no CORS
+header, like every answer of the core on adapter paths):
 
 ```json
-{ "error": { "id": "wrong-core", "message": "adapter calendar: account \"alice\" is served by another core; use the same address built on coreUrl", "coreUrl": "https://core-b.example.com/" } }
+{ "error": { "id": "wrong-core", "message": "adapter calendar: account \"alice\" is served by another core; retry the same address once its name resolves to that core (coreUrl identifies it)", "coreUrl": "https://core-b.example.com/" } }
 ```
 
-`coreUrl` is omitted when the platform has no usable URL for that core. The 421 names only the label
+The client retries the same URL. `coreUrl` identifies the core that should answer (for an operator,
+or a check such as `curl --resolve <host>:443:<that core's IP>` that keeps the original `Host`); when
+the platform has no usable URL for that core it is omitted and the message says so. The 421 names only the label
 the client sent; DNS, `/reg/<username>/server` and the API's own wrong-core answer already disclose as
 much for any name.
 
@@ -172,7 +183,7 @@ much for any name.
 | 400 | the path holds an encoded `/` or `\` (`%2f`, `%5c`), `%00`, a percent-encoding that is invalid or not UTF-8 (e.g. `%FF`), or an encoded dot segment; or the request's `Transfer-Encoding` is not exactly `chunked`; the connection is closed | `{ "error": { "id": "invalid-request-structure", ... } }` |
 | 405 | the method is TRACE (it would echo the credentials); the connection is closed | `{ "error": { "id": "invalid-operation", ... } }` |
 | 413 | the body is above `maxBodyBytes` (declared length: at once, without contacting the sidecar, and without `100 Continue` for a client that sent `Expect: 100-continue`; chunked: when it crosses the cap); the connection is closed | `{ "error": { "id": "invalid-request-structure", "message": "request body exceeds adapterRoutes.<name>.maxBodyBytes (<n> bytes)" } }` |
-| 421 | the request is addressed to an account another core serves (see "Per-user addresses"); the connection is closed | `{ "error": { "id": "wrong-core", "message": ..., "coreUrl": ... } }` |
+| 421 | the request is addressed to an account another core serves (see "Per-user addresses"), with `Retry-After`; the connection is closed | `{ "error": { "id": "wrong-core", "message": ..., "coreUrl": ... } }` |
 | 500 | the request is addressed to an account and the platform cannot say where it lives (placement lookup failure): not forwarded on a guess; the connection is closed | `{ "error": { "id": "unexpected-error", "message": "adapter <name>: account placement unavailable" } }` |
 | 502 | the sidecar cannot be reached (refused, reset, TLS failure) before it answered | `{ "error": { "id": "unexpected-error", "message": "adapter <name> unreachable" } }` |
 | 504 | no byte moved on the sidecar connection for `idleTimeoutMs` before it answered | `{ "error": { "id": "unexpected-error", "message": "adapter <name> timed out" } }` |
@@ -261,6 +272,9 @@ with (b), have nginx clear them (`proxy_set_header X-Adapter-Name "";` and the s
   addresses each account is its own origin: echo the `Origin` the sidecar accepts.
 - **421 `wrong-core` on a per-user address**: the request reached a core that does not serve the
   account (a resolver still holding an old DNS answer, a hosts entry, a proxy pinned to one core's
-  address). The address is right; resolve it again, or send the same path to `coreUrl`.
+  address). The address is right: flush the resolver, drop the hosts entry or unpin the proxy, and
+  retry the same URL; `coreUrl` tells the operator which core should be answering. A browser client
+  sees this as a CORS or network error and cannot read the body (the core adds no CORS on adapter
+  paths, and the preflight gets the same 421): it retries the same URL after a few minutes.
 - **The sidecar never sees `X-Adapter-Name`**: the request was at a platform address (a service or
-  core host, dnsLess), or an nginx routes `/adapter/` around the core (see "Behind nginx").
+  core host, a host not under `dns.domain`, dnsLess, or `dns.domain` unset), or an nginx routes `/adapter/` around the core (see "Behind nginx").

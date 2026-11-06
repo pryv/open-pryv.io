@@ -4,22 +4,29 @@
 
 ### Adapter routes: per-user addresses
 
-- **Added: adapter routes name the addressed account.** On a per-user host
-  (`https://<username>.<domain>/adapter/<name>/...`) the core sets `X-Adapter-Name` (the addressed
-  name, lowercased) and `X-Adapter-Base` (the route's base as addressed, e.g.
-  `https://alice.example.com/adapter/calendar/`) on the forwarded request; client-sent copies are
-  dropped on every adapter request, a trusted proxy's included. A service, core or hosted-site host
-  stays a platform address (neither header), and so does every host of a dnsLess core.
+- **Added: adapter routes name the addressed account.** On a per-user host (hosts of the form
+  `<name>.<dns.domain>`: `https://<username>.<dns.domain>/adapter/<name>/...`) the core sets
+  `X-Adapter-Name` (the addressed name, lowercased) and `X-Adapter-Base` (the route's base as
+  addressed, without a final dot, e.g. `https://alice.example.com/adapter/calendar/`) on the forwarded
+  request; client-sent copies, in any `-` / `_` spelling, are dropped on every adapter request, a
+  trusted proxy's included. A service, core or hosted-site host, a host under any other domain, and
+  every host of a dnsLess core or of a core without `dns.domain` stay platform addresses (neither
+  header). **Upgrade each core before the sidecar next to it starts reading the two headers**: a core
+  of an earlier release forwards client-sent copies.
 - **Added: `421 wrong-core` on an adapter route addressed to an account of another core**, with
-  `coreUrl`, for every method, without contacting the sidecar, never a redirect (`{ "error": { "id":
-  "wrong-core", "message", "coreUrl" } }`, the API's shape; `coreUrl` omitted when that core has no
-  usable URL). A name the platform does not map is forwarded like a local one. A placement lookup
-  failure answers `500 unexpected-error`, not forwarded.
+  `Retry-After` (`dns.defaultTTL`, 300 s by default) and `coreUrl`, for every method, without
+  contacting the sidecar, never a redirect (`{ "error": { "id": "wrong-core", "message", "coreUrl" } }`,
+  the API's shape). The client retries the same address once its name resolves to that core;
+  `coreUrl` identifies the core and is not a retry target (it is omitted, with its own message, when
+  that core has no usable URL). No CORS header, like every answer of the core on adapter paths. A
+  name the platform does not map is forwarded like a local one. A placement lookup failure answers
+  `500 unexpected-error`, not forwarded.
 - **Added: `/oauth2/token` and `/oauth2/authorize` on the host of an account another core serves**
   (a client holding an earlier DNS answer): `/token` answers `421 { "error": "wrong_core",
   "error_description", "coreUrl" }` with `Retry-After` (`dns.defaultTTL`, 300 s by default) before
   any code or refresh token is read; `/authorize` answers `421` with a static "this address has just
-  moved" page (no redirect, no form). Service and core hosts are unchanged.
+  moved" page (no redirect, no form). The host is read as for adapter routes; service and core hosts
+  and other domains are unchanged.
 - **Documented: `/service/info.adapters` lists adapter bases in the `{username}` template form**, as
   the operator sets them in `service.adapters` (passed through unchanged). See
   `docs/adapter-routes.md` "Per-user addresses and the addressed account" and `docs/oauth2.md` § 1.

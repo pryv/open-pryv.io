@@ -137,9 +137,11 @@ Then, on that host only:
   address has just moved, try again in a few minutes"), `Retry-After`, no
   redirect, no form.
 
-The host is read as an account by the same rule as the API's per-user hosts:
-service hosts (`reg`, `access`, `mfa`), core ids, static entries, hosted sites,
-runtime DNS records and issuer labels are not accounts. Those hosts, a name the
+The host is read as an account by the adapter routes' rule: exactly one label
+under `dns.domain` (port and final dot aside), of username shape; service hosts
+(`reg`, `access`, `mfa`), core ids, static entries, hosted sites, runtime DNS
+records, issuer labels and `adapter` are not accounts, nor is a host under any
+other domain. Those hosts, a name the
 platform does not map and an account of this core are unchanged; `/offer` and
 `/accept` keep the answer above. If the platform cannot say where the account
 lives, the request is served as before (codes and refresh tokens are keyed by
