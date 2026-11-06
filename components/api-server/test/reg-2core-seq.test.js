@@ -678,6 +678,19 @@ describe('[RG2C] Two-core integration tests', function () {
           assert.strictEqual(res.status, 400, `${name}: ${JSON.stringify(res.body)}`);
           assert.match(JSON.stringify(res.body), /reserved/);
         }
+        // Core B's username rewriter (the same predicate as the per-user OAuth binding) now
+        // reads both names as platform hosts: the path is not hoisted into a username.
+        const answer = async (host) => {
+          const res = await getWithHost(CORE_B_PORT, '/service/info', host);
+          let body;
+          try { body = JSON.parse(res.body); } catch { body = res.body; }
+          if (body != null && typeof body === 'object') delete body.meta;
+          return [res.status, body];
+        };
+        const root = await answer('127.0.0.1');
+        const asUser = await answer(`opurnobody${Date.now().toString(36)}.${DOMAIN}`);
+        assert.notDeepStrictEqual(asUser, root, 'the control host is read as a username');
+        for (const name of ['svc-c', 'auth-c']) assert.deepStrictEqual(await answer(`${name}.${DOMAIN}`), root, name);
       } finally {
         await stopCore(coreC);
         const row = await platformDB.getCoreInfo('core-c');

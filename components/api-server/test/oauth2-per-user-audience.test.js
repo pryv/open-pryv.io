@@ -23,6 +23,7 @@ import { mintSecret } from 'oauth2/src/clientSecret.ts';
 import * as storages from 'storages';
 import { injectTestConfigSnapshot, withInjectedConfig } from 'test-helpers';
 import { getUsersRepository } from 'business/src/users/index.ts';
+import { getPlatform } from 'platform';
 
 const REDIRECT_URI = 'https://app.per-user.test/redirect';
 const CONSENT_URL = 'https://auth.test/oauth2-authorize';
@@ -302,19 +303,28 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
   });
 
   it('[OPUE10] a name the platform answers itself (static entry, hosted site, core id) is no account\'s address, even for an account under that name', async () => {
+    // The configured names are read once at boot: a name added after it reaches the predicate
+    // through the platform's names (refreshed here, as after a /reg/records change or on its timer).
+    const platform = await getPlatform();
+    const coreId = String(platform.coreId);
     for (const kind of ['staticEntry', 'hostedSite', 'coreId']) {
-      const name = 'svc-' + kind.toLowerCase() + '-' + cuid().slice(-6);
+      const name = kind === 'coreId' ? coreId : 'svc-' + kind.toLowerCase() + '-' + cuid().slice(-6);
       const holder = await newUser(name);
       const overrides = kind === 'staticEntry'
         ? { dns: { staticEntries: { [name]: { ip: '127.0.0.1' } } } }
-        : kind === 'hostedSite' ? { hostedSites: { [name]: { static: '/tmp' } } } : { core: { id: name } };
+        : kind === 'hostedSite' ? { hostedSites: { [name]: { static: '/tmp' } } } : {};
       const { state } = await authorize(tplId, at(name));
-      await withInjectedConfig(overrides, async () => {
-        const o = await offer(holder, state);
-        assert.deepEqual([o.status, o.body], [403, MISMATCH], kind + ': ' + JSON.stringify(o.body));
-        const a = await accept(holder, state);
-        assert.deepEqual([a.status, a.body], [403, MISMATCH], kind + ': ' + JSON.stringify(a.body));
-      });
+      try {
+        await withInjectedConfig(overrides, async () => {
+          await platform.refreshPlatformNames();
+          const o = await offer(holder, state);
+          assert.deepEqual([o.status, o.body], [403, MISMATCH], kind + ': ' + JSON.stringify(o.body));
+          const a = await accept(holder, state);
+          assert.deepEqual([a.status, a.body], [403, MISMATCH], kind + ': ' + JSON.stringify(a.body));
+        });
+      } finally {
+        await platform.refreshPlatformNames();
+      }
       assert.deepEqual(await grantsOf(holder, tplId), [], kind + ': nothing written');
     }
   });

@@ -15,8 +15,10 @@
  * username-rewriter skips these labels, and a per-user OAuth audience never
  * names an address under one.
  *
- * Memory only (the platform keeps its names refreshed), no I/O. Before the
- * platform is initialised it answers from the configuration alone.
+ * Memory only, no I/O: the configured names are read once, when the
+ * predicate is built (the configuration does not change while the core
+ * runs), the platform keeps its own names refreshed. Before the platform is
+ * initialised it answers from the configuration alone.
  */
 
 import { ignoredUsernameSubdomains } from 'business/src/usernameSubdomains.ts';
@@ -24,12 +26,12 @@ import { platform } from 'platform';
 
 type ConfigReader = { get: (key: string) => unknown };
 
-/** The predicate for a configuration (read at each call: cheap, and current). */
+/** The predicate for a configuration, built once. */
 export function platformRoutedLabels (config: ConfigReader): (label: string) => boolean {
+  const configured = new Set<string>(ignoredUsernameSubdomains(config).map((n) => String(n).toLowerCase()));
   return function isPlatformRoutedLabel (label: string): boolean {
     if (typeof label !== 'string' || label === '') return false;
     const lower = label.toLowerCase();
-    if (ignoredUsernameSubdomains(config).some((n) => String(n).toLowerCase() === lower)) return true;
-    return platform.isNameRoutedByPlatform(lower);
+    return configured.has(lower) || platform.isNameRoutedByPlatform(lower);
   };
 }
