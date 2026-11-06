@@ -13,7 +13,8 @@
   current username or an address alias) at the signed-in `/offer`, in `/accept` before anything is
   composed or written, and on the exchange's home core.
 - Token exchange step 6 reads the subject's former usernames from the home core's users index
-  (`sessions.formerUsernamesOf`: its aliases minus the minted `r-` shape) and accepts a per-user
+  (`sessions.formerUsernamesOf`, through `series/namespace.ts` `formerUsernames`: its aliases minus the
+  minted `r-` shape and the current username; a failed read refuses the exchange) and accepts a per-user
   label naming one; the consent side's type (`ConsentAccountNames`) cannot carry them.
 - Token exchange step 5b: the optional `subject_token_resource` against the subject's audience
   (`sameResource`), before the 421; its shape in `requestShapeRefusal` (bounded by the caller's
