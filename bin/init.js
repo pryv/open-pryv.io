@@ -816,6 +816,8 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # header and body and authenticates nothing on those paths: the sidecar must.
 # # The sidecar sees X-Forwarded-For / -Proto / -Host set by this core; it is the
 # # upstream, not a proxy in front, so http.trustedProxies does not list it.
+# # On <username>.<dns.domain> the core also sets X-Adapter-Name / X-Adapter-Base
+# # and answers 421 for an account of another core (docs/adapter-routes.md).
 # # adapterRoutes:
 # #   calendar:
 # #     upstream: http://172.17.0.1:7450   # Docker bridge gateway, or a container name

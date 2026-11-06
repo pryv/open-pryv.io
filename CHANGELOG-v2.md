@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Adapter routes: per-user addresses
+
+- **Added: adapter routes name the addressed account.** On a per-user host
+  (`https://<username>.<domain>/adapter/<name>/...`) the core sets `X-Adapter-Name` (the addressed
+  name, lowercased) and `X-Adapter-Base` (the route's base as addressed, e.g.
+  `https://alice.example.com/adapter/calendar/`) on the forwarded request; client-sent copies are
+  dropped on every adapter request, a trusted proxy's included. A service, core or hosted-site host
+  stays a platform address (neither header), and so does every host of a dnsLess core.
+- **Added: `421 wrong-core` on an adapter route addressed to an account of another core**, with
+  `coreUrl`, for every method, without contacting the sidecar, never a redirect (`{ "error": { "id":
+  "wrong-core", "message", "coreUrl" } }`, the API's shape; `coreUrl` omitted when that core has no
+  usable URL). A name the platform does not map is forwarded like a local one. A placement lookup
+  failure answers `500 unexpected-error`, not forwarded.
+- **Added: `/oauth2/token` and `/oauth2/authorize` on the host of an account another core serves**
+  (a client holding an earlier DNS answer): `/token` answers `421 { "error": "wrong_core",
+  "error_description", "coreUrl" }` with `Retry-After` (`dns.defaultTTL`, 300 s by default) before
+  any code or refresh token is read; `/authorize` answers `421` with a static "this address has just
+  moved" page (no redirect, no form). Service and core hosts are unchanged.
+- **Documented: `/service/info.adapters` lists adapter bases in the `{username}` template form**, as
+  the operator sets them in `service.adapters` (passed through unchanged). See
+  `docs/adapter-routes.md` "Per-user addresses and the addressed account" and `docs/oauth2.md` § 1.
+
 ### OAuth: per-user resource addresses
 
 - **Added: a registered audience may name each account's own address.** An `allowedAudiences`

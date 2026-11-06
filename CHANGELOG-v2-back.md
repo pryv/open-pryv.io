@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Adapter routes: the addressed account
+
+- `api-server/src/addressedAccount.ts`: `addressedLabelOf(host, isPlatformRoutedLabel)`, the account
+  a request names by its host (first label of a DNS-name `Host`, username shape, not platform-routed;
+  IPs, single labels and malformed hosts are platform addresses). Read by the adapter ingress and
+  by the OAuth wrong-core guard, with the predicate of `platformLabels.ts` (the username
+  rewriter's).
+- `adapterIngress.ts`: with `addressing` (built by `adapterAddressingFor(config)`, null in dnsLess)
+  an addressed request is placed with `resolveUserCore` (no lookup on a single core, on a platform
+  address or for a declared body over the cap): local or unmapped is forwarded with the account,
+  remote answers 421 through `refuse()`, a lookup failure 500. `adapter` is never an account label.
+- `workerIngress.ts` (adapter mode): `X-Adapter-Name` / `X-Adapter-Base` always removed from the
+  incoming headers, then set from the ingress's account; the base's scheme is the forwarded
+  `X-Forwarded-Proto` (first value, `http` / `https` only, else the socket's).
+- `api-server/src/routes/oauth2/hostWrongCore.ts`: the guard on `POST /oauth2/token` and
+  `GET|POST /oauth2/authorize`, mounted ahead of the OAuth routes when the username is in the host.
+- Test harness: `core-process.js` serves `ADAPTER_ROUTES_JSON` with the api-server's boot check and
+  addressing; `requestWithHost` in the two-core suite. Tests `[ADRU1-5]` (ingress), `[ADRW1]`,
+  `[ADRW3]` (real server), `[ADRW2]`, `[OTKW1-3]` (two cores).
+- `docs/nginx-ingress-sample.conf`: the adapter `location` blocks clear `X-Adapter-Name` /
+  `X-Adapter-Base` and say that routing around the core drops the per-user triage.
+
 ### OAuth per-user audiences; platform names advertised by every core
 
 - `oauth2/src/audienceTemplate.ts`: the syntax of a per-user audience (`audienceProbe`, a probe

@@ -50,7 +50,8 @@ A backup that names an account `adapter` is refused at restore ("reserved userna
 does not bypass it): rename the account on the source platform and back it up again.
 
 At boot each route logs one line: `adapter route <name>: <upstream> paths <list>`. There is no probe of
-the upstream and nothing in `/service/info`: a sidecar may start after the core.
+the upstream: a sidecar may start after the core. Nothing in `/service/info` is derived from the
+routes; list the adapters there by hand in `service.adapters` (see "Per-user addresses" below).
 
 ## What is forwarded
 
@@ -73,7 +74,9 @@ the query unchanged. `/adapter/<name>` without its trailing slash is forwarded a
   `http.trustedProxies`), `X-Forwarded-Proto` (`https` when this core terminated TLS, else `http`),
   `X-Forwarded-Host` (the received `Host`). When the TCP peer is a trusted proxy (an nginx in front),
   its own `X-Forwarded-Proto` / `X-Forwarded-Host` are kept;
-- removed, never set: `Forwarded`, `X-Forwarded-Port`. Not set: `Via`, `X-Real-IP`.
+- removed, never set: `Forwarded`, `X-Forwarded-Port`. Not set: `Via`, `X-Real-IP`;
+- `X-Adapter-Name` / `X-Adapter-Base`: removed from every request (a client's or a trusted proxy's
+  values never pass), then set by the core on a request addressed to an account (see below).
 
 **Response:** status and every header except the hop-by-hop ones, `WWW-Authenticate`, `Set-Cookie`,
 `Location` and `Access-Control-*` included, streamed (an event stream is passed on as it is written).
@@ -85,6 +88,83 @@ keep-alive timeout does not matter.
 **Not supported:** WebSocket upgrades (the upgrade request is not forwarded and its connection is
 closed). Streamable HTTP and server-sent events are plain responses and work.
 
+## Per-user addresses and the addressed account
+
+**An adapter is addressed at the account's own address, never by core or region.** The per-user
+address is the platform's `service.api` template with the username filled in, followed by
+`adapter/<name>/`:
+
+```
+https://alice.example.com/adapter/calendar/...     a per-user address: the account "alice" is addressed
+https://reg.example.com/adapter/calendar/...       a platform address: the adapter, no account
+https://core-a.example.com/adapter/calendar/...    a platform address too
+```
+
+On a platform with per-user hosts (the DNS topology, every multi-core platform), DNS already sends
+`alice.example.com` to alice's core; the wildcard certificate of the built-in ACME covers it. The core's
+ingress then does the rest of the triage, so the sidecar needs no Host parsing, no list of
+platform names, no map of cores and no region knowledge:
+
+1. **It recognises the addressed account.** The first label of the received `Host` is the account when
+   it has the username shape and the platform does not answer that name itself: `reg`, `access`,
+   `mfa`, the core ids, `dns.staticEntries` names, hosted sites, runtime DNS records and issuer labels
+   of every core are platform addresses (the same rule as the API's per-user hosts). So are an IP, a
+   single-label host and `adapter`. In dnsLess mode the host is never read: every request is a
+   platform address (a path form, `https://<core host>/<username>/adapter/<name>/...`, is not served
+   yet).
+2. **It asks the platform where the account lives.** Another core: **`421`** with that core's URL,
+   for every method, the sidecar not contacted, never a redirect (a cross-origin redirect drops the
+   `Authorization` header, and a request body cannot safely be replayed through one). This core, or a
+   name the platform does not map: forwarded (a stranger is refused by the sidecar's own
+   authentication, as any request without valid credentials). A single-core platform makes no lookup.
+3. **It names the account to the sidecar** with two headers, set by the core only:
+
+| Header | Value | Example |
+|---|---|---|
+| `X-Adapter-Name` | the addressed name, lowercased, as addressed (a username, an alias, or a former username, which stays the account's address after a rename) | `alice` |
+| `X-Adapter-Base` | the route's base as the client addressed it: the forwarded scheme (`X-Forwarded-Proto` above: this core's TLS or a trusted proxy's first value), the received `Host` lowercased with its port, the route's root path `/adapter/<name>/` (also on its `.well-known` prefixes) | `https://alice.example.com/adapter/calendar/` |
+
+Both are absent on a platform address. **They are an address, not an identity:** the core
+authenticates nothing on these paths, the token is the identity. What the sidecar does with them:
+
+- its public URLs, its RFC 9728 `resource` and the links it emits are `X-Adapter-Base` + its own path;
+  its audience check is `aud === X-Adapter-Base + <its resource path>` (a token issued for alice's
+  address presented at bob's fails it, whatever the headers say);
+- "is this request addressed to an account" is "is `X-Adapter-Name` there"; at a platform address it
+  serves what needs no account (manifest, status, a sign-in entry), a platform-level resource if it has
+  one, or `404`;
+- it never calls `/reg/<username>/server`, never keeps a core map, never matches Host labels against
+  a list of region names; after an account moves to another core its address is unchanged: retry on a
+  `421` or a `503` with `Retry-After`;
+- it accepts the two headers from the core only (see "Behind nginx").
+
+**Callers that hold a username** build the address from `/service/info`: `api` with `{username}`
+filled, plus `adapter/<name>/`, or an entry of `adapters`. The core lists in `adapters` what the
+operator sets in `service.adapters`, unchanged; use the `{username}` template form there:
+
+```yaml
+service:
+  api: https://{username}.example.com/
+  adapters:
+    - https://{username}.example.com/adapter/calendar/
+```
+
+A caller that holds no username (a person pasting a platform address into an app's settings) reaches
+the adapter at its platform address; the account becomes known at the OAuth consent, where an
+account of another core is told to start again from its own address. An adapter may serve its own
+"enter your username" page at its platform address, built from `/service/info`, as a link (never
+reflecting a request value into it); the core serves none.
+
+The 421 body (`application/json`, `nosniff`, `no-store`, the connection closed):
+
+```json
+{ "error": { "id": "wrong-core", "message": "adapter calendar: account \"alice\" is served by another core; use the same address built on coreUrl", "coreUrl": "https://core-b.example.com/" } }
+```
+
+`coreUrl` is omitted when the platform has no usable URL for that core. The 421 names only the label
+the client sent; DNS, `/reg/<username>/server` and the API's own wrong-core answer already disclose as
+much for any name.
+
 ## Limits and answers of the core
 
 | Status | When | Body (`application/json`, `nosniff`, `no-store`) |
@@ -92,6 +172,8 @@ closed). Streamable HTTP and server-sent events are plain responses and work.
 | 400 | the path holds an encoded `/` or `\` (`%2f`, `%5c`), `%00`, a percent-encoding that is invalid or not UTF-8 (e.g. `%FF`), or an encoded dot segment; or the request's `Transfer-Encoding` is not exactly `chunked`; the connection is closed | `{ "error": { "id": "invalid-request-structure", ... } }` |
 | 405 | the method is TRACE (it would echo the credentials); the connection is closed | `{ "error": { "id": "invalid-operation", ... } }` |
 | 413 | the body is above `maxBodyBytes` (declared length: at once, without contacting the sidecar, and without `100 Continue` for a client that sent `Expect: 100-continue`; chunked: when it crosses the cap); the connection is closed | `{ "error": { "id": "invalid-request-structure", "message": "request body exceeds adapterRoutes.<name>.maxBodyBytes (<n> bytes)" } }` |
+| 421 | the request is addressed to an account another core serves (see "Per-user addresses"); the connection is closed | `{ "error": { "id": "wrong-core", "message": ..., "coreUrl": ... } }` |
+| 500 | the request is addressed to an account and the platform cannot say where it lives (placement lookup failure): not forwarded on a guess; the connection is closed | `{ "error": { "id": "unexpected-error", "message": "adapter <name>: account placement unavailable" } }` |
 | 502 | the sidecar cannot be reached (refused, reset, TLS failure) before it answered | `{ "error": { "id": "unexpected-error", "message": "adapter <name> unreachable" } }` |
 | 504 | no byte moved on the sidecar connection for `idleTimeoutMs` before it answered | `{ "error": { "id": "unexpected-error", "message": "adapter <name> timed out" } }` |
 
@@ -107,7 +189,7 @@ as several lines; a request header the client sent several times reaches the sid
 comma-separated line.
 
 Logs: one `debug` line per request (route, method, path without its query, status, duration), one
-`warn` line per 400 / 413 / 502 / 504; never a header value or a body.
+`warn` line per 400 / 413 / 421 / 500 / 502 / 504; never a header value or a body.
 
 ## Example: a sidecar container next to the core, no nginx
 
@@ -131,8 +213,10 @@ adapterRoutes:
     paths: ['/adapter/calendar/', '/.well-known/oauth-protected-resource/adapter/calendar/']
 ```
 
-The sidecar's public base URL is then `https://<core host>/adapter/calendar/`. Configure it in the
-sidecar, or derive it from `Host` / `X-Forwarded-Proto`, which the core sets. Without a shared
+The sidecar's public base URL is then `https://<core host>/adapter/calendar/` at a platform address,
+and `X-Adapter-Base` on a request addressed to an account (`https://alice.<domain>/adapter/calendar/`).
+Configure the platform one in the sidecar, or derive it from `Host` / `X-Forwarded-Proto`, which the
+core sets. Without a shared
 network, bind the sidecar to the bridge gateway (`-p 172.17.0.1:7450:7450`) and use
 `upstream: http://172.17.0.1:7450`. The sidecar is the upstream, not a proxy in front of the core:
 `http.trustedProxies` does not list it.
@@ -143,6 +227,17 @@ nginx can route the same prefixes straight to the sidecar (see the `location /ad
 `docs/nginx-ingress-sample.conf`, with a rate limit), or leave them to `location /`: the core then
 forwards them itself, keeping the `X-Forwarded-*` values of the trusted nginx. Raise nginx's
 `client_max_body_size` to the route's `maxBodyBytes` if above 1 MiB.
+
+**Routing around the core drops the per-user triage.** Behind an nginx that sends `/adapter/` straight
+to the sidecar, the core never sees the request: no `421` for an account of another core, no
+`X-Adapter-Name` / `X-Adapter-Base`. Choose one:
+(a) let the core forward adapter paths (remove those `location` blocks; the core keeps the trusted
+nginx's `X-Forwarded-*`): the per-user triage and the two headers work; or
+(b) keep the bypass, and have the sidecar derive the account from `Host` itself, accepting that a
+misrouted request is not caught. nginx cannot set the two headers (it does not know where the
+platform serves each account), and the sidecar must never accept them from anything but the core:
+with (b), have nginx clear them (`proxy_set_header X-Adapter-Name "";` and the same for
+`X-Adapter-Base`).
 
 ## Troubleshooting
 
@@ -162,4 +257,10 @@ forwards them itself, keeping the `X-Forwarded-*` values of the trusted nginx. R
   `Host`, set `proxy_set_header Host $http_host` there (as in the nginx sample), or configure the
   public URL in the sidecar.
 - **A browser app gets a CORS error**: the core adds no CORS on adapter paths; the sidecar must
-  answer the preflight (`OPTIONS`) and send `Access-Control-Allow-Origin` itself.
+  answer the preflight (`OPTIONS`) and send `Access-Control-Allow-Origin` itself. On per-user
+  addresses each account is its own origin: echo the `Origin` the sidecar accepts.
+- **421 `wrong-core` on a per-user address**: the request reached a core that does not serve the
+  account (a resolver still holding an old DNS answer, a hosts entry, a proxy pinned to one core's
+  address). The address is right; resolve it again, or send the same path to `coreUrl`.
+- **The sidecar never sees `X-Adapter-Name`**: the request was at a platform address (a service or
+  core host, dnsLess), or an nginx routes `/adapter/` around the core (see "Behind nginx").
