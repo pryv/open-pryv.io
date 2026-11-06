@@ -324,6 +324,17 @@ export function createSessions (env: GlueEnv) {
   }
 
   // ---------------------------------------------------------------------
+  // addressAliasesOf: the names, other than the current username, an
+  // account is addressed by in a per-user OAuth resource
+  // (`https://<name>.<domain>/...`). None is issued yet: the set is empty
+  // (the aliases an access holds and former usernames are not address
+  // aliases), and the consent and exchange checks already read it.
+  // ---------------------------------------------------------------------
+  async function addressAliasesOf (_userId: string): Promise<string[]> {
+    return [];
+  }
+
+  // ---------------------------------------------------------------------
   // Refresh: the chain is bound to the durable data-grant; re-read it
   // (revoked → typed throw the grant maps to invalid_grant) and mint from
   // its CURRENT permissions (scope-updates propagate).
@@ -541,6 +552,7 @@ export function createSessions (env: GlueEnv) {
     aliased: boolean;
     grantState?: unknown;
     apiBase: string;
+    addressAliases: string[];
   } | null> {
     const username = await resolveUsername(userId);
     if (username == null) return null;
@@ -563,6 +575,7 @@ export function createSessions (env: GlueEnv) {
       ...s,
       // No credential in it; the alias when the grant is aliased.
       apiBase: ApiEndpoint.build(s.aliased ? s.subject : username, undefined),
+      addressAliases: await addressAliasesOf(userId),
     };
   }
 
@@ -728,6 +741,7 @@ export function createSessions (env: GlueEnv) {
     setGrantState,
     resolveAccountUserId,
     resolveUsername,
+    addressAliasesOf,
     mintRefreshedAccess,
     resolveGrantSubject,
     bindAccessDpop,

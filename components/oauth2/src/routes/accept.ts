@@ -68,6 +68,8 @@ import type { OAuthClient } from '../storage.ts';
 import type { CurrentGrant, Composition, SubjectChange } from '../consentComposition.ts';
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
+import type { PlatformRoutedLabel } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal } from '../audienceAccount.ts';
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
@@ -98,6 +100,8 @@ export type UserSession = {
   username: string;
   /** When the user signed in for the token presented (seconds), if known. */
   authTime?: number;
+  /** The account's address aliases (a per-user resource may name one). */
+  addressAliases?: string[];
   /** Host-app data piggybacked through createAccess (e.g. MethodContext). */
   [key: string]: unknown;
 };
@@ -194,6 +198,8 @@ export type AcceptDeps = {
   createAccess: CreateAccess;
   /** Absent: a registry client's consent is composed as if no grant existed. */
   readRegistryGrant?: ReadRegistryGrant;
+  /** The host labels the platform answers itself (never an account's address). */
+  isPlatformRoutedLabel?: PlatformRoutedLabel;
 };
 
 type Refusal = { status: number; body: { error: string; error_description: string; reason?: string; coreUrl?: string } };
@@ -377,6 +383,14 @@ export function handleAccept (deps: AcceptDeps) {
         return { status: 421, body: wrongCoreBody(s) };
       }
       if (isRefusedSession(s)) return { status: 403, body: { error: 'access_denied', error_description: String(s.description) } };
+      // A per-user resource must be the signed-in account's own address,
+      // checked before anything is composed or written (every client kind:
+      // the code row carries the audience for both).
+      const audienceRefused = consentAudienceRefusal(payload.audience, stateClient, s, deps.isPlatformRoutedLabel);
+      if (audienceRefused != null) {
+        await auditAudienceRefusal(payload, audienceRefused);
+        return consentAudienceAnswer(audienceRefused);
+      }
       return s;
     };
 

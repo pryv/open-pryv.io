@@ -78,6 +78,8 @@ export type TokenDeps = {
   issueDerivedSession?: IssueDerivedSession;
   /** Public URL of a core (token exchange's wrong-core answer). */
   coreUrlFor?: (coreId: string) => string | Promise<string>;
+  /** Token exchange: the host labels the platform answers itself (never an account's address). */
+  isPlatformRoutedLabel?: (label: string) => boolean;
 };
 
 type TokenOutcome =
@@ -256,6 +258,7 @@ export function handleToken (deps: TokenDeps) {
             readSubjectSession: deps.readSubjectSession,
             issueDerivedSession: deps.issueDerivedSession,
             ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+            ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
           },
           { ...body, basic }
         );

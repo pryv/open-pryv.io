@@ -40,6 +40,7 @@ import type { Ctx, OAuthMethodResult, GlueEnv } from './oauth2/types.ts';
 import { createRequire } from 'node:module';
 import type { WrongCore } from './oauth2/wrongCore.ts';
 import { wrongCoreOf } from './oauth2/wrongCore.ts';
+import { platformRoutedLabels } from '../platformLabels.ts';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
@@ -126,6 +127,8 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return {
       userId: context.user.id,
       username: context.user.username,
+      // A per-user resource may name one of them (see oauth2/audienceAccount.ts).
+      addressAliases: await sessions.addressAliasesOf(context.user.id),
       personal: true,
       // The OpenID Connect `auth_time`: the last completed sign-in recorded on
       // this personal access (password, password plus second factor, or
@@ -213,5 +216,6 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     readRegistryGrant: grants.readRegistryGrant,
     readSubjectSession: sessions.readSubjectSession,
     issueDerivedSession: sessions.issueDerivedSession,
+    isPlatformRoutedLabel: platformRoutedLabels(config),
   });
 }

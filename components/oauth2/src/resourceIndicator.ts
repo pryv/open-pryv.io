@@ -18,6 +18,7 @@
 // The loopback hosts on which a plain-http resource is accepted (local
 // development): the same list as for plain-http redirect URIs.
 import { LOOPBACK_HOSTS } from './clientRegistry.ts';
+import { PROBE_LABEL, TEMPLATE_PREFIX, audienceProbe, isAudienceTemplate } from './audienceTemplate.ts';
 
 /**
  * Upper bound on a resource indicator a client names without a registered
@@ -79,6 +80,67 @@ export function isValidResource (value: string): boolean {
   if (u.username !== '' || u.password !== '') return false;
   if (u.protocol === 'https:') return u.hostname !== '';
   return u.protocol === 'http:' && LOOPBACK_HOSTS.includes(u.hostname);
+}
+
+// ---------------------------------------------------------------------------
+// Per-user audiences (syntax in audienceTemplate.ts): a registered audience
+// whose host starts with the literal label `{username}` names every account's
+// own address. A requested value matches it when its first host label has
+// the shape of an account name; the consent then binds that label to the
+// signed-in account (see audienceAccount.ts).
+// ---------------------------------------------------------------------------
+
+/** The shape of an account name (the registration grammar, ASCII). */
+const ACCOUNT_LABEL_RE = /^[a-z0-9][a-z0-9-]{3,58}[a-z0-9]$/;
+
+/** What a requested value matched: the audience to store, and the account label of a per-user one. */
+export type AudienceMatch = { audience: string; label: string | null };
+
+/**
+ * The registered audience a requested value names (the value is already
+ * bounded with `withinResourceCap` against the list). Exact entries first: a
+ * value equal to one is that entry (its registered spelling), bound to no
+ * account, even when a per-user audience would also read it. Then per-user
+ * audiences in list order: the value's comparison form must be `https://`, a
+ * label of account-name shape, then the entry's own comparison form after
+ * the placeholder; the audience is the entry with that label (scheme and host
+ * lowercased, path and query as the entry writes them). A malformed per-user
+ * entry matches nothing. Null when nothing matches.
+ */
+export function matchAudience (value: string, entries: readonly string[] | null | undefined): AudienceMatch | null {
+  const list = Array.isArray(entries) ? entries : [];
+  for (const e of list) {
+    if (typeof e === 'string' && !isAudienceTemplate(e) && sameResource(value, e)) return { audience: e, label: null };
+  }
+  const v = comparable(value);
+  const head = 'https://';
+  if (!v.startsWith(head)) return null;
+  for (const e of list) {
+    if (!isAudienceTemplate(e)) continue;
+    const t = templateParts(e);
+    if (t == null || v.length <= head.length + t.suffix.length || !v.endsWith(t.suffix)) continue;
+    // The suffix starts with a dot and the label shape has none: the label is
+    // exactly the value's first host label.
+    const label = v.slice(head.length, v.length - t.suffix.length);
+    if (!ACCOUNT_LABEL_RE.test(label)) continue;
+    return { audience: head + label + t.written, label };
+  }
+  return null;
+}
+
+/**
+ * A well-formed per-user audience split after its placeholder: the rest in
+ * comparison form (what a value must end with) and as stored (host
+ * lowercased, path as written). Null for a malformed one.
+ */
+function templateParts (entry: string): { suffix: string; written: string } | null {
+  const checked = audienceProbe(entry);
+  if (!('probe' in checked)) return null;
+  const suffix = comparable(checked.probe).slice(('https://' + PROBE_LABEL).length);
+  const rest = entry.slice(TEMPLATE_PREFIX.length - 1);
+  const cut = rest.search(/[/?#]/);
+  const written = cut < 0 ? rest.toLowerCase() : rest.slice(0, cut).toLowerCase() + rest.slice(cut);
+  return { suffix, written };
 }
 
 /**

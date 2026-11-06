@@ -344,6 +344,31 @@ describe('[OCMDE] client metadata documents end to end', function () {
     assert.equal((await readStream(token.access_token, 'a', grant.alias)).status, 200);
   });
 
+  it('[OPUE7] a template listing a per-user resource: the document client\'s flow at the account\'s own address; another account\'s is refused', async () => {
+    const perUser = 'https://{username}.example.com/adapter/calendar/api';
+    const cmd = { ...CMD, client: { ...TEMPLATE, allowedAudiences: [RS_AUD, perUser] } };
+    await withInjectedConfig({ oauth: { ...OAUTH, clientMetadataDocuments: cmd } }, async () => {
+      const url = publish();
+      const who = await newUser();
+      const mine = 'https://' + who.username + '.example.com/adapter/calendar/api';
+      const { verifier, challenge } = pkce();
+      const res = await authorize(url, { resource: mine, challenge });
+      assert.equal(res.status, 302, res.text);
+      const { accept } = await consent(who, new URL(res.headers.location).searchParams.get('state'));
+      assert.equal(accept.status, 200, JSON.stringify(accept.body));
+      const t = await coreRequest.post('/oauth2/token').type('form').send({
+        grant_type: 'authorization_code', code: new URL(accept.body.redirectTo).searchParams.get('code'), code_verifier: verifier, client_id: url, redirect_uri: REDIRECT_URI, resource: mine,
+      });
+      assert.equal(t.status, 200, JSON.stringify(t.body));
+      assert.equal((await introspect(t.body.access_token)).body.aud, mine);
+      const other = await authorize(url, { resource: 'https://someone-else.example.com/adapter/calendar/api' });
+      assert.equal(other.status, 302, other.text);
+      const state = new URL(other.headers.location).searchParams.get('state');
+      const refused = await coreRequest.post('/oauth2/authorize/offer').send({ state, username: who.username, userToken: who.token });
+      assert.deepEqual([refused.status, refused.body.reason], [403, 'audience-account-mismatch']);
+    });
+  });
+
   it('[OCMDE02] refresh rotation and revocation (RFC 7009) by the URL', async () => {
     const url = publish();
     const who = await newUser();

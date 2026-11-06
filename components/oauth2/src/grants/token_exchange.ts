@@ -20,9 +20,11 @@
  * Checks, in order (nothing is consumed; a refusal leaves the subject token
  * as it was): client authentication (401, uniform), the caller's role and
  * status, the request shape, the subject's index row (unknown, derived or
- * audience-less: `invalid_grant`; another core: 421 `wrong_core`), the
- * subject's audience against the caller's list (`invalid_target`), the
- * subject session and its client on the home core (`invalid_grant`).
+ * audience-less: `invalid_grant`), the subject's audience against the
+ * caller's list (`invalid_target`), the optional `subject_token_resource`
+ * against that audience (`invalid_target`), the home core (another core:
+ * 421 `wrong_core`), the subject session and its client on the home core,
+ * and the account a per-user audience names (`invalid_grant`).
  *
  * Deliberate departure from RFC 8693 § 2.2.2: an unusable subject token is
  * `invalid_grant`, not `invalid_request`, so a resource server can tell "the
@@ -40,7 +42,10 @@ import { isConfidentialClient } from '../clientAuth.ts';
 import { tokenEndpointAudiences, issuerFromConfig } from '../issuer.ts';
 import { prepareRegistryResponse } from '../responseHooks.ts';
 import type { RegistryResponseParts } from '../responseHooks.ts';
-import { sameResource, withinResourceCap } from '../resourceIndicator.ts';
+import { isValidResource, matchAudience, sameResource, withinResourceCap } from '../resourceIndicator.ts';
+import { USERNAME_PLACEHOLDER } from '../audienceTemplate.ts';
+import type { PlatformRoutedLabel } from '../audienceAccount.ts';
+import { AUDIENCE_ACCOUNT_MISMATCH, labelNamesAccount } from '../audienceAccount.ts';
 import { clientLifetimes } from '../clientLifetimes.ts';
 import { indexSession } from '../sessionIndex.ts';
 import { logServerError } from '../serverLog.ts';
@@ -66,6 +71,8 @@ export type SubjectSession = {
   grantState?: unknown;
   /** The account's API base URL, no credential in it (the alias when aliased). */
   apiBase: string;
+  /** The account's address aliases (a per-user audience may name one). */
+  addressAliases?: string[];
 };
 
 export type ReadSubjectSession = (params: {
@@ -102,6 +109,8 @@ export type TokenExchangeDeps = {
   issueDerivedSession: IssueDerivedSession;
   /** Public URL of a core, for the wrong-core answer. */
   coreUrlFor?: (coreId: string) => string | Promise<string>;
+  /** The host labels the platform answers itself; absent: none is. */
+  isPlatformRoutedLabel?: PlatformRoutedLabel;
 };
 
 export type TokenExchangeParams = {
@@ -118,6 +127,8 @@ export type TokenExchangeParams = {
   scope?: unknown;
   resource?: unknown;
   audience?: unknown;
+  /** Where the resource server received the subject token (optional, see step 5b). */
+  subject_token_resource?: unknown;
 };
 
 type Refusal = { ok: false; status: number; error: string; description?: string; extra?: Record<string, unknown> };
@@ -162,7 +173,7 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
 
   // 3. The request.
   const issuer = issuerFromConfig(deps.config);
-  const shape = requestShapeRefusal(params, issuer);
+  const shape = requestShapeRefusal(params, issuer, caller.allowedAudiences ?? []);
   if (shape != null) return await refuse('request-shape', shape);
   const subjectToken = params.subject_token as string;
 
@@ -175,13 +186,26 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
   }
 
   // 5. Confused deputy: the subject token must have been issued for one of
-  //    the audiences this resource server is registered for. Checked before
-  //    the home core is named: the audience is on the cluster-wide index row,
-  //    so a resource server the token was not issued for learns no core URL.
+  //    the audiences this resource server is registered for (an exact one, or
+  //    an address its per-user audience names). Checked before the home core
+  //    is named: the audience is on the cluster-wide index row, so a resource
+  //    server the token was not issued for learns no core URL.
   const audience = row.audience;
-  if (!(caller.allowedAudiences ?? []).some((a) => withinResourceCap(audience, [a]) && sameResource(audience, a))) {
+  const callerAudiences = caller.allowedAudiences ?? [];
+  const matched = withinResourceCap(audience, callerAudiences) ? matchAudience(audience, callerAudiences) : null;
+  if (matched == null) {
     return await refuse('foreign-audience', {
       ok: false, status: 400, error: 'invalid_target', description: 'the subject token was issued for a resource this client is not registered for',
+    });
+  }
+  // 5b. Where the resource server received the subject token, when it says
+  //     so: the token must have been issued for that resource (a token for
+  //     one account's address presented at another's is not exchanged). Also
+  //     before the home core is named.
+  const presentedAt = params.subject_token_resource;
+  if (typeof presentedAt === 'string' && presentedAt !== '' && !sameResource(audience, presentedAt)) {
+    return await refuse('subject-resource-mismatch', {
+      ok: false, status: 400, error: 'invalid_target', description: 'the subject token was not issued for the resource it was presented at',
     });
   }
   const coreId = String(deps.config.get('core:id') ?? 'single');
@@ -206,6 +230,11 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
     return { ok: false, status: 500, error: 'server_error', description: 'failed to issue the derived token' };
   }
   if (subject == null) return await refuse('subject-inactive', { ok: false, status: 400, error: 'invalid_grant', description: NOT_ACTIVE });
+  // An address named by a per-user audience must be the subject account's
+  // own (the consent checked it; this closes any row written otherwise).
+  if (matched.label != null && !labelNamesAccount(matched.label, subject, deps.isPlatformRoutedLabel)) {
+    return await refuse(AUDIENCE_ACCOUNT_MISMATCH, { ok: false, status: 400, error: 'invalid_grant', description: NOT_ACTIVE });
+  }
   const subjectClient: OAuthClient | null = await getClient(deps.platform, row.clientId);
   // The scope echo and the derived permissions are the grant's: a registry
   // client's session only.
@@ -313,7 +342,7 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
 }
 
 /** The request parameters (RFC 8693 § 2.1) this server accepts, or the refusal. */
-function requestShapeRefusal (params: TokenExchangeParams, issuer: string): Refusal | null {
+function requestShapeRefusal (params: TokenExchangeParams, issuer: string, callerAudiences: readonly string[]): Refusal | null {
   if (params.actor_token != null || params.actor_token_type != null) {
     return { ok: false, status: 400, error: 'invalid_request', description: 'actor tokens are not supported' };
   }
@@ -337,6 +366,18 @@ function requestShapeRefusal (params: TokenExchangeParams, issuer: string): Refu
     if (typeof value !== 'string') return { ok: false, status: 400, error: 'invalid_request', description: 'resource and audience must be strings' };
     if (!withinResourceCap(value, [issuer]) || !sameResource(value, issuer)) {
       return { ok: false, status: 400, error: 'invalid_target', description: 'the requested resource is not this server' };
+    }
+  }
+  // Not the target of the requested token (that is `resource`): the resource
+  // URL the subject token was presented at, one plain URL (no placeholder).
+  const presentedAt = params.subject_token_resource;
+  if (presentedAt != null && presentedAt !== '') {
+    if (Array.isArray(presentedAt)) return { ok: false, status: 400, error: 'invalid_target', description: 'one resource per request' };
+    if (typeof presentedAt !== 'string') {
+      return { ok: false, status: 400, error: 'invalid_request', description: 'subject_token_resource must be a string' };
+    }
+    if (!withinResourceCap(presentedAt, callerAudiences) || !isValidResource(presentedAt) || presentedAt.includes(USERNAME_PLACEHOLDER)) {
+      return { ok: false, status: 400, error: 'invalid_target', description: 'subject_token_resource is not a valid resource' };
     }
   }
   return null;

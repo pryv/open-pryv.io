@@ -46,6 +46,8 @@ import { composeShownOffer, subjectModeOf } from '../consentComposition.ts';
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import { metadataHostOf } from '../clientMetadata.ts';
+import type { PlatformRoutedLabel } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal } from '../audienceAccount.ts';
 
 /** A signed-in user, as the host app's resolver answers it. */
 export type OfferSession = {
@@ -53,6 +55,8 @@ export type OfferSession = {
   username: string;
   /** The token is a personal one (only those may see the user's grants). */
   personal?: boolean;
+  /** The account's address aliases (a per-user resource may name one). */
+  addressAliases?: string[];
   /** Host-app data piggybacked (e.g. the MethodContext). */
   _context?: unknown;
 };
@@ -65,6 +69,8 @@ export type OfferDeps = {
   Promise<OfferSession | { refused: true; description: string } | WrongCoreSession | null>;
   /** The user's current grant for the client, or null. */
   readRegistryGrant?: (params: { session: OfferSession; clientId: string }) => Promise<CurrentGrant | null>;
+  /** The host labels the platform answers itself (never an account's address). */
+  isPlatformRoutedLabel?: PlatformRoutedLabel;
 };
 
 export type StateOffer =
@@ -220,6 +226,14 @@ export function handleOffer (deps: OfferDeps) {
     if (isWrongCoreSession(session)) {
       await auditWrongCore(verified.payload);
       return sendJson(res, 421, wrongCoreBody(session));
+    }
+    // A per-user resource must be the signed-in account's own address: said
+    // here, before the consent screen is shown, as /accept will refuse it.
+    const audienceRefused = consentAudienceRefusal(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
+    if (audienceRefused != null) {
+      await auditAudienceRefusal(verified.payload, audienceRefused);
+      const refusal = consentAudienceAnswer(audienceRefused);
+      return sendJson(res, refusal.status, refusal.body);
     }
     const current = deps.readRegistryGrant != null
       ? await deps.readRegistryGrant({ session, clientId: c.clientId })
