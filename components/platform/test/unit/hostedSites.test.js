@@ -136,7 +136,11 @@ describe('[PLHS] hosted-site names are reserved usernames', () => {
     });
     await a.platform.registerSelf();
     assert.deepEqual(a.db.rows.get('core-a').dnsNames, ['auth-a', 'svc-a']);
-    assert.deepEqual(a.platform.getPlatformConfigSnapshot().snapshot['dns.names'], ['auth-a', 'svc-a']);
+    // Per-core names stay out of the platform-config snapshot: its hash is the one of a core without them.
+    const snapshot = a.platform.getPlatformConfigSnapshot();
+    assert.equal('dns.names' in snapshot.snapshot, false);
+    const { platform: plain } = makePlatform({ config: { 'dns:domain': 'example.org' } });
+    assert.equal(snapshot.hash, plain.getPlatformConfigSnapshot().hash);
     // Core B, configured with neither name, learns them from core A's row.
     const b = new Platform();
     b._setDependenciesForTests(a.db, null, makeConfig({ 'core:id': 'core-b', 'dns:domain': 'example.org' }));

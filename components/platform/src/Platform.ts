@@ -872,9 +872,8 @@ class Platform {
     // Only when set, so the hash of a platform without hosted sites is unchanged.
     const siteNames = this.#localHostedSiteNames().sort();
     if (siteNames.length > 0) snapshot['hostedSites.names'] = siteNames;
-    // Likewise the names this core advertises as `dnsNames`.
-    const dnsNames = this.#localDnsNames();
-    if (dnsNames.length > 0) snapshot['dns.names'] = dnsNames;
+    // Not the names this core advertises as `dnsNames` (static entries, issuer
+    // label): they are per core by design, the snapshot must match across cores.
     const adminKey = this.#config.get('auth:adminAccessKey');
     const secondSecret = this.#config.get('auth:filesReadTokenSecret');
     snapshot['auth.adminAccessKey.fingerprint'] = adminKey && secondSecret ? adminKeyFingerprint(String(adminKey), String(secondSecret)) : null;

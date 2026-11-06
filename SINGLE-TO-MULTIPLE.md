@@ -223,9 +223,7 @@ so a core with a different name set shows a different hash.
 Likewise, each core advertises its own `dns.staticEntries` names and its `oauth.issuer` label
 (when the issuer host is `<label>.<dns.domain>`) as `dnsNames` in its core-info row: every core
 refuses them as usernames and never reads them as an account's host (nor as an account's
-per-user OAuth address). These are per-core names: they appear in the snapshot line as
-`dns.names`, so two cores with different static entries or issuer labels show different hashes
-for that reason alone.
+per-user OAuth address). These are per-core names, so they are not in the snapshot line.
 
 ## Cluster security
 

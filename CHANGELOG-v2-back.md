@@ -27,10 +27,11 @@
 - `Platform.registerSelf` advertises the core's `dns.staticEntries` keys and its issuer label under
   `dns.domain` as `dnsNames` on its core-info row (only when there are some);
   `refreshPlatformNames` merges every core's, so a sibling core refuses them at registration and
-  rename and `isNameRoutedByPlatform` answers them everywhere. The platform-config snapshot lists
-  them as `dns.names` when set: a platform with static entries or an issuer label under its domain
-  sees one hash change at upgrade, and since these names are per core, the cores' hashes differ
-  by them.
+  rename and `isNameRoutedByPlatform` answers them everywhere. The platform-config snapshot is
+  unchanged (these names are per core). Add per-user audience entries once every core runs this
+  release: an older core matches such an entry to nothing and ignores a sibling's `dnsNames`
+  (both fail closed, but that core keeps accepting a sibling's issuer label as a username until
+  it upgrades).
 - `bin/oauth-client.js`: `--audience` help, `template-from` note (a per-user entry is valid on
   every core). Config and install-wizard comments of `oauth.clientMetadataDocuments` say the same.
 - Tests `[OPUA]`, `[OPUE]`, `[OPUX]`, `[OPUC]`, `[OPUR]` (oauth2 unit, api-server end to end on
