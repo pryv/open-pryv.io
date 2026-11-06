@@ -109,11 +109,13 @@ platform names, no map of cores and no region knowledge:
 
 1. **It recognises the addressed account.** A per-user address is `<name>.<dns.domain>`: the received
    `Host` (lowercased, port and final dot aside) must be exactly one label under `dns.domain`, and that
-   label is the account when it has the username shape and the platform does not answer that name itself: `reg`, `access`,
-   `mfa`, the core ids, `dns.staticEntries` names, hosted sites, runtime DNS records and issuer labels
-   of every core are platform addresses (the same rule as the API's per-user hosts). So are a host under
-   any other domain (a vanity name pointed at the core, `alice.attacker.tld`), a deeper host
-   (`bob.alice.example.com`), `dns.domain` itself, an IP, a single-label host and `adapter`. Without
+   label is the account when it has the username shape and the platform does not answer that name
+   itself: `reg`, `access`, `mfa`, the core ids, `dns.staticEntries` names, hosted sites, runtime DNS
+   records and issuer labels of every core are platform addresses (the platform names the API's
+   username rewriter skips too). So are a host under any other domain (a vanity name pointed at the
+   core, `alice.attacker.tld`), a deeper host (`bob.alice.example.com`), `dns.domain` itself, an IP, a
+   single-label host and `adapter`: this is stricter than the API's per-user hosts, whose rewriter reads
+   the first label under any domain, because the sidecar puts the base in its public URLs. Without
    `dns.domain` no host is an account (the boot logs one warning). In dnsLess mode the host is never read: every request is a
    platform address (a path form, `https://<core host>/<username>/adapter/<name>/...`, is not served
    yet).
