@@ -41,6 +41,8 @@ import { createRequire } from 'node:module';
 import type { WrongCore } from './oauth2/wrongCore.ts';
 import { wrongCoreOf } from './oauth2/wrongCore.ts';
 import { platformRoutedLabels } from '../platformLabels.ts';
+import { hostWrongCoreGuard } from './oauth2/hostWrongCore.ts';
+import { perUserAddressingFor } from '../addressedAccount.ts';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
@@ -188,6 +190,22 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     return ext;
   }
 
+  const isPlatformRoutedLabel = platformRoutedLabels(config);
+
+  // On a per-user host whose account another core serves (a client that
+  // still holds the previous DNS answer after a move), /token and /authorize
+  // answer before any code or refresh token is read (see hostWrongCore.ts).
+  // The same reading of per-user hosts as the adapter ingress (none in
+  // dnsLess mode nor without dns.domain).
+  const addressing = perUserAddressingFor(config);
+  if (addressing != null) {
+    const tokenGuard = hostWrongCoreGuard({ addressing, endpoint: 'token', logger });
+    const authorizeGuard = hostWrongCoreGuard({ addressing, endpoint: 'authorize', logger });
+    expressApp.post('/oauth2/token', tokenGuard);
+    expressApp.get('/oauth2/authorize', authorizeGuard);
+    expressApp.post('/oauth2/authorize', authorizeGuard);
+  }
+
   const env: GlueEnv = { config, storageLayer, logger, apiCall };
   const sessions = createSessions(env);
   const grants = createGrants(env, sessions);
@@ -216,6 +234,6 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     readRegistryGrant: grants.readRegistryGrant,
     readSubjectSession: sessions.readSubjectSession,
     issueDerivedSession: sessions.issueDerivedSession,
-    isPlatformRoutedLabel: platformRoutedLabels(config),
+    isPlatformRoutedLabel,
   });
 }

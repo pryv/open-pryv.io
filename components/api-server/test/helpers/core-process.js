@@ -40,6 +40,9 @@
  *                     runs the DNS topology (dnsLess off, sites matched by Host),
  *                     applies the same boot checks as the api-server (exit 1 on
  *                     a missing folder) and serves the sites in front of express.
+ *   ADAPTER_ROUTES_JSON: optional `adapterRoutes` block (JSON). When set, the
+ *                     core serves the routes in front of everything else, with
+ *                     the api-server's boot check and per-user address reading.
  *
  * Sends IPC 'ready' message when server is listening.
  */
@@ -249,6 +252,18 @@ const http = require('node:http');
     if (problems.length > 0) throw new Error('Hosted sites cannot be served: ' + problems.join('; '));
     const dispatch = buildHostedSitesIngress({ sites, domain, dnsLess: false, logger: { debug () {}, info () {}, warn () {}, error () {} } });
     requestHandler = (req, res) => dispatch(req, res, app.expressApp);
+  }
+  if (process.env.ADAPTER_ROUTES_JSON) {
+    config.set('adapterRoutes', JSON.parse(process.env.ADAPTER_ROUTES_JSON));
+    const { parseAdapterRoutes, checkAdapterRoutesAtBoot } = require('business/src/adapterRoutes.ts');
+    const { buildAdapterIngress, adapterAddressingFor } = require('api-server/src/adapterIngress.ts');
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const routes = parseAdapterRoutes(config);
+    const problems = await checkAdapterRoutesAtBoot(routes, await getUsersRepository());
+    if (problems.length > 0) throw new Error('Adapter routes cannot be served: ' + problems.join('; '));
+    const toRest = requestHandler;
+    const dispatch = buildAdapterIngress({ routes, logger: { debug () {}, info () {}, warn () {}, error () {} }, addressing: adapterAddressingFor(config) });
+    requestHandler = (req, res) => dispatch(req, res, toRest);
   }
 
   // Start HTTP server

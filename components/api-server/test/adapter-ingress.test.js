@@ -626,3 +626,292 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
     }
   });
 });
+
+/**
+ * Per-user addresses: the account a request is addressed to by its host, its
+ * placement on the platform, and the two headers the core sets for the
+ * sidecar.
+ */
+describe('[ADRU] adapter routes: the addressed account', function () {
+  this.timeout(10000);
+  const { addressedLabelOf } = require('../src/addressedAccount.ts');
+  const { platformRoutedLabels } = require('../src/platformLabels.ts');
+  const { usernameInHost } = require('business/src/usernameSubdomains.ts');
+  const { adapterAddressingFor } = require('../src/adapterIngress.ts');
+  const savedTrust = currentTrustedProxies();
+  const DOMAIN = 'example.com';
+  const CONFIG = {
+    'dns:domain': DOMAIN,
+    'core:id': 'core-a',
+    'dns:staticEntries': { 'svc-static': { a: ['127.0.0.9'] } },
+    hostedSites: { 'site-home': { static: '/tmp' } }
+  };
+  const configOf = (extra = {}) => ({ get: (key) => ({ ...CONFIG, ...extra })[key] });
+  // The platform's runtime DNS names (records added after boot): a predicate
+  // on top of the configured names, as the platform keeps them.
+  const RUNTIME = new Set(['runtime-rec']);
+  const configured = platformRoutedLabels(configOf());
+  const isPlatformRoutedLabel = (label) => configured(label) || RUNTIME.has(label);
+  let upstream, front, frontPort, warnings;
+  const logger = { debug: () => {}, info: () => {}, warn: (m) => warnings.push(m), error: () => {} };
+
+  /** A platform slice: `map` username -> core id; `fail` makes the lookup throw. */
+  function stubPlatform ({ isSingleCore = false, map = {}, fail = false } = {}) {
+    const calls = [];
+    return {
+      calls,
+      isSingleCore,
+      coreId: 'core-a',
+      async getUserCore (username) {
+        calls.push(username);
+        if (fail) throw new Error('platform store down');
+        return map[username] ?? null;
+      },
+      coreIdToUrl: (coreId) => coreId === 'core-nourl' ? 'null/' : 'https://' + coreId + '.example.com/'
+    };
+  }
+
+  async function setup (platform, opts = {}) {
+    warnings = [];
+    upstream = fakeUpstream();
+    await listen(upstream.server);
+    const up = 'http://127.0.0.1:' + upstream.server.address().port;
+    const dispatch = buildAdapterIngress({
+      routes: routesOf({ calendar: { upstream: up, paths: ['/.well-known/oauth-protected-resource/adapter/calendar/'], ...opts.routeExtra } }),
+      logger,
+      addressing: opts.addressing === null ? null : { isPlatformRoutedLabel, domain: DOMAIN, retryAfterSeconds: 120, platform }
+    });
+    const fallback = (req, res) => { req.resume(); res.writeHead(299); res.end('fallback'); };
+    front = opts.tls != null
+      ? https.createServer(opts.tls, (req, res) => dispatch(req, res, fallback))
+      : http.createServer((req, res) => dispatch(req, res, fallback));
+    await listen(front);
+    frontPort = front.address().port;
+  }
+
+  afterEach(async function () {
+    configureTrustedProxies(savedTrust);
+    await close(front);
+    await close(upstream?.server);
+    front = null;
+    upstream = null;
+  });
+
+  it('[ADRU1] the account label: one username-shaped label under dns.domain the platform does not route; every other host is a platform address', async function () {
+    const cases = {
+      'alice.example.com': 'alice',
+      'ALICE.Example.com:8443': 'alice',
+      'alice-2.example.com.': 'alice-2',
+      'alice-2.example.com.:8443': 'alice-2',
+      'alice.attacker.tld': null,
+      'alice.example.org': null,
+      'alice.notexample.com': null,
+      'bob.alice.example.com': null,
+      'example.com': null,
+      'adapter.example.com': null,
+      'reg.example.com': null,
+      'access.example.com': null,
+      'mfa.example.com': null,
+      'core-a.example.com': null,
+      'site-home.example.com': null,
+      'svc-static.example.com': null,
+      'runtime-rec.example.com': null,
+      'www.example.com': null,
+      alice: null,
+      'localhost:3000': null,
+      '127.0.0.1:3000': null,
+      '[::1]:3000': null,
+      'alice.example.com/evil': null,
+      'alice.exa mple.com': null,
+      '': null,
+      undefined: null
+    };
+    for (const [host, expected] of Object.entries(cases)) {
+      assert.equal(addressedLabelOf(host === 'undefined' ? undefined : host, isPlatformRoutedLabel, DOMAIN), expected, host);
+    }
+    // The domain compares lowercased, without its final dot.
+    assert.equal(addressedLabelOf('alice.example.com', isPlatformRoutedLabel, 'Example.COM.'), 'alice');
+    // dnsLess: the host is the core's own name, never an account.
+    assert.equal(usernameInHost(configOf({ 'dnsLess:isActive': true })), false);
+    assert.equal(adapterAddressingFor(configOf({ 'dnsLess:isActive': true })), null);
+    const addressing = adapterAddressingFor(configOf({ 'dnsLess:isActive': false, 'dns:defaultTTL': 42 }));
+    assert.equal(typeof addressing.isPlatformRoutedLabel, 'function');
+    assert.equal(addressing.domain, DOMAIN);
+    assert.equal(addressing.retryAfterSeconds, 42);
+    // Through the ingress: a platform address is forwarded without a lookup.
+    const platform = stubPlatform();
+    await setup(platform);
+    for (const host of ['reg.example.com', 'core-a.example.com', 'runtime-rec.example.com', 'adapter.example.com', '127.0.0.1', 'alice.attacker.tld', 'bob.alice.example.com', 'example.com']) {
+      const res = await request(frontPort, { path: '/adapter/calendar/x', headers: { host } });
+      assert.equal(res.status, 200, host);
+      assert.equal(upstream.seen.at(-1).headers['x-adapter-name'], undefined, host);
+    }
+    assert.deepEqual(platform.calls, [], 'no placement lookup for a platform address');
+  });
+
+  it('[ADRU1b] without dns.domain no host names an account, and the boot is warned once', async function () {
+    const warned = [];
+    assert.equal(adapterAddressingFor(configOf({ 'dnsLess:isActive': false, 'dns:domain': null }), { warn: (m) => warned.push(m) }), null);
+    assert.equal(warned.length, 1);
+    assert.match(warned[0], /per-user addresses need dns\.domain/);
+    assert.equal(adapterAddressingFor(configOf({ 'dnsLess:isActive': false, 'dns:domain': '' })), null);
+    for (const host of ['alice.example.com', 'alice.attacker.tld']) {
+      assert.equal(addressedLabelOf(host, isPlatformRoutedLabel, null), null, host);
+    }
+  });
+
+  it('[ADRU2] an addressed request reaches the upstream with the name and the route\'s base (scheme, Host, root path); a platform address with neither', async function () {
+    await setup(stubPlatform({ map: { alice: 'core-a' } }));
+    configureTrustedProxies([]);
+    await request(frontPort, { path: '/adapter/calendar/manifest.json', headers: { host: 'Alice.example.com:8443' } });
+    let h = upstream.seen.at(-1).headers;
+    assert.equal(h['x-adapter-name'], 'alice');
+    assert.equal(h['x-adapter-base'], 'http://alice.example.com:8443/adapter/calendar/');
+    // Another prefix of the route: the same base (the route root).
+    await request(frontPort, { path: '/.well-known/oauth-protected-resource/adapter/calendar/x', headers: { host: 'alice.example.com' } });
+    h = upstream.seen.at(-1).headers;
+    assert.equal(upstream.seen.at(-1).url, '/.well-known/oauth-protected-resource/adapter/calendar/x');
+    assert.equal(h['x-adapter-base'], 'http://alice.example.com/adapter/calendar/');
+    // A final dot in the Host: the base has none (port kept).
+    await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com.:8443' } });
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'http://alice.example.com:8443/adapter/calendar/');
+    await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com.' } });
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'http://alice.example.com/adapter/calendar/');
+    // An untrusted peer's X-Forwarded-Proto is not the scheme.
+    await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com', 'x-forwarded-proto': 'https' } });
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'http://alice.example.com/adapter/calendar/');
+    // A trusted proxy's is (its first value).
+    configureTrustedProxies(['loopback']);
+    await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com', 'x-forwarded-proto': 'https, http' } });
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'https://alice.example.com/adapter/calendar/');
+    // A platform address: neither header.
+    await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'reg.example.com' } });
+    h = upstream.seen.at(-1).headers;
+    assert.equal(h['x-adapter-name'], undefined);
+    assert.equal(h['x-adapter-base'], undefined);
+  });
+
+  it('[ADRU2b] on a TLS front the base is https', async function () {
+    const { generate } = require('business/src/acme/selfSignedPlaceholder.ts');
+    const { keyPem, certPem } = generate({ commonName: 'localhost' });
+    await setup(stubPlatform(), { tls: { key: keyPem, cert: certPem } });
+    configureTrustedProxies([]);
+    const res = await request(frontPort, { path: '/adapter/calendar/x', tls: true, headers: { host: 'alice.example.com', 'x-forwarded-proto': 'http' } });
+    assert.equal(res.status, 200);
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'https://alice.example.com/adapter/calendar/');
+  });
+
+  it('[ADRU3] client-sent X-Adapter-Name / X-Adapter-Base, in any - / _ spelling, never reach the upstream, from an untrusted peer or a trusted proxy', async function () {
+    const spoofed = {
+      'x-adapter-name': 'mallory',
+      'x-adapter-base': 'https://mallory.example.com/adapter/calendar/',
+      X_Adapter_Name: 'mallory-u',
+      'x_adapter-base': 'https://mallory-u.example.com/',
+      'X-Adapter_Name': 'mallory-m'
+    };
+    // Nothing of the client's spellings is left; only the core's own pair, when addressed.
+    const assertNoSpoof = (h, label) => {
+      for (const [name, value] of Object.entries(h)) {
+        if (name.replace(/_/g, '-').startsWith('x-adapter-')) assert.ok(!String(value).includes('mallory'), label + ' ' + name);
+      }
+      for (const name of Object.keys(h)) assert.ok(!name.includes('_'), label + ' ' + name);
+    };
+    for (const trust of [[], ['loopback']]) {
+      await setup(stubPlatform());
+      configureTrustedProxies(trust);
+      // Addressed: replaced by the core's values.
+      await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com', ...spoofed } });
+      let h = upstream.seen.at(-1).headers;
+      assert.equal(h['x-adapter-name'], 'alice', String(trust));
+      assert.equal(h['x-adapter-base'], 'http://alice.example.com/adapter/calendar/', String(trust));
+      assertNoSpoof(h, 'addressed ' + trust);
+      // A platform address: removed.
+      await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'reg.example.com', ...spoofed } });
+      h = upstream.seen.at(-1).headers;
+      assert.equal(h['x-adapter-name'], undefined, String(trust));
+      assert.equal(h['x-adapter-base'], undefined, String(trust));
+      assertNoSpoof(h, 'platform ' + trust);
+      // An ingress without per-user addresses (dnsLess) removes them too.
+      await close(front);
+      await close(upstream.server);
+      await setup(null, { addressing: null });
+      configureTrustedProxies(trust);
+      await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com', ...spoofed } });
+      h = upstream.seen.at(-1).headers;
+      assert.equal(h['x-adapter-name'], undefined, String(trust));
+      assert.equal(h['x-adapter-base'], undefined, String(trust));
+      assertNoSpoof(h, 'dnsLess ' + trust);
+      await close(front);
+      await close(upstream.server);
+    }
+  });
+
+  it('[ADRU4] placement: another core answers 421 wrong-core with Retry-After and its URL without the upstream; this core, an unknown name forward; no usable URL 421 without it; a lookup failure 500', async function () {
+    const platform = stubPlatform({ map: { alice: 'core-a', bobby: 'core-b', carol: 'core-nourl' } });
+    await setup(platform);
+    const before = upstream.seen.length;
+    const remote = await request(frontPort, { method: 'POST', path: '/adapter/calendar/x', headers: { host: 'bobby.example.com', 'content-type': 'application/json', authorization: 'Bearer t' }, body: '{"a":1}' });
+    assert.equal(remote.status, 421);
+    assert.equal(remote.headers['content-type'], 'application/json');
+    assert.equal(remote.headers['x-content-type-options'], 'nosniff');
+    assert.equal(remote.headers['cache-control'], 'no-store');
+    assert.equal(remote.headers.connection, 'close');
+    assert.equal(remote.headers.location, undefined, 'never a redirect');
+    const body = JSON.parse(remote.body);
+    assert.equal(body.error.id, 'wrong-core');
+    assert.equal(body.error.coreUrl, 'https://core-b.example.com/');
+    assert.match(body.error.message, /account "bobby" is served by another core/);
+    assert.match(body.error.message, /retry the same address/);
+    assert.doesNotMatch(body.error.message, /built on/);
+    assert.equal(remote.headers['retry-after'], '120', 'the configured dns.defaultTTL');
+    assert.equal(remote.headers['access-control-allow-origin'], undefined, 'no CORS on adapter paths');
+    assert.equal(upstream.seen.length, before, 'the upstream was not contacted');
+    assert.equal(warnings.length, 1);
+    assert.doesNotMatch(warnings[0], /Bearer|\{"a"/, 'the log names no header and no body');
+    for (const method of ['GET', 'DELETE', 'OPTIONS']) {
+      assert.equal((await request(frontPort, { method, path: '/adapter/calendar/x', headers: { host: 'bobby.example.com' } })).status, 421, method);
+    }
+    // Here, and a name the platform does not map: forwarded.
+    for (const name of ['alice', 'nobody-known']) {
+      const res = await request(frontPort, { path: '/adapter/calendar/x', headers: { host: name + '.example.com' } });
+      assert.equal(res.status, 200, name);
+      assert.equal(upstream.seen.at(-1).headers['x-adapter-name'], name);
+    }
+    // A core without a usable URL: 421, no coreUrl.
+    const noUrl = await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'carol.example.com' } });
+    assert.equal(noUrl.status, 421);
+    assert.equal(noUrl.headers['retry-after'], '120');
+    const noUrlError = JSON.parse(noUrl.body).error;
+    assert.ok(!('coreUrl' in noUrlError));
+    assert.equal(noUrlError.id, 'wrong-core');
+    assert.notEqual(noUrlError.message, body.error.message.replace('bobby', 'carol'));
+    assert.doesNotMatch(noUrlError.message, /coreUrl/, 'it names no member the body lacks');
+    // A lookup failure: 500, never forwarded.
+    await close(front);
+    await close(upstream.server);
+    await setup(stubPlatform({ fail: true }));
+    const failed = await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com' } });
+    assert.equal(failed.status, 500);
+    assert.equal(JSON.parse(failed.body).error.id, 'unexpected-error');
+    assert.equal(upstream.seen.length, 0);
+    assert.match(warnings.at(-1), /placement lookup failed/);
+  });
+
+  it('[ADRU4b] a declared body over the cap is refused 413 before any lookup', async function () {
+    const platform = stubPlatform({ map: { bobby: 'core-b' } });
+    await setup(platform, { routeExtra: { maxBodyBytes: 1000 } });
+    const res = await request(frontPort, { method: 'POST', path: '/adapter/calendar/x', headers: { host: 'bobby.example.com', 'content-type': 'text/plain' }, body: 'x'.repeat(5000) });
+    assert.equal(res.status, 413);
+    assert.deepEqual(platform.calls, []);
+  });
+
+  it('[ADRU5] single core: no lookup, the headers are still set', async function () {
+    const platform = stubPlatform({ isSingleCore: true, map: { alice: 'core-b' } });
+    await setup(platform);
+    const res = await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com' } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(platform.calls, []);
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-name'], 'alice');
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'http://alice.example.com/adapter/calendar/');
+  });
+});

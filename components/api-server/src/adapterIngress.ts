@@ -12,6 +12,9 @@ import type { AdapterRoute } from 'business/src/adapterRoutes.ts';
 import { redactUrl } from 'utils/src/redactUrl.ts';
 import { failIngress, hasEncodedSeparatorOrDotSegment } from './ingressGuard.ts';
 import { buildWorkerProxy } from './workerIngress.ts';
+import { addressableHost, addressedLabelOf, perUserAddressingFor } from './addressedAccount.ts';
+import type { PerUserAddressing } from './addressedAccount.ts';
+import { resolveUserCore } from './routes/reg/userCore.ts';
 
 /**
  * In-process dispatcher for adapter routes: a sidecar on the same host
@@ -24,6 +27,16 @@ import { buildWorkerProxy } from './workerIngress.ts';
  * header except the hop-by-hop ones, sets X-Forwarded-For / -Proto / -Host,
  * and passes the answer back unchanged. It authenticates nothing on these
  * paths: the upstream must.
+ *
+ * Per-user addresses (with `addressing`, on a platform with per-user hosts):
+ * a request on `https://<account>.<dns.domain>/adapter/<name>/...` is
+ * addressed to that account. The core asks the platform where the account
+ * lives: on another core the answer is 421 `wrong-core` with `Retry-After`
+ * (the client retries the same address once its name resolves to that core;
+ * `coreUrl` only says which core; never a redirect: it would drop the
+ * Authorization header), here the request is forwarded with X-Adapter-Name
+ * and X-Adapter-Base. A service, core or hosted-site host, or a host under
+ * another domain, is a platform address: forwarded without them.
  */
 
 type Fallback = (req: IncomingMessage, res: ServerResponse) => void;
@@ -38,16 +51,27 @@ type ContinueServer = {
   emit: (event: 'request', req: IncomingMessage, res: ServerResponse) => boolean;
 };
 
+/** How the ingress reads per-user addresses (see `addressedAccount.ts`). */
+type AdapterAddressing = PerUserAddressing;
+
 const JSON_ERROR_HEADERS = { 'content-type': 'application/json', 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' };
 
 /**
  * A refusal before the body was read: the connection is closed after it, so
  * an unread (possibly unbounded) body is not drained over keep-alive.
  */
-function refuse (req: IncomingMessage, res: ServerResponse, status: number, id: string, message: string) {
+function refuse (req: IncomingMessage, res: ServerResponse, status: number, id: string, message: string, extra: Record<string, string> = {}, headers: Record<string, string> = {}) {
   req.resume();
-  res.writeHead(status, { ...JSON_ERROR_HEADERS, connection: 'close' });
-  res.end(JSON.stringify({ error: { id, message } }));
+  res.writeHead(status, { ...JSON_ERROR_HEADERS, ...headers, connection: 'close' });
+  res.end(JSON.stringify({ error: { id, message, ...extra } }));
+}
+
+/**
+ * The per-user address reading of a configuration (null in dnsLess mode, and
+ * without `dns.domain`, then `logger` is warned once).
+ */
+function adapterAddressingFor (config: { get: (key: string) => unknown }, logger?: { warn: (msg: string) => void }): AdapterAddressing | null {
+  return perUserAddressingFor(config, logger);
 }
 
 /** The query of a request target as received (from `?`, without a fragment). */
@@ -58,8 +82,9 @@ function rawSearchOf (url: string): string {
   return queryAt < 0 ? '' : target.slice(queryAt);
 }
 
-function buildAdapterIngress (opts: { routes: Map<string, AdapterRoute>; logger: Logger; ca?: string }) {
+function buildAdapterIngress (opts: { routes: Map<string, AdapterRoute>; logger: Logger; ca?: string; addressing?: AdapterAddressing | null }) {
   const { routes, logger } = opts;
+  const addressing = opts.addressing ?? null;
   const entries: Entry[] = [];
   for (const route of routes.values()) {
     const tooLarge = `request body exceeds adapterRoutes.${route.name}.maxBodyBytes (${route.maxBodyBytes} bytes)`;
@@ -149,8 +174,50 @@ function buildAdapterIngress (opts: { routes: Map<string, AdapterRoute>; logger:
     res.once('close', () => {
       logger.debug(`[adapter-ingress] ${entry.route.name} ${req.method} ${shownPath} ${res.statusCode}${res.writableFinished ? '' : ' (not finished)'} ${Date.now() - started} ms`);
     });
-    entry.proxy(req, res, url.pathname + rawSearchOf(req.url as string));
+    const targetPath = url.pathname + rawSearchOf(req.url as string);
+    const label = addressing == null ? null : addressedLabelOf(req.headers.host, addressing.isPlatformRoutedLabel, addressing.domain);
+    // A platform address, or a declared body over the cap (refused by the
+    // proxy without the upstream, before any lookup).
+    if (label == null || declaredTooLarge(req, entry)) {
+      entry.proxy(req, res, targetPath);
+      return;
+    }
+    forwardAddressed(req, res, entry, label, targetPath, shownPath).catch((err: unknown) => {
+      failIngress(req, res, err, logger, '[adapter-ingress]');
+    });
   } as AdapterDispatch;
+
+  /**
+   * A request addressed to an account: forwarded with the account's name and
+   * base when the platform serves it here (or does not map it: the sidecar's
+   * own authentication answers a stranger, as for any request), 421 with the
+   * account's core when it lives on another one. Never forwarded on a guess.
+   */
+  async function forwardAddressed (req: IncomingMessage, res: ServerResponse, entry: Entry, label: string, targetPath: string, shownPath: string): Promise<void> {
+    const placement = await resolveUserCore(label, addressing?.platform != null ? { platform: addressing.platform } : {});
+    // The client left during the lookup: nothing to answer.
+    if (res.destroyed || res.headersSent) return;
+    const name = entry.route.name;
+    if (placement.kind === 'local') {
+      // The base names the host as addressed, lowercased, without a final dot.
+      entry.proxy(req, res, targetPath, { name: label, host: addressableHost(req.headers.host) as string, rootPath: entry.route.paths[0] });
+      return;
+    }
+    if (placement.kind === 'remote' || placement.reason === 'core-unresolvable') {
+      logger.warn(`[adapter-ingress] ${name}: account served by another core, 421 ${req.method} ${shownPath}`);
+      // The client retries the same address: a request to `coreUrl` itself
+      // would be a platform address (no account named), so it is diagnostic.
+      const retryAfter = { 'retry-after': String(addressing?.retryAfterSeconds ?? 300) };
+      if (placement.kind === 'remote') {
+        refuse(req, res, 421, 'wrong-core', `adapter ${name}: account "${label}" is served by another core; retry the same address once its name resolves to that core (coreUrl identifies it)`, { coreUrl: placement.coreUrl }, retryAfter);
+      } else {
+        refuse(req, res, 421, 'wrong-core', `adapter ${name}: account "${label}" is served by another core whose address this platform does not publish; retry the same address later`, {}, retryAfter);
+      }
+      return;
+    }
+    logger.warn(`[adapter-ingress] ${name}: account placement lookup failed ${req.method} ${shownPath}: ${placement.detail}`);
+    refuse(req, res, 500, 'unexpected-error', `adapter ${name}: account placement unavailable`);
+  }
 
   dispatch.refuseBeforeContinue = function refuseBeforeContinue (req: IncomingMessage, res: ServerResponse): boolean {
     const routed = routeOf(req);
@@ -182,5 +249,5 @@ function attachAdapterContinueCheck (server: ContinueServer, dispatch: AdapterDi
   });
 }
 
-export { buildAdapterIngress, attachAdapterContinueCheck };
-export type { AdapterDispatch };
+export { buildAdapterIngress, attachAdapterContinueCheck, adapterAddressingFor };
+export type { AdapterDispatch, AdapterAddressing };

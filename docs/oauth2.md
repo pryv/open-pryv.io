@@ -117,6 +117,36 @@ no core serves (or a core without a usable URL) keeps the uniform answers. It
 is audited as `oauth.consent.refused` with `reason: "wrong-core"` (the account
 is not named).
 
+**An account's own host on the wrong core.** On a platform with per-user hosts
+DNS sends `https://<account>.<domain>` to the account's core. A client can still
+reach another core there (a resolver holding an earlier DNS answer, for instance
+after the account was moved, a hosts entry, a proxy pinned to one address).
+Then, on that host only:
+
+- `POST /oauth2/token` answers, before any code or refresh token is read:
+
+  ```
+  421 Retry-After: <dns.defaultTTL, 300 by default>
+  { "error": "wrong_core", "error_description": "…", "coreUrl": "https://<the account's core>/" }
+  ```
+
+  The client retries after the delay, at the same address (its resolver then
+  has the current answer); the code or refresh token is untouched. `coreUrl` is
+  omitted when the platform has no usable URL for that core.
+- `GET` / `POST /oauth2/authorize` answers `421` with a static HTML page ("this
+  address has just moved, try again in a few minutes"), `Retry-After`, no
+  redirect, no form.
+
+The host is read as an account by the adapter routes' rule: exactly one label
+under `dns.domain` (port and final dot aside), of username shape; service hosts
+(`reg`, `access`, `mfa`), core ids, static entries, hosted sites, runtime DNS
+records, issuer labels and `adapter` are not accounts, nor is a host under any
+other domain. Those hosts, a name the
+platform does not map and an account of this core are unchanged; `/offer` and
+`/accept` keep the answer above. If the platform cannot say where the account
+lives, the request is served as before (codes and refresh tokens are keyed by
+the core that issued them, so none of another core's can be consumed here).
+
 On `/oauth2/authorize` (either method), a parameter given twice is refused
 with an HTML 400, and so is a `POST` body that is not form-encoded (JSON
 included).
@@ -1933,6 +1963,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 | registry client: `/oauth2/authorize` → `invalid_scope` "openid is not available on this core (no signing key configured)" | no `oauth.signingKeys` on this core (§ 2) |
 | `/oauth2/authorize` → `invalid_target` | the client has audiences and the request named none of them in `aud` / `resource`, or a value no list vouches for is not an absolute https URL without fragment (§ 1c, resource indicators; § 3b) |
 | `/oauth2/token` → `invalid_target` | the `resource` given is not the one the authorization named (§ 1c, resource indicators) |
+| `/oauth2/token` → `421 wrong_core` with `Retry-After` on `<account>.<domain>` | that request reached a core that does not serve the account (an old DNS answer, e.g. after a move): retry after the delay at the same address (§ 1, an account's own host on the wrong core) |
 | registry client: `/oauth2/token` → `500 server_error` "failed to build the token response" | the extension's hook failed or timed out, or its echo claimed reach the session does not hold; see the server log (§ 1c) |
 | consent UI: `400 invalid_request` with `reason: consent-out-of-date` | the grant, the client or the extension changed while the screen was shown: restart the flow (§ 1d) |
 | HTML 400, `access_denied` or `unauthorized_client` "this client is suspended"; data API 403 "The application access is suspended." | the client was suspended (`resume <clientId>`, § 3b) |

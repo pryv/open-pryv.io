@@ -27,7 +27,7 @@ const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSit
 const { guardIngress } = require('./ingressGuard.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
 const { parseAdapterRoutes, checkAdapterRoutesAtBoot } = require('business/src/adapterRoutes.ts');
-const { buildAdapterIngress, attachAdapterContinueCheck } = require('./adapterIngress.ts');
+const { buildAdapterIngress, attachAdapterContinueCheck, adapterAddressingFor } = require('./adapterIngress.ts');
 const { getPlatform } = require('platform');
 const { checkValidityWindow, clockSkewSecondsFromConfig } = require('business/src/acme/certUtils.ts');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
@@ -139,7 +139,11 @@ class Server {
       for (const route of adapterRoutes.values()) {
         this.logger.info(`adapter route ${route.name}: ${route.upstream} paths ${route.paths.join(' ')}`);
       }
-      const dispatch = buildAdapterIngress({ routes: adapterRoutes, logger: this.logger });
+      // On per-user hosts (`<account>.<dns.domain>`) the ingress names the
+      // addressed account to the sidecar (the username rewriter's predicate
+      // tells account labels from the platform's own), and answers 421 for an
+      // account of another core.
+      const dispatch = buildAdapterIngress({ routes: adapterRoutes, logger: this.logger, addressing: adapterAddressingFor(config, this.logger) });
       adaptersDispatch = dispatch;
       toAdapters = (req: unknown, res: unknown) => dispatch(req, res, toSites);
     }

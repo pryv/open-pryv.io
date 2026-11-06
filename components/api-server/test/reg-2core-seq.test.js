@@ -128,6 +128,25 @@ function getWithHost (port, reqPath, host) {
   });
 }
 
+// Helper: any request with an explicit Host header; a JSON body when given
+function requestWithHost (port, method, reqPath, host, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body == null ? null : JSON.stringify(body);
+    const allHeaders = { host, ...headers, ...(payload != null ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}) };
+    const r = require('node:http').request({ host: '127.0.0.1', port, method, path: reqPath, headers: allHeaders }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => {
+        let json;
+        try { json = JSON.parse(text); } catch { json = text; }
+        resolve({ status: res.statusCode, headers: res.headers, body: json });
+      });
+    });
+    r.on('error', reject);
+    r.end(payload);
+  });
+}
+
 // Helper: fork a core child process
 function startCore (env) {
   return new Promise((resolve, reject) => {
@@ -227,6 +246,8 @@ describe('[RG2C] Two-core integration tests', function () {
   let dnsServer, dnsPort, resolver;
   let platformDB;
   let savedIntegrityCheck;
+  let adapterUpstream;
+  const adapterSeen = [];
 
   // --- Setup: rqlite + DNS + two cores ---
 
@@ -325,6 +346,17 @@ describe('[RG2C] Two-core integration tests', function () {
     fs.mkdirSync(SITE_DIR, { recursive: true });
     fs.writeFileSync(path.join(SITE_DIR, 'index.html'), '<p>rg2c hosted site</p>');
 
+    // The sidecar of an adapter route, shared by both cores: records what it receives
+    adapterUpstream = require('node:http').createServer((req, res) => {
+      adapterSeen.push({ method: req.method, url: req.url, headers: req.headers });
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"upstream":true}');
+      });
+    });
+    await new Promise((resolve) => adapterUpstream.listen(0, '127.0.0.1', resolve));
+
     // Start Core A and Core B
     const coreEnv = {
       DNS_DOMAIN: DOMAIN,
@@ -339,7 +371,9 @@ describe('[RG2C] Two-core integration tests', function () {
       // Client metadata documents, for the tests below
       CLIENT_METADATA_HOST: METADATA_HOST,
       CLIENT_METADATA_STUB: `http://127.0.0.1:${METADATA_STUB_PORT}`,
-      CLIENT_METADATA_CONFIG_JSON: JSON.stringify(METADATA_CONFIG)
+      CLIENT_METADATA_CONFIG_JSON: JSON.stringify(METADATA_CONFIG),
+      // An adapter route, for the per-user address tests below
+      ADAPTER_ROUTES_JSON: JSON.stringify({ calendar: { upstream: `http://127.0.0.1:${adapterUpstream.address().port}` } })
     };
 
     coreAEnv = {
@@ -374,6 +408,10 @@ describe('[RG2C] Two-core integration tests', function () {
     await stopCore(coreA);
     await stopCore(coreB);
     if (dnsServer) await dnsServer.stop();
+    if (adapterUpstream != null) {
+      adapterUpstream.closeAllConnections();
+      await new Promise((resolve) => adapterUpstream.close(resolve));
+    }
     await rqliteProcess.stop((msg) => {
       if (process.env.LOGS) console.log('[rqlite]', msg);
     });
@@ -832,6 +870,66 @@ describe('[RG2C] Two-core integration tests', function () {
         assert.strictEqual(reg.body.server, CORE_A_URL);
         assert.strictEqual(reg.body.alias, `${a}.${DOMAIN}`);
       }
+    });
+  });
+
+  describe('Adapter routes across cores', () => {
+    const username = 'adrw' + Date.now().toString(36);
+    let token;
+
+    before(async () => {
+      const reg = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_B_HOSTING
+      });
+      assert.strictEqual(reg.status, 201, JSON.stringify(reg.body));
+      token = new URL(reg.body.apiEndpoint).username;
+    });
+
+    it('[ADRW2] a per-user address of the other core\'s account answers 421 with that core; its own core forwards it named; a former username keeps its address', async () => {
+      const host = `${username}.${DOMAIN}`;
+      const count = adapterSeen.length;
+      const onA = await requestWithHost(CORE_A_PORT, 'POST', '/adapter/calendar/x', host, { a: 1 }, { authorization: 'Bearer t' });
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(onA.body.error.id, 'wrong-core');
+      assert.strictEqual(onA.body.error.coreUrl, CORE_B_URL);
+      assert.strictEqual(onA.headers.location, undefined);
+      assert.strictEqual(onA.headers['retry-after'], '300');
+      assert.match(onA.body.error.message, /retry the same address/);
+      // Under another domain the name addresses no account: a platform address.
+      const foreign = await requestWithHost(CORE_A_PORT, 'GET', '/adapter/calendar/x', `${username}.attacker.tld`);
+      assert.strictEqual(foreign.status, 200, JSON.stringify(foreign.body));
+      assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-name'], undefined);
+      assert.strictEqual(adapterSeen.length, count + 1, 'core A did not forward the 421 one');
+      const onB = await requestWithHost(CORE_B_PORT, 'GET', '/adapter/calendar/x', host);
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+      assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-name'], username);
+      assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-base'], `http://${host}/adapter/calendar/`);
+      // A platform address on either core: forwarded, no account named.
+      for (const port of [CORE_A_PORT, CORE_B_PORT]) {
+        const res = await requestWithHost(port, 'GET', '/adapter/calendar/x', `reg.${DOMAIN}`);
+        assert.strictEqual(res.status, 200, String(port));
+        assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-name'], undefined);
+      }
+      // Renamed: the former name stays the account's address, forwarded as addressed.
+      const renamed = username + 'n';
+      const change = await httpRequest(CORE_B_PORT, 'POST', '/' + username + '/account/change-username', { newUsername: renamed }, { Authorization: token });
+      assert.strictEqual(change.status, 200, JSON.stringify(change.body));
+      const former = await requestWithHost(CORE_B_PORT, 'GET', '/adapter/calendar/x', host);
+      assert.strictEqual(former.status, 200, JSON.stringify(former.body));
+      assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-name'], username);
+      assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-base'], `http://${host}/adapter/calendar/`);
+      const formerOnA = await requestWithHost(CORE_A_PORT, 'GET', '/adapter/calendar/x', host);
+      assert.strictEqual(formerOnA.status, 421, JSON.stringify(formerOnA.body));
+      assert.strictEqual(formerOnA.body.error.coreUrl, CORE_B_URL);
+      const current = await requestWithHost(CORE_B_PORT, 'GET', '/adapter/calendar/x', `${renamed}.${DOMAIN}`);
+      assert.strictEqual(current.status, 200);
+      assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-name'], renamed);
     });
   });
 
@@ -1483,6 +1581,61 @@ describe('[RG2C] Two-core integration tests', function () {
       const badOnB = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/authorize/accept', { state: stateB, username: user.username, userToken: 'not-a-token', grantedPermissions });
       assert.strictEqual(badOnB.status, 401, JSON.stringify(badOnB.body));
       assert.deepStrictEqual(badOnB.body, acceptNobody.body);
+    });
+
+    it('[OTKW1] /token on the account\'s host at the other core answers 421 wrong_core with Retry-After before reading the refresh token; the home core then refreshes it', async () => {
+      const chain = await newChain();
+      const host = `${user.username}.${DOMAIN}`;
+      const refresh = { grant_type: 'refresh_token', refresh_token: chain.refresh_token, client_id: appId };
+      const onA = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', host, refresh);
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(onA.body.error, 'wrong_core');
+      assert.strictEqual(trim(onA.body.coreUrl), trim(CORE_B_URL));
+      assert.strictEqual(onA.headers['retry-after'], '300');
+      assert.strictEqual(onA.headers['cache-control'], 'no-store');
+      assert.ok(!JSON.stringify(onA.body).includes(user.username), 'the answer does not name the account');
+      // On the core's own host: the token endpoint answers as before.
+      const onAService = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', `${CORE_A_ID}.${DOMAIN}`, refresh);
+      assert.strictEqual(onAService.status, 400, JSON.stringify(onAService.body));
+      assert.strictEqual(onAService.body.error, 'invalid_grant');
+      // The refresh token is intact: the home core rotates it, on its account's host too.
+      const onB = await requestWithHost(CORE_B_PORT, 'POST', '/oauth2/token', host, refresh);
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+      assert.ok(onB.body.refresh_token != null && onB.body.refresh_token !== chain.refresh_token);
+    });
+
+    it('[OTKW2] /authorize on the account\'s host at the other core answers a static page, no redirect; the core\'s own host is unchanged', async () => {
+      const q = new URLSearchParams({
+        client_id: appId,
+        redirect_uri: REDIRECT,
+        response_type: 'code',
+        state: 'tk',
+        scope: 'read/notes',
+        code_challenge: crypto.createHash('sha256').update('v'.repeat(43)).digest('base64url'),
+        code_challenge_method: 'S256'
+      });
+      for (const method of ['GET', 'POST']) {
+        const moved = await requestWithHost(CORE_A_PORT, method, '/oauth2/authorize?' + q, `${user.username}.${DOMAIN}`);
+        assert.strictEqual(moved.status, 421, method);
+        assert.strictEqual(moved.headers.location, undefined, method);
+        assert.match(moved.headers['content-type'], /^text\/html/);
+        assert.strictEqual(moved.headers['retry-after'], '300');
+        assert.match(String(moved.body), /This address has just moved/);
+        assert.doesNotMatch(String(moved.body), /<form|<a |href=/i);
+      }
+      const onCoreHost = await requestWithHost(CORE_A_PORT, 'GET', '/oauth2/authorize?' + q, `${CORE_A_ID}.${DOMAIN}`);
+      assert.strictEqual(onCoreHost.status, 302);
+    });
+
+    it('[OTKW3] /offer and /accept on the account\'s host keep their own answer; an unmapped name\'s host, another domain and the adapter host are not concerned', async () => {
+      const offer = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/authorize/offer', `${user.username}.${DOMAIN}`, { state: 'not-a-state' });
+      assert.notStrictEqual(offer.status, 421, JSON.stringify(offer.body));
+      const refresh = { grant_type: 'refresh_token', refresh_token: 'x', client_id: appId };
+      for (const host of [`tknobody${Date.now().toString(36)}.${DOMAIN}`, `${user.username}.attacker.tld`, `adapter.${DOMAIN}`]) {
+        const res = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', host, refresh);
+        assert.strictEqual(res.status, 400, host + ' ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body.error, 'invalid_grant', host);
+      }
     });
 
     it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {
