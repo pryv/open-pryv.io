@@ -1577,6 +1577,53 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.deepStrictEqual(badOnB.body, acceptNobody.body);
     });
 
+    it('[OTKW1] /token on the account\'s host at the other core answers 421 wrong_core with Retry-After before reading the refresh token; the home core then refreshes it', async () => {
+      const chain = await newChain();
+      const host = `${user.username}.${DOMAIN}`;
+      const refresh = { grant_type: 'refresh_token', refresh_token: chain.refresh_token, client_id: appId };
+      const onA = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', host, refresh);
+      assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+      assert.strictEqual(onA.body.error, 'wrong_core');
+      assert.strictEqual(trim(onA.body.coreUrl), trim(CORE_B_URL));
+      assert.strictEqual(onA.headers['retry-after'], '300');
+      assert.strictEqual(onA.headers['cache-control'], 'no-store');
+      assert.ok(!JSON.stringify(onA.body).includes(user.username), 'the answer does not name the account');
+      // On the core's own host: the token endpoint answers as before.
+      const onAService = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', `${CORE_A_ID}.${DOMAIN}`, refresh);
+      assert.strictEqual(onAService.status, 400, JSON.stringify(onAService.body));
+      assert.strictEqual(onAService.body.error, 'invalid_grant');
+      // The refresh token is intact: the home core rotates it, on its account's host too.
+      const onB = await requestWithHost(CORE_B_PORT, 'POST', '/oauth2/token', host, refresh);
+      assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+      assert.ok(onB.body.refresh_token != null && onB.body.refresh_token !== chain.refresh_token);
+    });
+
+    it('[OTKW2] /authorize on the account\'s host at the other core answers a static page, no redirect; the core\'s own host is unchanged', async () => {
+      const q = new URLSearchParams({
+        client_id: appId, redirect_uri: REDIRECT, response_type: 'code', state: 'tk', scope: 'read/notes',
+        code_challenge: crypto.createHash('sha256').update('v'.repeat(43)).digest('base64url'), code_challenge_method: 'S256'
+      });
+      for (const method of ['GET', 'POST']) {
+        const moved = await requestWithHost(CORE_A_PORT, method, '/oauth2/authorize?' + q, `${user.username}.${DOMAIN}`);
+        assert.strictEqual(moved.status, 421, method);
+        assert.strictEqual(moved.headers.location, undefined, method);
+        assert.match(moved.headers['content-type'], /^text\/html/);
+        assert.strictEqual(moved.headers['retry-after'], '300');
+        assert.match(String(moved.body), /This address has just moved/);
+        assert.doesNotMatch(String(moved.body), /<form|<a |href=/i);
+      }
+      const onCoreHost = await requestWithHost(CORE_A_PORT, 'GET', '/oauth2/authorize?' + q, `${CORE_A_ID}.${DOMAIN}`);
+      assert.strictEqual(onCoreHost.status, 302);
+    });
+
+    it('[OTKW3] /offer and /accept on the account\'s host keep their own answer; an unmapped name\'s host is not concerned', async () => {
+      const offer = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/authorize/offer', `${user.username}.${DOMAIN}`, { state: 'not-a-state' });
+      assert.notStrictEqual(offer.status, 421, JSON.stringify(offer.body));
+      const nobody = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', `tknobody${Date.now().toString(36)}.${DOMAIN}`, { grant_type: 'refresh_token', refresh_token: 'x', client_id: appId });
+      assert.strictEqual(nobody.status, 400, JSON.stringify(nobody.body));
+      assert.strictEqual(nobody.body.error, 'invalid_grant');
+    });
+
     it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {
       const list = await httpRequest(CORE_B_PORT, 'GET', '/' + user.username + '/accesses', null, { Authorization: user.token });
       const grant = list.body.accesses.find((a) => a.name === 'oauth-grant:' + appId);
