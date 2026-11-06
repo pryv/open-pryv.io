@@ -281,6 +281,18 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
     assert.deepEqual((await accept(now, state)).body, MISMATCH);
     const fresh = await connect(now, tplId, at(renamed));
     assert.equal((await introspect(fresh.access_token)).body.aud, at(renamed));
+    // The chain made at the former address keeps exchanging (the account still holds the name).
+    for (const body of [{}, { subject_token_resource: at(former) }]) {
+      const x = await exchange(r.body.access_token, body);
+      assert.equal(x.status, 200, JSON.stringify(x.body));
+      const read = await coreRequest.get('/' + renamed + '/events').query({ streams: JSON.stringify(['a']) }).set('Authorization', x.body.access_token);
+      assert.equal(read.status, 200, JSON.stringify(read.body));
+    }
+    // Signing in with the former name binds the current one (the canonical name is compared).
+    const viaFormer = await connect({ ...alice, username: former }, tplId, at(renamed));
+    assert.equal((await introspect(viaFormer.access_token)).body.aud, at(renamed));
+    const { state: stale } = await authorize(tplId, at(former));
+    assert.deepEqual((await accept({ ...alice, username: former }, stale)).body, MISMATCH);
   });
 
   it('[OPUE8] login_hint binds nothing: alice at her own address with login_hint naming someone else is accepted', async () => {

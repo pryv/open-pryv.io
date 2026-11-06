@@ -33,6 +33,7 @@ import cache from 'cache';
 import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
+import { isMintedAliasShape } from 'business/src/users/aliasShape.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
 import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
@@ -335,6 +336,20 @@ export function createSessions (env: GlueEnv) {
   }
 
   // ---------------------------------------------------------------------
+  // formerUsernamesOf: the usernames the account had before a rename and
+  // still holds (a renamed account keeps its former name as an alias, so its
+  // former address keeps routing to it), from this core's users index: the
+  // aliases minus the minted ones (`r-` shape, never a username). Read by
+  // the token exchange only: an authorization made at a former address keeps
+  // exchanging; a new consent there is refused.
+  // ---------------------------------------------------------------------
+  async function formerUsernamesOf (userId: string): Promise<string[]> {
+    const usersIndex = await getUsersLocalIndex();
+    const aliases: string[] = await usersIndex.getAliasesForId(userId);
+    return aliases.filter((a) => typeof a === 'string' && !isMintedAliasShape(a));
+  }
+
+  // ---------------------------------------------------------------------
   // Refresh: the chain is bound to the durable data-grant; re-read it
   // (revoked → typed throw the grant maps to invalid_grant) and mint from
   // its CURRENT permissions (scope-updates propagate).
@@ -553,6 +568,7 @@ export function createSessions (env: GlueEnv) {
     grantState?: unknown;
     apiBase: string;
     addressAliases: string[];
+    formerUsernames: string[];
   } | null> {
     const username = await resolveUsername(userId);
     if (username == null) return null;
@@ -576,6 +592,7 @@ export function createSessions (env: GlueEnv) {
       // No credential in it; the alias when the grant is aliased.
       apiBase: ApiEndpoint.build(s.aliased ? s.subject : username, undefined),
       addressAliases: await addressAliasesOf(userId),
+      formerUsernames: await formerUsernamesOf(userId),
     };
   }
 

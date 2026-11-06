@@ -419,9 +419,10 @@ with a message naming the accepted form.
   flow; a client row deleted meanwhile is refused the same way. Nothing is
   written.
 - **After a username change.** A chain authorized before keeps its audience
-  (it is fixed at authorization and copied on refresh); a new authorization at
-  the former address is refused `audience-account-mismatch`. The account app
-  shows the current address.
+  (it is fixed at authorization and copied on refresh), and its token exchange
+  keeps working too (the former name stays the account's until the account is
+  deleted); a new authorization at the former address is refused
+  `audience-account-mismatch`. The account app shows the current address.
 - **From there on nothing changes:** the audience is a plain string on the
   code, refresh and session rows, `aud` at introspection, `ctx.audience` for
   the hooks, refused at the data API under `oauth:audienceBoundSessions`.
@@ -762,7 +763,7 @@ token as it was:
 | the subject token was issued for a resource the caller is not registered for (an exact audience of its list, or an address one of its per-user audiences names) | 400 | `invalid_target` |
 | `subject_token_resource` is not the subject token's audience | 400 | `invalid_target` ("the subject token was not issued for the resource it was presented at") |
 | the subject session lives on another core | 421 | `wrong_core`, with `coreUrl`: exchange there |
-| on the home core: the subject token's audience is a per-user address that does not name the subject account (a row no consent wrote) | 400 | `invalid_grant` ("subject token is not active") |
+| on the home core: the subject token's audience is a per-user address that does not name the subject account (its current username, an address alias or a former username it still holds; a row no consent wrote) | 400 | `invalid_grant` ("subject token is not active") |
 | a server fault (an extension hook failing, storage) | 500 | `server_error` |
 
 Departure from RFC 8693 § 2.2.2, which answers an unusable subject token with

@@ -495,10 +495,22 @@ describe('[OPUA] OAuth2: per-user audiences', () => {
       assert.equal(store.calls.length, 0);
     });
 
-    it('[OPUX5] the exchange takes an address alias of the subject account; an exact entry binds nothing', async () => {
+    it('[OPUX5] the exchange takes an address alias or a former username the subject account still holds; an exact entry binds nothing', async () => {
       const platform = await seededExchange(at('addr-alice'));
       assert.equal((await exchange(platform, { subject: subjectSession({ addressAliases: ['addr-alice'] }) })).statusCode, 200);
       assert.deepEqual((await exchange(platform)).body, NOT_ACTIVE);
+      // Renamed alice -> alice2: the chain at alice's address keeps exchanging while the account holds the name.
+      const renamed = await seededExchange(at('alice'));
+      assert.equal((await exchange(renamed, { subject: subjectSession({ username: 'alice2', formerUsernames: ['alice'] }) })).statusCode, 200);
+      let res;
+      const rows = await auditRows(async () => {
+        res = await exchange(renamed, { subject: subjectSession({ username: 'alice2', formerUsernames: ['someone-else'] }) });
+      });
+      assert.deepEqual(res.body, NOT_ACTIVE);
+      assert.equal(rows[0].payload.reason, 'audience-account-mismatch');
+      // A former username the platform now routes is refused like any routed name.
+      const routedFormer = await exchange(renamed, { subject: subjectSession({ username: 'alice2', formerUsernames: ['alice'] }), isPlatformRoutedLabel: (l) => l === 'alice' });
+      assert.deepEqual(routedFormer.body, NOT_ACTIVE);
       const exact = await seededExchange(REGION, [REGION, TEMPLATE]);
       assert.equal((await exchange(exact)).statusCode, 200);
     });

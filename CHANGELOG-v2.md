@@ -18,14 +18,16 @@
   id, a static DNS entry, an OAuth issuer label, a hosted site): `403 { "error": "access_denied",
   "error_description": "the requested resource names another account's address", "reason":
   "audience-account-mismatch" }`, before anything is written, audited as `oauth.consent.refused`
-  with that reason and no username. A former username is not accepted (chains authorized before a
-  rename keep their audience). An authorization whose audience the client's list no longer holds
+  with that reason and no username. A former username is not accepted for a new authorization;
+  existing authorizations keep their address after a username change, including at the token
+  exchange. An authorization whose audience the client's list no longer holds
   (or whose client is gone) answers `400 invalid_target`, `reason: "audience-not-listed"`, at the
   signed-in `/offer` and at `/accept` (restart the flow). Introspection `aud`, the token
   response and the data API flag `oauth.audienceBoundSessions` treat the address as any audience.
 - **Added: token exchange accepts a subject token issued for such an address** when the resource
-  server lists the matching entry; on the home core the address must name the subject account
-  (`invalid_grant` otherwise, audit reason `audience-account-mismatch`).
+  server lists the matching entry; on the home core the address must name the subject account (its
+  current username, or a former username it still holds) (`invalid_grant` otherwise, audit reason
+  `audience-account-mismatch`).
 - **Added: token exchange accepts `subject_token_resource`**, the resource URL at which the
   resource server received the subject token; when given it must be the token's `aud` (`400
   invalid_target`, "the subject token was not issued for the resource it was presented at", audit

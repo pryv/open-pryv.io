@@ -73,6 +73,11 @@ export type SubjectSession = {
   apiBase: string;
   /** The account's address aliases (a per-user audience may name one). */
   addressAliases?: string[];
+  /**
+   * The account's former usernames it still holds (from the home core's users
+   * index): an authorization made at a former address keeps exchanging.
+   */
+  formerUsernames?: string[];
 };
 
 export type ReadSubjectSession = (params: {

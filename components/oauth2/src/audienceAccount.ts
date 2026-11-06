@@ -37,20 +37,29 @@ export const AUDIENCE_ACCOUNT_MISMATCH_TEXT = 'the requested resource names anot
 /** Whether the platform answers a host label itself (never an account's host). */
 export type PlatformRoutedLabel = (label: string) => boolean;
 
-/** The names an account is addressed by: its current username, and its address aliases. */
-export type AccountNames = { username: string; addressAliases?: readonly string[] };
+/**
+ * The names an account is addressed by: its current username, its address
+ * aliases and, for the token exchange only, its former usernames the account
+ * still holds (an authorization made before a rename keeps working there).
+ */
+export type AccountNames = { username: string; addressAliases?: readonly string[]; formerUsernames?: readonly string[] };
+
+/** The names a consent may bind: never a former username (a new authorization uses the current address). */
+export type ConsentAccountNames = { username: string; addressAliases?: readonly string[]; formerUsernames?: never };
 
 /**
  * Whether a per-user audience's label names this account. The platform's own
  * names are checked first: a legacy account that holds one gets no address
- * under it. Former usernames are not accepted (the address is the current
- * name). No predicate (a unit test) means no name is routed.
+ * under it. Then the current username, an address alias, and the former
+ * usernames when given (the exchange's subject only). No predicate (a unit
+ * test) means no name is routed.
  */
 export function labelNamesAccount (label: string, account: AccountNames, isPlatformRoutedLabel?: PlatformRoutedLabel | null): boolean {
   const l = label.toLowerCase();
   if (isPlatformRoutedLabel != null && isPlatformRoutedLabel(l)) return false;
   if (typeof account.username === 'string' && account.username.toLowerCase() === l) return true;
-  return (account.addressAliases ?? []).some((a) => typeof a === 'string' && a.toLowerCase() === l);
+  if ((account.addressAliases ?? []).some((a) => typeof a === 'string' && a.toLowerCase() === l)) return true;
+  return (account.formerUsernames ?? []).some((a) => typeof a === 'string' && a.toLowerCase() === l);
 }
 
 /**
@@ -65,7 +74,7 @@ export function labelNamesAccount (label: string, account: AccountNames, isPlatf
 export function consentAudienceRefusal (
   audience: string | undefined,
   client: OAuthClient | null,
-  account: AccountNames,
+  account: ConsentAccountNames,
   isPlatformRoutedLabel?: PlatformRoutedLabel | null
 ): null | 'mismatch' | 'unlisted' {
   if (audience == null) return null;
