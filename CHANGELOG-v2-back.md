@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Mail: `html-to-text` 10, no `deepmerge` left at runtime
+
+- `overrides`: `html-to-text` raised to `^10.0.1` (locked at 10.0.1) under `email-templates` 13.0.1, which
+  still asks for `^9.0.5`. 10.x replaces `deepmerge` 4.3.1 (GHSA-gcqx-w48m-w2h4, prototype poisoning in
+  `mergeObject()`, no patched release) with `deepmerge-ts`; same CommonJS `convert` export, no option
+  removed, Node >= 20.19. `mailparser` already used 10.0.1, so the tree now holds one copy.
+  `npm audit --omit=dev` is clean; mail tests unchanged.
+
 ### Adapter routes: the addressed account
 
 - `api-server/src/addressedAccount.ts`: `addressedLabelOf(host, isPlatformRoutedLabel, domain)`, the
