@@ -9,7 +9,8 @@
   access created from that same request, instead of being reported as mismatching (and asked for
   consent again) at every sign-in. `checkedPermissions` carry the canonical ids, with `defaultName`
   or `name` resolved as before. A request naming the same stream twice in any spelling is refused
-  with the error `accesses.create` gives it (`invalid-request-structure`), instead of being checked.
+  with the error `accesses.create` gives it (`invalid-request-structure`), instead of being checked:
+  the same refusal as before, one step earlier (the create that followed the check failed with it).
 
 ### Account transfer to a beneficiary
 
