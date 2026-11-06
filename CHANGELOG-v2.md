@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### OAuth: per-user resource addresses
+
+- **Added: a registered audience may name each account's own address.** An `allowedAudiences`
+  entry (a registry client's `--audience`, or the metadata-document template's
+  `client.allowedAudiences`) of the form `https://{username}.<host>[:port][/path][?query]`
+  (exactly one `{username}`, as the first host label, at most 462 bytes) matches a requested `aud`
+  / `resource` whose first host label has the shape of an account name; the address is stored, in
+  the entry's spelling with that label, as any audience. Exact audiences keep working beside it and
+  are matched first: a value equal to an exact entry binds no account. Any other placement of
+  `{username}` is refused when the client is written.
+- **Added: such an address is bound to the signed-in account at consent.** The signed-in
+  `/oauth2/authorize/offer` and `/oauth2/authorize/accept` refuse it unless its label is the
+  account's current username and not a name the platform answers itself (a service host, a core
+  id, a static DNS entry, an OAuth issuer label, a hosted site): `403 { "error": "access_denied",
+  "error_description": "the requested resource names another account's address", "reason":
+  "audience-account-mismatch" }`, before anything is written, audited as `oauth.consent.refused`
+  with that reason and no username. A former username is not accepted for a new authorization;
+  existing authorizations keep their address after a username change, including at the token
+  exchange. An authorization whose audience the client's list no longer holds
+  (or whose client is gone) answers `400 invalid_target`, `reason: "audience-not-listed"`, at the
+  signed-in `/offer` and at `/accept` (restart the flow). Introspection `aud`, the token
+  response and the data API flag `oauth.audienceBoundSessions` treat the address as any audience.
+- **Added: token exchange accepts a subject token issued for such an address** when the resource
+  server lists the matching entry; on the home core the address must name the subject account (its
+  current username, or a former username it still holds) (`invalid_grant` otherwise, audit reason
+  `audience-account-mismatch`).
+- **Added: token exchange accepts `subject_token_resource`**, the resource URL at which the
+  resource server received the subject token; when given it must be the token's `aud` (`400
+  invalid_target`, "the subject token was not issued for the resource it was presented at", audit
+  reason `subject-resource-mismatch`), so a token issued for one account's address is not exchanged
+  when presented at another's. Checked before the home core is named. `resource` / `audience`
+  keep naming this server. See `docs/oauth2.md` § 1c "Per-user addresses" and § 1e.
+
 ### `accesses.checkApp` reads stream ids as `accesses.create` stores them
 
 - **`accesses.checkApp` canonicalises the requested stream ids** the way `accesses.create` and

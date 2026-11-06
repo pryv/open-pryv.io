@@ -726,9 +726,10 @@ class Platform {
   /**
    * Re-read the names an account may not take: the hosted-site names
    * advertised by every core (plus this core's own), the core ids, the
-   * `dns.staticEntries` keys, the runtime DNS record names and this core's
-   * OAuth issuer label (when the issuer host is `<label>.<dns.domain>`: the
-   * name answers the platform's endpoints, never an account). Registration
+   * `dns.staticEntries` keys and the OAuth issuer label of every core (this
+   * core's from its configuration, the others' from their `dnsNames`; an
+   * issuer host `<label>.<dns.domain>` answers the platform's endpoints,
+   * never an account) and the runtime DNS record names. Registration
    * and the change-username flow call it so a name added on another core
    * after this one booted is still refused as a username. `maxAgeMs` > 0
    * skips the read when the last one is that recent (the public, advisory
@@ -741,20 +742,38 @@ class Platform {
     const names = new Set<string>([this.coreId.toLowerCase()]);
     for (const info of cores) {
       if (typeof info?.id === 'string') names.add(info.id.toLowerCase());
+      // Every core's static entries and issuer label, as it advertises them
+      // (see registerSelf), so a name only another core answers is refused too.
+      if (Array.isArray(info?.dnsNames)) {
+        for (const name of info.dnsNames) {
+          if (typeof name === 'string' && name !== '') names.add(name.toLowerCase());
+        }
+      }
     }
-    const staticEntries = this.#config?.get('dns:staticEntries');
-    if (staticEntries != null && typeof staticEntries === 'object') {
-      for (const name of Object.keys(staticEntries)) names.add(name.toLowerCase());
-    }
+    for (const name of this.#localDnsNames()) names.add(name);
     for (const row of await this.#db.getAllDnsRecords()) {
       if (typeof row?.subdomain === 'string') names.add(row.subdomain.toLowerCase());
     }
-    // Not gated on dns.active: a member without a DNS of its own is still
-    // reached under the platform's domain.
-    const issuerLabel = this.#config == null ? null : issuerLabelUnderDomain(this.#config);
-    if (issuerLabel != null) names.add(issuerLabel);
     this.#platformDnsNames = names;
     this.#platformNamesReadAt = Date.now();
+  }
+
+  /**
+   * This core's own platform names: its `dns.staticEntries` keys and its
+   * OAuth issuer label under `dns.domain` (not gated on dns.active: a member
+   * without a DNS of its own is still reached under the platform's domain),
+   * lowercased, sorted. Advertised on its core-info row as `dnsNames`.
+   */
+  #localDnsNames (): string[] {
+    if (this.#config == null) return [];
+    const names = new Set<string>();
+    const staticEntries = this.#config.get('dns:staticEntries');
+    if (staticEntries != null && typeof staticEntries === 'object') {
+      for (const name of Object.keys(staticEntries)) names.add(name.toLowerCase());
+    }
+    const issuerLabel = issuerLabelUnderDomain(this.#config);
+    if (issuerLabel != null) names.add(String(issuerLabel).toLowerCase());
+    return [...names].sort();
   }
 
   /**
@@ -815,6 +834,10 @@ class Platform {
     // with the cores that list it, and every core reserves it as a username.
     const sites = this.#localHostedSiteNames().sort();
     if (sites.length > 0) info.sites = sites;
+    // And the names this core alone answers (static entries, issuer label):
+    // every core refuses them as usernames and never reads them as an account.
+    const dnsNames = this.#localDnsNames();
+    if (dnsNames.length > 0) info.dnsNames = dnsNames;
     await this.#db.setCoreInfo(this.coreId, info);
     // Refresh the in-memory coreId→URL cache so this core's own entry is
     // visible immediately. Changes made by OTHER cores are picked up by the
@@ -849,6 +872,8 @@ class Platform {
     // Only when set, so the hash of a platform without hosted sites is unchanged.
     const siteNames = this.#localHostedSiteNames().sort();
     if (siteNames.length > 0) snapshot['hostedSites.names'] = siteNames;
+    // Not the names this core advertises as `dnsNames` (static entries, issuer
+    // label): they are per core by design, the snapshot must match across cores.
     const adminKey = this.#config.get('auth:adminAccessKey');
     const secondSecret = this.#config.get('auth:filesReadTokenSecret');
     snapshot['auth.adminAccessKey.fingerprint'] = adminKey && secondSecret ? adminKeyFingerprint(String(adminKey), String(secondSecret)) : null;
@@ -1652,8 +1677,8 @@ class Platform {
   /**
    * Whether the embedded DNS answers the name itself, before its username
    * lookup: a service host (`reg`, `access`, `mfa`, `lsc`), a hosted-site
-   * name of any core, a core id, a static entry, a runtime DNS record name or
-   * this core's issuer label (as of the last refreshPlatformNames()). A
+   * name of any core, a core id, a static entry or issuer label of any core,
+   * or a runtime DNS record name (as of the last refreshPlatformNames()). A
    * request on `<name>.<domain>` never reaches an account, so the
    * username-rewriter skips it. The registration-only rules (`pryv*`, route
    * segments) are left out: an account that predates them keeps its host.

@@ -33,7 +33,7 @@ import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { ParsedScope } from '../scopeRegistry.ts';
 import type { OAuthClient } from '../storage.ts';
-import { MAX_RESOURCE_BYTES, isValidResource, sameResource, withinResourceCap } from '../resourceIndicator.ts';
+import { MAX_RESOURCE_BYTES, isValidResource, matchAudience, sameResource, withinResourceCap } from '../resourceIndicator.ts';
 const require = createRequire(import.meta.url);
 
 // Kept on the require shim: converting these to typed ESM imports surfaces
@@ -175,7 +175,8 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     // Resource indicator: `aud`, or its RFC 8707 spelling `resource`, names
     // the one resource server the authorization is for. Both given must name
     // the same one (trailing slash ignored). A client registered with a list
-    // of audiences must name one of them; any other client may name one that
+    // of audiences must name one of them (a per-user one names each
+    // account's own address); any other client may name one that
     // is well-formed. Every audience refusal is `invalid_target` (RFC 8707
     // § 2), and its description never lists the registered audiences.
     const listed: string[] | null = Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0
@@ -204,7 +205,9 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       if (requested == null) {
         return redirectError('invalid_target', 'aud or resource is required for this client');
       }
-      audience = listed.find((a: string) => sameResource(a, requested));
+      // An exact entry, or a per-user one instantiated with the value's label
+      // (its shape only: the account is known, and bound, at consent).
+      audience = matchAudience(requested, listed)?.audience;
       if (audience == null) return notListed(requestedName);
     } else if (requested != null) {
       if (!isValidResource(requested)) return malformed(requestedName);

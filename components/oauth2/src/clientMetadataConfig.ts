@@ -28,6 +28,7 @@
  */
 
 import { isLifetime } from './clientLifetimes.ts';
+import { audienceProbe } from './audienceTemplate.ts';
 
 export type ClientMetadataMode = 'off' | 'allowList' | 'any';
 
@@ -231,9 +232,16 @@ function templateProblems (raw: unknown, problems: string[]): void {
     problems.push(`${at}.allowedAudiences is required: at least one resource URL such a client may name (aud / resource)`);
   } else {
     for (const a of audiences) {
+      // A per-user audience (`https://{username}.<host>/...`) is checked as
+      // the URL it names with a probe label in place of the placeholder.
+      const checked = typeof a === 'string' ? audienceProbe(a) : null;
+      if (checked != null && 'problem' in checked) {
+        problems.push(`${at}.allowedAudiences: ${checked.problem}`);
+        continue;
+      }
       let u: URL | null = null;
-      try { u = new URL(String(a)); } catch { u = null; }
-      if (typeof a !== 'string' || u == null || u.protocol !== 'https:' || u.hash !== '' || u.username !== '' || u.password !== '') {
+      try { u = checked != null ? new URL(checked.probe) : null; } catch { u = null; }
+      if (u == null || u.protocol !== 'https:' || u.hash !== '' || u.username !== '' || u.password !== '') {
         problems.push(`${at}.allowedAudiences: ${JSON.stringify(a)} must be an absolute https URL without fragment or user information`);
       }
     }

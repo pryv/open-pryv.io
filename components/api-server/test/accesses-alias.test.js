@@ -199,6 +199,29 @@ describe('[ALIA] access aliases (randomAlias)', function () {
     assert.deepStrictEqual((await usersIndex.getAliasesForId(userId)).sort(), before.sort(), 'the minted alias was given back');
   });
 
+  it('[AL17] a create by an aliased access refused by the insert gives back only an alias it minted, never the one it inherits', async function () {
+    const usersIndex = await require('storage').getUsersLocalIndex();
+    const userId = fixtureUser.attrs.id;
+    const app = await createAccess({ name: 'al17 app', type: 'app', randomAlias: true, permissions: [{ streamId: stream0.attrs.id, level: 'contribute' }] }, await ownerToken());
+    assert.equal(app.status, 201, JSON.stringify(app.body));
+    const { alias, token } = app.body.access;
+    const viaAlias = (body) => coreRequest.post('/' + alias + '/accesses').set('Authorization', token).send(body);
+    const child = await viaAlias({ name: 'al17 child', permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+    assert.equal(child.status, 201, JSON.stringify(child.body));
+    assert.equal(child.body.access.alias, alias);
+    const before = await usersIndex.getAliasesForId(userId);
+    // The child's token again: refused by the insert, with the inherited alias and with a minted one.
+    for (const extra of [{}, { randomAlias: true }]) {
+      const res = await viaAlias({ name: 'al17 refused ' + cuid.slug(), token: child.body.access.token, ...extra, permissions: [{ streamId: stream0.attrs.id, level: 'read' }] });
+      assert.equal(res.status, 409, JSON.stringify(res.body));
+    }
+    assert.deepStrictEqual((await usersIndex.getAliasesForId(userId)).sort(), before.sort(), 'the inherited alias is kept, the minted one given back');
+    for (const holder of [token, child.body.access.token]) {
+      const res = await coreRequest.get('/' + alias + '/access-info').set('Authorization', holder);
+      assert.equal(res.status, 200, 'the alias still routes for its holders: ' + JSON.stringify(res.body));
+    }
+  });
+
   it('[AL04] mints unique aliases across many accesses (no collision)', async function () {
     const seen = new Set();
     for (let i = 0; i < 12; i++) {

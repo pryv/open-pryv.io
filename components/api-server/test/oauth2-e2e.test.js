@@ -344,6 +344,106 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
         'data-grant must keep the offer\'s selfRevoke:forbidden verbatim: ' + JSON.stringify(dataGrant.permissions));
     });
 
+    it('[OPUE4] an app-account client listing a per-user resource: bound at /accept; the code carries the audience, the session no stamp', async function () {
+      const platformDB = require('storages').platformDB;
+      const perUserId = 'app-pu-' + cuid();
+      const at = (name) => 'https://' + name + '.example.com/adapter/calendar/api';
+      await storage.setClient(platformDB, {
+        clientId: perUserId,
+        redirectUris: [REDIRECT_URI],
+        scope: ['cmc:' + OFFER_NAME],
+        cmcOffers: { [OFFER_NAME]: { capabilityUrl } },
+        grantTypes: ['authorization_code'],
+        allowedAudiences: ['https://{username}.example.com/adapter/calendar/api'],
+        clientName: 'OAuth E2E per-user app',
+        updatedAt: Date.now(),
+      });
+      try {
+        const run = async (aud) => {
+          const { verifier, challenge } = pkce();
+          const authRes = await coreRequest.get('/oauth2/authorize').query({
+            client_id: perUserId,
+            redirect_uri: REDIRECT_URI,
+            response_type: 'code',
+            state: 'csrf-' + cuid(),
+            code_challenge: challenge,
+            code_challenge_method: 'S256',
+            scope: 'cmc:' + OFFER_NAME,
+            aud,
+          });
+          assert.equal(authRes.status, 302, describeRes(authRes));
+          const signedState = new URL(authRes.headers.location).searchParams.get('state');
+          const acceptRes = await coreRequest.post('/oauth2/authorize/accept')
+            .send({ state: signedState, username, userToken: personalToken, grantedPermissions: DEFAULT_GRANTED });
+          return { acceptRes, verifier };
+        };
+        const other = await run(at('someone-else'));
+        assert.equal(other.acceptRes.status, 403, describeRes(other.acceptRes));
+        assert.equal(other.acceptRes.body.reason, 'audience-account-mismatch');
+        const token = async (resource) => {
+          const own = await run(at(username));
+          assert.equal(own.acceptRes.status, 200, describeRes(own.acceptRes));
+          const code = new URL(own.acceptRes.body.redirectTo).searchParams.get('code');
+          return await coreRequest.post('/oauth2/token').type('form').send({
+            grant_type: 'authorization_code', code, code_verifier: own.verifier, client_id: perUserId, redirect_uri: REDIRECT_URI, resource,
+          });
+        };
+        // The code row holds the audience: another resource is refused.
+        assert.equal((await token(at('someone-else'))).body.error, 'invalid_target');
+        const ok = await token(at(username));
+        assert.equal(ok.status, 200, describeRes(ok));
+        const accessesRes = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+        const session = accessesRes.body.accesses.find((a) => a.token === ok.body.access_token);
+        assert.ok(session != null);
+        assert.equal(session.clientData?.oauth?.audience, undefined, 'no audience stamp on an app-account session');
+      } finally {
+        try { await storage.deleteClient(platformDB, perUserId); } catch (_) { /* best-effort */ }
+      }
+    });
+
+    it('[OPUE14] an app-account client whose list changed, or whose row was deleted, between /authorize and /accept: refused audience-not-listed, no code', async function () {
+      const platformDB = require('storages').platformDB;
+      const perUser = 'https://{username}.example.com/adapter/calendar/api';
+      for (const change of ['narrowed', 'deleted']) {
+        const appId = 'app-' + change + '-' + cuid();
+        const row = {
+          clientId: appId,
+          redirectUris: [REDIRECT_URI],
+          scope: ['cmc:' + OFFER_NAME],
+          cmcOffers: { [OFFER_NAME]: { capabilityUrl } },
+          grantTypes: ['authorization_code'],
+          allowedAudiences: [perUser],
+          clientName: 'OAuth E2E ' + change + ' app',
+          updatedAt: Date.now(),
+        };
+        await storage.setClient(platformDB, row);
+        try {
+          const { challenge } = pkce();
+          const authRes = await coreRequest.get('/oauth2/authorize').query({
+            client_id: appId,
+            redirect_uri: REDIRECT_URI,
+            response_type: 'code',
+            state: 'csrf-' + cuid(),
+            code_challenge: challenge,
+            code_challenge_method: 'S256',
+            scope: 'cmc:' + OFFER_NAME,
+            aud: 'https://someone-else.example.com/adapter/calendar/api',
+          });
+          assert.equal(authRes.status, 302, describeRes(authRes));
+          const signedState = new URL(authRes.headers.location).searchParams.get('state');
+          if (change === 'deleted') await storage.deleteClient(platformDB, appId);
+          else await storage.setClient(platformDB, { ...row, allowedAudiences: ['https://rs.example.com/other'], updatedAt: Date.now() });
+          const acceptRes = await coreRequest.post('/oauth2/authorize/accept')
+            .send({ state: signedState, username, userToken: personalToken, grantedPermissions: DEFAULT_GRANTED });
+          assert.equal(acceptRes.status, 400, change + ': ' + describeRes(acceptRes));
+          assert.deepEqual([acceptRes.body.error, acceptRes.body.reason], ['invalid_target', 'audience-not-listed'], change);
+          assert.equal(acceptRes.body.redirectTo, undefined, change + ': no code');
+        } finally {
+          try { await storage.deleteClient(platformDB, appId); } catch (_) { /* best-effort */ }
+        }
+      }
+    });
+
     it('[OE07] the grant emits user-scoped oauth.* audit rows into the user audit trail', async function () {
       const r = await runFullFlow();
       assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));

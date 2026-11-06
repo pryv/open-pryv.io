@@ -458,6 +458,23 @@ describe('[CKBS] bin/check-config.js on a core joined with --bootstrap', functio
 describe('[CKOC] bin/check-config.js oauth.consentUrl', function () {
   this.timeout(60000);
 
+  it('[OPUC3] a per-user entry in the metadata-document template passes; one with the placeholder elsewhere is a problem', () => {
+    const block = (audience) => BASE + `
+oauth:
+  clientMetadataDocuments:
+    mode: allowList
+    allowedHosts: [client.example]
+    client:
+      scope: read/a
+      allowedAudiences: ['${audience}']
+`;
+    const ok = runCheck(block('https://{username}.example.com/adapter/calendar/api'));
+    assert.doesNotMatch(ok.stdout + ok.stderr, /allowedAudiences/, ok.stdout + ok.stderr);
+    const bad = runCheck(block('https://example.com/{username}/adapter/calendar/api'));
+    assert.strictEqual(bad.status, 1, bad.stdout + bad.stderr);
+    assert.match(bad.stderr, /allowedAudiences: "https:\/\/example\.com\/\{username\}\/adapter\/calendar\/api" is not a valid per-user audience/);
+  });
+
   it('[CKOC1] a config without oauth.consentUrl passes with a warning; setting it clears the warning', () => {
     const without = runCheck(BASE);
     assert.strictEqual(without.status, 0, without.stdout + without.stderr);

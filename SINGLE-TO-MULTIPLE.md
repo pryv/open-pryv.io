@@ -220,6 +220,11 @@ site. A core whose folder is missing does not start, so it never advertises a si
 serve. The names appear in the `[platform-config-snapshot]` boot line (`hostedSites.names`),
 so a core with a different name set shows a different hash.
 
+Likewise, each core advertises its own `dns.staticEntries` names and its `oauth.issuer` label
+(when the issuer host is `<label>.<dns.domain>`) as `dnsNames` in its core-info row: every core
+refuses them as usernames and never reads them as an account's host (nor as an account's
+per-user OAuth address). These are per-core names, so they are not in the snapshot line.
+
 ## Cluster security
 
 - **Raft channel uses mTLS.** Bootstrap-issued cores ship with `storages.engines.rqlite.tls.{caFile,certFile,keyFile,verifyClient:true}` set in `bootstrap-config.yml`. Both ends of every Raft connection verify the peer's cert against the cluster CA — a stranger on the network cannot join or impersonate a peer.

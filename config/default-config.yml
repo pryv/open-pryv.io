@@ -1207,7 +1207,9 @@ oauth:
   # as a registry client: identity and display from the document, what it may
   # be granted from `client` below (never from the document). The consent UI
   # must show the document's host next to the client's name.
-  # PLATFORM-WIDE: identical on every core, except client.allowedAudiences.
+  # PLATFORM-WIDE: identical on every core, except client.allowedAudiences when
+  # it names each core's own resource URL (a per-user entry,
+  # https://{username}.<host>/..., is the same on every core).
   clientMetadataDocuments:
     # off: a URL client_id is an unknown client. allowList: only documents on
     # allowedHosts (the cautious setting). any: any https host (any party can
@@ -1239,7 +1241,9 @@ oauth:
     # identity. `bin/oauth-client.js template-from <clientId>` prints this block
     # from an existing registry client. Required when mode is not off: scope
     # (the maximum scope set, in the extension's grammar) and allowedAudiences
-    # (the resource URLs such a client may name: aud / resource).
+    # (the resource URLs such a client may name: aud / resource;
+    # https://{username}.<host>/... names each account's own address, bound at
+    # consent to the signed-in account).
     client:
       scope: ''
       allowedAudiences: []

@@ -647,6 +647,56 @@ describe('[RG2C] Two-core integration tests', function () {
         if (row != null) await platformDB.setCoreInfo('core-c', { ...row, available: false });
       }
     });
+
+    it('[OPUR1] a core\'s static entry and issuer label are refused as usernames by another core, at registration and rename', async () => {
+      let coreC = null;
+      try {
+        coreC = await startCore({
+          DNS_DOMAIN: DOMAIN,
+          RQLITE_URL,
+          ADMIN_KEY,
+          CORE_PORT: String(CORE_C_PORT),
+          CORE_ID: 'core-c',
+          CORE_IP: '127.0.0.3',
+          CORE_DATA_NAME: CORE_C_DATA,
+          STATIC_ENTRIES_JSON: JSON.stringify({ 'svc-c': { a: ['127.0.0.9'] } }),
+          OAUTH_ISSUER: `https://auth-c.${DOMAIN}`
+        });
+        const row = await platformDB.getCoreInfo('core-c');
+        assert.deepStrictEqual(row.dnsNames, ['auth-c', 'svc-c']);
+        for (const name of ['svc-c', 'auth-c']) {
+          const res = await register(CORE_B_PORT, name);
+          assert.strictEqual(res.status, 409, `${name} on core B: ${JSON.stringify(res.body)}`);
+          assert.strictEqual(res.body.error.id, 'item-already-exists');
+        }
+        const holder = 'opur' + Date.now().toString(36);
+        const reg = await register(CORE_B_PORT, holder);
+        assert.strictEqual(reg.status, 201, JSON.stringify(reg.body));
+        const token = new URL(reg.body.apiEndpoint).username;
+        for (const name of ['svc-c', 'auth-c']) {
+          const res = await httpRequest(CORE_B_PORT, 'POST', '/' + holder + '/account/change-username', { newUsername: name }, { Authorization: token });
+          assert.strictEqual(res.status, 400, `${name}: ${JSON.stringify(res.body)}`);
+          assert.match(JSON.stringify(res.body), /reserved/);
+        }
+        // Core B's username rewriter (the same predicate as the per-user OAuth binding) now
+        // reads both names as platform hosts: the path is not hoisted into a username.
+        const answer = async (host) => {
+          const res = await getWithHost(CORE_B_PORT, '/service/info', host);
+          let body;
+          try { body = JSON.parse(res.body); } catch { body = res.body; }
+          if (body != null && typeof body === 'object') delete body.meta;
+          return [res.status, body];
+        };
+        const root = await answer('127.0.0.1');
+        const asUser = await answer(`opurnobody${Date.now().toString(36)}.${DOMAIN}`);
+        assert.notDeepStrictEqual(asUser, root, 'the control host is read as a username');
+        for (const name of ['svc-c', 'auth-c']) assert.deepStrictEqual(await answer(`${name}.${DOMAIN}`), root, name);
+      } finally {
+        await stopCore(coreC);
+        const row = await platformDB.getCoreInfo('core-c');
+        if (row != null) await platformDB.setCoreInfo('core-c', { ...row, available: false });
+      }
+    });
   });
 
   describe('Admin endpoints across cores', () => {
@@ -1207,12 +1257,12 @@ describe('[RG2C] Two-core integration tests', function () {
     });
 
     // Consent and code exchange on the home core: one refresh chain.
-    async function newChain ({ resource } = {}) {
+    async function newChain ({ resource, clientId = appId } = {}) {
       const username = user.username;
       const verifier = crypto.randomBytes(32).toString('base64url');
       const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
       const q = new URLSearchParams({
-        client_id: appId,
+        client_id: clientId,
         redirect_uri: REDIRECT,
         response_type: 'code',
         state: 'mc',
@@ -1232,7 +1282,7 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.strictEqual(accept.status, 200, JSON.stringify(accept.body));
       const code = new URL(accept.body.redirectTo).searchParams.get('code');
       const token = await httpRequest(CORE_B_PORT, 'POST', '/oauth2/token', {
-        grant_type: 'authorization_code', code, code_verifier: verifier, client_id: appId, redirect_uri: REDIRECT
+        grant_type: 'authorization_code', code, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT
       });
       assert.strictEqual(token.status, 200, JSON.stringify(token.body));
       return token.body;
@@ -1351,6 +1401,45 @@ describe('[RG2C] Two-core integration tests', function () {
         assert.strictEqual(read.status, 200, JSON.stringify(read.body));
       } finally {
         try { await oauthStorage.deleteClient(platformDB, exchangerId); } catch (_) { /* best-effort */ }
+      }
+    });
+
+    it('[OPUX4] a per-user subject token presented on the other core: the audience matches, then 421; a resource server not listing it, or a mismatching subject_token_resource, learns no core URL', async () => {
+      const template = 'https://{username}.multicore.test/rs';
+      const mine = 'https://' + user.username + '.multicore.test/rs';
+      const clientId = 'PerUser.' + Date.now().toString(36);
+      const exchangerId = 'RsPu.' + Date.now().toString(36);
+      const otherId = 'RsOther.' + Date.now().toString(36);
+      const confidential = { tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, anyAudience: undefined, canExchange: true };
+      await oauth2.persistClient(platformDB, registryRow({ clientId, anyAudience: undefined, allowedAudiences: [template] }));
+      await oauth2.persistClient(platformDB, registryRow({ clientId: exchangerId, ...confidential, allowedAudiences: [template] }));
+      await oauth2.persistClient(platformDB, registryRow({ clientId: otherId, ...confidential, allowedAudiences: ['https://rs.multicore.test/other'] }));
+      try {
+        const subject = await newChain({ resource: mine, clientId });
+        const exchangeAs = (port, id, extra = {}) => httpRequest(port, 'POST', '/oauth2/token', {
+          grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+          subject_token: subject.access_token,
+          subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          ...extra
+        }, { Authorization: 'Basic ' + Buffer.from(id + ':' + rsSecret.plaintext).toString('base64') });
+        const onA = await exchangeAs(CORE_A_PORT, exchangerId);
+        assert.strictEqual(onA.status, 421, JSON.stringify(onA.body));
+        assert.strictEqual(trim(onA.body.coreUrl), trim(CORE_B_URL));
+        const foreign = await exchangeAs(CORE_A_PORT, otherId);
+        assert.deepStrictEqual([foreign.status, foreign.body.error, foreign.body.coreUrl], [400, 'invalid_target', undefined]);
+        // [OPUX9] the presented resource is checked before the core is named.
+        const elsewhere = await exchangeAs(CORE_A_PORT, exchangerId, { subject_token_resource: 'https://someone-else.multicore.test/rs' });
+        assert.deepStrictEqual([elsewhere.status, elsewhere.body.error, elsewhere.body.coreUrl], [400, 'invalid_target', undefined]);
+        assert.ok(!JSON.stringify(elsewhere.body).includes(String(CORE_B_PORT)), 'no core URL');
+        const matching = await exchangeAs(CORE_A_PORT, exchangerId, { subject_token_resource: mine });
+        assert.strictEqual(matching.status, 421, JSON.stringify(matching.body));
+        // On the home core: the label is the subject's username, exchanged.
+        const onB = await exchangeAs(CORE_B_PORT, exchangerId, { subject_token_resource: mine });
+        assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
+      } finally {
+        for (const id of [clientId, exchangerId, otherId]) {
+          try { await oauthStorage.deleteClient(platformDB, id); } catch (_) { /* best-effort */ }
+        }
       }
     });
 

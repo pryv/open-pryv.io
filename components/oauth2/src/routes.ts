@@ -27,6 +27,7 @@ import type { RevokeChain, RetireSession } from './grants/refresh_token.ts';
 import type { IntrospectAccess } from './introspection.ts';
 import type { RevokeSession } from './revocation.ts';
 import type { ReadSubjectSession, IssueDerivedSession } from './grants/token_exchange.ts';
+import type { PlatformRoutedLabel } from './audienceAccount.ts';
 import { handleIntrospect } from './introspection.ts';
 import { handleRevoke } from './revocation.ts';
 import { clientMetadataDocumentsOn } from './clientMetadataConfig.ts';
@@ -189,6 +190,12 @@ export type Deps = {
   readSubjectSession?: ReadSubjectSession;
   /** Token exchange: find or mint the derived session on this core. */
   issueDerivedSession?: IssueDerivedSession;
+  /**
+   * Whether the platform answers a host label itself (a service host, a core
+   * id, a static entry, a hosted site, an issuer label): such a label never
+   * names an account's address in a per-user audience. Absent: none is.
+   */
+  isPlatformRoutedLabel?: PlatformRoutedLabel;
 };
 
 /**
@@ -290,6 +297,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       platform: deps.platform,
       resolveUser: deps.resolveUser,
       ...(deps.readRegistryGrant != null ? { readRegistryGrant: deps.readRegistryGrant } : {}),
+      ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
     })));
 
   app.post!('/oauth2/authorize/accept',
@@ -299,6 +307,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       resolveUser: deps.resolveUser,
       createAccess: deps.createAccess,
       ...(deps.readRegistryGrant != null ? { readRegistryGrant: deps.readRegistryGrant } : {}),
+      ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
     })));
 
   app.post!('/oauth2/authorize/refuse',
@@ -321,6 +330,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       ...(deps.readSubjectSession != null ? { readSubjectSession: deps.readSubjectSession } : {}),
       ...(deps.issueDerivedSession != null ? { issueDerivedSession: deps.issueDerivedSession } : {}),
       ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+      ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
     })));
 
   if (introspection) {

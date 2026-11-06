@@ -129,4 +129,37 @@ describe('[PLHS] hosted-site names are reserved usernames', () => {
     assert.equal('sites' in db.rows.get('core-a'), false);
     assert.equal('hostedSites.names' in platform.getPlatformConfigSnapshot().snapshot, false);
   });
+
+  it('[OPUR3] registerSelf advertises the static entries and the issuer label as dnsNames; another core refuses and routes them', async () => {
+    const a = makePlatform({
+      config: { 'dns:domain': 'example.org', 'dns:staticEntries': { 'SVC-A': { cname: 'x.example.org' } }, 'oauth:issuer': 'https://auth-a.example.org' },
+    });
+    await a.platform.registerSelf();
+    assert.deepEqual(a.db.rows.get('core-a').dnsNames, ['auth-a', 'svc-a']);
+    // Per-core names stay out of the platform-config snapshot: its hash is the one of a core without them.
+    const snapshot = a.platform.getPlatformConfigSnapshot();
+    assert.equal('dns.names' in snapshot.snapshot, false);
+    const { platform: plain } = makePlatform({ config: { 'dns:domain': 'example.org' } });
+    assert.equal(snapshot.hash, plain.getPlatformConfigSnapshot().hash);
+    // Core B, configured with neither name, learns them from core A's row.
+    const b = new Platform();
+    b._setDependenciesForTests(a.db, null, makeConfig({ 'core:id': 'core-b', 'dns:domain': 'example.org' }));
+    assert.equal(b.isNameRoutedByPlatform('auth-a'), false, 'not known before a read');
+    for (const name of ['auth-a', 'svc-a']) await assertRegistrationRefused(b, name);
+    assert.equal(b.isNameRoutedByPlatform('auth-a'), true);
+    assert.equal(b.isNameRoutedByPlatform('SVC-A'), true);
+    assert.equal(b.isUsernameReserved('auth-a'), true);
+    assert.equal(b.isUsernameReserved('someuser'), false);
+  });
+
+  it('[OPUR2] a core without static entries and with a derived issuer advertises no dnsNames (snapshot hash unchanged)', async () => {
+    const { platform, db } = makePlatform({ config: { 'dns:domain': 'example.org' } });
+    const before = platform.getPlatformConfigSnapshot().hash;
+    await platform.registerSelf();
+    assert.equal('dnsNames' in db.rows.get('core-a'), false);
+    assert.equal('dns.names' in platform.getPlatformConfigSnapshot().snapshot, false);
+    assert.equal(platform.getPlatformConfigSnapshot().hash, before);
+    const { platform: issuerOutside } = makePlatform({ config: { 'dns:domain': 'example.org', 'oauth:issuer': 'https://auth.other.test' } });
+    assert.equal('dns.names' in issuerOutside.getPlatformConfigSnapshot().snapshot, false);
+  });
 });

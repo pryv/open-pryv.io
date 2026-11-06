@@ -34,6 +34,7 @@ import { jwksUriProblem } from './jwksUri.ts';
 import { isLifetime } from './clientLifetimes.ts';
 import { MAX_PREVIOUS_SECRET_WINDOW_MS } from './clientSecret.ts';
 import { isMetadataClientKey, metadataClientKey, clientIdUrlSyntaxProblem } from './clientMetadataId.ts';
+import { audienceProbe } from './audienceTemplate.ts';
 const require = createRequire(import.meta.url);
 
 const storage = require('./storage.ts');
@@ -358,8 +359,12 @@ function validateRegistryClient (client: OAuthClient): void {
     throw new Error('registry client: an audience list and "any audience" exclude each other');
   }
   for (const a of audiences) {
+    // A per-user audience (`https://{username}.<host>/...`) is checked as the
+    // URL it names with a probe label in place of the placeholder.
+    const checked = audienceProbe(String(a));
+    if ('problem' in checked) throw new Error('allowedAudiences: ' + checked.problem);
     let u: URL;
-    try { u = new URL(a); } catch { throw new Error(`allowedAudiences: "${a}" is not a valid URL`); }
+    try { u = new URL(checked.probe); } catch { throw new Error(`allowedAudiences: "${a}" is not a valid URL`); }
     if (u.protocol !== 'https:' || u.hash !== '') throw new Error(`allowedAudiences: "${a}" must be an absolute https URL without fragment`);
   }
   // The resource-server role of token exchange: the caller authenticates, and

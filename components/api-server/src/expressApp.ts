@@ -11,7 +11,8 @@ const express = require('express');
 const middleware = require('middleware');
 const Paths = require('./routes/Paths.ts');
 const { getConfig } = require('@pryv/boiler');
-const { usernameInHost, ignoredUsernameSubdomains, ROOT_ONLY_PATHS } = require('business/src/usernameSubdomains.ts');
+const { usernameInHost, ROOT_ONLY_PATHS } = require('business/src/usernameSubdomains.ts');
+const { platformRoutedLabels } = require('./platformLabels.ts');
 const { configureTrustedProxies, expressTrustProxy } = require('middleware/src/clientIp.ts');
 const { effectiveMaxSizeMb } = require('./middleware/uploads.ts');
 const { isOAuthSurface, corsMiddleware: oauthCorsMiddleware } = require('oauth2/src/cors.ts');
@@ -58,17 +59,15 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
     // DnsServer.RESERVED_SERVICE_NAMES); operator-owned staticEntries names
     // (sw, mail, etc.) and hosted-site names (answered before express) are
     // harvested from config too. The HFS worker uses the same list.
-    const staticIgnored: string[] = ignoredUsernameSubdomains(config);
     // On top of it, every name the embedded DNS answers itself, so no request
     // on it reaches an account (core ids, static entries and runtime DNS
     // records of the whole platform, hosted sites of every core, the issuer
-    // label): the platform keeps them in memory, refreshed periodically and
+    // labels): the platform keeps them in memory, refreshed periodically and
     // after a local /reg/records change, so a record added at runtime is
     // skipped like a static entry. The singleton answers from empty sets until
-    // it is initialised (later in the boot), i.e. the static list alone.
-    const { platform } = require('platform');
-    const isIgnoredSubdomain = (label: string): boolean =>
-      staticIgnored.includes(label) || platform.isNameRoutedByPlatform(label);
+    // it is initialised (later in the boot), i.e. the static list alone. The
+    // same predicate keeps per-user OAuth audiences off these names.
+    const isIgnoredSubdomain: (label: string) => boolean = platformRoutedLabels(config);
 
     // When Host matches a reserved service subdomain (reg/access/mfa), the
     // client-facing URL is rootless — e.g. `reg.pryv.me/perki/server` or
