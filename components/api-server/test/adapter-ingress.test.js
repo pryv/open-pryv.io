@@ -708,7 +708,7 @@ describe('[ADRU] adapter routes: the addressed account', function () {
       'svc-static.example.com': null,
       'runtime-rec.example.com': null,
       'www.example.com': null,
-      'alice': null,
+      alice: null,
       'localhost:3000': null,
       '127.0.0.1:3000': null,
       '[::1]:3000': null,

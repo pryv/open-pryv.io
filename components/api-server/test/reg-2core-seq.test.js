@@ -1600,8 +1600,13 @@ describe('[RG2C] Two-core integration tests', function () {
 
     it('[OTKW2] /authorize on the account\'s host at the other core answers a static page, no redirect; the core\'s own host is unchanged', async () => {
       const q = new URLSearchParams({
-        client_id: appId, redirect_uri: REDIRECT, response_type: 'code', state: 'tk', scope: 'read/notes',
-        code_challenge: crypto.createHash('sha256').update('v'.repeat(43)).digest('base64url'), code_challenge_method: 'S256'
+        client_id: appId,
+        redirect_uri: REDIRECT,
+        response_type: 'code',
+        state: 'tk',
+        scope: 'read/notes',
+        code_challenge: crypto.createHash('sha256').update('v'.repeat(43)).digest('base64url'),
+        code_challenge_method: 'S256'
       });
       for (const method of ['GET', 'POST']) {
         const moved = await requestWithHost(CORE_A_PORT, method, '/oauth2/authorize?' + q, `${user.username}.${DOMAIN}`);
