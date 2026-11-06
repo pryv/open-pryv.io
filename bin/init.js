@@ -778,7 +778,8 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # consent screen must show the host next to the name). Off by default. Print
 # # the template from an existing registry client with
 # # bin/oauth-client.js template-from <clientId>. Under the oauth: block above;
-# # identical on every core except client.allowedAudiences (this core's resource URL).
+# # identical on every core except client.allowedAudiences when it names this core's
+# # resource URL (a per-user entry, https://{username}.<host>/..., is the same everywhere).
 # #   clientMetadataDocuments:
 # #     mode: allowList
 # #     allowedHosts:
@@ -791,6 +792,7 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #       scope: '<the maximum scope set, in the extension grammar>'
 # #       allowedAudiences:
 # #         - https://<this core host>/adapter/<name>
+# #         - https://{username}.<dns.domain>/adapter/<name>   # each account's own address
 # #       subjectType: pairwise
 
 # # hostedSites: a reserved name that serves a static folder (e.g. an auth /

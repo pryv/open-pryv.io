@@ -856,5 +856,41 @@ describe('[OCLI] operator CLI: registry clients', () => {
       try { await cli.runRevoke(platform, cli.parseArgs(['revoke', 'Cli.rev', '--yes']), async () => {}); } finally { console.log = log; }
       assert.match(lines.join('\n'), /purge-grants Cli\.rev --yes/);
     });
+
+    it('[OPUC2] --audience takes a per-user entry on create-registry and update; other placements are refused with the accepted form; template-from prints it and says it is valid on every core', async () => {
+      const platform = fakePlatform();
+      const perUser = 'https://{username}.example.com/adapter/calendar/api';
+      for (const bad of ['https://example.com/{username}/api', 'https://x.{username}.example.com/api']) {
+        const r = await run(cli.runCreateRegistry, platform, ['create-registry', 'Cli.pu.bad', '--redirect-uri', REDIRECT, '--scope', 'read/a', '--audience', bad, '--subject-type', 'public']);
+        assert.match(r.error?.message ?? '', /the accepted form is https:\/\/\{username\}\.<host>/, bad);
+        assert.equal(await getClient(platform, 'Cli.pu.bad'), null);
+      }
+      let r = await run(cli.runCreateRegistry, platform, ['create-registry', 'Cli.pu', '--redirect-uri', REDIRECT, '--scope', 'read/a', '--audience', AUD, '--subject-type', 'public']);
+      assert.equal(r.error, null, r.error?.message);
+      // Adding a per-user entry: a change of what the client may reach (vetted), no narrowing.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.pu', '--audience', AUD, '--audience', perUser]);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /status: {8}review \(allowedAudiences changed\)/);
+      assert.doesNotMatch(r.out, /live grants/);
+      assert.deepEqual((await getClient(platform, 'Cli.pu')).allowedAudiences, [AUD, perUser]);
+      await run(cli.runUpdate, platform, ['update', 'Cli.pu', '--approve']);
+      // Removing it: a narrowing, with the purge hint.
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.pu', '--audience', AUD, '--approve']);
+      assert.equal(r.error, null, r.error?.message);
+      assert.match(r.out, /allowedAudiences narrowed/);
+      assert.match(r.out, /purge-grants Cli\.pu --yes/);
+      r = await run(cli.runUpdate, platform, ['update', 'Cli.pu', '--audience', 'https://{username}.example.com/{username}']);
+      assert.match(r.error?.message ?? '', /not a valid per-user audience/);
+      // template-from: the entry as stored, and the note.
+      await run(cli.runUpdate, platform, ['update', 'Cli.pu', '--audience', perUser, '--approve']);
+      const out = [];
+      const err = [];
+      const [log, error] = [console.log, console.error];
+      console.log = (...a) => { out.push(a.join(' ')); };
+      console.error = (...a) => { err.push(a.join(' ')); };
+      try { await cli.runTemplateFrom(platform, cli.parseArgs(['template-from', 'Cli.pu']), getClient); } finally { console.log = log; console.error = error; }
+      assert.match(out.join('\n'), /allowedAudiences: \["https:\/\/\{username\}\.example\.com\/adapter\/calendar\/api"\]/);
+      assert.match(err.join('\n'), /a per-user entry \(\{username\} as the first host label\) is valid on every core/);
+    });
   });
 });

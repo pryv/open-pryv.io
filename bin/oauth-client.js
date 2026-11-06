@@ -743,7 +743,8 @@ async function runTemplateFrom (platform, args, getClient) {
   ];
   console.log(lines.join('\n'));
   if (row.subjectType == null) console.error('WARN "' + clientId + '" has no subject type (reads as public, as the template above): check it');
-  console.error('NOTE allowedAudiences differs per core: each core names its own resource URL');
+  console.error('NOTE allowedAudiences: a per-user entry ({username} as the first host label) is valid on every core; ' +
+    'an exact entry names one core\'s resource URL');
 }
 
 const SUBJECT_TYPES = ['public', 'pairwise'];
@@ -1714,8 +1715,11 @@ function printUsage (stream) {
     '                            for client_secret_basic, and none needs --yes)\n' +
     '  --audience <url>          (multi; also on update) resource values the client may\n' +
     '                            request (aud or resource; else invalid_target); at least\n' +
-    '                            one, unless --any-audience\n' +
-    '  --any-audience            (also on update) register the client explicitly for any\n' +
+    '                            one, unless --any-audience;\n' +
+    '                            https://{username}.<host>/... names each account\'s own\n' +
+    '                            address: at consent the label must be the signed-in\n' +
+    '                            account\'s username\n' +
+    '  --any-audience          (also on update) register the client explicitly for any\n' +
     '                            audience (no list check: a well-formed aud / resource is\n' +
     '                            stored and answered as introspection aud)\n' +
     '  --allow-insecure-redirect (also on update; "false" withdraws it) accept plain-http\n' +
