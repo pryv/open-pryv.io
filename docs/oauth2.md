@@ -418,7 +418,11 @@ with a message naming the accepted form.
   "audience-not-listed"`, audited with that reason) at the signed-in
   `/oauth2/authorize/offer` and at `/oauth2/authorize/accept`: restart the
   flow; a client row deleted meanwhile is refused the same way. Nothing is
-  written.
+  written. A registry client edited meanwhile (`oauth-client update`) is
+  answered earlier: its consent is already out of date (`400
+  invalid_request`, `reason: "consent-out-of-date"`, § 1d), so
+  `audience-not-listed` answers a list changed under the same client version,
+  or an application-account client.
 - **After a username change.** A chain authorized before keeps its audience
   (it is fixed at authorization and copied on refresh), and its token exchange
   keeps working too (the former name stays the account's until the account is
