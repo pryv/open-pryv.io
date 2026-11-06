@@ -799,6 +799,74 @@ describe('[ACSF] accesses (personal)', function () {
       assert.strictEqual(res.body.error.id, ErrorIds.ItemAlreadyExists);
     });
 
+    it('[CKCN1] an access created from a ":local:" request matches the same request again', async function () {
+      const requestedPermissions = () => [
+        { streamId: ':local:' + stream0.attrs.id, level: 'contribute', defaultName: 'Stream 0' }
+      ];
+      const createRes = await coreRequest.post(basePath).set('Authorization', personalToken)
+        .send({ name: 'ckcn1-app', type: 'app', permissions: requestedPermissions() });
+      assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
+      // stored under the canonical id
+      assert.ok(createRes.body.access.permissions.some((p) => p.streamId === stream0.attrs.id), JSON.stringify(createRes.body.access.permissions));
+
+      const res = await coreRequest.post(getCheckAppPath()).set('Authorization', personalToken)
+        .send({ requestingAppId: 'ckcn1-app', requestedPermissions: requestedPermissions() });
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.ok(res.body.matchingAccess, 'expected a match: ' + JSON.stringify(res.body));
+      assert.strictEqual(res.body.matchingAccess.token, createRes.body.access.token);
+      assert.strictEqual(res.body.mismatchingAccess, undefined);
+    });
+
+    it('[CKCN2] checkedPermissions carry canonical ids: a missing stream keeps its defaultName, an existing one gets its name', async function () {
+      const newStreamId = 'ckcn2-' + cuid().slice(-8);
+      const res = await coreRequest.post(getCheckAppPath()).set('Authorization', personalToken)
+        .send({
+          requestingAppId: 'ckcn2-app',
+          requestedPermissions: [
+            { streamId: ':local:' + stream1.attrs.id, level: 'read', defaultName: 'Ignored' },
+            { streamId: ':local:' + newStreamId, level: 'contribute', defaultName: 'CKCN2 New' }
+          ]
+        });
+      validation.check(res, { status: 200, schema: methodsSchema.checkApp.result });
+      assert.strictEqual(res.body.error, undefined, JSON.stringify(res.body));
+      assert.deepStrictEqual(res.body.checkedPermissions, [
+        { streamId: stream1.attrs.id, level: 'read', name: 'Stream 1' },
+        { streamId: newStreamId, level: 'contribute', defaultName: 'CKCN2 New' }
+      ]);
+
+      // sent straight to create, then checked again: a match
+      const createRes = await coreRequest.post(basePath).set('Authorization', personalToken)
+        .send({ name: 'ckcn2-app', type: 'app', permissions: res.body.checkedPermissions });
+      assert.strictEqual(createRes.status, 201, JSON.stringify(createRes.body));
+      const streams = await coreRequest.get('/' + username + '/streams').set('Authorization', personalToken);
+      assert.strictEqual(streams.body.streams.find((s) => s.id === newStreamId)?.name, 'CKCN2 New');
+      const again = await coreRequest.post(getCheckAppPath()).set('Authorization', personalToken)
+        .send({
+          requestingAppId: 'ckcn2-app',
+          requestedPermissions: [
+            { streamId: ':local:' + stream1.attrs.id, level: 'read', defaultName: 'Ignored' },
+            { streamId: ':local:' + newStreamId, level: 'contribute', defaultName: 'CKCN2 New' }
+          ]
+        });
+      assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+      assert.strictEqual(again.body.matchingAccess?.token, createRes.body.access.token, JSON.stringify(again.body));
+    });
+
+    it('[CKCN3] a request naming one stream twice (in any spelling) is refused as accesses.create refuses it', async function () {
+      const permissions = [
+        { streamId: stream0.attrs.id, level: 'read', defaultName: 'Stream 0' },
+        { streamId: ':local:' + stream0.attrs.id, level: 'manage', defaultName: 'Stream 0' }
+      ];
+      const createRes = await coreRequest.post(basePath).set('Authorization', personalToken)
+        .send({ name: 'ckcn3-app', type: 'app', permissions });
+      assert.strictEqual(createRes.status, 400, JSON.stringify(createRes.body));
+      const res = await coreRequest.post(getCheckAppPath()).set('Authorization', personalToken)
+        .send({ requestingAppId: 'ckcn3-app', requestedPermissions: permissions });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, createRes.body.error.id);
+      assert.strictEqual(res.body.error.message, createRes.body.error.message);
+    });
+
     it('[MTY1] must return an error if the sent data is badly formatted', async function () {
       const data = {
         requestingAppId: appAccess.attrs.name,

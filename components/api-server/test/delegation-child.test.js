@@ -290,6 +290,104 @@ describe('[DCHD] accesses granted through a delegation (in-process integration)'
     }
   });
 
+  async function bobStream (streamId) {
+    const res = await coreRequest.get('/' + bob.username + '/streams').set('Authorization', bob.token);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const find = (nodes) => {
+      for (const s of nodes || []) {
+        if (s.id === streamId) return s;
+        const inChild = find(s.children);
+        if (inChild != null) return inChild;
+      }
+      return null;
+    };
+    return find(res.body.streams);
+  }
+
+  it('[DCH26] the delegate token widens an app access it created: same access and token, marker kept, what it created kept', async function () {
+    const child = await createAccess(patToken, appFor('dch26-app'));
+    const shared = await createAccess(child.token, { type: 'shared', name: 'dch26-shared', permissions: [{ streamId: 'diary', level: 'read' }] });
+    const marker = (await bobAccess(child.id)).clientData.delegation;
+    const newStreamId = 'dch26-' + cuid().slice(-8);
+    assert.strictEqual(await bobStream(newStreamId), null);
+
+    const res = await coreRequest.put(bob.accessesPath + '/' + child.id).set('Authorization', patToken)
+      .send({
+        permissions: [DIARY, { streamId: newStreamId, level: 'read', defaultName: 'DCH26 New', name: 'DCH26 New' }],
+        clientData: { app: 'dch26-app', v: 2 },
+      });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const updated = res.body.access;
+    assert.strictEqual(base(updated.id), base(child.id), 'the same access, at its next serial');
+    // the delegate created this access: the update answer carries its token
+    assert.strictEqual(updated.token, child.token);
+    assert.strictEqual(typeof updated.apiEndpoint, 'string');
+
+    const stored = await bobAccess(child.id);
+    assert.strictEqual(stored.token, child.token, 'the token is unchanged');
+    assert.deepStrictEqual(stored.clientData, { app: 'dch26-app', v: 2, delegation: marker });
+    const added = stored.permissions.find((p) => p.streamId === newStreamId);
+    assert.deepStrictEqual(added, { streamId: newStreamId, level: 'read' }, 'defaultName and name are not stored');
+    assert.deepStrictEqual(stored.permissions.find((p) => p.streamId === 'diary'), { streamId: 'diary', level: 'contribute' });
+
+    // defaultName created the missing stream on the controlled account
+    const created = await bobStream(newStreamId);
+    assert.ok(created != null, 'the stream named with defaultName is created');
+    assert.strictEqual(created.name, 'DCH26 New');
+
+    // the access the app created survives, and both tokens still work
+    assert.ok(await bobAccess(shared.id) != null, 'the shared access the app created is kept');
+    const appInfo = await coreRequest.get(bob.accessInfoPath).set('Authorization', child.token);
+    assert.strictEqual(appInfo.status, 200, JSON.stringify(appInfo.body));
+    assert.strictEqual(appInfo.body.delegation.grantedVia, 'app');
+    const sharedInfo = await coreRequest.get(bob.accessInfoPath).set('Authorization', shared.token);
+    assert.strictEqual(sharedInfo.status, 200, JSON.stringify(sharedInfo.body));
+  });
+
+  it('[DCH27] check-app then update with the delegate token: the returning app is widened in place, then matches', async function () {
+    const name = 'dch27-app';
+    const child = await createAccess(patToken, appFor(name));
+    const newStreamId = 'dch27-' + cuid().slice(-8);
+    const requestedPermissions = [DIARY, { streamId: newStreamId, level: 'read', defaultName: 'DCH27 New' }];
+    const check = await coreRequest.post(bob.accessesPath + '/check-app').set('Authorization', patToken)
+      .send({ requestingAppId: name, requestedPermissions, clientData: { app: name } });
+    assert.strictEqual(check.status, 200, JSON.stringify(check.body));
+    assert.strictEqual(check.body.matchingAccess, undefined, JSON.stringify(check.body));
+    assert.strictEqual(base(check.body.mismatchingAccess.id), base(child.id));
+    assert.strictEqual(check.body.mismatchingAccess.token, child.token, 'the delegate sees the token of an access it created');
+    assert.ok(Array.isArray(check.body.checkedPermissions), JSON.stringify(check.body));
+
+    const res = await coreRequest.put(bob.accessesPath + '/' + check.body.mismatchingAccess.id).set('Authorization', patToken)
+      .send({ permissions: check.body.checkedPermissions });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.access.token, child.token);
+    assert.ok((await bobStream(newStreamId)) != null, 'the stream named with defaultName is created');
+    const stored = await bobAccess(child.id);
+    for (const p of stored.permissions) {
+      assert.strictEqual('defaultName' in p || 'name' in p, false, JSON.stringify(stored.permissions));
+    }
+
+    const again = await coreRequest.post(bob.accessesPath + '/check-app').set('Authorization', patToken)
+      .send({ requestingAppId: name, requestedPermissions, clientData: { app: name } });
+    assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+    assert.ok(again.body.matchingAccess != null, JSON.stringify(again.body));
+    assert.strictEqual(base(again.body.matchingAccess.id), base(child.id));
+    assert.strictEqual(again.body.matchingAccess.token, child.token);
+  });
+
+  it('[DCH28] no clientData update made with the delegate token drops or changes the marker', async function () {
+    let child = await createAccess(patToken, appFor('dch28-app'));
+    const marker = (await bobAccess(child.id)).clientData.delegation;
+    for (const clientData of [{ x: 1 }, { delegation: null }, null]) {
+      const res = await coreRequest.put(bob.accessesPath + '/' + child.id).set('Authorization', patToken)
+        .send({ clientData });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      child = res.body.access;
+      assert.deepStrictEqual((await bobAccess(child.id)).clientData?.delegation, marker, 'after clientData ' + JSON.stringify(clientData));
+    }
+    assert.deepStrictEqual((await bobAccess(child.id)).clientData, { delegation: marker });
+  });
+
   it('[DCH11] an access granted through the delegation cannot detach it (genuine-login gate)', async function () {
     const child = await createAccess(patToken, appFor('dch11-app'));
     const res = await coreRequest.delete(bob.delegationsPath + '/delegates/' + alice.username)

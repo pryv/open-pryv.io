@@ -137,9 +137,13 @@ describe('[DYND] dynData', function () {
     let dynData;
     let username;
 
-    before(function () {
+    before(async function () {
       dynData = helpers.dynData();
       username = dynData.users[0].username;
+      // each reset below writes for this user: create it here, so a test run
+      // on its own (or a filtered run without [DY20]) does not write for an
+      // unknown user
+      await dynData.resetUsers();
     });
 
     after(async function () {
