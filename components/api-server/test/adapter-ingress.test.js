@@ -639,7 +639,9 @@ describe('[ADRU] adapter routes: the addressed account', function () {
   const { usernameInHost } = require('business/src/usernameSubdomains.ts');
   const { adapterAddressingFor } = require('../src/adapterIngress.ts');
   const savedTrust = currentTrustedProxies();
+  const DOMAIN = 'example.com';
   const CONFIG = {
+    'dns:domain': DOMAIN,
     'core:id': 'core-a',
     'dns:staticEntries': { 'svc-static': { a: ['127.0.0.9'] } },
     hostedSites: { 'site-home': { static: '/tmp' } }
@@ -677,7 +679,7 @@ describe('[ADRU] adapter routes: the addressed account', function () {
     const dispatch = buildAdapterIngress({
       routes: routesOf({ calendar: { upstream: up, paths: ['/.well-known/oauth-protected-resource/adapter/calendar/'], ...opts.routeExtra } }),
       logger,
-      addressing: opts.addressing === null ? null : { isPlatformRoutedLabel, platform }
+      addressing: opts.addressing === null ? null : { isPlatformRoutedLabel, domain: DOMAIN, retryAfterSeconds: 120, platform }
     });
     const fallback = (req, res) => { req.resume(); res.writeHead(299); res.end('fallback'); };
     front = opts.tls != null
@@ -695,11 +697,18 @@ describe('[ADRU] adapter routes: the addressed account', function () {
     upstream = null;
   });
 
-  it('[ADRU1] the account label: a username-shaped first label the platform does not route; every other host is a platform address', async function () {
+  it('[ADRU1] the account label: one username-shaped label under dns.domain the platform does not route; every other host is a platform address', async function () {
     const cases = {
       'alice.example.com': 'alice',
       'ALICE.Example.com:8443': 'alice',
       'alice-2.example.com.': 'alice-2',
+      'alice-2.example.com.:8443': 'alice-2',
+      'alice.attacker.tld': null,
+      'alice.example.org': null,
+      'alice.notexample.com': null,
+      'bob.alice.example.com': null,
+      'example.com': null,
+      'adapter.example.com': null,
       'reg.example.com': null,
       'access.example.com': null,
       'mfa.example.com': null,
@@ -718,21 +727,37 @@ describe('[ADRU] adapter routes: the addressed account', function () {
       undefined: null
     };
     for (const [host, expected] of Object.entries(cases)) {
-      assert.equal(addressedLabelOf(host === 'undefined' ? undefined : host, isPlatformRoutedLabel), expected, host);
+      assert.equal(addressedLabelOf(host === 'undefined' ? undefined : host, isPlatformRoutedLabel, DOMAIN), expected, host);
     }
+    // The domain compares lowercased, without its final dot.
+    assert.equal(addressedLabelOf('alice.example.com', isPlatformRoutedLabel, 'Example.COM.'), 'alice');
     // dnsLess: the host is the core's own name, never an account.
     assert.equal(usernameInHost(configOf({ 'dnsLess:isActive': true })), false);
     assert.equal(adapterAddressingFor(configOf({ 'dnsLess:isActive': true })), null);
-    assert.equal(typeof adapterAddressingFor(configOf({ 'dnsLess:isActive': false })).isPlatformRoutedLabel, 'function');
+    const addressing = adapterAddressingFor(configOf({ 'dnsLess:isActive': false, 'dns:defaultTTL': 42 }));
+    assert.equal(typeof addressing.isPlatformRoutedLabel, 'function');
+    assert.equal(addressing.domain, DOMAIN);
+    assert.equal(addressing.retryAfterSeconds, 42);
     // Through the ingress: a platform address is forwarded without a lookup.
     const platform = stubPlatform();
     await setup(platform);
-    for (const host of ['reg.example.com', 'core-a.example.com', 'runtime-rec.example.com', 'adapter.example.com', '127.0.0.1']) {
+    for (const host of ['reg.example.com', 'core-a.example.com', 'runtime-rec.example.com', 'adapter.example.com', '127.0.0.1', 'alice.attacker.tld', 'bob.alice.example.com', 'example.com']) {
       const res = await request(frontPort, { path: '/adapter/calendar/x', headers: { host } });
       assert.equal(res.status, 200, host);
       assert.equal(upstream.seen.at(-1).headers['x-adapter-name'], undefined, host);
     }
     assert.deepEqual(platform.calls, [], 'no placement lookup for a platform address');
+  });
+
+  it('[ADRU1b] without dns.domain no host names an account, and the boot is warned once', async function () {
+    const warned = [];
+    assert.equal(adapterAddressingFor(configOf({ 'dnsLess:isActive': false, 'dns:domain': null }), { warn: (m) => warned.push(m) }), null);
+    assert.equal(warned.length, 1);
+    assert.match(warned[0], /per-user addresses need dns\.domain/);
+    assert.equal(adapterAddressingFor(configOf({ 'dnsLess:isActive': false, 'dns:domain': '' })), null);
+    for (const host of ['alice.example.com', 'alice.attacker.tld']) {
+      assert.equal(addressedLabelOf(host, isPlatformRoutedLabel, null), null, host);
+    }
   });
 
   it('[ADRU2] an addressed request reaches the upstream with the name and the route\'s base (scheme, Host, root path); a platform address with neither', async function () {
@@ -747,6 +772,11 @@ describe('[ADRU] adapter routes: the addressed account', function () {
     h = upstream.seen.at(-1).headers;
     assert.equal(upstream.seen.at(-1).url, '/.well-known/oauth-protected-resource/adapter/calendar/x');
     assert.equal(h['x-adapter-base'], 'http://alice.example.com/adapter/calendar/');
+    // A final dot in the Host: the base has none (port kept).
+    await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com.:8443' } });
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'http://alice.example.com:8443/adapter/calendar/');
+    await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com.' } });
+    assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'http://alice.example.com/adapter/calendar/');
     // An untrusted peer's X-Forwarded-Proto is not the scheme.
     await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'alice.example.com', 'x-forwarded-proto': 'https' } });
     assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'http://alice.example.com/adapter/calendar/');
@@ -771,8 +801,21 @@ describe('[ADRU] adapter routes: the addressed account', function () {
     assert.equal(upstream.seen.at(-1).headers['x-adapter-base'], 'https://alice.example.com/adapter/calendar/');
   });
 
-  it('[ADRU3] client-sent X-Adapter-Name / X-Adapter-Base never reach the upstream, from an untrusted peer or a trusted proxy', async function () {
-    const spoofed = { 'x-adapter-name': 'mallory', 'x-adapter-base': 'https://mallory.example.com/adapter/calendar/' };
+  it('[ADRU3] client-sent X-Adapter-Name / X-Adapter-Base, in any - / _ spelling, never reach the upstream, from an untrusted peer or a trusted proxy', async function () {
+    const spoofed = {
+      'x-adapter-name': 'mallory',
+      'x-adapter-base': 'https://mallory.example.com/adapter/calendar/',
+      X_Adapter_Name: 'mallory-u',
+      'x_adapter-base': 'https://mallory-u.example.com/',
+      'X-Adapter_Name': 'mallory-m'
+    };
+    // Nothing of the client's spellings is left; only the core's own pair, when addressed.
+    const assertNoSpoof = (h, label) => {
+      for (const [name, value] of Object.entries(h)) {
+        if (name.replace(/_/g, '-').startsWith('x-adapter-')) assert.ok(!String(value).includes('mallory'), label + ' ' + name);
+      }
+      for (const name of Object.keys(h)) assert.ok(!name.includes('_'), label + ' ' + name);
+    };
     for (const trust of [[], ['loopback']]) {
       await setup(stubPlatform());
       configureTrustedProxies(trust);
@@ -781,11 +824,13 @@ describe('[ADRU] adapter routes: the addressed account', function () {
       let h = upstream.seen.at(-1).headers;
       assert.equal(h['x-adapter-name'], 'alice', String(trust));
       assert.equal(h['x-adapter-base'], 'http://alice.example.com/adapter/calendar/', String(trust));
+      assertNoSpoof(h, 'addressed ' + trust);
       // A platform address: removed.
       await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'reg.example.com', ...spoofed } });
       h = upstream.seen.at(-1).headers;
       assert.equal(h['x-adapter-name'], undefined, String(trust));
       assert.equal(h['x-adapter-base'], undefined, String(trust));
+      assertNoSpoof(h, 'platform ' + trust);
       // An ingress without per-user addresses (dnsLess) removes them too.
       await close(front);
       await close(upstream.server);
@@ -795,12 +840,13 @@ describe('[ADRU] adapter routes: the addressed account', function () {
       h = upstream.seen.at(-1).headers;
       assert.equal(h['x-adapter-name'], undefined, String(trust));
       assert.equal(h['x-adapter-base'], undefined, String(trust));
+      assertNoSpoof(h, 'dnsLess ' + trust);
       await close(front);
       await close(upstream.server);
     }
   });
 
-  it('[ADRU4] placement: another core answers 421 wrong-core with its URL without the upstream; this core, an unknown name forward; no usable URL 421 without it; a lookup failure 500', async function () {
+  it('[ADRU4] placement: another core answers 421 wrong-core with Retry-After and its URL without the upstream; this core, an unknown name forward; no usable URL 421 without it; a lookup failure 500', async function () {
     const platform = stubPlatform({ map: { alice: 'core-a', bobby: 'core-b', carol: 'core-nourl' } });
     await setup(platform);
     const before = upstream.seen.length;
@@ -815,6 +861,10 @@ describe('[ADRU] adapter routes: the addressed account', function () {
     assert.equal(body.error.id, 'wrong-core');
     assert.equal(body.error.coreUrl, 'https://core-b.example.com/');
     assert.match(body.error.message, /account "bobby" is served by another core/);
+    assert.match(body.error.message, /retry the same address/);
+    assert.doesNotMatch(body.error.message, /built on/);
+    assert.equal(remote.headers['retry-after'], '120', 'the configured dns.defaultTTL');
+    assert.equal(remote.headers['access-control-allow-origin'], undefined, 'no CORS on adapter paths');
     assert.equal(upstream.seen.length, before, 'the upstream was not contacted');
     assert.equal(warnings.length, 1);
     assert.doesNotMatch(warnings[0], /Bearer|\{"a"/, 'the log names no header and no body');
@@ -830,8 +880,12 @@ describe('[ADRU] adapter routes: the addressed account', function () {
     // A core without a usable URL: 421, no coreUrl.
     const noUrl = await request(frontPort, { path: '/adapter/calendar/x', headers: { host: 'carol.example.com' } });
     assert.equal(noUrl.status, 421);
-    assert.equal(JSON.parse(noUrl.body).error.coreUrl, undefined);
-    assert.equal(JSON.parse(noUrl.body).error.id, 'wrong-core');
+    assert.equal(noUrl.headers['retry-after'], '120');
+    const noUrlError = JSON.parse(noUrl.body).error;
+    assert.ok(!('coreUrl' in noUrlError));
+    assert.equal(noUrlError.id, 'wrong-core');
+    assert.notEqual(noUrlError.message, body.error.message.replace('bobby', 'carol'));
+    assert.doesNotMatch(noUrlError.message, /coreUrl/, 'it names no member the body lacks');
     // A lookup failure: 500, never forwarded.
     await close(front);
     await close(upstream.server);

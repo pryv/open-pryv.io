@@ -139,10 +139,11 @@ class Server {
       for (const route of adapterRoutes.values()) {
         this.logger.info(`adapter route ${route.name}: ${route.upstream} paths ${route.paths.join(' ')}`);
       }
-      // On per-user hosts the ingress names the addressed account to the
-      // sidecar (the username rewriter's predicate tells account labels from
-      // the platform's own), and answers 421 for an account of another core.
-      const dispatch = buildAdapterIngress({ routes: adapterRoutes, logger: this.logger, addressing: adapterAddressingFor(config) });
+      // On per-user hosts (`<account>.<dns.domain>`) the ingress names the
+      // addressed account to the sidecar (the username rewriter's predicate
+      // tells account labels from the platform's own), and answers 421 for an
+      // account of another core.
+      const dispatch = buildAdapterIngress({ routes: adapterRoutes, logger: this.logger, addressing: adapterAddressingFor(config, this.logger) });
       adaptersDispatch = dispatch;
       toAdapters = (req: unknown, res: unknown) => dispatch(req, res, toSites);
     }

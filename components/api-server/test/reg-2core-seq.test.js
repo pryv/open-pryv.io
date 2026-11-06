@@ -899,7 +899,13 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.strictEqual(onA.body.error.id, 'wrong-core');
       assert.strictEqual(onA.body.error.coreUrl, CORE_B_URL);
       assert.strictEqual(onA.headers.location, undefined);
-      assert.strictEqual(adapterSeen.length, count, 'core A did not forward it');
+      assert.strictEqual(onA.headers['retry-after'], '300');
+      assert.match(onA.body.error.message, /retry the same address/);
+      // Under another domain the name addresses no account: a platform address.
+      const foreign = await requestWithHost(CORE_A_PORT, 'GET', '/adapter/calendar/x', `${username}.attacker.tld`);
+      assert.strictEqual(foreign.status, 200, JSON.stringify(foreign.body));
+      assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-name'], undefined);
+      assert.strictEqual(adapterSeen.length, count + 1, 'core A did not forward the 421 one');
       const onB = await requestWithHost(CORE_B_PORT, 'GET', '/adapter/calendar/x', host);
       assert.strictEqual(onB.status, 200, JSON.stringify(onB.body));
       assert.strictEqual(adapterSeen.at(-1).headers['x-adapter-name'], username);
@@ -1621,12 +1627,15 @@ describe('[RG2C] Two-core integration tests', function () {
       assert.strictEqual(onCoreHost.status, 302);
     });
 
-    it('[OTKW3] /offer and /accept on the account\'s host keep their own answer; an unmapped name\'s host is not concerned', async () => {
+    it('[OTKW3] /offer and /accept on the account\'s host keep their own answer; an unmapped name\'s host, another domain and the adapter host are not concerned', async () => {
       const offer = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/authorize/offer', `${user.username}.${DOMAIN}`, { state: 'not-a-state' });
       assert.notStrictEqual(offer.status, 421, JSON.stringify(offer.body));
-      const nobody = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', `tknobody${Date.now().toString(36)}.${DOMAIN}`, { grant_type: 'refresh_token', refresh_token: 'x', client_id: appId });
-      assert.strictEqual(nobody.status, 400, JSON.stringify(nobody.body));
-      assert.strictEqual(nobody.body.error, 'invalid_grant');
+      const refresh = { grant_type: 'refresh_token', refresh_token: 'x', client_id: appId };
+      for (const host of [`tknobody${Date.now().toString(36)}.${DOMAIN}`, `${user.username}.attacker.tld`, `adapter.${DOMAIN}`]) {
+        const res = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', host, refresh);
+        assert.strictEqual(res.status, 400, host + ' ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body.error, 'invalid_grant', host);
+      }
     });
 
     it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {

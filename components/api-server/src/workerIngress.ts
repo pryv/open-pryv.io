@@ -59,8 +59,13 @@ const JSON_ERROR_HEADERS = { 'content-type': 'application/json', 'x-content-type
 const ADAPTER_NAME_HEADER = 'x-adapter-name';
 const ADAPTER_BASE_HEADER = 'x-adapter-base';
 
-/** The account an adapter request is addressed to: its name and the route's root path. */
-type AdapterAddress = { name: string, rootPath: string };
+const ADAPTER_ADDRESS_HEADERS = new Set([ADAPTER_NAME_HEADER, ADAPTER_BASE_HEADER]);
+
+/**
+ * The account an adapter request is addressed to: its name, the host as
+ * addressed (lowercased, port kept, no final dot) and the route's root path.
+ */
+type AdapterAddress = { name: string, host: string, rootPath: string };
 
 type WorkerProxyOptions = {
   /** Log prefix, e.g. `hfs` -> `[hfs-ingress]`. */
@@ -206,11 +211,14 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       delete headers['x-forwarded-port'];
       if (headers['x-forwarded-host'] == null && req.headers.host != null) headers['x-forwarded-host'] = req.headers.host;
       if (headers['x-forwarded-proto'] == null) headers['x-forwarded-proto'] = (req.socket as TLSSocket | undefined)?.encrypted === true ? 'https' : 'http';
-      delete headers[ADAPTER_NAME_HEADER];
-      delete headers[ADAPTER_BASE_HEADER];
-      if (address != null && req.headers.host != null) {
+      // In every `-` / `_` spelling: a CGI-style layer behind the sidecar
+      // reads `X_Adapter_Name` and `X-Adapter-Name` as one header.
+      for (const headerName of Object.keys(headers)) {
+        if (ADAPTER_ADDRESS_HEADERS.has(headerName.replace(/_/g, '-'))) delete headers[headerName];
+      }
+      if (address != null) {
         headers[ADAPTER_NAME_HEADER] = address.name;
-        headers[ADAPTER_BASE_HEADER] = baseScheme(headers['x-forwarded-proto'], req) + '://' + req.headers.host.toLowerCase() + address.rootPath;
+        headers[ADAPTER_BASE_HEADER] = baseScheme(headers['x-forwarded-proto'], req) + '://' + address.host + address.rootPath;
       }
     }
     // Framing is derived from the request as received, never from what is left
