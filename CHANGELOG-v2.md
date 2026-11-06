@@ -2,6 +2,100 @@
 
 ## Unreleased
 
+### Account transfer to a beneficiary
+
+- **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
+  of being deleted at its date or after its period without use, an account can be handed over to a
+  beneficiary, who then becomes its controller (account delegation). The setting takes `transfer: {
+  email, name?, dateOfBirth?, notifyBeneficiary: 'atSetup' | 'atTrigger', fallback: 'delete' |
+  'keep' }` with `mode: 'date'` or `'inactivity'`; `fallback: 'delete'` is offered only where the
+  holder may delete the account themselves. Setting or changing a transfer (beneficiary, fallback,
+  notice, name or date of birth) needs the account password, like arming a schedule; moving from
+  `transfer` to `delete` counts as bringing the deletion nearer. Name and date of birth are optional,
+  stored encrypted in their own account field (never answered by the API: the setting shows
+  `identityGiven: true`), kept for the same beneficiary, and erased with every version when the
+  beneficiary changes, the action changes, the transfer completes, lapses or is declined, and with
+  the account. `getAutoDeletion` adds `transfer` (the state of the current or last transfer:
+  `status` `named | open | claimed | completed | declined | cancelled | lapsed | fallback-delete`,
+  `email`, `openedAt`, `endsAt`, `claimedBy`, `failedClaims`, `ownerNotifiedAt`, `closedAt`,
+  `closedReason`) and
+  `claimWindowDays`. With `notifyBeneficiary: 'atSetup'` the beneficiary is mailed at once, with a
+  decline link. When the schedule is due the account is not erased: a claim window opens
+  (`account.autoDeletion.transfer.claimWindowDays`, default 90), the beneficiary is mailed a claim
+  link (again 30 and 60 days later, the same link) and the holder is told. Use of the account before
+  a claim cancels the transfer in `inactivity` mode (the clock restarts), up to the moment the
+  fallback would apply; the holder can change or cancel it in the account app at any time (a new
+  date or period not yet due closes an open window). At the window end without a claim the holder's
+  `fallback` applies: `keep` lapses the transfer and leaves the setting at `never` (or the
+  platform's preset, with its full schedule, where opting out is not allowed); `delete` erases the
+  account as a direct deletion would (deletion guards, self-deletion, `maxDeletionsPerPass`).
+  `transfer` appears in `actions` and `features.autoDeletion.actions` where account delegation is
+  on, mail can be sent with the claim mail switched on (`atSetup` also needs the beneficiary-named
+  mail), and `service.account` is set (the claim and decline pages are pages of the
+  account app). The feature is now advertised when `transfer` alone is offered.
+- **New public methods `account.transferClaim` (`POST /{username}/account/auto-deletion/transfer-claim`,
+  `{ appId, token, claimant }`) and `account.transferDecline` (`POST
+  /{username}/account/auto-deletion/transfer-decline`, `{ appId, token }`).** The token of the mailed
+  link is the credential (trusted apps only, never inside a batch call). A claim binds the transfer to
+  the first account that claims it (`claimant`, on any core of the platform), sends that account a
+  delegation invite on the holder's behalf and answers `{ transfer: { status: 'invited', username }
+  }`; the claimant accepts it with `delegations.acceptAttach` on its own core, and the next claim
+  (or the sweep) completes the transfer: `{ status: 'completed' }`, the holder's setting cleared, the
+  identity erased, both parties mailed. A repeat by the same account answers the same; an invite that
+  lapsed inside the window is issued again; a claimant that already controls the account completes it
+  at once. Refusals: `auto-deletion-transfer-invalid-link` (unknown, replaced or closed: one answer),
+  `auto-deletion-transfer-expired` (window ended), `auto-deletion-transfer-claimed` (another account
+  claimed it). A valid link always proceeds; wrong ones are counted for the holder
+  (`transfer.failedClaims`) and refuse nothing else. Failed links also count on the caller's
+  address budget of failed secrets (`auth.passwordAttempts.perIp`, `too-many-attempts`). A decline
+  before the deadline turns the setting into the holder's fallback (`delete` on the same schedule, or
+  `never`); during the window, a claim made meanwhile included (its invite is withdrawn), it applies
+  the fallback at once (`keep`) or at the next pass (`delete`). A claimant who refuses the delegation
+  invite declines the same way; a decline after the claimant accepted is refused
+  (`auto-deletion-transfer-claimed`) and the transfer completes. A use of the account by its holder
+  (inactivity) also cancels a claim not accepted yet. The setting rejects an invalid transfer with `auto-deletion-transfer-invalid`
+  (`data.param`).
+- **Six new mails:** `account-transfer-named`, `-claim`, `-started`, `-cancelled`, `-lapsed`,
+  `-completed` (en, fr), switches `services.email.enabled.accountTransfer{Named,Claim,Started,
+  Cancelled,Lapsed,Completed}` and template keys `accountTransfer…Template` (variables in
+  `default-config.yml`). The confirmation and reminder mails say "transferred to" for a transfer
+  (new variables `ACTION_TRANSFER`, `BENEFICIARY`, `FALLBACK_DELETE`, `FALLBACK_KEEP`, ...).
+  **Existing platforms:** the seeder fills an empty template store only: add the six templates (and
+  the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
+  templates set`.
+- **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
+  owner of a transfer whose stored address another account holds is not marked told of its start (it
+  is tried again at each pass); mails to a transfer beneficiary are unchanged.
+
+## 2.0.0-rc.74 - 2026-11-05
+
+> **Upgrade advice for operators.** No BREAKING API change. One new configuration block, off by
+> default: `oauth.clientMetadataDocuments` (`mode: 'off'`; `allowList` serves the hosts of
+> `allowedHosts` only, `any` serves any https host). Its other keys and defaults: `allowedHosts: []`,
+> `deniedHosts: []`, `cacheSeconds: 3600`, `staleGraceSeconds: 86400`, `negativeCacheSeconds: 60`,
+> `fetchTimeoutMs: 5000`, `maxDocumentBytes: 16384`, `fetchesPerMinute: 60`,
+> `newClientsPerMinute: 10`, `unconsentedRowSeconds: 3600`, `authMethods: [none, private_key_jwt]`,
+> and the `client` template (`scope: ''`, `allowedAudiences: []`, `launchTypes: []`,
+> `subjectType: pairwise`, `maxEntries: 200`, `offlineAccessAllowed: true`, `accessTokenTTL`,
+> `refreshTokenTTL`, `refreshTokenAbsoluteTTL` `null`, `regions: []`). The block is platform-wide
+> (identical on every core, except `client.allowedAudiences`); with a mode other than `off`,
+> `client.scope` and `client.allowedAudiences` are required and the boot stops on a block that
+> does not check: run `node bin/check-config.js` on the new code before switching.
+> `bin/oauth-client.js template-from <clientId>` prints a `client` block from an existing registry
+> client, and `check-metadata <url>` fetches and checks a document without writing anything. A
+> consent UI must show `client.metadataHost` next to the name of such a client. `RS256` joins the
+> accepted `private_key_jwt` assertion algorithms of every client (nothing to configure). A
+> client id may no longer start with `url~`. A revoked client's codes and refresh tokens stay
+> refused when its id is registered again; the revoke time carries a five-second margin, so keep
+> the CLI host and the cores NTP-synced. On a multi-core platform, `/oauth2/authorize/offer` and
+> `/accept` answer `421 wrong_core` (with `coreUrl`) for an account of another core: a consent UI
+> ends the flow there with a message and a way back to the app. The OAuth surface (`/oauth2/*`,
+> `/.well-known/*`) answers CORS without credentials. Server-created streams carry `created`,
+> `createdBy`, `modified`, `modifiedBy`; those stored earlier read with the data store defaults
+> (nothing to migrate). No schema migration, so `migrations.autoRunOnStart: false` needs no step.
+> As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
+
 ### OAuth consent: an account served by another core gets its own answer
 
 - **Fixed: the consent of an account served by another core looped back to the sign-in.** On a
@@ -69,71 +163,6 @@
   issued up to five seconds after the revoke are void too (keep the CLI host and the cores
   NTP-synced).
 
-### Account transfer to a beneficiary
-
-- **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
-  of being deleted at its date or after its period without use, an account can be handed over to a
-  beneficiary, who then becomes its controller (account delegation). The setting takes `transfer: {
-  email, name?, dateOfBirth?, notifyBeneficiary: 'atSetup' | 'atTrigger', fallback: 'delete' |
-  'keep' }` with `mode: 'date'` or `'inactivity'`; `fallback: 'delete'` is offered only where the
-  holder may delete the account themselves. Setting or changing a transfer (beneficiary, fallback,
-  notice, name or date of birth) needs the account password, like arming a schedule; moving from
-  `transfer` to `delete` counts as bringing the deletion nearer. Name and date of birth are optional,
-  stored encrypted in their own account field (never answered by the API: the setting shows
-  `identityGiven: true`), kept for the same beneficiary, and erased with every version when the
-  beneficiary changes, the action changes, the transfer completes, lapses or is declined, and with
-  the account. `getAutoDeletion` adds `transfer` (the state of the current or last transfer:
-  `status` `named | open | claimed | completed | declined | cancelled | lapsed | fallback-delete`,
-  `email`, `openedAt`, `endsAt`, `claimedBy`, `failedClaims`, `ownerNotifiedAt`, `closedAt`,
-  `closedReason`) and
-  `claimWindowDays`. With `notifyBeneficiary: 'atSetup'` the beneficiary is mailed at once, with a
-  decline link. When the schedule is due the account is not erased: a claim window opens
-  (`account.autoDeletion.transfer.claimWindowDays`, default 90), the beneficiary is mailed a claim
-  link (again 30 and 60 days later, the same link) and the holder is told. Use of the account before
-  a claim cancels the transfer in `inactivity` mode (the clock restarts), up to the moment the
-  fallback would apply; the holder can change or cancel it in the account app at any time (a new
-  date or period not yet due closes an open window). At the window end without a claim the holder's
-  `fallback` applies: `keep` lapses the transfer and leaves the setting at `never` (or the
-  platform's preset, with its full schedule, where opting out is not allowed); `delete` erases the
-  account as a direct deletion would (deletion guards, self-deletion, `maxDeletionsPerPass`).
-  `transfer` appears in `actions` and `features.autoDeletion.actions` where account delegation is
-  on, mail can be sent with the claim mail switched on (`atSetup` also needs the beneficiary-named
-  mail), and `service.account` is set (the claim and decline pages are pages of the
-  account app). The feature is now advertised when `transfer` alone is offered.
-- **New public methods `account.transferClaim` (`POST /{username}/account/auto-deletion/transfer-claim`,
-  `{ appId, token, claimant }`) and `account.transferDecline` (`POST
-  /{username}/account/auto-deletion/transfer-decline`, `{ appId, token }`).** The token of the mailed
-  link is the credential (trusted apps only, never inside a batch call). A claim binds the transfer to
-  the first account that claims it (`claimant`, on any core of the platform), sends that account a
-  delegation invite on the holder's behalf and answers `{ transfer: { status: 'invited', username }
-  }`; the claimant accepts it with `delegations.acceptAttach` on its own core, and the next claim
-  (or the sweep) completes the transfer: `{ status: 'completed' }`, the holder's setting cleared, the
-  identity erased, both parties mailed. A repeat by the same account answers the same; an invite that
-  lapsed inside the window is issued again; a claimant that already controls the account completes it
-  at once. Refusals: `auto-deletion-transfer-invalid-link` (unknown, replaced or closed: one answer),
-  `auto-deletion-transfer-expired` (window ended), `auto-deletion-transfer-claimed` (another account
-  claimed it). A valid link always proceeds; wrong ones are counted for the holder
-  (`transfer.failedClaims`) and refuse nothing else. Failed links also count on the caller's
-  address budget of failed secrets (`auth.passwordAttempts.perIp`, `too-many-attempts`). A decline
-  before the deadline turns the setting into the holder's fallback (`delete` on the same schedule, or
-  `never`); during the window, a claim made meanwhile included (its invite is withdrawn), it applies
-  the fallback at once (`keep`) or at the next pass (`delete`). A claimant who refuses the delegation
-  invite declines the same way; a decline after the claimant accepted is refused
-  (`auto-deletion-transfer-claimed`) and the transfer completes. A use of the account by its holder
-  (inactivity) also cancels a claim not accepted yet. The setting rejects an invalid transfer with `auto-deletion-transfer-invalid`
-  (`data.param`).
-- **Six new mails:** `account-transfer-named`, `-claim`, `-started`, `-cancelled`, `-lapsed`,
-  `-completed` (en, fr), switches `services.email.enabled.accountTransfer{Named,Claim,Started,
-  Cancelled,Lapsed,Completed}` and template keys `accountTransfer…Template` (variables in
-  `default-config.yml`). The confirmation and reminder mails say "transferred to" for a transfer
-  (new variables `ACTION_TRANSFER`, `BENEFICIARY`, `FALLBACK_DELETE`, `FALLBACK_KEEP`, ...).
-  **Existing platforms:** the seeder fills an empty template store only: add the six templates (and
-  the updated `account-deletion-scheduled` and `account-deletion-reminder`) with `bin/mail.js
-  templates set`.
-- **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
-  owner of a transfer whose stored address another account holds is not marked told of its start (it
-  is tried again at each pass); mails to a transfer beneficiary are unchanged.
-
 ### System streams carry the properties the stream schema requires
 
 - **Fixed: streams the server creates itself lacked `created`, `createdBy`, `modified` and
@@ -146,13 +175,39 @@
   server-side update without its own stamp records `modified` and `modifiedBy` `'system'`.
   **Existing accounts:** streams already stored without these properties read with the data store
   defaults (`created` / `modified` `10000000.00000001`, `createdBy` / `modifiedBy` `'unknown'`), as
-  for the store streams fixed in 2.0.0-rc.73; nothing to migrate.
+  for the store streams fixed in 2.0.0-rc.72; nothing to migrate.
 - A stream taken out of the trash because a new access names it in a permission (with
   `defaultName`) now records that change (`modified`, `modifiedBy` the acting access).
 - **Fixed:** when that permission names a trashed stream of another data store (`:<store>:<id>`), the
   stream is now taken out of the trash in its own store. Before, a local stream with the same id was
   untrashed instead, or the request failed when there was none. Only data stores that support trash
   are concerned; the stores shipped with the server do not.
+
+### Email lookups match any case in cleartext piiMode
+
+- **Fixed: with `platform.piiMode: cleartext`, the lookups of the account holding an email find it
+  in any case.** The username recovery (`GET /reg/{email}/username` and `/uid`), the core lookup
+  (`GET /reg/cores?email=`) and the third-party sign-in's account matching found only the spelling
+  as written: `USER@x` for an account holding `user@x` answered "unknown email", the core lookup
+  answered as for a free address, and a sign-in whose identity provider gave `User@x` was refused
+  (`no-account`). They now find the account in any case and without surrounding white space, as
+  hashed mode does; the sign-in still links only an address the account proved, and only one the
+  identity provider asserts as verified. When two accounts hold one address in two spellings (data
+  written before the uniqueness of 2.0.0-rc.73), the one spelled as asked is answered, and none
+  when neither is. `bin/reconcile-user-cores.js --emails` no longer reports as missing, nor claims a second row
+  for, an account whose own row spells its address in another case than its stored email.
+
+### OAuth CORS
+
+- **Fixed: the OAuth endpoints (`/oauth2/*`) and the discovery documents (`/.well-known/*`) answer
+  CORS with their own policy only:** any origin, no credentials, `POST, GET, OPTIONS`,
+  `Content-Type, Authorization, DPoP`; a preflight answers `204` (cached an hour). The API's CORS
+  answered their preflights (the request's origin echoed, `200`) and added
+  `Access-Control-Allow-Credentials: true` next to `Access-Control-Allow-Origin: *` on their answers
+  (browsers refused that pair for a credentialed call anyway). The consent screen's
+  `POST /oauth2/authorize/{offer,accept,refuse}` follow the same policy.
+  `Access-Control-Expose-Headers: API-Version` is no longer sent on this surface. The other routes
+  keep the API's CORS (origin echoed, credentials allowed).
 
 ## 2.0.0-rc.73 - 2026-11-05
 
@@ -194,17 +249,6 @@
   `bin/reconcile-user-cores.js --emails --dry-run` lists them and, in cleartext mode, names the other
   holder and its spelling. Nothing is migrated. Hashed mode (the default, `piiMode: hashed`) is
   unchanged.
-- **Fixed: with `platform.piiMode: cleartext`, the lookups of the account holding an email find it
-  in any case.** The username recovery (`GET /reg/{email}/username` and `/uid`), the core lookup
-  (`GET /reg/cores?email=`) and the third-party sign-in's account matching found only the spelling
-  as written: `USER@x` for an account holding `user@x` answered "unknown email", the core lookup
-  answered as for a free address, and a sign-in whose identity provider gave `User@x` was refused
-  (`no-account`). They now find the account in any case and without surrounding white space, as
-  hashed mode does; the sign-in still links only an address the account proved, and only one the
-  identity provider asserts as verified. When two accounts hold one address in two spellings (data
-  written before the uniqueness above), the one spelled as asked is answered, and none when neither
-  is. `bin/reconcile-user-cores.js --emails` no longer reports as missing, nor claims a second row
-  for, an account whose own row spells its address in another case than its stored email.
 - **Fixed: a `bin/backup.js --restore --verify-integrity` rollback no longer leaves an account the
   restore created.** The rollback cleared the account's data but left its index entry, its platform
   rows (its email reserved) and its routing row: the name and the address stayed taken by an account
@@ -236,18 +280,6 @@
 > sweep treats each as an account without an address (`no-email`): it can be deleted without any
 > notice reaching its holder, so resolve such pairs before the next sweep. Hashed platforms need no
 > step.
-
-### OAuth CORS
-
-- **Fixed: the OAuth endpoints (`/oauth2/*`) and the discovery documents (`/.well-known/*`) answer
-  CORS with their own policy only:** any origin, no credentials, `POST, GET, OPTIONS`,
-  `Content-Type, Authorization, DPoP`; a preflight answers `204` (cached an hour). The API's CORS
-  answered their preflights (the request's origin echoed, `200`) and added
-  `Access-Control-Allow-Credentials: true` next to `Access-Control-Allow-Origin: *` on their answers
-  (browsers refused that pair for a credentialed call anyway). The consent screen's
-  `POST /oauth2/authorize/{offer,accept,refuse}` follow the same policy.
-  `Access-Control-Expose-Headers: API-Version` is no longer sent on this surface. The other routes
-  keep the API's CORS (origin echoed, credentials allowed).
 
 ### Adapter routes: a sidecar served under `/adapter/<name>/`
 
