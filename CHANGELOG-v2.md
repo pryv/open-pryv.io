@@ -1,6 +1,29 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.75 - 2026-11-06
+
+> **Upgrade advice for operators.** No BREAKING API change, no new configuration key, no schema
+> migration (`migrations.autoRunOnStart: false` needs no step). **Per-user resource addresses:** an
+> OAuth client's `allowedAudiences` (a registry client's `--audience`, or the metadata-document
+> template's `client.allowedAudiences`) may hold `https://{username}.<host>/...` entries, bound at
+> consent to the signed-in account; add such an entry only once every core of the platform runs
+> this release (an older core matches it to nothing). A per-user entry is the same on every core.
+> Resource servers may send `subject_token_resource` at the token exchange. **Adapter routes on
+> per-user hosts** (`https://<username>.<dns.domain>/adapter/<name>/...`): the core sets
+> `X-Adapter-Name` and `X-Adapter-Base` on the forwarded request and drops client-sent copies;
+> **upgrade each core before the sidecar next to it starts reading these headers** (an earlier core
+> forwards client-sent copies). Recognition needs `dns.domain`: a dnsLess core or a core without
+> it treats every host as a platform address (one boot warning when adapter routes are
+> configured). An ingress in front of the core that routes adapter paths around it loses this
+> triage (`docs/nginx-ingress-sample.conf` clears both headers). On such a host, an account of
+> another core answers `421 wrong-core` (adapter paths, with `coreUrl`) or `421 wrong_core`
+> (`/oauth2/token`; `/oauth2/authorize` shows a static page), with `Retry-After` from
+> `dns.defaultTTL` (300 s by default): a client retries the same address once DNS has moved.
+> Every core now advertises its `dns.staticEntries` names and its OAuth issuer label to its
+> siblings, which refuse them as usernames at registration and rename (the platform-config
+> snapshot and its hash are unchanged). `accesses.checkApp` reads `:local:<id>` as `<id>`, as
+> `accesses.create` stores it. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
 
 ### Adapter routes: per-user addresses
 
