@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### `accesses.checkApp` reads stream ids as `accesses.create` stores them
+
+- **`accesses.checkApp` canonicalises the requested stream ids** the way `accesses.create` and
+  `accesses.update` do (`:local:<id>` is `<id>`). An app requesting `:local:<id>` now matches the app
+  access created from that same request, instead of being reported as mismatching (and asked for
+  consent again) at every sign-in. `checkedPermissions` carry the canonical ids, with `defaultName`
+  or `name` resolved as before. A request naming the same stream twice in any spelling is refused
+  with the error `accesses.create` gives it (`invalid-request-structure`), instead of being checked.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

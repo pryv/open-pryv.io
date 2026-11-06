@@ -1281,8 +1281,18 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     'accesses.checkApp',
     commonFns.basicAccessAuthorizationCheck,
     commonFns.getParamsValidation(methodsSchema.checkApp.params),
+    canonicalizePermissionStreamIdsForCheckApp,
     checkApp
   );
+
+  // Same rewrite (and duplicate refusal) as accesses.create: the stored access
+  // carries canonical ids, so the match, `checkedPermissions` (sent back to
+  // create or update) and the stream lookups must reason on them too, or a
+  // `:local:<id>` request would never match the `<id>` it was stored as.
+  function canonicalizePermissionStreamIdsForCheckApp (context: MethodContext, params: AccessesCheckAppParams, result: AccessesCheckAppResult, next: MethodNext) {
+    canonicalizeStreamPermissions(params.requestedPermissions);
+    next(duplicateStreamPermissionError(params.requestedPermissions));
+  }
 
   function checkApp (context: MethodContext, params: AccessesCheckAppParams, result: AccessesCheckAppResult, next: MethodNext) {
     const accessesRepository = storageLayer.accesses;
