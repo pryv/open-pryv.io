@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 15 (2026-11-05), covering releases 2.0.0-rc.40 to 2.0.0-rc.73.
+**Report revision:** 16 (2026-11-06), covering releases 2.0.0-rc.40 to 2.0.0-rc.74.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -54,8 +54,9 @@ in 2.0.0-rc.70, and a review of the suspension and lifecycle of OAuth2 clients, 
 fixed in 2.0.0-rc.71, and a review of backup restore on multi-core platforms, of the mails sent to
 an account's stored address and of the background work of an account being erased, made in November
 2026, added those fixed in 2.0.0-rc.72, and a follow-up review of email uniqueness in cleartext PII
-mode and of backup restore, made in November 2026, added the one fixed in 2.0.0-rc.73; they were
-fixed under the same rules (tests that
+mode and of backup restore, made in November 2026, added the one fixed in 2.0.0-rc.73, and a
+review of the OAuth2 client revoke, made in November 2026 alongside the work on client metadata
+documents, added the one fixed in 2.0.0-rc.74; they were fixed under the same rules (tests that
 fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
@@ -66,7 +67,7 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 69 findings, each rated and described individually in
+The review and its follow-ups recorded 70 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
@@ -75,8 +76,8 @@ items reported through the public issue tracker, are described but not counted:
 | Critical | 6 | 0 | 0 |
 | High | 22 | 0 | 0 |
 | Medium | 38 | 0 | 0 |
-| Low | 3 | 0 | 0 |
-| **Total** | **69** | **0** | **0** |
+| Low | 4 | 0 | 0 |
+| **Total** | **70** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -124,6 +125,7 @@ its applicability is stated with it.
 | 2.0.0-rc.71 | 2026-11-03 | 1 Low, lower-severity fixes, completion step of an earlier hardening (a client's suspension reaches the data API); operator action: set `oauth.logoHosts` before upgrading where registry OAuth2 clients have logos, approve vetted client changes with `update --approve`, run `purge-grants` after a revoke (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-03) |
 | 2.0.0-rc.72 | 2026-11-04 | 2 Medium, 1 Low, lower-severity fixes; operator action: run `bin/reconcile-user-cores.js --emails` on each core where accounts were restored with `--user` by an earlier release, look for leftover records with the queries of that release (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-04) |
 | 2.0.0-rc.73 | 2026-11-05 | 1 Medium, lower-severity fixes; operator action: on a platform run with `platform.piiMode: cleartext`, run `bin/reconcile-user-cores.js --emails --dry-run` on each core and resolve the pairs of accounts it lists (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-05) |
+| 2.0.0-rc.74 | 2026-11-06 | 1 Low, lower-severity fixes; operator action: none beyond the upgrade for the fixes; keep the host that runs `bin/oauth-client.js` and the cores NTP-synced; before turning on `oauth.clientMetadataDocuments`, read `docs/oauth2.md` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-06) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -227,11 +229,14 @@ workers; the operator's custom authentication step; and the caller id carried fo
 | ACME HTTP-01 responder | public when Let's Encrypt is enabled |
 | rqlite platform database: HTTP API (loopback) and Raft (peer cores, mutual TLS) | local / peer cores |
 | Adapter routes (`/adapter/<name>/` on every host, since 2.0.0-rc.73, off unless configured): forwarded to a sidecar on the same host | public, authenticated by the sidecar, not by the core |
+| OAuth2 client metadata documents (an https URL as `client_id`, since 2.0.0-rc.74, off unless configured): the core fetches the document, and the key set it names, from the client's host | public: any party can present such a client to the consent screen of the hosts the operator allows |
 | Local pub/sub broker for cache invalidation | loopback |
 | PostgreSQL, InfluxDB, SQLite files | local |
 
 **Outbound calls:** webhooks, mail (SMTP or a mail service), SMS providers for MFA, core-to-core
-calls, cluster join acknowledgement, ACME, S3, the observability exporter.
+calls, cluster join acknowledgement, ACME, S3, the observability exporter, and (when turned on)
+the OAuth2 client metadata documents and their key sets (https only, no redirect followed,
+private addresses refused, size, time and rate bounds).
 
 ### 3.3 Operator tools and boot
 
@@ -1945,6 +1950,62 @@ earlier releases.
   as above. Before configuring an adapter route, read `docs/adapter-routes.md`: the sidecar must
   authenticate every request, and its port must not be reachable from outside the host.
 
+### Fixed in 2.0.0-rc.74 (deployed)
+
+2.0.0-rc.74 adds OAuth2 client metadata documents: a client may name itself, as `client_id`, by
+the https URL of a document it publishes, and the core serves it with the reach of a template the
+operator sets (off unless configured). It also accepts `RS256` client assertions. These are new
+features, described in `CHANGELOG-v2.md`, not fixes. The review of the client revoke made
+alongside them found the following in earlier releases.
+
+#### A revoked OAuth2 client's codes and refresh tokens worked again once its id was registered again
+
+- **Severity:** Low (it needs the operator to register again, under the same id, a client they
+  revoked; the gain is the revoked client's own grants, not access to another account). Affected:
+  2.0.0-rc.73 and earlier releases.
+- **What could happen:** `bin/oauth-client.js revoke` refused the client's live sessions and
+  removed the client. When the operator later registered a client under the same id, the refresh
+  tokens issued to the revoked client, and the authorization codes issued in the minutes before the
+  revoke, were accepted again and minted new sessions, and the users' earlier consents were reused
+  without asking them.
+- **What changed:** a revoke is a point in time: no authorization code, refresh token, session or
+  consent issued for that client id before it is honoured again, whatever is registered under the
+  id later. The users of a client registered again are asked for a new consent. The revoke time
+  carries a five-second margin against clock differences between the host that ran `revoke` and
+  the cores.
+- **Operator action:** none beyond the upgrade. Keep the host that runs `bin/oauth-client.js` and
+  the cores NTP-synced.
+
+#### Lower-severity fixes in 2.0.0-rc.74
+
+- **An access permission on a trashed stream of another data store untrashed a local stream**
+  (data stores that support trash only; the stores shipped with the server do not): an access
+  created with a permission naming such a stream (`:<store>:<id>`, with `defaultName`) took a local
+  stream with the same id out of the trash instead, or failed when there was none. The stream is
+  now taken out of the trash in its own store.
+- **The OAuth endpoints and the discovery documents answer CORS with their own policy**
+  (hardening): any origin, no credentials, a fixed list of methods and headers. They answered the
+  API's CORS before, which echoed the caller's origin on a preflight and added
+  `Access-Control-Allow-Credentials: true`.
+- Not security fixes, listed for operators: on a multi-core platform, the consent of an account
+  served by another core answers `421 wrong_core` with that core's URL instead of a sign-in loop
+  (the answer says no more than the wrong-core answer of the account routes already says); server-created
+  streams carry the tracking properties the stream schema requires; with `platform.piiMode:
+  cleartext`, the lookups of the account holding an email find it in any case; a Socket.IO client
+  no longer loses its change notifications when it connects while another client of the account
+  leaves.
+- New in this release, not findings: OAuth2 client metadata documents (section 3.2): with
+  `oauth.clientMetadataDocuments` turned on, the core fetches a document from the client's host
+  (https only, no redirect followed, private addresses refused, size, time and rate bounds), takes
+  the client's name and redirect URIs from it and what the client may be granted from the
+  operator's template only; such a client gets no introspection, no token exchange and no allowed
+  feature, and the consent screen must show the document's host next to the client's name. With
+  `mode: any`, any party can present a client to the consent screen: the host shown, the template,
+  the deny-list and the fetch bounds are the controls.
+- **Operator action:** before turning on `oauth.clientMetadataDocuments`, read `docs/oauth2.md`
+  (client metadata documents), prefer `mode: allowList`, and make sure the consent UI shows the
+  client's host.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2045,3 +2106,4 @@ This report is updated with every release that carries a security fix:
 | 13 | 2026-11-03 | 2.0.0-rc.40 to 2.0.0-rc.71 | Adds 2.0.0-rc.71 (review of the suspension and lifecycle of OAuth2 clients, alongside the vetting status of clients registered by the operator): 1 Low finding, lower-severity fixes and the completion step of the 2.0.0-rc.68 suspension (the data API refuses a suspended client's tokens). Deployed on the maintainers' platforms (2026-11-03). |
 | 14 | 2026-11-04 | 2.0.0-rc.40 to 2.0.0-rc.72 | Adds 2.0.0-rc.72 (review of backup restore on multi-core platforms, of the mails sent to an account's stored address and of the background work of an account being erased): 2 Medium findings, 1 Low finding and lower-severity fixes, among them two completion steps of the 2.0.0-rc.71 client vetting (launch types, withdrawn refresh grant type). Deployed on the maintainers' platforms (2026-11-04). |
 | 15 | 2026-11-05 | 2.0.0-rc.40 to 2.0.0-rc.73 | Adds 2.0.0-rc.73 (follow-up review of email uniqueness in cleartext PII mode and of backup restore): 1 Medium finding and lower-severity fixes; section 3.2 adds the adapter routes. Deployed on the maintainers' platforms (2026-11-05). |
+| 16 | 2026-11-06 | 2.0.0-rc.40 to 2.0.0-rc.74 | Adds 2.0.0-rc.74 (review of the OAuth2 client revoke, alongside client metadata documents): 1 Low finding and lower-severity fixes; section 3.2 adds client metadata documents and their outbound fetches. Deployed on the maintainers' platforms (2026-11-06). |
