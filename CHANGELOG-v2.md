@@ -20,7 +20,8 @@
   "audience-account-mismatch" }`, before anything is written, audited as `oauth.consent.refused`
   with that reason and no username. A former username is not accepted (chains authorized before a
   rename keep their audience). An authorization whose audience the client's list no longer holds
-  answers `400 invalid_target` at `/accept` (restart the flow). Introspection `aud`, the token
+  (or whose client is gone) answers `400 invalid_target`, `reason: "audience-not-listed"`, at the
+  signed-in `/offer` and at `/accept` (restart the flow). Introspection `aud`, the token
   response and the data API flag `oauth.audienceBoundSessions` treat the address as any audience.
 - **Added: token exchange accepts a subject token issued for such an address** when the resource
   server lists the matching entry; on the home core the address must name the subject account

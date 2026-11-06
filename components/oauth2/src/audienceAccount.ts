@@ -28,6 +28,9 @@ import { audit } from './audit.ts';
 /** The refusal reason (answer and audit), for every label that does not name the account. */
 export const AUDIENCE_ACCOUNT_MISMATCH = 'audience-account-mismatch';
 
+/** The reason (answer and audit) of a consent whose audience the client's current list does not hold. */
+export const AUDIENCE_NOT_LISTED = 'audience-not-listed';
+
 /** The refusal's `error_description`. */
 export const AUDIENCE_ACCOUNT_MISMATCH_TEXT = 'the requested resource names another account\'s address';
 
@@ -55,7 +58,9 @@ export function labelNamesAccount (label: string, account: AccountNames, isPlatf
  * on (no audience, a client without a list, an exact audience, or a per-user
  * one naming the account), `'mismatch'` when a per-user audience names
  * another address, `'unlisted'` when the client's list no longer holds the
- * audience the authorization named (changed since `/oauth2/authorize`).
+ * audience the authorization named (changed since `/oauth2/authorize`), or
+ * the client row is gone: the label is re-derived from the current list, so a
+ * list that no longer matches is refused rather than passed unbound.
  */
 export function consentAudienceRefusal (
   audience: string | undefined,
@@ -63,7 +68,8 @@ export function consentAudienceRefusal (
   account: AccountNames,
   isPlatformRoutedLabel?: PlatformRoutedLabel | null
 ): null | 'mismatch' | 'unlisted' {
-  if (audience == null || client == null) return null;
+  if (audience == null) return null;
+  if (client == null) return 'unlisted';
   const list = Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0 ? client.allowedAudiences : null;
   if (list == null) return null;
   const match = withinResourceCap(audience, list) ? matchAudience(audience, list) : null;
@@ -77,7 +83,7 @@ export async function auditAudienceRefusal (payload: { clientId: string; scope: 
   await audit('oauth.consent.refused', {
     clientId: payload.clientId,
     requestedScope: payload.scope,
-    reason: kind === 'mismatch' ? AUDIENCE_ACCOUNT_MISMATCH : 'audience-not-listed',
+    reason: kind === 'mismatch' ? AUDIENCE_ACCOUNT_MISMATCH : AUDIENCE_NOT_LISTED,
   });
 }
 
@@ -88,6 +94,10 @@ export function consentAudienceAnswer (kind: 'mismatch' | 'unlisted'): { status:
   }
   return {
     status: 400,
-    body: { error: 'invalid_target', error_description: 'the requested resource is no longer one this client may access: restart the authorization flow' },
+    body: {
+      error: 'invalid_target',
+      error_description: 'the requested resource is no longer one this client may access: restart the authorization flow',
+      reason: AUDIENCE_NOT_LISTED,
+    },
   };
 }

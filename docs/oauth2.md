@@ -413,7 +413,11 @@ with a message naming the accepted form.
   holds it (an account older than the name). One reason for every refusal, so
   the answer says nothing about whether an account exists. An authorization
   whose audience the client's list no longer holds (the list changed since
-  `/oauth2/authorize`) is refused `invalid_target`: restart the flow.
+  `/oauth2/authorize`) is refused `400 invalid_target` (`reason:
+  "audience-not-listed"`, audited with that reason) at the signed-in
+  `/oauth2/authorize/offer` and at `/oauth2/authorize/accept`: restart the
+  flow; a client row deleted meanwhile is refused the same way. Nothing is
+  written.
 - **After a username change.** A chain authorized before keeps its audience
   (it is fixed at authorization and copied on refresh); a new authorization at
   the former address is refused `audience-account-mismatch`. The account app
@@ -642,6 +646,7 @@ never on the wording; render errors without one generically.
 | `consent-widens-offer` | the kept subset would widen the offer through the stream hierarchy |
 | `grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (`/offer` and `/accept`) |
 | `audience-account-mismatch` | 403 `access_denied`: the requested resource is a per-user address that does not name the signed-in account (§ 1c); the signed-in `/offer` and `/accept` |
+| `audience-not-listed` | 400 `invalid_target`: the client's list no longer holds the resource the authorization named, or the client is gone: restart the flow (§ 1c); the signed-in `/offer` and `/accept` |
 
 ### Registry grants and their sessions
 

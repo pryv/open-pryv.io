@@ -25,7 +25,7 @@ import { handleToken } from '../src/routes/token.ts';
 import { TOKEN_EXCHANGE, ACCESS_TOKEN_TYPE } from '../src/grants/token_exchange.ts';
 import { persistClient, narrowedGrantFields, changedVettedFields } from '../src/clientRegistry.ts';
 import { mintSecret } from '../src/clientSecret.ts';
-import { setSessionIndex, getSessionIndex } from '../src/storage.ts';
+import { setSessionIndex, getSessionIndex, getClient, setClient } from '../src/storage.ts';
 import { MAX_RESOURCE_BYTES, matchAudience, withinResourceCap } from '../src/resourceIndicator.ts';
 import { MAX_TEMPLATE_BYTES, audienceProbe } from '../src/audienceTemplate.ts';
 import { labelNamesAccount, consentAudienceRefusal } from '../src/audienceAccount.ts';
@@ -256,6 +256,9 @@ describe('[OPUA] OAuth2: per-user audiences', () => {
       assert.equal(consentAudienceRefusal(at('alice'), { anyAudience: true, allowedAudiences: [] }, { username: 'bob' }), null);
       assert.equal(consentAudienceRefusal('https://gone.example.com/', client, { username: 'bob' }), 'unlisted');
       assert.equal(consentAudienceRefusal(undefined, client, { username: 'bob' }), null);
+      // The client row gone since /authorize: an audience is refused, none is not checked.
+      assert.equal(consentAudienceRefusal(at('alice'), null, { username: 'alice' }), 'unlisted');
+      assert.equal(consentAudienceRefusal(undefined, null, { username: 'alice' }), null);
     });
 
     it('[OPUC1] the registry: adding a per-user audience is a widening (vetted), removing one a narrowing', () => {
@@ -369,11 +372,15 @@ describe('[OPUA] OAuth2: per-user audiences', () => {
       const platform = fakePlatform();
       await seedConnector(platform);
       const a = await authorize(platform, at('alice'));
-      await seedConnector(platform, { allowedAudiences: [REGION] });
+      // The list changed under the same client version (a registry edit also ends the flow by its version).
+      const row = await getClient(platform, 'conn-app');
+      await setClient(platform, { ...row, allowedAudiences: [REGION] });
       const calls = [];
-      const res = await accept(consentDeps(platform, {}, calls), a.signed);
-      assert.equal(res.statusCode, 400, res.raw);
-      assert.equal(res.body.error, 'invalid_target');
+      const deps = consentDeps(platform, {}, calls);
+      for (const res of [await offer(deps, a.signed), await accept(deps, a.signed)]) {
+        assert.equal(res.statusCode, 400, res.raw);
+        assert.deepEqual([res.body.error, res.body.reason], ['invalid_target', 'audience-not-listed']);
+      }
       assert.equal(calls.length, 0);
     });
   });

@@ -307,6 +307,44 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
     }
   });
 
+  it('[OPUE13] the client\'s list no longer holds the authorization\'s audience (a per-user entry or an exact one removed meanwhile): refused at /offer and /accept, nothing written', async () => {
+    const alice = await newUser();
+    const notListed = [400, 'invalid_target', 'audience-not-listed'];
+    for (const [before, after, resource, expected] of [
+      [[TEMPLATE], [REGION], at(alice.username), notListed],
+      [[REGION], ['https://rs.example.com/other'], REGION, notListed],
+      // The exact entry removed, the per-user one kept: the region address now reads as a label, and binds no account.
+      [[REGION, TEMPLATE], [TEMPLATE], REGION, [403, 'access_denied', 'audience-account-mismatch']],
+    ]) {
+      // Through the registry: the new client version already ends the flow (the consent is pinned to it).
+      const edited = await register('Edited', { allowedAudiences: before });
+      const pinned = await authorize(edited, resource);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await oauth2.persistClient(platformDB, { ...(await storage.getClient(platformDB, edited)), allowedAudiences: after });
+      const restart = await accept(alice, pinned.state);
+      assert.deepEqual([restart.status, restart.body.error], [400, 'invalid_request'], JSON.stringify(restart.body));
+      // A row whose list changed under the same version (a write outside the registry): the binding's own check.
+      const cid = await register('Narrowed', { allowedAudiences: before });
+      const { state } = await authorize(cid, resource);
+      const row = await storage.getClient(platformDB, cid);
+      await storage.setClient(platformDB, { ...row, allowedAudiences: after });
+      let o, a;
+      const rows = await auditRows(async () => {
+        o = await offer(alice, state);
+        a = await accept(alice, state);
+      });
+      for (const res of [o, a]) {
+        assert.deepEqual([res.status, res.body.error, res.body.reason], expected, JSON.stringify(res.body));
+      }
+      const refused = rows.filter((x) => x.event === 'oauth.consent.refused');
+      assert.equal(refused.length, 2);
+      assert.ok(refused.every((x) => x.payload.reason === expected[2]));
+      assert.ok(!JSON.stringify(rows).includes(alice.username), 'no username in the audit rows');
+      assert.deepEqual(await grantsOf(alice, cid), [], 'no grant, no session');
+      assert.deepEqual(await grantsOf(alice, edited), [], 'no grant, no session');
+    }
+  });
+
   it('[OPUX11] the exchange of a per-user token: with subject_token_resource naming the address, the same derived token; naming another, invalid_target', async () => {
     const alice = await newUser();
     const t = await connect(alice, tplId, at(alice.username));
