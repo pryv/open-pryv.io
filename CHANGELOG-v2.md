@@ -47,8 +47,8 @@
 - **Added: `/oauth2/token` and `/oauth2/authorize` on the host of an account another core serves**
   (a client holding an earlier DNS answer): `/token` answers `421 { "error": "wrong_core",
   "error_description", "coreUrl" }` with `Retry-After` (`dns.defaultTTL`, 300 s by default) before
-  any code or refresh token is read; `/authorize` answers `421` with a static "this address has just
-  moved" page (no redirect, no form). The host is read as for adapter routes; service and core hosts
+  any code or refresh token is read; `/authorize` answers `421` with the same `Retry-After` and a
+  static "this address has just moved" page (no redirect, no form). The host is read as for adapter routes; service and core hosts
   and other domains are unchanged.
 - **Documented: `/service/info.adapters` lists adapter bases in the `{username}` template form**, as
   the operator sets them in `service.adapters` (passed through unchanged). See
@@ -86,6 +86,13 @@
   reason `subject-resource-mismatch`), so a token issued for one account's address is not exchanged
   when presented at another's. Checked before the home core is named. `resource` / `audience`
   keep naming this server. See `docs/oauth2.md` § 1c "Per-user addresses" and § 1e.
+- **Changed: a name another core of the platform answers itself is refused as a username on every
+  core.** Each core now advertises its `dns.staticEntries` keys and its OAuth issuer label to its
+  siblings, so registration, the username check and the username change refuse a sibling's names as
+  they already refused this core's own, and no core reads `<name>.<dns.domain>` as an account. A core
+  of an earlier release ignores its siblings' names until it is upgraded. These names are answered
+  by the DNS before usernames, so an existing account under one was already unreachable at that
+  host.
 
 ### `accesses.checkApp` reads stream ids as `accesses.create` stores them
 
