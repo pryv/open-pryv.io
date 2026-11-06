@@ -296,6 +296,26 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
     assert.deepEqual((await accept({ ...alice, username: former }, stale)).body, MISMATCH);
   });
 
+  it('[OPUE15] an access alias the account holds is no former username: a session whose audience names it is not exchanged', async () => {
+    const alice = await newUser();
+    const t = await connect(alice, tplId, at(alice.username));
+    const minted = await coreRequest.post('/' + alice.username + '/accesses').set('Authorization', alice.token)
+      .send({ name: 'opue15 aliased', type: 'shared', randomAlias: true, permissions: [{ streamId: 'a', level: 'read' }] });
+    assert.equal(minted.status, 201, JSON.stringify(minted.body));
+    const alias = minted.body.access.alias;
+    const row = await storage.getSessionIndex(platformDB, t.access_token);
+    // A row written otherwise than by a consent: its audience names the alias.
+    await storage.setSessionIndex(platformDB, t.access_token, { ...row, audience: at(alias) });
+    let x;
+    const rows = await auditRows(async () => { x = await exchange(t.access_token); });
+    assert.deepEqual([x.status, x.body.error], [400, 'invalid_grant'], JSON.stringify(x.body));
+    assert.ok(rows.some((r) => r.event === 'oauth.token.exchange_refused' && r.payload.reason === 'audience-account-mismatch'), JSON.stringify(rows));
+    // Control: the same session at the account's own address is exchanged.
+    await storage.setSessionIndex(platformDB, t.access_token, row);
+    const ok = await exchange(t.access_token);
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  });
+
   it('[OPUE8] login_hint binds nothing: alice at her own address with login_hint naming someone else is accepted', async () => {
     const alice = await newUser();
     const t = await connect(alice, tplId, at(alice.username), { extra: { login_hint: 'someone-else' } });
