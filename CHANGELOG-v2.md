@@ -2,78 +2,6 @@
 
 ## Unreleased
 
-### Adapter routes: per-user addresses
-
-- **Added: adapter routes name the addressed account.** On a per-user host (hosts of the form
-  `<name>.<dns.domain>`: `https://<username>.<dns.domain>/adapter/<name>/...`) the core sets
-  `X-Adapter-Name` (the addressed name, lowercased) and `X-Adapter-Base` (the route's base as
-  addressed, without a final dot, e.g. `https://alice.example.com/adapter/calendar/`) on the forwarded
-  request; client-sent copies, in any `-` / `_` spelling, are dropped on every adapter request, a
-  trusted proxy's included. A service, core or hosted-site host, a host under any other domain, and
-  every host of a dnsLess core or of a core without `dns.domain` stay platform addresses (neither
-  header). **Upgrade each core before the sidecar next to it starts reading the two headers**: a core
-  of an earlier release forwards client-sent copies.
-- **Added: `421 wrong-core` on an adapter route addressed to an account of another core**, with
-  `Retry-After` (`dns.defaultTTL`, 300 s by default) and `coreUrl`, for every method, without
-  contacting the sidecar, never a redirect (`{ "error": { "id": "wrong-core", "message", "coreUrl" } }`,
-  the API's shape). The client retries the same address once its name resolves to that core;
-  `coreUrl` identifies the core and is not a retry target (it is omitted, with its own message, when
-  that core has no usable URL). No CORS header, like every answer of the core on adapter paths. A
-  name the platform does not map is forwarded like a local one. A placement lookup failure answers
-  `500 unexpected-error`, not forwarded.
-- **Added: `/oauth2/token` and `/oauth2/authorize` on the host of an account another core serves**
-  (a client holding an earlier DNS answer): `/token` answers `421 { "error": "wrong_core",
-  "error_description", "coreUrl" }` with `Retry-After` (`dns.defaultTTL`, 300 s by default) before
-  any code or refresh token is read; `/authorize` answers `421` with a static "this address has just
-  moved" page (no redirect, no form). The host is read as for adapter routes; service and core hosts
-  and other domains are unchanged.
-- **Documented: `/service/info.adapters` lists adapter bases in the `{username}` template form**, as
-  the operator sets them in `service.adapters` (passed through unchanged). See
-  `docs/adapter-routes.md` "Per-user addresses and the addressed account" and `docs/oauth2.md` § 1.
-
-### OAuth: per-user resource addresses
-
-- **Added: a registered audience may name each account's own address.** An `allowedAudiences`
-  entry (a registry client's `--audience`, or the metadata-document template's
-  `client.allowedAudiences`) of the form `https://{username}.<host>[:port][/path][?query]`
-  (exactly one `{username}`, as the first host label, at most 462 bytes) matches a requested `aud`
-  / `resource` whose first host label has the shape of an account name; the address is stored, in
-  the entry's spelling with that label, as any audience. Exact audiences keep working beside it and
-  are matched first: a value equal to an exact entry binds no account. Any other placement of
-  `{username}` is refused when the client is written.
-- **Added: such an address is bound to the signed-in account at consent.** The signed-in
-  `/oauth2/authorize/offer` and `/oauth2/authorize/accept` refuse it unless its label is the
-  account's current username and not a name the platform answers itself (a service host, a core
-  id, a static DNS entry, an OAuth issuer label, a hosted site): `403 { "error": "access_denied",
-  "error_description": "the requested resource names another account's address", "reason":
-  "audience-account-mismatch" }`, before anything is written, audited as `oauth.consent.refused`
-  with that reason and no username. A former username is not accepted for a new authorization;
-  existing authorizations keep their address after a username change, including at the token
-  exchange. An authorization whose audience the client's list no longer holds
-  (or whose client is gone) answers `400 invalid_target`, `reason: "audience-not-listed"`, at the
-  signed-in `/offer` and at `/accept` (restart the flow). Introspection `aud`, the token
-  response and the data API flag `oauth.audienceBoundSessions` treat the address as any audience.
-- **Added: token exchange accepts a subject token issued for such an address** when the resource
-  server lists the matching entry; on the home core the address must name the subject account (its
-  current username, or a former username it still holds) (`invalid_grant` otherwise, audit reason
-  `audience-account-mismatch`).
-- **Added: token exchange accepts `subject_token_resource`**, the resource URL at which the
-  resource server received the subject token; when given it must be the token's `aud` (`400
-  invalid_target`, "the subject token was not issued for the resource it was presented at", audit
-  reason `subject-resource-mismatch`), so a token issued for one account's address is not exchanged
-  when presented at another's. Checked before the home core is named. `resource` / `audience`
-  keep naming this server. See `docs/oauth2.md` § 1c "Per-user addresses" and § 1e.
-
-### `accesses.checkApp` reads stream ids as `accesses.create` stores them
-
-- **`accesses.checkApp` canonicalises the requested stream ids** the way `accesses.create` and
-  `accesses.update` do (`:local:<id>` is `<id>`). An app requesting `:local:<id>` now matches the app
-  access created from that same request, instead of being reported as mismatching (and asked for
-  consent again) at every sign-in. `checkedPermissions` carry the canonical ids, with `defaultName`
-  or `name` resolved as before. A request naming the same stream twice in any spelling is refused
-  with the error `accesses.create` gives it (`invalid-request-structure`), instead of being checked:
-  the same refusal as before, one step earlier (the create that followed the check failed with it).
-
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
@@ -138,6 +66,111 @@
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+
+## 2.0.0-rc.75 - 2026-11-06
+
+> **Upgrade advice for operators.** No BREAKING API change, no new configuration key, no schema
+> migration (`migrations.autoRunOnStart: false` needs no step). **Per-user resource addresses:** an
+> OAuth client's `allowedAudiences` (a registry client's `--audience`, or the metadata-document
+> template's `client.allowedAudiences`) may hold `https://{username}.<host>/...` entries, bound at
+> consent to the signed-in account; add such an entry only once every core of the platform runs
+> this release (an older core matches it to nothing). A per-user entry is the same on every core.
+> Resource servers may send `subject_token_resource` at the token exchange. **Adapter routes on
+> per-user hosts** (`https://<username>.<dns.domain>/adapter/<name>/...`): the core sets
+> `X-Adapter-Name` and `X-Adapter-Base` on the forwarded request and drops client-sent copies;
+> **upgrade each core before the sidecar next to it starts reading these headers** (an earlier core
+> forwards client-sent copies). Recognition needs `dns.domain`: a dnsLess core or a core without
+> it treats every host as a platform address (one boot warning when adapter routes are
+> configured). An ingress in front of the core that routes adapter paths around it loses this
+> triage: every request through it is a platform address, and the sidecar must not derive an
+> account from `Host` (`docs/nginx-ingress-sample.conf` clears both headers). On such a host, an account of
+> another core answers `421 wrong-core` (adapter paths, with `coreUrl`) or `421 wrong_core`
+> (`/oauth2/token`; `/oauth2/authorize` shows a static page), with `Retry-After` from
+> `dns.defaultTTL` (300 s by default): a client retries the same address once DNS has moved.
+> Every core now advertises its `dns.staticEntries` names and its OAuth issuer label to its
+> siblings, which refuse them as usernames at registration and rename (the platform-config
+> snapshot and its hash are unchanged). `accesses.checkApp` reads `:local:<id>` as `<id>`, as
+> `accesses.create` stores it. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
+
+### Adapter routes: per-user addresses
+
+- **Added: adapter routes name the addressed account.** On a per-user host (hosts of the form
+  `<name>.<dns.domain>`: `https://<username>.<dns.domain>/adapter/<name>/...`) the core sets
+  `X-Adapter-Name` (the addressed name, lowercased) and `X-Adapter-Base` (the route's base as
+  addressed, without a final dot, e.g. `https://alice.example.com/adapter/calendar/`) on the forwarded
+  request; client-sent copies, in any `-` / `_` spelling, are dropped on every adapter request, a
+  trusted proxy's included. A service, core or hosted-site host, a host under any other domain, and
+  every host of a dnsLess core or of a core without `dns.domain` stay platform addresses (neither
+  header). **Upgrade each core before the sidecar next to it starts reading the two headers**: a core
+  of an earlier release forwards client-sent copies.
+- **Added: `421 wrong-core` on an adapter route addressed to an account of another core**, with
+  `Retry-After` (`dns.defaultTTL`, 300 s by default) and `coreUrl`, for every method, without
+  contacting the sidecar, never a redirect (`{ "error": { "id": "wrong-core", "message", "coreUrl" } }`,
+  the API's shape). The client retries the same address once its name resolves to that core;
+  `coreUrl` identifies the core and is not a retry target (it is omitted, with its own message, when
+  that core has no usable URL). No CORS header, like every answer of the core on adapter paths. A
+  name the platform does not map is forwarded like a local one. A placement lookup failure answers
+  `500 unexpected-error`, not forwarded.
+- **Added: `/oauth2/token` and `/oauth2/authorize` on the host of an account another core serves**
+  (a client holding an earlier DNS answer): `/token` answers `421 { "error": "wrong_core",
+  "error_description", "coreUrl" }` with `Retry-After` (`dns.defaultTTL`, 300 s by default) before
+  any code or refresh token is read; `/authorize` answers `421` with the same `Retry-After` and a
+  static "this address has just moved" page (no redirect, no form). The host is read as for adapter routes; service and core hosts
+  and other domains are unchanged.
+- **Documented: `/service/info.adapters` lists adapter bases in the `{username}` template form**, as
+  the operator sets them in `service.adapters` (passed through unchanged). See
+  `docs/adapter-routes.md` "Per-user addresses and the addressed account" and `docs/oauth2.md` § 1.
+
+### OAuth: per-user resource addresses
+
+- **Added: a registered audience may name each account's own address.** An `allowedAudiences`
+  entry (a registry client's `--audience`, or the metadata-document template's
+  `client.allowedAudiences`) of the form `https://{username}.<host>[:port][/path][?query]`
+  (exactly one `{username}`, as the first host label, at most 462 bytes) matches a requested `aud`
+  / `resource` whose first host label has the shape of an account name; the address is stored, in
+  the entry's spelling with that label, as any audience. Exact audiences keep working beside it and
+  are matched first: a value equal to an exact entry binds no account. Any other placement of
+  `{username}` is refused when the client is written.
+- **Added: such an address is bound to the signed-in account at consent.** The signed-in
+  `/oauth2/authorize/offer` and `/oauth2/authorize/accept` refuse it unless its label is the
+  account's current username and not a name the platform answers itself (a service host, a core
+  id, a static DNS entry, an OAuth issuer label, a hosted site): `403 { "error": "access_denied",
+  "error_description": "the requested resource names another account's address", "reason":
+  "audience-account-mismatch" }`, before anything is written, audited as `oauth.consent.refused`
+  with that reason and no username. A former username is not accepted for a new authorization;
+  existing authorizations keep their address after a username change, including at the token
+  exchange. An authorization whose audience the client's list no longer holds
+  (or whose client is gone) answers `400 invalid_target`, `reason: "audience-not-listed"`, at the
+  signed-in `/offer` and at `/accept` (restart the flow). Introspection `aud`, the token
+  response and the data API flag `oauth.audienceBoundSessions` treat the address as any audience.
+- **Added: token exchange accepts a subject token issued for such an address** when the resource
+  server lists the matching entry; on the home core the address must name the subject account (its
+  current username, or a former username it still holds) (`invalid_grant` otherwise, audit reason
+  `audience-account-mismatch`).
+- **Added: token exchange accepts `subject_token_resource`**, the resource URL at which the
+  resource server received the subject token; when given it must be the token's `aud` (`400
+  invalid_target`, "the subject token was not issued for the resource it was presented at", audit
+  reason `subject-resource-mismatch`), so a token issued for one account's address is not exchanged
+  when presented at another's. Checked before the home core is named. `resource` / `audience`
+  keep naming this server. See `docs/oauth2.md` § 1c "Per-user addresses" and § 1e.
+- **Changed: a name another core of the platform answers itself is refused as a username on every
+  core.** Each core now advertises its `dns.staticEntries` keys and its OAuth issuer label to its
+  siblings, so registration, the username check and the username change refuse a sibling's names as
+  they already refused this core's own, and no core reads `<name>.<dns.domain>` as an account. A core
+  of an earlier release ignores its siblings' names until it is upgraded. These names are answered
+  by the DNS before usernames, so an existing account under one was already unreachable at that
+  host.
+
+### `accesses.checkApp` reads stream ids as `accesses.create` stores them
+
+- **`accesses.checkApp` canonicalises the requested stream ids** the way `accesses.create` and
+  `accesses.update` do (`:local:<id>` is `<id>`). An app requesting `:local:<id>` now matches the app
+  access created from that same request, instead of being reported as mismatching (and asked for
+  consent again) at every sign-in. `checkedPermissions` carry the canonical ids, with `defaultName`
+  or `name` resolved as before. A request naming the same stream twice in any spelling is refused
+  with the error `accesses.create` gives it (`invalid-request-structure`), instead of being checked:
+  the same refusal as before, one step earlier (the create that followed the check failed with it).
 
 ## 2.0.0-rc.74 - 2026-11-05
 
