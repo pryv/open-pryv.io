@@ -55,6 +55,13 @@ export interface CoreInfo {
    * names as usernames.
    */
   sites?: string[];
+  /**
+   * The names this core's DNS answers itself (its `dns.staticEntries` keys and
+   * its OAuth issuer label under `dns.domain`), lowercased, written by
+   * `Platform.registerSelf()` only when there are some. Every core refuses
+   * them as usernames and never reads them as an account's host.
+   */
+  dnsNames?: string[];
   [key: string]: unknown;
 }
 
