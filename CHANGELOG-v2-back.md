@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### OAuth per-user audiences; platform names advertised by every core
+
+- `oauth2/src/audienceTemplate.ts`: the syntax of a per-user audience (`audienceProbe`, a probe
+  label in place of `{username}`, then the registry's and the template's usual URL rules: one code
+  path). `resourceIndicator.ts` `matchAudience`: exact entries first, then per-user entries (a
+  suffix test against the entry's comparison form, no regex built from it), answering the
+  instantiated audience and its label; `/oauth2/authorize` stores it, the exchange's step 5 matches
+  the caller's list with it. `audienceAccount.ts`: the binding (platform predicate first, then the
+  current username or an address alias) at the signed-in `/offer`, in `/accept` before anything is
+  composed or written, and on the exchange's home core.
+- Token exchange step 5b: the optional `subject_token_resource` against the subject's audience
+  (`sameResource`), before the 421; its shape in `requestShapeRefusal` (bounded by the caller's
+  list, `isValidResource`, no placeholder). New audit reasons `subject-resource-mismatch`,
+  `audience-account-mismatch` (exchange and consent), `audience-not-listed` (consent).
+- `api-server/src/platformLabels.ts`: the one predicate for "a name the platform answers itself"
+  (`ignoredUsernameSubdomains(config)` or `platform.isNameRoutedByPlatform`), used by the username
+  rewriter (`expressApp.ts`, previously inline) and injected into the OAuth routes as
+  `isPlatformRoutedLabel`. `sessions.addressAliasesOf` feeds the binding the account's address
+  aliases (empty for now) through `resolveUser` and `readSubjectSession`.
+- `Platform.registerSelf` advertises the core's `dns.staticEntries` keys and its issuer label under
+  `dns.domain` as `dnsNames` on its core-info row (only when there are some);
+  `refreshPlatformNames` merges every core's, so a sibling core refuses them at registration and
+  rename and `isNameRoutedByPlatform` answers them everywhere. The platform-config snapshot lists
+  them as `dns.names` when set: a platform with static entries or an issuer label under its domain
+  sees one hash change at upgrade, and since these names are per core, the cores' hashes differ
+  by them.
+- `bin/oauth-client.js`: `--audience` help, `template-from` note (a per-user entry is valid on
+  every core). Config and install-wizard comments of `oauth.clientMetadataDocuments` say the same.
+- Tests `[OPUA]`, `[OPUE]`, `[OPUX]`, `[OPUC]`, `[OPUR]` (oauth2 unit, api-server end to end on
+  both engines, two-core); the core-process helper takes `STATIC_ENTRIES_JSON` and `OAUTH_ISSUER`.
+
 ### Tests: the suites that need rqlited fail without it
 
 - The two-core suite (`[RG2C]`, api-server `reg-2core-seq.test.js`) and the two-node mTLS cluster test

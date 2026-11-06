@@ -375,6 +375,59 @@ percent-decoding, no default port).
   client: only the resource server's own check of introspection `aud`
   protects it. The registered list is the recommended setting.
 
+**Per-user addresses.** A registered audience whose host starts with the
+literal label `{username}`, e.g.
+`https://{username}.example.com/adapter/calendar/api`, names each account's
+own address (the `{username}` marker of `service:api`). Exactly one
+`{username}`, as the first host label, with at least one label after it; the
+rest follows the usual rules (`https`, no fragment, no user information); at
+most 462 bytes, so every address it names fits the 512-byte cap. Any other
+placement (`https://example.com/{username}/...`, `x.{username}.example.com`,
+`{username}-x.example.com`, twice) is refused when the client is written,
+with a message naming the accepted form.
+
+- **Matching, at `/oauth2/authorize`.** Exact entries are compared first: a
+  value equal to one is that entry and is bound to no account, even when a
+  per-user entry would also read it (so `https://auth-ch.example.com/...`
+  listed exactly stays a region address beside a per-user entry). Then the
+  per-user entries, in list order: the value matches when, compared as above,
+  it is `https://`, a label of account-name shape (5 to 60 characters,
+  lower-case letters, digits and inner hyphens), then the entry's text after
+  `{username}`. The stored audience is the entry with that label (host
+  lower-cased, path and query as the entry writes them). No user is known
+  here: the label is checked for its shape only, and `login_hint` never binds
+  it. A value that matches nothing is refused as any other (`invalid_target`,
+  no list named).
+- **Binding, at consent.** The signed-in `/oauth2/authorize/offer` and
+  `/oauth2/authorize/accept` (registry and application-account clients
+  alike) refuse a per-user audience whose label does not name the signed-in
+  account: **403 `access_denied`**, `error_description` "the requested
+  resource names another account's address", `reason:
+  "audience-account-mismatch"`, before anything is written, audited as
+  `oauth.consent.refused` with that reason and no username. The label names
+  the account when it is its **current** username (or one of its address
+  aliases, none of which is issued yet) and is not a name the platform
+  answers itself: a service host (`reg`, `access`, `mfa`), a core id, a
+  `dns.staticEntries` name or an OAuth issuer label of any core, a runtime DNS
+  record or a hosted site. Such a name is refused even for an account that
+  holds it (an account older than the name). One reason for every refusal, so
+  the answer says nothing about whether an account exists. An authorization
+  whose audience the client's list no longer holds (the list changed since
+  `/oauth2/authorize`) is refused `invalid_target`: restart the flow.
+- **After a username change.** A chain authorized before keeps its audience
+  (it is fixed at authorization and copied on refresh); a new authorization at
+  the former address is refused `audience-account-mismatch`. The account app
+  shows the current address.
+- **From there on nothing changes:** the audience is a plain string on the
+  code, refresh and session rows, `aud` at introspection, `ctx.audience` for
+  the hooks, refused at the data API under `oauth:audienceBoundSessions`.
+  The issuer stays the configured one: a per-user host is a resource, never
+  an issuer.
+- **Any-audience clients** have no list, hence no per-user entry and no
+  binding: a per-user-shaped value is stored as given, bound to nobody.
+- A per-user audience assumes per-user hosts (the DNS topology). On a dnsLess
+  core it names addresses no request reaches.
+
 The chosen value is answered as `aud` by `/oauth2/introspect` (a resource
 server checks it names itself) and handed to the extension's hooks as
 `ctx.audience`; the token response carries no `aud`, and the id_token `aud`
@@ -387,6 +440,10 @@ takes no `resource`. A refresh token issued without an audience (any chain
 from before this release) ignores `resource` and stays unbound until the
 user re-authorizes. `client_credentials` ignores `resource`.
 Nothing is added to the discovery document (RFC 8707 registers no metadata).
+On the token exchange (§ 1e), `resource` keeps its RFC 8693 meaning, the
+target of the requested token (it must name this server); where the subject
+token was presented is `subject_token_resource`, which must be that token's
+`aud`.
 
 ### The token response `scope` (the echo)
 
@@ -584,6 +641,7 @@ never on the wording; render errors without one generically.
 | `keep-one-stream` | a registry consent kept no stream |
 | `consent-widens-offer` | the kept subset would widen the offer through the stream hierarchy |
 | `grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (`/offer` and `/accept`) |
+| `audience-account-mismatch` | 403 `access_denied`: the requested resource is a per-user address that does not name the signed-in account (§ 1c); the signed-in `/offer` and `/accept` |
 
 ### Registry grants and their sessions
 
@@ -678,6 +736,7 @@ any token request (HTTP Basic, `client_secret_post` or `private_key_jwt`):
 | `subject_token_type` | required: `urn:ietf:params:oauth:token-type:access_token` |
 | `requested_token_type` | optional; if given, `urn:ietf:params:oauth:token-type:access_token` |
 | `resource`, `audience` | optional; if given, this server (its issuer URL), one value |
+| `subject_token_resource` | optional: the resource URL the subject token was presented at (for a per-user address, the address the request reached); if given, it must be the subject token's `aud` (compared as in § 1c), one plain URL, no `{username}` |
 | `scope` | refused (`invalid_scope`): no narrowing in this version |
 | `actor_token`, `actor_token_type` | refused (`invalid_request`) |
 | `DPoP` header | refused (`invalid_request`), as for every registry client |
@@ -695,8 +754,10 @@ token as it was:
 | a malformed request (table above) | 400 | `invalid_request`, `invalid_scope`, `invalid_target` |
 | the subject token is unknown, expired, deleted, retired past its grace, its grant gone, issued for no resource server, itself a derived token, or not a registry client's | 400 | `invalid_grant` ("subject token is not active") |
 | the subject token's client is revoked, suspended, under review, gone or not served in this core's region | 400 | `invalid_grant` ("the subject token's client is not available") |
-| the subject token was issued for a resource the caller is not registered for | 400 | `invalid_target` |
+| the subject token was issued for a resource the caller is not registered for (an exact audience of its list, or an address one of its per-user audiences names) | 400 | `invalid_target` |
+| `subject_token_resource` is not the subject token's audience | 400 | `invalid_target` ("the subject token was not issued for the resource it was presented at") |
 | the subject session lives on another core | 421 | `wrong_core`, with `coreUrl`: exchange there |
+| on the home core: the subject token's audience is a per-user address that does not name the subject account (a row no consent wrote) | 400 | `invalid_grant` ("subject token is not active") |
 | a server fault (an extension hook failing, storage) | 500 | `server_error` |
 
 Departure from RFC 8693 § 2.2.2, which answers an unusable subject token with
@@ -771,7 +832,17 @@ not set `act`; the introspection of any other token is unchanged.
 
 **Multi-core.** The exchange runs on the subject session's home core; any
 other core answers `421 wrong_core` with `coreUrl`. A resource server serving
-one core per issuer never sees it.
+one core per issuer never sees it. The audience checks (the caller's list,
+then `subject_token_resource`) come before it: a resource server the token
+was not issued for, or that names another resource, learns no core URL.
+
+**Per-user addresses.** A resource server whose list holds a per-user
+audience (`https://{username}.<host>/...`, § 1c) exchanges the tokens issued
+for any account's address under it; exact entries are matched first. Its own
+per-request guard is to accept a token only at the address its `aud` names;
+`subject_token_resource` lets the core check it a second time. The derived
+token has no audience; a repeated exchange with or without the parameter
+answers the same derived token.
 
 **`oauth.audienceBoundSessions`** (per core: `true` or `false`, the strings
 `"true"` / `"false"` accepted as an environment variable gives them; any other
@@ -886,7 +957,9 @@ seen at `/oauth2/authorize` first.
 **The template.** Every metadata-document client gets the reach the operator
 configured once in `oauth.clientMetadataDocuments.client`: `scope` (the maximum
 scope set, in the extension's grammar), `allowedAudiences` (required: the
-resource URLs such a client may name in `aud` / `resource`), `launchTypes`,
+resource URLs such a client may name in `aud` / `resource`; a per-user entry
+`https://{username}.<host>/...` is accepted under the same rules as on a
+registry row, § 1c), `launchTypes`,
 `subjectType` (`pairwise` by default: one alias per user and client),
 `maxEntries`, `offlineAccessAllowed`, lifetimes, `regions`. It never holds
 introspection, token exchange, an allowed feature, "any audience", insecure
@@ -1268,7 +1341,9 @@ all cores together.
 ### `clientMetadataDocuments` (an https URL as `client_id`)
 
 The settings of § 1f. Platform-wide (identical on every core), except
-`client.allowedAudiences`, where each core names its own resource URL.
+`client.allowedAudiences` when it names each core's own resource URL; with
+per-user entries (`https://{username}.<host>/...`, § 1c) it is identical on
+every core too.
 
 | Key | Meaning |
 |---|---|
@@ -1502,6 +1577,12 @@ Flags:
   **`--any-audience`** registers the client explicitly for any audience (no
   list check: a well-formed `aud` / `resource` is stored and answered as
   introspection `aud`, § 1c). The two exclude each other.
+  `https://{username}.<host>/...` names each account's own address: at
+  consent the label must be the signed-in account's username (§ 1c,
+  per-user addresses). Adding one is a change of what the client may reach
+  (vetted, as any audience); removing one is a narrowing (`purge-grants`
+  hint). `template-from` prints it as stored: a per-user entry is valid on
+  every core, an exact one names one core's resource URL.
 - **`--allow-insecure-redirect`**: plain-http redirect URIs are refused unless
   their host is a loopback one (`127.0.0.1`, `[::1]`, `localhost`); this flag
   accepts them on other hosts. Such clients are reported at every core boot.
@@ -1801,7 +1882,7 @@ Collect these for security monitoring and incident response.
 |---|---|
 | `oauth.consent.shown` | consent screen presented to the user |
 | `oauth.consent.granted` | user approved the authorization request |
-| `oauth.consent.refused` | user declined the authorization request, or the core refused the consent (`reason`, e.g. `user-declined`, `permission-level-conflict`, `wrong-core`) |
+| `oauth.consent.refused` | user declined the authorization request, or the core refused the consent (`reason`, e.g. `user-declined`, `permission-level-conflict`, `wrong-core`, `audience-account-mismatch`, `audience-not-listed`) |
 | `oauth.code.exchanged` | authorization code successfully exchanged for tokens |
 | `oauth.code.reused` | an already-consumed authorization code was presented again (attack signal) |
 | `oauth.nonce.reused` | an OpenID Connect nonce already used by the client came back at a code exchange (refused; the code by its hash, never the nonce) |
@@ -1813,7 +1894,7 @@ Collect these for security monitoring and incident response.
 | `oauth.token.revoked` | a token was revoked (reuse detected, consent withdrawn, revoked by its client at `/oauth2/revoke`, or its chain ended while a refresh was in flight) |
 | `oauth.token.introspected` | a resource server introspected a token (caller, `active`; `actorClientId` for a derived token; never the token; syslog only) |
 | `oauth.token.exchanged` | a resource server exchanged a client's token (§ 1e): `clientId` the resource server, `subjectClientId`, `accessId` (the derived session), `subjectAccessId`, `dataGrantAccessId`, `reused`, `grantedScope`; never a token |
-| `oauth.token.exchange_refused` | an authenticated exchange was refused (`reason`: `not-entitled`, `request-shape`, `subject-inactive`, `subject-client-unavailable`, `foreign-audience`, `wrong-core`; syslog only) |
+| `oauth.token.exchange_refused` | an authenticated exchange was refused (`reason`: `not-entitled`, `request-shape`, `subject-inactive`, `subject-client-unavailable`, `foreign-audience`, `subject-resource-mismatch`, `wrong-core`, `audience-account-mismatch`; syslog only) |
 | `oauth.client.metadata_fetched` | a client metadata document was fetched (§ 1f): `clientId` (the row key), `metadataUrl`, `host`, `outcome` (`created`, `refreshed`, `unchanged`), `changedFields`; syslog only |
 | `oauth.client.metadata_refused` | a client metadata document URL was refused or its document unusable, or such a client was refused `invalid_client` at `/oauth2/token`, `/revoke` or `/introspect`: `metadataUrl`, `host`, `reason` (`url`, `host-policy`, `unreachable`, `invalid`, `budget`, `client-auth` with the endpoint and grant type in `detail`), `detail` (the server-side reason, never the document), `suppressed`, `dropped`; syslog only. Sampled: at most one row (and one warning line) per host, reason and minute on each core, carrying in `suppressed` the count of refusals of that host not emitted in its minute before; and at most 60 refusal records per reason and minute per core over every host, the first record after a capped minute carrying in `dropped` the count the cap dropped in it (a storm that stops leaves its last count unreported; its evidence is the 60 records); `metadataUrl`, `host` and `detail` cut to 256 characters; a `client-auth` grant type outside the known ones reads `other` |
 
