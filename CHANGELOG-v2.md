@@ -15,7 +15,8 @@
 > forwards client-sent copies). Recognition needs `dns.domain`: a dnsLess core or a core without
 > it treats every host as a platform address (one boot warning when adapter routes are
 > configured). An ingress in front of the core that routes adapter paths around it loses this
-> triage (`docs/nginx-ingress-sample.conf` clears both headers). On such a host, an account of
+> triage: every request through it is a platform address, and the sidecar must not derive an
+> account from `Host` (`docs/nginx-ingress-sample.conf` clears both headers). On such a host, an account of
 > another core answers `421 wrong-core` (adapter paths, with `coreUrl`) or `421 wrong_core`
 > (`/oauth2/token`; `/oauth2/authorize` shows a static page), with `Retry-After` from
 > `dns.defaultTTL` (300 s by default): a client retries the same address once DNS has moved.
