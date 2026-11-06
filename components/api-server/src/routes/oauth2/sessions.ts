@@ -33,7 +33,7 @@ import cache from 'cache';
 import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
-import { isMintedAliasShape } from 'business/src/users/aliasShape.ts';
+import { formerUsernames } from 'business/src/series/namespace.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
 import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
@@ -339,14 +339,16 @@ export function createSessions (env: GlueEnv) {
   // formerUsernamesOf: the usernames the account had before a rename and
   // still holds (a renamed account keeps its former name as an alias, so its
   // former address keeps routing to it), from this core's users index: the
-  // aliases minus the minted ones (`r-` shape, never a username). Read by
-  // the token exchange only: an authorization made at a former address keeps
-  // exchanging; a new consent there is refused.
+  // aliases minus the minted ones (`r-` shape, never a username) and minus
+  // the current username (the series helper's reading of the same index).
+  // Read by the token exchange only: an authorization made at a former
+  // address keeps exchanging; a new consent there is refused. Residual (fails
+  // closed): a username of the exact minted shape, registered before that
+  // shape was refused, is taken for an access alias once it is a former name,
+  // so a chain made at that address stops exchanging after the rename.
   // ---------------------------------------------------------------------
-  async function formerUsernamesOf (userId: string): Promise<string[]> {
-    const usersIndex = await getUsersLocalIndex();
-    const aliases: string[] = await usersIndex.getAliasesForId(userId);
-    return aliases.filter((a) => typeof a === 'string' && !isMintedAliasShape(a));
+  async function formerUsernamesOf (userId: string, username: string): Promise<string[]> {
+    return await formerUsernames(await getUsersLocalIndex(), userId, username);
   }
 
   // ---------------------------------------------------------------------
@@ -592,7 +594,7 @@ export function createSessions (env: GlueEnv) {
       // No credential in it; the alias when the grant is aliased.
       apiBase: ApiEndpoint.build(s.aliased ? s.subject : username, undefined),
       addressAliases: await addressAliasesOf(userId),
-      formerUsernames: await formerUsernamesOf(userId),
+      formerUsernames: await formerUsernamesOf(userId, username),
     };
   }
 
