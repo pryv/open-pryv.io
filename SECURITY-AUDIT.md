@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 16 (2026-11-06), covering releases 2.0.0-rc.40 to 2.0.0-rc.74.
+**Report revision:** 17 (2026-11-07), covering releases 2.0.0-rc.40 to 2.0.0-rc.75.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -126,6 +126,7 @@ its applicability is stated with it.
 | 2.0.0-rc.72 | 2026-11-04 | 2 Medium, 1 Low, lower-severity fixes; operator action: run `bin/reconcile-user-cores.js --emails` on each core where accounts were restored with `--user` by an earlier release, look for leftover records with the queries of that release (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-04) |
 | 2.0.0-rc.73 | 2026-11-05 | 1 Medium, lower-severity fixes; operator action: on a platform run with `platform.piiMode: cleartext`, run `bin/reconcile-user-cores.js --emails --dry-run` on each core and resolve the pairs of accounts it lists (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-05) |
 | 2.0.0-rc.74 | 2026-11-06 | 1 Low, lower-severity fixes; operator action: none beyond the upgrade for the fixes; keep the host that runs `bin/oauth-client.js` and the cores NTP-synced; before turning on `oauth.clientMetadataDocuments`, read `docs/oauth2.md` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-06) |
+| 2.0.0-rc.75 | 2026-11-06 | lower-severity fixes; operator action: on a platform with several cores, upgrade every core before adding per-user audience entries to OAuth2 clients, and each core before the adapter sidecar next to it reads the addressed-account headers; route adapter paths through the core where per-user addresses are wanted (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-07) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -228,7 +229,7 @@ workers; the operator's custom authentication step; and the caller id carried fo
 | Embedded DNS (UDP and TCP) | public when enabled |
 | ACME HTTP-01 responder | public when Let's Encrypt is enabled |
 | rqlite platform database: HTTP API (loopback) and Raft (peer cores, mutual TLS) | local / peer cores |
-| Adapter routes (`/adapter/<name>/` on every host, since 2.0.0-rc.73, off unless configured): forwarded to a sidecar on the same host | public, authenticated by the sidecar, not by the core |
+| Adapter routes (`/adapter/<name>/` on every host, since 2.0.0-rc.73, off unless configured): forwarded to a sidecar on the same host; on a per-user host (`<username>.<dns.domain>`, since 2.0.0-rc.75) the core names the addressed account to the sidecar (`X-Adapter-Name`, `X-Adapter-Base`, set by the core only, client-sent copies dropped) and answers `421` for an account of another core | public, authenticated by the sidecar, not by the core (the two headers are an address, not an identity) |
 | OAuth2 client metadata documents (an https URL as `client_id`, since 2.0.0-rc.74, off unless configured): the core fetches the document, and the key set it names, from the client's host | public: any party can present such a client to the consent screen of the hosts the operator allows |
 | Local pub/sub broker for cache invalidation | loopback |
 | PostgreSQL, InfluxDB, SQLite files | local |
@@ -2006,6 +2007,41 @@ alongside them found the following in earlier releases.
   (client metadata documents), prefer `mode: allowList`, and make sure the consent UI shows the
   client's host.
 
+### Fixed in 2.0.0-rc.75 (deployed)
+
+2.0.0-rc.75 adds per-user resource addresses for OAuth2 (an audience entry
+`https://{username}.<host>/...` names each account's own address and is bound at consent to the
+signed-in account; token exchange accepts `subject_token_resource`) and names the addressed account
+to adapter sidecars on per-user hosts. These are new features, described in `CHANGELOG-v2.md`, not
+fixes. The review made alongside them found the following in earlier releases.
+
+#### Lower-severity fixes in 2.0.0-rc.75
+
+- **A name another core of the platform answers itself could be taken as a username** (platforms
+  with several cores; hardening): each core refused, at registration and at a username change, its
+  own `dns.staticEntries` keys and its own OAuth issuer label, but not those of its siblings unless
+  they also existed as runtime DNS records. Such an account was unreachable at its host (the DNS
+  answers these names first) and its name could be read as an account where the platform meant its
+  own service. Every core now advertises these names to the others, refuses them as usernames and
+  never reads them as an account's host. An account created under such a name by an earlier
+  release is kept; it has no per-user host.
+- Not security fixes, listed for operators: `accesses.checkApp` reads `:local:<id>` as `<id>`, as
+  `accesses.create` stores it (an app requesting it was asked for consent again at every sign-in).
+- New in this release, not findings: per-user resource addresses and adapter routes on per-user
+  hosts (section 3.2). The core binds a per-user audience to the signed-in account at consent and
+  refuses one naming another account or a name the platform answers itself; on a per-user host it
+  sets `X-Adapter-Name` and `X-Adapter-Base` itself and drops every client-sent copy, in any `-` /
+  `_` spelling, a trusted proxy's included, and it recognises only one label under `dns.domain`, so
+  no address under a domain the platform does not own reaches a sidecar. The two headers are an
+  address, not an identity: the sidecar authenticates the token and checks that its audience is
+  `X-Adapter-Base` plus its own path. A core of an earlier release forwards client-sent copies of
+  the two headers, and an ingress that routes adapter paths around the core sets neither: through
+  such an ingress every request is a platform address.
+- **Operator action:** upgrade every core before adding per-user audience entries to OAuth2
+  clients (an older core matches them to nothing); upgrade each core before the adapter sidecar
+  next to it starts reading `X-Adapter-Name` / `X-Adapter-Base`; where per-user addresses are
+  wanted, let the core forward adapter paths (`docs/adapter-routes.md`, "Behind nginx").
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2107,3 +2143,4 @@ This report is updated with every release that carries a security fix:
 | 14 | 2026-11-04 | 2.0.0-rc.40 to 2.0.0-rc.72 | Adds 2.0.0-rc.72 (review of backup restore on multi-core platforms, of the mails sent to an account's stored address and of the background work of an account being erased): 2 Medium findings, 1 Low finding and lower-severity fixes, among them two completion steps of the 2.0.0-rc.71 client vetting (launch types, withdrawn refresh grant type). Deployed on the maintainers' platforms (2026-11-04). |
 | 15 | 2026-11-05 | 2.0.0-rc.40 to 2.0.0-rc.73 | Adds 2.0.0-rc.73 (follow-up review of email uniqueness in cleartext PII mode and of backup restore): 1 Medium finding and lower-severity fixes; section 3.2 adds the adapter routes. Deployed on the maintainers' platforms (2026-11-05). |
 | 16 | 2026-11-06 | 2.0.0-rc.40 to 2.0.0-rc.74 | Adds 2.0.0-rc.74 (review of the OAuth2 client revoke, alongside client metadata documents): 1 Low finding and lower-severity fixes; section 3.2 adds client metadata documents and their outbound fetches. Deployed on the maintainers' platforms (2026-11-06). |
+| 17 | 2026-11-07 | 2.0.0-rc.40 to 2.0.0-rc.75 | Adds 2.0.0-rc.75 (review alongside per-user resource addresses and adapter routes on per-user hosts): lower-severity fixes, no counted finding; section 3.2 adds the addressed-account headers and the `421` of adapter routes on per-user hosts. Deployed on the maintainers' platforms (2026-11-07). |
