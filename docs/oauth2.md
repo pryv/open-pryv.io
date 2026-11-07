@@ -469,12 +469,22 @@ with a message naming the accepted form.
   `addressAlias` (the name the app will know the account by); over a current
   grant that carries another alias, or none, the consent is a change of
   subject (`subjectChange`, `pseudonym` to `pseudonym` included; § 1d "Change
-  of subject mode"), and the replaced grant's alias is released with it.
+  of subject mode"), and the replaced grant's alias is released with it. A
+  consent at the username's address over a grant that adopted an address
+  alias is a change of subject too (the adopted grant's tokens are used at the
+  alias only): acknowledged, the grant is replaced, a `pairwise` client's new
+  grant gets a minted alias, a `public` one none, and the address alias is
+  released. With an exact audience, or none, the client's `subjectType`
+  decides as for any aliased grant (a `pairwise` client's consent joins it).
   Withdrawing the grant, or the owner deleting the alias
-  (`account.addressAliases.delete`, which withdraws the grant), releases it.
-  An application-account client is refused an address alias (its grant
-  carries no alias). The token exchange accepts the alias its subject's grant
-  adopted.
+  (`account.addressAliases.delete`, which releases the name and then
+  withdraws the grant), releases it. A grant that expired, or that predates
+  its client's revoke (a client deleted and registered again), is replaced at
+  the next consent without releasing its address alias, so a consent at that
+  address adopts it again. An application-account client is refused an
+  address alias at `/accept` (its grant carries no alias; its `/offer`
+  answers registry consents only). The token exchange accepts the alias its
+  subject's grant adopted.
 - **After a username change.** A chain authorized before keeps its audience
   (it is fixed at authorization and copied on refresh), and its token exchange
   keeps working too (the former name stays the account's until the account is

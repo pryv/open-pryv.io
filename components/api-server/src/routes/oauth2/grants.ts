@@ -38,7 +38,8 @@ import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionR
 import * as storages from 'storages';
 import { getRevokedAt, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
 import { AUDIENCE_ACCOUNT_MISMATCH } from 'oauth2/src/audienceAccount.ts';
-import { ADDRESS_ALIAS_UNAVAILABLE } from '../../methods/helpers/addressAliases.ts';
+import { ADDRESS_ALIAS_UNAVAILABLE, addressAliasesOfAccount } from '../../methods/helpers/addressAliases.ts';
+import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -202,15 +203,21 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // made.
   // A consent bound to one of the account's address aliases (`adopt`) makes
   // the grant carry that alias: a current grant carrying another one, or
-  // none, is a change of subject like the above.
+  // none, is a change of subject like the above. So is a consent bound to
+  // the username's address (`atUsername`) over a grant that adopted an
+  // address alias: its tokens are used at the alias only.
   async function registryGrantFor (context: Ctx, clientId: string, wantAlias: boolean,
-    next: Array<Record<string, unknown>> | undefined, subjectChange: unknown, adopt: string | null = null): Promise<DataGrant> {
+    next: Array<Record<string, unknown>> | undefined, subjectChange: unknown, adopt: string | null = null,
+    atUsername: boolean = false): Promise<DataGrant> {
     // /accept always hands the final set (the default forbids included): a
     // grant is never written without it.
     if (next == null) throw new Error('oauth2.createAccess: a registry consent needs the grant\'s final permissions');
     let current = await findRegistryGrant(context, clientId);
     const currentAlias = typeof current?.alias === 'string' && current.alias.length > 0 ? current.alias : null;
-    if (current != null && (adopt != null ? currentAlias !== adopt : (currentAlias != null) !== wantAlias)) {
+    const replace = adopt != null
+      ? currentAlias !== adopt
+      : (currentAlias != null) !== wantAlias || (atUsername && currentAlias != null && isAddressAliasShape(currentAlias));
+    if (current != null && replace) {
       // Defence in depth: only a change of subject mode /accept checked (and
       // the user acknowledged) may replace the grant; a concurrent consent
       // that changed the grant in between is refused.
@@ -294,6 +301,11 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // the same unheld alias at the same moment could both adopt it: the one
   // created first (then the lower id) keeps it, the other withdraws its own
   // new grant (the alias stays held by the first) and is refused.
+  // The owner deleting the alias while the grant was being written (the
+  // deletion releases the name first, then withdraws its holders): a grant
+  // written after the release carries a name in no index, so it withdraws
+  // itself and the consent is refused; one written before is withdrawn by
+  // the deletion.
   async function keepSoleHolder (context: Ctx, ours: DataGrant, alias: string): Promise<void> {
     const all = await apiCall(context, 'accesses.get', { includeExpired: true });
     const order = (a: DataGrant) => [typeof a.created === 'number' ? a.created : 0, String(a.id)] as const;
@@ -303,7 +315,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       return ca !== cb ? ca < cb : ia < ib;
     };
     const rivals = (all?.accesses ?? []).filter((a) => a?.alias === alias && a.id !== ours.id);
-    if (!rivals.some((a) => before(a, ours))) return;
+    const stillOwned = (await addressAliasesOfAccount(context.user.id)).includes(alias);
+    if (stillOwned && !rivals.some((a) => before(a, ours))) return;
     await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(ours.id).base });
     throw audienceMismatch();
   }
@@ -322,7 +335,11 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // then registered again under the same id) belongs to the revoked
   // registration: its sessions are refused already (the revoke epoch), and it
   // is treated like an expired one, so the new registration never inherits
-  // its permissions nor its alias.
+  // its permissions nor its minted alias.
+  // An address alias such a grant adopted is not released by that repair: it
+  // goes back to the owner, unheld (this lazy repair is not the owner's
+  // withdrawal), so the consent that triggered it, at that address, adopts it
+  // again rather than finding the name gone.
   async function findRegistryGrant (context: Ctx, clientId: string, opts: { repair?: boolean } = {}): Promise<DataGrant | null> {
     const result = await apiCall(context, 'accesses.get', { includeExpired: true });
     let grant = (result?.accesses ?? []).find((a) =>
@@ -332,7 +349,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       (typeof grant.expires === 'number' && grant.expires <= Date.now() / 1000) ||
       await madeBeforeClientRevoke(grant, clientId))) {
       if (opts.repair !== false) {
-        await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(grant.id).base });
+        await deleteAccessChain({ id: context.user.id, username: context.user.username },
+          { id: parseAccessRef(grant.id).base, keepAddressAliases: true });
       }
       grant = null;
     }
@@ -415,7 +433,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     const adoptAlias = (offer as { adoptAlias?: unknown }).adoptAlias;
     const dataGrant = registry
       ? await registryGrantFor(context, clientId, (offer as { randomAlias?: boolean }).randomAlias === true, grantPermissions, subjectChange,
-        typeof adoptAlias === 'string' ? adoptAlias : null)
+        typeof adoptAlias === 'string' ? adoptAlias : null, (offer as { atUsername?: unknown }).atUsername === true)
       : await ensureCmcGrant(context, clientId, offer as CmcOffer, grantedPermissions);
     // A registry grant's state, replaced at every consent (computed by the
     // extension once the grant's permissions were final), written before the

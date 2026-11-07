@@ -49,7 +49,7 @@ import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import { metadataHostOf } from '../clientMetadata.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
-import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername } from '../audienceAccount.ts';
 
 /** A signed-in user, as the host app's resolver answers it. */
 export type OfferSession = {
@@ -242,7 +242,8 @@ export function handleOffer (deps: OfferDeps) {
       : null;
     // An address alias the audience names: the grant adopts it (shown here).
     const adopt = addressAliasOfAudience(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
-    const composition = composeShownOffer(r.resolved, current, c, adopt);
+    const atUsername = audienceNamesUsername(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
+    const composition = composeShownOffer(r.resolved, current, c, adopt, atUsername);
     if (!composition.ok) {
       return sendJson(res, 400, {
         error: 'invalid_scope',

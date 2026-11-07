@@ -60,7 +60,7 @@ const WebhooksRepository = require('business').webhooks.Repository;
 const { localFirstFetch } = require('./helpers/localDelivery.ts');
 const { rescopeWebhooksOfAccess } = require('./helpers/webhookScopes.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
-const { addressAliasesOfAccount, addressAliasHolders, ADDRESS_ALIAS_UNAVAILABLE } = require('./helpers/addressAliases.ts') as typeof import('./helpers/addressAliases.ts');
+const { addressAliasesOfAccount, addressAliasHolders, maxAliasesPerAccount, ADDRESS_ALIAS_UNAVAILABLE } = require('./helpers/addressAliases.ts') as typeof import('./helpers/addressAliases.ts');
 
 // Breach-scope reverse-index population — see components/platform/src/accessIndex.ts.
 // The index maps a bare accessId -> its owning user + minimal metadata so an
@@ -278,10 +278,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // How many aliases (minted access aliases and former usernames) one account
   // may hold before `randomAlias` is refused. Read per request so a config
   // change applies without a restart.
-  const getMaxAliasesPerAccount = (): number => {
-    const max = config.get('accesses:maxAliasesPerAccount');
-    return Number.isInteger(max) && max >= 0 ? max : 1000;
-  };
+  const getMaxAliasesPerAccount = (): number => maxAliasesPerAccount(config);
   const delegationPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
   const delegationAccessCreateForgePreventionHook = delegationActive
     ? delegation.createAccessCreateForgePreventionHook({ errors })

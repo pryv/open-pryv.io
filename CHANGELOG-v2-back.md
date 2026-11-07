@@ -19,9 +19,20 @@
   when the OAuth consent flow sets it on its own context (`addressAliasToAdopt`), never from the
   request; after creating the grant the flow keeps one holder per alias (the earlier grant wins, the
   later withdraws its new grant and refuses `audience-account-mismatch`).
-- `consentComposition.composeShownOffer(..., adopt)`: an adopted alias makes the shown offer
-  pseudonymous and a current grant with another alias (or none) a change of subject;
-  `CurrentGrant.alias`.
+- `consentComposition.composeShownOffer(..., adopt, atUsername)`: an adopted alias makes the shown
+  offer pseudonymous and a current grant with another alias (or none) a change of subject; a
+  consent at the username (`audienceAccount.audienceNamesUsername`) over a grant holding an address
+  alias is one too (`holdsAddressAlias`), and the grant step replaces that grant (the synthesised
+  offer carries `atUsername`); `CurrentGrant.alias`.
+- `deleteAccessChain(..., { keepAddressAliases })`: the lazy repair of a registry grant that expired
+  or predates its client's revoke keeps the address aliases it carried (unheld), every other
+  deletion releases them. The post-write holder check also refuses (and withdraws the new grant)
+  when the alias left the account's index meanwhile; `account.addressAliases.delete` releases the
+  name before withdrawing its holders.
+- `helpers/addressAliases.maxAliasesPerAccount(config)`: the one reader of
+  `accesses:maxAliasesPerAccount` (`accesses.create` and `account.addressAliases.create`).
+- `UsersRepository.scanAddressAliasShape()` and `bin/reconcile-user-cores.js --address-alias-shape`
+  (read only): this core's usernames and aliases of the address-alias shape, for the upgrade check.
 - Test core and helpers register `methods/addressAliases.ts`.
 
 ### Mail: `html-to-text` 10, no `deepmerge` left at runtime

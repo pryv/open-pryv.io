@@ -26,6 +26,17 @@ import { REGISTRY_GRANT_PREFIX, REGISTRY_GRANT_DEVICE } from '../../routes/oauth
 /** How many address aliases one account may hold, adopted or not. */
 export const MAX_ADDRESS_ALIASES = 10;
 
+/**
+ * How many aliases of any kind (access aliases, address aliases and former
+ * usernames) one account may hold: `accesses:maxAliasesPerAccount`, 1000 when
+ * unset or invalid. Read per request so a config change applies without a
+ * restart. The one reader of the key (`randomAlias` and address aliases).
+ */
+export function maxAliasesPerAccount (config: { get (key: string): unknown }): number {
+  const max = config.get('accesses:maxAliasesPerAccount');
+  return typeof max === 'number' && Number.isInteger(max) && max >= 0 ? max : 1000;
+}
+
 /** The reason a consent or an adoption gives when the address alias is not the account's to give. */
 export const ADDRESS_ALIAS_UNAVAILABLE = 'address-alias-unavailable';
 

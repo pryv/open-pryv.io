@@ -988,6 +988,28 @@ class UsersRepository {
   }
 
   /**
+   * Read-only: this core's names of the address-alias shape (`a-` + 8
+   * letters or digits, see aliasShape.ts), from the local users index. A
+   * current username of that shape stays the account's username; an alias of
+   * that shape is read as an address alias of its account. Run before the
+   * first release that mints address aliases, every alias of that shape is a
+   * former username (an account renamed earlier), which that release would
+   * list, count and let the owner delete as an address alias.
+   */
+  async scanAddressAliasShape (): Promise<{ usernames: string[]; aliases: Array<{ alias: string; username: string }> }> {
+    const byUsername = await this.usersIndex.getAllByUsername(); // { username: userId }
+    const usernames: string[] = [];
+    const aliases: Array<{ alias: string; username: string }> = [];
+    for (const [username, userId] of Object.entries(byUsername)) {
+      if (isAddressAliasShape(username)) usernames.push(username);
+      for (const alias of await this.usersIndex.getAliasesForId(userId)) {
+        if (isAddressAliasShape(alias)) aliases.push({ alias, username });
+      }
+    }
+    return { usernames: usernames.sort(), aliases: aliases.sort((a, b) => (a.alias < b.alias ? -1 : a.alias > b.alias ? 1 : 0)) };
+  }
+
+  /**
    * Reconcile THIS core's slice of the shared name→core (`user-core/`) map with
    * its local user index. Heals the two drift states the platform-wide
    * username check and the routing (the embedded DNS included) are sensitive to:

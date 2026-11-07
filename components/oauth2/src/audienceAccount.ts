@@ -100,6 +100,31 @@ export function addressAliasOfAudience (
   account: ConsentAccountNames,
   isPlatformRoutedLabel?: PlatformRoutedLabel | null
 ): string | null {
+  const l = perUserLabelOf(audience, client, isPlatformRoutedLabel);
+  if (l == null) return null;
+  if (typeof account.username === 'string' && account.username.toLowerCase() === l) return null;
+  return (account.addressAliases ?? []).find((a) => typeof a === 'string' && a.toLowerCase() === l) ?? null;
+}
+
+/**
+ * Whether a consent's per-user audience names the account's current
+ * username (not an address alias, not an exact audience, not no audience).
+ * A grant that adopted an address alias is then replaced: its tokens are
+ * used at the alias only, so a session bound to the username's address
+ * cannot be minted from it. Run after `consentAudienceRefusal`.
+ */
+export function audienceNamesUsername (
+  audience: string | undefined,
+  client: OAuthClient | null,
+  account: ConsentAccountNames,
+  isPlatformRoutedLabel?: PlatformRoutedLabel | null
+): boolean {
+  const l = perUserLabelOf(audience, client, isPlatformRoutedLabel);
+  return l != null && typeof account.username === 'string' && account.username.toLowerCase() === l;
+}
+
+/** The lowercased label of a per-user audience of the client, null for any other (or a platform-routed label). */
+function perUserLabelOf (audience: string | undefined, client: OAuthClient | null, isPlatformRoutedLabel?: PlatformRoutedLabel | null): string | null {
   if (audience == null || client == null) return null;
   const list = Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0 ? client.allowedAudiences : null;
   if (list == null) return null;
@@ -107,8 +132,7 @@ export function addressAliasOfAudience (
   if (match?.label == null) return null;
   const l = match.label.toLowerCase();
   if (isPlatformRoutedLabel != null && isPlatformRoutedLabel(l)) return null;
-  if (typeof account.username === 'string' && account.username.toLowerCase() === l) return null;
-  return (account.addressAliases ?? []).find((a) => typeof a === 'string' && a.toLowerCase() === l) ?? null;
+  return l;
 }
 
 /** The audit row of a consent refused by `consentAudienceRefusal` (no username, no label). */

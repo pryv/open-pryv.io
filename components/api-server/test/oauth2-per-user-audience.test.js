@@ -546,6 +546,134 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
     const withdrawn = await coreRequest.delete('/' + alice.username + '/accesses/' + held.id).set('Authorization', alice.token);
     assert.equal(withdrawn.status, 200, JSON.stringify(withdrawn.body));
     assert.deepEqual(await addressAliasesOf(alice), []);
+
+    // The budget counts adopted aliases too: with one held among 10, the 11th is refused.
+    const bob = await newUser();
+    await connect(bob, tplId, at(await mintAddressAlias(bob)));
+    for (let i = 0; i < 9; i++) await mintAddressAlias(bob);
+    const eleventh = await coreRequest.post('/' + bob.username + '/account/address-aliases').set('Authorization', bob.token).send({});
+    assert.deepEqual([eleventh.status, eleventh.body.error?.id, eleventh.body.error?.data?.addressAliasesLimit], [400, 'invalid-operation', 10], JSON.stringify(eleventh.body));
+    const bobs = await addressAliasesOf(bob);
+    assert.deepEqual([bobs.length, bobs.filter((x) => x.heldBy != null).length], [10, 1]);
+  });
+
+  /** The acknowledged consent of a change of subject. */
+  function acknowledged (who, state, shownDigest) {
+    return coreRequest.post('/oauth2/authorize/accept')
+      .send({ state, username: who.username, userToken: who.token, grantedPermissions: [{ streamId: 'a', level: 'read' }], shownDigest, acknowledgeSubjectChange: true });
+  }
+
+  /** The code exchange of an accepted consent: the token response. */
+  async function codeToken (cid, accepted, verifier) {
+    const t = await coreRequest.post('/oauth2/token').type('form').send({
+      grant_type: 'authorization_code', code: new URL(accepted.body.redirectTo).searchParams.get('code'), code_verifier: verifier, client_id: cid, redirect_uri: REDIRECT_URI,
+    });
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    return t.body;
+  }
+
+  const readAt = (name, token) => coreRequest.get('/' + name + '/events').query({ streams: JSON.stringify(['a']) }).set('Authorization', token);
+  const baseOf = (id) => String(id).split(':')[0];
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it('[OPUE19] a consent at the username over a grant that adopted an address alias is a change of subject: the grant is replaced, the address alias released, the token used at its api_base', async () => {
+    for (const [subjectType, to] of [['pairwise', 'pseudonym'], ['public', 'account']]) {
+      const alice = await newUser();
+      const cid = await register('PerUserAt', { subjectType });
+      const alias = await mintAddressAlias(alice);
+      const first = await connect(alice, cid, at(alias));
+      const { state, verifier } = await authorize(cid, at(alice.username));
+      const o = await offer(alice, state);
+      assert.equal(o.status, 200, JSON.stringify(o.body));
+      assert.deepEqual(o.body.subjectChange, { from: 'pseudonym', to }, subjectType);
+      assert.equal(o.body.addressAlias, undefined, 'nothing adopted at the username');
+      const refused = await accept(alice, state, o.body.shownDigest);
+      assert.deepEqual([refused.status, refused.body.reason], [400, 'subject-change-unacknowledged'], JSON.stringify(refused.body));
+      const ok = await acknowledged(alice, state, o.body.shownDigest);
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      const t = await codeToken(cid, ok, verifier);
+      const grant = await registryGrantOf(alice, cid);
+      if (to === 'pseudonym') assert.match(grant.alias, /^r-[a-z0-9]{8}$/, 'a new minted alias');
+      else assert.equal(grant.alias ?? null, null, 'no alias');
+      assert.equal((await introspect(first.access_token)).body.active, false, subjectType + ': the replaced grant\'s session ended');
+      assert.deepEqual(await addressAliasesOf(alice), [], subjectType + ': the address alias is released with the replaced grant');
+      const info = await introspect(t.access_token);
+      assert.deepEqual([info.body.active, info.body.aud], [true, at(alice.username)]);
+      const usableAt = to === 'pseudonym' ? grant.alias : alice.username;
+      assert.equal(info.body.sub === alias, false, 'the address alias is no subject any more');
+      assert.ok(info.body.api_base.includes(usableAt) && !info.body.api_base.includes(alias), info.body.api_base);
+      assert.equal((await readAt(usableAt, t.access_token)).status, 200, subjectType + ': usable at its api_base');
+    }
+  });
+
+  it('[OPUE21] a grant that expired, or that predates its client\'s revoke (a client deleted and registered again): the next consent at its address alias adopts it again', async () => {
+    storage._setRevokeClockMarginForTests(0);
+    try {
+      for (const stale of ['expired', 're-registered']) {
+        const alice = await newUser();
+        const cid = await register('PerUserStale');
+        const alias = await mintAddressAlias(alice);
+        const first = await connect(alice, cid, at(alias));
+        const old = await registryGrantOf(alice, cid);
+        if (stale === 'expired') {
+          const u = await coreRequest.put('/' + alice.username + '/accesses/' + encodeURIComponent(old.id)).set('Authorization', alice.token).send({ expireAfter: 0 });
+          assert.equal(u.status, 200, JSON.stringify(u.body));
+          await sleep(1100);
+        } else {
+          await sleep(1100);
+          const row = await storage.getClient(platformDB, cid);
+          await oauth2.removeClient(platformDB, cid);
+          await oauth2.persistClient(platformDB, { ...row, updatedAt: Date.now() });
+          await sleep(1100);
+        }
+        const o = await offer(alice, (await authorize(cid, at(alias))).state);
+        assert.deepEqual([o.status, o.body.addressAlias, o.body.subjectChange], [200, alias, null], stale + ': ' + JSON.stringify(o.body));
+        const again = await connect(alice, cid, at(alias));
+        const grant = await registryGrantOf(alice, cid);
+        assert.notEqual(baseOf(grant.id), baseOf(old.id), stale + ': a fresh grant');
+        assert.equal(grant.alias, alias, stale + ': it adopted the same address alias');
+        const info = await introspect(again.access_token);
+        assert.deepEqual([info.body.active, info.body.aud, info.body.sub], [true, at(alias), alias], stale);
+        assert.equal((await introspect(first.access_token)).body.active, false, stale + ': the stale grant\'s session is gone');
+        assert.equal((await readAt(alias, again.access_token)).status, 200);
+        const listed = (await addressAliasesOf(alice)).find((x) => x.alias === alias);
+        assert.deepEqual(listed.heldBy, { accessId: grant.id, clientId: cid }, stale);
+      }
+    } finally {
+      storage._setRevokeClockMarginForTests(null);
+    }
+  });
+
+  it('[OPAL5] the owner deletes an address alias while a consent adopts it: the grant written after the release withdraws itself, the consent is refused, the name stays released', async () => {
+    const alice = await newUser();
+    const platform = await getPlatform();
+    const alias = await mintAddressAlias(alice);
+    const { getStorageLayer } = await import('storage');
+    const accessesStorage = (await getStorageLayer()).accesses;
+    const insertOne = accessesStorage.insertOne;
+    let deletion = null;
+    // The deletion runs between the adoption's check and its write.
+    accessesStorage.insertOne = function (user, params, cb) {
+      if (params?.alias !== alias) return insertOne.call(this, user, params, cb);
+      accessesStorage.insertOne = insertOne;
+      coreRequest.delete('/' + alice.username + '/account/address-aliases/' + alias).set('Authorization', alice.token)
+        .then((res) => { deletion = res; insertOne.call(this, user, params, cb); }, cb);
+    };
+    try {
+      const { state } = await authorize(tplId, at(alias));
+      const o = await offer(alice, state);
+      assert.equal(o.status, 200, JSON.stringify(o.body));
+      const a = await accept(alice, state, o.body.shownDigest);
+      assert.deepEqual([a.status, a.body], [403, MISMATCH]);
+    } finally {
+      accessesStorage.insertOne = insertOne;
+    }
+    assert.equal(deletion?.status, 200, JSON.stringify(deletion?.body));
+    assert.deepEqual(deletion.body.relatedDeletions, [], 'nothing held it when the deletion ran');
+    assert.equal(await registryGrantOf(alice, tplId), null, 'the grant withdrew itself');
+    assert.ok(!(await accesses(alice)).some((x) => x.alias === alias), 'no access carries the name');
+    assert.deepEqual(await addressAliasesOf(alice), []);
+    assert.equal(await platform.getUserCore(alias), null, 'the name routes nowhere');
   });
 
   it('[OPUX5] the exchange accepts the address alias its grant adopted; a session whose audience names another of the account\'s address aliases is not exchanged', async () => {

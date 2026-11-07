@@ -174,4 +174,39 @@ describe('[OPAL] account address aliases', function () {
     assert.strictEqual(await platform.getUserCore(alias), null);
     assert.strictEqual(await resolves(alias), null);
   });
+
+  it('[OPAL6] the operator\'s scan lists the usernames and the aliases of the address-alias shape (a former username of that shape included), read only', async function () {
+    const shaped = () => 'a-' + (cuid() + cuid()).toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8);
+    const current = shaped();
+    const former = shaped();
+    const fixtures = getNewFixture();
+    await fixtures.user(current, { password: PASSWORD });
+    const renamedId = (await fixtures.user(former, { password: PASSWORD })).attrs.id;
+    const renamed = freshName('opf');
+    await usersRepository.changeUsername(renamedId, former, renamed, 'system');
+    const owner = await freshUser('ope');
+    const { alias } = (await create(owner)).body.addressAlias;
+
+    const scan = await usersRepository.scanAddressAliasShape();
+    assert.ok(scan.usernames.includes(current), JSON.stringify(scan));
+    assert.ok(!scan.usernames.includes(renamed) && !scan.usernames.includes(owner.uname));
+    assert.deepEqual(scan.aliases.filter((a) => [former, alias].includes(a.alias)).sort((a, b) => (a.alias < b.alias ? -1 : 1)),
+      [{ alias: former, username: renamed }, { alias, username: owner.uname }].sort((a, b) => (a.alias < b.alias ? -1 : 1)));
+
+    const { spawnSync } = require('node:child_process');
+    const path = require('node:path');
+    const { childStorageEngineEnv } = require('test-helpers');
+    const repoRoot = path.resolve(path.dirname(require('node:url').fileURLToPath(import.meta.url)), '../../../');
+    const cli = (args) => spawnSync('node', [path.join(repoRoot, 'bin/reconcile-user-cores.js'), ...args],
+      { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, ...childStorageEngineEnv() }, timeout: 90000 });
+    const run = cli(['--address-alias-shape']);
+    assert.strictEqual(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /--address-alias-shape: read only/);
+    for (const name of [current, former, alias]) assert.ok(run.stdout.includes(name), name + ': ' + run.stdout);
+    const combined = cli(['--address-alias-shape', '--emails']);
+    assert.strictEqual(combined.status, 1, combined.stdout + combined.stderr);
+    // Read only: everything is where it was.
+    assert.strictEqual(await platform.getUserCore(alias), platform.coreId);
+    assert.ok((await usersRepository.getAliasesForUserId(renamedId)).includes(former));
+  });
 });

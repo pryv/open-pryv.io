@@ -21,7 +21,7 @@ import { getUsersRepository } from 'business/src/users/index.ts';
 import { parseAccessRef } from 'business/src/accesses/refs.ts';
 import { deleteAccessChain } from './helpers/accessDeletion.ts';
 import type { AliasHolderRow } from './helpers/addressAliases.ts';
-import { MAX_ADDRESS_ALIASES, addressAliasesOfAccount, addressAliasHolders, holderOf } from './helpers/addressAliases.ts';
+import { MAX_ADDRESS_ALIASES, addressAliasesOfAccount, addressAliasHolders, holderOf, maxAliasesPerAccount } from './helpers/addressAliases.ts';
 
 type Api = { register: (...args: unknown[]) => void };
 type AccountRef = { id: string; username: string };
@@ -48,13 +48,6 @@ function viewOf (alias: string, rows: AliasHolderRow[] | undefined) {
   return { alias, apiEndpoint: ApiEndpoint.build(alias, undefined), heldBy: heldByOf(rows) };
 }
 
-// How many aliases of any kind (access aliases and former usernames
-// included) one account may hold: the cap `randomAlias` obeys.
-async function maxAliasesPerAccount (): Promise<number> {
-  const max: unknown = (await getConfig()).get('accesses:maxAliasesPerAccount');
-  return typeof max === 'number' && Number.isInteger(max) && max >= 0 ? max : 1000;
-}
-
 export default async function (api: Api) {
   api.register('account.addressAliases.create',
     basicAccessAuthorizationCheck,
@@ -72,7 +65,7 @@ export default async function (api: Api) {
           ));
         }
         const all = (await usersRepository.getAliasesForUserId(account.id)).length;
-        const maxAll = await maxAliasesPerAccount();
+        const maxAll = maxAliasesPerAccount(await getConfig());
         if (all >= maxAll) {
           return next(errors.invalidOperation(
             'This account already holds ' + all + ' aliases, the most allowed (accesses.maxAliasesPerAccount = ' + maxAll + ').',
@@ -106,9 +99,11 @@ export default async function (api: Api) {
     }
   );
 
-  // Deleting an address alias withdraws the grant that holds it (its
-  // sessions end, its refresh chains end), then releases the name: it
-  // routes nowhere and no longer answers in the DNS.
+  // Deleting an address alias releases the name (it routes nowhere and no
+  // longer answers in the DNS), then withdraws the grant that holds it (its
+  // sessions end, its refresh chains end). Released first: from then on no
+  // consent can adopt it (the adoption reads the alias index), so a consent
+  // racing the deletion is withdrawn by the passes below or refused.
   api.register('account.addressAliases.delete',
     basicAccessAuthorizationCheck,
     getParamsValidation(methodsSchema.addressAliasesDelete.params),
@@ -120,9 +115,11 @@ export default async function (api: Api) {
         if (!(await addressAliasesOfAccount(account.id)).includes(alias)) {
           return next(errors.unknownResource('address alias', params.alias));
         }
+        await (await getUsersRepository()).releaseAlias(alias, account.id);
         const relatedDeletions: Array<{ id: string }> = [];
         // A grant and its sessions carry the alias: deleting the grant takes
-        // them all. Bounded passes in case another holder appeared meanwhile.
+        // them all. Bounded passes in case another holder appeared meanwhile
+        // (one that adopted it just before the release).
         for (let pass = 0; pass < 5; pass++) {
           const rows = (await addressAliasHolders(account)).get(alias) ?? [];
           const holder = holderOf(rows);
@@ -131,8 +128,6 @@ export default async function (api: Api) {
           if (!outcome.deleted) break;
           relatedDeletions.push({ id: holder.id }, ...outcome.relatedDeletions);
         }
-        // Released by the withdrawal already when a grant held it.
-        await (await getUsersRepository()).releaseAlias(alias, account.id);
         result.addressAliasDeletion = { alias };
         result.relatedDeletions = relatedDeletions;
         next();

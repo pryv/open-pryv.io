@@ -69,7 +69,7 @@ import type { CurrentGrant, Composition, SubjectChange } from '../consentComposi
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
-import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, AUDIENCE_ACCOUNT_MISMATCH } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername, AUDIENCE_ACCOUNT_MISMATCH } from '../audienceAccount.ts';
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
@@ -159,6 +159,12 @@ export type CreateAccess = (params: {
      * with code `audience-account-mismatch` when the account cannot give it.
      */
     adoptAlias?: string;
+    /**
+     * The per-user resource names the account's username: a current grant
+     * that adopted an address alias is replaced (the acknowledged change of
+     * subject), never joined.
+     */
+    atUsername?: boolean;
   };
   grantedPermissions?: Array<Record<string, unknown>>;
   /** Registry client: the grant's permissions after this consent (final set). */
@@ -410,6 +416,9 @@ export function handleAccept (deps: AcceptDeps) {
     let session: UserSession;
     // The address alias the grant adopts (registry clients), or null.
     let adopt: string | null = null;
+    // The per-user audience names the username (a grant holding an address
+    // alias is then replaced, see composeShownOffer).
+    let atUsername = false;
     // What createAccess checks the granted subset against (tree-aware), and,
     // for a registry client, the grant's final permissions.
     let offeredForMint: Array<Record<string, unknown>>;
@@ -434,7 +443,8 @@ export function handleAccept (deps: AcceptDeps) {
         ? await deps.readRegistryGrant({ session, clientId: payload.clientId })
         : null;
       adopt = addressAliasOfAudience(payload.audience, stateClient, session, deps.isPlatformRoutedLabel);
-      const composition: Composition = composeShownOffer(synthesised, current, registryClient!, adopt);
+      atUsername = audienceNamesUsername(payload.audience, stateClient, session, deps.isPlatformRoutedLabel);
+      const composition: Composition = composeShownOffer(synthesised, current, registryClient!, adopt, atUsername);
       if (!composition.ok) {
         const refused = await levelConflictRefusal(composition.error, payload);
         return sendJson(res, refused.status, refused.body);
@@ -515,6 +525,7 @@ export function handleAccept (deps: AcceptDeps) {
               permissions: offeredForMint,
               randomAlias: adopt != null || synthesised.offer.randomAlias === true,
               ...(adopt != null ? { adoptAlias: adopt } : {}),
+              ...(atUsername ? { atUsername: true } : {}),
             }
           : payload.offer!,
         grantedPermissions,
