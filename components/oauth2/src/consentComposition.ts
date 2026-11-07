@@ -38,6 +38,7 @@ import {
   PermissionMergeConflictError,
 } from 'business/src/accesses/permissionSet.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
+import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
 
 /** How the app sees the user: the stable account id, or the grant's alias. */
 export type SubjectMode = 'pseudonym' | 'account';
@@ -50,6 +51,8 @@ export type CurrentGrant = {
   permissions: ExtPermission[];
   /** The grant carries an alias (the app sees a pseudonym). */
   aliased: boolean;
+  /** That alias, when known (an address alias a consent may name again). */
+  alias?: string | null;
 };
 
 /** The offer shown on the consent screen; entries may carry `currentlyGranted`. */
@@ -66,12 +69,28 @@ export function subjectModeOf (aliased: boolean): SubjectMode {
 /**
  * Compose the consent screen from the requested offer (as re-derived from the
  * signed state, with its digest) and the user's current grant (null: none).
+ *
+ * `adopt`: the address alias the authorization's audience names (see
+ * audienceAccount.ts `addressAliasOfAudience`). The grant then carries that
+ * alias, so the app sees a pseudonym whatever it asked; a current grant that
+ * carries another alias, or none, is a change of subject the user
+ * acknowledges (from a pseudonym to another pseudonym included: the app
+ * would know the account by another name).
+ *
+ * `atUsername`: the audience names the account's username (see
+ * audienceAccount.ts `audienceNamesUsername`). A current grant that adopted
+ * an address alias is then a change of subject too: its tokens are used at
+ * the alias only, so the grant is replaced (a pseudonymous client gets a new
+ * alias, a public one none).
  */
 export function composeShownOffer (
   requested: { offer: SynthOffer; digest: string },
   current: CurrentGrant | null,
-  client: OAuthClient
+  client: OAuthClient,
+  adopt: string | null = null,
+  atUsername: boolean = false
 ): Composition {
+  if (adopt != null) requested = { ...requested, offer: { ...requested.offer, randomAlias: true } };
   // A feature the request asks to allow that this client's grants forbid by
   // default is shown as the forbid it will be (locked), not as allowed.
   const defaults = new Set<string>(defaultForbiddenFeatures(client));
@@ -87,7 +106,9 @@ export function composeShownOffer (
   } else {
     const from = subjectModeOf(current.aliased);
     const to = subjectModeOf(requested.offer.randomAlias === true);
-    if (from !== to) subjectChange = { from, to };
+    if (from !== to || (adopt != null && current.alias !== adopt) || (atUsername && holdsAddressAlias(current))) {
+      subjectChange = { from, to };
+    }
 
     const requestedStreams = requestedPermissions.filter(isStreamPermission);
     // Exclusion masks of the grant are restrictions, not something to tick:
@@ -145,6 +166,11 @@ export function composeShownOffer (
   }
   const shown: ShownOffer = { ...requested.offer, permissions, allowUserChoice: requested.offer.allowUserChoice === true };
   return { ok: true, shown, subjectChange, shownDigest: shownDigestOf(requested.digest, shown, subjectChange) };
+}
+
+/** Whether the grant carries an address alias (adopted at an earlier consent). */
+export function holdsAddressAlias (current: CurrentGrant | null): boolean {
+  return typeof current?.alias === 'string' && isAddressAliasShape(current.alias);
 }
 
 /**

@@ -60,6 +60,7 @@ const WebhooksRepository = require('business').webhooks.Repository;
 const { localFirstFetch } = require('./helpers/localDelivery.ts');
 const { rescopeWebhooksOfAccess } = require('./helpers/webhookScopes.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const { addressAliasesOfAccount, addressAliasHolders, maxAliasesPerAccount, ADDRESS_ALIAS_UNAVAILABLE } = require('./helpers/addressAliases.ts') as typeof import('./helpers/addressAliases.ts');
 
 // Breach-scope reverse-index population — see components/platform/src/accessIndex.ts.
 // The index maps a bare accessId -> its owning user + minimal metadata so an
@@ -277,10 +278,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   // How many aliases (minted access aliases and former usernames) one account
   // may hold before `randomAlias` is refused. Read per request so a config
   // change applies without a restart.
-  const getMaxAliasesPerAccount = (): number => {
-    const max = config.get('accesses:maxAliasesPerAccount');
-    return Number.isInteger(max) && max >= 0 ? max : 1000;
-  };
+  const getMaxAliasesPerAccount = (): number => maxAliasesPerAccount(config);
   const delegationPassthrough = (context: MethodContext, params: unknown, result: unknown, next: MethodNext) => next();
   const delegationAccessCreateForgePreventionHook = delegationActive
     ? delegation.createAccessCreateForgePreventionHook({ errors })
@@ -600,6 +598,23 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     // leaks.
     const wantsAlias = params.randomAlias === true;
     delete params.randomAlias;
+    // An OAuth consent bound to one of the account's address aliases: the
+    // grant adopts it (set by the consent flow on its own context, never
+    // from the request). Only an address alias of this account that no
+    // access holds is adopted; it stays the owner's if the insert fails.
+    const adopt = (context as MethodContext & { addressAliasToAdopt?: string }).addressAliasToAdopt;
+    if (typeof adopt === 'string' && !wantsAlias) {
+      const unavailable = () => next(errors.invalidOperation('The address alias cannot be adopted: it is not an unheld address alias of this account.', { reason: ADDRESS_ALIAS_UNAVAILABLE }));
+      const ownerId = context.user.id;
+      if (ownerId == null || !context.access.isPersonal() || inheritedAlias(context.access) != null) return unavailable();
+      try {
+        if (!(await addressAliasesOfAccount(ownerId)).includes(adopt)) return unavailable();
+        if ((await addressAliasHolders({ id: ownerId, username: context.user.username })).has(adopt)) return unavailable();
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+      params.alias = adopt;
+    }
     const usersRepository = wantsAlias ? await getUsersRepository() : null;
     if (usersRepository != null) {
       // Every alias stays held until its access is deleted (an expired access

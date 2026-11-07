@@ -11,6 +11,7 @@ import { pubsub, WEBHOOKS_DELETE, USERNAME_BASED_ACCESSES_CHANGED } from 'messag
 import { getStorageLayer } from 'storage';
 import { getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
+import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
 import { managedAccessesOf, isManagedBy, parseAccessRef } from 'business/src/accesses/refs.ts';
 import { withoutCredentialUrls } from 'business/src/accesses/credentialUrls.ts';
 import WebhooksRepository from 'business/src/webhooks/repository.ts';
@@ -300,8 +301,17 @@ type DeletionOutcome = {
  * Delete the access `params.id` of `user` and what it manages.
  * `accessToDelete` / `relatedAccessesToDelete` are passed by the route (which
  * read them to answer and to check permissions); a plugin passes the id only.
+ * `keepAddressAliases`: the address aliases the deleted accesses carried stay
+ * the owner's, unheld, instead of being released (the lazy repair of an OAuth
+ * grant that expired or predates its client's revoke: the next consent at that
+ * address adopts it again). Every other deletion releases them.
  */
-async function deleteAccessChain (user: DeletionUser, params: { id: string; accessToDelete?: AccessRow | null; relatedAccessesToDelete?: AccessRow[] | null }): Promise<DeletionOutcome> {
+async function deleteAccessChain (user: DeletionUser, params: {
+  id: string;
+  accessToDelete?: AccessRow | null;
+  relatedAccessesToDelete?: AccessRow[] | null;
+  keepAddressAliases?: boolean;
+}): Promise<DeletionOutcome> {
   const storageLayer = await getStorageLayer();
   const accessesRepository = storageLayer.accesses;
   const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
@@ -419,7 +429,9 @@ async function deleteAccessChain (user: DeletionUser, params: { id: string; acce
     }
   }
   for (const token of sessionTokens) await endRefreshChainOf(token);
-  await releaseAliasesIfUnused(user, aliasesToRelease);
+  await releaseAliasesIfUnused(user, params.keepAddressAliases === true
+    ? aliasesToRelease.filter((a) => !isAddressAliasShape(a))
+    : aliasesToRelease);
   // Tombstone every deleted (base + cascaded) access in the breach-scope
   // reverse-index: the row is retained with a `deleted` timestamp so a breach
   // scoped after revocation still resolves the accessId. Non-fatal.

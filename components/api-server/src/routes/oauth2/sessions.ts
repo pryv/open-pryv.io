@@ -34,6 +34,8 @@ import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
 import { formerUsernames } from 'business/src/series/namespace.ts';
+import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
+import { bindableAddressAliases } from '../../methods/helpers/addressAliases.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
 import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
@@ -325,14 +327,18 @@ export function createSessions (env: GlueEnv) {
   }
 
   // ---------------------------------------------------------------------
-  // addressAliasesOf: the names, other than the current username, an
-  // account is addressed by in a per-user OAuth resource
-  // (`https://<name>.<domain>/...`). None is issued yet: the set is empty
-  // (the aliases an access holds and former usernames are not address
-  // aliases), and the consent and exchange checks already read it.
+  // addressAliasesOf: the names, other than the current username, a consent
+  // of `clientId` may bind in a per-user OAuth resource
+  // (`https://<name>.<domain>/...`): the account's address aliases no access
+  // holds, and the one this client's grant holds (a re-authorization at the
+  // same address); from this core's users index, never from the request. An
+  // address alias another grant holds, an access's alias and a former
+  // username are none of them.
   // ---------------------------------------------------------------------
-  async function addressAliasesOf (_userId: string): Promise<string[]> {
-    return [];
+  async function addressAliasesOf (userId: string, clientId?: string): Promise<string[]> {
+    const username = await resolveUsername(userId);
+    if (username == null) return [];
+    return await bindableAddressAliases({ id: userId, username }, clientId ?? null);
   }
 
   // ---------------------------------------------------------------------
@@ -593,7 +599,8 @@ export function createSessions (env: GlueEnv) {
       ...s,
       // No credential in it; the alias when the grant is aliased.
       apiBase: ApiEndpoint.build(s.aliased ? s.subject : username, undefined),
-      addressAliases: await addressAliasesOf(userId),
+      // The address alias the grant adopted, if any: its sessions' address.
+      addressAliases: s.aliased && isAddressAliasShape(s.subject) ? [s.subject] : [],
       formerUsernames: await formerUsernamesOf(userId, username),
     };
   }

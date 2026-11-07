@@ -436,8 +436,8 @@ with a message naming the accepted form.
   resource names another account's address", `reason:
   "audience-account-mismatch"`, before anything is written, audited as
   `oauth.consent.refused` with that reason and no username. The label names
-  the account when it is its **current** username (address aliases are
-  reserved for a later release) and is not a name the platform
+  the account when it is its **current** username, or one of its address
+  aliases this consent may bind (next item), and is not a name the platform
   answers itself: a service host (`reg`, `access`, `mfa`), a core id, a
   `dns.staticEntries` name or an OAuth issuer label of any core, a runtime DNS
   record or a hosted site. Such a name is refused even for an account that
@@ -453,6 +453,38 @@ with a message naming the accepted form.
   invalid_request`, `reason: "consent-out-of-date"`, § 1d), so
   `audience-not-listed` answers a list changed under the same client version,
   or an application-account client.
+- **Address aliases.** The account owner mints address aliases
+  (`account.addressAliases.create`, personal token, at most 10, see
+  `docs/api.md`): names of the shape `a-` + 8 letters or digits, routed to the
+  account's core like its username. A consent at
+  `https://<alias>.example.com/...` binds the alias when the account holds it
+  and no access does, or when this client's grant holds it already (a
+  re-authorization at the same address); the registry grant then **adopts** it:
+  the grant and every session of it carry it as their alias, whatever the
+  client's `subjectType`, so `sub`, `api_base`, the token's address and the
+  audience are that one name, and the tokens are used at that address only.
+  One grant per address alias: an alias another grant holds, another
+  account's alias, a minted access alias (`r-`) and a former username are
+  refused `audience-account-mismatch`. The signed-in `/offer` answers
+  `addressAlias` (the name the app will know the account by); over a current
+  grant that carries another alias, or none, the consent is a change of
+  subject (`subjectChange`, `pseudonym` to `pseudonym` included; § 1d "Change
+  of subject mode"), and the replaced grant's alias is released with it. A
+  consent at the username's address over a grant that adopted an address
+  alias is a change of subject too (the adopted grant's tokens are used at the
+  alias only): acknowledged, the grant is replaced, a `pairwise` client's new
+  grant gets a minted alias, a `public` one none, and the address alias is
+  released. With an exact audience, or none, the client's `subjectType`
+  decides as for any aliased grant (a `pairwise` client's consent joins it).
+  Withdrawing the grant, or the owner deleting the alias
+  (`account.addressAliases.delete`, which releases the name and then
+  withdraws the grant), releases it. A grant that expired, or that predates
+  its client's revoke (a client deleted and registered again), is replaced at
+  the next consent without releasing its address alias, so a consent at that
+  address adopts it again. An application-account client is refused an
+  address alias at `/accept` (its grant carries no alias; its `/offer`
+  answers registry consents only). The token exchange accepts the alias its
+  subject's grant adopted.
 - **After a username change.** A chain authorized before keeps its audience
   (it is fixed at authorization and copied on refresh), and its token exchange
   keeps working too (the former name stays the account's until the account is

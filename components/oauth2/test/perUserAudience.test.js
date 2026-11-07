@@ -335,6 +335,17 @@ describe('[OPUA] OAuth2: per-user audiences', () => {
       const ok = await accept(own, a.signed);
       assert.equal(ok.statusCode, 200, ok.raw);
       assert.equal(calls[0].audience, at('addr-alice'));
+      // The grant adopts the address alias: a pseudonymous grant with that alias.
+      assert.deepEqual([calls[0].offer.randomAlias, calls[0].offer.adoptAlias], [true, 'addr-alice']);
+      const shown = await offer(own, a.signed);
+      assert.equal(shown.body.addressAlias, 'addr-alice');
+      // At the username's own address nothing is adopted.
+      const plain = await authorize(platform, at('alice'));
+      await accept(own, plain.signed);
+      assert.deepEqual([calls[1].offer.adoptAlias, calls[1].offer.atUsername], [undefined, true]);
+      // At an alias, or an exact audience, the consent does not name the username.
+      assert.equal(calls[0].offer.atUsername, undefined);
+      calls.length = 1;
       for (const session of [{ username: 'bob', addressAliases: ['addr-bob'] }, { username: 'alice-renamed', addressAliases: [] }]) {
         const refused = await accept(consentDeps(platform, session, calls), a.signed);
         assert.equal(refused.statusCode, 403, refused.raw);

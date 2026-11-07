@@ -37,9 +37,24 @@ import { withSessionSelfRevoke, samePermissionKeys, REGISTRY_GRANT_PREFIX, REGIS
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import * as storages from 'storages';
 import { getRevokedAt, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
+import { AUDIENCE_ACCOUNT_MISMATCH } from 'oauth2/src/audienceAccount.ts';
+import { ADDRESS_ALIAS_UNAVAILABLE, addressAliasesOfAccount } from '../../methods/helpers/addressAliases.ts';
+import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
+
+/** The consent's address alias is not the account's to give (any more): /accept refuses it like another account's address. */
+function audienceMismatch (): Error {
+  const e = new Error('oauth2.createAccess: the address alias is not an unheld address alias of the account') as Error & { code: string };
+  e.code = AUDIENCE_ACCOUNT_MISMATCH;
+  return e;
+}
+
+function isAliasUnavailable (err: unknown): boolean {
+  const e = err as { code?: unknown; data?: { reason?: unknown } | null } | null;
+  return e?.code === AUDIENCE_ACCOUNT_MISMATCH || e?.data?.reason === ADDRESS_ALIAS_UNAVAILABLE;
+}
 
 /** The session-side helpers the grants need (see sessions.ts). */
 type SessionHelpers = {
@@ -186,13 +201,23 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // acknowledged it at /accept) withdraws the old grant first (its sessions
   // die, its alias is released, its refresh chains end), then a new grant is
   // made.
+  // A consent bound to one of the account's address aliases (`adopt`) makes
+  // the grant carry that alias: a current grant carrying another one, or
+  // none, is a change of subject like the above. So is a consent bound to
+  // the username's address (`atUsername`) over a grant that adopted an
+  // address alias: its tokens are used at the alias only.
   async function registryGrantFor (context: Ctx, clientId: string, wantAlias: boolean,
-    next: Array<Record<string, unknown>> | undefined, subjectChange: unknown): Promise<DataGrant> {
+    next: Array<Record<string, unknown>> | undefined, subjectChange: unknown, adopt: string | null = null,
+    atUsername: boolean = false): Promise<DataGrant> {
     // /accept always hands the final set (the default forbids included): a
     // grant is never written without it.
     if (next == null) throw new Error('oauth2.createAccess: a registry consent needs the grant\'s final permissions');
     let current = await findRegistryGrant(context, clientId);
-    if (current != null && (typeof current.alias === 'string' && current.alias.length > 0) !== wantAlias) {
+    const currentAlias = typeof current?.alias === 'string' && current.alias.length > 0 ? current.alias : null;
+    const replace = adopt != null
+      ? currentAlias !== adopt
+      : (currentAlias != null) !== wantAlias || (atUsername && currentAlias != null && isAddressAliasShape(currentAlias));
+    if (current != null && replace) {
       // Defence in depth: only a change of subject mode /accept checked (and
       // the user acknowledged) may replace the grant; a concurrent consent
       // that changed the grant in between is refused.
@@ -202,21 +227,23 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     }
     // A changed grant re-cuts its live sessions: accesses.update does it
     // (reconcileSessionsOfGrant), for this write as for the owner's own.
-    return await ensureRegistryGrant(context, clientId, current, next, wantAlias);
+    return await ensureRegistryGrant(context, clientId, current, next, wantAlias, adopt);
   }
 
   // The user's current grant for a registry client, read only (no repair
   // write): what the consent screen composes with the request.
   async function readRegistryGrant ({ session, clientId }: {
     session: { _context?: unknown; [key: string]: unknown }; clientId: string;
-  }): Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean } | null> {
+  }): Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean; alias: string | null } | null> {
     const context = session._context as Ctx | undefined;
     if (context == null) throw new Error('oauth2.readRegistryGrant: session missing _context');
     const grant = await findRegistryGrant(context, clientId, { repair: false });
     if (grant == null) return null;
+    const aliased = typeof grant.alias === 'string' && grant.alias.length > 0;
     return {
       permissions: grant.permissions ?? [],
-      aliased: typeof grant.alias === 'string' && grant.alias.length > 0,
+      aliased,
+      alias: aliased ? grant.alias as string : null,
     };
   }
 
@@ -224,27 +251,40 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // exactly `permissions` (written only when the entry set differs). The
   // caller decides the final set.
   async function ensureRegistryGrant (context: Ctx, clientId: string, current: DataGrant | null,
-    permissions: Array<Record<string, unknown>>, wantAlias: boolean): Promise<DataGrant> {
+    permissions: Array<Record<string, unknown>>, wantAlias: boolean, adopt: string | null = null): Promise<DataGrant> {
     let grant = current;
     if (grant == null) {
       try {
-        const created = await apiCall(context, 'accesses.create', {
-          type: 'app',
-          name: REGISTRY_GRANT_PREFIX + clientId,
-          deviceName: REGISTRY_GRANT_DEVICE,
-          permissions,
-          ...(wantAlias ? { randomAlias: true } : {}),
-        });
+        // The address alias is handed to accesses.create on this context only
+        // (never a request parameter: the API refuses a client-set alias).
+        const adopting = context as Ctx & { addressAliasToAdopt?: string };
+        let created;
+        try {
+          if (adopt != null) adopting.addressAliasToAdopt = adopt;
+          created = await apiCall(context, 'accesses.create', {
+            type: 'app',
+            name: REGISTRY_GRANT_PREFIX + clientId,
+            deviceName: REGISTRY_GRANT_DEVICE,
+            permissions,
+            ...(wantAlias && adopt == null ? { randomAlias: true } : {}),
+          });
+        } finally {
+          delete adopting.addressAliasToAdopt;
+        }
         if (created?.access == null || typeof created.access.id !== 'string') {
           throw new Error('oauth2.createAccess: accesses.create returned no data-grant');
         }
+        if (adopt != null) await keepSoleHolder(context, created.access, adopt);
         // `clientData.oauth` is server-owned: written storage-direct.
         await sessions.setGrantOf(context.user.id, context.user.username, created.access.id, clientId);
         return created.access;
       } catch (err: unknown) {
+        if (adopt != null && isAliasUnavailable(err)) throw audienceMismatch();
         // A concurrent first consent may have won the (type, name, deviceName) slot.
         grant = await findRegistryGrant(context, clientId);
         if (grant == null) throw err;
+        // That consent's grant must carry the address this one is bound to.
+        if (adopt != null && grant.alias !== adopt) throw audienceMismatch();
       }
     }
     if (!samePermissionKeys(grant.permissions ?? [], permissions)) {
@@ -255,6 +295,30 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       if (updated?.access != null) grant = updated.access;
     }
     return grant;
+  }
+
+  // One grant per address alias. Two consents of different clients bound to
+  // the same unheld alias at the same moment could both adopt it: the one
+  // created first (then the lower id) keeps it, the other withdraws its own
+  // new grant (the alias stays held by the first) and is refused.
+  // The owner deleting the alias while the grant was being written (the
+  // deletion releases the name first, then withdraws its holders): a grant
+  // written after the release carries a name in no index, so it withdraws
+  // itself and the consent is refused; one written before is withdrawn by
+  // the deletion.
+  async function keepSoleHolder (context: Ctx, ours: DataGrant, alias: string): Promise<void> {
+    const all = await apiCall(context, 'accesses.get', { includeExpired: true });
+    const order = (a: DataGrant) => [typeof a.created === 'number' ? a.created : 0, String(a.id)] as const;
+    const before = (a: DataGrant, b: DataGrant) => {
+      const [ca, ia] = order(a);
+      const [cb, ib] = order(b);
+      return ca !== cb ? ca < cb : ia < ib;
+    };
+    const rivals = (all?.accesses ?? []).filter((a) => a?.alias === alias && a.id !== ours.id);
+    const stillOwned = (await addressAliasesOfAccount(context.user.id)).includes(alias);
+    if (stillOwned && !rivals.some((a) => before(a, ours))) return;
+    await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(ours.id).base });
+    throw audienceMismatch();
   }
 
   // The grant's identity is (type, name, deviceName), unique among live
@@ -271,7 +335,11 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // then registered again under the same id) belongs to the revoked
   // registration: its sessions are refused already (the revoke epoch), and it
   // is treated like an expired one, so the new registration never inherits
-  // its permissions nor its alias.
+  // its permissions nor its minted alias.
+  // An address alias such a grant adopted is not released by that repair: it
+  // goes back to the owner, unheld (this lazy repair is not the owner's
+  // withdrawal), so the consent that triggered it, at that address, adopts it
+  // again rather than finding the name gone.
   async function findRegistryGrant (context: Ctx, clientId: string, opts: { repair?: boolean } = {}): Promise<DataGrant | null> {
     const result = await apiCall(context, 'accesses.get', { includeExpired: true });
     let grant = (result?.accesses ?? []).find((a) =>
@@ -281,7 +349,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       (typeof grant.expires === 'number' && grant.expires <= Date.now() / 1000) ||
       await madeBeforeClientRevoke(grant, clientId))) {
       if (opts.repair !== false) {
-        await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(grant.id).base });
+        await deleteAccessChain({ id: context.user.id, username: context.user.username },
+          { id: parseAccessRef(grant.id).base, keepAddressAliases: true });
       }
       grant = null;
     }
@@ -361,8 +430,10 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     }
 
     const registry = (offer as { kind?: string }).kind === 'synthesised';
+    const adoptAlias = (offer as { adoptAlias?: unknown }).adoptAlias;
     const dataGrant = registry
-      ? await registryGrantFor(context, clientId, (offer as { randomAlias?: boolean }).randomAlias === true, grantPermissions, subjectChange)
+      ? await registryGrantFor(context, clientId, (offer as { randomAlias?: boolean }).randomAlias === true, grantPermissions, subjectChange,
+        typeof adoptAlias === 'string' ? adoptAlias : null, (offer as { atUsername?: unknown }).atUsername === true)
       : await ensureCmcGrant(context, clientId, offer as CmcOffer, grantedPermissions);
     // A registry grant's state, replaced at every consent (computed by the
     // extension once the grant's permissions were final), written before the

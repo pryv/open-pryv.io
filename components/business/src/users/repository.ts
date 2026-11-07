@@ -32,6 +32,7 @@ const { reindexAccessNonFatal, cleanupUserAccessIndexNonFatal, renameAccessIndex
 const cache = require('cache').default;
 const { pubsub } = require('messages');
 const { gatherAccountSeries } = require('business/src/series/namespace.ts');
+const { ACCESS_ALIAS_PREFIX, ADDRESS_ALIAS_PREFIX, isAddressAliasShape } = require('./aliasShape.ts') as typeof import('./aliasShape.ts');
 const cmc = require('cmc');
 const emailsContainer = require('business/src/emails/container.ts');
 const emailsConstants = require('business/src/emails/constants.ts');
@@ -51,13 +52,16 @@ export { getUsersRepository };
 const USERNAME_CHANGE_COUNT_FIELD = 'usernameChangeCount';
 
 const ALIAS_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
-function generateRandomAlias (): string {
+function generateRandomAlias (prefix: string): string {
   let suffix = '';
   for (let i = 0; i < 8; i++) {
     suffix += ALIAS_ALPHABET[crypto.randomInt(ALIAS_ALPHABET.length)];
   }
-  return 'r-' + suffix;
+  return prefix + suffix;
 }
+
+/** What a minted alias is for: the alias of an access, or an address alias of the account. */
+export type MintedAliasKind = 'access' | 'address';
 
 /**
  * Repository of the users
@@ -171,6 +175,11 @@ class UsersRepository {
     return await this.usersIndex.getAliasesForId(userId);
   }
 
+  /** The account's address aliases (minted for the owner, see aliasShape.ts), held by a grant or not. */
+  async getAddressAliasesForUserId (userId: string): Promise<string[]> {
+    return (await this.usersIndex.getAliasesForId(userId)).filter(isAddressAliasShape);
+  }
+
   /**
    * Reserve a routable alias for a user. Three coordinated writes:
    *  1. platform unique-field `alias` — atomic cross-core uniqueness claim;
@@ -178,14 +187,18 @@ class UsersRepository {
    *  3. name→core mapping, so `alias.domain` routes to the owning core
    *     exactly like the username does (and the embedded DNS of a single
    *     core answers it); claimed, never overwritten (see `#bindAlias`).
-   * Generates an `r-` prefixed alias and retries on collision.
+   * Generates an `r-` prefixed alias (`a-` for an address alias, see
+   * aliasShape.ts) and retries on collision, or on a name the platform
+   * routes itself.
    * @returns the reserved alias string.
    */
-  async mintAlias (ownerUsername: string, ownerUserId: string): Promise<string> {
+  async mintAlias (ownerUsername: string, ownerUserId: string, kind: MintedAliasKind = 'access'): Promise<string> {
     const MAX_TRIES = 8;
     const coreId = await this.#aliasOwnerCoreId(ownerUsername);
+    const prefix = kind === 'address' ? ADDRESS_ALIAS_PREFIX : ACCESS_ALIAS_PREFIX;
     for (let i = 0; i < MAX_TRIES; i++) {
-      const alias = generateRandomAlias();
+      const alias = generateRandomAlias(prefix);
+      if (typeof this.platform.isUsernameRoutingReserved === 'function' && this.platform.isUsernameRoutingReserved(alias)) { continue; }
       const reserved = await this.platform.setUserUniqueFieldIfNotExists(ownerUsername, 'alias', alias);
       if (!reserved) { continue; } // collision — try another
       if (!await this.#bindAlias(alias, ownerUserId, coreId)) { continue; } // the name routes elsewhere — try another
@@ -972,6 +985,28 @@ class UsersRepository {
   async count () {
     const users = await this.usersIndex.getAllByUsername();
     return Object.keys(users).length;
+  }
+
+  /**
+   * Read-only: this core's names of the address-alias shape (`a-` + 8
+   * letters or digits, see aliasShape.ts), from the local users index. A
+   * current username of that shape stays the account's username; an alias of
+   * that shape is read as an address alias of its account. Run before the
+   * first release that mints address aliases, every alias of that shape is a
+   * former username (an account renamed earlier), which that release would
+   * list, count and let the owner delete as an address alias.
+   */
+  async scanAddressAliasShape (): Promise<{ usernames: string[]; aliases: Array<{ alias: string; username: string }> }> {
+    const byUsername = await this.usersIndex.getAllByUsername(); // { username: userId }
+    const usernames: string[] = [];
+    const aliases: Array<{ alias: string; username: string }> = [];
+    for (const [username, userId] of Object.entries(byUsername)) {
+      if (isAddressAliasShape(username)) usernames.push(username);
+      for (const alias of await this.usersIndex.getAliasesForId(userId)) {
+        if (isAddressAliasShape(alias)) aliases.push({ alias, username });
+      }
+    }
+    return { usernames: usernames.sort(), aliases: aliases.sort((a, b) => (a.alias < b.alias ? -1 : a.alias > b.alias ? 1 : 0)) };
   }
 
   /**

@@ -60,6 +60,12 @@
 // none) is claimed for the account, never over another holder; an account
 // whose email another account holds is listed (no password reset or notice is
 // mailed to it until its email is changed). --dry-run lists without claiming.
+//
+// With --address-alias-shape it writes nothing and lists this core's current
+// usernames and aliases of the address-alias shape (`a-` + 8 letters or
+// digits). Run it before upgrading to the release that mints address aliases:
+// an alias of that shape is then a former username, which that release reads
+// as an address alias of its account. Zero is the expected result.
 
 const path = require('path');
 
@@ -154,6 +160,20 @@ require('@pryv/boiler').init({
       process.exit(0);
     }
 
+    if (args.addressAliasShape) {
+      const s = await usersRepository.scanAddressAliasShape();
+      console.log('reconcile-user-cores --address-alias-shape: read only, on core "' + platform.coreId + '"');
+      console.log('  usernames of that shape ' + s.usernames.length + (s.usernames.length > 0 ? ': ' + s.usernames.join(', ') : ''));
+      console.log('  aliases of that shape   ' + s.aliases.length +
+        (s.aliases.length > 0 ? ': ' + s.aliases.map((a) => a.alias + ' (account ' + a.username + ')').join(', ') : ''));
+      if (s.aliases.length > 0) {
+        console.log('    ! before the upgrade these are former usernames: from the release that mints address ' +
+          'aliases on, each is read as an address alias of its account (listed, counted in its budget, ' +
+          'deletable by the owner, adoptable by an OAuth consent)');
+      }
+      process.exit(0);
+    }
+
     if (args.emails) {
       const s = await usersRepository.reconcileEmailRows(args.dryRun);
       console.log('reconcile-user-cores --emails: ' + (args.dryRun ? 'DRY-RUN (no writes)' : 'applied') +
@@ -207,12 +227,13 @@ require('@pryv/boiler').init({
 })();
 
 function parseArgs (argv) {
-  const args = { dryRun: false, extIds: false, emails: false, oldPepper: null, forceEmptyLocal: false };
+  const args = { dryRun: false, extIds: false, emails: false, addressAliasShape: false, oldPepper: null, forceEmptyLocal: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--ext-ids') args.extIds = true;
     else if (a === '--emails') args.emails = true;
+    else if (a === '--address-alias-shape') args.addressAliasShape = true;
     else if (a === '--force-empty-local') args.forceEmptyLocal = true;
     else if (a === '--old-pepper') {
       args.oldPepper = argv[++i];
@@ -227,6 +248,10 @@ function parseArgs (argv) {
   }
   if (args.emails && args.extIds) {
     console.error('--emails and --ext-ids are separate passes: run the tool once with each');
+    process.exit(1);
+  }
+  if (args.addressAliasShape && (args.emails || args.extIds)) {
+    console.error('--address-alias-shape is a separate, read-only pass: run it alone');
     process.exit(1);
   }
   return args;
@@ -253,6 +278,12 @@ function printUsage (stream) {
     '                                              # the accounts whose email another account holds',
     '                                              # (safe with this core\'s API running: it never',
     '                                              # deletes nor overwrites a row)',
+    '  node bin/reconcile-user-cores.js --address-alias-shape',
+    '                                              # list this core\'s usernames and aliases of the',
+    '                                              # address-alias shape (a- + 8 letters or digits);',
+    '                                              # read only, safe with the API running; run it',
+    '                                              # before upgrading to the release that mints',
+    '                                              # address aliases',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

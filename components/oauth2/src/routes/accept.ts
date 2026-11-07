@@ -69,7 +69,7 @@ import type { CurrentGrant, Composition, SubjectChange } from '../consentComposi
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
-import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername, AUDIENCE_ACCOUNT_MISMATCH } from '../audienceAccount.ts';
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
@@ -113,7 +113,7 @@ export type RefusedSession = { refused: true; description: string };
  * Resolver provided by the route mount: {username, userToken} → session,
  * refusal, an account served by another core (see wrongCore.ts), or null.
  */
-export type ResolveUser = (params: { username: string; userToken: string })
+export type ResolveUser = (params: { username: string; userToken: string; clientId?: string })
 => Promise<UserSession | RefusedSession | WrongCoreSession | null>;
 
 function isRefusedSession (session: UserSession | RefusedSession): session is RefusedSession {
@@ -153,6 +153,18 @@ export type CreateAccess = (params: {
      * (and every session of it) carries an alias, the subject the app sees.
      */
     randomAlias?: boolean;
+    /**
+     * The address alias the authorization's per-user resource names: the
+     * grant carries it (instead of a minted alias). The mount refuses it
+     * with code `audience-account-mismatch` when the account cannot give it.
+     */
+    adoptAlias?: string;
+    /**
+     * The per-user resource names the account's username: a current grant
+     * that adopted an address alias is replaced (the acknowledged change of
+     * subject), never joined.
+     */
+    atUsername?: boolean;
   };
   grantedPermissions?: Array<Record<string, unknown>>;
   /** Registry client: the grant's permissions after this consent (final set). */
@@ -371,7 +383,7 @@ export function handleAccept (deps: AcceptDeps) {
     const granted: string[] = payload.scope;
 
     const resolveSession = async (): Promise<UserSession | Refusal> => {
-      const s = await deps.resolveUser({ username: body.username, userToken: body.userToken });
+      const s = await deps.resolveUser({ username: body.username, userToken: body.userToken, clientId: payload.clientId });
       if (s == null) {
         return {
           status: 401,
@@ -391,10 +403,22 @@ export function handleAccept (deps: AcceptDeps) {
         await auditAudienceRefusal(payload, audienceRefused);
         return consentAudienceAnswer(audienceRefused);
       }
+      // An address alias is adopted by a registry client's grant only: an
+      // app-account client's grant carries no alias, so its token would not
+      // be usable at that address.
+      if (synthesised == null && addressAliasOfAudience(payload.audience, stateClient, s, deps.isPlatformRoutedLabel) != null) {
+        await auditAudienceRefusal(payload, 'mismatch');
+        return consentAudienceAnswer('mismatch');
+      }
       return s;
     };
 
     let session: UserSession;
+    // The address alias the grant adopts (registry clients), or null.
+    let adopt: string | null = null;
+    // The per-user audience names the username (a grant holding an address
+    // alias is then replaced, see composeShownOffer).
+    let atUsername = false;
     // What createAccess checks the granted subset against (tree-aware), and,
     // for a registry client, the grant's final permissions.
     let offeredForMint: Array<Record<string, unknown>>;
@@ -418,7 +442,9 @@ export function handleAccept (deps: AcceptDeps) {
       const current: CurrentGrant | null = deps.readRegistryGrant != null
         ? await deps.readRegistryGrant({ session, clientId: payload.clientId })
         : null;
-      const composition: Composition = composeShownOffer(synthesised, current, registryClient!);
+      adopt = addressAliasOfAudience(payload.audience, stateClient, session, deps.isPlatformRoutedLabel);
+      atUsername = audienceNamesUsername(payload.audience, stateClient, session, deps.isPlatformRoutedLabel);
+      const composition: Composition = composeShownOffer(synthesised, current, registryClient!, adopt, atUsername);
       if (!composition.ok) {
         const refused = await levelConflictRefusal(composition.error, payload);
         return sendJson(res, refused.status, refused.body);
@@ -494,7 +520,13 @@ export function handleAccept (deps: AcceptDeps) {
         scope: granted,
         expiresAt: accessExpiresAt,
         offer: synthesised != null
-          ? { kind: 'synthesised', permissions: offeredForMint, randomAlias: synthesised.offer.randomAlias === true }
+          ? {
+              kind: 'synthesised',
+              permissions: offeredForMint,
+              randomAlias: adopt != null || synthesised.offer.randomAlias === true,
+              ...(adopt != null ? { adoptAlias: adopt } : {}),
+              ...(atUsername ? { atUsername: true } : {}),
+            }
           : payload.offer!,
         grantedPermissions,
         ...(grantPermissions != null ? { grantPermissions, subjectChange, grantState } : {}),
@@ -516,6 +548,14 @@ export function handleAccept (deps: AcceptDeps) {
       }
       if ((err as { code?: string } | null)?.code === 'permission-level-conflict') {
         const r = await levelConflictRefusal(err, payload);
+        return sendJson(res, r.status, r.body);
+      }
+      // The address alias to adopt was taken meanwhile (another grant
+      // adopted it, or the owner deleted it): refused like any address that
+      // is not the account's to give.
+      if ((err as { code?: string } | null)?.code === AUDIENCE_ACCOUNT_MISMATCH) {
+        await auditAudienceRefusal(payload, 'mismatch');
+        const r = consentAudienceAnswer('mismatch');
         return sendJson(res, r.status, r.body);
       }
       // The data holder (peer) refused the consent accept — e.g. the open-link

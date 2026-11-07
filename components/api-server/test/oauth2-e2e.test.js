@@ -401,6 +401,58 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       }
     });
 
+    it('[OPUE20] an app-account client at one of the account\'s address aliases: /offer composes nothing, /accept refuses it, nothing is written, the alias stays unheld', async function () {
+      const platformDB = require('storages').platformDB;
+      const perUserId = 'app-pa-' + cuid();
+      const at = (name) => 'https://' + name + '.example.com/adapter/calendar/api';
+      await storage.setClient(platformDB, {
+        clientId: perUserId,
+        redirectUris: [REDIRECT_URI],
+        scope: ['cmc:' + OFFER_NAME],
+        cmcOffers: { [OFFER_NAME]: { capabilityUrl } },
+        grantTypes: ['authorization_code'],
+        allowedAudiences: ['https://{username}.example.com/adapter/calendar/api'],
+        clientName: 'OAuth E2E per-user app at an alias',
+        updatedAt: Date.now(),
+      });
+      const minted = await coreRequest.post('/' + username + '/account/address-aliases').set('Authorization', personalToken).send({});
+      assert.equal(minted.status, 201, describeRes(minted));
+      const alias = minted.body.addressAlias.alias;
+      const accessIds = async () => {
+        const res = await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken);
+        return res.body.accesses.map((a) => a.id).sort();
+      };
+      try {
+        const { challenge } = pkce();
+        const authRes = await coreRequest.get('/oauth2/authorize').query({
+          client_id: perUserId,
+          redirect_uri: REDIRECT_URI,
+          response_type: 'code',
+          state: 'csrf-' + cuid(),
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+          scope: 'cmc:' + OFFER_NAME,
+          aud: at(alias),
+        });
+        assert.equal(authRes.status, 302, describeRes(authRes));
+        const signedState = new URL(authRes.headers.location).searchParams.get('state');
+        const before = await accessIds();
+        // An app-account state carries its offer: /offer composes registry consents only.
+        const offerRes = await coreRequest.post('/oauth2/authorize/offer').send({ state: signedState, username, userToken: personalToken });
+        assert.deepEqual([offerRes.status, offerRes.body.error, offerRes.body.addressAlias], [400, 'invalid_request', undefined], describeRes(offerRes));
+        const acceptRes = await coreRequest.post('/oauth2/authorize/accept')
+          .send({ state: signedState, username, userToken: personalToken, grantedPermissions: DEFAULT_GRANTED });
+        assert.equal(acceptRes.status, 403, describeRes(acceptRes));
+        assert.deepEqual([acceptRes.body.error, acceptRes.body.reason], ['access_denied', 'audience-account-mismatch']);
+        assert.deepEqual(await accessIds(), before, 'nothing written');
+        const listed = await coreRequest.get('/' + username + '/account/address-aliases').set('Authorization', personalToken);
+        assert.deepEqual(listed.body.addressAliases.find((a) => a.alias === alias)?.heldBy, null, 'the alias stays unheld');
+      } finally {
+        await coreRequest.delete('/' + username + '/account/address-aliases/' + alias).set('Authorization', personalToken);
+        try { await storage.deleteClient(platformDB, perUserId); } catch (_) { /* best-effort */ }
+      }
+    });
+
     it('[OPUE14] an app-account client whose list changed, or whose row was deleted, between /authorize and /accept: refused audience-not-listed, no code', async function () {
       const platformDB = require('storages').platformDB;
       const perUser = 'https://{username}.example.com/adapter/calendar/api';

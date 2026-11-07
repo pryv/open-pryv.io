@@ -264,3 +264,51 @@ In the case of an error in any part of the batch message, a HTTP status in the 4
 | 403    | `"forbidden"`                 | The authorization provided to Pryv was not valid or doesn't have the access rights to store series data. |
 
 **Debug Tip!** If you get a HTTP 400 status with the code `"invalid-request-structure"`, you should make sure that every element in the "seriesBatch" structure executes individually as part of a series append operation.
+
+## Account address aliases
+
+An address alias is a name of the account other than its username, minted by the server for the account owner: `a-` followed by 8 lower-case letters or digits. Like the username, it is an address of the account: the platform routes `https://<alias>.<domain>/` to the account's core and the embedded DNS answers it. The owner gives it to an app instead of the username (for instance as the base of a per-user resource); an OAuth consent at that address makes the app's grant adopt it, so the app knows the account by that name only and its tokens are used at that address only (see `docs/oauth2.md` § 1c "Per-user addresses"). One grant per address alias. The methods below take a personal access token; any other token is refused `403 "forbidden"`.
+
+An address alias view: `alias`, `apiEndpoint` (the account's API at that name, no token), `heldBy` (`null` while no access holds it, else `{ accessId, clientId }`: the access that holds it, the OAuth grant that adopted it in practice, and, for a grant, its client).
+
+**Before upgrading to the release that mints address aliases**, run `node bin/reconcile-user-cores.js --address-alias-shape` on each core (read only): a former username of the exact shape `a-` + 8 (an account renamed earlier) is read as an address alias of its account from that release on. Zero names listed is the expected result.
+
+### Create an address alias
+
+|      |                                          |
+| ---- | ---------------------------------------- |
+| id   | `account.addressAliases.create`          |
+| HTTP | POST /{username}/account/address-aliases |
+
+No parameters: the name is minted by the server, never taken from the request.
+
+`HTTP 201 Created`, `addressAlias`: the new alias's view.
+
+| Status | Error Code                    |                                                              |
+| ------ | ----------------------------- | ------------------------------------------------------------ |
+| 400    | `"invalid-operation"`         | The account holds 10 address aliases already (`data.addressAliasesLimit`), or as many aliases of any kind as `accesses.maxAliasesPerAccount` allows (`data.maxAliasesPerAccount`). |
+| 400    | `"invalid-parameters-format"` | The request carries a parameter (an alias value, for instance). |
+
+### List the address aliases
+
+|      |                                         |
+| ---- | --------------------------------------- |
+| id   | `account.addressAliases.list`           |
+| HTTP | GET /{username}/account/address-aliases |
+
+`HTTP 200 OK`, `addressAliases`: the views, `addressAliasesLimit`: 10.
+
+### Delete an address alias
+
+|      |                                                    |
+| ---- | -------------------------------------------------- |
+| id   | `account.addressAliases.delete`                    |
+| HTTP | DELETE /{username}/account/address-aliases/{alias} |
+
+Releases the name (it routes nowhere and is no longer answered; a consent adopting it at that moment is refused), then withdraws the grant that holds it, if any (its sessions end, its refresh tokens stop working, the app must ask again). Withdrawing the grant otherwise (deleting its access) releases its address alias too; a grant that expired, or that predates its client's revoke, is replaced at the app's next consent without releasing it.
+
+`HTTP 200 OK`, `addressAliasDeletion: { alias }`, `relatedDeletions`: the ids of the accesses deleted with it.
+
+| Status | Error Code           |                                                     |
+| ------ | -------------------- | --------------------------------------------------- |
+| 404    | `"unknown-resource"` | `alias` is not an address alias of this account.    |

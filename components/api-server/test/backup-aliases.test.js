@@ -98,6 +98,35 @@ describe('[BKAL] backup + restore carry the alias index', function () {
     assert.notStrictEqual(await platform.getUsersUniqueField('alias', alias), null, 'the alias is reserved on the platform');
   });
 
+  it('[BKAL5] an unheld address alias is backed up, released with the account and restored by value: it routes to the account again', async function () {
+    const username = freshName('bkar');
+    const userId = (await getNewFixture().user(username)).attrs.id;
+    const alias = await usersRepository.mintAlias(username, userId, 'address');
+    assert.match(alias, /^a-[a-z0-9]{8}$/);
+    restored.push({ userId, username });
+
+    const dir = fs.mkdtempSync(path.join(backupDir, 'bkal5-'));
+    const writer = backupIO.createFilesystemBackupWriter(dir, { maxChunkSize: 50 * 1024 * 1024, compress: true });
+    const backup = new BackupOrchestrator();
+    await backup.init();
+    await backup.backupUser(userId, writer);
+    const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+    assert.deepStrictEqual(manifest.users.find((u) => u.userId === userId).aliases, [alias]);
+
+    await usersRepository.deleteOne(userId, username);
+    assert.strictEqual(await platform.getUserCore(alias), null, 'released with the account');
+
+    const reader = backupIO.createFilesystemBackupReader(dir, {});
+    const restore = new RestoreOrchestrator();
+    await restore.init();
+    const report = await restore.restoreUser(userId, reader, { overwrite: true });
+    await reader.close();
+    assert.deepStrictEqual(report.aliases, { restored: 1, refused: [] });
+    assert.deepStrictEqual(await usersRepository.getAddressAliasesForUserId(userId), [alias], 'an address alias of the account again');
+    assert.strictEqual(await platform.getUserCore(alias), platform.coreId, 'it routes to the home core');
+    assert.notStrictEqual(await platform.getUsersUniqueField('alias', alias), null, 'reserved on the platform');
+  });
+
   // Series kept under a former username (an account renamed by an earlier
   // release) and the username's own: backed up, then restored over the
   // account while the former namespace holds a point written after the backup.
