@@ -31,6 +31,13 @@ export const AUDIENCE_ACCOUNT_MISMATCH = 'audience-account-mismatch';
 /** The reason (answer and audit) of a consent whose audience the client's current list does not hold. */
 export const AUDIENCE_NOT_LISTED = 'audience-not-listed';
 
+/**
+ * The audit reason of a consent refused by `issuerAccountRefusal` (the
+ * signed-in account is not the one a per-user issuer's host names). The
+ * answer stays `AUDIENCE_ACCOUNT_MISMATCH`: no oracle on whose host it is.
+ */
+export const ISSUER_ACCOUNT_MISMATCH = 'issuer-account-mismatch';
+
 /** The refusal's `error_description`. */
 export const AUDIENCE_ACCOUNT_MISMATCH_TEXT = 'the requested resource names another account\'s address';
 
@@ -157,12 +164,21 @@ function perUserLabelOf (audience: string | undefined, client: OAuthClient | nul
   return l;
 }
 
-/** The audit row of a consent refused by `consentAudienceRefusal` (no username, no label). */
-export async function auditAudienceRefusal (payload: { clientId: string; scope: string[] }, kind: 'mismatch' | 'unlisted'): Promise<void> {
+const AUDIT_REASONS = {
+  mismatch: AUDIENCE_ACCOUNT_MISMATCH,
+  unlisted: AUDIENCE_NOT_LISTED,
+  'issuer-account': ISSUER_ACCOUNT_MISMATCH,
+} as const;
+
+/**
+ * The audit row of a consent refused by `consentAudienceRefusal`, or by
+ * `issuerAccountRefusal` (`'issuer-account'`): no username, no label.
+ */
+export async function auditAudienceRefusal (payload: { clientId: string; scope: string[] }, kind: keyof typeof AUDIT_REASONS): Promise<void> {
   await audit('oauth.consent.refused', {
     clientId: payload.clientId,
     requestedScope: payload.scope,
-    reason: kind === 'mismatch' ? AUDIENCE_ACCOUNT_MISMATCH : AUDIENCE_NOT_LISTED,
+    reason: AUDIT_REASONS[kind],
   });
 }
 

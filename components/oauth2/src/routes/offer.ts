@@ -247,9 +247,10 @@ export function handleOffer (deps: OfferDeps) {
     }
     // An address alias the audience names: the grant adopts it (shown here).
     const adopt = addressAliasOfAudience(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
-    // At a per-user issuer, only the account its host names consents.
+    // At a per-user issuer, only the account its host names consents (audited
+    // under its own reason, answered as an audience mismatch).
     if (issuerAccountRefusal(current.perUser?.label, session, adopt, deps.isPlatformRoutedLabel) != null) {
-      await auditAudienceRefusal(verified.payload, 'mismatch');
+      await auditAudienceRefusal(verified.payload, 'issuer-account');
       const refusal = consentAudienceAnswer('mismatch');
       return sendJson(res, refusal.status, refusal.body);
     }

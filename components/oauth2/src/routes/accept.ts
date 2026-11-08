@@ -421,7 +421,7 @@ export function handleAccept (deps: AcceptDeps) {
       // address alias, a registry consent that adopts it).
       const adopted = synthesised != null ? addressAliasOfAudience(payload.audience, stateClient, s, deps.isPlatformRoutedLabel) : null;
       if (issuerAccountRefusal(current.perUser?.label, s, adopted, deps.isPlatformRoutedLabel) != null) {
-        await auditAudienceRefusal(payload, 'mismatch');
+        await auditAudienceRefusal(payload, 'issuer-account');
         return consentAudienceAnswer('mismatch');
       }
       return s;
