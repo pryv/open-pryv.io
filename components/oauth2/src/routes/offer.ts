@@ -49,7 +49,9 @@ import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import { metadataHostOf } from '../clientMetadata.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
-import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername, issuerAccountRefusal } from '../audienceAccount.ts';
+import type { PerUserIssuerOf } from '../perUserIssuer.ts';
+import { requestIssuer, stateIssuerRefusal } from '../perUserIssuer.ts';
 
 /** A signed-in user, as the host app's resolver answers it. */
 export type OfferSession = {
@@ -73,6 +75,8 @@ export type OfferDeps = {
   readRegistryGrant?: (params: { session: OfferSession; clientId: string }) => Promise<CurrentGrant | null>;
   /** The host labels the platform answers itself (never an account's address). */
   isPlatformRoutedLabel?: PlatformRoutedLabel;
+  /** The per-user issuer of a request on an account's host (`oauth:perUserIssuer`). */
+  perUserIssuerOf?: PerUserIssuerOf;
 };
 
 export type StateOffer =
@@ -191,6 +195,10 @@ export function handleOffer (deps: OfferDeps) {
     if (!verified.ok) {
       return sendJson(res, 400, { error: 'invalid_request', error_description: `signed state ${verified.reason}` });
     }
+    // The consent goes on at the issuer the authorization was made at.
+    const current = await requestIssuer(deps.config, deps.perUserIssuerOf, req);
+    const otherIssuer = stateIssuerRefusal(deps.config, verified.payload.issuer, current);
+    if (otherIssuer != null) return sendJson(res, otherIssuer.status, otherIssuer.body);
     const r = await resolveStateOffer(deps, verified.payload);
     if (!r.ok) return sendJson(res, r.status, { error: r.error, error_description: r.description });
     const c = r.client;
@@ -237,13 +245,20 @@ export function handleOffer (deps: OfferDeps) {
       const refusal = consentAudienceAnswer(audienceRefused);
       return sendJson(res, refusal.status, refusal.body);
     }
-    const current = deps.readRegistryGrant != null
-      ? await deps.readRegistryGrant({ session, clientId: c.clientId })
-      : null;
     // An address alias the audience names: the grant adopts it (shown here).
     const adopt = addressAliasOfAudience(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
+    // At a per-user issuer, only the account its host names consents (audited
+    // under its own reason, answered as an audience mismatch).
+    if (issuerAccountRefusal(current.perUser?.label, session, adopt, deps.isPlatformRoutedLabel) != null) {
+      await auditAudienceRefusal(verified.payload, 'issuer-account');
+      const refusal = consentAudienceAnswer('mismatch');
+      return sendJson(res, refusal.status, refusal.body);
+    }
+    const currentGrant = deps.readRegistryGrant != null
+      ? await deps.readRegistryGrant({ session, clientId: c.clientId })
+      : null;
     const atUsername = audienceNamesUsername(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
-    const composition = composeShownOffer(r.resolved, current, c, adopt, atUsername);
+    const composition = composeShownOffer(r.resolved, currentGrant, c, adopt, atUsername);
     if (!composition.ok) {
       return sendJson(res, 400, {
         error: 'invalid_scope',
@@ -261,7 +276,7 @@ export function handleOffer (deps: OfferDeps) {
       authenticated: true,
       offer: composition.shown,
       shownDigest: composition.shownDigest,
-      currentGrant: current == null ? null : { subjectMode: subjectModeOf(current.aliased) },
+      currentGrant: currentGrant == null ? null : { subjectMode: subjectModeOf(currentGrant.aliased) },
       subjectChange: composition.subjectChange,
       ...(adopt != null ? { addressAlias: adopt } : {}),
     });

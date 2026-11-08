@@ -15,6 +15,29 @@
   relayed, a new upstream connection each) and `[ADRI17]` (a socket error injected right after the
   answer arrives).
 
+### OAuth per-user issuer
+
+- `oauth2/src/perUserIssuer.ts`: the `oauth:perUserIssuer` setting (parse, boot problems shared by
+  `config-validation.js` and `bin/check-config.js`), the request's issuer and the consent steps'
+  issuer check. The host knowledge is the api-server's (`routes/oauth2/perUserIssuer.ts`: the
+  adapter ingress's `addressedLabelOf` on the client-facing host, `externalRequestHost` shared with
+  DPoP, then the name-to-core row must name this core: one PlatformDB read per request on an
+  account host while the switch is on, none otherwise), injected as `perUserIssuerOf` and read per
+  request from the live configuration.
+- The signed state, the code row and the refresh row carry `issuer` only for a per-user issuer
+  (absent: the configured one), so rows and states written before read as today; refresh keys are
+  unchanged (still keyed by core id). The discovery handler builds per request and answers
+  synchronously while the switch is off. `tokenEndpointAudiences(config, requestIssuer)` takes the
+  request's issuer; revocation and introspection take `perUserIssuerOf` too, for their client
+  assertion audiences only (their answers keep `issuerFromConfig`).
+- `api-server/src/routes/oauth2/hostWrongCore.ts` reads `externalRequestHost` (the per-user
+  issuer's host reader) instead of `Host`. `audienceAccount.ts`: `ISSUER_ACCOUNT_MISMATCH`, the
+  audit reason of `issuerAccountRefusal` (the answer is unchanged).
+- Tests: `[OPIS1-7]` (in-process core with the DNS topology injected), `[OPIS8]` two-core (Core A
+  runs with the switch on: `OAUTH_PER_USER_ISSUER` in the child core helper), `[OPIU1-3]`,
+  `[CVOA9]`, `[CKPU1]`, `[OTKW5]` (the guard's host), `[OAIH5]` (`/reg/service/info` on a user host
+  of a DNS-topology app); `bin/init.js` appendix and `docs/oauth2.md` § 2 `perUserIssuer`.
+
 ### Address aliases
 
 - `users/aliasShape.ts`: the minted shapes are `r-` + 8 (access aliases) and `a-` + 8 (address

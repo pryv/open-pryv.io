@@ -80,6 +80,11 @@ export type SignedStatePayload = {
   audience?: string;
   /** OpenID Connect `nonce` of the authorization request (registry clients). */
   nonce?: string;
+  /**
+   * The per-user issuer the authorization was made at (`oauth:perUserIssuer`);
+   * absent: the configured issuer. The consent steps must reach the same one.
+   */
+  issuer?: string;
   iat: number;
   exp: number;
 };

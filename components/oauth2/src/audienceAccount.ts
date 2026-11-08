@@ -31,6 +31,13 @@ export const AUDIENCE_ACCOUNT_MISMATCH = 'audience-account-mismatch';
 /** The reason (answer and audit) of a consent whose audience the client's current list does not hold. */
 export const AUDIENCE_NOT_LISTED = 'audience-not-listed';
 
+/**
+ * The audit reason of a consent refused by `issuerAccountRefusal` (the
+ * signed-in account is not the one a per-user issuer's host names). The
+ * answer stays `AUDIENCE_ACCOUNT_MISMATCH`: no oracle on whose host it is.
+ */
+export const ISSUER_ACCOUNT_MISMATCH = 'issuer-account-mismatch';
+
 /** The refusal's `error_description`. */
 export const AUDIENCE_ACCOUNT_MISMATCH_TEXT = 'the requested resource names another account\'s address';
 
@@ -123,6 +130,28 @@ export function audienceNamesUsername (
   return l != null && typeof account.username === 'string' && account.username.toLowerCase() === l;
 }
 
+/**
+ * A consent at a per-user issuer (`oauth:perUserIssuer`): the issuer's host is
+ * an account's address, so only that account consents there. Null when it may
+ * go on (no per-user issuer, or its label is the signed-in account's current
+ * username, or the address alias this consent adopts), `'mismatch'`
+ * otherwise. An address alias the consent does not adopt is refused too: the
+ * app would get an address naming the account by another name than the one
+ * it was started at (the alias's point is that the app knows that name only).
+ */
+export function issuerAccountRefusal (
+  issuerLabel: string | null | undefined,
+  account: ConsentAccountNames,
+  adopted: string | null,
+  isPlatformRoutedLabel?: PlatformRoutedLabel | null
+): null | 'mismatch' {
+  if (issuerLabel == null) return null;
+  if (!labelNamesAccount(issuerLabel, account, isPlatformRoutedLabel)) return 'mismatch';
+  const l = issuerLabel.toLowerCase();
+  if (typeof account.username === 'string' && account.username.toLowerCase() === l) return null;
+  return adopted != null && adopted.toLowerCase() === l ? null : 'mismatch';
+}
+
 /** The lowercased label of a per-user audience of the client, null for any other (or a platform-routed label). */
 function perUserLabelOf (audience: string | undefined, client: OAuthClient | null, isPlatformRoutedLabel?: PlatformRoutedLabel | null): string | null {
   if (audience == null || client == null) return null;
@@ -135,12 +164,21 @@ function perUserLabelOf (audience: string | undefined, client: OAuthClient | nul
   return l;
 }
 
-/** The audit row of a consent refused by `consentAudienceRefusal` (no username, no label). */
-export async function auditAudienceRefusal (payload: { clientId: string; scope: string[] }, kind: 'mismatch' | 'unlisted'): Promise<void> {
+const AUDIT_REASONS = {
+  mismatch: AUDIENCE_ACCOUNT_MISMATCH,
+  unlisted: AUDIENCE_NOT_LISTED,
+  'issuer-account': ISSUER_ACCOUNT_MISMATCH,
+} as const;
+
+/**
+ * The audit row of a consent refused by `consentAudienceRefusal`, or by
+ * `issuerAccountRefusal` (`'issuer-account'`): no username, no label.
+ */
+export async function auditAudienceRefusal (payload: { clientId: string; scope: string[] }, kind: keyof typeof AUDIT_REASONS): Promise<void> {
   await audit('oauth.consent.refused', {
     clientId: payload.clientId,
     requestedScope: payload.scope,
-    reason: kind === 'mismatch' ? AUDIENCE_ACCOUNT_MISMATCH : AUDIENCE_NOT_LISTED,
+    reason: AUDIT_REASONS[kind],
   });
 }
 

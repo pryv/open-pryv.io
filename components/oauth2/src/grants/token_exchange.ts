@@ -116,6 +116,12 @@ export type TokenExchangeDeps = {
   coreUrlFor?: (coreId: string) => string | Promise<string>;
   /** The host labels the platform answers itself; absent: none is. */
   isPlatformRoutedLabel?: PlatformRoutedLabel;
+  /**
+   * The issuer the token request is served by, which a client assertion
+   * names (a per-user one on an account's host); absent: the configured
+   * issuer. The exchange itself keeps the configured issuer.
+   */
+  requestIssuer?: string;
 };
 
 export type TokenExchangeParams = {
@@ -157,7 +163,7 @@ export async function handleTokenExchange (deps: TokenExchangeDeps, params: Toke
     assertion: typeof params.client_assertion === 'string' ? params.client_assertion : undefined,
     assertionType: typeof params.client_assertion_type === 'string' ? params.client_assertion_type : undefined,
     platform: deps.platform,
-    expectedAudiences: tokenEndpointAudiences(deps.config),
+    expectedAudiences: tokenEndpointAudiences(deps.config, deps.requestIssuer),
   });
   if (!auth.ok) return unauthenticated;
 

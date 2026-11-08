@@ -141,4 +141,12 @@ describe('[CVOA] OAuth boot warnings', () => {
       assert.deepEqual(problemsFor(stateKey), [], JSON.stringify(stateKey));
     }
   });
+
+  it('[CVOA9] the per-user issuer refuses the boot on a dnsLess core or without dns.domain; on the DNS topology, or off, it passes', async () => {
+    const perUser = async (values) => (await validate(config(values))).filter((p) => p.path?.join('.') === 'oauth.perUserIssuer');
+    assert.equal((await perUser({ oauth: { perUserIssuer: true }, dnsLess: { isActive: true } })).length, 1);
+    assert.equal((await perUser({ oauth: { perUserIssuer: true }, dnsLess: { isActive: false } })).length, 1, 'no dns.domain');
+    assert.deepEqual(await perUser({ oauth: { perUserIssuer: true }, dnsLess: { isActive: false }, dns: { domain: 'example.com' } }), []);
+    assert.deepEqual(await perUser({ oauth: { perUserIssuer: false }, dnsLess: { isActive: true } }), []);
+  });
 });

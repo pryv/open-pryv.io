@@ -141,7 +141,9 @@ The host is read as an account by the adapter routes' rule: exactly one label
 under `dns.domain` (port and final dot aside), of username shape; service hosts
 (`reg`, `access`, `mfa`), core ids, static entries, hosted sites, runtime DNS
 records, issuer labels and `adapter` are not accounts, nor is a host under any
-other domain. Those hosts, a name the
+other domain. The host is the client-facing one: `X-Forwarded-Host` sent by a
+proxy listed in `http.trustedProxies`, else `Host` (the host the per-user
+issuer reads, § 2 `perUserIssuer`). Those hosts, a name the
 platform does not map and an account of this core are unchanged; `/offer` and
 `/accept` keep the answer above. If the platform cannot say where the account
 lives, the request is served as before (codes and refresh tokens are keyed by
@@ -493,8 +495,10 @@ with a message naming the accepted form.
 - **From there on nothing changes:** the audience is a plain string on the
   code, refresh and session rows, `aud` at introspection, `ctx.audience` for
   the hooks, refused at the data API under `oauth:audienceBoundSessions`.
-  The issuer stays the configured one: a per-user host is a resource, never
-  an issuer.
+  The issuer stays the configured one (a per-user host is a resource), unless
+  `oauth.perUserIssuer` is on (§ 2 `perUserIssuer`): then an authorization
+  made at the account's host is issued by that host and names a resource on
+  it only.
 - **Any-audience clients** have no list, hence no per-user entry and no
   binding: a per-user-shaped value is stored as given, bound to nobody.
 - A per-user audience assumes per-user hosts (the DNS topology). On a dnsLess
@@ -1165,6 +1169,7 @@ oauth:
   grantTypesSupported:             # advertised in the discovery document
     - authorization_code
   audienceBoundSessions: false     # true: the data API refuses tokens issued for a resource server (§ 1e)
+  perUserIssuer: false             # true: an account's own host is its issuer (DNS topology only; see below)
   extensionOptions: {}             # handed as is to the OAuth extension (see below)
   extensionHookTimeoutMs: 5000     # bound on each asynchronous extension hook, milliseconds
   clientMetadataDocuments:         # an https URL as client_id (§ 1f; see below)
@@ -1271,8 +1276,91 @@ configuration does not make resolve). The `/oauth2/*` and `/.well-known/*`
 paths are root-only on every host the core answers: they are never read as a
 user's path, so a user host such as `alice.<dns.domain>/oauth2/authorize`
 answers the platform's endpoints too, by design (the discovery document and
-the consent hand-off always name the configured issuer, never the request's
-host).
+the consent hand-off name the configured issuer, never the request's host,
+unless `perUserIssuer` below is on).
+
+### `perUserIssuer` (optional, DNS topology only)
+
+Off by default. On, an account's own host is its OAuth issuer: a request that
+reaches a core at `https://<name>.<dns.domain>`, where `<name>` is an account
+(or an address alias) that **this core** serves, is answered by the issuer
+`https://<name>.<dns.domain>`. A client that knows the account's address (an
+app that asked the user for their username or address alias) then finds the
+authorization server at that address, and the address keeps working when the
+account is served by another core later (DNS follows the account; the issuer
+string does not name a core).
+
+Which hosts: exactly one label of username shape under `dns.domain`, not a
+name the platform answers itself (service hosts, core ids, static entries,
+hosted sites, runtime DNS records, issuer labels, `adapter`: the same rule as
+the adapter routes' per-user addresses), with no explicit port, read from the
+`Host` header or from `X-Forwarded-Host` sent by a proxy listed in
+`http.trustedProxies` (as for DPoP), and whose name-to-core mapping names this
+core. A proxy must forward the host without a port (`X-Forwarded-Host:
+alice.<dns.domain>`, not `alice.<dns.domain>:443`; nginx: `$host`, not
+`$http_host`): a port makes the host a platform address, and the configured
+issuer answers, silently. Every other host keeps the configured issuer (above): a service or core
+host, a host under another domain, a name no core serves, an account of
+another core (its `/oauth2/token` and `/oauth2/authorize` answer `421` there,
+see § 1), a placement lookup that fails.
+
+What changes at such a host:
+
+- `/.well-known/oauth-authorization-server` and
+  `/.well-known/openid-configuration` name the per-user issuer and their
+  endpoints under it; with the switch on, every discovery answer carries
+  `Vary: Host, X-Forwarded-Host`. The JWK Set is this core's keys (signing
+  keys stay per core).
+- `/oauth2/authorize` puts the issuer in the signed state, in `iss` on every
+  redirect and in `pryvApi`; a `resource` / `aud` whose host is not the
+  issuer's host is refused `invalid_target` (a per-user issuer serves its own
+  address only).
+- `/oauth2/authorize/offer`, `/accept` and `/refuse` must be called at the
+  issuer the authorization was made at, else `400 invalid_request` with
+  `reason: issuer-mismatch` (restart the flow). Only the account the host
+  names may consent there: its current username, or, at an address alias's
+  host, a registry consent that adopts that alias (a `resource` at the
+  alias's address); anyone else, a former username, or a consent at an alias
+  that does not adopt it, is refused `403 access_denied` with `reason:
+  audience-account-mismatch` (the answer of a resource naming another
+  account, so it tells nothing about whose host it is), audited as
+  `oauth.consent.refused` with `reason: "issuer-account-mismatch"` and no
+  username (a resource naming another account is audited
+  `audience-account-mismatch`, as at any host).
+- The code and refresh rows record the issuer: `/oauth2/token` redeems them at
+  that issuer only (elsewhere `invalid_grant`; a code is used up, a refresh
+  token stays usable at its own issuer), the id_token `iss` is that issuer,
+  and a refresh chain keeps it. A code or chain issued at the configured
+  issuer is redeemed there only, likewise. With RFC 9207 `iss` on every
+  authorization redirect, this is the mix-up defence.
+- A `private_key_jwt` client assertion presented at that host must name the
+  per-user issuer or the endpoint it is sent to (`https://<name>.<dns.domain>`,
+  `.../oauth2/token`, or at `/oauth2/revoke` and `/oauth2/introspect` their
+  own URL), not the configured issuer. This holds at every endpoint:
+  `/oauth2/token` (all grants, the token exchange included), `/oauth2/revoke`
+  and `/oauth2/introspect`.
+- Unchanged: `/oauth2/introspect` and `/oauth2/revoke` keep the configured
+  issuer in what they answer (introspection answers the configured issuer as
+  `iss`, whatever host it is called at; a client assertion names the issuer
+  of the host it is presented at, as at `/oauth2/token`), and so does the
+  token exchange; resource servers call them at a fixed host, where both are
+  the configured issuer. `oauth.stateKey` stays per core.
+
+**Platform-wide:** set the same value on every core (a client must find one
+rule on every core). **Turning it off (or leaving one core off) ends every
+refresh chain issued at a per-user issuer** (`invalid_grant` at every host:
+the apps authorize again) and every consent in flight started at one
+(`issuer-mismatch`); on a core left off, only that core's refreshes fail.
+Turning it on ends nothing: chains of the configured issuer keep working at
+the configured host. **Refused at boot** (and by `check-config`) on a dnsLess
+core and without `dns.domain`: no account host exists there. **Before turning
+it on, the consent UI must accept `pryvApi` on every account host**: the
+consent hand-off now names `https://<name>.<dns.domain>`, and the consent UI
+calls `{pryvApi}/reg/service/info` and `/oauth2/authorize/*` there. A consent
+UI with an origin allowlist must accept those origins (app-web-user-account:
+`trustedApiOrigins`); `check-config` cannot verify it. Resource servers next
+to the core: with the switch on, their RFC 9728 `authorization_servers` on an
+account's address is that address's origin.
 
 DPoP proofs are checked against the URL the request reached: a mismatch
 answers `invalid_dpop_proof`. `apiEndpoint` in token responses and `api_base`
@@ -1955,7 +2043,7 @@ Collect these for security monitoring and incident response.
 |---|---|
 | `oauth.consent.shown` | consent screen presented to the user |
 | `oauth.consent.granted` | user approved the authorization request |
-| `oauth.consent.refused` | user declined the authorization request, or the core refused the consent (`reason`, e.g. `user-declined`, `permission-level-conflict`, `wrong-core`, `audience-account-mismatch`, `audience-not-listed`) |
+| `oauth.consent.refused` | user declined the authorization request, or the core refused the consent (`reason`, e.g. `user-declined`, `permission-level-conflict`, `wrong-core`, `audience-account-mismatch`, `audience-not-listed`, `issuer-account-mismatch`) |
 | `oauth.code.exchanged` | authorization code successfully exchanged for tokens |
 | `oauth.code.reused` | an already-consumed authorization code was presented again (attack signal) |
 | `oauth.nonce.reused` | an OpenID Connect nonce already used by the client came back at a code exchange (refused; the code by its hash, never the nonce) |
@@ -1989,6 +2077,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 | `/oauth2/token` → `invalid_grant` (PKCE) | the `code_verifier` does not match the `code_challenge` sent at `/authorize`, or the code expired / was already used |
 | `/oauth2/token` → `invalid_client` | confidential client presented a wrong/rotated `client_secret` |
 | `/oauth2/token` → `invalid_grant` on a multi-core deployment, the core logs "presented to core" | the exchange reached a core other than the one that issued the code: an `oauth.issuer` shared by several cores (see §2) |
+| `/oauth2/token` → `invalid_grant` "not issued by this issuer"; `/oauth2/authorize/*` → `reason: issuer-mismatch` | `oauth.perUserIssuer` is on and the client called another host than the one the authorization started at (an account's host, or the configured issuer's): use the endpoints of the discovery document it started from (§ 2 `perUserIssuer`) |
 | tokens behave differently between requests | `oauth:` block drift across cores (see §2) |
 | registry client: `/oauth2/authorize` → `invalid_scope` "no scope grammar registered on this core" | no OAuth extension installed (`customExtensions:oauthExtension`, § 2) |
 | a pseudonymous session's token is refused like an unknown token | the request addressed the account by its username (or another name) instead of the session's alias: use the alias the app received as its subject (§ 1c, alias-bound addressing) |

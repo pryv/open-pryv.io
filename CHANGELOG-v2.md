@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### OAuth: an account's own host as its issuer (`oauth.perUserIssuer`, opt-in)
+
+- **Added: `oauth.perUserIssuer`** (default `false`, platform-wide, DNS topology only: refused at
+  boot and by `check-config` on a dnsLess core or without `dns.domain`). On, a request at
+  `https://<name>.<dns.domain>`, where `<name>` is an account or an address alias served by this
+  core (one label of username shape, not a name the platform answers itself, no explicit port;
+  `Host`, or `X-Forwarded-Host` from a trusted proxy), is served by the issuer
+  `https://<name>.<dns.domain>`: both discovery documents name it and their endpoints under it
+  (`Vary: Host, X-Forwarded-Host` on every discovery answer while it is on); `/oauth2/authorize`
+  puts it in the signed state, in `iss` and in `pryvApi`, and refuses `invalid_target` a
+  `resource` / `aud` on another host; `/oauth2/authorize/offer`, `/accept` and `/refuse` answer
+  `400 invalid_request` `reason: issuer-mismatch` at another issuer than the authorization's, and
+  only the account the host names consents there (its username, or a consent adopting the address
+  alias of that host; otherwise `403 audience-account-mismatch`, audited as `oauth.consent.refused`
+  `reason: issuer-account-mismatch`); RFC 9207 `iss` on every redirect,
+  and a code or refresh token is redeemed at its issuer only (`invalid_grant` elsewhere; a refresh
+  token refused so is not used up); the id_token `iss` is that issuer. A `private_key_jwt`
+  assertion names the issuer of the host it is presented at, or the endpoint's URL, at
+  `/oauth2/token`, `/oauth2/revoke` and `/oauth2/introspect` alike. Every other host keeps the
+  configured issuer, and so do the answers of introspection (`iss`), revocation and the token
+  exchange. Off, nothing changes. Before turning it on, the consent UI must accept `pryvApi` on
+  every account host (app-web-user-account: `trustedApiOrigins`). Turning it off later (or leaving
+  one core off) ends every refresh chain issued at a per-user issuer (`invalid_grant`: the apps
+  authorize again) and every consent in flight there; turning it on ends nothing.
+- **Changed: the `421 wrong_core` of `/oauth2/token` and `/oauth2/authorize` on an account's own
+  host reads the client-facing host** (`X-Forwarded-Host` from a proxy listed in
+  `http.trustedProxies`, else `Host`), the host the per-user issuer reads: behind a trusted proxy
+  that rewrites `Host`, a request for an account of another core is now answered `421` there too.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

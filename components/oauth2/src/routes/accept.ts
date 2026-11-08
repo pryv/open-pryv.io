@@ -69,7 +69,9 @@ import type { CurrentGrant, Composition, SubjectChange } from '../consentComposi
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
-import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername, AUDIENCE_ACCOUNT_MISMATCH } from '../audienceAccount.ts';
+import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername, issuerAccountRefusal, AUDIENCE_ACCOUNT_MISMATCH } from '../audienceAccount.ts';
+import type { PerUserIssuerOf } from '../perUserIssuer.ts';
+import { requestIssuer, stateIssuerRefusal } from '../perUserIssuer.ts';
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
@@ -79,7 +81,6 @@ const { clientLifetimes } = require('../clientLifetimes.ts');
 
 const { generateToken } = require('../secureToken.ts');
 const { verifyState, stateKeyFromConfig } = require('../signedState.ts');
-const { issuerFromConfig } = require('../issuer.ts');
 const { setCode, CODE_TTL_SECONDS: STORED_CODE_TTL_SECONDS } = require('../storage.ts');
 const { recordFirstConsent, METADATA_STALE } = require('../clientMetadata.ts');
 const { grantedScopeTokens, entryCeiling, grantTooLarge } = require('../scopeGrammar.ts');
@@ -212,6 +213,8 @@ export type AcceptDeps = {
   readRegistryGrant?: ReadRegistryGrant;
   /** The host labels the platform answers itself (never an account's address). */
   isPlatformRoutedLabel?: PlatformRoutedLabel;
+  /** The per-user issuer of a request on an account's host (`oauth:perUserIssuer`). */
+  perUserIssuerOf?: PerUserIssuerOf;
 };
 
 type Refusal = { status: number; body: { error: string; error_description: string; reason?: string; coreUrl?: string } };
@@ -279,7 +282,8 @@ export const CODE_TTL_SECONDS = STORED_CODE_TTL_SECONDS;
 /** Express-style handler factory. */
 export function handleAccept (deps: AcceptDeps) {
   return async function accept (req: Request, res: Response): Promise<void> {
-    const issuer = issuerFromConfig(deps.config);
+    const current = await requestIssuer(deps.config, deps.perUserIssuerOf, req);
+    const issuer = current.issuer;
     const stateKey = stateKeyFromConfig(deps.config);
     if (!issuer || !stateKey) {
       return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or oauth:stateKey not configured' });
@@ -303,6 +307,9 @@ export function handleAccept (deps: AcceptDeps) {
       });
     }
     const payload = verified.payload;
+    // The consent goes on at the issuer the authorization was made at.
+    const otherIssuer = stateIssuerRefusal(deps.config, payload.issuer, current);
+    if (otherIssuer != null) return sendJson(res, otherIssuer.status, otherIssuer.body);
     // A client suspended or put under review since /authorize consents to
     // nothing, whatever its kind (no grant, no consent record, no session).
     const stateClient = await getClient(deps.platform, payload.clientId);
@@ -408,6 +415,13 @@ export function handleAccept (deps: AcceptDeps) {
       // be usable at that address.
       if (synthesised == null && addressAliasOfAudience(payload.audience, stateClient, s, deps.isPlatformRoutedLabel) != null) {
         await auditAudienceRefusal(payload, 'mismatch');
+        return consentAudienceAnswer('mismatch');
+      }
+      // At a per-user issuer, only the account its host names consents (at an
+      // address alias, a registry consent that adopts it).
+      const adopted = synthesised != null ? addressAliasOfAudience(payload.audience, stateClient, s, deps.isPlatformRoutedLabel) : null;
+      if (issuerAccountRefusal(current.perUser?.label, s, adopted, deps.isPlatformRoutedLabel) != null) {
+        await auditAudienceRefusal(payload, 'issuer-account');
         return consentAudienceAnswer('mismatch');
       }
       return s;
@@ -655,6 +669,8 @@ export function handleAccept (deps: AcceptDeps) {
           }
         : {}),
       ...(payload.audience != null ? { audience: payload.audience } : {}),
+      // Redeemed at this issuer only (RFC 9207), and named in the id_token.
+      ...(current.perUser != null ? { issuer } : {}),
     });
 
     await audit('oauth.consent.granted', {

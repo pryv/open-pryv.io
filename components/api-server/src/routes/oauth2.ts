@@ -43,6 +43,7 @@ import { wrongCoreOf } from './oauth2/wrongCore.ts';
 import { platformRoutedLabels } from '../platformLabels.ts';
 import { hostWrongCoreGuard } from './oauth2/hostWrongCore.ts';
 import { perUserAddressingFor } from '../addressedAccount.ts';
+import { perUserIssuerResolver } from './oauth2/perUserIssuer.ts';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
@@ -236,5 +237,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     readSubjectSession: sessions.readSubjectSession,
     issueDerivedSession: sessions.issueDerivedSession,
     isPlatformRoutedLabel,
+    // Asked only while `oauth:perUserIssuer` is on (see perUserIssuer.ts).
+    perUserIssuerOf: perUserIssuerResolver(config, logger),
   });
 }

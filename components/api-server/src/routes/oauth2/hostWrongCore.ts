@@ -20,8 +20,10 @@
  *   - `/oauth2/authorize` answers a static page saying the address has just
  *     moved (no redirect, no form, no link).
  *
- * The host is read by `addressedLabelOf` (the adapter ingress's reader) and
- * the decision is `resolveUserCore`'s, the one every misdirected request
+ * The host is the client-facing one (`X-Forwarded-Host` from a trusted proxy,
+ * else `Host`: the host the per-user issuer reads, perUserIssuer.ts), read by
+ * `addressedLabelOf` (the adapter ingress's reader), and the decision is
+ * `resolveUserCore`'s, the one every misdirected request
  * gets. A service, core or hosted-site host, a host under another domain, a
  * name the platform does not map, and an account of this core are not
  * concerned: the request goes on. A lookup failure lets it go on too: codes
@@ -32,6 +34,8 @@
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import type { PerUserAddressing } from '../../addressedAccount.ts';
 import { addressedLabelOf } from '../../addressedAccount.ts';
+import { externalRequestHost } from 'oauth2/src/externalUri.ts';
+import type { UriSource } from 'oauth2/src/externalUri.ts';
 import { resolveUserCore } from '../reg/userCore.ts';
 import type { UserCoreResolution } from '../reg/userCore.ts';
 
@@ -73,7 +77,7 @@ export function hostWrongCoreGuard (opts: {
   const deps = addressing.platform != null ? { platform: addressing.platform } : {};
 
   return function hostWrongCore (req: Request, res: Response, next: NextFunction): void {
-    const label = addressedLabelOf(req.headers.host, addressing.isPlatformRoutedLabel, addressing.domain);
+    const label = addressedLabelOf(externalRequestHost(req as UriSource), addressing.isPlatformRoutedLabel, addressing.domain);
     if (label == null) return next();
     resolveUserCore(label, deps).then((placement) => {
       if (placement.kind === 'local') return next();

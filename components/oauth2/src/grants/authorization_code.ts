@@ -90,6 +90,8 @@ export type AuthCodeDeps = {
   resolveUsername: UsernameResolver;
   /** The id a registry client sees for the user, or null when the grant is gone. */
   resolveGrantSubject?: GrantSubjectResolver;
+  /** The issuer the token request is served by (a per-user one); absent: the configured issuer. */
+  requestIssuer?: string;
 };
 
 /**
@@ -215,6 +217,8 @@ export async function handleAuthorizationCode (
     | { ok: true; body: Record<string, unknown> }
     | { ok: false; status: number; error: string; description?: string }
   > {
+    // The issuer that issued the code: a per-user one, or the configured one.
+    const codeIssuer = row.issuer ?? issuerFromConfig(deps.config);
     // PKCE: SHA256(code_verifier) base64url == row.codeChallenge.
     const computed = crypto.createHash('sha256').update(params.code_verifier as string).digest('base64')
       .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -242,6 +246,11 @@ export async function handleAuthorizationCode (
     if (params.redirect_uri !== row.redirectUri) {
       return { ok: false, status: 400, error: 'invalid_grant', description: 'redirect_uri mismatch' };
     }
+    // RFC 9207 mix-up defence: a code is redeemed at the issuer that issued
+    // it (a per-user issuer's code at that host only), consumed otherwise.
+    if (codeIssuer !== (deps.requestIssuer || issuerFromConfig(deps.config))) {
+      return { ok: false, status: 400, error: 'invalid_grant', description: 'code was not issued by this issuer' };
+    }
     // RFC 8707 § 2.2: a resource named here must be the one the code was
     // issued for; a refusal consumes the code like the other bindings.
     const resourceRefusal = checkTokenResource(params.resource, row.audience);
@@ -264,7 +273,7 @@ export async function handleAuthorizationCode (
       assertion: params.client_assertion,
       assertionType: params.client_assertion_type,
       platform: deps.platform,
-      expectedAudiences: tokenEndpointAudiences(deps.config),
+      expectedAudiences: tokenEndpointAudiences(deps.config, deps.requestIssuer),
     });
     if (!auth.ok) {
       return { ok: false, status: auth.status, error: auth.error, description: auth.description };
@@ -336,7 +345,7 @@ export async function handleAuthorizationCode (
         registry = await prepareRegistryResponse({
           client: client!,
           grantType: 'authorization_code',
-          issuer: issuerFromConfig(deps.config),
+          issuer: codeIssuer,
           config: deps.config,
           coreTokens: row.coreTokens ?? [],
           grammarTokens: row.grammarTokens ?? [],
@@ -405,6 +414,7 @@ export async function handleAuthorizationCode (
           ? { kind: 'registry' as const, coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] }
           : {}),
         ...(row.audience != null ? { audience: row.audience } : {}),
+        ...(row.issuer != null ? { issuer: row.issuer } : {}),
         // The session this chain backs: retired at its first rotation.
         accessId: row.accessId,
       });

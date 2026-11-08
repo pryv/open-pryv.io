@@ -515,6 +515,14 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   if (message != null) problems.push(message);
 }
 
+// oauth.perUserIssuer: a boolean, on the DNS topology with dns.domain only (the
+// boot refuses it elsewhere). That the consent UI accepts pryvApi on every
+// account host cannot be checked here.
+{
+  const { perUserIssuerProblems } = require('../components/oauth2/src/perUserIssuer.ts');
+  for (const p of perUserIssuerProblems(configReader)) problems.push(p);
+}
+
 // oauth.clientMetadataDocuments: the same shape check as the boot. The
 // template's scope is checked against the OAuth extension's grammar when the
 // core starts (this script does not load the extension).

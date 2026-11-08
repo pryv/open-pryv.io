@@ -28,6 +28,8 @@ import type { IntrospectAccess } from './introspection.ts';
 import type { RevokeSession } from './revocation.ts';
 import type { ReadSubjectSession, IssueDerivedSession } from './grants/token_exchange.ts';
 import type { PlatformRoutedLabel } from './audienceAccount.ts';
+import type { PerUserIssuerOf } from './perUserIssuer.ts';
+import { perUserIssuerOn, requestIssuer } from './perUserIssuer.ts';
 import { handleIntrospect } from './introspection.ts';
 import { handleRevoke } from './revocation.ts';
 import { clientMetadataDocumentsOn } from './clientMetadataConfig.ts';
@@ -196,6 +198,12 @@ export type Deps = {
    * names an account's address in a per-user audience. Absent: none is.
    */
   isPlatformRoutedLabel?: PlatformRoutedLabel;
+  /**
+   * With `oauth:perUserIssuer` on: the per-user issuer of a request on an
+   * account's own host served by this core (see perUserIssuer.ts). Absent:
+   * the configured issuer on every host.
+   */
+  perUserIssuerOf?: PerUserIssuerOf;
 };
 
 /**
@@ -240,8 +248,16 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
   }
 
   // The discovery documents follow the live configuration (signing keys) and
-  // the installed extension (its advertised scopes and claims).
-  function discovery (): {
+  // the installed extension (its advertised scopes and claims), and with
+  // `oauth:perUserIssuer` on, the request's host (an account's own host names
+  // its own issuer: RFC 8414 wants the document's `issuer` to be where it was
+  // fetched).
+  const perUserIssuer = (): boolean => deps.perUserIssuerOf != null && perUserIssuerOn(deps.config);
+  function discoveryFor<T> (req: Request, build: (d: ReturnType<typeof discovery>) => T): T | Promise<T> {
+    if (!perUserIssuer()) return build(discovery(issuer));
+    return requestIssuer(deps.config, deps.perUserIssuerOf, req).then((r) => build(discovery(r.issuer)));
+  }
+  function discovery (docIssuer: string): {
     issuer: string;
     scopesSupported: string[];
     grantTypesSupported: string[];
@@ -253,7 +269,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
   } {
     const oidc = hasSigningKeys(deps.config);
     return {
-      issuer,
+      issuer: docIssuer,
       scopesSupported: buildScopesSupported(oidc),
       grantTypesSupported: (deps.config.get('oauth:grantTypesSupported') as string[] | undefined) ?? ['authorization_code'],
       oidc,
@@ -265,12 +281,11 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
     };
   }
 
-  app.get!('/.well-known/oauth-authorization-server', handleJsonDocument(() => buildDiscoveryDocument(discovery())));
+  app.get!('/.well-known/oauth-authorization-server',
+    handleJsonDocument((req: Request) => discoveryFor(req, (d) => buildDiscoveryDocument(d)), { varyByHost: perUserIssuer }));
   // Mounted always, answering 404 while no signing key is configured.
-  app.get!('/.well-known/openid-configuration', handleJsonDocument(() => {
-    const d = discovery();
-    return d.oidc ? buildOpenIdConfiguration(d) : null;
-  }));
+  app.get!('/.well-known/openid-configuration',
+    handleJsonDocument((req: Request) => discoveryFor(req, (d) => d.oidc ? buildOpenIdConfiguration(d) : null), { varyByHost: perUserIssuer }));
   app.get!('/oauth2/jwks', handleJsonDocument(() => {
     const keys = loadSigningKeys(deps.config);
     return keys.length > 0 ? publicJwkSet(keys) : null;
@@ -287,7 +302,8 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
   }
 
   // Every async handler goes through `guardRoute` (see there).
-  const authorize = guardRoute(handleAuthorize({ config: deps.config, platform: deps.platform }));
+  const perUser = deps.perUserIssuerOf != null ? { perUserIssuerOf: deps.perUserIssuerOf } : {};
+  const authorize = guardRoute(handleAuthorize({ config: deps.config, platform: deps.platform, ...perUser }));
   app.get!('/oauth2/authorize', authorize);
   app.post!('/oauth2/authorize', authorize);
 
@@ -298,6 +314,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       resolveUser: deps.resolveUser,
       ...(deps.readRegistryGrant != null ? { readRegistryGrant: deps.readRegistryGrant } : {}),
       ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
+      ...perUser,
     })));
 
   app.post!('/oauth2/authorize/accept',
@@ -308,10 +325,11 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       createAccess: deps.createAccess,
       ...(deps.readRegistryGrant != null ? { readRegistryGrant: deps.readRegistryGrant } : {}),
       ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
+      ...perUser,
     })));
 
   app.post!('/oauth2/authorize/refuse',
-    guardRoute(handleRefuse({ config: deps.config })));
+    guardRoute(handleRefuse({ config: deps.config, ...perUser })));
 
   app.post!('/oauth2/token',
     guardRoute(handleToken({
@@ -331,6 +349,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       ...(deps.issueDerivedSession != null ? { issueDerivedSession: deps.issueDerivedSession } : {}),
       ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
       ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
+      ...perUser,
     })));
 
   if (introspection) {
@@ -340,6 +359,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
         platform: deps.platform,
         introspectAccess: deps.introspectAccess!,
         ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+        ...perUser,
       })));
   }
   if (revocation) {
@@ -351,6 +371,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
         platform: deps.platform,
         revokeSession: deps.revokeSession!,
         ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+        ...perUser,
       })));
   }
 

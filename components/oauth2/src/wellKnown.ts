@@ -27,6 +27,7 @@
 
 import type { Request, Response } from 'express';
 import { CLIENT_ASSERTION_ALGS } from './jwks.ts';
+import { logServerError } from './serverLog.ts';
 
 /**
  * Inputs the discovery doc needs from the surrounding config. The
@@ -125,9 +126,27 @@ export function buildOpenIdConfiguration (cfg: DiscoveryConfig): Record<string, 
  * (e.g. the OpenID Connect documents while no signing key is configured).
  * Same headers as the discovery document.
  */
-export function handleJsonDocument (build: () => Record<string, unknown> | null) {
-  return function (req: Request, res: Response): void {
-    const doc = build();
+export function handleJsonDocument (
+  build: (req: Request) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>,
+  opts: { varyByHost?: () => boolean } = {}
+) {
+  return function (req: Request, res: Response): void | Promise<void> {
+    const built = build(req);
+    if (!(built instanceof Promise)) return send(res, built);
+    return built.then((doc) => send(res, doc), (err: unknown) => {
+      logServerError('OAuth2 document failed: ' + (req?.path ?? ''), err);
+      if (res.headersSent) return;
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(JSON.stringify({ error: 'server_error', error_description: 'internal error' }));
+    });
+  };
+
+  function send (res: Response, doc: Record<string, unknown> | null): void {
+    // A document that depends on the request's host (a per-user issuer) is
+    // cached per host.
+    if (opts.varyByHost?.() === true) res.vary('Host').vary('X-Forwarded-Host');
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Access-Control-Allow-Origin', '*');
     if (doc == null) {
@@ -139,7 +158,7 @@ export function handleJsonDocument (build: () => Record<string, unknown> | null)
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.statusCode = 200;
     res.end(JSON.stringify(doc));
-  };
+  }
 }
 
 /**
