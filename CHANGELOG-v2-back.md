@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Adapter routes: early answers while the upload is still sent
+
+- **Fixed:** `workerIngress.buildWorkerProxy` (adapter mode, `stripHopByHop`) sent `Connection: close`
+  to the sidecar (the per-route agent has no keepAlive). A sidecar answering before reading the body
+  then closed its socket mid-upload, and when the reset (EPIPE / ECONNRESET) reached the proxy before
+  the answer did, the proxy answered 502. The proxy now sends `Connection: keep-alive` (the sidecar
+  reads past the unread body); the connection is still one per request (the agent destroys the
+  socket at the end of the exchange, an early answer ends it at once). An upstream connection error
+  after the answer arrived is no longer handled as an upstream failure: the response pipeline relays
+  the answer, or ends a cut one. Tests `[ADRI16]` (1000 early answers to a 512 KiB upload, all
+  relayed, a new upstream connection each) and `[ADRI17]` (a socket error injected right after the
+  answer arrives).
+
 ### Address aliases
 
 - `users/aliasShape.ts`: the minted shapes are `r-` + 8 (access aliases) and `a-` + 8 (address

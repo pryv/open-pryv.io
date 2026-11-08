@@ -13,6 +13,7 @@ const http = require('node:http');
 const https = require('node:https');
 const net = require('node:net');
 const { buildAdapterIngress, attachAdapterContinueCheck } = require('../src/adapterIngress.ts');
+const { buildWorkerProxy } = require('../src/workerIngress.ts');
 const { describeAdapterRoutes } = require('business/src/adapterRoutes.ts');
 const { configureTrustedProxies, currentTrustedProxies } = require('middleware/src/clientIp.ts');
 
@@ -569,6 +570,65 @@ describe('[ADRI] adapter routes in-process dispatcher', function () {
     const res = await request(frontPort, { method: 'POST', path: '/adapter/calendar/early', body });
     assert.equal(res.status, 401);
     assert.equal(res.headers['www-authenticate'], 'Bearer realm="x"');
+  });
+
+  it('[ADRI16] an early answer to a large upload is relayed every time, never a 502; still one upstream connection per request', async function () {
+    this.timeout(60000);
+    await setup((req, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end('{"error":"unauthorized"}');
+    });
+    let connections = 0;
+    upstream.server.on('connection', () => { connections++; });
+    const body = 'z'.repeat(512 * 1024);
+    // The race is rare per request (the upstream closing on `Connection: close`
+    // while the upload is still sent): many runs, and the request the upstream
+    // received is checked too.
+    const runs = 1000;
+    const statuses = {};
+    for (let i = 0; i < runs; i++) {
+      const res = await request(frontPort, { method: 'POST', path: '/adapter/calendar/early', body }).catch((err) => ({ status: err.code ?? err.message }));
+      statuses[res.status] = (statuses[res.status] ?? 0) + 1;
+    }
+    assert.deepEqual(statuses, { 401: runs });
+    assert.equal(upstream.seen.length, runs);
+    assert.deepEqual([...new Set(upstream.seen.map((r) => r.headers.connection))], ['keep-alive'], 'the upstream is not asked to close, so it reads past an unread body');
+    assert.equal(connections, runs, 'no upstream connection reused');
+  });
+
+  it('[ADRI17] an upstream connection error once the answer is received does not cut the relayed answer', async function () {
+    // The upstream socket fails (as a write to an upstream that closed after
+    // answering does) right after the answer arrived, before it is relayed.
+    class FailAfterAnswer extends http.Agent {
+      createConnection (options, callback) {
+        const socket = super.createConnection(options, callback);
+        socket.once('data', () => process.nextTick(() => socket.destroy(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }))));
+        return socket;
+      }
+    }
+    upstream = fakeUpstream((req, res) => {
+      res.writeHead(401, { 'www-authenticate': 'Bearer realm="x"', 'content-type': 'application/json' });
+      res.end('{"error":"unauthorized"}');
+    });
+    await listen(upstream.server);
+    const proxy = buildWorkerProxy({
+      name: 'adapter',
+      label: 'adapter calendar',
+      host: '127.0.0.1',
+      port: upstream.server.address().port,
+      logger: quietLogger,
+      agent: new FailAfterAnswer({ keepAlive: false }),
+      stripHopByHop: true,
+      forwardedHeaders: 'adapter'
+    });
+    front = http.createServer((req, res) => proxy(req, res, req.url));
+    await listen(front);
+    for (const body of ['{}', 'z'.repeat(512 * 1024)]) {
+      const res = await request(front.address().port, { method: 'POST', path: '/adapter/calendar/early', body });
+      assert.equal(res.status, 401, 'body of ' + body.length);
+      assert.equal(res.headers['www-authenticate'], 'Bearer realm="x"');
+      assert.equal(res.body, '{"error":"unauthorized"}');
+    }
   });
 
   it('[ADRI12] an Upgrade request is not passed on as an upgrade', async function () {
