@@ -40,6 +40,8 @@ const at = (name) => 'https://' + name + '.' + DOMAIN + '/adapter/facade/r4';
 const issuerOf = (name) => 'https://' + name + '.' + DOMAIN;
 const hostOf = (name) => name + '.' + DOMAIN;
 const ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+const TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange';
+const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 const OAUTH = { consentUrl: CONSENT_URL, stateKey: STATE_KEY, signingKeys: [{ kid: 'opis-1', privateKeyPem: SIGNING_KEY_PEM }] };
 const MISMATCH = { error: 'access_denied', error_description: 'the requested resource names another account\'s address', reason: 'audience-account-mismatch' };
 
@@ -69,6 +71,22 @@ function pkce () {
   return { verifier, challenge: crypto.createHash('sha256').update(verifier).digest('base64url') };
 }
 
+/** Run `body` while recording the OAuth audit rows (the debug channel the audit helper writes first). */
+async function auditRows (body) {
+  const rows = [];
+  const saved = process.env.OAUTH_AUDIT_DEBUG;
+  const debug = console.debug;
+  process.env.OAUTH_AUDIT_DEBUG = '1';
+  console.debug = (tag, event, payload) => { if (tag === '[oauth.audit]') rows.push({ event, payload }); };
+  try {
+    await body();
+  } finally {
+    console.debug = debug;
+    if (saved == null) delete process.env.OAUTH_AUDIT_DEBUG; else process.env.OAUTH_AUDIT_DEBUG = saved;
+  }
+  return rows;
+}
+
 function makeKey () {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-384' });
   const pub = publicKey.export({ format: 'jwk' });
@@ -78,7 +96,7 @@ function makeKey () {
 describe('[OPIS] OAuth issuer derived from the request host', function () {
   this.timeout(90000);
 
-  let fixtures, restoreConfig, platformDB, platform, configured, coreId, coreHost, pubId, anyId, pkjId, rsId, rsSecret, ecKey, alice, bob;
+  let fixtures, restoreConfig, platformDB, platform, configured, coreId, coreHost, pubId, anyId, pkjId, pkrId, rsId, rsSecret, ecKey, alice, bob;
   const clientIds = [];
 
   async function register (prefix, extra) {
@@ -137,6 +155,14 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
       tokenEndpointAuthMethod: 'private_key_jwt', jwks: { keys: [ecKey.publicJwk] }, tokenEndpointAuthSigningAlgs: ['ES384'],
     });
     rsId = await register('PuiRs', { tokenEndpointAuthMethod: 'client_secret_basic', clientSecretHash: rsSecret.hash, canIntrospect: true });
+    // A resource server authenticating with its key: introspection and the token exchange.
+    pkrId = await register('PuiKeyRs', {
+      tokenEndpointAuthMethod: 'private_key_jwt',
+      jwks: { keys: [ecKey.publicJwk] },
+      tokenEndpointAuthSigningAlgs: ['ES384'],
+      canIntrospect: true,
+      canExchange: true,
+    });
     alice = await newUser();
     bob = await newUser();
   });
@@ -266,12 +292,21 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
     // A state of the configured issuer is not served at an account's host either.
     const plain = await authorize(coreHost, pubId, { resource: at(alice.username) });
     assert.equal((await accept(hostOf(alice.username), alice, plain.state)).body.reason, 'issuer-mismatch');
-    // Another account at alice's issuer, with or without a resource: refused.
+    // Another account at alice's issuer, with or without a resource: refused,
+    // with the same answer. The audit tells the two apart: alice's resource is
+    // the audience's refusal; no resource, the issuer host's. No one named.
     const noResource = await authorize(hostOf(alice.username), anyId);
-    for (const state of [a.state, noResource.state]) {
-      assert.deepEqual((await offer(hostOf(alice.username), bob, state)).body, MISMATCH);
-      assert.deepEqual((await accept(hostOf(alice.username), bob, state)).body, MISMATCH);
-    }
+    const rows = await auditRows(async () => {
+      for (const state of [a.state, noResource.state]) {
+        assert.deepEqual((await offer(hostOf(alice.username), bob, state)).body, MISMATCH);
+        assert.deepEqual((await accept(hostOf(alice.username), bob, state)).body, MISMATCH);
+      }
+    });
+    const refused = rows.filter((x) => x.event === 'oauth.consent.refused');
+    assert.deepEqual(refused.map((x) => x.payload.reason),
+      ['audience-account-mismatch', 'audience-account-mismatch', 'issuer-account-mismatch', 'issuer-account-mismatch']);
+    const text = JSON.stringify(refused);
+    assert.ok(!text.includes(alice.username) && !text.includes(bob.username), 'no username in the audit rows');
     const refuse = await coreRequest.post('/oauth2/authorize/refuse').set('Host', hostOf(alice.username)).send({ state: a.state });
     assert.equal(refuse.status, 200, JSON.stringify(refuse.body));
     assert.equal(new URL(refuse.body.redirectTo).searchParams.get('iss'), issuerOf(alice.username));
@@ -299,7 +334,8 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
     const rotated = await refresh(host, t.body.refresh_token);
     assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
     assert.equal((await refresh(coreHost, rotated.body.refresh_token)).body.error, 'invalid_grant');
-    assert.equal((await refresh(host, rotated.body.refresh_token)).status, 200);
+    const third = await refresh(host, rotated.body.refresh_token);
+    assert.equal(third.status, 200, JSON.stringify(third.body));
     // A chain of the configured issuer is not refreshed at an account's host.
     const plain = await consent(coreHost, alice, pubId, { resource: at(alice.username) });
     assert.equal(plain.iss, configured);
@@ -314,29 +350,90 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
     assert.equal(info.status, 200, JSON.stringify(info.body));
     assert.equal(info.body.active, true);
     assert.equal(info.body.iss, configured);
+    // A code of the configured issuer presented at the account's host: refused, and used up.
+    const plainCode = await consent(coreHost, alice, pubId, { resource: at(alice.username) });
+    const atAccount = await token(host, codeGrant(plainCode));
+    assert.deepEqual([atAccount.status, atAccount.body.error], [400, 'invalid_grant'], JSON.stringify(atAccount.body));
+    assert.equal((await token(coreHost, codeGrant(plainCode))).body.error, 'invalid_grant', 'the code is used up');
+    // The switch turned off: a chain of a per-user issuer is refused at every
+    // host (no host is that issuer any more); the configured chain still works.
+    await withInjectedConfig({ oauth: { perUserIssuer: false } }, async () => {
+      for (const h of [host, coreHost]) {
+        assert.equal((await refresh(h, third.body.refresh_token)).body.error, 'invalid_grant', h);
+      }
+      assert.equal((await refresh(coreHost, pt.body.refresh_token)).status, 200);
+    });
+    // On again: the per-user chain was not used up.
+    assert.equal((await refresh(host, third.body.refresh_token)).status, 200);
   });
 
-  it('[OPIS6] private_key_jwt at a per-user issuer: the assertion names that issuer or its token endpoint, never the configured one', async function () {
+  it('[OPIS6] private_key_jwt at a per-user issuer: the assertion names that issuer or the endpoint, never the configured one, at /token (the exchange included), /introspect and /revoke; their answers keep the configured issuer', async function () {
     const mine = issuerOf(alice.username);
     const host = hostOf(alice.username);
-    const assertion = (aud) => {
+    const assertion = (aud, cid) => {
       const now = Math.floor(Date.now() / 1000);
       const h = b64url(JSON.stringify({ alg: 'ES384', typ: 'JWT', kid: 'opis-ec' }));
-      const p = b64url(JSON.stringify({ iss: pkjId, sub: pkjId, aud, jti: crypto.randomUUID(), iat: now, exp: now + 120 }));
+      const p = b64url(JSON.stringify({ iss: cid, sub: cid, aud, jti: crypto.randomUUID(), iat: now, exp: now + 120 }));
       const sig = crypto.sign('sha384', Buffer.from(h + '.' + p), { key: ecKey.privateKey, dsaEncoding: 'ieee-p1363' });
       return h + '.' + p + '.' + b64url(sig);
     };
-    const auth = (aud) => ({ client_id: pkjId, client_assertion_type: ASSERTION_TYPE, client_assertion: assertion(aud) });
+    const auth = (aud, cid = pkjId) => ({ client_id: cid, client_assertion_type: ASSERTION_TYPE, client_assertion: assertion(aud, cid) });
     const c = await consent(host, alice, pkjId, { resource: at(alice.username) });
     const t = await token(host, { grant_type: 'authorization_code', code: c.code, code_verifier: c.verifier, redirect_uri: REDIRECT_URI, ...auth(mine + '/oauth2/token') });
     assert.equal(t.status, 200, JSON.stringify(t.body));
-    const refresh = (aud) => token(host, { grant_type: 'refresh_token', refresh_token: t.body.refresh_token, ...auth(aud) });
+    const refresh = (aud, rt = t.body.refresh_token) => token(host, { grant_type: 'refresh_token', refresh_token: rt, ...auth(aud) });
     for (const aud of [configured, configured + '/oauth2/token']) {
       const refused = await refresh(aud);
       assert.deepEqual([refused.status, refused.body.error], [401, 'invalid_client'], aud);
     }
     const ok = await refresh(mine);
     assert.equal(ok.status, 200, JSON.stringify(ok.body));
+
+    // The token exchange at the account's host: the assertion names that
+    // host's issuer, the exchange itself keeps the configured issuer (its
+    // `resource` must name it).
+    const exchange = (h, aud, extra = {}) => token(h, {
+      grant_type: TOKEN_EXCHANGE, subject_token: ok.body.access_token, subject_token_type: ACCESS_TOKEN_TYPE, ...auth(aud, pkrId), ...extra,
+    });
+    const exchanged = await exchange(host, mine, { resource: configured });
+    assert.equal(exchanged.status, 200, JSON.stringify(exchanged.body));
+    const atMine = await exchange(host, mine + '/oauth2/token', { resource: mine });
+    assert.deepEqual([atMine.status, atMine.body.error], [400, 'invalid_target'], JSON.stringify(atMine.body));
+    assert.equal((await exchange(host, configured)).status, 401);
+    // At the configured host (a resource server's fixed host): the configured issuer, as before.
+    assert.equal((await exchange(coreHost, configured)).status, 200);
+    assert.equal((await exchange(coreHost, mine)).status, 401);
+
+    // Introspection and revocation: the same rule (the per-user document advertises both under the host).
+    const introspect = (h, aud, tok = ok.body.access_token) => coreRequest.post('/oauth2/introspect').set('Host', h).type('form')
+      .send({ token: tok, ...auth(aud, pkrId) });
+    for (const aud of [mine, mine + '/oauth2/introspect', mine + '/oauth2/token']) {
+      const info = await introspect(host, aud);
+      assert.equal(info.status, 200, aud + ' ' + JSON.stringify(info.body));
+      assert.equal(info.body.active, true);
+      assert.equal(info.body.iss, configured, 'the answer names the configured issuer');
+    }
+    for (const aud of [configured, configured + '/oauth2/introspect']) {
+      const refused = await introspect(host, aud);
+      assert.deepEqual([refused.status, refused.body.error], [401, 'invalid_client'], aud);
+    }
+    assert.equal((await introspect(coreHost, configured)).body.active, true, 'the fixed host is unchanged');
+    assert.equal((await introspect(coreHost, mine)).status, 401);
+
+    const revoke = (h, aud, tok, hint) => coreRequest.post('/oauth2/revoke').set('Host', h).type('form')
+      .send({ token: tok, ...(hint != null ? { token_type_hint: hint } : {}), ...auth(aud) });
+    const unknown = 'unknown-' + cuid();
+    for (const aud of [configured, configured + '/oauth2/revoke']) {
+      const refused = await revoke(host, aud, ok.body.refresh_token, 'refresh_token');
+      assert.deepEqual([refused.status, refused.body.error], [401, 'invalid_client'], aud);
+    }
+    assert.equal((await revoke(coreHost, configured, unknown)).status, 200, 'the fixed host is unchanged');
+    assert.equal((await revoke(coreHost, mine, unknown)).status, 401);
+    assert.equal((await revoke(host, mine, unknown)).status, 200);
+    const revoked = await revoke(host, mine + '/oauth2/revoke', ok.body.refresh_token, 'refresh_token');
+    assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
+    assert.equal((await refresh(mine, ok.body.refresh_token)).body.error, 'invalid_grant', 'the chain is ended');
+    assert.equal((await introspect(host, mine)).body.active, false, 'its session too');
   });
 
   it('[OPIS7] an address alias\'s host is the alias\'s issuer: a consent there adopts the alias; one that does not adopt it is refused', async function () {

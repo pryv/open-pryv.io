@@ -89,6 +89,16 @@ describe('[OAIH] OAuth endpoints on any host of a DNS-topology core', function (
     assert.deepStrictEqual(deleted.body.error, deletedAtRoot.body.error);
   });
 
+  it('[OAIH5] the service info answers on a user host (the consent UI calls {pryvApi}/reg/service/info there with oauth.perUserIssuer on)', async function () {
+    const atRoot = await coreRequest.get('/reg/service/info');
+    assert.strictEqual(atRoot.status, 200, atRoot.text);
+    const res = await front.get('/reg/service/info').set('Host', username + '.' + DOMAIN);
+    assert.strictEqual(res.status, 200, res.text);
+    assert.strictEqual(typeof res.body.serial, 'string', res.text);
+    assert.strictEqual(typeof res.body.api, 'string', res.text);
+    assert.strictEqual(res.body.api, atRoot.body.api);
+  });
+
   it('[OAIH3] other paths of a user host are still the user\'s', async function () {
     const res = await front.get('/events').set('Host', username + '.' + DOMAIN).set('Authorization', token);
     assert.strictEqual(res.status, 200, res.text);
