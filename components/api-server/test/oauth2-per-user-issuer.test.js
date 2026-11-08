@@ -78,7 +78,7 @@ function makeKey () {
 describe('[OPIS] OAuth issuer derived from the request host', function () {
   this.timeout(90000);
 
-  let fixtures, restoreConfig, platformDB, platform, configured, pubId, anyId, pkjId, rsId, rsSecret, ecKey, alice, bob;
+  let fixtures, restoreConfig, platformDB, platform, configured, coreId, coreHost, pubId, anyId, pkjId, rsId, rsSecret, ecKey, alice, bob;
   const clientIds = [];
 
   async function register (prefix, extra) {
@@ -124,6 +124,10 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
     platformDB = storages.platformDB;
     platform = await getPlatform();
     configured = issuerFromConfig(getConfigUnsafe(true));
+    // The core's own host: a platform address that keeps the configured issuer
+    // (the register host would be mapped to /reg/* on a DNS-topology app).
+    coreId = String(getConfigUnsafe(true).get('core:id') || 'single');
+    coreHost = hostOf(coreId);
     rsSecret = await mintSecret();
     ecKey = makeKey();
     pubId = await register('Pui');
@@ -187,7 +191,7 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
 
   it('[OPIS1] off: the configured issuer on every host, no Vary on the host, the consent hand-off names it', async function () {
     await withInjectedConfig({ oauth: { perUserIssuer: false } }, async () => {
-      for (const host of [hostOf(alice.username), hostOf('reg'), null]) {
+      for (const host of [hostOf(alice.username), coreHost, null]) {
         const res = await discovery(host);
         assert.equal(res.status, 200, res.text);
         assert.equal(res.body.issuer, configured, String(host));
@@ -211,8 +215,7 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
       assert.match(String(res.headers.vary), /\bHost\b/i);
     }
     const carol = await newUser({ mapped: false });
-    const coreId = String(getConfigUnsafe(true).get('core:id') || 'single');
-    for (const host of [hostOf('reg'), hostOf(coreId), hostOf(carol.username), alice.username + '.attacker.tld',
+    for (const host of [coreHost, hostOf(carol.username), alice.username + '.attacker.tld',
       hostOf(alice.username) + ':8443', 'deep.' + hostOf(alice.username), DOMAIN, null]) {
       const res = await discovery(host);
       assert.equal(res.status, 200, res.text);
@@ -248,20 +251,20 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
       assert.equal(refused.location.searchParams.get('iss'), mine);
     }
     // At the configured host nothing changes.
-    const plain = await authorize(hostOf('reg'), pubId, { resource: at(bob.username) });
+    const plain = await authorize(coreHost, pubId, { resource: at(bob.username) });
     assert.equal(plain.location.searchParams.get('pryvApi'), configured);
     assert.equal(statePayload(plain.state).issuer, undefined);
   });
 
   it('[OPIS4] the consent steps reach the authorization\'s issuer; only the account its host names consents there', async function () {
     const a = await authorize(hostOf(alice.username), pubId, { resource: at(alice.username) });
-    for (const res of [await offer(hostOf('reg'), alice, a.state), await accept(hostOf('reg'), alice, a.state),
-      await coreRequest.post('/oauth2/authorize/refuse').set('Host', hostOf('reg')).send({ state: a.state })]) {
+    for (const res of [await offer(coreHost, alice, a.state), await accept(coreHost, alice, a.state),
+      await coreRequest.post('/oauth2/authorize/refuse').set('Host', coreHost).send({ state: a.state })]) {
       assert.equal(res.status, 400, JSON.stringify(res.body));
       assert.equal(res.body.reason, 'issuer-mismatch');
     }
     // A state of the configured issuer is not served at an account's host either.
-    const plain = await authorize(hostOf('reg'), pubId, { resource: at(alice.username) });
+    const plain = await authorize(coreHost, pubId, { resource: at(alice.username) });
     assert.equal((await accept(hostOf(alice.username), alice, plain.state)).body.reason, 'issuer-mismatch');
     // Another account at alice's issuer, with or without a resource: refused.
     const noResource = await authorize(hostOf(alice.username), anyId);
@@ -281,7 +284,7 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
     const first = await consent(host, alice, pubId, { resource: at(alice.username) });
     assert.equal(first.iss, mine);
     const codeGrant = (c) => ({ grant_type: 'authorization_code', code: c.code, code_verifier: c.verifier, client_id: pubId, redirect_uri: REDIRECT_URI });
-    const atRegion = await token(hostOf('reg'), codeGrant(first));
+    const atRegion = await token(coreHost, codeGrant(first));
     assert.deepEqual([atRegion.status, atRegion.body.error], [400, 'invalid_grant'], JSON.stringify(atRegion.body));
     assert.equal((await token(host, codeGrant(first))).body.error, 'invalid_grant', 'the code is used up');
     // At its issuer: the id_token names it.
@@ -291,16 +294,16 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
     assert.equal(jwtPayload(t.body.id_token).iss, mine);
     // The refresh chain: refused at the configured host without being used up, rotated at its issuer, which it keeps.
     const refresh = (h, rt) => token(h, { grant_type: 'refresh_token', refresh_token: rt, client_id: pubId });
-    const elsewhere = await refresh(hostOf('reg'), t.body.refresh_token);
+    const elsewhere = await refresh(coreHost, t.body.refresh_token);
     assert.deepEqual([elsewhere.status, elsewhere.body.error], [400, 'invalid_grant'], JSON.stringify(elsewhere.body));
     const rotated = await refresh(host, t.body.refresh_token);
     assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
-    assert.equal((await refresh(hostOf('reg'), rotated.body.refresh_token)).body.error, 'invalid_grant');
+    assert.equal((await refresh(coreHost, rotated.body.refresh_token)).body.error, 'invalid_grant');
     assert.equal((await refresh(host, rotated.body.refresh_token)).status, 200);
     // A chain of the configured issuer is not refreshed at an account's host.
-    const plain = await consent(hostOf('reg'), alice, pubId, { resource: at(alice.username) });
+    const plain = await consent(coreHost, alice, pubId, { resource: at(alice.username) });
     assert.equal(plain.iss, configured);
-    const pt = await token(hostOf('reg'), codeGrant(plain));
+    const pt = await token(coreHost, codeGrant(plain));
     assert.equal(pt.status, 200, JSON.stringify(pt.body));
     assert.equal(jwtPayload(pt.body.id_token).iss, configured);
     assert.equal((await refresh(host, pt.body.refresh_token)).body.error, 'invalid_grant');
@@ -377,7 +380,7 @@ describe('[OPIS] OAuth issuer derived from the request host', function () {
     for (const host of [hostOf('bobby'), hostOf('nobody'), hostOf('failing')]) assert.equal(await of(req(host)), null, host);
     assert.match(warnings.at(-1), /placement lookup failed/);
     const before = stub.calls.length;
-    for (const host of [hostOf('alice') + ':443', hostOf('reg'), 'alice.attacker.tld', DOMAIN, '127.0.0.1', undefined]) {
+    for (const host of [hostOf('alice') + ':443', hostOf('reg'), coreHost, 'alice.attacker.tld', DOMAIN, '127.0.0.1', undefined]) {
       assert.equal(await of(req(host)), null, String(host));
     }
     // Not a trusted proxy: its X-Forwarded-Host is not read.
