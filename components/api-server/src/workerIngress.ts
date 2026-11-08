@@ -228,9 +228,19 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
     if (stripHopByHop) {
       if (req.headers['content-length'] != null) headers['content-length'] = req.headers['content-length'];
       else if (req.headers['transfer-encoding'] != null) headers['transfer-encoding'] = 'chunked';
+      // Ask the upstream to keep the connection, whatever the agent pools:
+      // on `Connection: close`, an upstream that answers before reading the
+      // whole body (a 401 ahead of a large upload) closes its socket while
+      // the body is still sent, and the reset can reach this side before the
+      // answer does (a 502 instead of the upstream's status). Kept open, it
+      // reads past the unread body instead. The connection is still not
+      // reused: an agent without keepAlive destroys the socket once the
+      // exchange is over, and an early answer ends it below.
+      headers.connection = 'keep-alive';
     }
 
     let bodyTooLarge = false;
+    let upstreamAnswered = false;
     const declaredLength = Number(req.headers['content-length']);
     if (maxBodyBytes != null && Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
       // The upstream is not contacted; the client may still be sending.
@@ -249,6 +259,7 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
       ...(opts.agent != null ? { agent: opts.agent } : {}),
       ...tlsOptions
     }, (proxyRes: IncomingMessage) => {
+      upstreamAnswered = true;
       // The client may have left while the worker was still working on the
       // request (its body was complete, so the request-side hook below did not
       // fire). Nothing to answer, and pipeline() throws synchronously on a
@@ -318,6 +329,13 @@ function buildWorkerProxy (opts: WorkerProxyOptions) {
         // Most often the proxy's own teardown (a timeout, a body cap, or a client
         // that went away), which Node reports as 'socket hang up'. Nothing to answer.
         logger.debug(`${tag} upstream request dropped (${upstreamTimedOut ? 'timed out' : (bodyTooLarge ? 'body too large' : 'client went away')}) ${req.method} ${shownUrl}: ${err.message}`);
+        return;
+      }
+      if (upstreamAnswered) {
+        // The answer is already relayed by the response hop: an upstream that
+        // stops reading the rest of the upload after answering is not a
+        // failure, and a cut answer is ended by the response pipeline.
+        logger.debug(`${tag} upstream connection error after its answer ${req.method} ${shownUrl}: ${err.message}`);
         return;
       }
       logger.warn(`${tag} upstream error ${req.method} ${shownUrl}: ${err.message}`);

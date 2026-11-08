@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Adapter routes: an early answer to an upload is relayed
+
+- **Fixed: an adapter that answers before reading a large request body (e.g. a `401` ahead of the
+  upload) could reach the client as `502 adapter <name> unreachable`.** The sidecar's own status and
+  body are relayed.
+
 ### Address aliases: addresses of an account other than its username
 
 - **Added: `account.addressAliases.create` / `.list` / `.delete`** (`POST`, `GET
