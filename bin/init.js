@@ -771,8 +771,9 @@ ${dnsLess
 # # Per-user issuer: an account's own host (https://<name>.<dns.domain>) is its
 # # OAuth issuer (discovery, iss, id_token, pryvApi; tokens redeemed there only).
 # # The same value on every core; the consent UI must accept pryvApi on every
-# # account host first (app-web-user-account: trustedApiOrigins). Under the
-# # oauth: block above.
+# # account host first (app-web-user-account: trustedApiOrigins). Turning it
+# # off later ends every refresh chain issued at a per-user issuer (the apps
+# # authorize again). Under the oauth: block above.
 # #   perUserIssuer: true
 `}
 # # Logos of OAuth clients on the consent screen: https only, from these hosts

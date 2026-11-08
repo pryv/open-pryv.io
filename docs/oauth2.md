@@ -141,7 +141,9 @@ The host is read as an account by the adapter routes' rule: exactly one label
 under `dns.domain` (port and final dot aside), of username shape; service hosts
 (`reg`, `access`, `mfa`), core ids, static entries, hosted sites, runtime DNS
 records, issuer labels and `adapter` are not accounts, nor is a host under any
-other domain. Those hosts, a name the
+other domain. The host is the client-facing one: `X-Forwarded-Host` sent by a
+proxy listed in `http.trustedProxies`, else `Host` (the host the per-user
+issuer reads, § 2 `perUserIssuer`). Those hosts, a name the
 platform does not map and an account of this core are unchanged; `/offer` and
 `/accept` keep the answer above. If the platform cannot say where the account
 lives, the request is served as before (codes and refresh tokens are keyed by
@@ -1294,7 +1296,10 @@ hosted sites, runtime DNS records, issuer labels, `adapter`: the same rule as
 the adapter routes' per-user addresses), with no explicit port, read from the
 `Host` header or from `X-Forwarded-Host` sent by a proxy listed in
 `http.trustedProxies` (as for DPoP), and whose name-to-core mapping names this
-core. Every other host keeps the configured issuer (above): a service or core
+core. A proxy must forward the host without a port (`X-Forwarded-Host:
+alice.<dns.domain>`, not `alice.<dns.domain>:443`; nginx: `$host`, not
+`$http_host`): a port makes the host a platform address, and the configured
+issuer answers, silently. Every other host keeps the configured issuer (above): a service or core
 host, a host under another domain, a name no core serves, an account of
 another core (its `/oauth2/token` and `/oauth2/authorize` answer `421` there,
 see § 1), a placement lookup that fails.
@@ -1317,22 +1322,37 @@ What changes at such a host:
   host, a registry consent that adopts that alias (a `resource` at the
   alias's address); anyone else, a former username, or a consent at an alias
   that does not adopt it, is refused `403 access_denied` with `reason:
-  audience-account-mismatch`.
+  audience-account-mismatch` (the answer of a resource naming another
+  account, so it tells nothing about whose host it is), audited as
+  `oauth.consent.refused` with `reason: "issuer-account-mismatch"` and no
+  username (a resource naming another account is audited
+  `audience-account-mismatch`, as at any host).
 - The code and refresh rows record the issuer: `/oauth2/token` redeems them at
-  that issuer only (RFC 9207 mix-up defence: elsewhere `invalid_grant`; a
-  code is used up, a refresh token stays usable at its own issuer), the
-  id_token `iss` is that issuer, and a refresh chain keeps it. A chain issued
-  at the configured issuer is redeemed there only, likewise.
+  that issuer only (elsewhere `invalid_grant`; a code is used up, a refresh
+  token stays usable at its own issuer), the id_token `iss` is that issuer,
+  and a refresh chain keeps it. A code or chain issued at the configured
+  issuer is redeemed there only, likewise. With RFC 9207 `iss` on every
+  authorization redirect, this is the mix-up defence.
 - A `private_key_jwt` client assertion presented at that host must name the
-  per-user issuer or its token endpoint (`https://<name>.<dns.domain>` or
-  `.../oauth2/token`), not the configured issuer.
+  per-user issuer or the endpoint it is sent to (`https://<name>.<dns.domain>`,
+  `.../oauth2/token`, or at `/oauth2/revoke` and `/oauth2/introspect` their
+  own URL), not the configured issuer. This holds at every endpoint:
+  `/oauth2/token` (all grants, the token exchange included), `/oauth2/revoke`
+  and `/oauth2/introspect`.
 - Unchanged: `/oauth2/introspect` and `/oauth2/revoke` keep the configured
-  issuer (introspection answers it as `iss`; client assertions there name it),
-  and so does the token exchange; resource servers call them at a fixed host.
-  `oauth.stateKey` stays per core.
+  issuer in what they answer (introspection answers the configured issuer as
+  `iss`, whatever host it is called at; a client assertion names the issuer
+  of the host it is presented at, as at `/oauth2/token`), and so does the
+  token exchange; resource servers call them at a fixed host, where both are
+  the configured issuer. `oauth.stateKey` stays per core.
 
 **Platform-wide:** set the same value on every core (a client must find one
-rule on every core). **Refused at boot** (and by `check-config`) on a dnsLess
+rule on every core). **Turning it off (or leaving one core off) ends every
+refresh chain issued at a per-user issuer** (`invalid_grant` at every host:
+the apps authorize again) and every consent in flight started at one
+(`issuer-mismatch`); on a core left off, only that core's refreshes fail.
+Turning it on ends nothing: chains of the configured issuer keep working at
+the configured host. **Refused at boot** (and by `check-config`) on a dnsLess
 core and without `dns.domain`: no account host exists there. **Before turning
 it on, the consent UI must accept `pryvApi` on every account host**: the
 consent hand-off now names `https://<name>.<dns.domain>`, and the consent UI
@@ -2023,7 +2043,7 @@ Collect these for security monitoring and incident response.
 |---|---|
 | `oauth.consent.shown` | consent screen presented to the user |
 | `oauth.consent.granted` | user approved the authorization request |
-| `oauth.consent.refused` | user declined the authorization request, or the core refused the consent (`reason`, e.g. `user-declined`, `permission-level-conflict`, `wrong-core`, `audience-account-mismatch`, `audience-not-listed`) |
+| `oauth.consent.refused` | user declined the authorization request, or the core refused the consent (`reason`, e.g. `user-declined`, `permission-level-conflict`, `wrong-core`, `audience-account-mismatch`, `audience-not-listed`, `issuer-account-mismatch`) |
 | `oauth.code.exchanged` | authorization code successfully exchanged for tokens |
 | `oauth.code.reused` | an already-consumed authorization code was presented again (attack signal) |
 | `oauth.nonce.reused` | an OpenID Connect nonce already used by the client came back at a code exchange (refused; the code by its hash, never the nonce) |

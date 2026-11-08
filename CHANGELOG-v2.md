@@ -15,13 +15,21 @@
   `resource` / `aud` on another host; `/oauth2/authorize/offer`, `/accept` and `/refuse` answer
   `400 invalid_request` `reason: issuer-mismatch` at another issuer than the authorization's, and
   only the account the host names consents there (its username, or a consent adopting the address
-  alias of that host; otherwise `403 audience-account-mismatch`); codes and refresh tokens are
-  redeemed at their issuer only (`invalid_grant` elsewhere, RFC 9207; a refresh token refused so is
-  not used up), the id_token `iss` is that issuer, and a `private_key_jwt` assertion there names it
-  or its token endpoint. Every other host keeps the configured issuer, and so do introspection
-  (`iss`), revocation and the token exchange. Off, nothing changes. Before turning it on, the
-  consent UI must accept `pryvApi` on every account host (app-web-user-account:
-  `trustedApiOrigins`).
+  alias of that host; otherwise `403 audience-account-mismatch`, audited as `oauth.consent.refused`
+  `reason: issuer-account-mismatch`); RFC 9207 `iss` on every redirect,
+  and a code or refresh token is redeemed at its issuer only (`invalid_grant` elsewhere; a refresh
+  token refused so is not used up); the id_token `iss` is that issuer. A `private_key_jwt`
+  assertion names the issuer of the host it is presented at, or the endpoint's URL, at
+  `/oauth2/token`, `/oauth2/revoke` and `/oauth2/introspect` alike. Every other host keeps the
+  configured issuer, and so do the answers of introspection (`iss`), revocation and the token
+  exchange. Off, nothing changes. Before turning it on, the consent UI must accept `pryvApi` on
+  every account host (app-web-user-account: `trustedApiOrigins`). Turning it off later (or leaving
+  one core off) ends every refresh chain issued at a per-user issuer (`invalid_grant`: the apps
+  authorize again) and every consent in flight there; turning it on ends nothing.
+- **Changed: the `421 wrong_core` of `/oauth2/token` and `/oauth2/authorize` on an account's own
+  host reads the client-facing host** (`X-Forwarded-Host` from a proxy listed in
+  `http.trustedProxies`, else `Host`), the host the per-user issuer reads: behind a trusted proxy
+  that rewrites `Host`, a request for an account of another core is now answered `421` there too.
 
 ### Address aliases: addresses of an account other than its username
 

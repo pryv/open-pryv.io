@@ -15,10 +15,15 @@
   (absent: the configured one), so rows and states written before read as today; refresh keys are
   unchanged (still keyed by core id). The discovery handler builds per request and answers
   synchronously while the switch is off. `tokenEndpointAudiences(config, requestIssuer)` takes the
-  request's issuer.
+  request's issuer; revocation and introspection take `perUserIssuerOf` too, for their client
+  assertion audiences only (their answers keep `issuerFromConfig`).
+- `api-server/src/routes/oauth2/hostWrongCore.ts` reads `externalRequestHost` (the per-user
+  issuer's host reader) instead of `Host`. `audienceAccount.ts`: `ISSUER_ACCOUNT_MISMATCH`, the
+  audit reason of `issuerAccountRefusal` (the answer is unchanged).
 - Tests: `[OPIS1-7]` (in-process core with the DNS topology injected), `[OPIS8]` two-core (Core A
   runs with the switch on: `OAUTH_PER_USER_ISSUER` in the child core helper), `[OPIU1-3]`,
-  `[CVOA9]`, `[CKPU1]`; `bin/init.js` appendix and `docs/oauth2.md` § 2 `perUserIssuer`.
+  `[CVOA9]`, `[CKPU1]`, `[OTKW5]` (the guard's host), `[OAIH5]` (`/reg/service/info` on a user host
+  of a DNS-topology app); `bin/init.js` appendix and `docs/oauth2.md` § 2 `perUserIssuer`.
 
 ### Address aliases
 
