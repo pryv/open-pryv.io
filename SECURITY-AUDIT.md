@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 17 (2026-11-07), covering releases 2.0.0-rc.40 to 2.0.0-rc.75.
+**Report revision:** 18 (2026-11-08), covering releases 2.0.0-rc.40 to 2.0.0-rc.76.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -127,6 +127,7 @@ its applicability is stated with it.
 | 2.0.0-rc.73 | 2026-11-05 | 1 Medium, lower-severity fixes; operator action: on a platform run with `platform.piiMode: cleartext`, run `bin/reconcile-user-cores.js --emails --dry-run` on each core and resolve the pairs of accounts it lists (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-05) |
 | 2.0.0-rc.74 | 2026-11-06 | 1 Low, lower-severity fixes; operator action: none beyond the upgrade for the fixes; keep the host that runs `bin/oauth-client.js` and the cores NTP-synced; before turning on `oauth.clientMetadataDocuments`, read `docs/oauth2.md` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-06) |
 | 2.0.0-rc.75 | 2026-11-06 | lower-severity fixes; operator action: on a platform with several cores, upgrade every core before adding per-user audience entries to OAuth2 clients, and each core before the adapter sidecar next to it reads the addressed-account headers; route adapter paths through the core where per-user addresses are wanted (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-07) |
+| 2.0.0-rc.76 | 2026-11-08 | no finding (new surface: address aliases); dependency update, not an audit finding: `html-to-text` 10 under `email-templates`, which drops `deepmerge` 4.3.1 (GHSA-gcqx-w48m-w2h4, low: prototype poisoning in `mergeObject()`); operator action: right after the upgrade, run `bin/reconcile-user-cores.js --address-alias-shape` on each core and look at any account it lists (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-08) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -230,6 +231,7 @@ workers; the operator's custom authentication step; and the caller id carried fo
 | ACME HTTP-01 responder | public when Let's Encrypt is enabled |
 | rqlite platform database: HTTP API (loopback) and Raft (peer cores, mutual TLS) | local / peer cores |
 | Adapter routes (`/adapter/<name>/` on every host, since 2.0.0-rc.73, off unless configured): forwarded to a sidecar on the same host; on a per-user host (`<username>.<dns.domain>`, since 2.0.0-rc.75) the core names the addressed account to the sidecar (`X-Adapter-Name`, `X-Adapter-Base`, set by the core only, client-sent copies dropped) and answers `421` for an account of another core | public, authenticated by the sidecar, not by the core (the two headers are an address, not an identity) |
+| Address aliases (`<alias>.<dns.domain>`, since 2.0.0-rc.76): names of an account minted by the server at its owner's request (`a-` + 8 letters or digits, at most 10), routed to the account's core and answered by the embedded DNS like a username; an OAuth2 consent at one adopts it for that client's grant | public addresses of the account; minted, listed and deleted with the owner's personal token only |
 | OAuth2 client metadata documents (an https URL as `client_id`, since 2.0.0-rc.74, off unless configured): the core fetches the document, and the key set it names, from the client's host | public: any party can present such a client to the consent screen of the hosts the operator allows |
 | Local pub/sub broker for cache invalidation | loopback |
 | PostgreSQL, InfluxDB, SQLite files | local |
@@ -2042,6 +2044,39 @@ fixes. The review made alongside them found the following in earlier releases.
   next to it starts reading `X-Adapter-Name` / `X-Adapter-Base`; where per-user addresses are
   wanted, let the core forward adapter paths (`docs/adapter-routes.md`, "Behind nginx").
 
+### Fixed in 2.0.0-rc.76 (deployed)
+
+2.0.0-rc.76 adds address aliases: addresses of an account other than its username, which its owner
+mints and an OAuth2 grant adopts at consent. This is a new feature, described in
+`CHANGELOG-v2.md`, not a fix. The review made alongside it found no defect in earlier releases.
+
+#### Lower-severity fixes in 2.0.0-rc.76
+
+- Dependency update, not an audit finding: `html-to-text` 10 under `email-templates` replaces
+  `deepmerge` 4.3.1 (GHSA-gcqx-w48m-w2h4, low: prototype poisoning in `mergeObject()`, no patched
+  `deepmerge` release). `npm audit --omit=dev` reports no advisory for this release.
+- Not security fixes, listed for operators: an adapter sidecar that answers before reading a large
+  upload (a `401` ahead of the body, for example) could reach the client as `502 adapter <name>
+  unreachable`; its own answer is relayed now. The status code was wrong; nothing else was exposed.
+- New in this release, not findings: address aliases (section 3.2). The server chooses the name
+  (`a-` + 8 lower-case letters or digits; nothing is taken from the request), at most 10 per
+  account, through methods that only the owner's personal token can call. An address alias is an
+  address of the account like its username: the platform routes it to the account's core and the
+  embedded DNS answers it. An OAuth2 consent at an address alias adopts it for that client's grant
+  only: one grant per alias; an alias another grant holds, another account's alias and a former
+  username are refused (`403 audience-account-mismatch`). The tokens of an adopted grant are used
+  at that address only and their subject is the alias, never the username. Signing in at an
+  address alias, or using a token there that does not carry it, is refused. Deleting an alias
+  releases the name first, then withdraws the grant that holds it (its sessions and refresh chains
+  end); a consent adopting it at that moment is refused. A consent at the username over a grant
+  that adopted an alias is a change of subject the user must acknowledge. A new username of the
+  alias shape is refused, so no account can take such a name; a former username of that shape (an
+  account renamed before this release) is read as an address alias of its account.
+- **Operator action:** right after the upgrade, before account owners mint address aliases, run
+  `node bin/reconcile-user-cores.js --address-alias-shape` on each core (read only). Zero usernames
+  and zero aliases of that shape is the expected result; an alias it lists is a former username,
+  now an address alias of its account (listed to the owner, adoptable by an OAuth2 consent).
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2144,3 +2179,4 @@ This report is updated with every release that carries a security fix:
 | 15 | 2026-11-05 | 2.0.0-rc.40 to 2.0.0-rc.73 | Adds 2.0.0-rc.73 (follow-up review of email uniqueness in cleartext PII mode and of backup restore): 1 Medium finding and lower-severity fixes; section 3.2 adds the adapter routes. Deployed on the maintainers' platforms (2026-11-05). |
 | 16 | 2026-11-06 | 2.0.0-rc.40 to 2.0.0-rc.74 | Adds 2.0.0-rc.74 (review of the OAuth2 client revoke, alongside client metadata documents): 1 Low finding and lower-severity fixes; section 3.2 adds client metadata documents and their outbound fetches. Deployed on the maintainers' platforms (2026-11-06). |
 | 17 | 2026-11-07 | 2.0.0-rc.40 to 2.0.0-rc.75 | Adds 2.0.0-rc.75 (review alongside per-user resource addresses and adapter routes on per-user hosts): lower-severity fixes, no counted finding; section 3.2 adds the addressed-account headers and the `421` of adapter routes on per-user hosts. Deployed on the maintainers' platforms (2026-11-07). |
+| 18 | 2026-11-08 | 2.0.0-rc.40 to 2.0.0-rc.76 | Adds 2.0.0-rc.76 (review alongside address aliases): no finding, counts unchanged; the `html-to-text` 10 dependency update (low advisory, not an audit finding); section 3.2 adds address aliases. Deployed on the maintainers' platforms (2026-11-08). |
