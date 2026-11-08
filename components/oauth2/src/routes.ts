@@ -359,6 +359,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
         platform: deps.platform,
         introspectAccess: deps.introspectAccess!,
         ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+        ...perUser,
       })));
   }
   if (revocation) {
@@ -370,6 +371,7 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
         platform: deps.platform,
         revokeSession: deps.revokeSession!,
         ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),
+        ...perUser,
       })));
   }
 

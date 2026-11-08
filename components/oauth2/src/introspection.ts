@@ -43,6 +43,8 @@ import { getClient, isRegistryClient, clientUnavailable } from './clientRegistry
 import { authenticateClient } from './clientSecret.ts';
 import { decodeBasicAuth, clientIdFromAssertion, isConfidentialClient as isConfidential } from './clientAuth.ts';
 import { issuerFromConfig } from './issuer.ts';
+import type { PerUserIssuerOf } from './perUserIssuer.ts';
+import { requestIssuer } from './perUserIssuer.ts';
 import { grantedScopeTokens } from './scopeGrammar.ts';
 import { clientKeyOf, publicClientId } from './clientMetadataId.ts';
 import { reportClientAuthRefusal } from './clientMetadata.ts';
@@ -75,6 +77,8 @@ export type IntrospectDeps = {
   introspectAccess: IntrospectAccess;
   /** Public URL of a core, for the wrong-core answer. */
   coreUrlFor?: (coreId: string) => string | Promise<string>;
+  /** The per-user issuer of a request on an account's host (`oauth:perUserIssuer`): the client assertion's audiences. */
+  perUserIssuerOf?: PerUserIssuerOf;
 };
 
 const INACTIVE = { active: false };
@@ -109,7 +113,12 @@ export function handleIntrospect (deps: IntrospectDeps) {
     if (caller == null || !isConfidentialClient(caller) || caller.canIntrospect !== true || clientUnavailable(caller, null) != null) {
       return refuse();
     }
+    // The answer (`iss`, the hook context) names the configured issuer; a
+    // client assertion names the issuer of the host it is presented at (a
+    // per-user issuer's document advertises this endpoint under its host), as
+    // at /oauth2/token. At a fixed host both are the configured issuer.
     const issuer = issuerFromConfig(deps.config);
+    const { issuer: requestIss } = await requestIssuer(deps.config, deps.perUserIssuerOf, req);
     const auth = await authenticateClient({
       client: caller,
       clientId,
@@ -117,7 +126,7 @@ export function handleIntrospect (deps: IntrospectDeps) {
       assertion: typeof body.client_assertion === 'string' ? body.client_assertion : undefined,
       assertionType: typeof body.client_assertion_type === 'string' ? body.client_assertion_type : undefined,
       platform: deps.platform,
-      expectedAudiences: [issuer, issuer + '/oauth2/introspect', issuer + '/oauth2/token'],
+      expectedAudiences: [requestIss, requestIss + '/oauth2/introspect', requestIss + '/oauth2/token'],
     });
     if (!auth.ok) return refuse();
 

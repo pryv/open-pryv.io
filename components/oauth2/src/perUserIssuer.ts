@@ -15,8 +15,10 @@
  * authorization (its `iss`, the consent hand-off `pryvApi`), the code and
  * refresh rows and the id_token name it, and a code or refresh token is
  * redeemed only at the issuer that issued it (RFC 9207 mix-up defence).
- * Introspection, revocation and the token exchange keep the configured issuer:
- * resource servers call them at a fixed host.
+ * Introspection, revocation and the token exchange keep the configured issuer
+ * in what they answer (resource servers call them at a fixed host); a client
+ * assertion names the issuer of the host it is presented at, at every
+ * endpoint (`/oauth2/token`, `/oauth2/revoke`, `/oauth2/introspect`).
  *
  * Which host names an account is the host application's knowledge (the
  * platform's own names, where each account is served): it is injected as a
