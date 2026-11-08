@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### OAuth per-user issuer
+
+- `oauth2/src/perUserIssuer.ts`: the `oauth:perUserIssuer` setting (parse, boot problems shared by
+  `config-validation.js` and `bin/check-config.js`), the request's issuer and the consent steps'
+  issuer check. The host knowledge is the api-server's (`routes/oauth2/perUserIssuer.ts`: the
+  adapter ingress's `addressedLabelOf` on the client-facing host, `externalRequestHost` shared with
+  DPoP, then the name-to-core row must name this core: one PlatformDB read per request on an
+  account host while the switch is on, none otherwise), injected as `perUserIssuerOf` and read per
+  request from the live configuration.
+- The signed state, the code row and the refresh row carry `issuer` only for a per-user issuer
+  (absent: the configured one), so rows and states written before read as today; refresh keys are
+  unchanged (still keyed by core id). The discovery handler builds per request and answers
+  synchronously while the switch is off. `tokenEndpointAudiences(config, requestIssuer)` takes the
+  request's issuer.
+- Tests: `[OPIS1-7]` (in-process core with the DNS topology injected), `[OPIS8]` two-core (Core A
+  runs with the switch on: `OAUTH_PER_USER_ISSUER` in the child core helper), `[OPIU1-3]`,
+  `[CVOA9]`, `[CKPU1]`; `bin/init.js` appendix and `docs/oauth2.md` § 2 `perUserIssuer`.
+
 ### Address aliases
 
 - `users/aliasShape.ts`: the minted shapes are `r-` + 8 (access aliases) and `a-` + 8 (address

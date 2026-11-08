@@ -34,6 +34,8 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
 import type { ParsedScope } from '../scopeRegistry.ts';
 import type { OAuthClient } from '../storage.ts';
 import { MAX_RESOURCE_BYTES, isValidResource, matchAudience, sameResource, withinResourceCap } from '../resourceIndicator.ts';
+import type { PerUserIssuerOf } from '../perUserIssuer.ts';
+import { requestIssuer, urlHost } from '../perUserIssuer.ts';
 const require = createRequire(import.meta.url);
 
 // Kept on the require shim: converting these to typed ESM imports surfaces
@@ -46,7 +48,6 @@ const { parseScopes, ScopeParseError } = require('../scopeRegistry.ts');
 const { signState, stateKeyFromConfig } = require('../signedState.ts');
 const { hasSigningKeys } = require('../signingKeys.ts');
 const { isNonceUsed } = require('../storage.ts');
-const { issuerFromConfig } = require('../issuer.ts');
 const { audit } = require('../audit.ts');
 const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 const { resolveMetadataClient, metadataHostOf } = require('../clientMetadata.ts');
@@ -65,12 +66,17 @@ export type AuthorizeDeps = {
   platform: PlatformDB; // raw PlatformDB
   /** Test seam for the cmc offer read (defaults to global fetch). */
   offerFetch?: typeof fetch;
+  /** The per-user issuer of a request on an account's host (`oauth:perUserIssuer`). */
+  perUserIssuerOf?: PerUserIssuerOf;
 };
 
 /** Express-style handler factory. */
 export function handleAuthorize (deps: AuthorizeDeps) {
   return async function authorize (req: Request, res: Response): Promise<void> {
-    const issuer = issuerFromConfig(deps.config);
+    // The issuer of this request: on an account's own host with
+    // `oauth:perUserIssuer` on, that host's issuer (named in the state, `iss`
+    // and `pryvApi`), else the configured one.
+    const { issuer, perUser } = await requestIssuer(deps.config, deps.perUserIssuerOf, req);
     if (!issuer) return sendServerError(res, 'service:api not configured');
     const consentUrl = String(deps.config.get('oauth:consentUrl') ?? '').replace(/\/$/, '');
     if (!consentUrl) return sendServerError(res, 'oauth:consentUrl not configured');
@@ -213,6 +219,11 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       if (!isValidResource(requested)) return malformed(requestedName);
       audience = requested;
     }
+    // A per-user issuer serves its own address only: the resource must be on
+    // the issuer's host (the consent then binds that address to the account).
+    if (perUser != null && requested != null && urlHost(requested) !== urlHost(perUser.issuer)) {
+      return redirectError('invalid_target', `${requestedName} must be on this issuer's host`);
+    }
 
     if (isRegistryClient(client)) {
       return authorizeRegistryClient();
@@ -293,6 +304,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       userIdHint: isNonEmptyString(q.login_hint) ? String(q.login_hint) : undefined,
       ...(offer != null ? { offer } : {}),
       ...(audience != null ? { audience } : {}),
+      ...(perUser != null ? { issuer } : {}),
     });
     return redirectToConsent(signed);
 
@@ -335,6 +347,7 @@ export function handleAuthorize (deps: AuthorizeDeps) {
         offerRef: { kind: 'synthesised', digest: resolved.digest },
         ...(audience != null ? { audience } : {}),
         ...(oidcNonce != null ? { nonce: oidcNonce } : {}),
+        ...(perUser != null ? { issuer } : {}),
       });
       return redirectToConsent(signed);
     }

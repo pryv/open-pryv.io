@@ -123,6 +123,28 @@ export function audienceNamesUsername (
   return l != null && typeof account.username === 'string' && account.username.toLowerCase() === l;
 }
 
+/**
+ * A consent at a per-user issuer (`oauth:perUserIssuer`): the issuer's host is
+ * an account's address, so only that account consents there. Null when it may
+ * go on (no per-user issuer, or its label is the signed-in account's current
+ * username, or the address alias this consent adopts), `'mismatch'`
+ * otherwise. An address alias the consent does not adopt is refused too: the
+ * app would get an address naming the account by another name than the one
+ * it was started at (the alias's point is that the app knows that name only).
+ */
+export function issuerAccountRefusal (
+  issuerLabel: string | null | undefined,
+  account: ConsentAccountNames,
+  adopted: string | null,
+  isPlatformRoutedLabel?: PlatformRoutedLabel | null
+): null | 'mismatch' {
+  if (issuerLabel == null) return null;
+  if (!labelNamesAccount(issuerLabel, account, isPlatformRoutedLabel)) return 'mismatch';
+  const l = issuerLabel.toLowerCase();
+  if (typeof account.username === 'string' && account.username.toLowerCase() === l) return null;
+  return adopted != null && adopted.toLowerCase() === l ? null : 'mismatch';
+}
+
 /** The lowercased label of a per-user audience of the client, null for any other (or a platform-routed label). */
 function perUserLabelOf (audience: string | undefined, client: OAuthClient | null, isPlatformRoutedLabel?: PlatformRoutedLabel | null): string | null {
   if (audience == null || client == null) return null;

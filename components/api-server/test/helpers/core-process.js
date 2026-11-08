@@ -36,6 +36,7 @@
  *                     key OAUTH_STATE_KEY when set, else one per core id).
  *   STATIC_ENTRIES_JSON: optional `dns.staticEntries` block (JSON).
  *   OAUTH_ISSUER:   optional `oauth.issuer`.
+ *   OAUTH_PER_USER_ISSUER: optional '1': `oauth.perUserIssuer` on.
  *   HOSTED_SITES_JSON: optional `hostedSites` block (JSON). When set, the core
  *                     runs the DNS topology (dnsLess off, sites matched by Host),
  *                     applies the same boot checks as the api-server (exit 1 on
@@ -198,6 +199,7 @@ const http = require('node:http');
   // an explicit OAuth issuer (advertised to the other cores at boot).
   if (process.env.STATIC_ENTRIES_JSON) config.set('dns:staticEntries', JSON.parse(process.env.STATIC_ENTRIES_JSON));
   if (process.env.OAUTH_ISSUER) config.set('oauth:issuer', process.env.OAUTH_ISSUER);
+  if (process.env.OAUTH_PER_USER_ISSUER === '1') config.set('oauth:perUserIssuer', true);
   config.set('audit:active', false);
   config.set('webhooks:inProcess', false);
   config.set('http:ssl:backloop.dev', false);

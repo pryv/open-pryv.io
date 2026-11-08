@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### OAuth: an account's own host as its issuer (`oauth.perUserIssuer`, opt-in)
+
+- **Added: `oauth.perUserIssuer`** (default `false`, platform-wide, DNS topology only: refused at
+  boot and by `check-config` on a dnsLess core or without `dns.domain`). On, a request at
+  `https://<name>.<dns.domain>`, where `<name>` is an account or an address alias served by this
+  core (one label of username shape, not a name the platform answers itself, no explicit port;
+  `Host`, or `X-Forwarded-Host` from a trusted proxy), is served by the issuer
+  `https://<name>.<dns.domain>`: both discovery documents name it and their endpoints under it
+  (`Vary: Host, X-Forwarded-Host` on every discovery answer while it is on); `/oauth2/authorize`
+  puts it in the signed state, in `iss` and in `pryvApi`, and refuses `invalid_target` a
+  `resource` / `aud` on another host; `/oauth2/authorize/offer`, `/accept` and `/refuse` answer
+  `400 invalid_request` `reason: issuer-mismatch` at another issuer than the authorization's, and
+  only the account the host names consents there (its username, or a consent adopting the address
+  alias of that host; otherwise `403 audience-account-mismatch`); codes and refresh tokens are
+  redeemed at their issuer only (`invalid_grant` elsewhere, RFC 9207; a refresh token refused so is
+  not used up), the id_token `iss` is that issuer, and a `private_key_jwt` assertion there names it
+  or its token endpoint. Every other host keeps the configured issuer, and so do introspection
+  (`iss`), revocation and the token exchange. Off, nothing changes. Before turning it on, the
+  consent UI must accept `pryvApi` on every account host (app-web-user-account:
+  `trustedApiOrigins`).
+
 ### Address aliases: addresses of an account other than its username
 
 - **Added: `account.addressAliases.create` / `.list` / `.delete`** (`POST`, `GET

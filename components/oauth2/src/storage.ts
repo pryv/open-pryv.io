@@ -314,6 +314,8 @@ export interface OAuthCode {
   nonce?: string;
   /** When the consenting user signed in (seconds), the id_token `auth_time`. */
   authTime?: number;
+  /** The per-user issuer that issued the code (`oauth:perUserIssuer`); absent: the configured issuer. */
+  issuer?: string;
 }
 
 /**
@@ -360,6 +362,8 @@ export interface OAuthRefresh {
   coreTokens?: string[];
   grammarTokens?: string[];
   audience?: string;
+  /** The per-user issuer the chain was issued by (see OAuthCode); absent: the configured issuer. */
+  issuer?: string;
   /**
    * The session this chain currently backs (the access minted with the
    * refresh token now in this row), retired at the next rotation. Absent on

@@ -37,6 +37,8 @@ import { getClient, isRegistryClient } from '../clientRegistry.ts';
 import { decodeBasicAuth, clientIdFromAssertion, hasKeySet } from '../clientAuth.ts';
 import { clientKeyOf } from '../clientMetadataId.ts';
 import { reportClientAuthRefusal } from '../clientMetadata.ts';
+import type { PerUserIssuerOf } from '../perUserIssuer.ts';
+import { requestIssuer } from '../perUserIssuer.ts';
 
 export type TokenDeps = {
   config: { get (key: string): unknown };
@@ -80,6 +82,8 @@ export type TokenDeps = {
   coreUrlFor?: (coreId: string) => string | Promise<string>;
   /** Token exchange: the host labels the platform answers itself (never an account's address). */
   isPlatformRoutedLabel?: (label: string) => boolean;
+  /** The per-user issuer of a request on an account's host (`oauth:perUserIssuer`). */
+  perUserIssuerOf?: PerUserIssuerOf;
 };
 
 type TokenOutcome =
@@ -100,6 +104,9 @@ export function handleToken (deps: TokenDeps) {
       ? { ...rawBody, client_id: basic.client_id }
       : (noBodyClientId ? rawBody : { ...rawBody, client_id: clientKeyOf(rawBody.client_id) });
     const grantType = typeof body.grant_type === 'string' ? body.grant_type : '';
+    // The issuer this token endpoint answers for: a code or refresh token is
+    // redeemed at the issuer that issued it, and a client assertion names it.
+    const { issuer } = await requestIssuer(deps.config, deps.perUserIssuerOf, req);
 
     let outcome: TokenOutcome | undefined;
     // RFC 7521 §4.2 / RFC 7523 §3: next to a client_assertion, client_id is
@@ -190,6 +197,7 @@ export function handleToken (deps: TokenDeps) {
           {
             config: deps.config,
             platform: deps.platform,
+            requestIssuer: issuer,
             ...(deps.bindAccessDpop != null ? { bindAccessDpop: deps.bindAccessDpop } : {}),
             ...(deps.resolveAccess != null ? { resolveAccess: deps.resolveAccess } : {}),
             ...(deps.revokeAccessLocal != null ? { revokeAccessLocal: deps.revokeAccessLocal } : {}),
@@ -213,6 +221,7 @@ export function handleToken (deps: TokenDeps) {
           {
             config: deps.config,
             platform: deps.platform,
+            requestIssuer: issuer,
             mintRefreshedAccess: deps.mintRefreshedAccess,
             ...(deps.revokeChain != null ? { revokeChain: deps.revokeChain } : {}),
             ...(deps.retireSession != null ? { retireSession: deps.retireSession } : {}),
@@ -238,6 +247,7 @@ export function handleToken (deps: TokenDeps) {
           {
             config: deps.config,
             platform: deps.platform,
+            requestIssuer: issuer,
             mintClientAccess: deps.mintClientAccess,
             resolveAccountUserId: deps.resolveAccountUserId,
             resolveUsername: deps.resolveUsername,
@@ -255,6 +265,7 @@ export function handleToken (deps: TokenDeps) {
           {
             config: deps.config,
             platform: deps.platform,
+            requestIssuer: issuer,
             readSubjectSession: deps.readSubjectSession,
             issueDerivedSession: deps.issueDerivedSession,
             ...(deps.coreUrlFor != null ? { coreUrlFor: deps.coreUrlFor } : {}),

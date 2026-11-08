@@ -60,6 +60,8 @@ export type ClientCredentialsDeps = {
   resolveAccountUserId: ResolveAccountUserId;
   /** Canonical username for the account's user id on this core, or null when absent. */
   resolveUsername: UsernameResolver;
+  /** The issuer the token request is served by (a client assertion names it); absent: the configured issuer. */
+  requestIssuer?: string;
 };
 
 export type ClientCredentialsParams = {
@@ -120,7 +122,7 @@ export async function handleClientCredentials (
     assertion,
     assertionType: params.client_assertion_type,
     platform: deps.platform,
-    expectedAudiences: tokenEndpointAudiences(deps.config),
+    expectedAudiences: tokenEndpointAudiences(deps.config, deps.requestIssuer),
   });
   if (!auth.ok) {
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };

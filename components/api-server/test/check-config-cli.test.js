@@ -708,3 +708,16 @@ describe('[CCDU] bin/check-config.js on dns.domain with dnsLess.isActive left un
     }
   });
 });
+
+describe('[CKPU] bin/check-config.js oauth.perUserIssuer', function () {
+  this.timeout(60000);
+
+  it('[CKPU1] on a dnsLess core the key is a problem; off it is not', () => {
+    const on = runCheck(BASE + 'oauth:\n  perUserIssuer: true\n');
+    assert.strictEqual(on.status, 1, on.stdout + on.stderr);
+    assert.match(on.stderr, /oauth\.perUserIssuer is true on a dnsLess core/);
+    const off = runCheck(BASE + 'oauth:\n  perUserIssuer: false\n');
+    assert.strictEqual(off.status, 0, off.stdout + off.stderr);
+    assert.doesNotMatch(off.stdout + off.stderr, /perUserIssuer/);
+  });
+});

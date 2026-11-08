@@ -693,9 +693,20 @@ async function validate (config) {
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
   checkAudienceBoundSessions(config, problems);
+  checkPerUserIssuer(config, problems);
   checkClientMetadataDocuments(config, problems);
 
   return problems;
+}
+
+/**
+ * `oauth.perUserIssuer`: a boolean (or the strings `true` / `false`), on the
+ * DNS topology with `dns.domain` only: an operator who turns it on where no
+ * account host exists expects an effect, so the boot refuses it.
+ */
+function checkPerUserIssuer (config, problems) {
+  const { perUserIssuerProblems } = require('../../components/oauth2/src/perUserIssuer.ts');
+  for (const message of perUserIssuerProblems(config)) problems.push({ message, path: ['oauth', 'perUserIssuer'] });
 }
 
 /**

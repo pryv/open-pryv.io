@@ -80,9 +80,13 @@ export function issuerFromConfig (config: { get (key: string): unknown }): strin
  * header is consulted to decide who the assertion was addressed to).
  * Returns [] when the issuer is not derivable (fail-closed: aud cannot
  * be satisfied, so the assertion is refused).
+ *
+ * `requestIssuer`: the issuer the request is served by when it is not the
+ * configured one (a per-user issuer, see perUserIssuer.ts: decided by the
+ * core from the platform's own names, never taken from a header as is).
  */
-export function tokenEndpointAudiences (config: { get (key: string): unknown }): string[] {
-  const issuer = issuerFromConfig(config);
+export function tokenEndpointAudiences (config: { get (key: string): unknown }, requestIssuer?: string): string[] {
+  const issuer = requestIssuer || issuerFromConfig(config);
   if (!issuer) return [];
   return [issuer, issuer + '/oauth2/token'];
 }

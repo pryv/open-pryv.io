@@ -1194,6 +1194,17 @@ oauth:
   # the API; a later release is planned to default it to true. Per core; true or false
   # (the strings "true" / "false" too), any other value stops the boot.
   audienceBoundSessions: false
+  # Per-user issuer: true makes an account's own host (https://<name>.<dns.domain>,
+  # the account served by this core) its OAuth issuer: the discovery documents
+  # fetched there, the authorization started there and the code and refresh
+  # tokens issued there name https://<name>.<dns.domain> (`iss`, id_token,
+  # `pryvApi`), are redeemed there only, and an authorization there may name a
+  # resource on that host only. Every other host keeps the configured issuer;
+  # introspection, revocation and the token exchange always do. PLATFORM-WIDE
+  # (the same value on every core), DNS topology only (refused on a dnsLess core
+  # or without dns.domain). Before turning it on, the consent UI must accept
+  # `pryvApi` on every account host (app-web-user-account: trustedApiOrigins).
+  perUserIssuer: false
   # Options handed as-is to the OAuth extension (customExtensions:oauthExtension).
   extensionOptions: {}
   # Bound on each asynchronous OAuth extension hook (e.g. the token-response

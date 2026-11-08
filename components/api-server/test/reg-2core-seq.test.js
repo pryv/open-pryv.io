@@ -385,7 +385,9 @@ describe('[RG2C] Two-core integration tests', function () {
       CORE_DATA_NAME: CORE_A_DATA,
       HOSTED_SITES_JSON: JSON.stringify({ [SITE_BOTH]: { static: SITE_DIR }, [SITE_A_ONLY]: { static: SITE_DIR } }),
       // The consent page of the aliases across cores below
-      OAUTH_CONSENT_URL
+      OAUTH_CONSENT_URL,
+      // The per-user issuer, on Core A only ([OPIS8])
+      OAUTH_PER_USER_ISSUER: '1'
     };
     coreA = await startCore(coreAEnv);
 
@@ -1636,6 +1638,36 @@ describe('[RG2C] Two-core integration tests', function () {
         assert.strictEqual(res.status, 400, host + ' ' + JSON.stringify(res.body));
         assert.strictEqual(res.body.error, 'invalid_grant', host);
       }
+    });
+
+    it('[OPIS8] with the per-user issuer on (Core A): an account of Core A has its own issuer there; an account of Core B is not given one by Core A, whose token endpoint answers 421 on its host', async () => {
+      const own = 'tcpi' + Date.now().toString(36);
+      const reg = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username: own,
+        password: 'testpassw0rd',
+        email: own + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_A_HOSTING
+      });
+      assert.strictEqual(reg.status, 201, JSON.stringify(reg.body));
+      const discovery = (port, host) => requestWithHost(port, 'GET', '/.well-known/oauth-authorization-server', host);
+      const mine = await discovery(CORE_A_PORT, `${own}.${DOMAIN}`);
+      assert.strictEqual(mine.status, 200, JSON.stringify(mine.body));
+      assert.strictEqual(mine.body.issuer, `https://${own}.${DOMAIN}`);
+      assert.match(String(mine.headers.vary), /\bHost\b/i);
+      const configuredA = (await discovery(CORE_A_PORT, `${CORE_A_ID}.${DOMAIN}`)).body.issuer;
+      const elsewhere = await discovery(CORE_A_PORT, `${user.username}.${DOMAIN}`);
+      assert.strictEqual(elsewhere.status, 200, JSON.stringify(elsewhere.body));
+      assert.strictEqual(elsewhere.body.issuer, configuredA, 'not a per-user issuer for an account of another core');
+      const token = await requestWithHost(CORE_A_PORT, 'POST', '/oauth2/token', `${user.username}.${DOMAIN}`,
+        { grant_type: 'refresh_token', refresh_token: 'x', client_id: appId });
+      assert.strictEqual(token.status, 421, JSON.stringify(token.body));
+      assert.strictEqual(token.body.error, 'wrong_core');
+      // Core B runs with the switch off: its own account's host keeps its configured issuer.
+      const onB = await discovery(CORE_B_PORT, `${user.username}.${DOMAIN}`);
+      assert.strictEqual(onB.body.issuer, (await discovery(CORE_B_PORT, `${CORE_B_ID}.${DOMAIN}`)).body.issuer);
     });
 
     it('[2C73] deleting the grant on the home core turns introspection inactive at once', async () => {

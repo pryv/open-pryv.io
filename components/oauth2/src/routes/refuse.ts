@@ -23,18 +23,22 @@
  */
 
 import { verifyState, stateKeyFromConfig } from '../signedState.ts';
-import { issuerFromConfig } from '../issuer.ts';
+import type { PerUserIssuerOf } from '../perUserIssuer.ts';
+import { requestIssuer, stateIssuerRefusal } from '../perUserIssuer.ts';
 import { audit } from '../audit.ts';
 
 import type { Request, Response } from 'express';
 
 export type RefuseDeps = {
   config: { get (key: string): unknown };
+  /** The per-user issuer of a request on an account's host (`oauth:perUserIssuer`). */
+  perUserIssuerOf?: PerUserIssuerOf;
 };
 
 export function handleRefuse (deps: RefuseDeps) {
   return async function refuse (req: Request, res: Response): Promise<void> {
-    const issuer = issuerFromConfig(deps.config);
+    const current = await requestIssuer(deps.config, deps.perUserIssuerOf, req);
+    const issuer = current.issuer;
     const stateKey = stateKeyFromConfig(deps.config);
     if (!issuer || !stateKey) {
       return sendJson(res, 500, { error: 'server_error', error_description: 'service:api or oauth:stateKey not configured' });
@@ -53,6 +57,9 @@ export function handleRefuse (deps: RefuseDeps) {
       });
     }
     const payload = verified.payload;
+    // Answered with the issuer the authorization was made at, never another.
+    const otherIssuer = stateIssuerRefusal(deps.config, payload.issuer, current);
+    if (otherIssuer != null) return sendJson(res, otherIssuer.status, otherIssuer.body);
 
     await audit('oauth.consent.refused', {
       clientId: payload.clientId,

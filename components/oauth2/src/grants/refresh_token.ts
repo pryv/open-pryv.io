@@ -171,6 +171,8 @@ export type RefreshTokenDeps = {
   resolveUsername: UsernameResolver;
   /** Removes a just-minted access when the response cannot be built. */
   revokeAccessLocal?: AuthCodeAccessRevoker;
+  /** The issuer the token request is served by (a per-user one); absent: the configured issuer. */
+  requestIssuer?: string;
 };
 
 export type RefreshGrantParams = {
@@ -240,7 +242,7 @@ export async function handleRefreshToken (
     assertion: params.client_assertion,
     assertionType: params.client_assertion_type,
     platform: deps.platform,
-    expectedAudiences: tokenEndpointAudiences(deps.config),
+    expectedAudiences: tokenEndpointAudiences(deps.config, deps.requestIssuer),
   });
   if (!auth.ok) {
     return { ok: false, status: auth.status, error: auth.error, description: auth.description };
@@ -270,6 +272,12 @@ export async function handleRefreshToken (
   if (peek?.audience != null) {
     const resourceRefusal = checkTokenResource(params.resource, peek.audience);
     if (resourceRefusal != null) return resourceRefusal;
+  }
+  // RFC 9207 mix-up defence: a chain is refreshed at the issuer that issued
+  // it (a per-user issuer's at that host only). Refused on the same
+  // non-consuming read: the token stays usable at its own issuer.
+  if (peek != null && (peek.issuer ?? issuerFromConfig(deps.config)) !== (deps.requestIssuer || issuerFromConfig(deps.config))) {
+    return { ok: false, status: 400, error: 'invalid_grant', description: 'refresh_token was not issued by this issuer' };
   }
 
   // ATOMIC single-use: consume deletes-and-returns in one linearized op, so
@@ -521,7 +529,7 @@ export async function handleRefreshToken (
       registry = await prepareRegistryResponse({
         client,
         grantType: 'refresh_token',
-        issuer: issuerFromConfig(deps.config),
+        issuer: row.issuer ?? issuerFromConfig(deps.config),
         config: deps.config,
         coreTokens: row.coreTokens ?? [],
         grammarTokens: row.grammarTokens ?? [],
@@ -562,6 +570,7 @@ export async function handleRefreshToken (
       ? { kind: 'registry', coreTokens: row.coreTokens ?? [], grammarTokens: row.grammarTokens ?? [] }
       : {}),
     ...(row.audience != null ? { audience: row.audience } : {}),
+    ...(row.issuer != null ? { issuer: row.issuer } : {}),
     accessId: access.accessId,
   });
 

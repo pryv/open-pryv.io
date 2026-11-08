@@ -46,12 +46,21 @@ function firstHeaderValue (raw: unknown): string | null {
   return v.split(',')[0].trim();
 }
 
+/**
+ * The client-facing host of the request (`X-Forwarded-Host` from a trusted
+ * proxy, else `Host`), as received (port kept), or null when there is none.
+ */
+export function externalRequestHost (req: UriSource): string | null {
+  const headers = req.headers ?? {};
+  return (fromTrustedProxy(req) ? firstHeaderValue(headers['x-forwarded-host']) : null) ?? firstHeaderValue(headers.host);
+}
+
 export function externalRequestUri (req: UriSource): string {
   const headers = req.headers ?? {};
   const forwarded = fromTrustedProxy(req);
   const ownProto = req.protocol ?? (req.socket?.encrypted ? 'https' : 'http');
   const proto = (forwarded ? firstHeaderValue(headers['x-forwarded-proto']) : null) ?? ownProto;
-  const host = (forwarded ? firstHeaderValue(headers['x-forwarded-host']) : null) ?? firstHeaderValue(headers.host);
+  const host = externalRequestHost(req);
   if (host == null) throw new Error('cannot reconstruct the request URI: no Host header');
   const rawPath = req.originalUrl ?? req.url ?? '/';
   const path = rawPath.split('?')[0].split('#')[0];
