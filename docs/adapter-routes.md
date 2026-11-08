@@ -118,7 +118,9 @@ platform names, no map of cores and no region knowledge:
    the first label under any domain, because the sidecar puts the base in its public URLs. Without
    `dns.domain` no host is an account (the boot logs one warning). In dnsLess mode the host is never read: every request is a
    platform address (a path form, `https://<core host>/<username>/adapter/<name>/...`, is not served
-   yet).
+   yet). The received `Host` is read here, never `X-Forwarded-Host`: a proxy in front of the core
+   must pass the client's `Host` unchanged (nginx: `proxy_set_header Host $host;`); one that rewrites
+   it (to the core's own name, say) makes every request through it a platform address.
 2. **It asks the platform where the account lives.** Another core: **`421`** with `Retry-After`
    (`dns.defaultTTL`, 300 s by default) and that core's URL, for every method, the sidecar not contacted, never a redirect (a cross-origin redirect drops the
    `Authorization` header, and a request body cannot safely be replayed through one). This core, or a

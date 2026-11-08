@@ -47,7 +47,8 @@ export function perUserIssuerResolver (config: ConfigReader, logger: LoggerLike,
     const addressing = perUserAddressingFor(config);
     if (addressing == null) return null;
     const host = externalRequestHost(req as UriSource);
-    // An explicit port (or an IPv6 literal) is no account host.
+    // An explicit port is no account host (anything else that is not a DNS
+    // name, an IPv6 literal included, is refused by `addressedLabelOf`).
     if (host == null || host.includes(':')) return null;
     const label = addressedLabelOf(host, addressing.isPlatformRoutedLabel, addressing.domain);
     if (label == null) return null;
