@@ -1,6 +1,28 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.76 - 2026-11-08
+
+> **Upgrade advice for operators.** **BREAKING (registration): a new username of the exact shape
+> `a-` + 8 lower-case letters or digits is refused** (registration, `account.changeUsername`,
+> `/reg/{name}/check_username`); it is the shape of the new address aliases. Existing accounts keep
+> their name. **Right after the upgrade, on each core**, run `node bin/reconcile-user-cores.js
+> --address-alias-shape` (add `--config config/host-config.yml` where the core layers one; read
+> only, safe with the API running). It prints `usernames of that shape` and `aliases of that
+> shape`, with the names when there are any; 0 and 0 is the expected result. A current username of
+> that shape is harmless. An alias of that shape found before any owner has minted an address
+> alias is a former username (an account renamed earlier): from this release on it is read as an
+> address alias of its account (listed, counted in its budget, deletable by the owner, adoptable by
+> an OAuth consent); look at those accounts before their owners mint aliases, since the tool cannot
+> tell the two apart afterwards. No new configuration key (`accesses.maxAliasesPerAccount` also
+> bounds the address aliases, at most 10 per account), no schema migration
+> (`migrations.autoRunOnStart: false` needs no step). **Address aliases** are owner-only account
+> methods (`account.addressAliases.create` / `.list` / `.delete`, personal token); the platform
+> routes `<alias>.<dns.domain>` to the account's core and the embedded DNS answers it, like a
+> username. **Adapter routes:** an adapter's early answer to a large upload (e.g. a `401` before it
+> reads the body) is relayed instead of `502`; still one connection to the sidecar per request.
+> The mail templates render their text part with `html-to-text` 10 (internal, no option changed).
+> As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
 
 ### Adapter routes: an early answer to an upload is relayed
 
