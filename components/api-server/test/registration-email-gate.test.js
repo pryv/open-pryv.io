@@ -265,6 +265,26 @@ describe('[EMCR] registration email gate', function () {
     assert.strictEqual(captured.length, 0, 'no code may be mailed to a taken address');
   });
 
+  it('[EMCR15] a challenge counts in the email-lookup budget of the client address: past it, no answer about the address', async function () {
+    const { LOOKUPS_PER_WINDOW, clear } = require('api-server/src/routes/reg/emailLookupBudget.ts');
+    const address = '203.0.113.80';
+    try {
+      for (let i = 0; i < LOOKUPS_PER_WINDOW; i++) {
+        const res = await request.get('/reg/' + encodeURIComponent(newEmail()) + '/check_email').set('X-Forwarded-For', address);
+        assert.notStrictEqual(res.status, 429, 'lookup ' + i + ': ' + JSON.stringify(res.body));
+      }
+      captured = [];
+      nock.cleanAll();
+      mailNock();
+      const res = await request.post('/reg/email-challenge').set('X-Forwarded-For', address).send({ email: newEmail() });
+      assert.strictEqual(res.status, 429, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'too-many-attempts');
+      assert.strictEqual(captured.length, 0, 'no code is mailed past the budget');
+    } finally {
+      await clear();
+    }
+  });
+
   it('[EMCR10] spends the attempt budget then closes the code', async function () {
     const email = newEmail();
     mailNock();

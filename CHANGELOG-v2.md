@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Public email lookups within a per-address budget
+
+- **Changed: the public email lookups share one per-address budget**: `GET /reg/{email}/check_email`,
+  `GET /reg/{email}/username`, `GET /reg/{email}/uid`, `GET /reg/cores?email=` (a lookup by
+  `username` does not count) and, when the registration email gate is on, `POST /reg/email-challenge`
+  (it refuses an address that has an account). Each client address (an IPv4 address, or the /64 of an
+  IPv6 one) may make 30 such requests a minute through them together, valid or not, found or not;
+  past it every one of them answers `429` `too-many-attempts` with `Retry-After` and
+  `data.retryAfterSeconds` until the window ends. The budget is per core: in hashed mode on a
+  multi-core platform, the `307` of the username routes sends the client to the home core, which
+  counts the lookup once more. Before, an address could test emails at request rate, and the
+  username routes map an email to a username.
+- **Changed: `auth.emailCheck` and `auth.cores` are refused inside a batch call and over socket.io**
+  (`invalid-operation`), as the credential methods already are: they are served over their own HTTP
+  routes only, where the budget applies.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
