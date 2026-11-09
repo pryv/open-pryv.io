@@ -1,6 +1,20 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.77 - 2026-11-09
+
+> **Upgrade advice for operators.** No BREAKING change, no schema migration
+> (`migrations.autoRunOnStart: false` needs no step). **New, opt-in: `oauth.perUserIssuer`**
+> (default `false`, nothing changes while it is off; platform-wide, refused at boot and by
+> `check-config` on a dnsLess core or without `dns.domain`). Before turning it on, make the consent
+> UI accept `pryvApi` on every account host (app-web-user-account: `trustedApiOrigins`) and turn it
+> on on every core; turning it off later, or leaving one core off, ends the refresh chains issued at
+> a per-user issuer (the apps authorize again). **Behind a proxy that rewrites `Host`:** the
+> `421 wrong_core` of `/oauth2/token` and `/oauth2/authorize` on an account's own host now reads
+> `X-Forwarded-Host` from a proxy listed in `http.trustedProxies`. **Audit:** a streamed call the
+> client cuts short is now audited as an error (`client-closed-request`), no longer as a success.
+> **HF series:** points written through a former username right after a username change are
+> gathered under the new one. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
 
 ### OAuth: an account's own host as its issuer (`oauth.perUserIssuer`, opt-in)
 
