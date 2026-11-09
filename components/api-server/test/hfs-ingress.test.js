@@ -405,14 +405,29 @@ describe('[HFSI] HFS in-process ingress dispatcher', function () {
       let clientFinished = false;
       client.on('finish', () => { clientFinished = true; });
       const outcome = collect(client);
+      // Seen once failing in a full run only: each message carries the state
+      // and timing, so a next occurrence names what was still pending.
+      const started = Date.now();
+      const state = () => JSON.stringify({
+        ms: Date.now() - started,
+        status: outcome.status,
+        received: outcome.received,
+        ended: outcome.ended,
+        closed: outcome.closed,
+        clientFinished,
+        written: client.socket?.bytesWritten ?? null,
+        workerSocketClosed: worker.socketClosed,
+        warns,
+        debugs
+      });
       client.write(HEAD);
-      assert.ok(await until(() => outcome.ended), 'the early answer must reach the client');
-      assert.strictEqual(outcome.status, 403);
+      assert.ok(await until(() => outcome.ended), 'the early answer must reach the client ' + state());
+      assert.strictEqual(outcome.status, 403, state());
       assert.strictEqual(JSON.parse(outcome.body).error.id, 'forbidden');
       client.end(Buffer.alloc(SIZE - HEAD.length, 0x62));
-      assert.ok(await until(() => clientFinished), 'the rest of the upload must be accepted, not stall');
-      assert.ok(await until(() => worker.socketClosed), 'the worker connection must be released');
-      assert.deepStrictEqual(warns, []);
+      assert.ok(await until(() => clientFinished), 'the rest of the upload must be accepted, not stall ' + state());
+      assert.ok(await until(() => worker.socketClosed), 'the worker connection must be released ' + state());
+      assert.deepStrictEqual(warns, [], state());
       assertNothingEscaped();
     });
 
