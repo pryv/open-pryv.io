@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
 import { openUploadedFile } from './helpers/uploadedFiles.ts';
+import { claimSingleUseAccept } from './helpers/cmcAcceptClaim.ts';
 
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext, UploadedFile } from 'business/src/MethodContext.ts';
@@ -503,10 +504,12 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   const cmcInternalWriteGuard = cmc.createInternalWriteGuardHook({ errors });
   const cmcEventUpdateGuard = cmc.createEventUpdateGuardHook({ errors });
   const cmcEventDeleteGuard = cmc.createEventDeleteGuardHook({ errors });
+  // `claimAccept`: one accept takes a single-use link (cmcAcceptClaim.ts).
   const cmcCapabilityResponseHook = cmc.createCapabilityResponseHook({
     errors,
     mall: mallForCmc,
     logger: getLogger('cmc:capability-response'),
+    claimAccept: claimSingleUseAccept,
   });
   // Takes the access token OUT of an accept / refuse / back-channel record
   // before it is persisted, and carries it on context.cmc.credentials for the

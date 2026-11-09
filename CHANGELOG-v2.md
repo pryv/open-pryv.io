@@ -18,6 +18,16 @@
   (`invalid-operation`), as the credential methods already are: they are served over their own HTTP
   routes only, where the budget applies.
 
+### CMC: one accepter per single-use link, also for accepts sent at once
+
+- **Fixed:** two accepts from two different people written at the same moment on one single-use
+  link could both pass the link's check and both open a relationship: the link only turns
+  `consumed` once the first accept is handled. The first accept now takes the link as it is written;
+  another accepter's accept that arrives meanwhile fails with `cmc-capability-consumed`, as it does
+  once the link is consumed. The same accepter's accept delivered again still passes (it heals its
+  relationship in place). If the first accept fails before the link is consumed, the link takes other
+  accepters again a minute later. Open-link invites and refusals are unchanged.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

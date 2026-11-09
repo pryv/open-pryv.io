@@ -50,6 +50,7 @@ type CapabilityCd = {
 };
 type NewEventLike = {
   streamIds?: string[];
+  type?: string;
   content?: { from?: { username?: string; host?: string } };
 };
 type MwContext = {
@@ -66,11 +67,24 @@ const { CmcErrorIds } = require('./errorIds.ts');
 /**
  * `mall` is optional: without it the open-link re-click check is skipped (unit
  * constructions that only exercise the state gate).
+ *
+ * `claimAccept` takes the single-use link for the accept being written, in
+ * the name of its accepter (`content.from`): create-if-absent on a key of the
+ * account and the capability, shared by the API workers of the core, held a
+ * short while. The link only turns `consumed` once `handleIncomingAccept` has
+ * handled that accept, so without the claim two accepts arriving together both
+ * read `open` and both open a relationship. While the claim is held, an accept
+ * of another accepter is refused as consumed; the holder's own accept passes
+ * again (a re-delivery, which heals its relationship in place). If the accept
+ * fails before the consume, the link takes other accepters once the claim
+ * expires. A store that cannot answer lets the accept through (the state
+ * check above still applies). Without `claimAccept` the check is skipped.
  */
 function createCapabilityResponseHook (deps: {
   errors: ErrorFactory;
   mall?: { accesses: MallAccessesLike };
   logger?: CmcLogger;
+  claimAccept?: (userId: string, capabilityId: string, accepter: string) => Promise<boolean>;
 }): Middleware {
   return async function cmcCapabilityResponseHook (context, _params, _result, next) {
     const event = context?.newEvent;
@@ -133,6 +147,31 @@ function createCapabilityResponseHook (deps: {
         return next(deps.errors.invalidOperation(
           'You have already accepted this open-link consent',
           { id: CmcErrorIds.CAPABILITY_ALREADY_ACCEPTED_BY_YOU, acceptedAt: live.created }
+        ));
+      }
+    }
+    // Single-use (the default for a link minted before modes): one accept takes
+    // the link. A refusal does not consume it, so it takes no claim.
+    if (state === 'open' && capabilityCd.mode !== 'open-link' && event.type === C.ET_ACCEPT &&
+        deps.claimAccept != null && typeof capabilityId === 'string' && typeof userId === 'string') {
+      const from = event.content?.from;
+      // An accept naming no accepter claims the link for nobody: any other
+      // accept is refused while it holds it, and so is a second one of these.
+      const accepter = typeof from?.username === 'string' && typeof from?.host === 'string'
+        ? from.username.toLowerCase() + '|' + from.host.toLowerCase()
+        : '';
+      let claimed = true;
+      try {
+        claimed = await deps.claimAccept(userId, capabilityId, accepter);
+      } catch (err: unknown) {
+        deps.logger?.warn?.('cmc/capabilityResponseHook: accept claim failed, accept let through', {
+          capabilityId, error: String((err as Error)?.message || err),
+        });
+      }
+      if (!claimed) {
+        return next(deps.errors.invalidOperation(
+          'Capability already accepted; the link is single-use and another accept took it',
+          { id: CmcErrorIds.CAPABILITY_CONSUMED }
         ));
       }
     }
