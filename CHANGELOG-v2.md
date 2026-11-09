@@ -38,6 +38,16 @@
   error id `client-closed-request`) instead of as a successful call. The id is new; it is never sent
   to a client, since nobody is left to read it.
 
+### HF series across a username change
+
+- **Fixed: points written through the former username right after a username change are no longer
+  left under it.** The HF server keeps the series credentials it resolved for a while; until it
+  learns of the change, a write through the former name still went to the former name's series,
+  after the core had moved them under the new one, and those points were read under neither name
+  until the next username change (or `bin/gather-former-series.js`). The HF server now moves them
+  under the new name when it learns of the change. A write already in progress at that very moment
+  can still land under the former name (gathered as before).
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

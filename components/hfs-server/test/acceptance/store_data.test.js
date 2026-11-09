@@ -22,6 +22,7 @@ const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('store_data.test');
 const { getMall } = require('mall');
 const { getUsersRepository } = require('business/src/users/index.ts');
+const { pubsub } = require('messages');
 describe('[SDHF] Storing data in a HF series', function () {
   let database, pryv;
   let mall;
@@ -478,12 +479,37 @@ describe('[SDHF] Storing data in a HF series', function () {
       assert.strictEqual(after.status, 200, JSON.stringify(after.body));
       const stored = await store(currentName, event.id, [[4, 4]]);
       assert.strictEqual(stored.status, 200, JSON.stringify(stored.body));
+      // The worker learns of the change asynchronously; once it has, every
+      // point is under the username, whichever came first.
+      const query = `select * from "event.${event.id}"`;
+      await gatheredUnder(query);
       for (const name of [formerName, currentName]) {
         assert.deepStrictEqual(await read(name, event.id), [[1, 1], [2, 2], [3, 3], [4, 4]], 'read under ' + name);
       }
-      const query = `select * from "event.${event.id}"`;
-      assert.strictEqual(await countPoints(query, `user.${formerName}`), 0, 'nothing under the former name');
     });
+
+    it('[SDMV2] a point that lands under the former name after the change is gathered when the worker learns of the change', async function () {
+      const event = await mall.events.create(userId, {
+        streamIds: [parentStreamId], time: timestamp.now(), type: 'series:angular-speed/rad-s'
+      });
+      // A write through credentials cached for the former name, after the
+      // core moved the series: it lands under the former name.
+      await seriesConn.writeMeasurement(`event.${event.id}`, [{ fields: { deltaTime: 5, value: 5 }, timestamp: 5000000 }], { database: `user.${formerName}` });
+      const query = `select * from "event.${event.id}"`;
+      assert.strictEqual(await countPoints(query, `user.${formerName}`), 1);
+      pubsub.series.emit(pubsub.SERIES_USERNAME_CHANGED, { username: formerName, newUsername: currentName });
+      await gatheredUnder(query);
+      assert.strictEqual(await countPoints(query, `user.${currentName}`), 1, 'the point is under the username');
+    });
+
+    async function gatheredUnder (query) {
+      let left = -1;
+      for (let i = 0; i < 50 && left !== 0; i++) {
+        left = await countPoints(query, `user.${formerName}`);
+        if (left !== 0) await awaiting.delay(100);
+      }
+      assert.strictEqual(left, 0, 'nothing under the former name');
+    }
   });
 
   describe('[SD03] POST /events/EVENT_ID/series', function () {
