@@ -21,6 +21,7 @@ const { getPasswordRules, getUsersRepository } = require('business').users;
 const challenge = require('business/src/emails/challenge.ts');
 const policy = require('business/src/emails/registrationPolicy.ts');
 const mailing = require('./../helpers/mailing.ts');
+const { reserveEmailLookup } = require('../../routes/reg/emailLookupBudget.ts');
 
 type RegisterParams = { username?: string; password?: string; email?: string; [k: string]: unknown };
 type EmailChallengeParams = { email: string; language?: string };
@@ -107,8 +108,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     commonFns.getParamsValidation(methodsSchema.usernameCheck.params),
     checkUsername);
 
-  // Email / unique field check
+  // Email / unique field check. Its route counts it in the email-lookup
+  // budget; a batch call or socket.io would not, so they are refused.
   api.register('auth.emailCheck',
+    commonFns.refuseGenericDispatch,
     setAuditAccessId(AuditAccessIds.PUBLIC),
     commonFns.getParamsValidation(methodsSchema.emailCheck.params),
     checkUniqueField);
@@ -184,8 +187,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
 
   // Do not mint a code for an address that already belongs to an account: the
   // challenge only exists to prove an address on the way to creating one.
-  async function refuseTakenAddress (_context: MethodContext, params: EmailChallengeParams, _result: ResultBag, next: MethodNext) {
+  // The answer says whether an address has an account: it counts in the
+  // email-lookup budget of the client address, as the public lookups do.
+  async function refuseTakenAddress (context: MethodContext, params: EmailChallengeParams, _result: ResultBag, next: MethodNext) {
     try {
+      const overBudget = await reserveEmailLookup((context as { source?: { ip?: string } }).source?.ip);
+      if (overBudget != null) return next(overBudget);
       // In any spelling: no code goes to an address another account holds.
       if (await platform.isUniqueValueTaken('email', params.email)) {
         return next(errors.itemAlreadyExists('user', { email: params.email }));
@@ -267,7 +274,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   // Core discovery — find which core hosts a given user
   const { ApiEndpoint } = require('utils');
 
+  // Refused over batch and socket.io, as auth.emailCheck: a lookup by email
+  // is counted on its route only.
   api.register('auth.cores',
+    commonFns.refuseGenericDispatch,
     setAuditAccessId(AuditAccessIds.PUBLIC),
     coresLookup);
 

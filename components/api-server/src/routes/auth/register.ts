@@ -15,6 +15,7 @@ const errors = require('errors').factory;
 const { setMinimalMethodContext, setMethodId } = require('middleware');
 const { getConfigSync } = require('@pryv/boiler');
 const { REGISTRATION_FORWARD_HEADER, verifyRegistrationForward } = require('business/src/auth/registrationForward.ts');
+const { countEmailLookup } = require('../reg/emailLookupBudget.ts');
 
 /**
  * Routes for users
@@ -43,7 +44,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   // `POST /reg/users`. Without this alias it would fall through to the
   // `/:username/*` router and 404 as "Unknown user 'reg'".
   expressApp.post(path.join(regPath, '/users'), setMinimalMethodContext, setMethodId('auth.register'), registerHandler);
-  expressApp.get(path.join(regPath, '/:email/check_email'), setMinimalMethodContext, setMethodId('auth.emailCheck'), (req: PryvRequest, res: Response, next: NextFunction) => {
+  // The email lookups share one per-address budget (see emailLookupBudget.ts).
+  expressApp.get(path.join(regPath, '/:email/check_email'), setMinimalMethodContext, setMethodId('auth.emailCheck'), countEmailLookup(), (req: PryvRequest, res: Response, next: NextFunction) => {
     api.call(req.context, req.params, methodCallback(res, next, 200));
   });
   // Registration email challenge (public, inert unless the gate is on).
@@ -69,9 +71,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   });
 
   // Core discovery — find which core hosts a given user
-  expressApp.get(path.join(regPath, '/cores'), setMinimalMethodContext, setMethodId('auth.cores'), (req: PryvRequest, res: Response, next: NextFunction) => {
-    api.call(req.context, req.query, methodCallback(res, next, 200));
-  });
+  // A lookup by email counts in the email-lookup budget; one by username does not.
+  expressApp.get(path.join(regPath, '/cores'), setMinimalMethodContext, setMethodId('auth.cores'),
+    countEmailLookup((req: PryvRequest) => req.query?.email != null), (req: PryvRequest, res: Response, next: NextFunction) => {
+      api.call(req.context, req.query, methodCallback(res, next, 200));
+    });
 
   // Hostings — available cores
   expressApp.get(path.join(regPath, '/hostings'), setMinimalMethodContext, setMethodId('auth.hostings'), (req: PryvRequest, res: Response, next: NextFunction) => {

@@ -18,6 +18,7 @@ const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { coreIdProblem } = require('platform/src/coreIdentity.ts');
+const { countEmailLookup } = require('./emailLookupBudget.ts');
 const { getLogger } = require('@pryv/boiler');
 
 const logger = getLogger('routes:reg:admin');
@@ -112,7 +113,7 @@ export default function (expressApp: ExpressApp, app: App) {
    * the HMAC username token back to cleartext from its in-region local
    * index — cleartext usernames never cross Raft.
    */
-  expressApp.get('/reg/:email/username', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/:email/username', countEmailLookup(), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const email = String(req.params.email);
       const r = await resolveUsernameByEmail(email);
@@ -133,7 +134,7 @@ export default function (expressApp: ExpressApp, app: App) {
    * GET /:email/uid — deprecated alias, returns { uid }. Same redirect/
    * resolve behaviour as /:email/username above.
    */
-  expressApp.get('/reg/:email/uid', async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/:email/uid', countEmailLookup(), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const email = String(req.params.email);
       const r = await resolveUsernameByEmail(email);
