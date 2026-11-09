@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 18 (2026-11-08), covering releases 2.0.0-rc.40 to 2.0.0-rc.76.
+**Report revision:** 19 (2026-11-09), covering releases 2.0.0-rc.40 to 2.0.0-rc.77.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -128,6 +128,7 @@ its applicability is stated with it.
 | 2.0.0-rc.74 | 2026-11-06 | 1 Low, lower-severity fixes; operator action: none beyond the upgrade for the fixes; keep the host that runs `bin/oauth-client.js` and the cores NTP-synced; before turning on `oauth.clientMetadataDocuments`, read `docs/oauth2.md` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-06) |
 | 2.0.0-rc.75 | 2026-11-06 | lower-severity fixes; operator action: on a platform with several cores, upgrade every core before adding per-user audience entries to OAuth2 clients, and each core before the adapter sidecar next to it reads the addressed-account headers; route adapter paths through the core where per-user addresses are wanted (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-07) |
 | 2.0.0-rc.76 | 2026-11-08 | no finding (new surface: address aliases); dependency update, not an audit finding: `html-to-text` 10 under `email-templates`, which drops `deepmerge` 4.3.1 (GHSA-gcqx-w48m-w2h4, low: prototype poisoning in `mergeObject()`); operator action: right after the upgrade, run `bin/reconcile-user-cores.js --address-alias-shape` on each core and look at any account it lists (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-08) |
+| 2.0.0-rc.77 | 2026-11-09 | no finding (new opt-in surface: a per-user OAuth2 issuer, off by default); lower-severity fix: a streamed call the client cut short was audited as a success; operator action: none beyond the upgrade; before turning `oauth.perUserIssuer` on, read `docs/oauth2.md` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-09) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -232,6 +233,7 @@ workers; the operator's custom authentication step; and the caller id carried fo
 | rqlite platform database: HTTP API (loopback) and Raft (peer cores, mutual TLS) | local / peer cores |
 | Adapter routes (`/adapter/<name>/` on every host, since 2.0.0-rc.73, off unless configured): forwarded to a sidecar on the same host; on a per-user host (`<username>.<dns.domain>`, since 2.0.0-rc.75) the core names the addressed account to the sidecar (`X-Adapter-Name`, `X-Adapter-Base`, set by the core only, client-sent copies dropped) and answers `421` for an account of another core | public, authenticated by the sidecar, not by the core (the two headers are an address, not an identity) |
 | Address aliases (`<alias>.<dns.domain>`, since 2.0.0-rc.76): names of an account minted by the server at its owner's request (`a-` + 8 letters or digits, at most 10), routed to the account's core and answered by the embedded DNS like a username; an OAuth2 consent at one adopts it for that client's grant | public addresses of the account; minted, listed and deleted with the owner's personal token only |
+| Per-user OAuth2 issuer (`oauth.perUserIssuer`, since 2.0.0-rc.77, off unless configured): on an account's own host (`<name>.<dns.domain>`) the OAuth2 issuer is that host; its discovery documents, consent, code, refresh token, id_token and client assertions are bound to it | public, like the configured issuer; only the account the host names consents there |
 | OAuth2 client metadata documents (an https URL as `client_id`, since 2.0.0-rc.74, off unless configured): the core fetches the document, and the key set it names, from the client's host | public: any party can present such a client to the consent screen of the hosts the operator allows |
 | Local pub/sub broker for cache invalidation | loopback |
 | PostgreSQL, InfluxDB, SQLite files | local |
@@ -2077,6 +2079,34 @@ mints and an OAuth2 grant adopts at consent. This is a new feature, described in
   and zero aliases of that shape is the expected result; an alias it lists is a former username,
   now an address alias of its account (listed to the owner, adoptable by an OAuth2 consent).
 
+### Fixed in 2.0.0-rc.77 (deployed)
+
+2.0.0-rc.77 adds an opt-in per-user OAuth2 issuer (`oauth.perUserIssuer`, off by default). This is
+a new feature, described in `CHANGELOG-v2.md`, not a fix. The review made alongside it found no
+defect in earlier releases.
+
+#### Lower-severity fixes in 2.0.0-rc.77
+
+- A streamed call (`events.get` and other calls answered as a stream) that the client cut short
+  was audited, and counted, as a successful call, although its result was never delivered whole;
+  a store failing on its first row was counted as a success too. It is now audited as an error
+  (`audit-log/pryv-api-error`, error id `client-closed-request`, never sent to a client) and
+  counted by how it ended. The audit trail recorded the call; only its outcome was wrong.
+- Not security fixes, listed for operators: HF points written through a former username right
+  after a username change are gathered under the new one (they were read under neither name until
+  the next change); `bin/reconcile-user-cores.js` keeps the routing row of a registration in flight
+  (it could free a name for another core for a moment) and no longer needs the API stopped.
+- New in this release, not findings: the per-user issuer (section 3.2). Off, nothing changes. On,
+  a request at an account's own host is served by the issuer of that host: the authorization, its
+  code and refresh token, the id_token and client assertions are bound to it (`invalid_grant` or
+  `issuer-mismatch` elsewhere), and only the account the host names (its username, or a consent
+  adopting the address alias of that host) consents there (`403 audience-account-mismatch`,
+  audited `issuer-account-mismatch`). Introspection, revocation and the token exchange keep the
+  configured issuer.
+- **Operator action:** none beyond the upgrade. Before turning `oauth.perUserIssuer` on, make the
+  consent UI accept `pryvApi` on every account host and turn it on on every core: turning it off
+  later, or leaving one core off, ends the refresh chains issued at a per-user issuer.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2180,3 +2210,4 @@ This report is updated with every release that carries a security fix:
 | 16 | 2026-11-06 | 2.0.0-rc.40 to 2.0.0-rc.74 | Adds 2.0.0-rc.74 (review of the OAuth2 client revoke, alongside client metadata documents): 1 Low finding and lower-severity fixes; section 3.2 adds client metadata documents and their outbound fetches. Deployed on the maintainers' platforms (2026-11-06). |
 | 17 | 2026-11-07 | 2.0.0-rc.40 to 2.0.0-rc.75 | Adds 2.0.0-rc.75 (review alongside per-user resource addresses and adapter routes on per-user hosts): lower-severity fixes, no counted finding; section 3.2 adds the addressed-account headers and the `421` of adapter routes on per-user hosts. Deployed on the maintainers' platforms (2026-11-07). |
 | 18 | 2026-11-08 | 2.0.0-rc.40 to 2.0.0-rc.76 | Adds 2.0.0-rc.76 (review alongside address aliases): no finding, counts unchanged; the `html-to-text` 10 dependency update (low advisory, not an audit finding); section 3.2 adds address aliases. Deployed on the maintainers' platforms (2026-11-08). |
+| 19 | 2026-11-09 | 2.0.0-rc.40 to 2.0.0-rc.77 | Adds 2.0.0-rc.77 (review alongside the per-user OAuth2 issuer): no finding, counts unchanged; one lower-severity fix (the audit outcome of a streamed call cut short); section 3.2 adds the per-user issuer. Deployed on the maintainers' platforms (2026-11-09). |
