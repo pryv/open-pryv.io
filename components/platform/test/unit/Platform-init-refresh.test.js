@@ -30,8 +30,12 @@ async function until (condition, timeoutMs = 2000) {
 }
 
 describe('[PINI] Platform.init is shared and retryable', () => {
-  // init() needs the storages (PlatformDB singleton) to be up.
-  before(async () => {
+  // init() needs the storages (PlatformDB singleton) to be up. Under
+  // PostgreSQL the root hook does not init them, so this opens the
+  // PostgreSQL and rqlite connections cold: give it the root hook's 30 s,
+  // not the component's 2 s default.
+  before(async function () {
+    this.timeout(30000);
     const { getConfig } = require('@pryv/boiler');
     await require('storages').init(await getConfig());
   });
