@@ -131,16 +131,19 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     const res = fullResponse();
     res.destroy(); // client vanished before we ever got to write
 
-    let onEndCalls = 0;
-    result.onEnd(() => { onEndCalls++; });
+    const ended = [];
+    result.onEnd((outcome) => { ended.push(outcome.status); });
+    const settled = [];
+    result.onSettled((outcome) => { settled.push(outcome.status); });
     // Must not throw ERR_STREAM_UNABLE_TO_PIPE.
     result.writeToHttpResponse(res, 200);
 
     const ok = await until(() => a.released);
     assert.ok(ok, 'source released even though there was no response to pipe into');
-    assert.strictEqual(onEndCalls, 1,
+    assert.deepStrictEqual(ended, ['aborted'],
       'onEnd must still run — it is what AUDITS the call, and a listener attached ' +
-      'to an already-closed response would never fire');
+      'to an already-closed response would never fire — and as an abort, not a success');
+    assert.deepStrictEqual(settled, ['aborted']);
     assert.strictEqual(uncaught, null);
   });
 
@@ -178,12 +181,16 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     result.closeConcatArrayStream('events');
 
     const res = fullResponse();
-    let onEndCalls = 0;
-    result.onEnd(() => { onEndCalls++; });
+    const ended = [];
+    result.onEnd((outcome) => { ended.push(outcome.status); });
+    const settled = [];
+    result.onSettled((outcome) => { settled.push(outcome.status); });
     result.writeToHttpResponse(res, 200);
 
-    const ok = await until(() => onEndCalls === 1);
+    const ok = await until(() => ended.length === 1);
     assert.ok(ok, 'onEnd runs on the happy path too');
+    assert.deepStrictEqual(ended, ['success']);
+    assert.deepStrictEqual(settled, ['success']);
     assert.ok(a.released && b.released, 'both generators completed');
     assert.strictEqual(uncaught, null);
   });
@@ -269,12 +276,19 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     result.addStream('eventDeletions', pipeThroughReal(c.stream, new CleanDeletedEventsStream()));
 
     const errors = [];
+    const ended = [];
+    result.onEnd((outcome) => { ended.push(outcome.status); });
+    const settled = [];
+    result.onSettled((outcome) => { settled.push(outcome.status); });
     result.writeToHttpResponse(responseThatDiesAfterFirstChunk(), 200, (err) => errors.push(err));
 
     const ok = await until(() => a.released && b.released && c.released);
     assert.ok(ok, `every source must be released: a=${a.released} b=${b.released} c=${c.released}`);
     assert.ok(a.stream.destroyed && b.stream.destroyed && c.stream.destroyed);
     assert.deepStrictEqual(errors, [], 'a client hang-up is not handed to the error handler');
+    assert.ok(await until(() => ended.length === 1), 'onEnd runs for a hang-up (it audits it)');
+    assert.deepStrictEqual(ended, ['aborted'], 'a hang-up is not audited as a success');
+    assert.deepStrictEqual(settled, ['aborted']);
     assert.strictEqual(uncaught, null);
   });
 
@@ -312,6 +326,8 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     res.removeHeader = () => {};
     let onEndCalls = 0;
     result.onEnd(() => { onEndCalls++; });
+    const settled = [];
+    result.onSettled((outcome) => { settled.push(outcome); });
     const errors = [];
     result.writeToHttpResponse(res, 200, (err) => { errors.push(err); res.end(); });
 
@@ -322,6 +338,10 @@ describe('[RSAB] streamed responses release their sources when the client goes a
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.strictEqual(errors.length, 1, 'exactly once');
     assert.strictEqual(onEndCalls, 0, 'the error handler audits a failed call, not onEnd');
+    // The response did finish (the handler ended it): the failure must win.
+    assert.strictEqual(settled.length, 1);
+    assert.strictEqual(settled[0].status, 'failed');
+    assert.strictEqual(settled[0].error, errors[0]);
     assert.strictEqual(uncaught, null);
   });
 
