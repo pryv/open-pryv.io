@@ -1,6 +1,17 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.78 - 2026-11-09
+
+> **Upgrade advice for operators.** No schema migration (`migrations.autoRunOnStart: false` needs
+> no step), no new configuration key. **Changed: public email lookups** (`check_email`, the
+> email-to-username routes, `/reg/cores?email=`, and the registration email gate's challenge for an
+> address that has an account) now share one budget of 30 requests a minute per client address;
+> past it they answer `429` `too-many-attempts`. A client that tests many addresses in a burst (a
+> bulk import, a sign-up form that checks on each keystroke) should throttle or handle the `429`.
+> `auth.emailCheck` and `auth.cores` are no longer accepted inside a batch call or over socket.io.
+> **CMC:** a single-use link now accepts one accepter only, also when two accepts arrive at the
+> same moment. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
 
 ### Public email lookups within a per-address budget
 
