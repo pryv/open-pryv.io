@@ -31,6 +31,16 @@
   `http.trustedProxies`, else `Host`), the host the per-user issuer reads: behind a trusted proxy
   that rewrites `Host`, a request for an account of another core is now answered `421` there too.
 
+### HF series across a username change
+
+- **Fixed: points written through the former username right after a username change are no longer
+  left under it.** The HF server keeps the series credentials it resolved for a while; until it
+  learns of the change, a write through the former name still went to the former name's series,
+  after the core had moved them under the new one, and those points were read under neither name
+  until the next username change (or `bin/gather-former-series.js`). The HF server now moves them
+  under the new name when it learns of the change. A write already in progress at that very moment
+  can still land under the former name (gathered as before).
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

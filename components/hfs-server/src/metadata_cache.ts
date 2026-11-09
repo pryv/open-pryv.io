@@ -18,15 +18,20 @@ const storage = require('storage');
 const MethodContext = require('business').MethodContext;
 const errors = require('errors').factory;
 const { SeriesRowType } = require('business').types;
-const { seriesNamespace, accountSeriesNamespaces } = require('business/src/series/namespace.ts');
+const { seriesNamespace, accountSeriesNamespaces, gatherAccountSeries } = require('business/src/series/namespace.ts');
 const { pubsub } = require('messages');
 const { getMall } = require('mall');
 // A single HFS server will keep at maximum this many credentials in cache.
 const LRU_CACHE_SIZE = 10000;
 // Credentials will be cached for at most this many ms.
 const LRU_CACHE_MAX_AGE_MS = 1000 * 60 * 5; // 5 mins
-// Series repository handle — only dropMeasurement is reached from here.
-type SeriesRepoLike = { connection: { dropMeasurement: (...args: unknown[]) => unknown } };
+// Series repository handle: only dropMeasurement and renameDatabase are reached from here.
+type SeriesRepoLike = {
+  connection: {
+    dropMeasurement: (...args: unknown[]) => unknown;
+    renameDatabase: (from: string, to: string) => Promise<void> | void;
+  }
+};
 /** Holds metadata related to series for some time so that we don't have to
  * compile it every time we store data in the server.
  *
@@ -109,11 +114,37 @@ class MetadataCache {
   // A username change moves the account's series under the new name: forget
   // every entry addressed by, or holding the namespace of, the former name,
   // or the next write through it would land under that name again.
-  forgetUsername (change: { username: string }) {
+  // The core moves the series when it emits the change, but until this
+  // message arrives a write through the former name still uses the cached
+  // namespace and lands under it, after that move: gather once more here,
+  // where every write that used the forgotten entries is behind us (a write
+  // already in flight at this moment can still land under the former name;
+  // it is gathered at the next username change, or by
+  // bin/gather-former-series.js).
+  forgetUsername (change: { username: string; newUsername?: string }) {
     const prefix = change.username + '/';
     for (const [key, value] of this.cache.entries()) {
       const holdsName = value instanceof SeriesMetadataImpl && value.userName === change.username;
       if (holdsName || String(key).startsWith(prefix)) this.cache.delete(key);
+    }
+    if (change.newUsername != null) this.gatherSeries(change.newUsername); // never rejects
+  }
+
+  /**
+   * The account's former-name namespaces merged into its username's, the
+   * username read now (renamed again since, it is the latest name); a failure
+   * is logged, never raised.
+   */
+  async gatherSeries (newUsername: string): Promise<void> {
+    try {
+      const usersIndex = await storage.getUsersLocalIndex();
+      const userId = await usersIndex.getUserId(newUsername);
+      if (userId == null) return; // not served here
+      const username = await usersIndex.getUsername(userId);
+      if (username == null) return;
+      await gatherAccountSeries(this.series.connection, usersIndex, userId, username);
+    } catch (err: unknown) {
+      logger.error(`Could not gather the series of the former names of "${newUsername}"`, err);
     }
   }
 
