@@ -35,7 +35,7 @@
   audit reason of `issuerAccountRefusal` (the answer is unchanged).
 - Tests: `[OPIS1-7]` (in-process core with the DNS topology injected), `[OPIS8]` two-core (Core A
   runs with the switch on: `OAUTH_PER_USER_ISSUER` in the child core helper), `[OPIU1-3]`,
-  `[CVOA9]`, `[CKPU1]`, `[OTKW5]` (the guard's host), `[OAIH5]` (`/reg/service/info` on a user host
+  `[CVOA11]` (first published as a second `[CVOA9]`, renumbered), `[CKPU1]`, `[OTKW5]` (the guard's host), `[OAIH5]` (`/reg/service/info` on a user host
   of a DNS-topology app); `bin/init.js` appendix and `docs/oauth2.md` § 2 `perUserIssuer`.
 
 ### Address aliases

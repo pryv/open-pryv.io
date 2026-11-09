@@ -234,7 +234,7 @@ describe('[PSET] accesses permissionSet', () => {
   });
 
   describe('[PSET-FORBID] forbidden features in consent context', () => {
-    it('[PS14] a forbidden feature is always mandatory; optIn on it is refused; plain form unchanged', () => {
+    it('[PS15] a forbidden feature is always mandatory; optIn on it is refused; plain form unchanged', () => {
       assert.deepEqual(ps.normalizePermissions([{ feature: 'webhooks', setting: 'forbidden' }], { consent: true }),
         [{ feature: 'webhooks', setting: 'forbidden', mandatory: true }]);
       assert.throws(() => ps.normalizePermissions([{ feature: 'webhooks', setting: 'forbidden', optIn: true }], { consent: true }),

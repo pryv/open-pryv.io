@@ -324,7 +324,7 @@ describe('[OPUA] OAuth2: per-user audiences', () => {
   }
 
   describe('consent', () => {
-    it('[OPUE9] an address alias of the signed-in account is its address; another account\'s alias, or a former username, is not', async () => {
+    it('[OPUA9] an address alias of the signed-in account is its address; another account\'s alias, or a former username, is not', async () => {
       const platform = fakePlatform();
       await seedConnector(platform);
       const a = await authorize(platform, at('addr-alice'));
@@ -508,7 +508,7 @@ describe('[OPUA] OAuth2: per-user audiences', () => {
       assert.equal(store.calls.length, 0);
     });
 
-    it('[OPUX5] the exchange takes an address alias or a former username the subject account still holds; an exact entry binds nothing', async () => {
+    it('[OPUA10] the exchange takes an address alias or a former username the subject account still holds; an exact entry binds nothing', async () => {
       const platform = await seededExchange(at('addr-alice'));
       assert.equal((await exchange(platform, { subject: subjectSession({ addressAliases: ['addr-alice'] }) })).statusCode, 200);
       assert.deepEqual((await exchange(platform)).body, NOT_ACTIVE);

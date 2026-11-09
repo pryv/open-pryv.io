@@ -321,12 +321,12 @@ describe('[ACMEORCH] AcmeOrchestrator', function () {
       return logs.filter((l) => l.startsWith('initial materialize'));
     }
 
-    it('[ACLU1] a platform DB without leader is logged as a retry, not an error', async () => {
+    it('[ACML1] a platform DB without leader is logged as a retry, not an error', async () => {
       const logs = await firstMaterializeLog(new Error('rqlite query failed (503): leader not found\n'));
       assert.deepEqual(logs, ['initial materialize: platform DB leader unavailable (restarting?), retrying on the next tick']);
     });
 
-    it('[ACLU2] any other failure is still logged as an error with its message', async () => {
+    it('[ACML2] any other failure is still logged as an error with its message', async () => {
       const logs = await firstMaterializeLog(new Error('rqlite query failed (500): boom'));
       assert.deepEqual(logs, ['initial materialize error: rqlite query failed (500): boom']);
     });

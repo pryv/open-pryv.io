@@ -1089,7 +1089,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(sameRes.status, 200, describeRes(sameRes));
     });
 
-    it('[OE38] clientData.oauth is server-owned: refused on accesses.create, and set or changed on accesses.update (403)', async function () {
+    it('[OE39] clientData.oauth is server-owned: refused on accesses.create, and set or changed on accesses.update (403)', async function () {
       const create = await coreRequest.post('/' + username + '/accesses').set('Authorization', personalToken)
         .send({ name: 'oe35-' + cuid(), type: 'app', permissions: [{ streamId: 'health', level: 'read' }], clientData: { oauth: { mine: 1 } } });
       assert.equal(create.status, 403, describeRes(create));
@@ -1109,7 +1109,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       assert.equal(none.status, 200, describeRes(none));
     });
 
-    it('[OE36] the session minted at consent is written by the system, carries its grant link, and is announced like any created access', async function () {
+    it('[OE40] the session minted at consent is written by the system, carries its grant link, and is announced like any created access', async function () {
       const { pubsub } = require('messages');
       const seen = [];
       const remove = pubsub.scopedNotifications.onAndGetRemovable(username, (payload) => { seen.push(payload); });

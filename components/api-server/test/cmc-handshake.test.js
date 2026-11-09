@@ -2591,7 +2591,7 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(res.body?.error?.data?.id, 'cmc-reserved-stream-undeletable', label);
     }
 
-    it('[CN106] accepter withdraws: both sides may then delete their chat stream with its messages, not before', async function () {
+    it('[CN109] accepter withdraws: both sides may then delete their chat stream with its messages, not before', async function () {
       const h = await runFreshHandshake('cd-a', 'cd-app-a', { mode: 'open-link' });
       const bc = await backChannelFor(alice, h.triggerStreamId);
       const dataGrant = await pollCounterpartyAccessForScope(bob, alice.username, h.triggerStreamId);
@@ -3603,7 +3603,7 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       return await coreRequest.get(bob.eventsPath).set('Authorization', token).query({ streams, limit: 100 });
     }
 
-    it('[CN88] an offer asking the accepter\'s :_cmc:inbox (every grant endpoint they received) is refused at write', async function () {
+    it('[CN110] an offer asking the accepter\'s :_cmc:inbox (every grant endpoint they received) is refused at write', async function () {
       await ensureStream(alice.streamsPath, alice.token, { id: ':_cmc:apps:guard-app-a', parentId: ':_cmc:apps', name: 'guard-app-a' });
       for (const streamId of [':_cmc:inbox', ':_cmc:_internal:retries', ':_cmc:apps:guard-app-a:s:chats:bob--x-pryv-me']) {
         const res = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token).send({

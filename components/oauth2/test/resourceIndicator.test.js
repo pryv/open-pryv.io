@@ -651,7 +651,7 @@ describe('[ORI] OAuth2: RFC 8707 resource indicators', () => {
     assert.equal('audience' in lastCtx.introspectionClaims, false);
   });
 
-  it('[ORI11] discovery documents advertise nothing new', () => {
+  it('[ORI16] discovery documents advertise nothing new', () => {
     const cfg = { issuer: ISSUER, scopesSupported: [], oidc: true, introspection: true, revocation: true };
     for (const doc of [buildDiscoveryDocument(cfg), buildOpenIdConfiguration(cfg)]) {
       assert.deepEqual(Object.keys(doc).filter((k) => /resource|audience|target/.test(k)), []);
