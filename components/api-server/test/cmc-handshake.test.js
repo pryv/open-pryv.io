@@ -2052,6 +2052,27 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       await pollTrigger(alice, inv2.requestEventId, (c) => c.status === 'invalidated', 'CN56 refused then invalidated');
     });
 
+    it('[CN106] two accepts sent at once on one single-use link: one relationship, the other accept fails as consumed', async function () {
+      const inv = await postInvite('two-accepts');
+      const carol = await makeActor('carol-' + cuid().slice(-8));
+      const stamp = Date.now();
+      const [bobAcceptId, carolAcceptId] = await Promise.all([
+        postAnswer(bob, 'consent/accept-cmc', inv.capabilityUrl, { accessName: 'cmc-grant-cn106-b-' + stamp }),
+        postAnswer(carol, 'consent/accept-cmc', inv.capabilityUrl, { accessName: 'cmc-grant-cn106-c-' + stamp })
+      ]);
+      const outcomes = await Promise.all([
+        pollTrigger(bob, bobAcceptId, settled, 'CN106 bob accept'),
+        pollTrigger(carol, carolAcceptId, settled, 'CN106 carol accept')
+      ]);
+      const statuses = outcomes.map((t) => t.content.status).sort();
+      assert.deepStrictEqual(statuses, ['completed', 'failed'], JSON.stringify(outcomes.map((t) => t.content)));
+      const failed = outcomes.find((t) => t.content.status === 'failed');
+      assert.strictEqual(failed.content.failure?.reason, 'cmc-capability-consumed', JSON.stringify(failed.content));
+      assert.strictEqual((await liveAccepters(alice, inv.capabilityId)).length, 1);
+      const cap = await capabilityAccessOf(alice, inv.capabilityId);
+      assert.strictEqual(cap?.clientData?.cmc?.capability?.state, 'consumed');
+    });
+
     it('[CN101] withdrawing a consumed single-use invite is a no-op: the relationship stands, the invite stays accepted', async function () {
       const h = await runFreshHandshake('wd-consumed');
       await pollTrigger(alice, h.requestEventId, (c) => c.status === 'accepted', 'CN101 accepted');
