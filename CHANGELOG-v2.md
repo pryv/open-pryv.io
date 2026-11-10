@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### OAuth: a consent at the owner's own address alias held by another app names that case
+
+- **Changed: the account owner consenting at one of their address aliases that another app's grant
+  holds is refused `403 access_denied` with `reason: address-alias-held`** ("the requested address
+  is one of this account's address aliases, already used by another app") at `/oauth2/authorize/offer`
+  and `/accept`, audited as `oauth.consent.refused` with that reason. Before, it was answered
+  `audience-account-mismatch` ("names another account's address"), which reads wrong to the owner.
+  Every other case keeps the shared `audience-account-mismatch`: another account signing in at that
+  address, another account's alias, an access alias, a former username, and a consent that loses a
+  race for an unheld alias. The owner lists the alias and the app holding it
+  (`account.addressAliases.list`, `heldBy`), so the distinct answer reveals nothing new.
+
 ### Public email lookups within a per-address budget
 
 - **Changed: the public email lookups share one per-address budget**: `GET /reg/{email}/check_email`,

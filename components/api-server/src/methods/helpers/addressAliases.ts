@@ -91,14 +91,27 @@ export function isRegistryGrantRow (row: AliasHolderRow, clientId?: string): boo
  * never one of them. Without a client, the unheld ones only.
  */
 export async function bindableAddressAliases (user: AccountRef, clientId?: string | null): Promise<string[]> {
+  return (await consentAddressAliases(user, clientId)).bindable;
+}
+
+/**
+ * The account's address aliases split for a consent of `clientId`: those it
+ * may bind (see `bindableAddressAliases`) and those another access holds.
+ * The second list names the account's own aliases only, for the owner's
+ * consent screen: a consent at one of them is refused under its own reason.
+ */
+export async function consentAddressAliases (user: AccountRef, clientId?: string | null): Promise<{ bindable: string[]; held: string[] }> {
   const aliases = await addressAliasesOfAccount(user.id);
-  if (aliases.length === 0) return [];
+  if (aliases.length === 0) return { bindable: [], held: [] };
   const holders = await addressAliasHolders(user);
-  return aliases.filter((alias) => {
+  const bindable: string[] = [];
+  const held: string[] = [];
+  for (const alias of aliases) {
     const rows = holders.get(alias);
-    if (rows == null || rows.length === 0) return true;
-    return clientId != null && rows.some((row) => isRegistryGrantRow(row, clientId));
-  });
+    if (rows == null || rows.length === 0 || (clientId != null && rows.some((row) => isRegistryGrantRow(row, clientId)))) bindable.push(alias);
+    else held.push(alias);
+  }
+  return { bindable, held };
 }
 
 /** The access a holder list names as the alias's holder: the grant, or the first row. */

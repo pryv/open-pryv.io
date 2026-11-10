@@ -465,9 +465,13 @@ with a message naming the accepted form.
   the grant and every session of it carry it as their alias, whatever the
   client's `subjectType`, so `sub`, `api_base`, the token's address and the
   audience are that one name, and the tokens are used at that address only.
-  One grant per address alias: an alias another grant holds, another
-  account's alias, a minted access alias (`r-`) and a former username are
-  refused `audience-account-mismatch`. The signed-in `/offer` answers
+  One grant per address alias: another account's alias, a minted access
+  alias (`r-`) and a former username are refused `audience-account-mismatch`;
+  so is an alias another grant holds, except to its owner, who is answered
+  `address-alias-held` (the owner lists the alias and its holder anyway, so
+  that tells nothing new; the owner releases it by deleting the alias or
+  withdrawing that app). A consent racing another one for the same unheld
+  alias is refused `audience-account-mismatch`. The signed-in `/offer` answers
   `addressAlias` (the name the app will know the account by); over a current
   grant that carries another alias, or none, the consent is a change of
   subject (`subjectChange`, `pseudonym` to `pseudonym` included; § 1d "Change
@@ -718,6 +722,7 @@ never on the wording; render errors without one generically.
 | `consent-widens-offer` | the kept subset would widen the offer through the stream hierarchy |
 | `grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (`/offer` and `/accept`) |
 | `audience-account-mismatch` | 403 `access_denied`: the requested resource is a per-user address that does not name the signed-in account (§ 1c); the signed-in `/offer` and `/accept` |
+| `address-alias-held` | 403 `access_denied`: the requested resource is one of the signed-in account's own address aliases, which another access (another app's grant) holds (§ 1c); the signed-in `/offer` and `/accept` |
 | `audience-not-listed` | 400 `invalid_target`: the client's list no longer holds the resource the authorization named, or the client is gone: restart the flow (§ 1c); the signed-in `/offer` and `/accept` |
 
 ### Registry grants and their sessions

@@ -35,6 +35,7 @@ const TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 const OAUTH = { consentUrl: CONSENT_URL, stateKey: STATE_KEY };
 const MISMATCH = { error: 'access_denied', error_description: 'the requested resource names another account\'s address', reason: 'audience-account-mismatch' };
+const HELD = { error: 'access_denied', error_description: 'the requested address is one of this account\'s address aliases, already used by another app', reason: 'address-alias-held' };
 
 const LEVEL_OF = { read: 'read', write: 'contribute' };
 const toyExtension = {
@@ -433,15 +434,38 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
     assert.equal((await introspect(again.access_token)).body.aud, at(alias));
     assert.equal((await registryGrantOf(alice, tplId)).id, grant.id, 'the same grant');
 
-    // Held by this grant: another client's consent at that address is refused; so is bob's alias for alice.
+    // Held by this grant: another client's consent at that address is refused (told to the owner as held); so is bob's alias for alice.
     const other = await register('PerUserOther');
     const { state: s2 } = await authorize(other, at(alias));
-    assert.deepEqual([(await offer(alice, s2)).status, (await accept(alice, s2)).body], [403, MISMATCH]);
+    assert.deepEqual([(await offer(alice, s2)).status, (await accept(alice, s2)).body], [403, HELD]);
     const bobs = await mintAddressAlias(bob);
     const { state: s3 } = await authorize(other, at(bobs));
     assert.deepEqual([(await offer(alice, s3)).status, (await accept(alice, s3)).body], [403, MISMATCH]);
     assert.equal(await registryGrantOf(alice, other), null, 'nothing written');
     assert.ok((await addressAliasesOf(bob)).every((x) => x.heldBy === null), 'bob\'s alias is untouched');
+  });
+
+  it('[OPUE22] the owner consents at an address alias another app\'s grant holds: 403 address-alias-held, audited so, nothing written; another account there still gets the shared mismatch', async () => {
+    const alice = await newUser();
+    const bob = await newUser();
+    const alias = await mintAddressAlias(alice);
+    await connect(alice, tplId, at(alias));
+    const other = await register('PerUserHeld');
+    const { state } = await authorize(other, at(alias));
+    let o, a;
+    const rows = await auditRows(async () => {
+      o = await offer(alice, state);
+      a = await accept(alice, state);
+    });
+    for (const res of [o, a]) assert.deepEqual([res.status, res.body], [403, HELD]);
+    const refused = rows.filter((x) => x.event === 'oauth.consent.refused');
+    assert.equal(refused.length, 2);
+    assert.ok(refused.every((x) => x.payload.reason === 'address-alias-held' && x.payload.userId == null));
+    assert.ok(!JSON.stringify(rows).includes(alias), 'no alias in the audit rows');
+    assert.equal(await registryGrantOf(alice, other), null, 'nothing written');
+    // No oracle: for bob, alice's held alias is just another account's address.
+    const { state: s2 } = await authorize(other, at(alias));
+    assert.deepEqual([(await offer(bob, s2)).body, (await accept(bob, s2)).body], [MISMATCH, MISMATCH]);
   });
 
   it('[OPUE16] a consent at an address alias over a grant without it is a change of subject: unacknowledged, refused; acknowledged, the grant is replaced (the alias it held, if any, released)', async () => {

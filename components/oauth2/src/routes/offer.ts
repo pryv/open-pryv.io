@@ -61,6 +61,8 @@ export type OfferSession = {
   personal?: boolean;
   /** The account's address aliases (a per-user resource may name one). */
   addressAliases?: string[];
+  /** The account's address aliases another access holds (never bound; named in the refusal). */
+  heldAddressAliases?: string[];
   /** Host-app data piggybacked (e.g. the MethodContext). */
   _context?: unknown;
 };
