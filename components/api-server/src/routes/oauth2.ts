@@ -127,12 +127,14 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     if (!(typeof access?.isPersonal === 'function' && access.isPersonal() === true)) {
       return { refused: true as const, description: 'only the account owner can grant OAuth access' };
     }
+    // A per-user resource may name one of them (see oauth2/audienceAccount.ts):
+    // those this client's consent may bind, and those another access holds.
+    const aliasNames = await sessions.consentAddressAliasesOf(context.user.id, clientId);
     return {
       userId: context.user.id,
       username: context.user.username,
-      // A per-user resource may name one of them (see oauth2/audienceAccount.ts):
-      // those this client's consent may bind.
-      addressAliases: await sessions.addressAliasesOf(context.user.id, clientId),
+      addressAliases: aliasNames.bindable,
+      heldAddressAliases: aliasNames.held,
       personal: true,
       // The OpenID Connect `auth_time`: the last completed sign-in recorded on
       // this personal access (password, password plus second factor, or
