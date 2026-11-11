@@ -1139,12 +1139,22 @@ describe('[OCMD] client metadata documents', function () {
   it('[OCMD13] the access stamp: name (first language of a set), host, url; none for a curated client', () => {
     const key = ids.metadataClientKey(URL1);
     assert.deepEqual(ids.metadataClientStamp({ origin: 'metadata-document', metadataUrl: URL1, clientName: 'Agent' }),
-      { name: 'Agent', host: 'client.example', url: URL1 });
+      { name: 'Agent', host: 'client.example', url: URL1, origin: 'metadata-document' });
     assert.deepEqual(ids.metadataClientStamp({ origin: 'metadata-document', metadataUrl: URL1, name: { fr: 'Agent FR', de: 'Agent DE' } }),
-      { name: 'Agent FR', host: 'client.example', url: URL1 });
+      { name: 'Agent FR', host: 'client.example', url: URL1, origin: 'metadata-document' });
     assert.deepEqual(ids.metadataClientStamp({ origin: 'metadata-document', metadataUrl: 'https://xn--bcher-kva.example/c.json' }),
-      { host: 'xn--bcher-kva.example', url: 'https://xn--bcher-kva.example/c.json' });
+      { host: 'xn--bcher-kva.example', url: 'https://xn--bcher-kva.example/c.json', origin: 'metadata-document' });
     assert.equal(ids.metadataClientStamp({ clientId: 'curated', clientName: 'Curated' }), null);
+    // Any client: an operator-registered registry one carries its registered name and `origin: 'operator'`.
+    assert.deepEqual(ids.clientStamp({ clientId: 'curated', kind: 'registry', clientName: 'Curated' }), { name: 'Curated', origin: 'operator' });
+    assert.deepEqual(ids.clientStamp({ clientId: 'curated', kind: 'registry', name: { de: 'Kuratiert' } }), { name: 'Kuratiert', origin: 'operator' });
+    assert.deepEqual(ids.clientStamp({ clientId: 'curated', kind: 'registry' }), { origin: 'operator' });
+    // An app-account client's consent is a CMC grant: not stamped.
+    assert.equal(ids.clientStamp({ clientId: 'app', kind: 'app-account', clientName: 'App' }), null);
+    assert.equal(ids.clientStamp({ clientId: 'app', clientName: 'App' }), null);
+    assert.deepEqual(ids.clientStamp({ origin: 'metadata-document', metadataUrl: URL1, clientName: 'Agent' }),
+      { name: 'Agent', host: 'client.example', url: URL1, origin: 'metadata-document' });
+    assert.equal(ids.clientStamp(null), null);
     assert.equal(ids.isMetadataClientKey(key), true);
     assert.deepEqual(meta.metadataHostOf('https://xn--bcher-kva.example/c.json'),
       { metadataHost: 'xn--bcher-kva.example', metadataHostUnicode: 'bücher.example' });

@@ -445,8 +445,9 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     if (registry && grantState != null && typeof grantState.name === 'string') {
       await sessions.setGrantState(context.user.id, context.user.username, dataGrant.id, grantState.name, grantState.value);
     }
-    // A metadata-document client's grant names it (display fields from its
-    // document as they stand at this consent); server-owned, storage-direct.
+    // A registry grant names its client (a metadata-document client's display
+    // fields from its document, or the name the operator registered, as they
+    // stand at this consent); server-owned, storage-direct.
     if (registry) await sessions.setGrantClient(context.user.id, context.user.username, dataGrant.id, clientId);
 
     // The minted row additionally carries the session selfRevoke override

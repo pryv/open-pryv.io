@@ -10,9 +10,23 @@
   and `/accept`, audited as `oauth.consent.refused` with that reason. Before, it was answered
   `audience-account-mismatch` ("names another account's address"), which reads wrong to the owner.
   Every other case keeps the shared `audience-account-mismatch`: another account signing in at that
-  address, another account's alias, an access alias, a former username, and a consent that loses a
-  race for an unheld alias. The owner lists the alias and the app holding it
+  address, another account's alias, an access alias, a former username, and a consent that loses the
+  write race for an unheld alias (one that reads the winner's grant already written gets
+  `address-alias-held`). The owner lists the alias and the app holding it
   (`account.addressAliases.list`, `heldBy`), so the distinct answer reveals nothing new.
+
+### OAuth: an operator-registered client's grant and sessions name it
+
+- **Added: `clientData.oauth.client = { name?, origin: "operator" }` on the consent grant and every
+  session of a registry client the operator registered**, as a metadata-document client's already carry
+  `{ name?, host, url }`. `name` is the name the operator registered (`clientName`, else the first
+  language of `name`), never one taken from a request. A metadata-document client's stamp now also
+  carries `origin: "metadata-document"` (a stamp written before has none; its `host` tells it
+  apart), so `origin` names the kind of every new stamp. An account app names a connected app by it,
+  the access name `oauth-grant:<clientId>` / `oauth:<clientId>` being no name. A snapshot, server-owned,
+  refused by `accesses.update`: a refresh stamps the new session from the client row as it stands, a
+  consent stamps the grant again, so a grant made before this carries it from its next consent and
+  its sessions from their next refresh. A derived session (token exchange) carries none.
 
 ### CMC group accounts: member access budgets for bulk reads
 

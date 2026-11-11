@@ -405,13 +405,13 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
 
   it('[OREG12] the grant is stamped with its client by the server; the owner cannot change that stamp', async () => {
     const [grant] = await grants();
-    assert.deepEqual(grant.clientData?.oauth, { grantOf: clientId });
+    assert.deepEqual(grant.clientData?.oauth, { grantOf: clientId, client: { name: 'Registry e2e', origin: 'operator' } });
     for (const clientData of [{ oauth: { grantOf: 'someone-else' } }, { oauth: null }, null]) {
       const res = await coreRequest.put(accessPath(grant.id)).set('Authorization', personalToken).send({ clientData });
       assert.equal(res.status, 403, JSON.stringify(clientData) + ': ' + JSON.stringify(res.body));
     }
     const [after] = await grants();
-    assert.deepEqual(after.clientData?.oauth, { grantOf: clientId });
+    assert.deepEqual(after.clientData?.oauth, { grantOf: clientId, client: { name: 'Registry e2e', origin: 'operator' } });
     // Sessions are minted by the system, linked to the grant.
     const sessions = (await coreRequest.get('/' + username + '/accesses').set('Authorization', personalToken))
       .body.accesses.filter((a) => a.name === 'oauth:' + clientId);

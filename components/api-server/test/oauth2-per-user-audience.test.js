@@ -17,6 +17,7 @@
 
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import * as oauth2 from 'oauth2';
 import * as storage from 'oauth2/src/storage.ts';
 import { mintSecret } from 'oauth2/src/clientSecret.ts';
@@ -510,7 +511,10 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
     }
     const answers = await Promise.all(flows.map((f) => accept(alice, f.state, f.shownDigest)));
     assert.deepEqual(answers.map((a) => a.status).sort(), [200, 403], JSON.stringify(answers.map((a) => a.body)));
-    assert.deepEqual(answers.find((a) => a.status === 403).body, MISMATCH);
+    // The loser reads the alias held (the winner's grant was written before its
+    // check) or loses the write race: either refusal, nothing written.
+    const refusal = answers.find((a) => a.status === 403).body;
+    assert.ok(isDeepStrictEqual(refusal, MISMATCH) || isDeepStrictEqual(refusal, HELD), JSON.stringify(refusal));
     const holders = (await accesses(alice)).filter((a) => a.alias === alias && a.name.startsWith('oauth-grant:'));
     assert.equal(holders.length, 1, 'one grant holds it');
     assert.equal(holders[0].name, 'oauth-grant:' + flows[answers.findIndex((a) => a.status === 200)].cid);

@@ -470,8 +470,10 @@ with a message naming the accepted form.
   so is an alias another grant holds, except to its owner, who is answered
   `address-alias-held` (the owner lists the alias and its holder anyway, so
   that tells nothing new; the owner releases it by deleting the alias or
-  withdrawing that app). A consent racing another one for the same unheld
-  alias is refused `audience-account-mismatch`. The signed-in `/offer` answers
+  withdrawing that app). Of two consents racing for the same unheld alias, the
+  loser is refused `address-alias-held` when it reads the winner's grant
+  already written, `audience-account-mismatch` when it loses the write itself;
+  nothing is written for it either way. The signed-in `/offer` answers
   `addressAlias` (the name the app will know the account by); over a current
   grant that carries another alias, or none, the consent is a change of
   subject (`subjectChange`, `pseudonym` to `pseudonym` included; § 1d "Change
@@ -1071,13 +1073,22 @@ tooltip). The name is never a link; the only links are `clientUri`,
 when served, is smaller than the host and never replaces it.
 
 **The access stamp.** The grant and every session minted for such a client
-carry, server-owned, `clientData.oauth.client = { name?, host, url }` (the
-document's name as a plain string, the first language of a set; the host in
-ASCII form; the URL): an account app names a connected app by it, the access
+carry, server-owned, `clientData.oauth.client = { name?, host, url, origin:
+"metadata-document" }` (the document's name as a plain string, the first
+language of a set; the host in ASCII form; the URL; a stamp written before
+2.0.0-rc.79 has no `origin`): an account app names a connected app by it, the access
 name `oauth:url~…` being no name. It is a snapshot: a refresh stamps the new
 session from the client as it stands, a consent stamps the grant again; the API
-refuses to change it. A derived session (token exchange) and the accesses of
-curated clients carry none.
+refuses to change it. A derived session (token exchange) carries none. A
+registry client the operator registered (§ 3b) is stamped the same way, at the
+same moments, with
+`clientData.oauth.client = { name?, origin: "operator" }`: the name the
+operator registered (`clientName`, else the first language of `name`), never
+one taken from a request, and no host or url. An app-account client's consent
+is a CMC grant, not stamped. An account app tells the two apart by `host`
+(present on every metadata-document stamp, never on an operator one) or by
+`origin`, and shows a metadata-document client's host next to its name, never
+the name alone.
 
 **On the wire and in storage.** The URL is the client's id on the wire:
 request parameters (`/oauth2/authorize`, `/token` body `client_id`, `/revoke`),
