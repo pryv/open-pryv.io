@@ -22,7 +22,7 @@ import { activityOf } from 'business/src/accesses/accountActivity.ts';
 import type { AccountActivity } from 'business/src/accesses/accountActivity.ts';
 import { buildMallForCmc } from './cmcMall.ts';
 import { sendmail, isLoggedMailFailure, isRecipientRejected, isRecipientDeferred } from './mailing.ts';
-import { availableActions, availableTriggers } from './autoDeletionPolicy.ts';
+import { availableActions, availableTriggers, autoDeletionConfig } from './autoDeletionPolicy.ts';
 
 /**
  * What `account.getAutoDeletion` / `account.setAutoDeletion` need to know
