@@ -2,19 +2,6 @@
 
 ## Unreleased
 
-### OAuth: a consent at the owner's own address alias held by another app names that case
-
-- **Changed: the account owner consenting at one of their address aliases that another app's grant
-  holds is refused `403 access_denied` with `reason: address-alias-held`** ("the requested address
-  is one of this account's address aliases, already used by another app") at `/oauth2/authorize/offer`
-  and `/accept`, audited as `oauth.consent.refused` with that reason. Before, it was answered
-  `audience-account-mismatch` ("names another account's address"), which reads wrong to the owner.
-  Every other case keeps the shared `audience-account-mismatch`: another account signing in at that
-  address, another account's alias, an access alias, a former username, and a consent that loses the
-  write race for an unheld alias (one that reads the winner's grant already written gets
-  `address-alias-held`). The owner lists the alias and the app holding it
-  (`account.addressAliases.list`, `heldBy`), so the distinct answer reveals nothing new.
-
 ### OAuth: an operator-registered client's grant and sessions name it
 
 - **Added: `clientData.oauth.client = { name?, origin: "operator" }` on the consent grant and every
@@ -27,76 +14,6 @@
   refused by `accesses.update`: a refresh stamps the new session from the client row as it stands, a
   consent stamps the grant again, so a grant made before this carries it from its next consent and
   its sessions from their next refresh. A derived session (token exchange) carries none.
-
-### CMC group accounts: member access budgets for bulk reads
-
-- **Changed: asking again for a live member access no longer counts as a new one.** A membership has
-  two budgets, counted for the whole core (shared by its API workers) as a burst from idle then a
-  sustained rate: new member accesses (`cmc:memberAccess:mintBurst`, default 5000, then
-  `cmc:memberAccess:ratePerMinute`, default 1000 a minute) and requests of any kind, re-asks of a live
-  access included (`cmc:memberAccess:askBurst`, default 10000, then
-  `cmc:memberAccess:askRatePerMinute`, default 3000 a minute; raised to the new-access budget, with a
-  log line, when set lower). A re-ask answered with the recorded access gives its new-access token
-  back, and so does an ask that fails. Before, every trigger counted against `ratePerMinute` (30 a
-  minute per membership, per worker process), re-asks included, which bounded a pass over 10,000
-  patients to hours. `ratePerMinute` keeps its name and unit, but now counts new accesses only and for
-  the whole core. **Operators who had tuned `ratePerMinute` to be strict: set `mintBurst` too**; the
-  former "at most N from idle" is `mintBurst: N`.
-- **Changed (behaviour, not breaking): a spent budget answers `429` `too-many-attempts`** with a
-  `Retry-After` header and `error.data.retryAfterSeconds`, instead of `400` `invalid-operation`.
-  `error.data.id` is unchanged (`cmc-member-access-rate-limited`), so clients that key on it keep
-  working. An ask admitted while the new-access budget was spent, because its patient had a live
-  member access, that turns out to need a new one fails its trigger with
-  `cmc-member-access-rate-limited` and `retryAfterMs` in the failure detail (milliseconds, like the
-  other waits recorded on the trigger).
-- **Fixed:** a member access ask whose `events.create` failed after the write-time check (an event id
-  already taken, a storage error) left that patient answering `cmc-member-access-in-flight` to the
-  membership for a minute, and kept its new-access token. Both are now released on the failure.
-- **Fixed:** asking again for a patient once the previous member access had expired (and its record
-  had been settled by the periodic pass) failed `cmc-member-access-peer-rejected` (`409`
-  `item-already-exists`): the expired access still held its name on the patient's core. The expired
-  access of that name is now deleted through the grant and the access minted again, once. A live
-  access holding the name is still never deleted.
-- **Changed: `Access-Control-Expose-Headers` is now `API-Version, Retry-After`**, so a browser client
-  can read the wait of a `429` (member access budgets, the public email lookups, login attempts).
-  `Retry-After` is not a CORS-safelisted response header; before, a cross-origin page could not read
-  it.
-- One `info` log line (`cmc/memberMintBudget: bulk minting by membership <id>`) when a membership
-  falls below half its new-access burst, at most once a minute per membership, for operators who
-  alert on bulk minting. The budgets pace a membership; what ends its reach is its expiry and its
-  revocation.
-- Internal: the member ledger record of a (membership, patient) pair is read by an id derived from
-  the pair, instead of a scan of the whole ledger on every ask (records written by an earlier release
-  are found by a scan, then moved); the ledger read no longer stops silently at 100,000 records, so
-  the sweep and the reuse see every record; one load of the group's accesses per ask instead of two,
-  and no ledger write for a re-ask whose record is unchanged. Settled records at their pair's id are
-  pruned once their membership is gone or expired.
-
-### Public email lookups within a per-address budget
-
-- **Changed: the public email lookups share one per-address budget**: `GET /reg/{email}/check_email`,
-  `GET /reg/{email}/username`, `GET /reg/{email}/uid`, `GET /reg/cores?email=` (a lookup by
-  `username` does not count) and, when the registration email gate is on, `POST /reg/email-challenge`
-  (it refuses an address that has an account). Each client address (an IPv4 address, or the /64 of an
-  IPv6 one) may make 30 such requests a minute through them together, valid or not, found or not;
-  past it every one of them answers `429` `too-many-attempts` with `Retry-After` and
-  `data.retryAfterSeconds` until the window ends. The budget is per core: in hashed mode on a
-  multi-core platform, the `307` of the username routes sends the client to the home core, which
-  counts the lookup once more. Before, an address could test emails at request rate, and the
-  username routes map an email to a username.
-- **Changed: `auth.emailCheck` and `auth.cores` are refused inside a batch call and over socket.io**
-  (`invalid-operation`), as the credential methods already are: they are served over their own HTTP
-  routes only, where the budget applies.
-
-### CMC: one accepter per single-use link, also for accepts sent at once
-
-- **Fixed:** two accepts from two different people written at the same moment on one single-use
-  link could both pass the link's check and both open a relationship: the link only turns
-  `consumed` once the first accept is handled. The first accept now takes the link as it is written;
-  another accepter's accept that arrives meanwhile fails with `cmc-capability-consumed`, as it does
-  once the link is consumed. The same accepter's accept delivered again still passes (it heals its
-  relationship in place). If the first accept fails before the link is consumed, the link takes other
-  accepters again a minute later. Open-link invites and refusals are unchanged.
 
 ### Account transfer to a beneficiary
 
@@ -162,6 +79,117 @@
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+
+## 2.0.0-rc.79 - 2026-11-11
+
+> **Upgrade advice for operators.** No schema migration (`migrations.autoRunOnStart: false` needs
+> no step). **New configuration keys** `cmc:memberAccess:mintBurst` (default 5000),
+> `cmc:memberAccess:askRatePerMinute` (3000) and `cmc:memberAccess:askBurst` (10000); the default of
+> `cmc:memberAccess:ratePerMinute` goes from 30 to 1000 and it now counts new member accesses for
+> the whole core, not every request per worker process. **Where `ratePerMinute` was tuned to be
+> strict, set `mintBurst` too.** **Changed: a CMC member access ask past its budget answers `429`
+> `too-many-attempts` with `Retry-After`** instead of `400` (`error.data.id` unchanged), and
+> `Access-Control-Expose-Headers` now lists `Retry-After`, so browser clients can read the wait.
+> **OAuth:** the owner consenting at their own address alias held by another app is refused
+> `address-alias-held` instead of `audience-account-mismatch`. As announced with 2.0.0-rc.73, a later
+> release is planned to default `oauth.audienceBoundSessions` to `true`: set it explicitly where it
+> is not set yet.
+
+### OAuth: a consent at the owner's own address alias held by another app names that case
+
+- **Changed: the account owner consenting at one of their address aliases that another app's grant
+  holds is refused `403 access_denied` with `reason: address-alias-held`** ("the requested address
+  is one of this account's address aliases, already used by another app") at `/oauth2/authorize/offer`
+  and `/accept`, audited as `oauth.consent.refused` with that reason. Before, it was answered
+  `audience-account-mismatch` ("names another account's address"), which reads wrong to the owner.
+  Every other case keeps the shared `audience-account-mismatch`: another account signing in at that
+  address, another account's alias, an access alias, a former username, and a consent that loses the
+  write race for an unheld alias (one that reads the winner's grant already written gets
+  `address-alias-held`). The owner lists the alias and the app holding it
+  (`account.addressAliases.list`, `heldBy`), so the distinct answer reveals nothing new.
+
+### CMC group accounts: member access budgets for bulk reads
+
+- **Changed: asking again for a live member access no longer counts as a new one.** A membership has
+  two budgets, counted for the whole core (shared by its API workers) as a burst from idle then a
+  sustained rate: new member accesses (`cmc:memberAccess:mintBurst`, default 5000, then
+  `cmc:memberAccess:ratePerMinute`, default 1000 a minute) and requests of any kind, re-asks of a live
+  access included (`cmc:memberAccess:askBurst`, default 10000, then
+  `cmc:memberAccess:askRatePerMinute`, default 3000 a minute; raised to the new-access budget, with a
+  log line, when set lower). A re-ask answered with the recorded access gives its new-access token
+  back, and so does an ask that fails. Before, every trigger counted against `ratePerMinute` (30 a
+  minute per membership, per worker process), re-asks included, which bounded a pass over 10,000
+  patients to hours. `ratePerMinute` keeps its name and unit, but now counts new accesses only and for
+  the whole core. **Operators who had tuned `ratePerMinute` to be strict: set `mintBurst` too**; the
+  former "at most N from idle" is `mintBurst: N`.
+- **Changed (behaviour, not breaking): a spent budget answers `429` `too-many-attempts`** with a
+  `Retry-After` header and `error.data.retryAfterSeconds`, instead of `400` `invalid-operation`.
+  `error.data.id` is unchanged (`cmc-member-access-rate-limited`), so clients that key on it keep
+  working. An ask admitted while the new-access budget was spent, because its patient had a live
+  member access, that turns out to need a new one fails its trigger with
+  `cmc-member-access-rate-limited` and `retryAfterMs` in the failure detail (milliseconds, like the
+  other waits recorded on the trigger).
+- **Fixed:** a member access ask whose `events.create` failed after the write-time check (an event id
+  already taken, a storage error) left that patient answering `cmc-member-access-in-flight` to the
+  membership for a minute, and kept its new-access token. Both are now released on the failure.
+- **Fixed:** asking again for a patient once the previous member access had expired (and its record
+  had been settled by the periodic pass) failed `cmc-member-access-peer-rejected` (`409`
+  `item-already-exists`): the expired access still held its name on the patient's core. The expired
+  access of that name is now deleted through the grant and the access minted again, once. A live
+  access holding the name is still never deleted.
+- **Changed: `Access-Control-Expose-Headers` is now `API-Version, Retry-After`**, so a browser client
+  can read the wait of a `429` (member access budgets, the public email lookups, login attempts).
+  `Retry-After` is not a CORS-safelisted response header; before, a cross-origin page could not read
+  it.
+- One `info` log line (`cmc/memberMintBudget: bulk minting by membership <id>`) when a membership
+  falls below half its new-access burst, at most once a minute per membership, for operators who
+  alert on bulk minting. The budgets pace a membership; what ends its reach is its expiry and its
+  revocation.
+- Internal: the member ledger record of a (membership, patient) pair is read by an id derived from
+  the pair, instead of a scan of the whole ledger on every ask (records written by an earlier release
+  are found by a scan, then moved); the ledger read no longer stops silently at 100,000 records, so
+  the sweep and the reuse see every record; one load of the group's accesses per ask instead of two,
+  and no ledger write for a re-ask whose record is unchanged. Settled records at their pair's id are
+  pruned once their membership is gone or expired.
+
+## 2.0.0-rc.78 - 2026-11-09
+
+> **Upgrade advice for operators.** No schema migration (`migrations.autoRunOnStart: false` needs
+> no step), no new configuration key. **Changed: public email lookups** (`check_email`, the
+> email-to-username routes, `/reg/cores?email=`, and the registration email gate's challenge for an
+> address that has an account) now share one budget of 30 requests a minute per client address;
+> past it they answer `429` `too-many-attempts`. A client that tests many addresses in a burst (a
+> bulk import, a sign-up form that checks on each keystroke) should throttle or handle the `429`.
+> `auth.emailCheck` and `auth.cores` are no longer accepted inside a batch call or over socket.io.
+> **CMC:** a single-use link now accepts one accepter only, also when two accepts arrive at the
+> same moment. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
+
+### Public email lookups within a per-address budget
+
+- **Changed: the public email lookups share one per-address budget**: `GET /reg/{email}/check_email`,
+  `GET /reg/{email}/username`, `GET /reg/{email}/uid`, `GET /reg/cores?email=` (a lookup by
+  `username` does not count) and, when the registration email gate is on, `POST /reg/email-challenge`
+  (it refuses an address that has an account). Each client address (an IPv4 address, or the /64 of an
+  IPv6 one) may make 30 such requests a minute through them together, valid or not, found or not;
+  past it every one of them answers `429` `too-many-attempts` with `Retry-After` and
+  `data.retryAfterSeconds` until the window ends. The budget is per core: in hashed mode on a
+  multi-core platform, the `307` of the username routes sends the client to the home core, which
+  counts the lookup once more. Before, an address could test emails at request rate, and the
+  username routes map an email to a username.
+- **Changed: `auth.emailCheck` and `auth.cores` are refused inside a batch call and over socket.io**
+  (`invalid-operation`), as the credential methods already are: they are served over their own HTTP
+  routes only, where the budget applies.
+
+### CMC: one accepter per single-use link, also for accepts sent at once
+
+- **Fixed:** two accepts from two different people written at the same moment on one single-use
+  link could both pass the link's check and both open a relationship: the link only turns
+  `consumed` once the first accept is handled. The first accept now takes the link as it is written;
+  another accepter's accept that arrives meanwhile fails with `cmc-capability-consumed`, as it does
+  once the link is consumed. The same accepter's accept delivered again still passes (it heals its
+  relationship in place). If the first accept fails before the link is consumed, the link takes other
+  accepters again a minute later. Open-link invites and refusals are unchanged.
 
 ## 2.0.0-rc.77 - 2026-11-09
 
