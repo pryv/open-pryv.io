@@ -754,7 +754,7 @@ describe('[OCMDE] client metadata documents end to end', function () {
     const url = publish();
     const who = await newUser();
     const { token } = await connect(who, url);
-    const stamp = { name: 'Example agent', host: 'client.example', url };
+    const stamp = { name: 'Example agent', host: 'client.example', url, origin: 'metadata-document' };
     const grant = (await accesses(who)).find((a) => a.name === 'oauth-grant:' + metadataClientKey(url));
     assert.deepEqual(grant.clientData.oauth.client, stamp);
     const session = await rowOf(who, token.access_token);
@@ -771,7 +771,7 @@ describe('[OCMDE] client metadata documents end to end', function () {
     assert.equal((await rowOf(who, r.body.access_token)).clientData.oauth.client.name, 'New name');
     const x = await exchange(r.body.access_token);
     assert.equal((await rowOf(who, x.body.access_token)).clientData.oauth.client, undefined);
-    // A curated client's accesses are not stamped.
+    // The resource server's derived sessions are not stamped.
     const rsGrantless = (await accesses(who)).filter((a) => a.name === 'oauth:' + rsId);
     assert.ok(rsGrantless.every((a) => a.clientData?.oauth?.client == null));
   });

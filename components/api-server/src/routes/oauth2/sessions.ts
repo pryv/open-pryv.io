@@ -43,8 +43,8 @@ import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionR
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
 import { getClient as getOAuthClient, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
-import { isMetadataClientKey, metadataClientStamp } from 'oauth2/src/clientMetadataId.ts';
-import type { MetadataClientStamp } from 'oauth2/src/clientMetadataId.ts';
+import { clientStamp } from 'oauth2/src/clientMetadataId.ts';
+import type { ClientStamp } from 'oauth2/src/clientMetadataId.ts';
 import * as storages from 'storages';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -87,7 +87,7 @@ export function createSessions (env: GlueEnv) {
   // `oauth:audienceBoundSessions` is on); a derived session records the
   // subject session it was exchanged for (`exchange`).
   function sessionClientData (dataGrantAccessId: string, chainPermissions: Array<Record<string, unknown>>, dpopJkt?: string,
-    more: { audience?: string; exchange?: DerivedFrom; client?: MetadataClientStamp | null } = {}): Record<string, unknown> {
+    more: { audience?: string; exchange?: DerivedFrom; client?: ClientStamp | null } = {}): Record<string, unknown> {
     return {
       oauth: {
         dataGrantId: parseAccessRef(dataGrantAccessId).base,
@@ -167,9 +167,9 @@ export function createSessions (env: GlueEnv) {
       throw new Error('mintAccessDirect: an audience or an exchange belongs to a session of a grant');
     }
     const permissions = canonicalPermissions(rawPermissions);
-    // A session of a metadata-document client's grant (not a derived one) is
-    // stamped with the client's display fields, as the client row says now.
-    const client = dataGrantAccessId != null && exchange == null ? await metadataClientStampOf(clientId) : null;
+    // A session of a grant (not a derived one) is stamped with the client's
+    // display fields, as the client row says now.
+    const client = dataGrantAccessId != null && exchange == null ? await clientStampOf(clientId) : null;
     const accessesRepository = accessesRepo(storageLayer, 'mintAccessDirect');
     // Millisecond precision, like every other access (timestamp.now()): the
     // client-revoke check compares `created` with a revoke epoch in ms, so a
@@ -255,21 +255,22 @@ export function createSessions (env: GlueEnv) {
     await updateGrantOauth(userId, username, grantId, 'oauth2.setGrantOf', (oauth) => ({ ...oauth, grantOf: clientId }));
   }
 
-  // The display stamp of a metadata-document client (`clientData.oauth.client`:
-  // name, host, url), from its row as it stands; null for any other client.
-  // A snapshot: what the account app names the connected app by, the row key
-  // (`oauth:url~…`) being no name.
-  async function metadataClientStampOf (clientId: string): Promise<MetadataClientStamp | null> {
-    if (!isMetadataClientKey(clientId)) return null;
+  // The display stamp of the client (`clientData.oauth.client`): a
+  // metadata-document client's name, host and url, or the name an operator
+  // registered with `origin: 'operator'`, from its row as it stands; null
+  // when the row is gone. A snapshot: what the account app names the
+  // connected app by, the row key (`oauth:url~…`, `oauth:<clientId>`) being
+  // no name.
+  async function clientStampOf (clientId: string): Promise<ClientStamp | null> {
     const platform = storages.platformDB as Parameters<typeof getOAuthClient>[0] | null | undefined;
     if (platform == null) return null;
-    return metadataClientStamp(await getOAuthClient(platform, clientId));
+    return clientStamp(await getOAuthClient(platform, clientId));
   }
 
-  // setGrantClient: stamp (again, at each consent) a metadata-document
-  // client's grant with its display fields; written only when they changed.
+  // setGrantClient: stamp (again, at each consent) a client's grant with its
+  // display fields; written only when they changed.
   async function setGrantClient (userId: string, username: string, grantId: string, clientId: string): Promise<void> {
-    const stamp = await metadataClientStampOf(clientId);
+    const stamp = await clientStampOf(clientId);
     if (stamp == null) return;
     await updateGrantOauth(userId, username, grantId, 'oauth2.setGrantClient', (oauth) =>
       (isDeepStrictEqual(oauth.client, stamp) ? null : { ...oauth, client: stamp }));
