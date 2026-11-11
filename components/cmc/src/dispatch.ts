@@ -7,8 +7,9 @@
 import { createRequire } from 'node:module';
 import type { CmcLogger, OutboundDeps, RetryContext, MallLike } from './_types.ts';
 import type { CredentialStash } from './credentialScrub.ts';
-import type { MemberAccessOptions } from './handleMemberAccess.ts';
-import type { MemberMintRegistry } from './memberMintRegistry.ts';
+import type { MemberAccessOptions, MintBudgetHandle, MintTarget } from './handleMemberAccess.ts';
+import { settleMemberMint } from './memberMintRegistry.ts';
+import type { MemberMintGateState, MemberMintRegistry, MintReservation } from './memberMintRegistry.ts';
 import type { MemberSweep } from './memberSweep.ts';
 
 const require = createRequire(import.meta.url);
@@ -156,10 +157,15 @@ type DispatchDeps = {
   // (handleRevoke: a delivery the peer already received). Absent live.
   retryContext?: RetryContext;
   // Group accounts: the per-core settings of the member access mint and the
-  // per-worker registry whose in-flight lock the middleware releases once a
-  // mint settled (the gate hook took it at write time).
+  // registry whose in-flight lock the middleware releases once a mint
+  // settled, and whose mint token it gives back unless a child was minted
+  // (the gate hook took both at write time).
   memberAccess?: MemberAccessOptions;
   mintRegistry?: MemberMintRegistry;
+  // Set by the middleware for a member access trigger: what the gate
+  // resolved, and the mint budget of an ask admitted without a mint token.
+  memberMintTarget?: MintTarget;
+  memberMintBudget?: MintBudgetHandle;
   // The sweep entry points (memberSweep.ts), for the revoke handlers: a
   // membership that ends is swept, a patient relationship that ends has its
   // member children swept through the grant first.
@@ -176,6 +182,8 @@ type DispatchResult = {
   // mint's endpoint, token included): copied to the events.create response
   // by the middleware, read by no stamp, log line or retry snapshot.
   response?: Record<string, unknown>;
+  // The member access mint: a new child, or the recorded one handed back.
+  mintOutcome?: 'minted' | 'reused';
 };
 
 type HandlerResult = {
@@ -183,6 +191,7 @@ type HandlerResult = {
   reason?: string;
   detail?: unknown;
   response?: Record<string, unknown>;
+  mintOutcome?: 'minted' | 'reused';
   // The member access mint's record on the trigger (never the token).
   memberAccess?: { accessId: string; name: string; expires: number; attribution: string };
   member?: { username: string; host: string };
@@ -459,6 +468,8 @@ async function dispatch (params: {
             memberAccess: deps.memberAccess ?? memberAccessDefaults(),
             retryContext: deps.retryContext,
             triggerAccess: deps.triggerAccess as { id?: string } | undefined,
+            target: deps.memberMintTarget,
+            mintBudget: deps.memberMintBudget,
           },
         });
         break;
@@ -521,7 +532,13 @@ async function dispatch (params: {
       outcome: result?.outcome,
       residuals: result?.residuals,
     });
-    return { handled: true, eventType: event.type, status: 'completed', ...(result?.response != null ? { response: result.response } : {}) };
+    return {
+      handled: true,
+      eventType: event.type,
+      status: 'completed',
+      ...(result?.response != null ? { response: result.response } : {}),
+      ...(result?.mintOutcome != null ? { mintOutcome: result.mintOutcome } : {}),
+    };
   }
 
   return await markFailed(
@@ -676,6 +693,24 @@ const NEVER_ENQUEUE_TYPES = new Set<string>([
   'consent/member-access-cmc',
 ]);
 
+/**
+ * The mint budget handed to the handler: a reservation the gate holds is
+ * used as is; one it could not take (a probable reuse) is taken when the
+ * handler needs to mint after all.
+ */
+function mintBudgetOf (registry: MemberMintRegistry, reservation: MintReservation): MintBudgetHandle {
+  return {
+    async ensure () {
+      if (reservation.held) return { ok: true };
+      const r = await registry.reserve('mint', reservation.membershipAccessId);
+      if (!r.ok) return r;
+      reservation.held = true;
+      reservation.via = r.via;
+      return { ok: true };
+    },
+  };
+}
+
 function memberAccessDefaults (): MemberAccessOptions {
   const d = C.MEMBER_ACCESS_CONFIG_DEFAULTS;
   return { defaultTtl: d.defaultTtl, minTtl: d.minTtl, maxTtl: d.maxTtl, allowNameOnly: d.allowNameOnly };
@@ -731,10 +766,13 @@ async function isPeerDeliveredEvent (
     ? createdBy
     : createdBy.slice(0, separatorIndex);
   try {
-    const list = await mallAccesses.get(userId, {});
-    const acc = Array.isArray(list)
-      ? list.find((a) => a?.id === createdByAccessId)
-      : null;
+    let acc;
+    if (mallAccesses.getOne != null) {
+      acc = await mallAccesses.getOne(userId, { id: createdByAccessId });
+    } else {
+      const list = await mallAccesses.get(userId, {});
+      acc = Array.isArray(list) ? list.find((a) => a?.id === createdByAccessId) : null;
+    }
     // A membership access is a peer for protocol deliveries: what it writes
     // on the group account came from the member's plugin.
     return C.RELATIONSHIP_ROLES.includes(acc?.clientData?.cmc?.role);
@@ -776,12 +814,20 @@ function createDispatchMiddleware (
     if (SYNC_DISPATCH_TYPES.has(event.type)) {
       // Synchronous dispatch — await before returning so the response
       // reflects the side-effect.
-      const mintLock = (context as { cmc?: { memberMintLock?: string } })?.cmc?.memberMintLock;
-      const releaseLock = () => {
-        if (typeof mintLock === 'string') requestDeps.mintRegistry?.release(mintLock);
-      };
-      dispatch({ userId, event, deps: requestDeps })
+      const gateState = (context as { cmc?: MemberMintGateState & { memberMintTarget?: MintTarget } })?.cmc;
+      const reservation = gateState?.memberMintReservation;
+      const registry = requestDeps.mintRegistry;
+      const syncDeps: DispatchDeps = event.type === C.ET_MEMBER_ACCESS
+        ? {
+            ...requestDeps,
+            memberMintTarget: gateState?.memberMintTarget,
+            memberMintBudget: reservation != null && registry != null ? mintBudgetOf(registry, reservation) : undefined,
+          }
+        : requestDeps;
+      let mintOutcome: DispatchResult['mintOutcome'];
+      dispatch({ userId, event, deps: syncDeps })
         .then(async (dispatched) => {
+          mintOutcome = dispatched.mintOutcome;
           // The handler's one-shot payload (the member access endpoint)
           // beside the event, for this caller only.
           if (dispatched.response != null) result.memberAccess = dispatched.response;
@@ -801,8 +847,11 @@ function createDispatchMiddleware (
           // stream, which is the ONLY re-dispatch source: the stored trigger
           // carries no usable endpoint at any point in its life.
         })
-        .finally(() => {
-          releaseLock();
+        .then(async () => {
+          // The lock is released; the mint token is kept only by a new
+          // child: a reuse, a failure or a throw gives it back. Once per
+          // request (the create chain's error path settles it otherwise).
+          await settleMemberMint(registry, gateState, mintOutcome);
           next();
         });
       return;

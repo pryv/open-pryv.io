@@ -131,9 +131,13 @@ async function seed (mall, over = {}) {
     stateChangedAt: 1,
     ...over,
   };
-  const id = await ledger.writeRecord({ mall, now: () => NOW }, 'group', rec);
+  // Several records per pair here: written at random ids, as before the
+  // lookup by pair id (writeRecord keeps one per pair; see [MR2A]).
+  const id = 'seed' + String(++seedSeq).padStart(21, '0');
+  mall.eventsMap.set(id, { id, type: C.ET_MEMBER_LEDGER, streamIds: [C.NS_INTERNAL_MEMBERS], time: NOW, content: rec });
   return { ...rec, eventId: id };
 }
+let seedSeq = 0;
 
 function revokeDeps (mall, cores, over = {}) {
   return { mall, fetch: cores.fetch, now: () => NOW, ...over };
@@ -411,6 +415,42 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       const left = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
       assert.deepEqual(left, { 'c-res': 'deleted', 'c-still': 'residual' });
       assert.equal(mall.calls.eventsCreated.filter((e) => e.type === C.ET_MEMBER_REVOKE).length, 0);
+    });
+
+    it('[MR2A] the periodic pass reads the ledger once; records at their pair\'s id are pruned only once their membership is gone or expired', async () => {
+      const mall = fakeMall({ accesses: [MEMBERSHIP, { ...MEMBERSHIP, id: 'acc-expired', expires: NOW - 1 }, REL, REL2] });
+      const write = (over) => ledger.writeRecord({ mall, now: () => NOW }, 'group', {
+        membershipAccessId: 'acc-membership',
+        member: MEMBER,
+        relationshipAccessId: 'acc-rel',
+        counterparty: PATIENT,
+        scopeStreamId: TEAM,
+        childAccessId: 'c',
+        childName: 'n',
+        expires: NOW - 5,
+        attribution: 'stamped',
+        state: 'absent',
+        stateChangedAt: 1,
+        ...over,
+      });
+      const kept = await write({});
+      const gone = await write({ membershipAccessId: 'acc-gone', relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B });
+      const expiredLive = await write({ relationshipAccessId: 'acc-rel2', counterparty: PATIENT2, scopeStreamId: TEAM_B, state: 'live' });
+      // Its membership still exists but has expired: it can no longer ask.
+      const ofExpired = await write({ membershipAccessId: 'acc-expired', state: 'deleted' });
+      assert.ok([kept, gone, expiredLive, ofExpired].every((id) => typeof id === 'string'));
+      const cores = fakeCores();
+      const { sweep } = sweepOf(mall, cores);
+      let reads = 0;
+      const get = mall.events.get;
+      mall.events.get = async (...a) => { reads += 1; return get.apply(mall.events, a); };
+      const r = await sweep.runLedgerPass('group');
+      assert.equal(reads, 1, 'one ledger read for the pass and its prune');
+      assert.equal(r.expired, 1);
+      assert.equal(r.pruned, 2, 'the records of the membership that is gone and of the expired one');
+      assert.deepEqual(mall.calls.eventsDeleted.sort(), [gone, ofExpired].sort());
+      const left = (await ledger.listRecords({ mall }, 'group')).map((x) => x.eventId).sort();
+      assert.deepEqual(left, [kept, expiredLive].sort(), 'kept at their ids: their membership may ask again');
     });
 
     it('[MR26] a relationship that cannot be read leaves the record residual (retried), unlike one that is gone (absent)', async () => {

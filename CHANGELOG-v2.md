@@ -14,6 +14,41 @@
   race for an unheld alias. The owner lists the alias and the app holding it
   (`account.addressAliases.list`, `heldBy`), so the distinct answer reveals nothing new.
 
+### CMC group accounts: member access budgets for bulk reads
+
+- **Changed: asking again for a live member access no longer counts as a new one.** A membership has
+  two budgets, counted for the whole core (shared by its API workers) as a burst from idle then a
+  sustained rate: new member accesses (`cmc:memberAccess:mintBurst`, default 5000, then
+  `cmc:memberAccess:ratePerMinute`, default 1000 a minute) and requests of any kind, re-asks of a live
+  access included (`cmc:memberAccess:askBurst`, default 10000, then
+  `cmc:memberAccess:askRatePerMinute`, default 3000 a minute; raised to the new-access budget, with a
+  log line, when set lower). A re-ask answered with the recorded access gives its new-access token
+  back, and so does an ask that fails. Before, every trigger counted against `ratePerMinute` (30 a
+  minute per membership, per worker process), re-asks included, which bounded a pass over 10,000
+  patients to hours. `ratePerMinute` keeps its name and unit, but now counts new accesses only and for
+  the whole core. **Operators who had tuned `ratePerMinute` to be strict: set `mintBurst` too**; the
+  former "at most N from idle" is `mintBurst: N`.
+- **Changed (behaviour, not breaking): a spent budget answers `429` `too-many-attempts`** with a
+  `Retry-After` header and `error.data.retryAfterSeconds`, instead of `400` `invalid-operation`.
+  `error.data.id` is unchanged (`cmc-member-access-rate-limited`), so clients that key on it keep
+  working. An ask admitted while the new-access budget was spent, because its patient had a live
+  member access, that turns out to need a new one fails its trigger with
+  `cmc-member-access-rate-limited` and `retryAfterMs` in the failure detail (milliseconds, like the
+  other waits recorded on the trigger).
+- **Fixed:** a member access ask whose `events.create` failed after the write-time check (an event id
+  already taken, a storage error) left that patient answering `cmc-member-access-in-flight` to the
+  membership for a minute, and kept its new-access token. Both are now released on the failure.
+- One `info` log line (`cmc/memberMintBudget: bulk minting by membership <id>`) when a membership
+  falls below half its new-access burst, at most once a minute per membership, for operators who
+  alert on bulk minting. The budgets pace a membership; what ends its reach is its expiry and its
+  revocation.
+- Internal: the member ledger record of a (membership, patient) pair is read by an id derived from
+  the pair, instead of a scan of the whole ledger on every ask (records written by an earlier release
+  are found by a scan, then moved); the ledger read no longer stops silently at 100,000 records, so
+  the sweep and the reuse see every record; one load of the group's accesses per ask instead of two,
+  and no ledger write for a re-ask whose record is unchanged. Settled records at their pair's id are
+  pruned once their membership is gone or expired.
+
 ### Public email lookups within a per-address budget
 
 - **Changed: the public email lookups share one per-address budget**: `GET /reg/{email}/check_email`,

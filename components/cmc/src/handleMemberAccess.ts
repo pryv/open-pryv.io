@@ -36,8 +36,9 @@
  *      narrower than the offer: the grant on the patient core is the real
  *      bound, and its `forbidden` answer maps to the same id;
  *   4. `expireAfter` within the per-core bounds (default when absent).
- * The write-time hook adds the per-membership rate limit and the in-flight
- * lock per (membership, relationship) (memberMintRegistry.ts).
+ * The write-time hook adds the per-membership budgets and the in-flight
+ * lock per (membership, relationship) (memberMintRegistry.ts), and hands
+ * what it resolved to the handler, which then does not resolve it again.
  *
  * The mint itself (`handleMemberAccess`), through the grant endpoint, two
  * calls at most under one timeout overall:
@@ -372,8 +373,19 @@ type MemberAccessResult =
     memberAccess: { accessId: string; name: string; expires: number; attribution: string };
     member: Identity;
     relationshipAccessId: string;
+    // A new child, or the recorded one handed back (the mint budget is
+    // given back for a reuse).
+    mintOutcome: 'minted' | 'reused';
   }
   | { ok: false; reason: string; detail?: Record<string, unknown> };
+
+/**
+ * The mint budget of a request the gate admitted without a mint token (a
+ * probable reuse): `ensure` takes one before anything is minted or deleted.
+ */
+type MintBudgetHandle = {
+  ensure: () => Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }>;
+};
 
 type HandlerDeps = OutboundDeps & {
   mall: MallLike;
@@ -381,6 +393,11 @@ type HandlerDeps = OutboundDeps & {
   retryContext?: RetryContext;
   // The writing access on a live dispatch (its id names the membership).
   triggerAccess?: { id?: string };
+  // What the write-time gate resolved for this trigger, so the accesses of
+  // the account are not loaded a second time. Used only when it names the
+  // membership that wrote the trigger.
+  target?: MintTarget;
+  mintBudget?: MintBudgetHandle;
   now?: () => number;
 };
 
@@ -442,16 +459,21 @@ async function handleMemberAccess (params: {
   const membershipAccessId = (typeof deps.triggerAccess?.id === 'string' && deps.triggerAccess.id.length > 0)
     ? deps.triggerAccess.id
     : accessIdOf(triggerEvent.createdBy);
-  const membershipAccess = membershipAccessId == null ? null : await findAccessById(mall, userId, membershipAccessId);
-  const gate = await resolveMintTarget({
-    userId,
-    membershipAccess,
-    triggerStreamIds: triggerEvent.streamIds,
-    content: triggerEvent.content as MintContent,
-    deps: { mall, options: deps.memberAccess, logger: deps.logger, now },
-  });
-  if (!gate.ok) return gate;
-  const t = gate.target;
+  let t: MintTarget;
+  if (deps.target != null && membershipAccessId != null && deps.target.membershipAccess?.id === membershipAccessId) {
+    t = deps.target;
+  } else {
+    const membershipAccess = membershipAccessId == null ? null : await findAccessById(mall, userId, membershipAccessId);
+    const gate = await resolveMintTarget({
+      userId,
+      membershipAccess,
+      triggerStreamIds: triggerEvent.streamIds,
+      content: triggerEvent.content as MintContent,
+      deps: { mall, options: deps.memberAccess, logger: deps.logger, now },
+    });
+    if (!gate.ok) return gate;
+    t = gate.target;
+  }
   const relationshipAccessId = t.relationshipAccess.id;
   const member = t.member;
   if (!t.grantDelegable) {
@@ -504,6 +526,16 @@ async function handleMemberAccess (params: {
     }
   };
 
+  // A request admitted without a mint token takes one before anything is
+  // minted or deleted; refused, the trigger fails and the recorded child is
+  // left as it is. The wait is `retryAfterMs`, as for an unreachable patient
+  // core on the same trigger.
+  const mintAllowed = async (): Promise<MemberAccessResult | null> => {
+    if (deps.mintBudget == null) return null;
+    const r = await deps.mintBudget.ensure();
+    return r.ok ? null : { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_RATE_LIMITED, detail: { retryAfterMs: r.retryAfterSeconds * 1000 } };
+  };
+
   // (1) Idempotency: the pair's record, verified by id on the patient core.
   const record: StoredLedgerRecord | null = await ledger.findRecord(ledgerDeps, userId, t.membershipAccess.id, relationshipAccessId);
   if (record != null && record.state === 'live') {
@@ -519,13 +551,15 @@ async function handleMemberAccess (params: {
       const membershipExpires = t.membershipAccess.expires;
       const withinMembership = typeof membershipExpires !== 'number' || (typeof child?.expires === 'number' && child.expires <= membershipExpires);
       if (child?.id != null && typeof child.token === 'string' && remaining > REUSE_MIN_REMAINING_S && withinMembership && childCarries(child, t.permissions)) {
-        return await finish({ id: child.id, token: child.token, name: child.name ?? record.childName, expires: typeof child.expires === 'number' ? child.expires : record.expires, attribution: record.attribution });
+        return await finish({ id: child.id, token: child.token, name: child.name ?? record.childName, expires: typeof child.expires === 'number' ? child.expires : record.expires, attribution: record.attribution }, 'reused');
       }
       // Stale: about to expire, past the membership, or not the permissions
       // asked. Deleted, then re-minted; a child not known gone is never
       // minted over (the member may still hold its token, and the next name
       // would collide): the record stays live and the ask fails.
       if (child?.id != null) {
+        const refused = await mintAllowed();
+        if (refused != null) return refused;
         const del = await deleteChild(child.id);
         if (!deletedOrGone(del)) return peerFailure(del);
         await ledger.setState(ledgerDeps, userId, record.eventId, 'deleted', record.childAccessId);
@@ -539,6 +573,8 @@ async function handleMemberAccess (params: {
   }
 
   // (2) Mint.
+  const refused = await mintAllowed();
+  if (refused != null) return refused;
   const name = childNameFor(member, t.membershipAccess.id, relationshipAccessId);
   const body: Record<string, unknown> = {
     type: 'shared',
@@ -569,40 +605,53 @@ async function handleMemberAccess (params: {
       return unreachable();
     }
   }
-  if (!created.ok) return peerFailure(created);
+  if (!created.ok) {
+    // The deterministic name is taken: a child this core minted for the pair
+    // and recorded where this process did not look. The next ask scans.
+    if (created.reason === 'http-4xx' && peerErrorIdOf(created.body) === 'item-already-exists') ledger.forgetScan(ledgerDeps, userId);
+    return peerFailure(created);
+  }
   const child = ((created.body as { access?: PeerAccess } | null)?.access) ?? null;
   if (child?.id == null || typeof child.token !== 'string') {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, detail: { httpStatus: created.status } };
   }
   const expires = typeof child.expires === 'number' ? child.expires : now() + t.expireAfter;
-  return await finish({ id: child.id, token: child.token, name: child.name ?? name, expires, attribution });
+  return await finish({ id: child.id, token: child.token, name: child.name ?? name, expires, attribution }, 'minted');
 
   /**
    * The ledger record first, then the membership re-read, then the token.
    */
-  async function finish (child: { id: string; token: string; name: string; expires: number; attribution: string }): Promise<MemberAccessResult> {
+  async function finish (child: { id: string; token: string; name: string; expires: number; attribution: string }, mintOutcome: 'minted' | 'reused'): Promise<MemberAccessResult> {
     // The record, before the token leaves. A record that cannot be written,
     // or whose pair was taken by another worker meanwhile (compare-and-set
     // on the child it names), means this child is untracked: deleted, and
-    // the ask fails; the member asks again.
+    // the ask fails; the member asks again. A reuse whose record already
+    // says exactly this (at the pair's id) is not written again.
     let eventId: string | null = null;
     let writeError: unknown = null;
-    try {
-      eventId = await ledger.writeRecord(ledgerDeps, userId, {
-        membershipAccessId: t.membershipAccess.id,
-        member,
-        relationshipAccessId,
-        counterparty: { username: t.relationshipAccess.clientData!.cmc!.counterparty!.username as string, host: t.relationshipAccess.clientData!.cmc!.counterparty!.host as string },
-        scopeStreamId: t.scopeStreamId,
-        childAccessId: child.id,
-        childName: child.name,
-        expires: child.expires,
-        attribution: child.attribution,
-        state: 'live',
-        stateChangedAt: now(),
-      }, record);
-    } catch (err: unknown) {
-      writeError = err;
+    const unchanged = mintOutcome === 'reused' && record != null && record.state === 'live' &&
+      record.childAccessId === child.id && record.expires === child.expires &&
+      record.eventId === ledger.pairEventIdOf(t.membershipAccess.id, relationshipAccessId);
+    if (unchanged) {
+      eventId = record.eventId;
+    } else {
+      try {
+        eventId = await ledger.writeRecord(ledgerDeps, userId, {
+          membershipAccessId: t.membershipAccess.id,
+          member,
+          relationshipAccessId,
+          counterparty: { username: t.relationshipAccess.clientData!.cmc!.counterparty!.username as string, host: t.relationshipAccess.clientData!.cmc!.counterparty!.host as string },
+          scopeStreamId: t.scopeStreamId,
+          childAccessId: child.id,
+          childName: child.name,
+          expires: child.expires,
+          attribution: child.attribution,
+          state: 'live',
+          stateChangedAt: now(),
+        }, record);
+      } catch (err: unknown) {
+        writeError = err;
+      }
     }
     if (eventId == null) {
       const del = await deleteChild(child.id);
@@ -641,6 +690,7 @@ async function handleMemberAccess (params: {
       memberAccess: { accessId: child.id, name: child.name, expires: child.expires, attribution: child.attribution },
       member,
       relationshipAccessId,
+      mintOutcome,
     };
   }
 }
@@ -653,4 +703,4 @@ export {
   childApiEndpoint,
   triggerScopeOf,
 };
-export type { MemberAccessOptions, MintTarget, MemberAccessPayload, MemberAccessResult };
+export type { MemberAccessOptions, MintTarget, MemberAccessPayload, MemberAccessResult, MintBudgetHandle };

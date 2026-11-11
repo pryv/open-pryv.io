@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
 import { openUploadedFile } from './helpers/uploadedFiles.ts';
 import { claimSingleUseAccept } from './helpers/cmcAcceptClaim.ts';
+import { clientFor as clusterKvClientFor } from 'messages/src/cluster_kv.ts';
 
 import type { MethodNext } from './_types.ts';
 import type { MethodContext as BaseMethodContext, UploadedFile } from 'business/src/MethodContext.ts';
@@ -418,16 +419,45 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // hold; the server's offboarding record is never written by a client.
   const cmcMembershipOfferHook = cmc.createMembershipOfferHook({ errors });
   const cmcMemberRevokeWriteGuard = cmc.createMemberRevokeWriteGuardHook({ errors });
-  // The member access mint: its per-core settings, the per-worker registry
-  // (rate limit per membership, in-flight lock per membership and patient),
-  // the write-time gate (a refused ask is an API error) and the strip of the
-  // outcome fields a client may not write.
+  // The member access mint: its per-core settings, the registry (the
+  // budgets per membership, shared by the workers of this core through the
+  // cluster key/value store; the in-flight lock per membership and patient,
+  // per worker), the write-time gate (a refused ask is an API error) and the
+  // strip of the outcome fields a client may not write.
   const cmcMemberAccessOptions = cmc.memberAccessOptionsFromConfig(config);
   const positiveOr = (value: unknown, fallback: number): number =>
     (typeof value === 'number' && Number.isFinite(value) && value > 0) ? value : fallback;
+  const cmcMemberMintLogger = getLogger('cmc:member-mint-budget');
+  // Read on every call, so a configuration change applies without a restart;
+  // an ask budget set below the mint budget is raised to it, said once.
+  let cmcMemberMintClampSaid: string | null = null;
+  const cmcMemberMintLimits = () => {
+    const limits = cmc.memberMintLimitsFromConfig(config);
+    if (limits.clamped.length > 0) {
+      const said = JSON.stringify(limits);
+      if (said !== cmcMemberMintClampSaid) {
+        cmcMemberMintClampSaid = said;
+        cmcMemberMintLogger.warn('cmc:memberAccess: the ask budget is below the mint budget (a mint is also an ask); raised to it', {
+          raised: limits.clamped, askBurst: limits.ask.burst, askRatePerMinute: limits.ask.perMinute,
+        });
+      }
+    }
+    return limits;
+  };
+  type MintBudgetKv = {
+    get: (key: string) => Promise<unknown>;
+    set: (key: string, value: unknown, opts?: { ttlMs?: number; ifEquals?: unknown }) => Promise<boolean>;
+  };
+  let cmcMemberMintKv: MintBudgetKv | null = null;
+  const cmcMemberMintKvOf = (): MintBudgetKv => (cmcMemberMintKv ??= clusterKvClientFor() as MintBudgetKv);
   const cmcMemberMintRegistry = cmc.createMemberMintRegistry({
-    ratePerMinute: positiveOr(config.get('cmc:memberAccess:ratePerMinute'), cmc.constants.MEMBER_ACCESS_CONFIG_DEFAULTS.ratePerMinute),
+    limits: cmcMemberMintLimits,
     maxInFlightPerMembership: positiveOr(config.get('cmc:memberAccess:maxInFlightPerMembership'), cmc.constants.MEMBER_ACCESS_CONFIG_DEFAULTS.maxInFlightPerMembership),
+    store: {
+      get: (key: string) => cmcMemberMintKvOf().get(key),
+      set: (key: string, value: unknown, opts?: { ttlMs?: number; ifEquals?: unknown }) => cmcMemberMintKvOf().set(key, value, opts),
+    },
+    logger: cmcMemberMintLogger,
   });
   const cmcMemberAccessGateHook = cmc.createMemberAccessGateHook({
     errors,
@@ -436,6 +466,36 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     registry: cmcMemberMintRegistry,
     logger: getLogger('cmc:member-access-gate'),
   });
+  // The gate holds the pair's lock and a mint token until the dispatch
+  // settles them. A step between the gate and the dispatch that fails (the
+  // store refusing the event, an id already taken, ...) ends the chain before
+  // the dispatch: each such step settles them on its failure (once per
+  // request; a no-op for any other request).
+  const settleMemberMintOnFailure = <P, R>(step: (context: MethodContext, params: P, result: R, next: MethodNext) => unknown) => {
+    const settle = (context: MethodContext) => cmc.settleMemberMint(cmcMemberMintRegistry, (context as { cmc?: unknown }).cmc) as Promise<void>;
+    const wrapped = function (context: MethodContext, params: P, result: R, next: MethodNext) {
+      const onNext = (err?: unknown) => {
+        if (err == null) return next();
+        settle(context).then(() => next(err as Error), () => next(err as Error));
+      };
+      let returned: unknown;
+      try {
+        returned = step(context, params, result, onNext);
+      } catch (err) {
+        settle(context).catch(() => {});
+        throw err;
+      }
+      if (returned != null && typeof (returned as PromiseLike<unknown>).then === 'function') {
+        return Promise.resolve(returned).then(null, async (err: unknown) => {
+          await settle(context).catch(() => {});
+          throw err;
+        });
+      }
+      return returned;
+    };
+    Object.defineProperty(wrapped, 'name', { value: step.name });
+    return wrapped;
+  };
   const cmcMemberAccessServerOwnedFieldsHook = cmc.createMemberAccessServerOwnedFieldsHook();
   // The offboarding sweep (shared with the accesses and delegations wiring).
   const cmcMemberSweep = await buildMemberSweep();
@@ -620,33 +680,39 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     cmcMembershipOfferHook,
     cmcMemberAccessServerOwnedFieldsHook,
     cmcMemberAccessGateHook,
-    cmcAcceptAccessGateHook,
-    // After the gate, so a refused write is never stamped; before the store.
-    cmcAcceptStampingHook,
-    cmcCapabilityMintHook,
-    cmcInboxWriteHook,
-    cmcCounterpartyFromStampingHook,
-    cmcCounterpartyFeatureGateHook,
-    cmcCapabilityResponseHook,
-    // AFTER the validating hooks above, so they judge the record as sent and
-    // a rejected write has nothing to strip; BEFORE createEvent, so the store
-    // computes integrity over the stripped content and the create response
-    // returns the same row a later events.getOne will.
-    cmcCredentialStashHook,
-    detectAccountStream,
-    validateAccountStreamForCreate,
-    validateAccountStreamContent,
-    handleSeries,
-    claimAccountFieldForCreate,
-    settlingAccountFieldClaim(createEvent),
-    // Post-stamp: AFTER createEvent assigns event.id, copy it
-    // onto the capability access's clientData.cmc.requestEventId. Must
-    // run after createEvent (which generates id) and before
-    // cmcDispatchMiddleware (which doesn't depend on this stamp).
-    cmcCapabilityPostCreateHook,
-    addIntegrityToContext,
-    notify,
-    cmcDispatchMiddleware
+    // Every step from the gate to the dispatch settles the gate's lock and
+    // mint token when it fails (settleMemberMintOnFailure above).
+    ...[
+      cmcAcceptAccessGateHook,
+      // After the gate, so a refused write is never stamped; before the store.
+      cmcAcceptStampingHook,
+      cmcCapabilityMintHook,
+      cmcInboxWriteHook,
+      cmcCounterpartyFromStampingHook,
+      cmcCounterpartyFeatureGateHook,
+      cmcCapabilityResponseHook,
+      // AFTER the validating hooks above, so they judge the record as sent and
+      // a rejected write has nothing to strip; BEFORE createEvent, so the store
+      // computes integrity over the stripped content and the create response
+      // returns the same row a later events.getOne will.
+      cmcCredentialStashHook,
+      detectAccountStream,
+      validateAccountStreamForCreate,
+      validateAccountStreamContent,
+      handleSeries,
+      claimAccountFieldForCreate,
+      settlingAccountFieldClaim(createEvent),
+      // Post-stamp: AFTER createEvent assigns event.id, copy it
+      // onto the capability access's clientData.cmc.requestEventId. Must
+      // run after createEvent (which generates id) and before
+      // cmcDispatchMiddleware (which doesn't depend on this stamp).
+      cmcCapabilityPostCreateHook,
+      addIntegrityToContext,
+      notify,
+      // Settles them itself once the mint settled; wrapped for a throw
+      // before that.
+      cmcDispatchMiddleware,
+    ].map(settleMemberMintOnFailure)
   );
 
   // CMC retry-loop bootstrap. Enabled by default (`cmc.retryLoop.enabled`);

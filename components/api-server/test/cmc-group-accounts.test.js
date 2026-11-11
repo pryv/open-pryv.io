@@ -31,6 +31,7 @@ const require = createRequire(import.meta.url);
 
 const fs = require('node:fs');
 const C = require('cmc');
+const { injectTestConfigSnapshot } = require('test-helpers');
 const { buildFetchShim } = require('./cmc-fetch-shim.cjs');
 
 const POLL_INTERVAL_MS = 100;
@@ -446,6 +447,175 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
         assert.match(info.name, /^cmc-member--/);
       } finally {
         globalThis.fetch = shim;
+      }
+    });
+  });
+
+  describe('[CMCGA-BUDGET] the budgets of a membership', function () {
+    let restore = null;
+    afterEach(function () {
+      if (restore != null) { restore(); restore = null; }
+    });
+    function budget (memberAccess) {
+      restore = injectTestConfigSnapshot({ cmc: { memberAccess } });
+    }
+
+    it('[GA16] a re-ask answered with the live access does not spend the mint budget; a new patient past it is refused 429 with Retry-After', async function () {
+      const mb = await joinGroup('team-budget');
+      await invitePatient(mb.teamStream, mb.membershipToken);
+      // A second relationship with the patient, under a sub-team (the owner
+      // creates the sub-team stream and publishes that invite).
+      await invitePatient(mb.teamStream, group.token, { sub: 'ward' });
+      budget({ mintBurst: 1, ratePerMinute: 1 });
+      const first = (await mint(mb.teamStream, mb.membershipToken, { scopeStreamId: mb.teamStream })).res;
+      assert.strictEqual(first.status, 201, JSON.stringify(first.body));
+      const again = (await mint(mb.teamStream, mb.membershipToken, { scopeStreamId: mb.teamStream })).res;
+      assert.strictEqual(again.status, 201, 'a re-ask is answered: ' + JSON.stringify(again.body));
+      assert.strictEqual(again.body.memberAccess?.accessId, first.body.memberAccess.accessId, 'reused');
+      const other = (await mint(mb.teamStream, mb.membershipToken, { scopeStreamId: mb.teamStream + ':ward' })).res;
+      assert.strictEqual(other.status, 429, JSON.stringify(other.body));
+      assert.strictEqual(other.body.error?.id, 'too-many-attempts');
+      assert.strictEqual(other.body.error?.data?.id, C.CmcErrorIds.MEMBER_ACCESS_RATE_LIMITED);
+      const retryAfter = Number(other.headers['retry-after']);
+      assert.ok(retryAfter >= 1 && retryAfter <= 60, 'Retry-After: ' + other.headers['retry-after']);
+      assert.strictEqual(other.body.error.data.retryAfterSeconds, retryAfter);
+      // A refusal of the gate itself stays a 400, without Retry-After.
+      const invalid = (await mint(mb.teamStream, mb.membershipToken, { scopeStreamId: mb.teamStream, expireAfter: 10 })).res;
+      assert.strictEqual(invalid.status, 400, JSON.stringify(invalid.body));
+      assert.strictEqual(invalid.headers['retry-after'], undefined);
+      // Admitted on its live record, the access turns out to be gone (the
+      // patient deleted it): a new one would be needed, the budget is spent,
+      // the trigger fails with the wait in milliseconds.
+      const del = await coreRequest.delete(patient.accessesPath + '/' + first.body.memberAccess.accessId).set('Authorization', patient.token);
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      const gone = (await mint(mb.teamStream, mb.membershipToken, { scopeStreamId: mb.teamStream })).res;
+      assert.strictEqual(gone.status, 201, JSON.stringify(gone.body));
+      assert.strictEqual(gone.body.memberAccess, undefined);
+      assert.strictEqual(gone.body.event.content.status, 'failed');
+      assert.strictEqual(gone.body.event.content.failure?.reason, C.CmcErrorIds.MEMBER_ACCESS_RATE_LIMITED);
+      assert.ok(gone.body.event.content.failure.detail.retryAfterMs >= 1000, JSON.stringify(gone.body.event.content.failure));
+    });
+
+    it('[GA1A] an ask whose create fails after the gate (its event id is taken) leaves the patient free to ask again and the new-access budget whole', async function () {
+      const mb = await joinGroup('team-fail');
+      await invitePatient(mb.teamStream, mb.membershipToken);
+      budget({ mintBurst: 1, ratePerMinute: 1 });
+      const takenId = cuid();
+      const note = await coreRequest.post(group.eventsPath).set('Authorization', group.token)
+        .send({ id: takenId, streamIds: [mb.teamStream], type: 'note/txt', content: 'taken' });
+      assert.strictEqual(note.status, 201, JSON.stringify(note.body));
+      const dup = await coreRequest.post(group.eventsPath).set('Authorization', mb.membershipToken).send({
+        id: takenId, streamIds: [mb.teamStream], type: 'consent/member-access-cmc', content: { counterparty: { username: patient.username, host: TEST_HOST } },
+      });
+      assert.strictEqual(dup.body.error?.id, 'item-already-exists', JSON.stringify(dup.body));
+      const next = (await mint(mb.teamStream, mb.membershipToken)).res;
+      assert.strictEqual(next.status, 201, 'not in flight, not rate-limited: ' + JSON.stringify(next.body));
+      assert.ok(next.body.memberAccess?.accessId, 'minted with the one token: ' + JSON.stringify(next.body));
+    });
+
+    it('[GA19] on the storage engine, a deleted ledger record keeps its id: read by id with `deleted` set, a create at the id refused; the pair\'s record is then kept at a random id', async function () {
+      const userId = await (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(group.username);
+      const mall = await require('mall').getMall();
+      const ledger = C.memberLedger;
+      const deps = { mall };
+      const m = 'm' + cuid();
+      const r = 'r' + cuid();
+      const rec = {
+        membershipAccessId: m,
+        member: { username: member.username, host: TEST_HOST },
+        relationshipAccessId: r,
+        counterparty: { username: patient.username, host: TEST_HOST },
+        scopeStreamId: APP_ROOT,
+        childAccessId: 'c1',
+        childName: 'n',
+        expires: Date.now() / 1000 - 10,
+        attribution: 'stamped',
+        state: 'deleted',
+        stateChangedAt: 1,
+      };
+      const id = await ledger.writeRecord(deps, userId, rec);
+      assert.strictEqual(id, ledger.pairEventIdOf(m, r));
+      assert.strictEqual((await ledger.findRecord(deps, userId, m, r))?.eventId, id);
+      await mall.events.delete(userId, { id, type: C.ET_MEMBER_LEDGER, streamIds: [C.NS_INTERNAL_MEMBERS] });
+      const tomb = await mall.events.getOne(userId, id);
+      assert.ok(tomb != null && tomb.deleted != null, 'the id still reads, as deleted: ' + JSON.stringify(tomb));
+      await assert.rejects(
+        mall.events.create(userId, { id, streamIds: [C.NS_INTERNAL_MEMBERS], type: C.ET_MEMBER_LEDGER, time: Date.now() / 1000, content: {} }),
+        (err) => C.provisioning.isAlreadyExistsError(err)
+      );
+      const again = await ledger.writeRecord(deps, userId, { ...rec, childAccessId: 'c2', state: 'live', expires: Date.now() / 1000 + 3600 });
+      assert.ok(typeof again === 'string' && again !== id);
+      assert.strictEqual((await ledger.findRecord(deps, userId, m, r))?.childAccessId, 'c2');
+      await mall.events.delete(userId, { id: again, type: C.ET_MEMBER_LEDGER, streamIds: [C.NS_INTERNAL_MEMBERS] });
+    });
+
+    it('[GA17] every ask spends the request budget, a re-ask too', async function () {
+      const mb = await joinGroup('team-asks');
+      await invitePatient(mb.teamStream, mb.membershipToken);
+      budget({ mintBurst: 2, ratePerMinute: 1, askBurst: 2, askRatePerMinute: 1 });
+      const a = (await mint(mb.teamStream, mb.membershipToken)).res;
+      const b = (await mint(mb.teamStream, mb.membershipToken)).res;
+      assert.deepStrictEqual([a.status, b.status], [201, 201], JSON.stringify(b.body));
+      assert.strictEqual(b.body.memberAccess.accessId, a.body.memberAccess.accessId);
+      const c = (await mint(mb.teamStream, mb.membershipToken)).res;
+      assert.strictEqual(c.status, 429, JSON.stringify(c.body));
+      assert.strictEqual(c.body.error?.data?.id, C.CmcErrorIds.MEMBER_ACCESS_RATE_LIMITED);
+      assert.match(c.body.error.message, /member access requests/);
+    });
+
+    it('[GA18] a pass over many patients loads the group\'s accesses once per ask, and a second pass reads no ledger page', async function () {
+      this.timeout(180_000);
+      const N = 12;
+      const CONCURRENCY = 4;
+      const mb = await joinGroup('team-pass');
+      const scopes = [];
+      for (let i = 0; i < N; i++) {
+        const { inviteStream } = await invitePatient(mb.teamStream, group.token, { sub: 'p' + i });
+        scopes.push(inviteStream);
+      }
+      const groupUserId = await (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(group.username);
+      const storageLayer = await require('storage').getStorageLayer();
+      const mall = await require('mall').getMall();
+      const counts = { accessesLoads: 0, ledgerPages: 0 };
+      const origFind = storageLayer.accesses.find;
+      storageLayer.accesses.find = function (user, query, ...rest) {
+        if ((user?.id ?? user) === groupUserId && query != null && Object.keys(query).length === 0) counts.accessesLoads += 1;
+        return origFind.call(this, user, query, ...rest);
+      };
+      const origGet = mall.events.get;
+      mall.events.get = function (userId, params, ...rest) {
+        if (userId === groupUserId && JSON.stringify(params?.streams ?? null).includes(':_cmc:_internal:members')) counts.ledgerPages += 1;
+        return origGet.call(this, userId, params, ...rest);
+      };
+      async function pass () {
+        const out = new Array(N);
+        let next = 0;
+        await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
+          while (next < N) {
+            const i = next++;
+            out[i] = (await mint(mb.teamStream, mb.membershipToken, { scopeStreamId: scopes[i] })).res;
+          }
+        }));
+        return out;
+      }
+      try {
+        const firstPass = await pass();
+        for (const r of firstPass) assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+        assert.strictEqual(counts.accessesLoads, N, 'one load of the group\'s accesses per ask');
+        // The asks in flight before the first scan settled scan too, then none.
+        assert.ok(counts.ledgerPages <= CONCURRENCY, 'the ledger is scanned until one scan saw it: ' + counts.ledgerPages);
+        counts.accessesLoads = 0;
+        counts.ledgerPages = 0;
+        const secondPass = await pass();
+        for (let i = 0; i < N; i++) {
+          assert.strictEqual(secondPass[i].status, 201, JSON.stringify(secondPass[i].body));
+          assert.strictEqual(secondPass[i].body.memberAccess.accessId, firstPass[i].body.memberAccess.accessId, 'reused');
+        }
+        assert.strictEqual(counts.accessesLoads, N);
+        assert.strictEqual(counts.ledgerPages, 0, 'every record read by its id');
+      } finally {
+        storageLayer.accesses.find = origFind;
+        mall.events.get = origGet;
       }
     });
   });

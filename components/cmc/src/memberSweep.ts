@@ -206,7 +206,10 @@ function createMemberSweep (deps: SweepDeps) {
       }
       if (r.state !== 'live') continue;
       if (typeof r.expires === 'number' && r.expires < t) {
-        try { await ledger.setState(ledgerDeps, userId, r.eventId, 'absent', r.childAccessId); expired += 1; } catch (_e) { /* best-effort */ }
+        try {
+          if (await ledger.setState(ledgerDeps, userId, r.eventId, 'absent', r.childAccessId)) r.state = 'absent';
+          expired += 1;
+        } catch (_e) { /* best-effort */ }
         continue;
       }
       const list = byMembership.get(r.membershipAccessId) ?? [];
@@ -219,12 +222,20 @@ function createMemberSweep (deps: SweepDeps) {
     for (const key of goneSince.keys()) {
       if (key.startsWith(userId + ':') && !byMembership.has(key.slice(userId.length + 1))) goneSince.delete(key);
     }
+    // Memberships read by this pass (the prune asks again for some).
+    const memberships = new Map<string, CmcAccessLike | null>();
+    const membershipOf = async (membershipAccessId: string): Promise<CmcAccessLike | null> => {
+      if (memberships.has(membershipAccessId)) return memberships.get(membershipAccessId) ?? null;
+      const found = deps.mall.accesses.getOne != null
+        ? await deps.mall.accesses.getOne(userId, { id: membershipAccessId })
+        : (await deps.mall.accesses.get(userId, {})).find((a) => a?.id === membershipAccessId) ?? null;
+      memberships.set(membershipAccessId, found);
+      return found;
+    };
     for (const [membershipAccessId, list] of byMembership) {
       let membership: CmcAccessLike | null = null;
       try {
-        membership = deps.mall.accesses.getOne != null
-          ? await deps.mall.accesses.getOne(userId, { id: membershipAccessId })
-          : (await deps.mall.accesses.get(userId, {})).find((a) => a?.id === membershipAccessId) ?? null;
+        membership = await membershipOf(membershipAccessId);
       } catch (_e) {
         continue;
       }
@@ -259,7 +270,15 @@ function createMemberSweep (deps: SweepDeps) {
         deps.logger?.info?.('cmc/memberSweep: residual member accesses settled by the periodic pass', { userId, settled: residualsSwept, left: r.residuals.length });
       }
     }
-    const pruned = await ledger.pruneExpired(ledgerDeps, userId);
+    // From the list read above (states this pass changed are on it). An
+    // expired membership counts as gone: it can no longer ask.
+    const pruned = await ledger.pruneExpired(ledgerDeps, userId, {
+      records,
+      isMembershipGone: async (membershipAccessId) => {
+        const m = await membershipOf(membershipAccessId);
+        return m == null || (typeof m.expires === 'number' && m.expires < t);
+      },
+    });
     return { swept, expired, residuals: residualsSwept, pruned, records: open };
   }
 
