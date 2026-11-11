@@ -23,7 +23,7 @@ type Raw = Record<string, unknown>;
 export type AutoDeletionConfig = {
   enabled: boolean;
   dryRun: boolean;
-  inactivity: { defaultDays: number | null; minDays: number; maxDays: number };
+  inactivity: { defaultDays: number | null; minDays: number; maxDays: number; countAppUse: boolean };
   userOverride: boolean;
   allowUserOptOut: boolean;
   date: { minLeadDays: number };
@@ -36,7 +36,7 @@ export type AutoDeletionConfig = {
 export const AUTO_DELETION_DEFAULTS: AutoDeletionConfig = Object.freeze({
   enabled: true,
   dryRun: false,
-  inactivity: { defaultDays: null, minDays: 90, maxDays: 3650 },
+  inactivity: { defaultDays: null, minDays: 90, maxDays: 3650, countAppUse: false },
   userOverride: true,
   allowUserOptOut: true,
   date: { minLeadDays: 14 },
@@ -80,7 +80,8 @@ export function normalizeAutoDeletionConfig (rawBlock: unknown): AutoDeletionCon
     inactivity: {
       defaultDays: pick(inactivity.defaultDays, (v) => v === null || isPosInt(v), d.inactivity.defaultDays),
       minDays: pick(inactivity.minDays, isPosInt, d.inactivity.minDays),
-      maxDays: pick(inactivity.maxDays, isPosInt, d.inactivity.maxDays)
+      maxDays: pick(inactivity.maxDays, isPosInt, d.inactivity.maxDays),
+      countAppUse: pick(inactivity.countAppUse, (v) => typeof v === 'boolean', d.inactivity.countAppUse)
     },
     userOverride: pick(raw.userOverride, (v) => typeof v === 'boolean', d.userOverride),
     allowUserOptOut: pick(raw.allowUserOptOut, (v) => typeof v === 'boolean', d.allowUserOptOut),
@@ -144,6 +145,7 @@ export function describeAutoDeletionConfig (rawBlock: unknown, env: AutoDeletion
   for (const k of ['minDays', 'maxDays']) {
     if (has(inactivity, k) && !isPosInt(inactivity[k])) bad(['inactivity', k], 'must be a positive number of days.');
   }
+  if (has(inactivity, 'countAppUse') && typeof inactivity.countAppUse !== 'boolean') bad(['inactivity', 'countAppUse'], 'must be true or false.');
   if (has(date, 'minLeadDays') && !isPosInt(date.minLeadDays)) bad(['date', 'minLeadDays'], 'must be a positive number of days.');
   if (has(reminders, 'leadDays') && !isLeadDays(reminders.leadDays)) {
     bad(['reminders', 'leadDays'], 'must be a non-empty list of positive day counts in strictly decreasing order, e.g. [60, 30, 7, 1].');
