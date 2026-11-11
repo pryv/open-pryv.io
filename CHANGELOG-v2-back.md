@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### `.api-version` read trimmed
+
+- **Fixed:** the API version read from `.api-version` is trimmed. A trailing newline (an editor's, or a
+  hand-written release cut) went into the `API-Version` response header, which refuses it, so every
+  answer was a 500. Release builds were never exposed (the tag CI refuses such a file and the image
+  stamps it with `printf '%s'`); a native install with a hand-edited file was.
+
 ### Adapter routes: early answers while the upload is still sent
 
 - **Fixed:** `workerIngress.buildWorkerProxy` (adapter mode, `stripHopByHop`) sent `Connection: close`

@@ -19,8 +19,9 @@ const { execSync } = require('child_process');
 // The method '#version' returns a version string for this project. Resolution
 // order:
 //
-//   1. The '.api-version' file at the project root: its contents are returned
-//      as the version string, UNLESS they equal the literal placeholder
+//   1. The '.api-version' file at the project root: its contents, trimmed (the
+//      version goes into the API-Version header, where a newline is refused),
+//      are returned as the version string, UNLESS they equal the literal placeholder
 //      '1.2.3' (the un-provisioned sentinel). In every real deployment this
 //      file is present and non-placeholder, so this branch wins.
 //   2. `git describe --tags`: a fallback for git checkouts only. It is
@@ -83,7 +84,7 @@ class ProjectVersion {
       const rootPath = path.dirname(current);
       const versionFilePath = path.join(rootPath, API_VERSION_FILENAME);
       if (!fs.existsSync(versionFilePath)) { continue; }
-      return fs.readFileSync(versionFilePath).toString();
+      return fs.readFileSync(versionFilePath).toString().trim();
     }
     // ESM fallback — walk upward from the directory containing this source
     // file looking for an .api-version sibling. Stops at filesystem root.
@@ -91,7 +92,7 @@ class ProjectVersion {
     for (let i = 0; i < 16; i++) {
       const candidate = path.join(dir, API_VERSION_FILENAME);
       if (fs.existsSync(candidate)) {
-        return fs.readFileSync(candidate).toString();
+        return fs.readFileSync(candidate).toString().trim();
       }
       const parent = path.dirname(dir);
       if (parent === dir) break;
