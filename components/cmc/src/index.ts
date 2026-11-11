@@ -66,10 +66,10 @@ export {
   handleMemberRevoke, memberSweep,
 };
 // Group accounts: the mint's write-time gate and server-owned-fields hooks,
-// the per-worker registry (rate limit + in-flight locks), the config reader,
-// the sweep entry points.
+// the registry (per-membership budgets + in-flight locks) and its config
+// reader, the mint's config reader, the sweep entry points.
 export const { createMemberAccessGateHook, createMemberAccessServerOwnedFieldsHook } = memberAccessHooks;
-export const { createMemberMintRegistry } = memberMintRegistry;
+export const { createMemberMintRegistry, memberMintLimitsFromConfig, settleMemberMint } = memberMintRegistry;
 export const { memberAccessOptionsFromConfig } = handleMemberAccess;
 export const { createMemberSweep } = memberSweep;
 export const CmcErrorIds = errorIds.CmcErrorIds;

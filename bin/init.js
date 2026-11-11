@@ -996,10 +996,14 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # periodic ledger pass. On by default; off = nothing queued, a warning at
 # # boot. cmc.memberAccess.* — the accesses a group's core mints on
 # # patients' accounts for its members: default / min / max lifetime in
-# # seconds (24 h, 60 s, 7 d), mint triggers per membership per minute per
-# # worker, concurrent mints per (membership, patient) per worker, whether to
-# # mint on a patient core that refuses the member stamp (older release; the
-# # access then names the member only), and the ledger pass interval.
+# # seconds (24 h, 60 s, 7 d), the budgets per membership for the whole core
+# # (new member accesses: ratePerMinute sustained after a mintBurst from
+# # idle; requests of any kind, re-asks of a live access included:
+# # askRatePerMinute after an askBurst; a spent budget answers 429 with
+# # Retry-After), concurrent mints per (membership, patient) per worker,
+# # whether to mint on a patient core that refuses the member stamp (older
+# # release; the access then names the member only), and the ledger pass
+# # interval.
 # # cmc:
 # #   retryLoop:
 # #     enabled: true
@@ -1010,7 +1014,10 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #     defaultTtl: 86400
 # #     minTtl: 60
 # #     maxTtl: 604800
-# #     ratePerMinute: 30
+# #     ratePerMinute: 1000
+# #     mintBurst: 5000
+# #     askRatePerMinute: 3000
+# #     askBurst: 10000
 # #     maxInFlightPerMembership: 1
 # #     allowNameOnly: true
 # #     sweepIntervalMs: 60000

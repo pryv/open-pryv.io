@@ -1523,7 +1523,7 @@ The records live on the team stream. They are the owner's: an app or shared acce
 
 ## Error ids
 
-Refused when the trigger is written: HTTP 400 `invalid-operation`, id in `error.data.id`.
+Refused when the trigger is written: HTTP 400 `invalid-operation`, id in `error.data.id`; a spent budget (`cmc-member-access-rate-limited`) is HTTP 429 `too-many-attempts` instead, with a `Retry-After` header.
 
 | Id | Meaning |
 |---|---|
@@ -1532,7 +1532,7 @@ Refused when the trigger is written: HTTP 400 `invalid-operation`, id in `error.
 | `cmc-member-access-scope-outside-membership` | `scopeStreamId` is not the trigger's stream or under it, or the trigger is not on a team stream. |
 | `cmc-member-access-permissions-not-subset` | Not stream permissions, or beyond what the group's invite offered the patient. |
 | `cmc-member-access-expiry-out-of-range` | `expireAfter` outside [`minTtl`, `maxTtl`]. |
-| `cmc-member-access-rate-limited` | More than `ratePerMinute` triggers for this membership in the last minute on this server process: ask again after the minute. |
+| `cmc-member-access-rate-limited` | A budget of this membership is spent, for the whole core: its requests (`askBurst`, then `askRatePerMinute`; every ask counts) or its new member accesses (`mintBurst`, then `ratePerMinute`; asking again for a live access does not count). Answered `429` `too-many-attempts` with a `Retry-After` header and `error.data.retryAfterSeconds`: ask again after that many seconds. |
 | `cmc-member-access-in-flight` | A mint for this membership and patient is running: ask again shortly. |
 | `cmc-membership-permissions-invalid` | A membership request breaks the membership rule. |
 | `cmc-member-stamp-invalid` | (patient's core, `accesses.create`) A consent grant sent a `clientData.cmc` that is not the member stamp. |
@@ -1547,10 +1547,15 @@ Recorded on the trigger, in `content.failure.reason` (the answer then has no `me
 | `cmc-member-access-peer-unreachable` | The patient's core could not be reached (5xx, network, timeout) or asked to be called later (408, 429): ask again shortly, and not before `detail.retryAfterMs` when it is set (the patient core's `Retry-After`). |
 | `cmc-member-access-membership-gone` | The membership ended during the mint; the access was deleted. |
 | `cmc-member-access-not-retryable` | A mint is never replayed from the retry queue. |
+| `cmc-member-access-rate-limited` | The membership's new-access budget was spent and the ask was admitted because its patient had a live member access, which turned out to need replacing: ask again after `detail.retryAfterMs` (milliseconds, as for `cmc-member-access-peer-unreachable`). |
 | `cmc-member-revoke-residual` | (sweep record) At least one access could not be deleted; see `residuals`. |
 | `cmc-member-channel-not-supported` | A chat addressed to a member (on the trigger), or a chat / alert / ack written by a member (403 at write). |
 
-"Ask again shortly" means `cmc-member-access-in-flight` and `cmc-member-access-peer-unreachable`; `cmc-member-access-rate-limited` means after the minute.
+"Ask again shortly" means `cmc-member-access-in-flight` and `cmc-member-access-peer-unreachable`; `cmc-member-access-rate-limited` means after the wait it carries. The units differ by where the answer lands: on the 429 it is seconds (`Retry-After`, `error.data.retryAfterSeconds`), recorded on the trigger it is milliseconds (`content.failure.detail.retryAfterMs`, like every wait recorded there).
+
+The new-access budget is not what bounds the group core's work for a runaway client: an ask refused on a spent new-access budget has already loaded the group's accesses and read the ledger (the exemption for a live access needs both). The request budget (`askBurst`, `askRatePerMinute`) bounds that work; size it against the cost of loading the group's accesses.
+
+**Bulk reads** (a member reading many patients in a row): ask an `expireAfter` that covers the whole analysis window (a later pass then gets the same accesses back, which costs no new-access budget), keep a few asks in flight rather than hundreds (a burst of concurrent asks can see the new-access budget empty for a moment), and honour `Retry-After`. The budgets pace a membership; they do not protect the patients, since a membership already reaches every patient its team covers: what ends that exposure is the membership's expiry and its revocation.
 
 ## Versions and older cores
 
@@ -1559,7 +1564,7 @@ Recorded on the trigger, in `content.failure.reason` (the answer then has no `me
 - **Patient's core of an earlier release** refuses the member stamp with `cmc-clientdata-cmc-forbidden`. The group's core then creates the access once more without the stamp and reports `attribution: 'name-only'` (the name still names the member) when `cmc:memberAccess:allowNameOnly` is true (the default for now), and fails the trigger with `cmc-member-access-peer-rejected` otherwise. Any other refusal is a failure, never a silent fallback. On such a core, accesses removed by the consent pages leave no deletion record.
 - **Patient's core older than 2.0.0-rc.52** does not delete the member accesses when the patient withdraws through `consent/revoke-cmc`: they live until they expire.
 
-Configuration of the group's core (`cmc:memberAccess:*`): `defaultTtl` 86400, `minTtl` 60, `maxTtl` 604800, `ratePerMinute` 30 (per membership, per server process), `maxInFlightPerMembership` 1 (per membership and patient, per server process), `allowNameOnly` true, `sweepIntervalMs` 60000 (periodic ledger pass, run with the retry loop).
+Configuration of the group's core (`cmc:memberAccess:*`): `defaultTtl` 86400, `minTtl` 60, `maxTtl` 604800, `ratePerMinute` 1000 and `mintBurst` 5000 (new member accesses per membership, for the whole core: the burst from idle, then the rate a minute), `askRatePerMinute` 3000 and `askBurst` 10000 (requests of any kind per membership, re-asks included, for the whole core; raised to the new-access budget when set lower), `maxInFlightPerMembership` 1 (per membership and patient, per server process), `allowNameOnly` true, `sweepIntervalMs` 60000 (periodic ledger pass, run with the retry loop).
 
 **Trust boundary.** Any access with `read` on the group's `:_cmc:inbox` holds every patient grant (the accept mirrors keep `grantedAccess.apiEndpoint`), and so do the group's owner and delegates; a membership can never be granted it. Members of a team read the team's mint triggers (who opened which patient, when, with the access id and expiry, never the token).
 

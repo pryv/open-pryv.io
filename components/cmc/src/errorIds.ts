@@ -327,8 +327,15 @@ const CmcErrorIds = {
   MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET: 'cmc-member-access-permissions-not-subset',
   // `expireAfter` outside [`cmc:memberAccess:minTtl`, `cmc:memberAccess:maxTtl`].
   MEMBER_ACCESS_EXPIRY_OUT_OF_RANGE: 'cmc-member-access-expiry-out-of-range',
-  // More than `cmc:memberAccess:ratePerMinute` mint triggers by this
-  // membership on this worker in the last minute. Ask again after the window.
+  // A budget of this membership is spent, for the whole core: the requests
+  // (`askBurst`, then `askRatePerMinute`; every ask counts, a re-ask of a
+  // live access included) or the new member accesses (`mintBurst`, then
+  // `ratePerMinute`; a re-ask answered with a live access does not count).
+  // Answered 429 `too-many-attempts` with a `Retry-After` header and
+  // `error.data.retryAfterSeconds` (this id in `error.data.id`). An ask the
+  // gate admitted as a probable reuse that needed a new access after all
+  // fails its trigger with this id and `retryAfterMs` in the detail (the
+  // unit of the other waits recorded on the trigger).
   MEMBER_ACCESS_RATE_LIMITED: 'cmc-member-access-rate-limited',
   // A mint for the same (membership, relationship) is in flight on this
   // worker. Ask again shortly.
