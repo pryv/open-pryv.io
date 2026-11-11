@@ -1076,7 +1076,7 @@ when served, is smaller than the host and never replaces it.
 carry, server-owned, `clientData.oauth.client = { name?, host, url, origin:
 "metadata-document" }` (the document's name as a plain string, the first
 language of a set; the host in ASCII form; the URL; a stamp written before
-2.0.0-rc.79 has no `origin`): an account app names a connected app by it, the access
+2.0.0-rc.80 has no `origin`): an account app names a connected app by it, the access
 name `oauth:url~…` being no name. It is a snapshot: a refresh stamps the new
 session from the client as it stands, a consent stamps the grant again; the API
 refuses to change it. A derived session (token exchange) carries none. A
