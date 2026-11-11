@@ -43,6 +43,16 @@ describe('[APIV] APIVersion#version', () => {
     });
   });
 
+  describe('[AV03] when the ".api-version" file ends with a newline or spaces', () => {
+    before(() => {
+      fs.writeFileSync(versionFilePath, ' 1.2.5\n', { encoding: 'utf-8' });
+    });
+    it('[AV3T] returns the version without them (it goes into the API-Version header)', async () => {
+      const version = await getAPIVersion(true);
+      assert.strictEqual(version, '1.2.5');
+    });
+  });
+
   describe('[AV02] when a ".api-version" file exists in the project and is 1.2.3 (sentinel)', () => {
     before(() => {
       fs.writeFileSync(versionFilePath, '1.2.3', { encoding: 'utf-8' });
