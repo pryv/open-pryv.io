@@ -170,7 +170,7 @@ describe('[ROOT] root', function () {
         { name: 'Access-Control-Allow-Origin', value: origin },
         { name: 'Access-Control-Allow-Methods', value: allowMethod },
         { name: 'Access-Control-Allow-Headers', value: allowHeaders },
-        { name: 'Access-Control-Expose-Headers', value: 'API-Version' },
+        { name: 'Access-Control-Expose-Headers', value: 'API-Version, Retry-After' },
         { name: 'Access-Control-Allow-Credentials', value: 'true' }
       ]);
       validation.checkMeta(res.body);

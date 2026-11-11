@@ -117,7 +117,7 @@ describe('[OACO] OAuth CORS on the api-server', function () {
       assert.equal(res.headers['access-control-allow-credentials'], 'true', path);
       assert.equal(res.headers['access-control-allow-methods'], 'POST', path);
       assert.equal(res.headers['access-control-allow-headers'], 'content-type, authorization', path);
-      assert.equal(res.headers['access-control-expose-headers'], 'API-Version', path);
+      assert.equal(res.headers['access-control-expose-headers'], 'API-Version, Retry-After', path);
     }
   });
 });

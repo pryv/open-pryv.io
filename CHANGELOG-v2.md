@@ -43,6 +43,10 @@
   `item-already-exists`): the expired access still held its name on the patient's core. The expired
   access of that name is now deleted through the grant and the access minted again, once. A live
   access holding the name is still never deleted.
+- **Changed: `Access-Control-Expose-Headers` is now `API-Version, Retry-After`**, so a browser client
+  can read the wait of a `429` (member access budgets, the public email lookups, login attempts).
+  `Retry-After` is not a CORS-safelisted response header; before, a cross-origin page could not read
+  it.
 - One `info` log line (`cmc/memberMintBudget: bulk minting by membership <id>`) when a membership
   falls below half its new-access burst, at most once a minute per membership, for operators who
   alert on bulk minting. The budgets pace a membership; what ends its reach is its expiry and its
