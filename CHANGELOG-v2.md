@@ -13,6 +13,62 @@
 > same moment. As announced with 2.0.0-rc.73, a later release is planned to default
 > `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
 
+### OAuth: a consent at the owner's own address alias held by another app names that case
+
+- **Changed: the account owner consenting at one of their address aliases that another app's grant
+  holds is refused `403 access_denied` with `reason: address-alias-held`** ("the requested address
+  is one of this account's address aliases, already used by another app") at `/oauth2/authorize/offer`
+  and `/accept`, audited as `oauth.consent.refused` with that reason. Before, it was answered
+  `audience-account-mismatch` ("names another account's address"), which reads wrong to the owner.
+  Every other case keeps the shared `audience-account-mismatch`: another account signing in at that
+  address, another account's alias, an access alias, a former username, and a consent that loses a
+  race for an unheld alias. The owner lists the alias and the app holding it
+  (`account.addressAliases.list`, `heldBy`), so the distinct answer reveals nothing new.
+
+### CMC group accounts: member access budgets for bulk reads
+
+- **Changed: asking again for a live member access no longer counts as a new one.** A membership has
+  two budgets, counted for the whole core (shared by its API workers) as a burst from idle then a
+  sustained rate: new member accesses (`cmc:memberAccess:mintBurst`, default 5000, then
+  `cmc:memberAccess:ratePerMinute`, default 1000 a minute) and requests of any kind, re-asks of a live
+  access included (`cmc:memberAccess:askBurst`, default 10000, then
+  `cmc:memberAccess:askRatePerMinute`, default 3000 a minute; raised to the new-access budget, with a
+  log line, when set lower). A re-ask answered with the recorded access gives its new-access token
+  back, and so does an ask that fails. Before, every trigger counted against `ratePerMinute` (30 a
+  minute per membership, per worker process), re-asks included, which bounded a pass over 10,000
+  patients to hours. `ratePerMinute` keeps its name and unit, but now counts new accesses only and for
+  the whole core. **Operators who had tuned `ratePerMinute` to be strict: set `mintBurst` too**; the
+  former "at most N from idle" is `mintBurst: N`.
+- **Changed (behaviour, not breaking): a spent budget answers `429` `too-many-attempts`** with a
+  `Retry-After` header and `error.data.retryAfterSeconds`, instead of `400` `invalid-operation`.
+  `error.data.id` is unchanged (`cmc-member-access-rate-limited`), so clients that key on it keep
+  working. An ask admitted while the new-access budget was spent, because its patient had a live
+  member access, that turns out to need a new one fails its trigger with
+  `cmc-member-access-rate-limited` and `retryAfterMs` in the failure detail (milliseconds, like the
+  other waits recorded on the trigger).
+- **Fixed:** a member access ask whose `events.create` failed after the write-time check (an event id
+  already taken, a storage error) left that patient answering `cmc-member-access-in-flight` to the
+  membership for a minute, and kept its new-access token. Both are now released on the failure.
+- **Fixed:** asking again for a patient once the previous member access had expired (and its record
+  had been settled by the periodic pass) failed `cmc-member-access-peer-rejected` (`409`
+  `item-already-exists`): the expired access still held its name on the patient's core. The expired
+  access of that name is now deleted through the grant and the access minted again, once. A live
+  access holding the name is still never deleted.
+- **Changed: `Access-Control-Expose-Headers` is now `API-Version, Retry-After`**, so a browser client
+  can read the wait of a `429` (member access budgets, the public email lookups, login attempts).
+  `Retry-After` is not a CORS-safelisted response header; before, a cross-origin page could not read
+  it.
+- One `info` log line (`cmc/memberMintBudget: bulk minting by membership <id>`) when a membership
+  falls below half its new-access burst, at most once a minute per membership, for operators who
+  alert on bulk minting. The budgets pace a membership; what ends its reach is its expiry and its
+  revocation.
+- Internal: the member ledger record of a (membership, patient) pair is read by an id derived from
+  the pair, instead of a scan of the whole ledger on every ask (records written by an earlier release
+  are found by a scan, then moved); the ledger read no longer stops silently at 100,000 records, so
+  the sweep and the reuse see every record; one load of the group's accesses per ask instead of two,
+  and no ledger write for a re-ask whose record is unchanged. Settled records at their pair's id are
+  pruned once their membership is gone or expired.
+
 ### Public email lookups within a per-address budget
 
 - **Changed: the public email lookups share one per-address budget**: `GET /reg/{email}/check_email`,

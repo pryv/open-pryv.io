@@ -35,7 +35,7 @@ import { fromCallback, ApiEndpoint } from 'utils';
 import { getUsersLocalIndex } from 'storage';
 import { formerUsernames } from 'business/src/series/namespace.ts';
 import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
-import { bindableAddressAliases } from '../../methods/helpers/addressAliases.ts';
+import { bindableAddressAliases, consentAddressAliases } from '../../methods/helpers/addressAliases.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
 import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
@@ -339,6 +339,14 @@ export function createSessions (env: GlueEnv) {
     const username = await resolveUsername(userId);
     if (username == null) return [];
     return await bindableAddressAliases({ id: userId, username }, clientId ?? null);
+  }
+
+  // consentAddressAliasesOf: the same, plus the account's address aliases
+  // another access holds (the owner's consent screen names that case).
+  async function consentAddressAliasesOf (userId: string, clientId?: string): Promise<{ bindable: string[]; held: string[] }> {
+    const username = await resolveUsername(userId);
+    if (username == null) return { bindable: [], held: [] };
+    return await consentAddressAliases({ id: userId, username }, clientId ?? null);
   }
 
   // ---------------------------------------------------------------------
@@ -768,6 +776,7 @@ export function createSessions (env: GlueEnv) {
     resolveAccountUserId,
     resolveUsername,
     addressAliasesOf,
+    consentAddressAliasesOf,
     mintRefreshedAccess,
     resolveGrantSubject,
     bindAccessDpop,

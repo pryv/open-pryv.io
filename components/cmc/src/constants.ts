@@ -285,11 +285,17 @@ const MEMBER_REVOKE_REASONS: readonly string[] = ['revoke', 'accesses.delete', '
 const MEMBER_ATTRIBUTION_STAMPED = 'stamped';
 const MEMBER_ATTRIBUTION_NAME_ONLY = 'name-only';
 // Config keys (`cmc:memberAccess:*`) with the values used when unset.
+// The budgets (memberMintRegistry.ts) are per membership, for the whole core:
+// `ratePerMinute` / `mintBurst` count new member accesses, `askRatePerMinute`
+// / `askBurst` count requests of any kind (a re-ask of a live access too).
 const MEMBER_ACCESS_CONFIG_DEFAULTS = {
   defaultTtl: 86400,
   minTtl: 60,
   maxTtl: 604800,
-  ratePerMinute: 30,
+  ratePerMinute: 1000,
+  mintBurst: 5000,
+  askRatePerMinute: 3000,
+  askBurst: 10000,
   maxInFlightPerMembership: 1,
   allowNameOnly: true,
   sweepIntervalMs: 60000,

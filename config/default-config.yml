@@ -1283,11 +1283,23 @@ cmc:
     perUserLimit: 100
   # Group accounts: the accesses a group's core mints on patients' accounts
   # for its members (`consent/member-access-cmc`).
+  # The two budgets of a membership are counted for the whole core (shared by
+  # its workers), as token buckets: a burst from idle, then a sustained rate.
+  # They pace a membership, they do not protect the patients: a membership
+  # already reaches every patient its team covers; its expiry and its
+  # revocation are what end that. A spent budget is answered 429 with
+  # Retry-After (`cmc-member-access-rate-limited`). The request budget is what
+  # bounds the work a runaway client causes on this core (each ask loads the
+  # group's accesses before the new-access budget is checked): size it against
+  # that load. A value of 0 or below means the default, not "off".
   memberAccess:
     defaultTtl: 86400              # seconds a member access lives when the trigger sets none (24 h)
     minTtl: 60                     # smallest `expireAfter` accepted (seconds)
     maxTtl: 604800                 # largest `expireAfter` accepted (7 days); also bounds a residual after a failed sweep
-    ratePerMinute: 30              # mint triggers per membership access per minute, per worker process
+    ratePerMinute: 1000            # NEW member accesses per membership per minute, sustained (a re-ask answered with a live access does not count)
+    mintBurst: 5000                # new member accesses a membership may make from idle before ratePerMinute applies
+    askRatePerMinute: 3000         # member access requests of any kind per membership per minute, sustained (re-asks included); raised to ratePerMinute if lower
+    askBurst: 10000                # same, from idle; raised to mintBurst if lower
     maxInFlightPerMembership: 1    # concurrent mints per (membership, patient relationship), per worker
     allowNameOnly: true            # mint on a patient core that refuses the member stamp (older release); the access then names the member only
     sweepIntervalMs: 60000         # ledger pass: expired memberships and children, pruning (on the retry scheduler tick)

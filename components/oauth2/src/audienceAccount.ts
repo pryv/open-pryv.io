@@ -41,6 +41,17 @@ export const ISSUER_ACCOUNT_MISMATCH = 'issuer-account-mismatch';
 /** The refusal's `error_description`. */
 export const AUDIENCE_ACCOUNT_MISMATCH_TEXT = 'the requested resource names another account\'s address';
 
+/**
+ * The reason (answer and audit) of a consent at one of the signed-in
+ * account's own address aliases that another access holds (another app's
+ * grant). Told apart from `AUDIENCE_ACCOUNT_MISMATCH` for the owner only: the
+ * owner lists the alias and its holder anyway, so it reveals nothing.
+ */
+export const ADDRESS_ALIAS_HELD = 'address-alias-held';
+
+/** That refusal's `error_description`. */
+export const ADDRESS_ALIAS_HELD_TEXT = 'the requested address is one of this account\'s address aliases, already used by another app';
+
 /** Whether the platform answers a host label itself (never an account's host). */
 export type PlatformRoutedLabel = (label: string) => boolean;
 
@@ -51,8 +62,12 @@ export type PlatformRoutedLabel = (label: string) => boolean;
  */
 export type AccountNames = { username: string; addressAliases?: readonly string[]; formerUsernames?: readonly string[] };
 
-/** The names a consent may bind: never a former username (a new authorization uses the current address). */
-export type ConsentAccountNames = { username: string; addressAliases?: readonly string[]; formerUsernames?: never };
+/**
+ * The names a consent may bind: never a former username (a new authorization
+ * uses the current address). `heldAddressAliases` are the account's address
+ * aliases another access holds: never bound, only named in the refusal.
+ */
+export type ConsentAccountNames = { username: string; addressAliases?: readonly string[]; heldAddressAliases?: readonly string[]; formerUsernames?: never };
 
 /**
  * Whether a per-user audience's label names this account. The platform's own
@@ -76,14 +91,16 @@ export function labelNamesAccount (label: string, account: AccountNames, isPlatf
  * another address, `'unlisted'` when the client's list no longer holds the
  * audience the authorization named (changed since `/oauth2/authorize`), or
  * the client row is gone: the label is re-derived from the current list, so a
- * list that no longer matches is refused rather than passed unbound.
+ * list that no longer matches is refused rather than passed unbound. `'held'`
+ * when the label is one of the account's own address aliases that another
+ * access holds (a `'mismatch'` for anyone but the owner, see ADDRESS_ALIAS_HELD).
  */
 export function consentAudienceRefusal (
   audience: string | undefined,
   client: OAuthClient | null,
   account: ConsentAccountNames,
   isPlatformRoutedLabel?: PlatformRoutedLabel | null
-): null | 'mismatch' | 'unlisted' {
+): null | 'mismatch' | 'unlisted' | 'held' {
   if (audience == null) return null;
   if (client == null) return 'unlisted';
   const list = Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0 ? client.allowedAudiences : null;
@@ -91,7 +108,10 @@ export function consentAudienceRefusal (
   const match = withinResourceCap(audience, list) ? matchAudience(audience, list) : null;
   if (match == null) return 'unlisted';
   if (match.label == null) return null;
-  return labelNamesAccount(match.label, account, isPlatformRoutedLabel) ? null : 'mismatch';
+  if (labelNamesAccount(match.label, account, isPlatformRoutedLabel)) return null;
+  const l = match.label.toLowerCase();
+  if (isPlatformRoutedLabel != null && isPlatformRoutedLabel(l)) return 'mismatch';
+  return (account.heldAddressAliases ?? []).some((a) => typeof a === 'string' && a.toLowerCase() === l) ? 'held' : 'mismatch';
 }
 
 /**
@@ -167,6 +187,7 @@ function perUserLabelOf (audience: string | undefined, client: OAuthClient | nul
 const AUDIT_REASONS = {
   mismatch: AUDIENCE_ACCOUNT_MISMATCH,
   unlisted: AUDIENCE_NOT_LISTED,
+  held: ADDRESS_ALIAS_HELD,
   'issuer-account': ISSUER_ACCOUNT_MISMATCH,
 } as const;
 
@@ -183,9 +204,12 @@ export async function auditAudienceRefusal (payload: { clientId: string; scope: 
 }
 
 /** The answer of a consent refused by `consentAudienceRefusal`. */
-export function consentAudienceAnswer (kind: 'mismatch' | 'unlisted'): { status: number; body: { error: string; error_description: string; reason?: string } } {
+export function consentAudienceAnswer (kind: 'mismatch' | 'unlisted' | 'held'): { status: number; body: { error: string; error_description: string; reason?: string } } {
   if (kind === 'mismatch') {
     return { status: 403, body: { error: 'access_denied', error_description: AUDIENCE_ACCOUNT_MISMATCH_TEXT, reason: AUDIENCE_ACCOUNT_MISMATCH } };
+  }
+  if (kind === 'held') {
+    return { status: 403, body: { error: 'access_denied', error_description: ADDRESS_ALIAS_HELD_TEXT, reason: ADDRESS_ALIAS_HELD } };
   }
   return {
     status: 400,
