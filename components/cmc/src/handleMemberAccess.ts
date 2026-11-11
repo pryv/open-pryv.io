@@ -526,6 +526,21 @@ async function handleMemberAccess (params: {
     }
   };
 
+  // The id of the expired access named `name` among those the grant manages,
+  // or null (none, a live one, or the list could not be read).
+  const expiredNamesake = async (name: string): Promise<string | null> => {
+    let r: outbound.DeliverResult;
+    try {
+      r = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'GET', path: 'accesses?includeExpired=true', deps: peerDeps() });
+    } catch (_e) {
+      return null;
+    }
+    if (!r.ok) return null;
+    const list = (r.body as { accesses?: PeerAccess[] } | null)?.accesses;
+    const found = Array.isArray(list) ? list.find((a) => a?.name === name) : undefined;
+    return typeof found?.id === 'string' && typeof found.expires === 'number' && found.expires < now() ? found.id : null;
+  };
+
   // A request admitted without a mint token takes one before anything is
   // minted or deleted; refused, the trigger fails and the recorded child is
   // left as it is. The wait is `retryAfterMs`, as for an unreachable patient
@@ -605,12 +620,25 @@ async function handleMemberAccess (params: {
       return unreachable();
     }
   }
-  if (!created.ok) {
-    // The deterministic name is taken: a child this core minted for the pair
-    // and recorded where this process did not look. The next ask scans.
-    if (created.reason === 'http-4xx' && peerErrorIdOf(created.body) === 'item-already-exists') ledger.forgetScan(ledgerDeps, userId);
-    return peerFailure(created);
+  if (!created.ok && created.reason === 'http-4xx' && peerErrorIdOf(created.body) === 'item-already-exists') {
+    // The deterministic name is taken. An EXPIRED child of that name (its
+    // record settled and pruned, the child left on the patient core until
+    // deleted) opens nothing: deleted, then the mint is tried once more. A
+    // live one may be a child this core minted for the pair and recorded
+    // where this process did not look (the next ask scans): never deleted.
+    ledger.forgetScan(ledgerDeps, userId);
+    const namesake = await expiredNamesake(name);
+    if (namesake != null) {
+      const del = await deleteChild(namesake);
+      if (!deletedOrGone(del)) return peerFailure(del);
+      try {
+        created = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'POST', path: 'accesses', body, deps: peerDeps() });
+      } catch (_e) {
+        return unreachable();
+      }
+    }
   }
+  if (!created.ok) return peerFailure(created);
   const child = ((created.body as { access?: PeerAccess } | null)?.access) ?? null;
   if (child?.id == null || typeof child.token !== 'string') {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, detail: { httpStatus: created.status } };

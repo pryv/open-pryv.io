@@ -391,16 +391,59 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal(r.detail.peerErrorId, 'cmc-member-stamp-invalid');
     });
 
-    it('[HMA15] the grant is the real bound: a 403 forbidden from the create is permissions-not-subset; a duplicate name is peer-rejected and never answered with a delete', async () => {
+    it('[HMA15] the grant is the real bound: a 403 forbidden from the create is permissions-not-subset; a duplicate name held by a live access is peer-rejected and never answered with a delete', async () => {
       let core = fakePatientCore([{ status: 403, body: { error: { id: 'forbidden', message: 'insufficient' } } }]);
       let r = await mint(fakeMall(), core, {});
       assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_PERMISSIONS_NOT_SUBSET);
       assert.deepEqual(r.detail, { peerErrorId: 'forbidden', httpStatus: 403 });
-      core = fakePatientCore([{ status: 400, body: { error: { id: 'item-already-exists', message: 'name', data: { accesses: [{ token: 'child-tok' }] } } } }]);
-      r = await mint(fakeMall(), core, {});
-      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED);
-      assert.deepEqual(r.detail, { peerErrorId: 'item-already-exists', httpStatus: 400 }, 'no peer body in the detail');
-      assert.equal(core.calls.length, 1, 'no delete');
+      const taken = { status: 400, body: { error: { id: 'item-already-exists', message: 'name', data: { accesses: [{ token: 'child-tok' }] } } } };
+      // The namesake is live (or the list unreadable): left alone.
+      for (const listed of [
+        { status: 200, body: { accesses: [{ id: 'live-1', expires: 2_000_000 }] } },
+        { status: 503, body: null },
+      ]) {
+        core = fakePatientCore(({ method, path, body }) => {
+          if (method === 'POST') return taken;
+          if (method === 'GET' && path.endsWith('/accesses')) {
+            if (listed.body != null) listed.body.accesses[0].name = core.calls[0].body.name;
+            return listed;
+          }
+          return null;
+        });
+        r = await mint(fakeMall(), core, {});
+        assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED);
+        assert.deepEqual(r.detail, { peerErrorId: 'item-already-exists', httpStatus: 400 }, 'no peer body in the detail');
+        assert.deepEqual(core.calls.map((c) => c.method), ['POST', 'GET'], 'no delete');
+      }
+    });
+
+    it('[HMA18] a duplicate name held by an EXPIRED access (its record pruned) is deleted and the mint tried once more', async () => {
+      const taken = { status: 400, body: { error: { id: 'item-already-exists', message: 'name' } } };
+      let posts = 0;
+      const core = fakePatientCore(({ method, path }) => {
+        if (method === 'POST') return ++posts === 1 ? taken : created201();
+        if (method === 'GET' && path.endsWith('/accesses')) {
+          return { status: 200, body: { accesses: [{ id: 'other', name: 'cmc-member--someone-else', expires: 1 }, { id: 'old-child', name: core.calls[0].body.name, expires: 999_000 }] } };
+        }
+        if (method === 'DELETE' && path.endsWith('/accesses/old-child')) return { status: 200, body: { accessDeletion: { id: 'old-child' } } };
+        return null;
+      });
+      const r = await mint(fakeMall(), core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.mintOutcome, 'minted');
+      assert.equal(r.memberAccess.accessId, CHILD.id);
+      assert.deepEqual(core.calls.map((c) => c.method + ' ' + c.path.replace(/^.*\/accesses/, 'accesses')), ['POST accesses', 'GET accesses', 'DELETE accesses/old-child', 'POST accesses']);
+      assert.equal(core.calls[3].body.name, core.calls[0].body.name, 'same name');
+      // Twice taken: no third attempt, peer-rejected.
+      const again = fakePatientCore(({ method, path }) => {
+        if (method === 'POST') return taken;
+        if (method === 'GET') return { status: 200, body: { accesses: [{ id: 'old-child', name: again.calls[0].body.name, expires: 999_000 }] } };
+        if (method === 'DELETE') return { status: 404, body: { error: { id: 'unknown-resource' } } };
+        return null;
+      });
+      const r2 = await mint(fakeMall(), again, {});
+      assert.equal(r2.reason, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED);
+      assert.deepEqual(again.calls.map((c) => c.method), ['POST', 'GET', 'DELETE', 'POST']);
     });
 
     it('[HMA16] a 5xx, a network error or a timeout is peer-unreachable; the ledger gets nothing', async () => {
