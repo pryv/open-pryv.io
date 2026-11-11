@@ -20,19 +20,6 @@
   until now keeps that date; only later app use stops counting. **Operators who rely on app use**
   to keep accounts active: set `countAppUse: true`.
 
-### OAuth: an operator-registered client's grant and sessions name it
-
-- **Added: `clientData.oauth.client = { name?, origin: "operator" }` on the consent grant and every
-  session of a registry client the operator registered**, as a metadata-document client's already carry
-  `{ name?, host, url }`. `name` is the name the operator registered (`clientName`, else the first
-  language of `name`), never one taken from a request. A metadata-document client's stamp now also
-  carries `origin: "metadata-document"` (a stamp written before has none; its `host` tells it
-  apart), so `origin` names the kind of every new stamp. An account app names a connected app by it,
-  the access name `oauth-grant:<clientId>` / `oauth:<clientId>` being no name. A snapshot, server-owned,
-  refused by `accesses.update`: a refresh stamps the new session from the client row as it stands, a
-  consent stamps the grant again, so a grant made before this carries it from its next consent and
-  its sessions from their next refresh. A derived session (token exchange) carries none.
-
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
@@ -97,6 +84,26 @@
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+
+## 2.0.0-rc.80 - 2026-11-11
+
+> **Upgrade advice for operators.** No schema migration, no new configuration key. OAuth grants and
+> sessions of operator-registered clients gain a `clientData.oauth.client` stamp (below); nothing to
+> do on the core. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
+
+### OAuth: an operator-registered client's grant and sessions name it
+
+- **Added: `clientData.oauth.client = { name?, origin: "operator" }` on the consent grant and every
+  session of a registry client the operator registered**, as a metadata-document client's already carry
+  `{ name?, host, url }`. `name` is the name the operator registered (`clientName`, else the first
+  language of `name`), never one taken from a request. A metadata-document client's stamp now also
+  carries `origin: "metadata-document"` (a stamp written before has none; its `host` tells it
+  apart), so `origin` names the kind of every new stamp. An account app names a connected app by it,
+  the access name `oauth-grant:<clientId>` / `oauth:<clientId>` being no name. A snapshot, server-owned,
+  refused by `accesses.update`: a refresh stamps the new session from the client row as it stands, a
+  consent stamps the grant again, so a grant made before this carries it from its next consent and
+  its sessions from their next refresh. A derived session (token exchange) carries none.
 
 ## 2.0.0-rc.79 - 2026-11-11
 
