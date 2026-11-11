@@ -38,6 +38,15 @@
 - **Fixed:** a member access ask whose `events.create` failed after the write-time check (an event id
   already taken, a storage error) left that patient answering `cmc-member-access-in-flight` to the
   membership for a minute, and kept its new-access token. Both are now released on the failure.
+- **Fixed:** asking again for a patient once the previous member access had expired (and its record
+  had been settled by the periodic pass) failed `cmc-member-access-peer-rejected` (`409`
+  `item-already-exists`): the expired access still held its name on the patient's core. The expired
+  access of that name is now deleted through the grant and the access minted again, once. A live
+  access holding the name is still never deleted.
+- **Changed: `Access-Control-Expose-Headers` is now `API-Version, Retry-After`**, so a browser client
+  can read the wait of a `429` (member access budgets, the public email lookups, login attempts).
+  `Retry-After` is not a CORS-safelisted response header; before, a cross-origin page could not read
+  it.
 - One `info` log line (`cmc/memberMintBudget: bulk minting by membership <id>`) when a membership
   falls below half its new-access burst, at most once a minute per membership, for operators who
   alert on bulk minting. The budgets pace a membership; what ends its reach is its expiry and its

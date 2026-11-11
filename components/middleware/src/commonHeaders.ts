@@ -34,7 +34,9 @@ export default async function (options: CommonHeadersOptions = {}): Promise<Requ
       // *
       res.header('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] ||
               'Authorization, Content-Type');
-      res.header('Access-Control-Expose-Headers', 'API-Version');
+      // Retry-After is not a CORS-safelisted response header: without it a
+      // browser client cannot read the wait of a 429.
+      res.header('Access-Control-Expose-Headers', 'API-Version, Retry-After');
       // *
       res.header('Access-Control-Max-Age', (60 * 60 * 24 * 365).toString());
       res.header('Access-Control-Allow-Credentials', 'true');

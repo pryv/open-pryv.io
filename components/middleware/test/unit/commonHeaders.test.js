@@ -151,7 +151,7 @@ describe('[CHOC] CORS left to the routes that own it', function () {
       const get = await request(port, 'GET');
       assert.strictEqual(get.headers['access-control-allow-origin'], 'https://app.example');
       assert.strictEqual(get.headers['access-control-allow-credentials'], 'true');
-      assert.strictEqual(get.headers['access-control-expose-headers'], 'API-Version');
+      assert.strictEqual(get.headers['access-control-expose-headers'], 'API-Version, Retry-After', 'a browser reads the wait of a 429');
       const preflight = await request(port, 'OPTIONS');
       assert.strictEqual(preflight.statusCode, 200);
       assert.strictEqual(preflight.headers['access-control-allow-origin'], 'https://app.example');

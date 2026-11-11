@@ -513,6 +513,37 @@ describe('[CMCGA] cmc group accounts (in-process integration)', function () {
       assert.ok(next.body.memberAccess?.accessId, 'minted with the one token: ' + JSON.stringify(next.body));
     });
 
+    it('[GA1B] a member asks again after the previous access expired and the ledger pass settled its record: the expired access of the same name is deleted, a new one is minted', async function () {
+      const mb = await joinGroup('team-remint');
+      const p = await invitePatient(mb.teamStream, mb.membershipToken);
+      const first = (await mint(mb.teamStream, mb.membershipToken)).res;
+      assert.strictEqual(first.status, 201, JSON.stringify(first.body));
+      const old = first.body.memberAccess;
+      // The access expires on the patient core; the ledger pass marks its
+      // record absent (as runLedgerPass does), the child stays there under
+      // its name.
+      const users = await require('business/src/users/index.ts').getUsersRepository();
+      const patientUser = { id: await users.getUserIdForUsername(patient.username), username: patient.username };
+      const storageLayer = await require('storage').getStorageLayer();
+      await new Promise((resolve, reject) => storageLayer.accesses.updateOne(patientUser, { id: old.accessId },
+        { expires: Date.now() / 1000 - 60 }, (err) => (err != null ? reject(err) : resolve())));
+      const groupUserId = await users.getUserIdForUsername(group.username);
+      const mall = await require('mall').getMall();
+      const record = await C.memberLedger.findRecord({ mall }, groupUserId, mb.membershipAccess.id, p.relationship.id);
+      assert.ok(record != null && record.state === 'live', 'the pair has a live record');
+      assert.ok(await C.memberLedger.setState({ mall }, groupUserId, record.eventId, 'absent', record.childAccessId), 'settled');
+
+      const again = (await mint(mb.teamStream, mb.membershipToken)).res;
+      assert.strictEqual(again.status, 201, JSON.stringify(again.body));
+      assert.strictEqual(again.body.event.content.status, 'completed', JSON.stringify(again.body.event.content));
+      const fresh = again.body.memberAccess;
+      assert.notStrictEqual(fresh.accessId, old.accessId, 'a new access');
+      assert.strictEqual(fresh.name, old.name, 'under the same name');
+      const listed = (await accessesOf(patient, patient.token, { includeExpired: true })).accesses;
+      assert.strictEqual(listed.some((a) => a.id === old.accessId), false, 'the expired one is deleted');
+      assert.ok(await tokenLivesOn(patient, new URL(fresh.apiEndpoint).username), 'the new one opens the patient account');
+    });
+
     it('[GA19] on the storage engine, a deleted ledger record keeps its id: read by id with `deleted` set, a create at the id refused; the pair\'s record is then kept at a random id', async function () {
       const userId = await (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(group.username);
       const mall = await require('mall').getMall();
