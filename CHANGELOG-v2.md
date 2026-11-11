@@ -1,5 +1,25 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.80 - 2026-11-11
+
+> **Upgrade advice for operators.** No schema migration, no new configuration key. OAuth grants and
+> sessions of operator-registered clients gain a `clientData.oauth.client` stamp (below); nothing to
+> do on the core. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
+
+### OAuth: an operator-registered client's grant and sessions name it
+
+- **Added: `clientData.oauth.client = { name?, origin: "operator" }` on the consent grant and every
+  session of a registry client the operator registered**, as a metadata-document client's already carry
+  `{ name?, host, url }`. `name` is the name the operator registered (`clientName`, else the first
+  language of `name`), never one taken from a request. A metadata-document client's stamp now also
+  carries `origin: "metadata-document"` (a stamp written before has none; its `host` tells it
+  apart), so `origin` names the kind of every new stamp. An account app names a connected app by it,
+  the access name `oauth-grant:<clientId>` / `oauth:<clientId>` being no name. A snapshot, server-owned,
+  refused by `accesses.update`: a refresh stamps the new session from the client row as it stands, a
+  consent stamps the grant again, so a grant made before this carries it from its next consent and
+  its sessions from their next refresh. A derived session (token exchange) carries none.
+
 ## 2.0.0-rc.79 - 2026-11-11
 
 > **Upgrade advice for operators.** No schema migration (`migrations.autoRunOnStart: false` needs
@@ -27,19 +47,6 @@
   write race for an unheld alias (one that reads the winner's grant already written gets
   `address-alias-held`). The owner lists the alias and the app holding it
   (`account.addressAliases.list`, `heldBy`), so the distinct answer reveals nothing new.
-
-### OAuth: an operator-registered client's grant and sessions name it
-
-- **Added: `clientData.oauth.client = { name?, origin: "operator" }` on the consent grant and every
-  session of a registry client the operator registered**, as a metadata-document client's already carry
-  `{ name?, host, url }`. `name` is the name the operator registered (`clientName`, else the first
-  language of `name`), never one taken from a request. A metadata-document client's stamp now also
-  carries `origin: "metadata-document"` (a stamp written before has none; its `host` tells it
-  apart), so `origin` names the kind of every new stamp. An account app names a connected app by it,
-  the access name `oauth-grant:<clientId>` / `oauth:<clientId>` being no name. A snapshot, server-owned,
-  refused by `accesses.update`: a refresh stamps the new session from the client row as it stands, a
-  consent stamps the grant again, so a grant made before this carries it from its next consent and
-  its sessions from their next refresh. A derived session (token exchange) carries none.
 
 ### CMC group accounts: member access budgets for bulk reads
 
