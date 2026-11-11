@@ -123,29 +123,63 @@ type StampSource = {
   metadataUrl?: string | undefined;
   clientName?: string | undefined;
   name?: string | Record<string, string> | undefined;
+  kind?: string | undefined;
 };
 
-/** What an access minted for a metadata-document client carries in `clientData.oauth.client`. */
-export type MetadataClientStamp = { name?: string; host: string; url: string };
+/**
+ * What an access minted for a metadata-document client carries in
+ * `clientData.oauth.client`. `origin` is written since the operator stamp
+ * exists; a stamp written before carries none (its `host` tells it apart).
+ */
+export type MetadataClientStamp = { name?: string; host: string; url: string; origin: 'metadata-document' };
+
+/**
+ * What an access minted for a client registered by the operator carries in
+ * `clientData.oauth.client`: the name the operator registered, never one
+ * taken from a request. No host or url.
+ */
+export type OperatorClientStamp = { name?: string; origin: 'operator' };
+
+/** The display stamp of an access minted for an OAuth client. */
+export type ClientStamp = MetadataClientStamp | OperatorClientStamp;
+
+// The row's name as a plain string: `clientName`, else `name` (the first
+// language of a localized set).
+function plainClientName (row: StampSource): string | undefined {
+  if (typeof row.clientName === 'string' && row.clientName.length > 0) return row.clientName;
+  if (typeof row.name === 'string' && row.name.length > 0) return row.name;
+  if (row.name != null && typeof row.name === 'object') {
+    const first = Object.values(row.name).find((v) => typeof v === 'string' && v.length > 0);
+    if (first != null) return first;
+  }
+  return undefined;
+}
 
 /**
  * The display stamp of an access minted for a metadata-document client: the
  * document's `client_name` as a plain string (the first language of a
  * localized set), the document's host (ASCII form) and the client's URL; null
- * for any other client (curated rows are named from the operator's catalogue).
+ * for any other client.
  */
 export function metadataClientStamp (row: StampSource | null | undefined): MetadataClientStamp | null {
   if (row?.origin !== 'metadata-document' || typeof row.metadataUrl !== 'string') return null;
   let host: string;
   try { host = new URL(row.metadataUrl).hostname; } catch { return null; }
-  let name: string | undefined;
-  if (typeof row.clientName === 'string' && row.clientName.length > 0) {
-    name = row.clientName;
-  } else if (typeof row.name === 'string' && row.name.length > 0) {
-    name = row.name;
-  } else if (row.name != null && typeof row.name === 'object') {
-    const first = Object.values(row.name).find((v) => typeof v === 'string' && v.length > 0);
-    if (first != null) name = first;
-  }
-  return { ...(name != null ? { name } : {}), host, url: row.metadataUrl };
+  const name = plainClientName(row);
+  return { ...(name != null ? { name } : {}), host, url: row.metadataUrl, origin: 'metadata-document' };
+}
+
+/**
+ * The display stamp of an access minted for an OAuth client: a
+ * metadata-document client's (see `metadataClientStamp`), or, for a registry
+ * client the operator registered, its registered name with `origin:
+ * 'operator'`; null for any other row (an app-account client's consent is a
+ * CMC grant, named by its own rules) and when there is no row.
+ */
+export function clientStamp (row: StampSource | null | undefined): ClientStamp | null {
+  if (row == null) return null;
+  if (row.origin === 'metadata-document') return metadataClientStamp(row);
+  if (row.kind !== 'registry') return null;
+  const name = plainClientName(row);
+  return { ...(name != null ? { name } : {}), origin: 'operator' };
 }
