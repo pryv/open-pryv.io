@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 19 (2026-11-09), covering releases 2.0.0-rc.40 to 2.0.0-rc.77.
+**Report revision:** 20 (2026-11-11), covering releases 2.0.0-rc.40 to 2.0.0-rc.79.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -129,6 +129,8 @@ its applicability is stated with it.
 | 2.0.0-rc.75 | 2026-11-06 | lower-severity fixes; operator action: on a platform with several cores, upgrade every core before adding per-user audience entries to OAuth2 clients, and each core before the adapter sidecar next to it reads the addressed-account headers; route adapter paths through the core where per-user addresses are wanted (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-07) |
 | 2.0.0-rc.76 | 2026-11-08 | no finding (new surface: address aliases); dependency update, not an audit finding: `html-to-text` 10 under `email-templates`, which drops `deepmerge` 4.3.1 (GHSA-gcqx-w48m-w2h4, low: prototype poisoning in `mergeObject()`); operator action: right after the upgrade, run `bin/reconcile-user-cores.js --address-alias-shape` on each core and look at any account it lists (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-08) |
 | 2.0.0-rc.77 | 2026-11-09 | no finding (new opt-in surface: a per-user OAuth2 issuer, off by default); lower-severity fix: a streamed call the client cut short was audited as a success; operator action: none beyond the upgrade; before turning `oauth.perUserIssuer` on, read `docs/oauth2.md` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-09) |
+| 2.0.0-rc.78 | 2026-11-09 | lower-severity fixes: public email lookups were not limited per client address; a single-use consent link could be accepted by two people writing at once; operator action: a client that tests many addresses in a burst must throttle or handle the `429` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-11) |
+| 2.0.0-rc.79 | 2026-11-11 | no finding (changed limit: the group-account member access budgets); lower-severity fix: a failed member access request held its patient's in-flight lock for a minute; operator action: where `cmc.memberAccess.ratePerMinute` was tuned to be strict, set `mintBurst` too (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-11) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -2107,6 +2109,56 @@ defect in earlier releases.
   consent UI accept `pryvApi` on every account host and turn it on on every core: turning it off
   later, or leaving one core off, ends the refresh chains issued at a per-user issuer.
 
+### Fixed in 2.0.0-rc.78 (deployed)
+
+#### Lower-severity fixes in 2.0.0-rc.78
+
+- The public email lookups (`GET /reg/{email}/check_email`, `/reg/{email}/username`,
+  `/reg/{email}/uid`, `/reg/cores?email=`, and the registration email gate's challenge for an
+  address that has an account) answered at request rate, so a client could test many addresses,
+  and the username routes map an address to a username. They now share one budget per client
+  address (an IPv4 address, or the /64 of an IPv6 one): 30 requests a minute through them
+  together, then `429` with `Retry-After`. The budget is counted per core and fails open when its
+  store cannot answer. `auth.emailCheck` and `auth.cores` are refused inside a batch call and over
+  socket.io, as the credential methods already were, so the budget cannot be bypassed there.
+  Residual: registration still answers that an address is taken.
+- Two accepts written at the same moment by two different people on one single-use consent link
+  could both pass the link's check and both open a relationship, since the link only turned
+  consumed once the first accept was handled. The first accept now takes the link as it is
+  written (a claim held a short while in the core's shared store); another accepter is refused as
+  consumed. An open-link invite is unchanged.
+- **Operator action:** none beyond the upgrade; a client that tests many addresses in a burst (a
+  bulk import, a sign-up form that checks on each keystroke) must throttle or handle the `429`.
+
+### Fixed in 2.0.0-rc.79 (deployed)
+
+2.0.0-rc.79 changes a limit rather than fixing one: the group-account member access budgets (a
+membership reading many patients). The review made alongside it found no defect in earlier
+releases.
+
+#### Lower-severity fixes in 2.0.0-rc.79
+
+- A member access request whose event could not be stored after the write-time check (an event id
+  already taken, a storage error) kept its patient's in-flight lock for a minute and the request's
+  share of the budget: during that minute the membership could not open that patient. Both are now
+  released on the failure.
+- Not security fixes, listed for operators: asking again for a patient once the previous member
+  access had expired failed (`409 item-already-exists` from the patient's core); the expired access
+  of that name is now deleted through the grant and a new one minted. A live access holding the
+  name is never deleted. `Access-Control-Expose-Headers` now lists `Retry-After`, so a browser
+  client can read the wait of a `429`.
+- Changed in this release, not a finding: each membership has two budgets counted for the whole
+  core (new member accesses: 5000 at once, then `ratePerMinute`, now 1000 a minute; requests of any
+  kind: 10000 at once, then 3000 a minute); asking again for a live access spends no new-access
+  budget, and a spent budget answers `429` with `Retry-After`. Before, every request counted, 30 a
+  minute per membership and per worker process. The budgets pace a membership; they do not bound
+  what it may read: a membership that may read a patient may read all of its patients, and what
+  ends the exposure of a misused membership is its expiry and its revocation (the patient's audit
+  log names the member on every read). One `info` log line marks a membership past half its
+  new-access burst, for operators who alert on bulk reads.
+- **Operator action:** where `cmc.memberAccess.ratePerMinute` was tuned to be strict, set
+  `cmc.memberAccess.mintBurst` too (the former "at most N from idle" is `mintBurst: N`).
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2211,3 +2263,4 @@ This report is updated with every release that carries a security fix:
 | 17 | 2026-11-07 | 2.0.0-rc.40 to 2.0.0-rc.75 | Adds 2.0.0-rc.75 (review alongside per-user resource addresses and adapter routes on per-user hosts): lower-severity fixes, no counted finding; section 3.2 adds the addressed-account headers and the `421` of adapter routes on per-user hosts. Deployed on the maintainers' platforms (2026-11-07). |
 | 18 | 2026-11-08 | 2.0.0-rc.40 to 2.0.0-rc.76 | Adds 2.0.0-rc.76 (review alongside address aliases): no finding, counts unchanged; the `html-to-text` 10 dependency update (low advisory, not an audit finding); section 3.2 adds address aliases. Deployed on the maintainers' platforms (2026-11-08). |
 | 19 | 2026-11-09 | 2.0.0-rc.40 to 2.0.0-rc.77 | Adds 2.0.0-rc.77 (review alongside the per-user OAuth2 issuer): no finding, counts unchanged; one lower-severity fix (the audit outcome of a streamed call cut short); section 3.2 adds the per-user issuer. Deployed on the maintainers' platforms (2026-11-09). |
+| 20 | 2026-11-11 | 2.0.0-rc.40 to 2.0.0-rc.79 | Adds 2.0.0-rc.78 (lower-severity fixes: public email lookups within a per-address budget, one accepter per single-use consent link) and 2.0.0-rc.79 (no finding, counts unchanged; the group-account member access budgets; one lower-severity fix, a failed member access request holding its patient's lock). Deployed on the maintainers' platforms (2026-11-11). |
