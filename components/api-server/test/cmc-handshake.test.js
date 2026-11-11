@@ -2068,7 +2068,16 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.deepStrictEqual(statuses, ['completed', 'failed'], JSON.stringify(outcomes.map((t) => t.content)));
       const failed = outcomes.find((t) => t.content.status === 'failed');
       assert.strictEqual(failed.content.failure?.reason, 'cmc-capability-consumed', JSON.stringify(failed.content));
-      assert.strictEqual((await liveAccepters(alice, inv.capabilityId)).length, 1);
+      // The requester's side of the relationship lands through its own
+      // delivery, possibly a moment after the accepter's trigger settled.
+      let accepters = [];
+      for (const deadline = Date.now() + 10_000; Date.now() < deadline;) {
+        accepters = await liveAccepters(alice, inv.capabilityId);
+        if (accepters.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.strictEqual((await liveAccepters(alice, inv.capabilityId)).length, 1, 'one relationship: ' + JSON.stringify(accepters));
       const cap = await capabilityAccessOf(alice, inv.capabilityId);
       assert.strictEqual(cap?.clientData?.cmc?.capability?.state, 'consumed');
     });
