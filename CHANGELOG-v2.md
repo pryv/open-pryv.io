@@ -1,17 +1,19 @@
 # Changelog - API Changes
 
-## 2.0.0-rc.78 - 2026-11-09
+## 2.0.0-rc.79 - 2026-11-11
 
 > **Upgrade advice for operators.** No schema migration (`migrations.autoRunOnStart: false` needs
-> no step), no new configuration key. **Changed: public email lookups** (`check_email`, the
-> email-to-username routes, `/reg/cores?email=`, and the registration email gate's challenge for an
-> address that has an account) now share one budget of 30 requests a minute per client address;
-> past it they answer `429` `too-many-attempts`. A client that tests many addresses in a burst (a
-> bulk import, a sign-up form that checks on each keystroke) should throttle or handle the `429`.
-> `auth.emailCheck` and `auth.cores` are no longer accepted inside a batch call or over socket.io.
-> **CMC:** a single-use link now accepts one accepter only, also when two accepts arrive at the
-> same moment. As announced with 2.0.0-rc.73, a later release is planned to default
-> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
+> no step). **New configuration keys** `cmc:memberAccess:mintBurst` (default 5000),
+> `cmc:memberAccess:askRatePerMinute` (3000) and `cmc:memberAccess:askBurst` (10000); the default of
+> `cmc:memberAccess:ratePerMinute` goes from 30 to 1000 and it now counts new member accesses for
+> the whole core, not every request per worker process. **Where `ratePerMinute` was tuned to be
+> strict, set `mintBurst` too.** **Changed: a CMC member access ask past its budget answers `429`
+> `too-many-attempts` with `Retry-After`** instead of `400` (`error.data.id` unchanged), and
+> `Access-Control-Expose-Headers` now lists `Retry-After`, so browser clients can read the wait.
+> **OAuth:** the owner consenting at their own address alias held by another app is refused
+> `address-alias-held` instead of `audience-account-mismatch`. As announced with 2.0.0-rc.73, a later
+> release is planned to default `oauth.audienceBoundSessions` to `true`: set it explicitly where it
+> is not set yet.
 
 ### OAuth: a consent at the owner's own address alias held by another app names that case
 
@@ -68,6 +70,19 @@
   the sweep and the reuse see every record; one load of the group's accesses per ask instead of two,
   and no ledger write for a re-ask whose record is unchanged. Settled records at their pair's id are
   pruned once their membership is gone or expired.
+
+## 2.0.0-rc.78 - 2026-11-09
+
+> **Upgrade advice for operators.** No schema migration (`migrations.autoRunOnStart: false` needs
+> no step), no new configuration key. **Changed: public email lookups** (`check_email`, the
+> email-to-username routes, `/reg/cores?email=`, and the registration email gate's challenge for an
+> address that has an account) now share one budget of 30 requests a minute per client address;
+> past it they answer `429` `too-many-attempts`. A client that tests many addresses in a burst (a
+> bulk import, a sign-up form that checks on each keystroke) should throttle or handle the `429`.
+> `auth.emailCheck` and `auth.cores` are no longer accepted inside a batch call or over socket.io.
+> **CMC:** a single-use link now accepts one accepter only, also when two accepts arrive at the
+> same moment. As announced with 2.0.0-rc.73, a later release is planned to default
+> `oauth.audienceBoundSessions` to `true`: set it explicitly where it is not set yet.
 
 ### Public email lookups within a per-address budget
 
