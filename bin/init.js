@@ -961,6 +961,8 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # operator preset for plain accounts with an email address (null = never,
 # # the default; needs accessTracking.isActive, mail and service.account).
 # # Per core: set the same values on every core for a platform-wide preset.
+# # Use = sign-ins and personal tokens (a delegate's included); app accesses
+# # count only with inactivity.countAppUse: true.
 # # Try a preset with dryRun: true first (logs, sends and deletes nothing).
 # # account:
 # #   autoDeletion:
@@ -970,6 +972,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #       defaultDays: null
 # #       minDays: 90
 # #       maxDays: 3650
+# #       countAppUse: false
 # #     userOverride: true
 # #     allowUserOptOut: true
 # #     date:

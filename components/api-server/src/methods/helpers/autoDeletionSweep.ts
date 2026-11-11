@@ -133,7 +133,7 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
     state,
     loadFacts: passFacts.loadFacts,
     beginPass: passFacts.beginPass,
-    readActivity: (account) => getActivity(storageLayer.accesses as unknown as ActivityAccessesRepo, account, now()),
+    readActivity: (account) => getActivity(storageLayer.accesses as unknown as ActivityAccessesRepo, account, now(), { countApps: autoDeletionConfig(config).inactivity.countAppUse }),
     sendReminder: (account, facts, notice) => sendScheduleMail(config, 'reminder', account, facts, notice),
     sendBlocked: (account, facts, notice) => sendScheduleMail(config, 'blocked', account, facts, notice),
     sendTransferMail: (account, facts, notice) => sendTransferMail(config, account, facts, notice),

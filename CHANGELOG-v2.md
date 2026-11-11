@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Auto-deletion: only personal use keeps an account active
+
+- **Changed: inactivity counts the account's personal use only.** An account's last activity
+  (`lastActivity` in `account.getAutoDeletion`, the clock of an `inactivity` schedule, the use that
+  cancels a transfer) was the latest use of its `personal` and `app` accesses. It is now the latest
+  use of its `personal` accesses: the holder's sign-ins and personal tokens, and a delegate's own
+  token. An app syncing in the background is not the holder using the account: `app` accesses
+  (the holder's apps, OAuth sessions, apps a delegate granted) count only with the new per-core
+  setting **`account.autoDeletion.inactivity.countAppUse`** (default `false`). `shared` accesses
+  still never count.
+- **Changed: the `lastActivity` breakdown.** `personal` is the holder's personal accesses,
+  `delegate` a delegate's own token only, `app` every app access (an app a delegate granted
+  included, it was under `delegate`). `app` is reported even when it does not count; `max` and `by`
+  come from counted use only.
+- **Transition:** the recorded maximum never moves backwards, so an account kept active by app use
+  until now keeps that date; only later app use stops counting. **Operators who rely on app use**
+  to keep accounts active: set `countAppUse: true`.
+
 ### OAuth: an operator-registered client's grant and sessions name it
 
 - **Added: `clientData.oauth.client = { name?, origin: "operator" }` on the consent grant and every

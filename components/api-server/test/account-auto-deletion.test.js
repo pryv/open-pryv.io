@@ -121,6 +121,23 @@ describe('[ACST] account auto-deletion setting', function () {
     assert.equal((await get(u)).body.autoDeletion.lastActivity.by, 'owner');
   });
 
+  it('[ACST20] an app\'s use is reported but is not use of the account unless inactivity.countAppUse is on', async function () {
+    const u = await freshUser();
+    const app = await u.fu.access({ type: 'app', token: 'acst-app-' + cuid(), name: 'acst background sync' });
+    const now = Math.floor(timestamp.now());
+    await setLastUsed(u, u.personalAccessId, now - 30 * DAY);
+    await setLastUsed(u, app.attrs.id, now - DAY);
+    const ad = (await get(u)).body.autoDeletion;
+    assert.equal(ad.lastActivity.app, now - DAY, 'reported');
+    assert.equal(ad.lastActivity.personal, now - 30 * DAY);
+    assert.equal(ad.lastActivity.max, now - 30 * DAY, 'the app syncing yesterday does not count');
+    assert.equal(ad.lastActivity.by, 'owner');
+    await withInjectedConfig({ account: { autoDeletion: { inactivity: { countAppUse: true } } } }, async () => {
+      const counted = (await get(u)).body.autoDeletion;
+      assert.equal(counted.lastActivity.max, now - DAY, 'counted when the operator turns it on');
+    });
+  });
+
   it('[ACST3] arming a schedule needs the password; a wrong one is refused; the right one sets it', async function () {
     const u = await freshUser();
     const missing = await set(u, { mode: 'inactivity', inactivityDays: 365 });
