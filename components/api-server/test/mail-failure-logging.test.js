@@ -391,13 +391,15 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
 
     /**
      * A 400 naming the refused address, without the SMTP reply, logged once at warn by the sender only.
-     * The SMTP-reply check reads the error only: `meta.serverTime` can itself contain "550".
+     * The SMTP-reply check reads the error without the address it echoes: `meta.serverTime` and the
+     * random address (checked equal just above) can themselves contain "550".
      */
     function assertRecipientRejectedAnswer (res, lines, email) {
       assert.strictEqual(res.status, 400, JSON.stringify(res.body));
       assert.strictEqual(res.body.error.id, 'invalid-parameters-format', JSON.stringify(res.body));
       assert.deepStrictEqual(res.body.error.data, { email, reason: 'recipient-rejected' });
-      assert.ok(!/550|Domain not found/.test(JSON.stringify(res.body.error)), 'the SMTP reply stays out of the answer');
+      const errorWithoutAddress = Object.assign({}, res.body.error, { data: { reason: res.body.error.data.reason } });
+      assert.ok(!/550|Domain not found/.test(JSON.stringify(errorWithoutAddress)), 'the SMTP reply stays out of the answer');
       assertLoggedOnceAsRejected(lines);
     }
 
