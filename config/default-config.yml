@@ -586,8 +586,9 @@ account:
   # Account auto-deletion: an account is deleted (or handed to a beneficiary,
   # if its holder chose a transfer) at a date the holder picks or after a
   # period without use, with reminder mails before. Use is the latest use of
-  # the account's personal and app accesses, a delegate's included; shared
-  # accesses never count. Users set it in the account app
+  # the account's personal accesses (the holder's sign-ins and personal
+  # tokens, and a delegate's own token); app accesses count only with
+  # inactivity.countAppUse; shared accesses never count. Users set it in the account app
   # (account.setAutoDeletion). Per core: for a platform-wide preset set the
   # same values on every core.
   autoDeletion:
@@ -611,6 +612,11 @@ account:
       # Periods a user may choose.
       minDays: 90
       maxDays: 3650
+      # true: the use of app accesses (an app the holder authorised, an
+      # OAuth2 session, an app a delegate granted) also counts as use of the
+      # account. false (default): an app syncing in the background does not
+      # keep an account its holder no longer signs in to.
+      countAppUse: false
     # A user may choose their own date or period (instead of the preset, or
     # when there is none). false refuses both.
     userOverride: true

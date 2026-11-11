@@ -112,7 +112,7 @@ export async function loadAccountFacts (config: ConfigLike, user: UserRef, now?:
   const isControlled = await hasActiveDelegate(user.id);
   const notifiable = mail === 'available';
   return {
-    activity: activityOf(accesses, now),
+    activity: activityOf(accesses, now, { countApps: autoDeletionConfig(config).inactivity.countAppUse }),
     email,
     emailHeld,
     language,
