@@ -149,6 +149,14 @@ describe('[ATAB] attachment downloads release the file when the client goes away
     return fs.readdirSync('/dev/fd').length;
   }
 
+  // What each open fd points to (Linux: a path or `socket:[…]`), for the
+  // failure message only; best-effort where /dev/fd entries are not links.
+  function fdTargets () {
+    return fs.readdirSync('/dev/fd').map((fd) => {
+      try { return fd + '->' + fs.readlinkSync('/dev/fd/' + fd); } catch (_e) { return fd + '->?'; }
+    });
+  }
+
   function serverConnections () {
     return new Promise((resolve, reject) => {
       global.coreServer.getConnections((err, count) => err ? reject(err) : resolve(count));
@@ -172,12 +180,25 @@ describe('[ATAB] attachment downloads release the file when the client goes away
     assert.ok(await until(() => captured.every((s) => s.closed)),
       'control download must close its source before the baseline is taken');
     const baseline = fdCount();
+    const baselineTargets = fdTargets();
+    const connectionsBefore = await serverConnections();
     for (let i = 0; i < 8; i++) {
       await abortOnFirstChunk();
     }
-    assert.ok(await until(() => fdCount() <= baseline + 2),
-      'fd count must return to baseline after 8 aborted downloads (baseline ' +
-      baseline + ', now ' + fdCount() + ')');
+    // At the resource: every aborted download closed its source file.
+    assert.strictEqual(captured.length, 9);
+    assert.ok(await until(() => captured.every((s) => s.closed), 10_000),
+      'every aborted download must close its source file');
+    // Cross-check on the process fd count. Client and server sockets of the
+    // aborted downloads live in this process too: let the server side drain
+    // before counting, and allow a slower teardown under CI load.
+    await until(async () => (await serverConnections()) <= connectionsBefore, 10_000);
+    const settled = await until(() => fdCount() <= baseline + 2, 10_000);
+    if (!settled) {
+      const extra = fdTargets().filter((t) => !baselineTargets.includes(t));
+      assert.fail('fd count must return to baseline after 8 aborted downloads (baseline ' +
+        baseline + ', now ' + fdCount() + '; new: ' + extra.join(', ') + ')');
+    }
     assert.strictEqual(uncaught, null, uncaught && uncaught.stack);
   });
 
