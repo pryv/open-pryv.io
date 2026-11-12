@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 20 (2026-11-11), covering releases 2.0.0-rc.40 to 2.0.0-rc.79.
+**Report revision:** 21 (2026-11-12), covering releases 2.0.0-rc.40 to 2.0.0-rc.82.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -131,6 +131,9 @@ its applicability is stated with it.
 | 2.0.0-rc.77 | 2026-11-09 | no finding (new opt-in surface: a per-user OAuth2 issuer, off by default); lower-severity fix: a streamed call the client cut short was audited as a success; operator action: none beyond the upgrade; before turning `oauth.perUserIssuer` on, read `docs/oauth2.md` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-09) |
 | 2.0.0-rc.78 | 2026-11-09 | lower-severity fixes: public email lookups were not limited per client address; a single-use consent link could be accepted by two people writing at once; operator action: a client that tests many addresses in a burst must throttle or handle the `429` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-11) |
 | 2.0.0-rc.79 | 2026-11-11 | no finding (changed limit: the group-account member access budgets); lower-severity fix: a failed member access request held its patient's in-flight lock for a minute; operator action: where `cmc.memberAccess.ratePerMinute` was tuned to be strict, set `mintBurst` too (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-11) |
+| 2.0.0-rc.80 | 2026-11-11 | none (not an audit release) | yes (2026-11-11) |
+| 2.0.0-rc.81 | 2026-11-11 | none (not an audit release) | yes (2026-11-11) |
+| 2.0.0-rc.82 | 2026-11-12 | no finding; default change: `oauth.audienceBoundSessions` is `true`; operator action: set it to `false` explicitly on a core whose resource servers do not exchange yet (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-12) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -1952,7 +1955,7 @@ earlier releases.
   unless configured); OAuth token exchange lets a resource server exchange the token a user's
   client sent it, and `oauth.audienceBoundSessions: true` refuses at the data API the sessions
   issued for a resource server (off by default in this release; a later release is planned to turn it
-  on by default).
+  on by default; done in 2.0.0-rc.82).
 - **Operator action:** run `bin/reconcile-user-cores.js --emails --dry-run` on cleartext platforms
   as above. Before configuring an adapter route, read `docs/adapter-routes.md`: the sidecar must
   authenticate every request, and its port must not be reachable from outside the host.
@@ -2159,6 +2162,21 @@ releases.
 - **Operator action:** where `cmc.memberAccess.ratePerMinute` was tuned to be strict, set
   `cmc.memberAccess.mintBurst` too (the former "at most N from idle" is `mintBurst: N`).
 
+### Fixed in 2.0.0-rc.82 (deployed)
+
+2.0.0-rc.82 changes a default rather than fixing a defect.
+
+- Changed in this release, not a finding: `oauth.audienceBoundSessions` defaults to `true`. The
+  direct use at the data API of a token issued for a resource server, described with 2.0.0-rc.73
+  as off by default, is now refused by default: such a token works only through the resource
+  server's token exchange. Sessions minted before the upgrade keep working until they expire or
+  refresh. The residual is a core where the operator sets `false` explicitly; the boot log names
+  the clients concerned on such a core, and on a core where a client may obtain such tokens while
+  no resource server is registered for token exchange.
+- **Operator action:** on a core where a resource server does not exchange yet, set
+  `oauth.audienceBoundSessions: false` explicitly before upgrading; otherwise none beyond the
+  upgrade.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2264,3 +2282,4 @@ This report is updated with every release that carries a security fix:
 | 18 | 2026-11-08 | 2.0.0-rc.40 to 2.0.0-rc.76 | Adds 2.0.0-rc.76 (review alongside address aliases): no finding, counts unchanged; the `html-to-text` 10 dependency update (low advisory, not an audit finding); section 3.2 adds address aliases. Deployed on the maintainers' platforms (2026-11-08). |
 | 19 | 2026-11-09 | 2.0.0-rc.40 to 2.0.0-rc.77 | Adds 2.0.0-rc.77 (review alongside the per-user OAuth2 issuer): no finding, counts unchanged; one lower-severity fix (the audit outcome of a streamed call cut short); section 3.2 adds the per-user issuer. Deployed on the maintainers' platforms (2026-11-09). |
 | 20 | 2026-11-11 | 2.0.0-rc.40 to 2.0.0-rc.79 | Adds 2.0.0-rc.78 (lower-severity fixes: public email lookups within a per-address budget, one accepter per single-use consent link) and 2.0.0-rc.79 (no finding, counts unchanged; the group-account member access budgets; one lower-severity fix, a failed member access request holding its patient's lock). Deployed on the maintainers' platforms (2026-11-11). |
+| 21 | 2026-11-12 | 2.0.0-rc.40 to 2.0.0-rc.82 | Release table adds 2.0.0-rc.80 and rc.81 (not audit releases); section 4 adds 2.0.0-rc.82: the default of `oauth.audienceBoundSessions` is now `true`, closing by default the direct use at the data API of a token issued for a resource server (described with 2.0.0-rc.73); no finding, counts unchanged. Deployed on the maintainers' platforms (2026-11-12). |
