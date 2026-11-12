@@ -12,3 +12,5 @@ const __ex_permissionSet = require('./permissionSet.ts');
 export { __ex_permissionSet as permissionSet };
 const __ex_canReadEvent = require('./canReadEvent.ts').canReadEvent;
 export { __ex_canReadEvent as canReadEvent };
+const __ex_methodClasses = require('./methodClasses.ts');
+export { __ex_methodClasses as methodClasses };

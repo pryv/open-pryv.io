@@ -29,6 +29,7 @@ const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 // Account/system-stream permission validation, shared with the consent accept.
 const { validateAccountStreamPermissions } = require('business/src/accesses/accountStreamPermissions.ts');
 const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
+const { usageFromCalls } = require('business/src/accesses/methodClasses.ts') as typeof import('business/src/accesses/methodClasses.ts');
 
 const cache = require('cache').default;
 
@@ -111,6 +112,30 @@ type AccessesCheckAppResult = { matchingAccess?: AccessLike; mismatchingAccess?:
 export default async function produceAccessesApiMethods (api: { register (...args: unknown[]): unknown }) {
   const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
   const config = await ready();
+  // Owner-facing usage: a personal caller reads each access's call counters
+  // as `usage` (accesses.get, its deletion records, the accesses.getOne head).
+  // Absent when access tracking is off: there is nothing to report then.
+  // Read per request, like the other runtime switches of this file.
+  const withCallsFindOptions = { projection: { deleted: 0 } };
+  function reportsUsage (context: MethodContext): boolean {
+    return !!config.get('accessTracking:isActive') && context.access?.isPersonal() === true;
+  }
+  function findOptionsFor (context: MethodContext) {
+    return reportsUsage(context) ? withCallsFindOptions : dbFindOptions;
+  }
+  function deletionFindOptionsFor (context: MethodContext) {
+    return reportsUsage(context) ? {} : { projection: { calls: 0 } };
+  }
+  // Replaces the raw (storage-keyed) counters on a wire access by `usage`, for
+  // a personal caller; any other caller never had them read.
+  function attachUsage (context: MethodContext, wire: Record<string, unknown>): Record<string, unknown> {
+    const calls = wire.calls;
+    delete wire.calls;
+    if (reportsUsage(context)) {
+      wire.usage = usageFromCalls(calls as Record<string, unknown> | null | undefined);
+    }
+    return wire;
+  }
   const mall = await getMall();
   const storageLayer = await getStorageLayer();
   // Composed CMC mall (with `.accesses`) for the accesses.delete post-hook.
@@ -135,7 +160,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const accessesRepository = storageLayer.accesses;
     if (currentAccess == null) { return next(new Error('AF: Access cannot be null at this point.')); }
     try {
-      let accesses: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, {}, dbFindOptions, cb));
+      let accesses: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.find(context.user, {}, findOptionsFor(context), cb));
       if (!currentAccess.canListAnyAccess()) {
         // app -> only the accesses it created, including those created under
         // a caller id (`createdBy` is then `<id> <callerId>`)
@@ -147,7 +172,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // Compose wire-format ids + strip internal serial fields, then
       // attach apiEndpoint.
       result.accesses = accesses.map((a: AccessLike) => {
-        const wire = composeWireAccess(a);
+        const wire = attachUsage(context, composeWireAccess(a));
         wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
         return mayShowCredentials(context, a) ? wire : withoutCredentials(wire);
       });
@@ -167,13 +192,13 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const currentAccess = context.access;
     const accessesRepository = storageLayer.accesses;
     try {
-      let deletions: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletionRecords(context.user, {}, { projection: { calls: 0 } }, cb));
+      let deletions: AccessLike[] = await fromCallback((cb: NodeCallback) => accessesRepository.findDeletionRecords(context.user, {}, deletionFindOptionsFor(context), cb));
       if (!currentAccess.canListAnyAccess()) {
         // app -> only the accesses it created (caller-id forms included)
         deletions = (deletions || []).filter((d: AccessLike) => isManagedBy(d, currentAccess.id));
       }
       // A deleted access's token no longer opens anything: never returned.
-      result.accessDeletions = (deletions || []).map((d: AccessLike) => withoutCredentials(composeWireAccess(d)));
+      result.accessDeletions = (deletions || []).map((d: AccessLike) => withoutCredentials(attachUsage(context, composeWireAccess(d))));
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));
@@ -200,11 +225,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     let head: { id: string; serial?: number; createdBy?: string; [k: string]: unknown } | null = null;
     try {
       head = await fromCallback((cb: NodeCallback) =>
-        accessesRepository.findOne(context.user, { id: ref.base }, dbFindOptions, cb));
+        accessesRepository.findOne(context.user, { id: ref.base }, findOptionsFor(context), cb));
     } catch (err) {
       return next(errors.unexpectedError(err));
     }
     if (head == null) return next(errors.unknownResource('access', params.id));
+    // Counters are reported on the current head only (never on a snapshot).
+    const headCalls = head.calls;
+    delete head.calls;
     // Visibility — app callers can only see accesses they manage.
     if (!context.access.canListAnyAccess()) {
       const createdByBase = typeof head.createdBy === 'string'
@@ -222,7 +250,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     const specificMatchesHead = wantsSpecific && currentSerial != null && ref.serial === currentSerial;
     if (!wantsSpecific || specificMatchesHead) {
       // Current head — return as-is.
-      const wire = composeWireAccess(head);
+      const wire = attachUsage(context, Object.assign(composeWireAccess(head), headCalls === undefined ? {} : { calls: headCalls }));
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
       result.access = showCredentials ? wire : withoutCredentials(wire);
     } else if (currentSerial != null && ref.serial < currentSerial) {
@@ -237,6 +265,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       const snapshot = (history || []).find((h: AccessLike & { serial?: number }) => (h.serial ?? null) === ref.serial);
       if (snapshot == null) return next(errors.unknownResource('access', params.id));
       const wire = composeWireAccess(snapshot, ref.base);
+      delete wire.calls; // a snapshot's counters are internal, never reported
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
       result.access = showCredentials ? wire : withoutCredentials(wire);
       result.current = serializeAccessRef({ base: ref.base, serial: currentSerial });
@@ -250,6 +279,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
         const history = await accessesRepository.findHistory(context.user, ref.base);
         result.history = (history || []).map((h: AccessLike) => {
           const wire = composeWireAccess(h, ref.base);
+          delete wire.calls; // a snapshot's counters are internal, never reported
           wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
           return showCredentials ? wire : withoutCredentials(wire);
         });

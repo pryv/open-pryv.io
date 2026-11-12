@@ -652,6 +652,19 @@ describe('[SYER] system (ex-register)', function () {
       ], done);
     });
 
+    it('[SY6S] a stored counter of a method no longer registered is counted, never null', async function () {
+      const { getStorageLayer } = require('storage');
+      const accesses = (await getStorageLayer()).accesses;
+      await new Promise((resolve, reject) => accesses.updateOne(user, { id: testData.accesses[4].id },
+        { $inc: { 'calls.retired:method': 3 } }, (err) => (err ? reject(err) : resolve())));
+      const res = await request.get(path(user.username))
+        .set('authorization', helpers.dependencies.settings.auth.adminAccessKey);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      const detail = res.body.userInfo.callsDetail;
+      assert.ok(detail['retired:method'] >= 3, 'retired counter: ' + detail['retired:method']);
+      for (const [k, v] of Object.entries(detail)) assert.ok(Number.isFinite(v), k + ': ' + v);
+    });
+
     it('[FNJ5] must return a correct 404 error when authentication is invalid', function (done) {
       // eslint-disable-next-line n/handle-callback-err
       request.get(path(user.username)).set('authorization', 'bad-key').end(function (err, res) {

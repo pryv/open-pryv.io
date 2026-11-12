@@ -114,8 +114,16 @@ const events = {
 
 // ------------- accesses ------------------ //
 
+// `usage` (the owner-facing call counts, derived from `calls` at read time) is
+// left out of the hash like `lastUsed` and `calls`: it changes with every call.
+function withoutUsage (access: AccessLike): AccessLike {
+  if (access == null || !('usage' in access)) return access;
+  const { usage: _usage, ...rest } = access;
+  return rest;
+}
+
 function computeAccess (access: AccessLike): IntegrityResult {
-  return stableRepresentation.access.compute(access, algorithm);
+  return stableRepresentation.access.compute(withoutUsage(access), algorithm);
 }
 
 function keyAccess (access: AccessLike): string {
@@ -123,7 +131,7 @@ function keyAccess (access: AccessLike): string {
 }
 
 function hashAccess (access: AccessLike): string {
-  return stableRepresentation.access.hash(access, algorithm);
+  return stableRepresentation.access.hash(withoutUsage(access), algorithm);
 }
 
 function setOnAccess (access: AccessLike): AccessLike | undefined {

@@ -180,7 +180,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         if (access.calls) {
           for (const [methodKey, total] of Object.entries(access.calls)) {
             info.callsTotal += total;
-            info.callsDetail[methodKey] += total;
+            // a counter of a method no longer registered starts from 0 too
+            info.callsDetail[methodKey] = (info.callsDetail[methodKey] ?? 0) + total;
             info.callsPerAccess[accessKey] += total;
           }
         }
