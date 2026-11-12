@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Dependencies: fast-xml-parser 5.12.0, node-forge 1.4.3
+
+- `fast-xml-parser` override raised to `^5.12.0` (GHSA-474x-hrwr-fgx4, low: quadratic CPU on unterminated
+  stop-node tags; used by the S3 storage engine's SDK to parse the endpoint's answers).
+- `node-forge` raised to `^1.4.3` (moderate advisories in Ed25519 verification, the TLS client and HTTP header
+  trimming; the core only generates its self-signed placeholder certificate with it). Runtime `npm audit`: 0.
+
 ### `oauth.audienceBoundSessions`: the default and the boot pass
 
 - `parseAudienceBoundSessions` (`components/oauth2/src/audienceBinding.ts`) reads an absent value
