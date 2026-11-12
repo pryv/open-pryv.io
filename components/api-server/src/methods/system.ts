@@ -379,6 +379,32 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     }
   );
 
+  // ------------------------------------------------------ migrationsStatus
+  // Whether the storage schema is behind the code, for deploy checks. A core
+  // with `migrations.autoRunOnStart: false` boots and serves with migrations
+  // pending (schema-dependent methods then fail) until an operator runs
+  // `bin/migrate.js up`, usually from another process while this core serves:
+  // the status is read on every call, never cached. Always 200 when it could
+  // be read; `upToDate` carries the answer.
+  let migrationRunner: { status: () => Promise<unknown[]> } | null = null;
+  systemAPI.register('system.getMigrationsStatus',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    async function getMigrationsStatus (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+      try {
+        const { createMigrationRunner, summarizeStatus } = require('storages/interfaces/migrations/index.ts');
+        migrationRunner ??= await createMigrationRunner({ logger: getLogger('migrations') });
+        const statuses = await migrationRunner!.status();
+        result.migrations = {
+          autoRunOnStart: (await ready()).get('migrations:autoRunOnStart') ?? true,
+          ...summarizeStatus(statuses)
+        };
+        return next();
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+    }
+  );
+
   // --------------------------------------------------------------- checks
   systemAPI.register('system.checkPlatformIntegrity',
     async function performSystemsChecks (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {

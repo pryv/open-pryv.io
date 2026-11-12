@@ -96,7 +96,10 @@ MongoDB does not participate in the v2 primitive — if migrations are ever need
 
 ## Automatic execution
 
-`bin/master.js` calls `runner.runAll()` before forking workers when `migrations.autoRunOnStart` is `true` (default). Set to `false` to operate migrations manually with `bin/migrate.js`.
+`bin/master.js` calls `runner.runAll()` before forking workers when `migrations.autoRunOnStart` is `true` (default). Set to `false` to operate migrations manually with `bin/migrate.js`. In that case the boot announcement
+(`applyOrAnnounce`) warns about pending migrations, and `GET /system/migrations-status` (admin key) reports them to
+deploy scripts. Both derive their answer from `summarizeStatus()` (`statusSummary.ts`) over `runner.status()`, so they
+cannot disagree; the route reads the status on every call, never from a cache.
 
 ## CLI
 

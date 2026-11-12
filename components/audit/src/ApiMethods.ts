@@ -93,6 +93,7 @@ const ALL_METHODS = [
   'system.listUsers',
   'system.listCores',
   'system.getEventTypesStatus',
+  'system.getMigrationsStatus',
   'system.extIdNamespaces.list',
   'system.extIdNamespaces.get',
   'system.extIdNamespaces.set',
@@ -173,6 +174,8 @@ const NOT_AUDITED_METHODS = [
   'system.listCores',
   // read-only dictionary status introspection, no per-user context
   'system.getEventTypesStatus',
+  // read-only storage schema status, no per-user context
+  'system.getMigrationsStatus',
   // read-only, no per-user context
   'system.extIdNamespaces.list',
   'system.extIdNamespaces.get',

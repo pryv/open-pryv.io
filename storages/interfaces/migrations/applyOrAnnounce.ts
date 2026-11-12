@@ -27,6 +27,7 @@
  */
 
 import type { AppliedMigration, EngineStatus } from './MigrationRunner.js';
+import { summarizeStatus } from './statusSummary.ts';
 
 export interface ApplyOrAnnounceLogger {
   info: (msg: string) => void;
@@ -71,8 +72,10 @@ export async function applyOrAnnounce ({
   }
 
   const statuses = await runner.status();
-  const enginesWithPending = statuses.filter(s => s.pending.length > 0);
-  const pendingCount = enginesWithPending.reduce((n, s) => n + s.pending.length, 0);
+  // Same summary as `GET /system/migrations-status`, so the two never disagree.
+  const summary = summarizeStatus(statuses);
+  const enginesWithPending = statuses.filter((_s, i) => summary.engines[i].pending.length > 0);
+  const pendingCount = summary.pending;
 
   if (pendingCount === 0) {
     logger.info('Migrations skipped (autoRunOnStart=false); no pending migrations.');
