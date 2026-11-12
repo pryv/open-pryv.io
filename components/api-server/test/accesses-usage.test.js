@@ -131,7 +131,7 @@ describe('[AUG] accesses usage for the owner', function () {
     }
   });
 
-  it('[AUG2] calls made with an app token are counted per method and by class; a batch counts its inner calls, not itself', async function () {
+  it('[AUG2] seeded direct counters plus a real batch are reported per method and by class; a batch counts its inner calls, not itself', async function () {
     // Two direct calls, as the tracker records them (the in-process test core
     // does not register the per-call tracker; a batch flushes its own stats).
     await countDirectCalls(appAccess.attrs.id, 'events:get', 2);
@@ -167,40 +167,51 @@ describe('[AUG] accesses usage for the owner', function () {
     const one = await coreRequest.get('/' + username + '/accesses/' + created.body.access.id).set('Authorization', appToken);
     assert.equal(one.status, 200, JSON.stringify(one.body));
     assert.equal(one.body.access.usage, undefined);
+    // A shared access may not read accesses at all: no list, no usage.
     const asShared = await getAccesses(sharedToken);
-    if (asShared.status === 200) {
-      for (const a of asShared.body.accesses) assert.equal(a.usage, undefined, 'shared caller, ' + a.name);
-    }
+    assert.equal(asShared.status, 403, JSON.stringify(asShared.body));
+    const oneShared = await coreRequest.get('/' + username + '/accesses/' + created.body.access.id).set('Authorization', sharedToken);
+    assert.equal(oneShared.status, 403, JSON.stringify(oneShared.body));
   });
 
   it('[AUG4] a deletion record carries the counters of the revoked access', async function () {
-    const token = cuid();
-    const victim = await fixtureUser.access({ type: 'app', name: 'aug-revoked-' + cuid().slice(-6), token, permissions: [{ streamId, level: 'read' }] });
-    await countDirectCalls(victim.attrs.id, 'events:get', 1);
-    const del = await coreRequest.delete('/' + username + '/accesses/' + victim.attrs.id).set('Authorization', personalToken);
+    // Created by the app, so the app lists its deletion record too.
+    const created = await coreRequest.post('/' + username + '/accesses').set('Authorization', appToken)
+      .send({ type: 'shared', name: 'aug-revoked-' + cuid().slice(-6), permissions: [{ streamId, level: 'read' }] });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const victimId = created.body.access.id;
+    await countDirectCalls(victimId, 'events:get', 1);
+    const del = await coreRequest.delete('/' + username + '/accesses/' + victimId).set('Authorization', personalToken);
     assert.equal(del.status, 200, JSON.stringify(del.body));
     const res = await getAccesses(personalToken, { includeDeletions: true });
     validation.check(res, { status: 200, schema: methodsSchema.get.result });
-    const record = res.body.accessDeletions.find((d) => d.id === victim.attrs.id);
+    const record = res.body.accessDeletions.find((d) => d.id === victimId);
     assert.ok(record != null, 'deletion record listed');
     assert.ok(record.usage != null, 'deletion record carries usage');
     assert.equal(record.usage.byMethod['events.get'], 1);
     assert.equal(record.calls, undefined);
     const asApp = await getAccesses(appToken, { includeDeletions: true });
-    for (const d of asApp.body.accessDeletions || []) assert.equal(d.usage, undefined);
+    assert.equal(asApp.status, 200, JSON.stringify(asApp.body));
+    const appRecord = (asApp.body.accessDeletions || []).find((d) => d.id === victimId);
+    assert.ok(appRecord != null, 'the app lists the deletion record of the access it created');
+    assert.equal(appRecord.usage, undefined, 'no usage for the app');
+    assert.equal(appRecord.calls, undefined);
   });
 
   it('[AUG5] accesses.getOne: the head carries `usage`, history snapshots do not', async function () {
-    const upd = await coreRequest.put('/' + username + '/accesses/' + appAccess.attrs.id).set('Authorization', personalToken)
+    const token = cuid();
+    const target = await fixtureUser.access({ type: 'app', name: 'aug-versioned-' + cuid().slice(-6), token, permissions: [{ streamId, level: 'read' }] });
+    await countDirectCalls(target.attrs.id, 'events:get', 5);
+    const upd = await coreRequest.put('/' + username + '/accesses/' + target.attrs.id).set('Authorization', personalToken)
       .send({ clientData: { note: 'aug5' } });
     assert.equal(upd.status, 200, JSON.stringify(upd.body));
-    const res = await coreRequest.get('/' + username + '/accesses/' + appAccess.attrs.id)
+    const res = await coreRequest.get('/' + username + '/accesses/' + target.attrs.id)
       .query({ includeHistory: true }).set('Authorization', personalToken);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     // Schema only: an updated access's integrity is checked elsewhere.
     validation.checkSchema(res.body, methodsSchema.getOne.result);
     assert.ok(res.body.access.usage != null, 'head carries usage');
-    assert.ok(res.body.access.usage.total >= 5, 'counters kept across an update');
+    assert.equal(res.body.access.usage.total, 5, 'counters kept across an update');
     assert.ok(Array.isArray(res.body.history) && res.body.history.length >= 1, 'history listed');
     for (const h of res.body.history) {
       assert.equal(h.usage, undefined, 'no usage on a snapshot');

@@ -13,6 +13,10 @@
   (an access with clientData, or a deletion record, did not validate against it).
 - The in-process test core does not register the per-call tracker (`trackingFunctions`); tests seed
   counters with the same storage `$inc` the tracker makes.
+- `accessTracking.isActive` is read per request for `usage` but once at boot by the tracker: flipping it
+  off at runtime hides `usage` while counters keep being written (they reappear, interval included, when
+  it is flipped back on). A negative projection is `SELECT *` plus an in-memory delete on both engines,
+  so reading `calls` for personal callers costs nothing extra.
 
 ### Dependencies: fast-xml-parser 5.12.0, node-forge 1.4.3
 

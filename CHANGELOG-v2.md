@@ -14,15 +14,18 @@
   (`includeDeletions`) included, and the `accesses.getOne` head carry
   `usage: { total, reads, writes, session, other, byMethod }`: approximate lifetime call counts per
   method (`byMethod`, keyed by method id, e.g. `"events.get": 12`) and summed by class (session:
-  `auth.*`, `mfa.*`, `oauth.*`, `sso.*`; read: a last segment starting with `get`, `list`, `check`,
-  `retrieve`, or `info`, `usernameChanges`, `controlledStatus`, `extIdHolds`; write: `create`,
-  `update`, `delete`, `set`, `replace`, `claim`, `release`, `change`, `accept`, `refuse`, `cancel`,
-  `detach`, `dismiss`, `issue`, `notify`, `request`, `reset`, `verify`, `test`, `transfer`,
-  `deactivate`, `erase`, or `adminRelease`, `extIdRelease`; anything else `other`). Counts are
+  `auth.*`, `mfa.*`, `oauth.*`, `sso.*`; read: a last segment starting with `get`, `list`, `check` or
+  `retrieve`, or equal to `info`, `usernameChanges`, `controlledStatus`, `extIdHolds`; write: a last
+  segment starting with `create`, `update`, `delete`, `set`, `replace`, `claim`, `release`, `change`,
+  `accept`, `refuse`, `cancel`, `detach`, `dismiss`, `issue`, `notify`, `request`, `reset`, `verify`,
+  `test`, `transfer`, `deactivate` or `erase`, or equal to `adminRelease`, `extIdRelease`; anything
+  else `other`). Counts are
   written asynchronously after each reply; a batch counts its inner calls, not itself. Absent when
   `accessTracking.isActive` is off, and for app and shared callers (an app still reads its own
   counters through `getAccessInfo`). History snapshots (`includeHistory`) carry no counters. `usage`
-  is read-only and not part of an access's `integrity`. Additive, not breaking.
+  is read-only (refused at creation and update) and not part of an access's `integrity`: a client
+  verifying an access's integrity strips `usage` before hashing, as it does `lastUsed`, `calls` and
+  `apiEndpoint`. Additive, not breaking.
 - **Fixed: history snapshots no longer expose the internal `calls` counters.** `accesses.getOne`
   with `includeHistory`, and a request for an earlier version of an access, returned each
   snapshot's raw storage counters.

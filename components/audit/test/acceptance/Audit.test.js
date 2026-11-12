@@ -722,6 +722,15 @@ describe('[AUDT] Audit', function () {
           assert.strictEqual(envelope.content.recordCount, undefined, 'batch envelope row must not carry a read recordCount');
         }
       });
+      // Activity views count the inner rows and leave the envelope out: the
+      // trail of a batch is one callBatch row plus one row per inner call.
+      it('[QK5F] a batch leaves exactly one callBatch row beside its inner rows', async function () {
+        const entries = await getAuditEvents({ fromTime: now },
+          (rows) => rows.filter(e => e.content.action === 'events.get').length >= 2 &&
+            rows.some(e => e.content.action === 'callBatch'));
+        assert.strictEqual(entries.filter(e => e.content.action === 'callBatch').length, 1, 'one envelope row');
+        assert.strictEqual(entries.filter(e => e.content.action === 'events.get').length, 2, 'one row per inner call');
+      });
     });
   });
 });
