@@ -2,26 +2,6 @@
 
 ## Unreleased
 
-### OAuth: sessions issued for a resource server are refused at the data API by default
-
-- **BREAKING: `oauth.audienceBoundSessions` defaults to `true`.** A session a registry client's
-  authorization naming a resource server (`aud` / `resource`) mints records it
-  (`clientData.oauth.audience`, since 2.0.0-rc.73); the data API now refuses such a token by
-  default (`403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`, on every
-  transport): it is meant for that resource server, which exchanges it (token exchange,
-  `--can-exchange`) for a session of its own. Sessions minted before the upgrade keep working
-  until they expire or their chain refreshes; sessions issued for no resource server, app-account
-  clients' sessions and derived sessions are never refused. **Operator action: on a core where a
-  resource server does not exchange yet, set `oauth.audienceBoundSessions: false` explicitly**
-  (the behaviour of 2.0.0-rc.73 to the previous release); nothing is ended by either value, a
-  restart applies it. An absent value now reads as `true`; a value other than `true` / `false`
-  still stops the boot.
-- **Changed: the boot pass over registry clients.** It warns when a client may obtain tokens for a
-  resource server while no client is registered for token exchange (those tokens are refused at
-  the data API and nobody can exchange them), and, as before, when the setting is `false` while a
-  client may exchange.
-- The `bin/init.js` configuration appendix shows `audienceBoundSessions: false` as the opt-out.
-
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
@@ -86,6 +66,33 @@
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+
+## 2.0.0-rc.82 - 2026-11-12
+
+> **Upgrade advice for operators.** No schema migration, no new configuration key.
+> **BREAKING for cores where a resource server does not exchange tokens yet:**
+> `oauth.audienceBoundSessions` now defaults to `true` (see below); set it to `false` explicitly
+> there before switching, run `node bin/check-config.js` on the new code.
+
+### OAuth: sessions issued for a resource server are refused at the data API by default
+
+- **BREAKING: `oauth.audienceBoundSessions` defaults to `true`.** A session a registry client's
+  authorization naming a resource server (`aud` / `resource`) mints records it
+  (`clientData.oauth.audience`, since 2.0.0-rc.73); the data API now refuses such a token by
+  default (`403 invalid-access-token`, `WWW-Authenticate: Bearer error="invalid_token"`, on every
+  transport): it is meant for that resource server, which exchanges it (token exchange,
+  `--can-exchange`) for a session of its own. Sessions minted before the upgrade keep working
+  until they expire or their chain refreshes; sessions issued for no resource server, app-account
+  clients' sessions and derived sessions are never refused. **Operator action: on a core where a
+  resource server does not exchange yet, set `oauth.audienceBoundSessions: false` explicitly**
+  (the behaviour of 2.0.0-rc.73 to the previous release); nothing is ended by either value, a
+  restart applies it. An absent value now reads as `true`; a value other than `true` / `false`
+  still stops the boot.
+- **Changed: the boot pass over registry clients.** It warns when a client may obtain tokens for a
+  resource server while no client is registered for token exchange (those tokens are refused at
+  the data API and nobody can exchange them), and, as before, when the setting is `false` while a
+  client may exchange.
+- The `bin/init.js` configuration appendix shows `audienceBoundSessions: false` as the opt-out.
 
 ## 2.0.0-rc.81 - 2026-11-11
 
