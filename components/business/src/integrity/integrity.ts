@@ -10,6 +10,7 @@ const config = require('@pryv/boiler').getConfigUnsafe(true);
 const logger = require('@pryv/boiler').getLogger('integrity');
 const stableRepresentation = require('@pryv/stable-object-representation');
 const { integrityAlgorithmProblem } = require('./algorithms.ts') as typeof import('./algorithms.ts');
+const { composeWireAccess } = require('../accesses/refs.ts') as typeof import('../accesses/refs.ts');
 
 // --------------- CONFIGURATION -------------- //
 const configIntegrity = config.get('integrity');
@@ -114,15 +115,37 @@ const events = {
 
 // ------------- accesses ------------------ //
 
+// The hashed form of an access is the object its owner receives: composite
+// `id` / `createdBy` / `modifiedBy`, no `serial`, `*BySerial` nor `headId`
+// (a history row hashes under its `<base>[:<serial>]` id), and no `usage`
+// (derived at read time, like `lastUsed` and `calls`). Idempotent on an object
+// already in that form, so a storage row and the API response hash alike.
+function canonicalAccess (access: AccessLike): AccessLike {
+  if (access == null) return access;
+  const out: AccessLike = (typeof access.id === 'string' && access.id.length > 0)
+    ? composeWireAccess(access as Parameters<typeof composeWireAccess>[0],
+      typeof access.headId === 'string' ? access.headId : undefined)
+    : Object.assign({}, access);
+  delete out.usage;
+  return out;
+}
+
 function computeAccess (access: AccessLike): IntegrityResult {
-  return stableRepresentation.access.compute(access, algorithm);
+  return stableRepresentation.access.compute(canonicalAccess(access), algorithm);
 }
 
 function keyAccess (access: AccessLike): string {
-  return stableRepresentation.access.key(access);
+  return stableRepresentation.access.key(canonicalAccess(access));
 }
 
 function hashAccess (access: AccessLike): string {
+  return stableRepresentation.access.hash(canonicalAccess(access), algorithm);
+}
+
+// The hash of the stored row itself, as versions before the canonical form
+// computed it: only for the one-time recompute of stored hashes at upgrade,
+// which rewrites a row only when its stored value is this one.
+function rowFormHashAccess (access: AccessLike): string {
   return stableRepresentation.access.hash(access, algorithm);
 }
 
@@ -137,6 +160,7 @@ const accesses = {
   compute: computeAccess,
   key: keyAccess,
   hash: hashAccess,
+  rowFormHash: rowFormHashAccess,
   set: setOnAccess
 };
 
