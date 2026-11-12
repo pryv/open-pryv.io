@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Accesses: per-access usage for the account owner
+
+- **`accesses.get` and `accesses.getOne` return `usage` to the account owner.** With a personal
+  access (the owner's own, or a delegate's personal access), every access listed, deletion records
+  (`includeDeletions`) included, and the `accesses.getOne` head carry
+  `usage: { total, reads, writes, session, other, byMethod }`: approximate lifetime call counts per
+  method (`byMethod`, keyed by method id, e.g. `"events.get": 12`) and summed by class (session:
+  `auth.*`, `mfa.*`, `oauth.*`, `sso.*`; read: a last segment starting with `get`, `list`, `check`,
+  `retrieve`, or `info`, `usernameChanges`, `controlledStatus`, `extIdHolds`; write: `create`,
+  `update`, `delete`, `set`, `replace`, `claim`, `release`, `change`, `accept`, `refuse`, `cancel`,
+  `detach`, `dismiss`, `issue`, `notify`, `request`, `reset`, `verify`, `test`, `transfer`,
+  `deactivate`, `erase`, or `adminRelease`, `extIdRelease`; anything else `other`). Counts are
+  written asynchronously after each reply; a batch counts its inner calls, not itself. Absent when
+  `accessTracking.isActive` is off, and for app and shared callers (an app still reads its own
+  counters through `getAccessInfo`). History snapshots (`includeHistory`) carry no counters. `usage`
+  is read-only and not part of an access's `integrity`. Additive, not breaking.
+- **Fixed: history snapshots no longer expose the internal `calls` counters.** `accesses.getOne`
+  with `includeHistory`, and a request for an earlier version of an access, returned each
+  snapshot's raw storage counters.
+- **Fixed: `system.getUserInfo` `callsDetail` reported `null`** for a stored counter of a method no
+  longer registered; it now reports the count.
+
 ### Service info: whether password reset sends a mail
 
 - **`service.info` advertises `features.passwordResetByEmail` (boolean).** `true` when
