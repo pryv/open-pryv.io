@@ -79,6 +79,19 @@ describe('[AIWB] access integrity: canonical (wire) form', function () {
     assert.equal(integrity.accesses.hash(withUsage), integrity.accesses.hash(row));
   });
 
+  it('[AIWZ] compute() hashes with the configured algorithm, for events and accesses', function () {
+    const event = { id: 'ckaiwzevent0000000000001', streamIds: ['diary'], type: 'note/txt', content: 'x', time: 1700000000, created: 1700000000, createdBy: 'a', modified: 1700000000, modifiedBy: 'a' };
+    const ev = integrity.events.compute(event);
+    assert.equal(ev.integrity, integrity.events.hash(event));
+    assert.ok(ev.integrity.startsWith('EVENT:0:' + integrity.algorithm + '-'), ev.integrity);
+    assert.equal(ev.key, integrity.events.key(event));
+    const row = Object.assign(baseRow(), { serial: 2 });
+    const ac = integrity.accesses.compute(row);
+    assert.equal(ac.integrity, integrity.accesses.hash(row));
+    assert.ok(ac.integrity.startsWith('ACCESS:0:' + integrity.algorithm + '-'), ac.integrity);
+    assert.equal(ac.key, integrity.accesses.key(row));
+  });
+
   it('[AIWY] set() writes the wire hash on the row it is given', function () {
     const row = Object.assign(baseRow(), { serial: 1 });
     const res = integrity.accesses.set(row, true);

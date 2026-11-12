@@ -86,8 +86,10 @@ const attachments = {
 
 // ------------- events ------------------ //
 
+// The library's compute() hashes with its default algorithm whatever it is
+// given: build the pair here so it always uses the configured one.
 function computeEvent (event: EventLike): IntegrityResult {
-  return stableRepresentation.event.compute(event, algorithm);
+  return { key: keyEvent(event), integrity: hashEvent(event) };
 }
 
 function keyEvent (event: EventLike): string {
@@ -131,7 +133,7 @@ function canonicalAccess (access: AccessLike): AccessLike {
 }
 
 function computeAccess (access: AccessLike): IntegrityResult {
-  return stableRepresentation.access.compute(canonicalAccess(access), algorithm);
+  return { key: keyAccess(access), integrity: hashAccess(access) };
 }
 
 function keyAccess (access: AccessLike): string {
