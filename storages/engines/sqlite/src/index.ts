@@ -67,7 +67,7 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
   const { DatabaseSQLite } = require('./DatabaseSQLite.ts');
   const { SessionsSQLite } = require('./SessionsSQLite.ts');
   const { PasswordResetRequestsSQLite } = require('./PasswordResetRequestsSQLite.ts');
-  const { AccessesSQLite } = require('./user/AccessesSQLite.ts');
+  const { AccessesSQLite, recomputeAccessesIntegrityOnce } = require('./user/AccessesSQLite.ts');
   const { ProfileSQLite } = require('./user/ProfileSQLite.ts');
   const { StreamsSQLite } = require('./user/StreamsSQLite.ts');
   const { WebhooksSQLite } = require('./user/WebhooksSQLite.ts');
@@ -79,6 +79,13 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
   storageLayer.sessions = new SessionsSQLite(sharedDb, { maxAge: options.sessionMaxAge });
   storageLayer.passwordResetRequests = new PasswordResetRequestsSQLite(sharedDb, { maxAge: options.passwordResetRequestMaxAge });
   storageLayer.accesses = new AccessesSQLite(options.integrityAccesses);
+  // Access hashes stored before they covered the wire form: recomputed once
+  // (no schema-migration runner for this engine; a marker file records it).
+  try {
+    await recomputeAccessesIntegrityOnce(storageLayer.accesses);
+  } catch (err) {
+    integrityLogger.error('access integrity recompute failed, retried at next start: ' + (err as Error).message);
+  }
   storageLayer.profile = new ProfileSQLite();
   storageLayer.streams = new StreamsSQLite();
   storageLayer.webhooks = new WebhooksSQLite();

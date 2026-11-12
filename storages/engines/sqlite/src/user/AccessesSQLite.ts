@@ -9,14 +9,35 @@ import { createRequire } from 'node:module';
 import type { Callback, UserOrId, UpdateData, FindOptions } from '../../../../interfaces/_shared/types.ts';
 import type { StoredAccess } from '../../../../interfaces/_shared/domain.ts';
 import type { DbRow } from './BaseStorageSQLite.ts';
+import type { SqliteDb } from '../types.ts';
 const require = createRequire(import.meta.url);
 
 const { BaseStorageSQLite, decorateSQLiteDuplicateError } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
+const fs = require('fs');
+const path = require('path');
+const { _internals } = require('../_internals.ts');
+const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 
-type IntegrityAccesses = { isActive: boolean; set: (access: AccessItem, recompute?: boolean) => void };
+const logger = _internals.lazyLogger('storage:accesses-sqlite');
+
+type IntegrityAccesses = {
+  isActive: boolean;
+  set: (access: AccessItem, recompute?: boolean) => void;
+  rowFormHash?: (access: AccessItem) => string;
+};
+type RecomputeResult = { scanned: number; rewritten: number; unverified: number; failedUsers: number };
+
+/** Rows whose stored form differs from the wire form (see `composeWireAccess`). */
+const VERSIONED_ROWS_WHERE = 'head_id IS NOT NULL' +
+  ' OR json_extract(data, \'$.serial\') IS NOT NULL' +
+  ' OR json_extract(data, \'$.modifiedBySerial\') IS NOT NULL' +
+  ' OR json_extract(data, \'$.createdBySerial\') IS NOT NULL';
+
+/** Written in the users base directory once the recompute below completed. */
+const INTEGRITY_WIRE_FORM_MARKER = 'accesses-integrity-wire-form.done';
 /** Storage item for this collection — the canonical stored shape (the
  *  previous local type was misnamed AccessItem; rows are the base's DbRow). */
 type AccessItem = StoredAccess;
@@ -173,6 +194,54 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     });
   }
 
+  /**
+   * One-time upgrade pass: re-hash the rows whose stored form differs from
+   * the wire form (updated accesses, their history rows and deletion
+   * records) so their `integrity` verifies on what the API returns. A row is
+   * rewritten only when its stored value is the hash of the row itself (the
+   * previous computation): any other value is left for the integrity check
+   * to report, never replaced. Idempotent: a second run rewrites nothing.
+   * Walks every user directory (the users index may lack some).
+   */
+  async recomputeIntegrityOfVersionedRows (): Promise<RecomputeResult> {
+    const result: RecomputeResult = { scanned: 0, rewritten: 0, unverified: 0, failedUsers: 0 };
+    if (!this.integrityAccesses.isActive) return result;
+    const rowForm = this.integrityAccesses.rowFormHash;
+    for (const userId of await _internals.userLocalDirectory.listUserIds() as string[]) {
+      if (!fs.existsSync(UserBaseStorageDb.existingPathForUser(userId))) continue;
+      try {
+        const udb: { db: SqliteDb } = await UserBaseStorageDb.forUser(userId);
+        const hasTable = udb.db.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = ?').get(this.tableName) != null;
+        if (!hasTable) continue;
+        await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
+          const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE ${VERSIONED_ROWS_WHERE}`).all();
+          const write = udb.db.prepare(`UPDATE ${this.tableName} SET data = json_set(data, '$.integrity', ?)` +
+            ' WHERE id = ? AND json_extract(data, \'$.integrity\') = ?');
+          for (const row of rows) {
+            const item = this.rowToItem(row);
+            if (item == null || item.integrity == null) continue;
+            result.scanned++;
+            const stored = item.integrity;
+            this.integrityAccesses.set(item, true);
+            if (item.integrity === stored) continue;
+            if (rowForm != null && rowForm(item) !== stored) { // the hash leaves `integrity` out
+              result.unverified++;
+              continue;
+            }
+            result.rewritten += write.run(item.integrity, row.id, stored).changes;
+          }
+        }).immediate());
+      } catch (err) {
+        result.failedUsers++;
+        logger.error('access integrity recompute failed for user ' + userId + ': ' + (err as Error).message);
+      }
+    }
+    logger.info('access integrity recompute: ' + result.scanned + ' versioned rows scanned, ' +
+      result.rewritten + ' rewritten, ' + result.unverified + ' left as stored (not the previous row hash)' +
+      (result.failedUsers > 0 ? ', ' + result.failedUsers + ' user databases failed' : ''));
+    return result;
+  }
+
   insertMany (userOrUserId: UserOrId, accesses: Array<Partial<AccessItem>>, callback: Callback<void>): void {
     const prepared = accesses.map((a) => {
       if (a.deleted === undefined) return Object.assign({ deleted: null }, a);
@@ -246,4 +315,29 @@ function duplicateIndexError (constraintKeys: string[], data: Record<string, unk
   return err;
 }
 
-export { AccessesSQLite, duplicateIndexError };
+/**
+ * Run `recomputeIntegrityOfVersionedRows` once per users base directory: the
+ * SQLite engine has no schema-migration runner, so a marker file records that
+ * it completed (written only when every user database was processed; a
+ * failure is retried at the next start). Returns null when skipped: marker
+ * present, integrity inactive, or the users directory not initialised in this
+ * process (the supervisor: its workers and the admin tools run it).
+ */
+async function recomputeAccessesIntegrityOnce (accesses: AccessesSQLite): Promise<RecomputeResult | null> {
+  if (!accesses.integrityAccesses.isActive) return null;
+  let basePath: string;
+  try {
+    basePath = _internals.userLocalDirectory.getBasePath();
+  } catch (_e) {
+    return null;
+  }
+  const marker = path.join(basePath, INTEGRITY_WIRE_FORM_MARKER);
+  if (fs.existsSync(marker)) return null;
+  const result = await accesses.recomputeIntegrityOfVersionedRows();
+  if (result.failedUsers === 0) {
+    fs.writeFileSync(marker, 'DO NOT DELETE THIS FILE - IT RECORDS THAT THE ACCESS INTEGRITY RECOMPUTE COMPLETED');
+  }
+  return result;
+}
+
+export { AccessesSQLite, duplicateIndexError, recomputeAccessesIntegrityOnce, INTEGRITY_WIRE_FORM_MARKER };

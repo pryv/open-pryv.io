@@ -19,7 +19,12 @@ const timestamp = require('unix-timestamp');
 
 const logger = _internals.lazyLogger('storage:accesses-pg');
 
-type IntegrityAccesses = { isActive: boolean; set: (item: AccessItem, deep?: boolean) => void };
+type IntegrityAccesses = {
+  isActive: boolean;
+  set: (item: AccessItem, deep?: boolean) => void;
+  rowFormHash?: (item: AccessItem) => string;
+};
+type RecomputeResult = { scanned: number; rewritten: number; unverified: number };
 /** Storage item for this collection — the canonical stored shape. */
 type AccessItem = StoredAccess;
 type AccessRow = Record<string, unknown>;
@@ -76,11 +81,10 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
     }
-    // `headId` stays on the storage item so the integrity hash
-    // (computed at insert time including headId) round-trips
-    // consistently with the read-time recompute. The api-server layer
-    // strips `headId` via `composeWireAccess` before responding to
-    // the client.
+    // `headId` stays on the storage item: the integrity hash is computed on
+    // the item's wire form (`composeWireAccess`, which uses `headId` for a
+    // history row's id and then strips it), and the api-server layer strips
+    // it the same way before responding to the client.
     return item;
   }
 
@@ -246,6 +250,44 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
         callback(err2 || null);
       });
     });
+  }
+
+  /**
+   * One-time upgrade pass: re-hash the rows whose stored form differs from
+   * the wire form (updated accesses, their history rows and deletion
+   * records) so their `integrity` verifies on what the API returns. A row is
+   * rewritten only when its stored value is the hash of the row itself (the
+   * previous computation): any other value is left for the integrity check
+   * to report, never replaced. Idempotent: a second run rewrites nothing.
+   */
+  async recomputeIntegrityOfVersionedRows (): Promise<RecomputeResult> {
+    const result: RecomputeResult = { scanned: 0, rewritten: 0, unverified: 0 };
+    if (!this.integrityAccesses.isActive) return result;
+    const res = await this.db.query(
+      'SELECT * FROM accesses WHERE head_id IS NOT NULL OR serial IS NOT NULL' +
+      ' OR modified_by_serial IS NOT NULL OR created_by_serial IS NOT NULL'
+    );
+    for (const row of res.rows) {
+      const item = this.rowToItem(row);
+      if (item == null || item.integrity == null) continue;
+      result.scanned++;
+      const stored = item.integrity;
+      this.integrityAccesses.set(item, true);
+      if (item.integrity === stored) continue;
+      const rowForm = this.integrityAccesses.rowFormHash;
+      if (rowForm != null && rowForm(item) !== stored) { // the hash leaves `integrity` out
+        result.unverified++;
+        continue;
+      }
+      const upd = await this.db.query(
+        'UPDATE accesses SET integrity = $1 WHERE user_id = $2 AND id = $3 AND integrity = $4',
+        [item.integrity, row.user_id, row.id, stored]
+      );
+      result.rewritten += upd.rowCount;
+    }
+    logger.info('access integrity recompute: ' + result.scanned + ' versioned rows scanned, ' +
+      result.rewritten + ' rewritten, ' + result.unverified + ' left as stored (not the previous row hash)');
+    return result;
   }
 
   insertMany (userOrUserId: UserOrId, accesses: Array<Partial<AccessItem>>, callback: Callback<void>): void {
