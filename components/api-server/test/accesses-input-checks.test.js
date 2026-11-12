@@ -116,6 +116,33 @@ describe('[ACIN] accesses input checks', function () {
     assert.notStrictEqual(stored.lastUsed, 4102444800);
   });
 
+  // `usage` is derived by the server from the access's call counters and only
+  // ever read: a caller cannot supply it.
+  const FAKE_USAGE = { total: 1, reads: 1, writes: 0, session: 0, other: 0, byMethod: { 'events.get': 1 } };
+
+  it('[ACUS1] `usage` is refused at creation', async function () {
+    const name = 'usage ' + cuid();
+    const res = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+      .send({ name, type: 'app', permissions: [{ streamId: 'acin', level: 'read' }], usage: FAKE_USAGE });
+    assert.strictEqual(res.status, 400, res.text);
+    assert.strictEqual(res.body.error.id, 'invalid-parameters-format', res.text);
+    const after = await getAccesses({});
+    assert.ok(!after.body.accesses.some((a) => a.name === name), 'no access created');
+  });
+
+  it('[ACUS2] `usage` is refused at update', async function () {
+    const created = await coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+      .send({ name: 'usage update ' + cuid().slice(-6), type: 'app', permissions: [{ streamId: 'acin', level: 'read' }] });
+    assert.strictEqual(created.status, 201, created.text);
+    const res = await coreRequest.put('/' + username + '/accesses/' + created.body.access.id).set('Authorization', token)
+      .send({ usage: FAKE_USAGE });
+    assert.strictEqual(res.status, 400, res.text);
+    assert.strictEqual(res.body.error.id, 'invalid-parameters-format', res.text);
+    const list = await getAccesses({});
+    const stored = list.body.accesses.find((a) => a.id === created.body.access.id);
+    assert.notDeepStrictEqual(stored.usage, FAKE_USAGE, 'the stored counters are the server\'s');
+  });
+
   // An access holds one level per stream: two entries for the same stream
   // would silently keep only one of them, depending on their order.
   const duplicates = [
