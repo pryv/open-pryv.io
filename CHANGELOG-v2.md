@@ -1,6 +1,11 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.83 - 2026-11-12
+
+> **Upgrade advice for operators.** No schema migration, no new configuration key, no breaking
+> change. New admin route `GET /system/migrations-status` for deploy checks (see below); with
+> `migrations.autoRunOnStart: false`, use it to wait for `node bin/migrate.js up` before switching
+> traffic on future releases that ship a migration.
 
 ### Service info: whether password reset sends a mail
 
