@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 21 (2026-11-12), covering releases 2.0.0-rc.40 to 2.0.0-rc.82.
+**Report revision:** 22 (2026-11-12), covering releases 2.0.0-rc.40 to 2.0.0-rc.83.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -134,6 +134,7 @@ its applicability is stated with it.
 | 2.0.0-rc.80 | 2026-11-11 | none (not an audit release) | yes (2026-11-11) |
 | 2.0.0-rc.81 | 2026-11-11 | none (not an audit release) | yes (2026-11-11) |
 | 2.0.0-rc.82 | 2026-11-12 | no finding; default change: `oauth.audienceBoundSessions` is `true`; operator action: set it to `false` explicitly on a core whose resource servers do not exchange yet (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-12) |
+| 2.0.0-rc.83 | 2026-11-12 | none (not an audit release) | yes (2026-11-12) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -2283,3 +2284,4 @@ This report is updated with every release that carries a security fix:
 | 19 | 2026-11-09 | 2.0.0-rc.40 to 2.0.0-rc.77 | Adds 2.0.0-rc.77 (review alongside the per-user OAuth2 issuer): no finding, counts unchanged; one lower-severity fix (the audit outcome of a streamed call cut short); section 3.2 adds the per-user issuer. Deployed on the maintainers' platforms (2026-11-09). |
 | 20 | 2026-11-11 | 2.0.0-rc.40 to 2.0.0-rc.79 | Adds 2.0.0-rc.78 (lower-severity fixes: public email lookups within a per-address budget, one accepter per single-use consent link) and 2.0.0-rc.79 (no finding, counts unchanged; the group-account member access budgets; one lower-severity fix, a failed member access request holding its patient's lock). Deployed on the maintainers' platforms (2026-11-11). |
 | 21 | 2026-11-12 | 2.0.0-rc.40 to 2.0.0-rc.82 | Release table adds 2.0.0-rc.80 and rc.81 (not audit releases); section 4 adds 2.0.0-rc.82: the default of `oauth.audienceBoundSessions` is now `true`, closing by default the direct use at the data API of a token issued for a resource server (described with 2.0.0-rc.73); no finding, counts unchanged. Deployed on the maintainers' platforms (2026-11-12). |
+| 22 | 2026-11-12 | 2.0.0-rc.40 to 2.0.0-rc.83 | Release table adds 2.0.0-rc.83 (not an audit release: `features.passwordResetByEmail` in service info, the admin route `GET /system/migrations-status`); counts unchanged. |
