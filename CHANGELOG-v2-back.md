@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Access integrity hashed on the wire form
+
+- `business/src/integrity/integrity.ts`: `accesses.compute` / `hash` / `key` canonicalise the access
+  through `composeWireAccess` (composite id and refs, `serial`, `*BySerial`, `headId` and `usage`
+  left out; a history row hashes under `<base>[:<serial>]`) before the library hashes it. The form is
+  a fixed point, so engines keep hashing the row they persist and verifiers (`IntegrityCheck`, the
+  test teardown check) need no change. `accesses.rowFormHash` keeps the previous computation for the
+  upgrade pass only. A row never updated hashes the same in both forms (null fields are dropped by
+  the library), so its stored value and the `accesses.create` audit record are unchanged.
+- Upgrade pass `recomputeIntegrityOfVersionedRows()` on `AccessesPG` and `AccessesSQLite`: rows with
+  `head_id`, `serial`, `modifiedBySerial` or `createdBySerial` get the wire-form hash, only when
+  their stored value is the row-form hash (any other value is left for the integrity check to
+  report, never replaced); idempotent. PostgreSQL runs it in the migration
+  `20261112_120000_access_integrity_wire_form.js` (at boot by default, or `bin/migrate.js up`).
+  With `migrations.autoRunOnStart: false`, `bin/integrity-check.js` reports a mismatch on updated
+  accesses until the migration ran. SQLite has no schema-migration runner yet: the pass runs once at
+  storage init (`recomputeAccessesIntegrityOnce`, in each process whose users directory is
+  initialised: the API workers and the admin tools), recorded by the marker file
+  `accesses-integrity-wire-form.done` in the users base directory (written only when every user
+  database was processed). Rolling back to an earlier image makes its integrity check report the
+  rewritten rows (forward-only); accesses updated under the earlier image keep a row-form hash after
+  upgrading again (the pass has run already) and are reported by the check the same way.
+
 ### Dependencies: fast-xml-parser 5.12.0, node-forge 1.4.3
 
 - `fast-xml-parser` override raised to `^5.12.0` (GHSA-474x-hrwr-fgx4, low: quadratic CPU on unterminated

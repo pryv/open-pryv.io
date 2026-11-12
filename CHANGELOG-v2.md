@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Access integrity after an update
+
+- **Fixed:** the `integrity` of an access that has been updated now verifies on the object the API
+  returns (composite `id` and `modifiedBy`), for `accesses.update`, `accesses.get`,
+  `accesses.getOne` (the current version, older versions, `includeHistory`) and `accessDeletions`.
+  It was computed on the stored form (base id plus internal serial fields), so it did not verify
+  with `@pryv/stable-object-representation` once an access had been updated. Hashes of accesses
+  that were never updated are unchanged; the stored hashes of updated ones are recomputed once at
+  upgrade. A copy returned without credentials (token removed, counterparty URLs rewritten, as in
+  `accessDeletions` or an app's listing of accesses it does not hold the token of) cannot be
+  re-hashed by its receiver: the value is the server's record, which a holder of the token can
+  verify after restoring it.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
