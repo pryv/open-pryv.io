@@ -2,29 +2,6 @@
 
 ## Unreleased
 
-### Service info: whether password reset sends a mail
-
-- **`service.info` advertises `features.passwordResetByEmail` (boolean).** `true` when
-  `account.resetPassword` mails a reset link on this core: the reset mail is switched on
-  (`services.email.enabled`, `.resetPassword`) and mail is configured (for in-process delivery, an
-  SMTP host; otherwise the mail service URL and key). The reset request answers the same either way,
-  so an app can now tell "check your mailbox" from "ask the platform operator". An explicit
-  `service.features.passwordResetByEmail` in the configuration wins. Older cores omit the field:
-  treat absence as unknown.
-
-### Operators: pending storage migrations readable by deploy checks
-
-- **New admin route `GET /system/migrations-status`** (admin key, like the other `/system` routes). It
-  answers 200 with `{ migrations: { autoRunOnStart, upToDate, pending, engines: [{ id, currentVersion,
-  targetVersion, pending }] } }`: per engine, the schema version recorded, the version this code
-  expects, and the migration files not applied yet. The state is read on every call, so a deploy
-  script can run `node bin/migrate.js up` and poll until `upToDate` is `true`. Before, a core with
-  `migrations.autoRunOnStart: false` booted and served with migrations pending (its schema-dependent
-  methods failing) while health checks passed. Nothing else changes: such a core still serves, and
-  logs the same warning, now computed from the same summary.
-- **Upgrade advice, for every release that ships a migration:** with `autoRunOnStart: false`, run
-  `node bin/migrate.js up` and check `/system/migrations-status` before switching traffic.
-
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
@@ -89,6 +66,36 @@
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+
+## 2.0.0-rc.83 - 2026-11-12
+
+> **Upgrade advice for operators.** No schema migration, no new configuration key, no breaking
+> change. New admin route `GET /system/migrations-status` for deploy checks (see below); with
+> `migrations.autoRunOnStart: false`, use it to wait for `node bin/migrate.js up` before switching
+> traffic on future releases that ship a migration.
+
+### Service info: whether password reset sends a mail
+
+- **`service.info` advertises `features.passwordResetByEmail` (boolean).** `true` when
+  `account.resetPassword` mails a reset link on this core: the reset mail is switched on
+  (`services.email.enabled`, `.resetPassword`) and mail is configured (for in-process delivery, an
+  SMTP host; otherwise the mail service URL and key). The reset request answers the same either way,
+  so an app can now tell "check your mailbox" from "ask the platform operator". An explicit
+  `service.features.passwordResetByEmail` in the configuration wins. Older cores omit the field:
+  treat absence as unknown.
+
+### Operators: pending storage migrations readable by deploy checks
+
+- **New admin route `GET /system/migrations-status`** (admin key, like the other `/system` routes). It
+  answers 200 with `{ migrations: { autoRunOnStart, upToDate, pending, engines: [{ id, currentVersion,
+  targetVersion, pending }] } }`: per engine, the schema version recorded, the version this code
+  expects, and the migration files not applied yet. The state is read on every call, so a deploy
+  script can run `node bin/migrate.js up` and poll until `upToDate` is `true`. Before, a core with
+  `migrations.autoRunOnStart: false` booted and served with migrations pending (its schema-dependent
+  methods failing) while health checks passed. Nothing else changes: such a core still serves, and
+  logs the same warning, now computed from the same summary.
+- **Upgrade advice, for every release that ships a migration:** with `autoRunOnStart: false`, run
+  `node bin/migrate.js up` and check `/system/migrations-status` before switching traffic.
 
 ## 2.0.0-rc.82 - 2026-11-12
 
