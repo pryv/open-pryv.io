@@ -1,6 +1,11 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.82 - 2026-11-12
+
+> **Upgrade advice for operators.** No schema migration, no new configuration key.
+> **BREAKING for cores where a resource server does not exchange tokens yet:**
+> `oauth.audienceBoundSessions` now defaults to `true` (see below); set it to `false` explicitly
+> there before switching, run `node bin/check-config.js` on the new code.
 
 ### OAuth: sessions issued for a resource server are refused at the data API by default
 
