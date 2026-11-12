@@ -89,7 +89,10 @@ describe('[OIR] OAuth sessions: introspection, revocation, chain end, retirement
     await initTests();
     await initCore();
     fixtures = getNewFixture();
-    restoreConfig = injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
+    // audienceBoundSessions false: these tests read with the client's own token
+    // (a 403 here must be the revoke or the retirement, never the audience);
+    // the default (true) is tested with token exchange.
+    restoreConfig = injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, audienceBoundSessions: false } });
     oauth2.extension.setExtension(toyExtension);
     platformDB = storages.platformDB;
     const row = {

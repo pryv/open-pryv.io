@@ -32,15 +32,21 @@ import { clientMetadataSettings } from './clientMetadataConfig.ts';
 
 /**
  * Check every registry client of the platform. Resolves to the number of
- * warnings. With `config`: a client registered for token exchange while this
- * core still accepts at the data API the tokens issued for a resource server
- * (`oauth:audienceBoundSessions` not on) is reported once.
+ * warnings. With `config`, two platform-wide lines, each reported once:
+ * - `oauth:audienceBoundSessions` is false while a client may exchange
+ *   tokens: the tokens issued for a resource server also work directly at
+ *   the data API;
+ * - it is true (the default) while a client may obtain tokens for a resource
+ *   server and no client may exchange: those tokens are refused at the data
+ *   API and no resource server can exchange them. Coarse on purpose (any
+ *   exchanger at all, not audience by audience): a heads-up, not a rule.
  */
 export async function checkRegistryClients (platform: PlatformDB, config?: { get (key: string): unknown }): Promise<number> {
   let warnings = 0;
   if (typeof platform?.listPlatformKvKeys !== 'function') return 0; // a partial store (tests)
   const ids: string[] = await storage.listClientIds(platform);
   const exchanging: string[] = [];
+  const withAudience: string[] = [];
   for (const id of ids) {
     let client: OAuthClient | null;
     try {
@@ -62,6 +68,7 @@ export async function checkRegistryClients (platform: PlatformDB, config?: { get
     }
     if (client.kind !== 'registry') continue;
     if (client.canExchange === true) exchanging.push(id);
+    if (client.anyAudience === true || (Array.isArray(client.allowedAudiences) && client.allowedAudiences.length > 0)) withAudience.push(id);
     const max = checkMaxSet(client);
     if (!max.ok) {
       warnings++;
@@ -79,10 +86,22 @@ export async function checkRegistryClients (platform: PlatformDB, config?: { get
         : `oauth registry client ${id}: plain-http redirect URIs on a non-loopback host (${insecure.join(', ')}) stored without the insecure-redirect registration (a row written before the rule; update it)`);
     }
   }
-  if (config != null && exchanging.length > 0 && !audienceBoundSessions(config)) {
-    warnings++;
-    logServerWarning(`oauth registry client(s) ${exchanging.join(', ')} may exchange tokens, but this core still accepts at its data API ` +
-      'the tokens issued for a resource server (oauth.audienceBoundSessions is not true): set it once those resource servers exchange');
+  if (config != null) {
+    const bound = audienceBoundSessions(config);
+    if (!bound && exchanging.length > 0) {
+      warnings++;
+      logServerWarning(`oauth registry client(s) ${exchanging.join(', ')} may exchange tokens, but oauth.audienceBoundSessions is false ` +
+        'on this core: the tokens issued for a resource server also work directly at the data API. Remove the setting (true is the ' +
+        'default) once every resource server exchanges.');
+    }
+    if (bound && withAudience.length > 0 && exchanging.length === 0) {
+      warnings++;
+      logServerWarning(`oauth registry client(s) ${withAudience.join(', ')} may obtain tokens for a resource server, but no client is ` +
+        'registered for token exchange: a token issued for a resource server is refused at the data API ' +
+        '(oauth.audienceBoundSessions is true) and no resource server can exchange it. Tokens obtained without aud / resource, ' +
+        'and resource servers that only introspect, are not affected. Register the resource server with --can-exchange if it ' +
+        'reads this API, or set oauth.audienceBoundSessions: false on this core while it does not exchange yet.');
+    }
   }
   return warnings;
 }

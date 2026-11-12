@@ -606,9 +606,12 @@ class MethodContext {
    * `resource`) while `oauth:audienceBoundSessions` is true: such a token is
    * meant for that resource server, which exchanges it (token exchange) for
    * a session of its own; presented here by whoever holds it, it is refused
-   * like an invalid token, on every transport (shared choke point). Off by
-   * default; a session without the field (minted before it existed, or for
-   * no resource server, or a derived session) is never refused here.
+   * like an invalid token, on every transport (shared choke point). On by
+   * default; `false` keeps such a token usable. A session without the field
+   * (minted before it existed, or for no resource server, or a derived
+   * session) is never refused here. The `catch` below only covers unit
+   * contexts with no booted configuration, never a running core, which always
+   * has the default configuration loaded.
    */
   checkAudienceBinding () {
     const audience = (this.access as { clientData?: { oauth?: { audience?: unknown } } } | null)?.clientData?.oauth?.audience;

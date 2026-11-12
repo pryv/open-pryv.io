@@ -108,7 +108,9 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     await initTests();
     await initCore();
     fixtures = getNewFixture();
-    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
+    // audienceBoundSessions false: these tests read with the client's own token;
+    // the default (true) is tested with token exchange.
+    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, audienceBoundSessions: false } });
     oauth2.extension.setExtension(toyExtension);
     platformDB = require('storages').platformDB;
     const row = {

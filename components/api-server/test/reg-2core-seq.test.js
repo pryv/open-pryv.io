@@ -359,6 +359,10 @@ describe('[RG2C] Two-core integration tests', function () {
 
     // Start Core A and Core B
     const coreEnv = {
+      // The OAuth tests here read with the client's own token (alias
+      // addressing across cores): audience binding, on by default, is tested
+      // with token exchange in a single core.
+      OAUTH_AUDIENCE_BOUND_SESSIONS: 'false',
       DNS_DOMAIN: DOMAIN,
       RQLITE_URL,
       ADMIN_KEY,

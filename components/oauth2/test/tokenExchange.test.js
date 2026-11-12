@@ -689,23 +689,37 @@ describe('[OTX] OAuth2: token exchange (RFC 8693)', () => {
     });
   });
 
-  it('[OTX19] boot: a client registered for token exchange while the core does not refuse the tokens issued for a resource server is reported', async () => {
+  it('[OTX19] boot: false with a client registered for token exchange is reported; so is true with an audience client and no exchanger', async () => {
+    // Exchangers present: an explicit false warns; true, by default or explicit, does not.
     const platform = await seeded();
-    const off = await checkRegistryClients(platform, fakeConfig());
+    const byDefault = await checkRegistryClients(platform, fakeConfig());
     const on = await checkRegistryClients(platform, fakeConfig({ 'oauth:audienceBoundSessions': true }));
+    const off = await checkRegistryClients(platform, fakeConfig({ 'oauth:audienceBoundSessions': false }));
+    assert.equal(byDefault, on);
     assert.equal(off, on + 1);
-    // No configuration given (the operator CLI's check): nothing about it.
-    assert.equal(await checkRegistryClients(platform), on);
-    // No client registered for it: nothing either.
-    const none = fakePlatform();
-    await persistClient(none, CONNECTOR);
-    assert.equal(await checkRegistryClients(none, fakeConfig()), await checkRegistryClients(none, fakeConfig({ 'oauth:audienceBoundSessions': true })));
     // The string an environment variable gives counts as on.
     assert.equal(await checkRegistryClients(platform, fakeConfig({ 'oauth:audienceBoundSessions': 'TRUE' })), on);
+    // No configuration given (the operator CLI's check): neither line.
+    assert.equal(await checkRegistryClients(platform), on);
+    // A client that may name a resource server and no exchanger: true warns
+    // (those tokens are refused and nobody can exchange them), false does not.
+    for (const client of [CONNECTOR, { ...CONNECTOR, allowedAudiences: [], anyAudience: true }]) {
+      const lonely = fakePlatform();
+      await persistClient(lonely, client);
+      const lonelyOff = await checkRegistryClients(lonely, fakeConfig({ 'oauth:audienceBoundSessions': false }));
+      assert.equal(await checkRegistryClients(lonely, fakeConfig()), lonelyOff + 1, JSON.stringify(client.allowedAudiences));
+      assert.equal(await checkRegistryClients(lonely), lonelyOff);
+    }
+    // No registry client at all (a registry row always lists an audience or
+    // "any audience"): nothing either way.
+    const plain = fakePlatform();
+    assert.equal(await checkRegistryClients(plain, fakeConfig()), 0);
+    assert.equal(await checkRegistryClients(plain, fakeConfig({ 'oauth:audienceBoundSessions': false })), 0);
   });
 
-  it('[OTX22] audienceBoundSessions: a boolean or the strings true / false (any case); anything else is a configuration problem, never read as on or off silently', () => {
-    for (const [value, parsed] of [[true, true], [false, false], [undefined, false], [null, false], ['true', true], [' True ', true], ['false', false], ['FALSE', false]]) {
+  it('[OTX22] audienceBoundSessions: a boolean or the strings true / false (any case), absent reads as true; anything else is a configuration problem, never read as on or off silently', () => {
+    assert.equal(audienceBoundSessions(fakeConfig()), true);
+    for (const [value, parsed] of [[true, true], [false, false], [undefined, true], [null, true], ['true', true], [' True ', true], ['false', false], ['FALSE', false]]) {
       assert.equal(parseAudienceBoundSessions(value), parsed, JSON.stringify(value));
       assert.equal(audienceBoundSessionsProblem(value), null, JSON.stringify(value));
     }

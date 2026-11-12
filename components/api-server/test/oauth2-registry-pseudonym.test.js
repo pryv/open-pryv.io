@@ -95,7 +95,9 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
   before(async function () {
     await initTests();
     await initCore();
-    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
+    // audienceBoundSessions false: these tests read with the client's own token;
+    // the default (true) is tested with token exchange.
+    restoreConfig = require('test-helpers').injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, audienceBoundSessions: false } });
     oauth2.extension.setExtension(toyExtension);
     platformDB = require('storages').platformDB;
     usersRepository = await require('business/src/users/index.ts').getUsersRepository();
