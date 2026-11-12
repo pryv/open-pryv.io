@@ -960,6 +960,21 @@ node bin/migrate.js up --target 3      # stop per-engine at version 3
 
 Set `migrations.autoRunOnStart: false` in config to disable auto-run at startup and rely on the CLI only.
 
+With `autoRunOnStart: false`, a core whose schema is behind its code still boots and serves (it logs a warning
+naming the pending migrations), but the methods that need the new schema fail until the migrations are applied
+(after 2.0.0-rc.70, password sign-in answers 500). A deploy check can read the state in one call, with the admin key:
+
+```bash
+curl -fsS -H "Authorization: $ADMIN_KEY" https://core.example.com/system/migrations-status | jq -e '.migrations.upToDate'
+```
+
+`GET /system/migrations-status` answers 200 with `{ migrations: { autoRunOnStart, upToDate, pending, engines: [{ id,
+currentVersion, targetVersion, pending: [filenames] }] } }`; the state is read on every call, so it follows a
+`bin/migrate.js up` run from another process. Without the admin key it answers 404, as does a core older than this
+route. A roll with `autoRunOnStart: false`: start the new code, run `node bin/migrate.js up`, wait until `upToDate`
+is `true`, then switch traffic. With `autoRunOnStart: true`, `upToDate: false` means the boot-time run failed or was
+interrupted: check the master log.
+
 ### Upgrading the bundled rqlite (9.x to 10.x)
 
 The Docker image and `storages/engines/rqlite/scripts/setup` bundle rqlite **10.6.0** (10.5.1 up to 2.0.0-rc.53, 9.4.5 before rc.34).

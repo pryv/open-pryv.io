@@ -104,6 +104,12 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.get(Paths.System + '/event-types-status', setMethodId('system.getEventTypesStatus'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
+  // --------------------- storage migrations status ----------------- //
+  // Whether the storage schema is behind the code (pending migrations), so a
+  // deploy script can wait for `bin/migrate.js up` before switching traffic.
+  expressApp.get(Paths.System + '/migrations-status', setMethodId('system.getMigrationsStatus'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
+  });
   // --------------------- admin force-renew --------------------- //
   // POST /system/admin/certs/force-renew — operator-triggered ACME
   // rollover. The orchestrator lives in the master process; this worker

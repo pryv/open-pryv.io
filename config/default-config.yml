@@ -1012,7 +1012,8 @@ observability:
 # Engine-agnostic schema migration runner (see storages/interfaces/migrations/).
 # When true, master.js applies pending migrations against each migration-capable
 # engine before forking workers. Set false to operate migrations manually via
-# `node bin/migrate.js`.
+# `node bin/migrate.js`; deploy checks then read GET /system/migrations-status
+# (admin key) until `upToDate` is true.
 migrations:
   autoRunOnStart: true
 
