@@ -34,6 +34,11 @@ describe('[MGHS] storage migrations status', function () {
     // initCore wires only the user-facing API; register the system API on the
     // app coreRequest is bound to (see event-types-degraded.test.js).
     await require('api-server/src/methods/system.ts').default(global.app.systemAPI, global.app.api);
+    // The in-process test core does not run the boot-time migrations (the
+    // master process does), so a freshly created test database records no
+    // version. Apply them as the master would (idempotent).
+    const { createMigrationRunner } = require('storages/interfaces/migrations/index.ts');
+    await (await createMigrationRunner()).runAll();
   });
 
   const get = (key) => {
