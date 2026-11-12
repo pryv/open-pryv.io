@@ -11,14 +11,16 @@
  *
  * A security switch: `true` (or the string `true`, as an environment
  * variable gives it, any case) refuses at the data API the sessions minted
- * for a resource server; `false`, the string `false` or absent keeps them
- * usable. Anything else is a configuration error (the boot refuses it), never
- * read silently as one or the other.
+ * for a resource server; it is the default, and an absent value reads as
+ * `true` too, so a configuration layer that drops the key lands on the safe
+ * side. `false` or the string `false` keeps such sessions usable. Anything
+ * else is a configuration error (the boot refuses it), never read silently as
+ * one or the other.
  */
 
 /** The setting as a boolean, or null when it is neither a boolean nor `true` / `false`. */
 export function parseAudienceBoundSessions (value: unknown): boolean | null {
-  if (value == null) return false;
+  if (value == null) return true;
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') {
     const v = value.trim().toLowerCase();

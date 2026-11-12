@@ -158,7 +158,7 @@ Lifecycle: `deleteAccessChain` deletes the derived sessions of a deleted session
 
 Reserved keys: `RESERVED_KEYS` is the contract of the contexts that existed before the exchange; the exchange's token response also reserves `api_base` and `issued_token_type`, a derived token's introspection `act` (`EXCHANGE_RESERVED_KEYS`, passed to `runHook` in those contexts only; the exchange's static extras are stripped of them).
 
-`clientData.oauth.audience` is written on every session a registry client's authorization naming a resource server mints (the code exchange's pre-minted session and every refresh; never on an app-account client's session, which has no exchange path); `MethodContext.checkAudienceBinding` refuses such a session while `oauth:audienceBoundSessions` is on (`audienceBinding.ts`: `true` or the string `true`, any case; the boot refuses a value that is neither a boolean nor `true` / `false`).
+`clientData.oauth.audience` is written on every session a registry client's authorization naming a resource server mints (the code exchange's pre-minted session and every refresh; never on an app-account client's session, which has no exchange path); `MethodContext.checkAudienceBinding` refuses such a session while `oauth:audienceBoundSessions` is on (`audienceBinding.ts`: `true` or the string `true`, any case, the default; absent reads as `true`; the boot refuses a value that is neither a boolean nor `true` / `false`).
 
 ## Per-user audiences
 

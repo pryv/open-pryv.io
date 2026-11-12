@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### `oauth.audienceBoundSessions`: the default and the boot pass
+
+- `parseAudienceBoundSessions` (`components/oauth2/src/audienceBinding.ts`) reads an absent value
+  as `true`, so a configuration layer that drops the key, or a unit context's partial config, lands
+  on the refusing side; `config/default-config.yml` sets `true`.
+- `checkRegistryClients` (`components/oauth2/src/registryBootCheck.ts`) collects the registry
+  clients that may name a resource server (`allowedAudiences` non-empty or `anyAudience`) and logs
+  a second platform-wide warning when the setting is true and no client may exchange; the warning
+  for `false` with an exchanging client is reworded.
+
 ### `.api-version` read trimmed
 
 - **Fixed:** the API version read from `.api-version` is trimmed. A trailing newline (an editor's, or a

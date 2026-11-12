@@ -113,7 +113,9 @@ describe('[OSUB] OAuth registry clients: what sessions create follows the grant;
     await initTests();
     await initCore();
     fixtures = getNewFixture();
-    restoreConfig = injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY } });
+    // audienceBoundSessions false: these tests read with the client's own token;
+    // the default (true) is tested with token exchange.
+    restoreConfig = injectTestConfigSnapshot({ oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, audienceBoundSessions: false } });
     oauth2.extension.setExtension(toyExtension);
     platformDB = storages.platformDB;
     const row = {

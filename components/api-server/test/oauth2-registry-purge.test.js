@@ -96,7 +96,10 @@ describe('[ORGP] OAuth registry clients: purge, vetting, ceilings, display', fun
     await initCore();
     fixtures = getNewFixture();
     restoreConfig = require('test-helpers').injectTestConfigSnapshot({
-      oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, logoHosts: ['logos.purge.test'] },
+      // audienceBoundSessions false: a 403 here must be the purge, the revoke
+      // or the suspension, never the audience; the default (true) is tested
+      // with token exchange.
+      oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, logoHosts: ['logos.purge.test'], audienceBoundSessions: false },
     });
     oauth2.extension.setExtension(toyExtension);
     platformDB = require('storages').platformDB;

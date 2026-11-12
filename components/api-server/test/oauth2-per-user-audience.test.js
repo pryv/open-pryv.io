@@ -34,7 +34,10 @@ const at = (name) => 'https://' + name + '.example.com/adapter/calendar/api';
 const REGION = at('auth-x');
 const TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
-const OAUTH = { consentUrl: CONSENT_URL, stateKey: STATE_KEY };
+// audienceBoundSessions false: these tests read with the client's own token;
+// [OPUE1] sets true for a per-user audience, and the default (true) is tested
+// with token exchange.
+const OAUTH = { consentUrl: CONSENT_URL, stateKey: STATE_KEY, audienceBoundSessions: false };
 const MISMATCH = { error: 'access_denied', error_description: 'the requested resource names another account\'s address', reason: 'audience-account-mismatch' };
 const HELD = { error: 'access_denied', error_description: 'the requested address is one of this account\'s address aliases, already used by another app', reason: 'address-alias-held' };
 

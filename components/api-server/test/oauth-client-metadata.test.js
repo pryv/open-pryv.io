@@ -44,7 +44,10 @@ const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 const STUB_HOSTS = ['client.example', 'tools.example', 'agent.anywhere.example'];
 const TEMPLATE = { scope: 'read/a read/b write/a', allowedAudiences: [RS_AUD], subjectType: 'pairwise', maxEntries: 20 };
 const CMD = { mode: 'allowList', allowedHosts: ['client.example', 'tools.example'], deniedHosts: [], client: TEMPLATE };
-const OAUTH = { consentUrl: CONSENT_URL, stateKey: STATE_KEY, clientMetadataDocuments: CMD };
+// audienceBoundSessions false: these tests read with the client's own token;
+// [OCMDE04] sets true for such a client, and the default (true) is tested with
+// token exchange.
+const OAUTH = { consentUrl: CONSENT_URL, stateKey: STATE_KEY, clientMetadataDocuments: CMD, audienceBoundSessions: false };
 
 // Toy grammar: `read/<s>`, `write/<s>` give one stream a level.
 const LEVEL_OF = { read: 'read', write: 'contribute' };
