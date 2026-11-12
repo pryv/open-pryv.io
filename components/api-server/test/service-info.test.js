@@ -196,5 +196,33 @@ describe('[SINF] Service', () => {
         assert.strictEqual(gate.body.features.emailVerification.atRegistration, true);
       });
     });
+
+    it('[SN13] advertises features.passwordResetByEmail: reset mail switched on AND mail configured; an explicit value wins', async () => {
+      const get = async () => (await coreRequest.get('/' + username + '/service/info')).body.features.passwordResetByEmail;
+      // Test config ships resetPassword switched off.
+      assert.strictEqual(await get(), false);
+      await withInjectedConfig({ services: { email: { enabled: { resetPassword: true } } } }, async () => {
+        assert.strictEqual(await get(), true);
+      });
+      // Switched on, but the whole mail feature off.
+      await withInjectedConfig({ services: { email: { enabled: false } } }, async () => {
+        assert.strictEqual(await get(), false);
+      });
+      // Switched on, in-process delivery with no SMTP host: the send is skipped.
+      await withInjectedConfig({
+        services: { email: { enabled: { resetPassword: true }, method: 'in-process', smtp: { host: '' } } }
+      }, async () => {
+        assert.strictEqual(await get(), false);
+      });
+      // Same, with an SMTP host: mail is configured.
+      await withInjectedConfig({
+        services: { email: { enabled: { resetPassword: true }, method: 'in-process', smtp: { host: 'smtp.example.com' } } }
+      }, async () => {
+        assert.strictEqual(await get(), true);
+      });
+      await withInjectedConfig({ service: { features: { passwordResetByEmail: true } } }, async () => {
+        assert.strictEqual(await get(), true);
+      });
+    });
   });
 });

@@ -1,5 +1,17 @@
 # Changelog - API Changes
 
+## Unreleased
+
+### Service info: whether password reset sends a mail
+
+- **`service.info` advertises `features.passwordResetByEmail` (boolean).** `true` when
+  `account.resetPassword` mails a reset link on this core: the reset mail is switched on
+  (`services.email.enabled`, `.resetPassword`) and mail is configured (for in-process delivery, an
+  SMTP host; otherwise the mail service URL and key). The reset request answers the same either way,
+  so an app can now tell "check your mailbox" from "ask the platform operator". An explicit
+  `service.features.passwordResetByEmail` in the configuration wins. Older cores omit the field:
+  treat absence as unknown.
+
 ## 2.0.0-rc.82 - 2026-11-12
 
 > **Upgrade advice for operators.** No schema migration, no new configuration key.
