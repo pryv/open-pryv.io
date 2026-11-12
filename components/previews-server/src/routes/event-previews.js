@@ -79,15 +79,8 @@ module.exports = async function (expressApp, initContextMiddleware, loadAccessMi
       if (event == null) {
         return next(errors.unknownResource('event', id));
       }
-      let canReadEvent = false;
-      for (let i = 0; i < event.streamIds.length; i++) {
-        // ok if at least one
-        if (await context.access.canGetEventsOnStreamAndWithTags(event.streamIds[i], event.tags)) {
-          canReadEvent = true;
-          break;
-        }
-      }
-      if (!canReadEvent) { return next(errors.forbidden()); }
+      // same exclusions as events.get
+      if (!(await context.access.canReadEvent(event))) { return next(errors.forbidden()); }
       if (!canHavePreview(event)) {
         return res.sendStatus(204);
       }

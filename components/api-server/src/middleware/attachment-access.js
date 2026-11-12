@@ -72,14 +72,8 @@ async function attachmentsAccessMiddleware (req, res, next) {
   if (!event) {
     return next(errors.unknownResource('event', req.params.id));
   }
-  let canReadEvent = false;
-  for (let i = 0; i < event.streamIds.length; i++) {
-    if (await req.context.access.canGetEventsOnStream(event.streamIds[i], 'local')) {
-      canReadEvent = true;
-      break;
-    }
-  }
-  if (!canReadEvent) {
+  // same exclusions as events.get
+  if (!(await req.context.access.canReadEvent(event))) {
     return next(errors.forbidden());
   }
   // set response content type (we can't rely on the filename)

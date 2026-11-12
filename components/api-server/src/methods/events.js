@@ -196,26 +196,14 @@ module.exports = async function (api) {
     if (!context.event) { return next(); }
     const event = context.event;
     delete context.event;
-    const systemStreamIdsForbiddenForReading = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForReading();
-    let canReadEvent = false;
     // special case no streamIds on event && deleted
     if (event.streamIds == null) { // event might be deleted - limit result to deleted property
       result.event = { id: event.id, deleted: event.deleted };
       return next();
     }
 
-    for (const streamId of event.streamIds) {
-      // ok if at least one
-      if (systemStreamIdsForbiddenForReading.includes(streamId)) {
-        canReadEvent = false;
-        break;
-      }
-      if (await context.access.canGetEventsOnStreamAndWithTags(streamId, event.tags)) {
-        canReadEvent = true;
-      }
-    }
-    // might return 404 to avoid discovery of existing forbidden events
-    if (!canReadEvent) { return next(errors.forbidden()); }
+    // same exclusions as events.get; might return 404 to avoid discovery of existing forbidden events
+    if (!(await context.access.canReadEvent(event))) { return next(errors.forbidden()); }
     event.attachments = setFileReadToken(context.access, event.attachments);
     // To remove when streamId not necessary
     event.streamId = event.streamIds[0];
@@ -231,15 +219,15 @@ module.exports = async function (api) {
     try {
       const events = await mall.events.getHistory(context.user.id, params.id);
       result.history = [];
-      events.forEach((e) => {
+      for (const e of events) {
         // To remove when streamId not necessary
         _applyBackwardCompatibilityOnEvent(e, context);
         if (result.event.streamIds == null) { // event might be deleted - limit result to modified property
           result.event = { id: e.id, modified: e.modified };
-        } else {
+        } else if (await context.access.canReadEvent(e)) { // leave out versions the access cannot read
           result.history.push(e);
         }
-      });
+      }
       next();
     } catch (err) {
       next(errors.unexpectedError(err));

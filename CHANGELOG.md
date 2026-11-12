@@ -1,6 +1,9 @@
 
 ## 1.9
 
+### 1.9.4
+- Security fix: single-event reads (`events.getOne`, `GET /events/{id}`, attachment downloads, previews) apply the exclusions `events.get` applies. An event is refused when any of its streams is governed by a `none` or `create-only` permission, even if another of its streams is readable. Attachment downloads also check tag permissions, and `includeHistory` leaves out the versions the access cannot read.
+
 ### 1.9.3
 - Added Audit from Entreprise version to Open-Pryv.io.
 

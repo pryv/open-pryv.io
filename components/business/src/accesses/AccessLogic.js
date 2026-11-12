@@ -487,6 +487,35 @@ class AccessLogic {
   }
 
   /**
+   * Whether one event fetched by id can be read: single-event reads (events.getOne,
+   * attachments, previews) apply the exclusions events.get applies.
+   * Refused when any of its streams is a hidden account stream, or (non-personal
+   * access) is governed by a `none` / `create-only` grant (own or inherited).
+   * Otherwise at least one stream must be readable with the event's tags.
+   * @param {{streamIds?: Array<string>, tags?: Array<string>}} event
+   * @returns {Promise<boolean>}
+   */
+  async canReadEvent (event) {
+    const streamIds = event?.streamIds;
+    if (!Array.isArray(streamIds) || streamIds.length === 0) return false;
+    const hidden = SystemStreamsSerializer.getAccountStreamsIdsForbiddenForReading();
+    if (streamIds.some((id) => hidden.includes(id))) return false;
+    if (this.isPersonal()) return true;
+
+    for (const streamId of streamIds) {
+      await this._getStreamPermissionLevel(streamId);
+      const permission = this._streamPermissionLevelCache[streamId];
+      if (permission == null) continue; // no grant: not readable, not forbidden
+      if (permission.level == null || permission.level === 'none' || permission.level === 'create-only') return false;
+    }
+
+    for (const streamId of streamIds) {
+      if (await this.canGetEventsOnStreamAndWithTags(streamId, event.tags)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Whether events in the given stream and tags context can be updated/deleted.
    *
    * @param streamId

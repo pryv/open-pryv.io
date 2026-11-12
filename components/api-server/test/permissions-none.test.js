@@ -141,4 +141,59 @@ describe('permissions none', function () {
       });
     });
   });
+
+  describe('single-event reads apply the events.get exclusions', function () {
+    let server, mongoFixtures, username, basePathEvent;
+    const tokenNoneB = cuid();
+    const tokenCreateOnlyB = cuid();
+    const ids = {};
+
+    before(async () => {
+      server = await context.spawn();
+      mongoFixtures = databaseFixture(await produceMongoConnection());
+      username = cuid();
+      basePathEvent = `/${username}/events/`;
+      const user = await mongoFixtures.user(username, {});
+      for (const [streamId, streamData] of Object.entries(STREAMS)) {
+        await user.stream({ id: streamId, name: 'stream ' + streamId, parentId: streamData.parentId });
+      }
+      await user.access({ type: 'app', token: tokenNoneB, permissions: [{ streamId: '*', level: 'read' }, { streamId: 'B', level: 'none' }] });
+      await user.access({ type: 'app', token: tokenCreateOnlyB, permissions: [{ streamId: '*', level: 'read' }, { streamId: 'B', level: 'create-only' }] });
+      for (const [key, event] of Object.entries(EVENTS)) {
+        ids[key] = cuid();
+        await user.event({ id: ids[key], type: 'note/txt', content: key, streamIds: event.streamIds });
+      }
+    });
+    after(async () => {
+      server.stop();
+      await mongoFixtures.clean();
+    });
+
+    async function getOneStatus (token, key) {
+      const res = await server.request().get(basePathEvent + ids[key]).set('Authorization', token);
+      return res.statusCode;
+    }
+
+    it('[SRX1] events.getOne refuses an event in a "none" stream, even when another of its streams is readable', async function () {
+      for (const key of ['ab', 'bc', 'ea', 'b']) assert.equal(await getOneStatus(tokenNoneB, key), 403, key);
+      for (const key of ['a', 'ac', 'c']) assert.equal(await getOneStatus(tokenNoneB, key), 200, key);
+    });
+
+    it('[SRX2] events.getOne refuses an event in a "create-only" stream, even when another of its streams is readable', async function () {
+      for (const key of ['ab', 'bc', 'ea', 'b']) assert.equal(await getOneStatus(tokenCreateOnlyB, key), 403, key);
+      for (const key of ['a', 'ac', 'c']) assert.equal(await getOneStatus(tokenCreateOnlyB, key), 200, key);
+    });
+
+    // the event is checked before its attachment is looked up: 403, not 404 for the unknown file id
+    it('[SRX4] attachment download refuses an event in a "none" stream, even when another of its streams is readable', async function () {
+      const res = await server.request()
+        .get(basePathEvent + ids.ab + '/some-file-id/doc.txt')
+        .set('Authorization', tokenNoneB);
+      assert.equal(res.statusCode, 403);
+      const readable = await server.request()
+        .get(basePathEvent + ids.ac + '/some-file-id/doc.txt')
+        .set('Authorization', tokenNoneB);
+      assert.equal(readable.statusCode, 404);
+    });
+  });
 });
