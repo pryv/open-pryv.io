@@ -758,13 +758,15 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # #   idTokenTTL: 300
 
 # # Token exchange (RFC 8693) for a resource server in front of this core (a
-# # registry client registered with --can-exchange): advertise the grant, and,
-# # once that resource server exchanges, refuse at the data API the tokens
-# # issued for it (false by default in this release). Under the oauth: block above.
+# # registry client registered with --can-exchange): advertise the grant under
+# # the oauth: block above. The data API refuses the tokens issued for a
+# # resource server (audienceBoundSessions: true, the default): that resource
+# # server exchanges them. Only while a resource server does not exchange yet,
+# # set it to false explicitly on this core.
 # #   grantTypesSupported:
 # #     - authorization_code
 # #     - urn:ietf:params:oauth:grant-type:token-exchange
-# #   audienceBoundSessions: true
+# #   audienceBoundSessions: false
 ${dnsLess
 ? ''
 : `

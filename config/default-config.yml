@@ -1193,13 +1193,14 @@ oauth:
   # registry client registered with `--can-exchange`) exchanges the token a
   # user's client sent it for a session of its own. To advertise it, add
   # urn:ietf:params:oauth:grant-type:token-exchange to grantTypesSupported.
-  # audienceBoundSessions: true refuses at the data API every session minted
-  # for a resource server (a registry client's authorization naming `aud` /
-  # `resource`): such a token works only through that resource server's
-  # exchange. false (the default in this release) keeps such tokens usable at
-  # the API; a later release is planned to default it to true. Per core; true or false
-  # (the strings "true" / "false" too), any other value stops the boot.
-  audienceBoundSessions: false
+  # audienceBoundSessions: true (the default) refuses at the data API every
+  # session minted for a resource server (a registry client's authorization
+  # naming `aud` / `resource`): such a token works only through that resource
+  # server's exchange. Set false, per core, only while a resource server does
+  # not exchange yet: such tokens then work directly at the API. true or false
+  # (the strings "true" / "false" too); absent reads as true; any other value
+  # stops the boot.
+  audienceBoundSessions: true
   # Per-user issuer: true makes an account's own host (https://<name>.<dns.domain>,
   # the account served by this core) its OAuth issuer: the discovery documents
   # fetched there, the authorization started there and the code and refresh

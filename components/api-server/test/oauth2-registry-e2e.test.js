@@ -164,7 +164,9 @@ describe('[OREG] OAuth 2.0 registry clients (extension grammar, no app account)'
     await initCore();
     fixtures = getNewFixture();
     restoreConfig = require('test-helpers').injectTestConfigSnapshot({
-      oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, signingKeys: [{ kid: 'e2e-1', privateKeyPem: SIGNING_KEY_PEM }] },
+      // audienceBoundSessions false: these tests read with the client's own
+      // token; the default (true) is tested with token exchange.
+      oauth: { consentUrl: CONSENT_URL, stateKey: STATE_KEY, signingKeys: [{ kid: 'e2e-1', privateKeyPem: SIGNING_KEY_PEM }], audienceBoundSessions: false },
     });
     oauth2.extension.setExtension(toyExtension);
     platformDB = require('storages').platformDB;

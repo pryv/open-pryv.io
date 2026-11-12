@@ -798,9 +798,9 @@ A resource server in front of a core (an agent gateway, an API facade) receives
 the access token a user's client obtained for it (the authorization named the
 resource server in `aud` / `resource`). With token exchange it trades that
 token for a **derived session** of its own on the user's home core, and calls
-the data API with the derived token. The client's token itself can then be
-refused at the data API (`oauth.audienceBoundSessions`, below): whoever holds
-it, it works only through the resource server it was issued for.
+the data API with the derived token. The client's token itself is refused at
+the data API (`oauth.audienceBoundSessions`, `true` by default, below):
+whoever holds it, it works only through the resource server it was issued for.
 
 **Who may exchange.** A registry client registered with `--can-exchange`
 (§ 3b): confidential (`client_secret_basic` or `private_key_jwt`), with an
@@ -940,13 +940,17 @@ minted before this release carry no such record and keep working until they
 expire or their chain refreshes; sessions issued for no resource server are
 never refused (and cannot be exchanged), nor are app-account clients'
 sessions (they record no audience: they have no exchange to replace them).
-`false` (the default in this release) keeps every token usable at the API; a
-later release is planned to default it to `true`. Turn it on once every resource server whose
-clients use this core exchanges; while it is off and a client is registered
-with `--can-exchange`, the core warns at boot. The setting is read from the
-configuration (it changes with a restart): a socket.io connection opened
-before it changed stays until it reconnects, and an HFS series metadata cache
-entry lags it by at most its lifetime (5 minutes), as for a client revoke.
+`true` is the default: a token issued for a resource server works only through
+that resource server's exchange. Set `false` explicitly, per core, only while a
+resource server whose clients use this core does not exchange yet: every such
+token then works directly at the API (the behaviour before the default
+changed). The core warns at boot when a client may obtain tokens for a resource
+server and no client is registered for token exchange, and when the setting is
+`false` while a client may exchange. An absent value reads as `true`. The
+setting is read from the configuration (it changes with a restart): a socket.io
+connection opened before it changed stays until it reconnects, and an HFS
+series metadata cache entry lags it by at most its lifetime (5 minutes), as for
+a client revoke.
 Accesses a session created while it was off carry no audience and stay usable.
 
 ## 1f. Client metadata documents (an https URL as `client_id`)
@@ -1184,7 +1188,7 @@ oauth:
   idTokenTTL: 300                  # id_token lifetime, seconds
   grantTypesSupported:             # advertised in the discovery document
     - authorization_code
-  audienceBoundSessions: false     # true: the data API refuses tokens issued for a resource server (§ 1e)
+  audienceBoundSessions: true      # false: the data API accepts tokens issued for a resource server (§ 1e)
   perUserIssuer: false             # true: an account's own host is its issuer (DNS topology only; see below)
   extensionOptions: {}             # handed as is to the OAuth extension (see below)
   extensionHookTimeoutMs: 5000     # bound on each asynchronous extension hook, milliseconds
@@ -2108,7 +2112,7 @@ single-use, so a reuse means either a broken client or a stolen code.
 | token exchange: `400 unauthorized_client` "client is not registered for token exchange" | the resource server's row has no `--can-exchange`, or it is suspended / under review (§ 1e, § 3b) |
 | token exchange: `400 invalid_target` "the subject token was issued for a resource this client is not registered for" | the client's authorization named an `aud` / `resource` that is not in the resource server's `--audience` list |
 | token exchange: `400 invalid_grant` for a token that works at the API | the token was issued for no resource server (no `aud` / `resource` at `/oauth2/authorize`): not exchangeable (§ 1e) |
-| data API `403` "The access token is bound to a resource server" | `oauth.audienceBoundSessions` is on and the token was issued for a resource server: call through that resource server, which exchanges it (§ 1e) |
+| data API `403` "The access token is bound to a resource server" | `oauth.audienceBoundSessions` is on (the default) and the token was issued for a resource server: call through that resource server, which exchanges it (§ 1e), or, while that resource server does not exchange yet, set `oauth.audienceBoundSessions: false` on the core |
 | consent UI: `400 invalid_scope` with `reason: grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (§ 3b) |
 | consent UI: `421 wrong_core` on `/oauth2/authorize/offer` or `/accept` | the account is served by another core than the one that issued the authorization (the app used another region's address): start again from the app with the address of the account's core, named by `coreUrl` (§ 1, accounts served by another core) |
 | `/oauth2/authorize` with a URL `client_id` → HTML 400 "Unknown client_id" | `oauth.clientMetadataDocuments.mode` is `off` on this core (§ 2) |

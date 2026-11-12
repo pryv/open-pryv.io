@@ -307,26 +307,12 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     assert.equal((await exchange(t.access_token, [introId, rsSecret.plaintext])).body.error, 'unauthorized_client');
   });
 
-  it('[OTXE02] with audienceBoundSessions true the subject token is refused at the data API (request, batch, socket.io), the derived one is not; false keeps both, and the boot warns', async () => {
+  it('[OTXE02] by default (audienceBoundSessions true) the subject token is refused at the data API (request, batch, socket.io), the derived one is not; false keeps both, and the boot warns', async () => {
     const who = await newUser();
     const t = await connectorToken(who);
     const x = await exchanged(t.access_token);
-    // false (the default): both work.
-    assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
-    assert.equal((await readStream(who, x.access_token, 'a')).status, 200);
-    // The boot warns while a client may exchange and the core does not bind.
-    const loggerProto = Object.getPrototypeOf(getLogger('oauth2'));
-    const warn = loggerProto.warn;
-    const warned = [];
-    loggerProto.warn = function (message, ...rest) { warned.push(String(message)); return warn.call(this, message, ...rest); };
-    try {
-      await checkRegistryClients(platformDB, getConfigUnsafe(true));
-    } finally {
-      loggerProto.warn = warn;
-    }
-    assert.ok(warned.some((m) => m.includes('may exchange tokens') && m.includes(rsId)), JSON.stringify(warned));
-
-    await withInjectedConfig({ oauth: { ...OAUTH, audienceBoundSessions: true } }, async () => {
+    {
+      // true, the default: no injection.
       const refused = await readStream(who, t.access_token, 'a');
       assert.equal(refused.status, 403, JSON.stringify(refused.body));
       assert.equal(refused.body.error.id, 'invalid-access-token');
@@ -371,20 +357,34 @@ describe('[OTXE] OAuth token exchange end to end', function () {
         if (setup?.io != null) await new Promise((resolve) => setup.io.close(() => resolve()));
         else await new Promise((resolve) => s.close(resolve));
       }
+    }
+    // false, set explicitly: both work, and the boot warns while a client may exchange.
+    await withInjectedConfig({ oauth: { ...OAUTH, audienceBoundSessions: false } }, async () => {
+      assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
+      assert.equal((await readStream(who, x.access_token, 'a')).status, 200);
+      const loggerProto = Object.getPrototypeOf(getLogger('oauth2'));
+      const warn = loggerProto.warn;
+      const warned = [];
+      loggerProto.warn = function (message, ...rest) { warned.push(String(message)); return warn.call(this, message, ...rest); };
+      try {
+        await checkRegistryClients(platformDB, getConfigUnsafe(true));
+      } finally {
+        loggerProto.warn = warn;
+      }
+      assert.ok(warned.some((m) => m.includes('may exchange tokens') && m.includes(rsId)), JSON.stringify(warned));
     });
-    // Back to false: the subject token works again (nothing was ended).
-    assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
-    // A session issued for no resource server is never refused.
+    // Back to the default: refused again, the derived token still works (nothing was ended).
+    assert.equal((await readStream(who, t.access_token, 'a')).status, 403);
+    assert.equal((await readStream(who, x.access_token, 'a')).status, 200);
+    // A session issued for no resource server is never refused, under the default.
     const plain = await connectorToken(who, 'offline_access read/a', { cid: freeId, aud: null });
-    await withInjectedConfig({ oauth: { ...OAUTH, audienceBoundSessions: true } }, async () => {
-      assert.equal((await readStream(who, plain.access_token, 'a')).status, 200);
-      // Not exchangeable either.
-      const ex = await exchange(plain.access_token);
-      assert.deepEqual([ex.status, ex.body.error], [400, 'invalid_grant']);
-    });
+    assert.equal((await readStream(who, plain.access_token, 'a')).status, 200);
+    // Not exchangeable either.
+    const ex = await exchange(plain.access_token);
+    assert.deepEqual([ex.status, ex.body.error], [400, 'invalid_grant']);
   });
 
-  it('[OTXE03] a session minted before the field keeps working under true; the next session of its chain records it and is refused', async () => {
+  it('[OTXE03] a session minted before the field keeps working under the default; the next session of its chain records it and is refused', async () => {
     const who = await newUser();
     const t = await connectorToken(who);
     const subject = await rowOf(who, t.access_token);
@@ -394,16 +394,14 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     await new Promise((resolve, reject) => repo.updateOne({ id: who.userId, username: who.username }, { id: subject.id },
       { clientData: { ...subject.clientData, oauth }, modified: Date.now() / 1000 }, (err) => (err != null ? reject(err) : resolve())));
     (await import('cache')).default.unsetUserData(who.userId);
-    await withInjectedConfig({ oauth: { ...OAUTH, audienceBoundSessions: true } }, async () => {
-      assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
-      const r = await refresh(t.refresh_token);
-      assert.equal(r.status, 200, JSON.stringify(r.body));
-      assert.equal((await rowOf(who, r.body.access_token)).clientData.oauth.audience, RS_AUD);
-      assert.equal((await readStream(who, r.body.access_token, 'a')).status, 403);
-      // Its resource server exchanges it.
-      const x = await exchanged(r.body.access_token);
-      assert.equal((await readStream(who, x.access_token, 'a')).status, 200);
-    });
+    assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
+    const r = await refresh(t.refresh_token);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal((await rowOf(who, r.body.access_token)).clientData.oauth.audience, RS_AUD);
+    assert.equal((await readStream(who, r.body.access_token, 'a')).status, 403);
+    // Its resource server exchanges it.
+    const x = await exchanged(r.body.access_token);
+    assert.equal((await readStream(who, x.access_token, 'a')).status, 200);
   });
 
   it('[OTXE04] the owner deletes the subject session: the derived session goes with it at once; introspection says inactive', async () => {
@@ -429,7 +427,10 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     const res = await coreRequest.post('/oauth2/revoke').type('form')
       .send({ token: t.refresh_token, token_type_hint: 'refresh_token', client_id: connId });
     assert.equal(res.status, 200, res.text);
-    assert.equal((await readStream(who, t.access_token, 'a')).status, 403);
+    // Under false, so the subject's 403 is the revoke, not its audience.
+    await withInjectedConfig({ oauth: { ...OAUTH, audienceBoundSessions: false } }, async () => {
+      assert.equal((await readStream(who, t.access_token, 'a')).status, 403);
+    });
     assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
     // A revoked subject token cannot be exchanged again.
     assert.equal((await exchange(t.access_token)).body.error, 'invalid_grant');
@@ -502,16 +503,20 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     const who = await newUser();
     const t = await connectorToken(who);
     const x = await exchanged(t.access_token);
-    await purgeClientGrants(rsId);
-    assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
-    assert.equal((await readStream(who, t.access_token, 'a')).status, 200, 'the client\'s session stays');
-    assert.ok((await accesses(who)).some((a) => a.name === 'oauth-grant:' + connId), 'the client\'s grant stays');
-    const y = await exchanged(t.access_token);
-    assert.notEqual(y.access_token, x.access_token);
-    await purgeClientGrants(connId);
-    assert.equal((await readStream(who, y.access_token, 'a')).status, 403);
-    assert.equal((await readStream(who, t.access_token, 'a')).status, 403);
-    assert.equal((await accesses(who)).filter((a) => a.name === 'oauth:' + rsId || a.name === 'oauth-grant:' + connId).length, 0);
+    // Under false, so the client's session is read directly: a 200 says it
+    // stays, a 403 says the purge ended it (not its audience).
+    await withInjectedConfig({ oauth: { ...OAUTH, audienceBoundSessions: false } }, async () => {
+      await purgeClientGrants(rsId);
+      assert.equal((await readStream(who, x.access_token, 'a')).status, 403);
+      assert.equal((await readStream(who, t.access_token, 'a')).status, 200, 'the client\'s session stays');
+      assert.ok((await accesses(who)).some((a) => a.name === 'oauth-grant:' + connId), 'the client\'s grant stays');
+      const y = await exchanged(t.access_token);
+      assert.notEqual(y.access_token, x.access_token);
+      await purgeClientGrants(connId);
+      assert.equal((await readStream(who, y.access_token, 'a')).status, 403);
+      assert.equal((await readStream(who, t.access_token, 'a')).status, 403);
+      assert.equal((await accesses(who)).filter((a) => a.name === 'oauth:' + rsId || a.name === 'oauth-grant:' + connId).length, 0);
+    });
   });
 
   it('[OTXE10] introspection of the derived token: the client as client_id, the resource server as act, no aud, its permissions', async () => {
@@ -544,7 +549,8 @@ describe('[OTXE] OAuth token exchange end to end', function () {
     const x = await exchanged(t.access_token);
     const issuedSubjectExpiry = (await rowOf(who, t.access_token)).expires;
     let r;
-    await withInjectedConfig({ oauth: { ...OAUTH, refreshRetireGraceSeconds: 0 } }, async () => {
+    // Under false, so the subject's 403 is the retirement, not its audience.
+    await withInjectedConfig({ oauth: { ...OAUTH, refreshRetireGraceSeconds: 0, audienceBoundSessions: false } }, async () => {
       r = await refresh(t.refresh_token);
       assert.equal(r.status, 200, JSON.stringify(r.body));
       assert.equal((await readStream(who, t.access_token, 'a')).status, 403, 'the subject is retired');
