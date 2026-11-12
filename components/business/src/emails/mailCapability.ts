@@ -146,6 +146,16 @@ export function enabledMailKinds (config: ConfigReader): Array<keyof typeof MAIL
 }
 
 /**
+ * Whether a mail of `kind` would actually be sent: its class is switched on in
+ * `services.email.enabled` and mail is configured. These are the two runtime
+ * gates (the per-class switch at the send site, and the in-process skip when no
+ * SMTP host is set), so an advertised value cannot disagree with a send.
+ */
+export function isMailKindLive (config: ConfigReader, kind: keyof typeof MAIL_KINDS): boolean {
+  return enabledMailKinds(config).includes(kind) && describeMailCapability(config).ok;
+}
+
+/**
  * Whether the account email-verification flow (the mailed link) is live, and
  * why not when it is not. Rules are ordered: the operator switching the feature
  * off is reported as `disabled` even if the rest is also incomplete.

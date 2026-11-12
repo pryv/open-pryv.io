@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Service info: whether password reset sends a mail
+
+- **`service.info` advertises `features.passwordResetByEmail` (boolean).** `true` when
+  `account.resetPassword` mails a reset link on this core: the reset mail is switched on
+  (`services.email.enabled`, `.resetPassword`) and mail is configured (for in-process delivery, an
+  SMTP host; otherwise the mail service URL and key). The reset request answers the same either way,
+  so an app can now tell "check your mailbox" from "ask the platform operator". An explicit
+  `service.features.passwordResetByEmail` in the configuration wins. Older cores omit the field:
+  treat absence as unknown.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

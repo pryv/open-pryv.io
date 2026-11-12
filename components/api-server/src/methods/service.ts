@@ -7,7 +7,7 @@
 import { createRequire } from 'node:module';
 import type { MethodContext } from 'business/src/MethodContext.ts';
 import type { MethodNext } from './_types.ts';
-import { describeVerificationMail, describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { describeVerificationMail, describeMailCapability, isMailKindLive } from 'business/src/emails/mailCapability.ts';
 import { autoDeletionConfig, availableActions, availableTriggers } from './helpers/autoDeletionPolicy.ts';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
@@ -85,6 +85,12 @@ export default function (api: { register: (...args: unknown[]) => void }) {
         atRegistration: config.get('account:emailVerification:requireAtRegistration') === true,
         onAccount: describeVerificationMail(config).enabled
       };
+    }
+    // Password reset by mail: whether `account.resetPassword` mails a link on
+    // this core. The reset request answers the same either way, so this is how
+    // an app tells "check your mailbox" from "ask the platform operator".
+    if (serviceInfo.features.passwordResetByEmail === undefined) {
+      serviceInfo.features.passwordResetByEmail = isMailKindLive(config, 'resetPassword');
     }
     // Account delegation: lets an auth page offer to grant an app access for
     // an account the user controls. Same rule as the flags above: an explicit
