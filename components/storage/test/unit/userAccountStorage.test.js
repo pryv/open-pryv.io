@@ -170,4 +170,37 @@ describe('[UASF] SQLite account storage follows its file on disk', function () {
       await userLocalDirectory.deleteUserDirectory(userId);
     }
   });
+
+  it('[UASF4] concurrent first opens wait for one open, even when opening is slow', async function () {
+    // The engine reads its user directory helper from its registry at each
+    // open: a slower one (as on a busy disk) that counts the opens of this account.
+    const { _internals } = require('storages/engines/sqlite/src/_internals.ts');
+    const original = _internals.userLocalDirectory;
+    const userId = cuid();
+    let opens = 0;
+    _internals.set('userLocalDirectory', new Proxy(original, {
+      get (target, prop) {
+        if (prop !== 'ensureUserDirectory') return target[prop];
+        return async (id, ...rest) => {
+          if (id === userId) {
+            opens++;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          return target.ensureUserDirectory(id, ...rest);
+        };
+      }
+    }));
+    try {
+      await Promise.all([
+        storage.setAccountField(userId, 'a', 1, 'test'),
+        storage.setAccountField(userId, 'b', 2, 'test'),
+        storage.getAccountFields(userId)
+      ]);
+      assert.strictEqual(opens, 1, 'one open for the three first calls');
+      assert.deepStrictEqual(await storage.getAccountFields(userId), { a: 1, b: 2 });
+    } finally {
+      _internals.set('userLocalDirectory', original);
+      await userLocalDirectory.deleteUserDirectory(userId);
+    }
+  });
 });
