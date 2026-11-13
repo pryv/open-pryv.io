@@ -2,65 +2,6 @@
 
 ## Unreleased
 
-### Access integrity after an update
-
-- **Fixed:** the `integrity` of an access that has been updated now verifies on the object the API
-  returns (composite `id` and `modifiedBy`), for `accesses.update`, `accesses.get`,
-  `accesses.getOne` (the current version, older versions, `includeHistory`) and `accessDeletions`.
-  It was computed on the stored form (base id plus internal serial fields), so it did not verify
-  with `@pryv/stable-object-representation` once an access had been updated. Hashes of accesses
-  that were never updated are unchanged; the stored hashes of updated ones are recomputed once at
-  upgrade. A copy returned without credentials (token removed, counterparty URLs rewritten, as in
-  `accessDeletions` or an app's listing of accesses it does not hold the token of) cannot be
-  re-hashed by its receiver: the value is the server's record, which a holder of the credentials
-  can verify after restoring them.
-- **Upgrade:** on PostgreSQL the recompute is a migration, run at boot by default. With
-  `migrations.autoRunOnStart: false`, run `node bin/migrate.js up` before trusting
-  `bin/integrity-check.js`: until then it reports the updated accesses as mismatches. On SQLite the
-  recompute runs at the first start of the new version (and in `bin/integrity-check.js` itself).
-- **`integrity.algorithm` other than `sha256`:** event integrity computed by the storage layer and
-  every check by `bin/integrity-check.js` used sha256 whatever the setting; they now use the
-  configured algorithm. With the default `sha256` nothing changes. With `sha512`, events written
-  before this release by that path carry sha256 hashes and are now reported by the integrity check
-  (they are not recomputed: as for any change of algorithm, items written under another one no
-  longer match), while accesses, which were hashed with the configured algorithm, now verify.
-
-### Accesses: per-access usage for the account owner
-
-- **`accesses.get` and `accesses.getOne` return `usage` to the account owner.** With a personal
-  access (the owner's own, or a delegate's personal access), every access listed, deletion records
-  (`includeDeletions`) included, and the `accesses.getOne` head carry
-  `usage: { total, reads, writes, session, other, byMethod }`: approximate lifetime call counts per
-  method (`byMethod`, keyed by method id, e.g. `"events.get": 12`) and summed by class (session:
-  `auth.*`, `mfa.*`, `oauth.*`, `sso.*`; read: a last segment starting with `get`, `list`, `check` or
-  `retrieve`, or equal to `info`, `usernameChanges`, `controlledStatus`, `extIdHolds`; write: a last
-  segment starting with `create`, `update`, `delete`, `set`, `replace`, `claim`, `release`, `change`,
-  `accept`, `refuse`, `cancel`, `detach`, `dismiss`, `issue`, `notify`, `request`, `reset`, `verify`,
-  `test`, `transfer`, `deactivate` or `erase`, or equal to `adminRelease`, `extIdRelease`; anything
-  else `other`). Counts are
-  written asynchronously after each reply; a batch counts its inner calls, not itself. Absent when
-  `accessTracking.isActive` is off, and for app and shared callers (an app still reads its own
-  counters through `getAccessInfo`). History snapshots (`includeHistory`) carry no counters. `usage`
-  is read-only (refused at creation and update) and not part of an access's `integrity`: a client
-  verifying an access's integrity strips `usage` before hashing, as it does `lastUsed`, `calls` and
-  `apiEndpoint`. Additive, not breaking.
-- **Fixed: history snapshots no longer expose the internal `calls` counters.** `accesses.getOne`
-  with `includeHistory`, and a request for an earlier version of an access, returned each
-  snapshot's raw storage counters.
-- **Fixed: `system.getUserInfo` `callsDetail` reported `null`** for a stored counter of a method no
-  longer registered; it now reports the count.
-
-### Storage used per account is computed by the core
-
-- **Fixed: `account.get` `storageUsed` read `{ dbDocuments: 0, attachedFiles: 0 }` for every
-  account** unless the operator scheduled `components/api-server/bin/nightly` (the only writer of
-  the figure, documented nowhere). The core now runs that pass itself, for its own accounts, in the
-  worker that runs its background loops: about 15 minutes after boot, then every
-  `account.storageUsed.intervalHours` (new key, default `24`; `0` turns the job off, a value that is
-  not a number >= 0 stops the boot). An account that fails is logged and skipped, the pass goes on.
-  `bin/nightly` stays, for an operator who turns the job off and schedules it. The figures are right
-  after the first pass; nothing to migrate. (`attachedFiles` is in bytes, as before.)
-
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
@@ -125,6 +66,73 @@
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+
+## 2.0.0-rc.84 - 2026-11-13
+
+> **Upgrade advice for operators.** One storage migration on PostgreSQL (the access integrity
+> recompute below), run at boot by default; with `migrations.autoRunOnStart: false`, run
+> `node bin/migrate.js up` and check `GET /system/migrations-status` before switching traffic. On
+> SQLite the same pass runs once at the first start of this version. One new configuration key,
+> `account.storageUsed.intervalHours` (default `24`, `0` turns the job off). No breaking change.
+
+### Access integrity after an update
+
+- **Fixed:** the `integrity` of an access that has been updated now verifies on the object the API
+  returns (composite `id` and `modifiedBy`), for `accesses.update`, `accesses.get`,
+  `accesses.getOne` (the current version, older versions, `includeHistory`) and `accessDeletions`.
+  It was computed on the stored form (base id plus internal serial fields), so it did not verify
+  with `@pryv/stable-object-representation` once an access had been updated. Hashes of accesses
+  that were never updated are unchanged; the stored hashes of updated ones are recomputed once at
+  upgrade. A copy returned without credentials (token removed, counterparty URLs rewritten, as in
+  `accessDeletions` or an app's listing of accesses it does not hold the token of) cannot be
+  re-hashed by its receiver: the value is the server's record, which a holder of the credentials
+  can verify after restoring them.
+- **Upgrade:** on PostgreSQL the recompute is a migration, run at boot by default. With
+  `migrations.autoRunOnStart: false`, run `node bin/migrate.js up` before trusting
+  `bin/integrity-check.js`: until then it reports the updated accesses as mismatches. On SQLite the
+  recompute runs at the first start of the new version (and in `bin/integrity-check.js` itself).
+- **`integrity.algorithm` other than `sha256`:** event integrity computed by the storage layer and
+  every check by `bin/integrity-check.js` used sha256 whatever the setting; they now use the
+  configured algorithm. With the default `sha256` nothing changes. With `sha512`, events written
+  before this release by that path carry sha256 hashes and are now reported by the integrity check
+  (they are not recomputed: as for any change of algorithm, items written under another one no
+  longer match), while accesses, which were hashed with the configured algorithm, now verify.
+
+### Accesses: per-access usage for the account owner
+
+- **`accesses.get` and `accesses.getOne` return `usage` to the account owner.** With a personal
+  access (the owner's own, or a delegate's personal access), every access listed, deletion records
+  (`includeDeletions`) included, and the `accesses.getOne` head carry
+  `usage: { total, reads, writes, session, other, byMethod }`: approximate lifetime call counts per
+  method (`byMethod`, keyed by method id, e.g. `"events.get": 12`) and summed by class (session:
+  `auth.*`, `mfa.*`, `oauth.*`, `sso.*`; read: a last segment starting with `get`, `list`, `check` or
+  `retrieve`, or equal to `info`, `usernameChanges`, `controlledStatus`, `extIdHolds`; write: a last
+  segment starting with `create`, `update`, `delete`, `set`, `replace`, `claim`, `release`, `change`,
+  `accept`, `refuse`, `cancel`, `detach`, `dismiss`, `issue`, `notify`, `request`, `reset`, `verify`,
+  `test`, `transfer`, `deactivate` or `erase`, or equal to `adminRelease`, `extIdRelease`; anything
+  else `other`). Counts are
+  written asynchronously after each reply; a batch counts its inner calls, not itself. Absent when
+  `accessTracking.isActive` is off, and for app and shared callers (an app still reads its own
+  counters through `getAccessInfo`). History snapshots (`includeHistory`) carry no counters. `usage`
+  is read-only (refused at creation and update) and not part of an access's `integrity`: a client
+  verifying an access's integrity strips `usage` before hashing, as it does `lastUsed`, `calls` and
+  `apiEndpoint`. Additive, not breaking.
+- **Fixed: history snapshots no longer expose the internal `calls` counters.** `accesses.getOne`
+  with `includeHistory`, and a request for an earlier version of an access, returned each
+  snapshot's raw storage counters.
+- **Fixed: `system.getUserInfo` `callsDetail` reported `null`** for a stored counter of a method no
+  longer registered; it now reports the count.
+
+### Storage used per account is computed by the core
+
+- **Fixed: `account.get` `storageUsed` read `{ dbDocuments: 0, attachedFiles: 0 }` for every
+  account** unless the operator scheduled `components/api-server/bin/nightly` (the only writer of
+  the figure, documented nowhere). The core now runs that pass itself, for its own accounts, in the
+  worker that runs its background loops: about 15 minutes after boot, then every
+  `account.storageUsed.intervalHours` (new key, default `24`; `0` turns the job off, a value that is
+  not a number >= 0 stops the boot). An account that fails is logged and skipped, the pass goes on.
+  `bin/nightly` stays, for an operator who turns the job off and schedules it. The figures are right
+  after the first pass; nothing to migrate. (`attachedFiles` is in bytes, as before.)
 
 ## 2.0.0-rc.83 - 2026-11-12
 
