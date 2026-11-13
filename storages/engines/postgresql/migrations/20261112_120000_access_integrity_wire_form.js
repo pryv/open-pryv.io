@@ -21,7 +21,8 @@ module.exports = {
     const integrity = require('business/src/integrity/index.ts').default;
     const accesses = new AccessesPG(context.db, integrity.accesses);
     const res = await accesses.recomputeIntegrityOfVersionedRows();
-    context.logger?.info?.('access integrity: ' + res.rewritten + ' of ' + res.scanned + ' versioned rows rewritten');
+    context.logger?.info?.('access integrity: ' + res.scanned + ' versioned rows scanned, ' + res.rewritten +
+      ' rewritten, ' + res.unverified + ' left as stored (not the previous row hash)');
     return res;
   }
 };
