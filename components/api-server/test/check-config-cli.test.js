@@ -721,3 +721,19 @@ describe('[CKPU] bin/check-config.js oauth.perUserIssuer', function () {
     assert.doesNotMatch(off.stdout + off.stderr, /perUserIssuer/);
   });
 });
+
+describe('[CKSU] bin/check-config.js account.storageUsed.intervalHours', function () {
+  this.timeout(60000);
+
+  it('[CKSU1] a number >= 0 passes (0 turns the job off); a string or a negative value is a problem', () => {
+    for (const ok of ['0', '6', '24']) {
+      const res = runCheck(BASE + `account:\n  storageUsed:\n    intervalHours: ${ok}\n`);
+      assert.strictEqual(res.status, 0, ok + res.stdout + res.stderr);
+    }
+    for (const bad of ['"24"', '-1']) {
+      const res = runCheck(BASE + `account:\n  storageUsed:\n    intervalHours: ${bad}\n`);
+      assert.strictEqual(res.status, 1, bad + res.stdout + res.stderr);
+      assert.match(res.stderr, /account\.storageUsed\.intervalHours must be a number of hours >= 0/);
+    }
+  });
+});

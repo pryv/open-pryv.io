@@ -565,6 +565,14 @@ if (get('account.autoDeletion') != null) {
   }
 }
 
+// account.storageUsed.intervalHours: the same check master.js runs at boot.
+{
+  const v = get('account.storageUsed.intervalHours');
+  if (v != null && (typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
+    problems.push('account.storageUsed.intervalHours must be a number of hours >= 0 (0 turns the storage-size job off).');
+  }
+}
+
 // http.trustedProxies: the same check master.js runs at boot (every entry an
 // IP, a CIDR or a proxy-addr name; loopback needed while HFS workers run).
 try {

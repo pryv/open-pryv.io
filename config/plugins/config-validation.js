@@ -568,6 +568,16 @@ function checkAutoDeletion (config, problems) {
   }
 }
 
+// account.storageUsed.intervalHours: hours between two storage-size passes,
+// 0 turns the job off. A typo must not silently turn it off.
+function checkStorageUsed (config, problems) {
+  const value = config.get('account:storageUsed:intervalHours');
+  if (value == null) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    problems.push({ message: 'account.storageUsed.intervalHours must be a number of hours >= 0 (0 turns the storage-size job off).', path: ['account', 'storageUsed', 'intervalHours'], payload: { value } });
+  }
+}
+
 // core.id becomes a DNS label and the host of derived core URLs; on a
 // multi-core deployment core.url is where peers send the admin key.
 function checkCoreIdentity (config, problems) {
@@ -689,6 +699,7 @@ async function validate (config) {
   checkCmcOutbound(config, problems);
   checkIntegrityAlgorithm(config, problems);
   checkAutoDeletion(config, problems);
+  checkStorageUsed(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);

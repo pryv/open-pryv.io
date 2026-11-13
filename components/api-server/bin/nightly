@@ -1,24 +1,20 @@
 #!/usr/bin/env node
 
-// Binary for nightly tasks setup.
+// Binary for nightly tasks setup: one storage-size pass (account.get
+// storageUsed) over this core's accounts. The core runs the same pass on its
+// own (account.storageUsed.intervalHours, default 24); this script is for an
+// operator who turned that off and schedules it themselves.
 
 const { getApplication } = require('api-server/src/application.ts');
 const { getLogger } = require('@pryv/boiler');
+const { computeStorageUsedForAllAccounts } = require('api-server/src/methods/helpers/storageUsedJob.ts');
 let logger;
-const { getUsersRepository } = require('business/src/users/repository.ts');
 
 (async () => {
-  // Load settings asynchronously because we have to fetch
-  // some values from register via an http-get request.
-
   // Construct application
   const app = getApplication();
   await app.initiate();
   logger = getLogger('nightly-tasks');
-
-  // Construct storage size object
-  const storage = require('../../storage');
-  const storageSize = new storage.Size();
 
   // This bit is useful to trace down promise rejections that aren't caught.
   process.on('unhandledRejection', (reason, promise) => {
@@ -32,36 +28,15 @@ const { getUsersRepository } = require('business/src/users/repository.ts');
     process.exit(2);
   });
 
-  runNightlyTasks(storageSize)
-    .then(() => {
+  logger.info('Starting update of storage size');
+  computeStorageUsedForAllAccounts(logger)
+    .then((r) => {
+      logger.info(`${r.updated} of ${r.accounts} users updated${r.failed > 0 ? `, ${r.failed} failed` : ''}.`);
       logger.info('Nightly tasks completed.');
-      process.exit(0);
+      process.exit(r.failed > 0 ? 1 : 0);
     })
     .catch(e => {
       logger.error(e, e);
       process.exit(1);
     });
 })();
-
-/**
- * Standalone script to perform nightly tasks (such as updating storage sizes for all users).
- */
-async function runNightlyTasks (storageSize) {
-  logger.info('Starting update of storage size');
-
-  // Retrieve all existing users
-  const usersRepository = await getUsersRepository();
-  const users = await usersRepository.getAll();
-
-  // Compute storage size used by each user
-  for (const user of users) {
-    try {
-      await storageSize.computeForUser(user);
-    } catch (err) {
-      logger.error('Error computing storage size for user "' +
-        user.username + '" ' + '(' + user.id + '): ' + err);
-    }
-  }
-
-  logger.info(users.length + ' users updated.');
-}

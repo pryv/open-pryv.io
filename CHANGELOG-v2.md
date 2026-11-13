@@ -27,6 +27,17 @@
 - **Fixed: `system.getUserInfo` `callsDetail` reported `null`** for a stored counter of a method no
   longer registered; it now reports the count.
 
+### Storage used per account is computed by the core
+
+- **Fixed: `account.get` `storageUsed` read `{ dbDocuments: 0, attachedFiles: 0 }` for every
+  account** unless the operator scheduled `components/api-server/bin/nightly` (the only writer of
+  the figure, documented nowhere). The core now runs that pass itself, for its own accounts, in the
+  worker that runs its background loops: about 15 minutes after boot, then every
+  `account.storageUsed.intervalHours` (new key, default `24`; `0` turns the job off, a value that is
+  not a number >= 0 stops the boot). An account that fails is logged and skipped, the pass goes on.
+  `bin/nightly` stays, for an operator who turns the job off and schedules it. The figures are right
+  after the first pass; nothing to migrate. (`attachedFiles` is in bytes, as before.)
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead
