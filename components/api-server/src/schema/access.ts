@@ -56,10 +56,33 @@ function accessSchema (action: string): AccessSchemaShape {
     base.properties.calls = object({});
   }
 
+  // Approximate lifetime call counts, derived from 'calls' by the server for
+  // a personal caller only. Read-only: absent from create and update.
+  if (action === Action.READ) {
+    base.properties.usage = object({
+      total: helpers.number(),
+      reads: helpers.number(),
+      writes: helpers.number(),
+      session: helpers.number(),
+      other: helpers.number(),
+      byMethod: object({}, { additionalProperties: helpers.number() })
+    }, {
+      required: ['total', 'reads', 'writes', 'session', 'other', 'byMethod'],
+      additionalProperties: false
+    });
+  }
+
   // Time of the last completed sign-in on a personal access: written by the
   // server at sign-in, read-only.
   if (action === Action.READ || action === Action.STORE) {
     base.properties.lastLogin = helpers.number();
+  }
+
+  // What reads return beyond the base: the access's clientData, and on a
+  // deletion record (accesses.get includeDeletions) the deletion time.
+  if (action === Action.READ) {
+    base.properties.clientData = helpers.object({}, { nullable: true });
+    base.properties.deleted = helpers.number();
   }
 
   const personal = structuredClone(base);

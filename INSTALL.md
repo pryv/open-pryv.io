@@ -267,6 +267,23 @@ caching:
 Lower values shorten that bound at the cost of more storage reads (about one per
 active user per worker per period).
 
+### Storage used per account
+
+`account.get` answers each account's `storageUsed` (`dbDocuments`, `attachedFiles` in
+bytes). The core recomputes it for its own accounts in one API worker: a first pass about
+15 minutes after boot, then every `account.storageUsed.intervalHours` (about 2 minutes for
+17,000 accounts):
+
+```yaml
+account:
+  storageUsed:
+    intervalHours: 24   # default; 0 turns the job off
+```
+
+With the job off, the figures stay as last computed; run
+`node components/api-server/bin/nightly` yourself (for example from cron, or
+`docker exec <container> node components/api-server/bin/nightly`) to recompute them once.
+
 
 ## Running — standalone with HTTPS
 

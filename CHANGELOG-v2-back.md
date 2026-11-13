@@ -41,6 +41,22 @@
   as for any change of algorithm, see `business/src/integrity/algorithms.ts`); accesses, which were
   written with the configured algorithm, now verify.
 
+### Access usage summary
+
+- `components/business/src/accesses/methodClasses.ts`: `classifyMethod(methodId)` (read / write /
+  session / other / batch) and `usageFromCalls(calls)`; the account app carries the same rules and the
+  same test fixture (`[AUGC]` here), and `[AUG8]` pins that every declared method classifies.
+- `methods/accesses.ts` reads `calls` only for a personal caller with tracking on (`findOptionsFor`),
+  then replaces it by `usage` (`attachUsage`); the integrity wrapper hashes an access without `usage`.
+- The access READ schema gains `usage`, and `clientData` and `deleted`, which reads already returned
+  (an access with clientData, or a deletion record, did not validate against it).
+- The in-process test core does not register the per-call tracker (`trackingFunctions`); tests seed
+  counters with the same storage `$inc` the tracker makes.
+- `accessTracking.isActive` is read per request for `usage` but once at boot by the tracker: flipping it
+  off at runtime hides `usage` while counters keep being written (they reappear, interval included, when
+  it is flipped back on). A negative projection is `SELECT *` plus an in-memory delete on both engines,
+  so reading `calls` for personal callers costs nothing extra.
+
 ### Dependencies: fast-xml-parser 5.12.0, node-forge 1.4.3
 
 - `fast-xml-parser` override raised to `^5.12.0` (GHSA-474x-hrwr-fgx4, low: quadratic CPU on unterminated

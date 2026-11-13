@@ -25,6 +25,42 @@
   (they are not recomputed: as for any change of algorithm, items written under another one no
   longer match), while accesses, which were hashed with the configured algorithm, now verify.
 
+### Accesses: per-access usage for the account owner
+
+- **`accesses.get` and `accesses.getOne` return `usage` to the account owner.** With a personal
+  access (the owner's own, or a delegate's personal access), every access listed, deletion records
+  (`includeDeletions`) included, and the `accesses.getOne` head carry
+  `usage: { total, reads, writes, session, other, byMethod }`: approximate lifetime call counts per
+  method (`byMethod`, keyed by method id, e.g. `"events.get": 12`) and summed by class (session:
+  `auth.*`, `mfa.*`, `oauth.*`, `sso.*`; read: a last segment starting with `get`, `list`, `check` or
+  `retrieve`, or equal to `info`, `usernameChanges`, `controlledStatus`, `extIdHolds`; write: a last
+  segment starting with `create`, `update`, `delete`, `set`, `replace`, `claim`, `release`, `change`,
+  `accept`, `refuse`, `cancel`, `detach`, `dismiss`, `issue`, `notify`, `request`, `reset`, `verify`,
+  `test`, `transfer`, `deactivate` or `erase`, or equal to `adminRelease`, `extIdRelease`; anything
+  else `other`). Counts are
+  written asynchronously after each reply; a batch counts its inner calls, not itself. Absent when
+  `accessTracking.isActive` is off, and for app and shared callers (an app still reads its own
+  counters through `getAccessInfo`). History snapshots (`includeHistory`) carry no counters. `usage`
+  is read-only (refused at creation and update) and not part of an access's `integrity`: a client
+  verifying an access's integrity strips `usage` before hashing, as it does `lastUsed`, `calls` and
+  `apiEndpoint`. Additive, not breaking.
+- **Fixed: history snapshots no longer expose the internal `calls` counters.** `accesses.getOne`
+  with `includeHistory`, and a request for an earlier version of an access, returned each
+  snapshot's raw storage counters.
+- **Fixed: `system.getUserInfo` `callsDetail` reported `null`** for a stored counter of a method no
+  longer registered; it now reports the count.
+
+### Storage used per account is computed by the core
+
+- **Fixed: `account.get` `storageUsed` read `{ dbDocuments: 0, attachedFiles: 0 }` for every
+  account** unless the operator scheduled `components/api-server/bin/nightly` (the only writer of
+  the figure, documented nowhere). The core now runs that pass itself, for its own accounts, in the
+  worker that runs its background loops: about 15 minutes after boot, then every
+  `account.storageUsed.intervalHours` (new key, default `24`; `0` turns the job off, a value that is
+  not a number >= 0 stops the boot). An account that fails is logged and skipped, the pass goes on.
+  `bin/nightly` stays, for an operator who turns the job off and schedules it. The figures are right
+  after the first pass; nothing to migrate. (`attachedFiles` is in bytes, as before.)
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

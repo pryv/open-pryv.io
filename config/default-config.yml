@@ -618,6 +618,13 @@ account:
     registrationCodeDailyLimit: 10
     registrationCodeFailuresPerDay: 20
     registrationProofMaxAgeMs: 1800000
+  # Storage used by each account (`account.get` `storageUsed`: dbDocuments,
+  # attachedFiles in bytes), recomputed by the core for its own accounts: a
+  # first pass about 15 minutes after boot, then every `intervalHours`. 0 turns
+  # the job off (the figures then stay as last computed; run
+  # components/api-server/bin/nightly yourself, e.g. from cron).
+  storageUsed:
+    intervalHours: 24
   # Account auto-deletion: an account is deleted (or handed to a beneficiary,
   # if its holder chose a transfer) at a date the holder picks or after a
   # period without use, with reminder mails before. Use is the latest use of
