@@ -21,6 +21,7 @@ class Size {
     const storageInfo = await mall.getUserStorageInfos(user.id);
     let dbDocuments = 0;
     let attachedFiles = 0;
+    // files.sizeKb is in BYTES despite its name (pryv-datastore contract name, kept); attachedFiles is bytes.
     type StoreStorageInfo = { streams?: { count?: number }; events?: { count?: number }; files?: { sizeKb?: number } };
     for (const entry of Object.values(storageInfo) as Array<StoreStorageInfo>) {
       if (entry.streams?.count) dbDocuments += entry.streams?.count;
