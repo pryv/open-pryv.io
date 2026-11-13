@@ -951,6 +951,13 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # auth:
 # #   usernameChangeLimit: 2
 
+# # account.storageUsed.intervalHours: the core recomputes each account's
+# # storageUsed (account.get) every N hours (default 24, first pass ~15 min
+# # after boot); 0 turns it off (then run components/api-server/bin/nightly).
+# # account:
+# #   storageUsed:
+# #     intervalHours: 24
+
 # # account.autoDeletion: users may schedule their account's deletion (or a
 # # transfer to a beneficiary) at a date or after a period without use, with
 # # reminder mails at 60, 30, 7 and 1 day(s). inactivity.defaultDays is an

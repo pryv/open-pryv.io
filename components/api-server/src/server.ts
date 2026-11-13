@@ -205,6 +205,12 @@ class Server {
         // The API serves without it; nothing is deleted while it is down.
         this.logger.error('account auto-deletion sweep not started: ' + (err instanceof Error ? err.message : String(err)));
       }
+      // Storage-size job (account.get storageUsed), same worker.
+      try {
+        require('./methods/helpers/storageUsedJob.ts').startStorageUsedJob(config);
+      } catch (err: unknown) {
+        this.logger.error('storage-size job not started: ' + (err instanceof Error ? err.message : String(err)));
+      }
     }
     this.logger.debug('start completed');
   }
