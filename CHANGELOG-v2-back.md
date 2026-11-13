@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Access integrity hashed on the wire form
+
+- `business/src/integrity/integrity.ts`: `accesses.compute` / `hash` / `key` canonicalise the access
+  through `composeWireAccess` (composite id and refs, `serial`, `*BySerial`, `headId` and `usage`
+  left out; a history row hashes under `<base>[:<serial>]`) before the library hashes it. The form is
+  a fixed point, so engines keep hashing the row they persist and verifiers (`IntegrityCheck`, the
+  test teardown check) need no change. `accesses.rowFormHash` keeps the previous computation for the
+  upgrade pass only. A row never updated hashes the same in both forms (null fields are dropped by
+  the library), so its stored value and the `accesses.create` audit record are unchanged.
+- Upgrade pass `recomputeIntegrityOfVersionedRows()` on `AccessesPG` and `AccessesSQLite`: rows with
+  `head_id`, `serial`, `modifiedBySerial` or `createdBySerial` get the wire-form hash, only when
+  their stored value is the row-form hash (any other value is left for the integrity check to
+  report, never replaced); idempotent. The pass refuses to run (throws) when the integrity module
+  it is given has no `rowFormHash`, so a row is never rewritten unchecked. Each UPDATE is a
+  compare-and-set on the stored value (no lock around migrations: concurrent runs and an
+  interrupted run are safe). PostgreSQL runs it in the migration
+  `20261112_120000_access_integrity_wire_form.js` (at boot by default, or `bin/migrate.js up`),
+  reading the versioned rows in batches of 1000 (keyset on `(user_id, id)`).
+  With `migrations.autoRunOnStart: false`, `bin/integrity-check.js` reports a mismatch on updated
+  accesses until the migration ran. SQLite has no schema-migration runner yet: the pass runs once at
+  storage init (`recomputeAccessesIntegrityOnce`, in each process whose users directory is
+  initialised: every API worker at its first start, before it listens, concurrently with the other
+  workers, and the admin tools), recorded by the marker file `accesses-integrity-wire-form.done` in
+  the users base directory. The marker is written only when every user database was processed: a
+  user database that keeps failing makes the pass run again at every start, with one error line per
+  failed user and a warning naming them (up to 20). Rolling back to an earlier image makes its
+  integrity check report the rewritten rows (forward-only); accesses updated under the earlier image
+  keep a row-form hash after upgrading again (the pass has run already) and are reported by the
+  check the same way. Remedy: on SQLite, delete `accesses-integrity-wire-form.done` to run the pass
+  again at the next start; on PostgreSQL there is none short of a new migration.
+- `integrity.events.compute` / `integrity.accesses.compute` now hash with `integrity.algorithm`.
+  The library's `compute` used its default `sha256` whatever the setting, so events written through
+  the store hook the Mall gives every store and every verification (`IntegrityCheck`,
+  `bin/integrity-check.js`, the test teardown check) were sha256, while `set()` / `hash()` honoured
+  the setting. No change with the default `sha256`. Under another algorithm, events written through
+  the hook before this release carry sha256 hashes and are reported by the check (not recomputed,
+  as for any change of algorithm, see `business/src/integrity/algorithms.ts`); accesses, which were
+  written with the configured algorithm, now verify.
+
 ### Access usage summary
 
 - `components/business/src/accesses/methodClasses.ts`: `classifyMethod(methodId)` (read / write /

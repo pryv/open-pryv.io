@@ -1,11 +1,35 @@
 # Changelog - API Changes
 
-## 2.0.0-rc.83 - 2026-11-12
+## 2.0.0-rc.84 - 2026-11-13
 
-> **Upgrade advice for operators.** No schema migration, no new configuration key, no breaking
-> change. New admin route `GET /system/migrations-status` for deploy checks (see below); with
-> `migrations.autoRunOnStart: false`, use it to wait for `node bin/migrate.js up` before switching
-> traffic on future releases that ship a migration.
+> **Upgrade advice for operators.** One storage migration on PostgreSQL (the access integrity
+> recompute below), run at boot by default; with `migrations.autoRunOnStart: false`, run
+> `node bin/migrate.js up` and check `GET /system/migrations-status` before switching traffic. On
+> SQLite the same pass runs once at the first start of this version. One new configuration key,
+> `account.storageUsed.intervalHours` (default `24`, `0` turns the job off). No breaking change.
+
+### Access integrity after an update
+
+- **Fixed:** the `integrity` of an access that has been updated now verifies on the object the API
+  returns (composite `id` and `modifiedBy`), for `accesses.update`, `accesses.get`,
+  `accesses.getOne` (the current version, older versions, `includeHistory`) and `accessDeletions`.
+  It was computed on the stored form (base id plus internal serial fields), so it did not verify
+  with `@pryv/stable-object-representation` once an access had been updated. Hashes of accesses
+  that were never updated are unchanged; the stored hashes of updated ones are recomputed once at
+  upgrade. A copy returned without credentials (token removed, counterparty URLs rewritten, as in
+  `accessDeletions` or an app's listing of accesses it does not hold the token of) cannot be
+  re-hashed by its receiver: the value is the server's record, which a holder of the credentials
+  can verify after restoring them.
+- **Upgrade:** on PostgreSQL the recompute is a migration, run at boot by default. With
+  `migrations.autoRunOnStart: false`, run `node bin/migrate.js up` before trusting
+  `bin/integrity-check.js`: until then it reports the updated accesses as mismatches. On SQLite the
+  recompute runs at the first start of the new version (and in `bin/integrity-check.js` itself).
+- **`integrity.algorithm` other than `sha256`:** event integrity computed by the storage layer and
+  every check by `bin/integrity-check.js` used sha256 whatever the setting; they now use the
+  configured algorithm. With the default `sha256` nothing changes. With `sha512`, events written
+  before this release by that path carry sha256 hashes and are now reported by the integrity check
+  (they are not recomputed: as for any change of algorithm, items written under another one no
+  longer match), while accesses, which were hashed with the configured algorithm, now verify.
 
 ### Accesses: per-access usage for the account owner
 
@@ -31,6 +55,24 @@
   snapshot's raw storage counters.
 - **Fixed: `system.getUserInfo` `callsDetail` reported `null`** for a stored counter of a method no
   longer registered; it now reports the count.
+
+### Storage used per account is computed by the core
+
+- **Fixed: `account.get` `storageUsed` read `{ dbDocuments: 0, attachedFiles: 0 }` for every
+  account** unless the operator scheduled `components/api-server/bin/nightly` (the only writer of
+  the figure, documented nowhere). The core now runs that pass itself, for its own accounts, in the
+  worker that runs its background loops: about 15 minutes after boot, then every
+  `account.storageUsed.intervalHours` (new key, default `24`; `0` turns the job off, a value that is
+  not a number >= 0 stops the boot). An account that fails is logged and skipped, the pass goes on.
+  `bin/nightly` stays, for an operator who turns the job off and schedules it. The figures are right
+  after the first pass; nothing to migrate. (`attachedFiles` is in bytes, as before.)
+
+## 2.0.0-rc.83 - 2026-11-12
+
+> **Upgrade advice for operators.** No schema migration, no new configuration key, no breaking
+> change. New admin route `GET /system/migrations-status` for deploy checks (see below); with
+> `migrations.autoRunOnStart: false`, use it to wait for `node bin/migrate.js up` before switching
+> traffic on future releases that ship a migration.
 
 ### Service info: whether password reset sends a mail
 
