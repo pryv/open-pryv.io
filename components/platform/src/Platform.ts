@@ -1832,14 +1832,14 @@ class Platform {
 
   async #encryptObservabilitySecret (key: string, value: unknown) {
     const atRestKey = this.#getAtRestKey('observability-' + key);
-    return AtRestEncryption.encrypt(Buffer.from(String(value), 'utf8'), atRestKey);
+    return AtRestEncryption.encrypt(Buffer.from(String(value), 'utf8'), atRestKey, 'observability:' + key);
   }
 
   async #decryptObservabilitySecret (key: string, stored: string | null) {
     if (!stored) return '';
     try {
       const atRestKey = this.#getAtRestKey('observability-' + key);
-      return AtRestEncryption.decrypt(stored, atRestKey).toString('utf8');
+      return AtRestEncryption.decrypt(stored, atRestKey, 'observability:' + key).toString('utf8');
     } catch (err: unknown) {
       logger.warn('observability: failed to decrypt ' + key + ': ' + (err as Error).message);
       return '';

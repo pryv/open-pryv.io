@@ -86,7 +86,10 @@ class TotpService implements MfaMethod {
     const p = profile as unknown as { method: string; totp: Record<string, unknown> };
     p.method = 'totp';
     p.totp = {
-      secret: encrypt(secretB32, key), // encrypted-at-rest envelope
+      // Encrypted-at-rest envelope (version 2). No account id reaches this
+      // method (it is given the username, which can change), so the envelope
+      // is bound to its purpose (the TOTP key) and not to the account.
+      secret: encrypt(secretB32, key),
       algorithm: ALGORITHM,
       digits: this.digits,
       periodSeconds: this.periodSeconds,

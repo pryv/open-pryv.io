@@ -139,6 +139,18 @@ describe('[ADKS] account auto-deletion state', function () {
     assert.equal(await state.getIdentity('u1', key), null);
   });
 
+  it('[AREV3] the identity envelope is bound to its account: copied to another account it does not decrypt', async function () {
+    const storage = fakeStorage();
+    const state = createAutoDeletionState(storage);
+    const key = crypto.randomBytes(32);
+    await state.setIdentity('u1', { name: 'Ada Lovelace' }, key, 'acc1');
+    const envelope = storage.fields.get('u1/' + IDENTITY_FIELD)[0];
+    assert.equal(Buffer.from(envelope, 'base64')[0], 2, 'current envelope version');
+    await storage.setAccountField('u2', IDENTITY_FIELD, envelope, 'acc2');
+    await assert.rejects(state.getIdentity('u2', key), /authentication failed/);
+    assert.deepEqual(await state.getIdentity('u1', key), { name: 'Ada Lovelace' });
+  });
+
   it('[ADKS6] the identity key is the configured one, else derived from the admin key', function () {
     const configured = crypto.randomBytes(32);
     assert.deepEqual(resolveIdentityKey(configured.toString('base64'), 'admin'), configured);

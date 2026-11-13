@@ -75,6 +75,25 @@ describe('[MTOTP] TotpService', function () {
     );
   });
 
+  it('[AREV3] a secret is enrolled in the current envelope version; one stored in the first version still verifies', async function () {
+    const secretsKey = crypto.randomBytes(32).toString('base64');
+    const svc = new TotpService({ secretsKey, digits: 6, periodSeconds: 30, driftSteps: 1 });
+    const profile = new Profile();
+    const extra = await svc.enroll('dave', profile, {});
+    assert.strictEqual(Buffer.from(profile.totp.secret, 'base64')[0], 2);
+
+    // the same secret in an envelope of the first version (no authenticated data)
+    const { resolveTotpKey } = require('../../src/mfa/totpKeys.ts');
+    const key = await resolveTotpKey({ secretsKey });
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ct = Buffer.concat([cipher.update(Buffer.from(extra.secret, 'utf8')), cipher.final()]);
+    profile.totp.secret = Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), ct]).toString('base64');
+    const code = totpCode(base32Decode(extra.secret), { digits: 6, periodSeconds: 30 });
+    await svc.verify('dave', profile, { headers: {}, body: { code } });
+    assert.ok(profile.totp.lastUsedStep >= 0);
+  });
+
   it('[MTOTP4] challenge is a no-op that signals the method', async function () {
     const svc = newService();
     const profile = new Profile();

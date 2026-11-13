@@ -28,10 +28,10 @@ const AcmeClient = require('./AcmeClient.ts');
 const AT_REST_PURPOSE = 'pryv-at-rest-tls-v1';
 
 type PlatformDB = {
-  getAcmeAccount (): Promise<{ accountKey: Buffer; accountUrl: string; email: string | null } | null>;
-  setAcmeAccount (acc: { accountKey: Buffer; accountUrl: string; email: string | null }): Promise<unknown>;
-  getCertificate (hostname: string): Promise<{ certPem: string; chainPem?: string; keyPem: Buffer; issuedAt: number; expiresAt: number } | null>;
-  setCertificate (hostname: string, cert: { certPem: string; chainPem?: string; keyPem: Buffer; issuedAt: number; expiresAt: number }): Promise<unknown>;
+  getAcmeAccount (): Promise<{ accountKey: string; accountUrl: string; email: string | null } | null>;
+  setAcmeAccount (acc: { accountKey: string; accountUrl: string; email: string | null }): Promise<unknown>;
+  getCertificate (hostname: string): Promise<{ certPem: string; chainPem?: string; keyPem: string; issuedAt: number; expiresAt: number } | null>;
+  setCertificate (hostname: string, cert: { certPem: string; chainPem?: string; keyPem: string; issuedAt: number; expiresAt: number }): Promise<unknown>;
   listCertificates? (): Promise<unknown[]>;
   getDnsRecord (name: string): Promise<{ txt?: string[]; [k: string]: unknown } | null>;
   setDnsRecord (name: string, record: Record<string, unknown>): Promise<unknown>;
@@ -42,9 +42,16 @@ type DnsWriter = { create (name: string, value: string): Promise<unknown>; remov
 type AcmeAuthz = { identifier: { value: string } };
 type AcmeChallenge = { type: string; token: string; [k: string]: unknown };
 
+/** The rows the ACME account key and a TLS key are bound to (authenticated with their envelope). */
+const ACCOUNT_CONTEXT = 'acme-account';
+const certContext = (hostname: string): string => 'tls-cert:' + hostname;
+
 class CertRenewer {
   #platformDB: PlatformDB;
+  /** The configured key: decrypts the envelopes written before the purpose-derived key (version 1). */
   #atRestKey: Buffer;
+  /** The key of the envelopes written now (version 2): derived from the configured one for this purpose. */
+  #derivedKey: Buffer;
   #email: string | null;
   #directoryUrl: string;
   #acmeLib: unknown;
@@ -63,6 +70,7 @@ class CertRenewer {
     }
     this.#platformDB = platformDB;
     this.#atRestKey = atRestKey;
+    this.#derivedKey = AtRestEncryption.deriveKey(atRestKey, AT_REST_PURPOSE);
     this.#email = email || null;
     this.#directoryUrl = directoryUrl || AcmeClient.DIRECTORY_PRODUCTION;
     this.#acmeLib = acmeLib;
@@ -77,21 +85,43 @@ class CertRenewer {
     const stored = await this.#platformDB.getAcmeAccount();
     if (!stored) return null;
     return {
-      accountKey: AtRestEncryption.decrypt(stored.accountKey, this.#atRestKey).toString('utf8'),
+      accountKey: this.#decrypt(stored.accountKey, ACCOUNT_CONTEXT).toString('utf8'),
       accountUrl: stored.accountUrl,
       email: stored.email
     };
   }
 
+  /** An envelope of version 1 under the configured key, of version 2 under the derived key and bound to `context`. */
+  #decrypt (encoded: string, context: string): Buffer {
+    return AtRestEncryption.envelopeVersion(encoded) === AtRestEncryption.LEGACY_ENVELOPE_VERSION
+      ? AtRestEncryption.decrypt(encoded, this.#atRestKey)
+      : AtRestEncryption.decrypt(encoded, this.#derivedKey, context);
+  }
+
+  #encrypt (plaintext: string | Buffer, context: string): string {
+    return AtRestEncryption.encrypt(plaintext, this.#derivedKey, context);
+  }
+
   /**
    * Idempotent: returns an ACME account, creating a fresh one the first
    * time this is called. The account key is encrypted at rest before
-   * being handed to PlatformDB.
+   * being handed to PlatformDB. An account stored in the envelope of an
+   * earlier release is written back once in the current one.
    *
    */
   async ensureAccount () {
+    const stored = await this.#platformDB.getAcmeAccount();
     const existing = await this.getAccount();
-    if (existing) return existing;
+    if (existing) {
+      if (stored != null && AtRestEncryption.envelopeVersion(stored.accountKey) === AtRestEncryption.LEGACY_ENVELOPE_VERSION) {
+        await this.#platformDB.setAcmeAccount({
+          accountKey: this.#encrypt(existing.accountKey, ACCOUNT_CONTEXT),
+          accountUrl: existing.accountUrl,
+          email: existing.email
+        });
+      }
+      return existing;
+    }
 
     const fresh = await AcmeClient.createAccount({
       email: this.#email,
@@ -99,7 +129,7 @@ class CertRenewer {
       acmeLib: this.#acmeLib
     });
     await this.#platformDB.setAcmeAccount({
-      accountKey: AtRestEncryption.encrypt(fresh.accountKey, this.#atRestKey),
+      accountKey: this.#encrypt(fresh.accountKey, ACCOUNT_CONTEXT),
       accountUrl: fresh.accountUrl,
       email: fresh.email
     });
@@ -170,7 +200,7 @@ class CertRenewer {
     await this.#platformDB.setCertificate(hostname, {
       certPem: result.certPem,
       chainPem: result.chainPem,
-      keyPem: AtRestEncryption.encrypt(result.keyPem, this.#atRestKey),
+      keyPem: this.#encrypt(result.keyPem, certContext(hostname)),
       issuedAt: result.issuedAt,
       expiresAt: result.expiresAt
     });
@@ -192,7 +222,7 @@ class CertRenewer {
     return {
       certPem: stored.certPem,
       chainPem: stored.chainPem,
-      keyPem: AtRestEncryption.decrypt(stored.keyPem, this.#atRestKey).toString('utf8'),
+      keyPem: this.#decrypt(stored.keyPem, certContext(hostname)).toString('utf8'),
       issuedAt: stored.issuedAt,
       expiresAt: stored.expiresAt
     };

@@ -31,16 +31,29 @@ import crypto from 'node:crypto';
  *     version prefix so we can rev the format later.
  *
  * Wire format (base64 of the concatenated buffer):
- *   version:  1 byte   (currently 1)
+ *   version:  1 byte   (2; envelopes of version 1 are still read)
  *   iv:       12 bytes (GCM nonce; fresh per encrypt)
  *   tag:      16 bytes (GCM auth tag)
  *   ct:       N bytes  (ciphertext of the plaintext)
+ *
+ * Version 2 authenticates a context with the ciphertext: AAD =
+ * 'pryv-at-rest-v2' | 0x00 | context, where the caller names the row that
+ * holds the envelope (the purpose is in the key). An envelope moved to
+ * another row of the same purpose then fails to decrypt. Version 1 (no
+ * authenticated data) decrypts with any context. The tag length is pinned
+ * to 16 bytes on both sides.
  */
 
-const ENVELOPE_VERSION = 1;
+const ENVELOPE_VERSION = 2;
+const LEGACY_ENVELOPE_VERSION = 1;
+const AAD_LABEL = 'pryv-at-rest-v2';
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
+
+function aadOf (context: string): Buffer {
+  return Buffer.concat([Buffer.from(AAD_LABEL, 'utf8'), Buffer.from([0]), Buffer.from(context, 'utf8')]);
+}
 
 /**
  * Derive a 32-byte AES key from arbitrary source material + a purpose
@@ -66,11 +79,12 @@ function deriveKey (source: string | Buffer, purpose: string, salt: Buffer = Buf
 
 /**
  * Encrypt a plaintext string or Buffer with a 32-byte key. Returns a
- * base64-encoded envelope safe to store in a JSON field.
+ * base64-encoded envelope (version 2) safe to store in a JSON field.
  *
  * @param key - 32 bytes
+ * @param context - the row that holds the envelope (authenticated, not stored)
  */
-function encrypt (plaintext: string | Buffer, key: Buffer): string {
+function encrypt (plaintext: string | Buffer, key: Buffer, context: string = ''): string {
   if (plaintext == null) {
     throw new Error('AtRestEncryption.encrypt: plaintext is required');
   }
@@ -79,20 +93,34 @@ function encrypt (plaintext: string | Buffer, key: Buffer): string {
   }
   const ptBuf = Buffer.isBuffer(plaintext) ? plaintext : Buffer.from(plaintext, 'utf8');
   const iv = crypto.randomBytes(IV_BYTES);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
+  cipher.setAAD(aadOf(context));
   const ct = Buffer.concat([cipher.update(ptBuf), cipher.final()]);
   const tag = cipher.getAuthTag();
   const envelope = Buffer.concat([Buffer.from([ENVELOPE_VERSION]), iv, tag, ct]);
   return envelope.toString('base64');
 }
 
+/** The version byte of an envelope (1 or 2); throws on anything else. */
+function envelopeVersion (encoded: string): number {
+  if (typeof encoded !== 'string' || encoded.length === 0) {
+    throw new Error('AtRestEncryption.envelopeVersion: encoded is required');
+  }
+  const version = Buffer.from(encoded, 'base64')[0];
+  if (version !== ENVELOPE_VERSION && version !== LEGACY_ENVELOPE_VERSION) {
+    throw new Error(`AtRestEncryption: unsupported envelope version ${version} (this binary understands ${LEGACY_ENVELOPE_VERSION} and ${ENVELOPE_VERSION})`);
+  }
+  return version;
+}
+
 /**
  * Decrypt a base64 envelope produced by encrypt(). Throws on tamper,
- * wrong key, or unknown envelope version.
+ * wrong key, another context, or unknown envelope version.
  *
  * @param key - 32 bytes
+ * @param context - the row that holds the envelope (as given to encrypt; ignored for a version-1 envelope)
  */
-function decrypt (encoded: string, key: Buffer): Buffer {
+function decrypt (encoded: string, key: Buffer, context: string = ''): Buffer {
   if (typeof encoded !== 'string' || encoded.length === 0) {
     throw new Error('AtRestEncryption.decrypt: encoded is required');
   }
@@ -108,14 +136,15 @@ function decrypt (encoded: string, key: Buffer): Buffer {
     throw new Error(`AtRestEncryption.decrypt: envelope too small (${envelope.length} bytes)`);
   }
   const version = envelope[0];
-  if (version !== ENVELOPE_VERSION) {
-    throw new Error(`AtRestEncryption.decrypt: unsupported envelope version ${version} (this binary understands ${ENVELOPE_VERSION})`);
+  if (version !== ENVELOPE_VERSION && version !== LEGACY_ENVELOPE_VERSION) {
+    throw new Error(`AtRestEncryption.decrypt: unsupported envelope version ${version} (this binary understands ${LEGACY_ENVELOPE_VERSION} and ${ENVELOPE_VERSION})`);
   }
   let off = 1;
   const iv = envelope.subarray(off, off += IV_BYTES);
   const tag = envelope.subarray(off, off += TAG_BYTES);
   const ct = envelope.subarray(off);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
+  if (version === ENVELOPE_VERSION) decipher.setAAD(aadOf(context));
   decipher.setAuthTag(tag);
   try {
     return Buffer.concat([decipher.update(ct), decipher.final()]);
@@ -127,18 +156,18 @@ function decrypt (encoded: string, key: Buffer): Buffer {
 /**
  * Convenience: encrypt a JS object as JSON and return the envelope.
  */
-function encryptJson (obj: unknown, key: Buffer): string {
-  return encrypt(JSON.stringify(obj), key);
+function encryptJson (obj: unknown, key: Buffer, context: string = ''): string {
+  return encrypt(JSON.stringify(obj), key, context);
 }
 
 /**
  * Convenience: decrypt and JSON.parse. Throws if the plaintext isn't valid JSON.
  */
-function decryptJson (encoded: string, key: Buffer): unknown {
-  const pt = decrypt(encoded, key);
+function decryptJson (encoded: string, key: Buffer, context: string = ''): unknown {
+  const pt = decrypt(encoded, key, context);
   try { return JSON.parse(pt.toString('utf8')); } catch {
     throw new Error('AtRestEncryption.decryptJson: decrypted payload is not valid JSON');
   }
 }
 
-export { ENVELOPE_VERSION, KEY_BYTES, deriveKey, encrypt, decrypt, encryptJson, decryptJson };
+export { ENVELOPE_VERSION, LEGACY_ENVELOPE_VERSION, KEY_BYTES, deriveKey, encrypt, decrypt, encryptJson, decryptJson, envelopeVersion };

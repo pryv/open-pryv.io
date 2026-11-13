@@ -29,6 +29,31 @@ describe('[ATRENC] AtRestEncryption', () => {
   describe('[AREV1] envelope versions', () => {
     it('[AREV1] an envelope of the first version still decrypts', () => {
       assert.equal(AtRestEncryption.decrypt(V1_ENVELOPE.encoded, V1_ENVELOPE.key).toString('utf8'), V1_ENVELOPE.plaintext);
+      // with any context: it binds none
+      assert.equal(AtRestEncryption.decrypt(V1_ENVELOPE.encoded, V1_ENVELOPE.key, 'tls-cert:any').toString('utf8'), V1_ENVELOPE.plaintext);
+      assert.equal(AtRestEncryption.envelopeVersion(V1_ENVELOPE.encoded), 1);
+    });
+
+    it('[AREV1] the current version is bound to its context and pins a 16-byte tag', () => {
+      const key = crypto.randomBytes(32);
+      const encoded = AtRestEncryption.encrypt('secret', key, 'tls-cert:a.example');
+      const raw = Buffer.from(encoded, 'base64');
+      assert.equal(raw[0], 2);
+      assert.equal(AtRestEncryption.envelopeVersion(encoded), 2);
+      assert.equal(AtRestEncryption.decrypt(encoded, key, 'tls-cert:a.example').toString('utf8'), 'secret');
+      assert.throws(() => AtRestEncryption.decrypt(encoded, key, 'tls-cert:b.example'), /authentication failed/);
+      assert.throws(() => AtRestEncryption.decrypt(encoded, key), /authentication failed/);
+      // the version byte rewritten to 1 (read without its context): refused
+      const downgraded = Buffer.from(raw);
+      downgraded[0] = 1;
+      assert.throws(() => AtRestEncryption.decrypt(downgraded.toString('base64'), key, 'tls-cert:a.example'), /authentication failed/);
+      // a 12-byte tag in place of the 16-byte one: refused
+      const shortTag = Buffer.concat([raw.subarray(0, 13), raw.subarray(13, 25), raw.subarray(29)]);
+      assert.throws(() => AtRestEncryption.decrypt(shortTag.toString('base64'), key, 'tls-cert:a.example'), /authentication failed|too small/);
+      // JSON helpers take the same context
+      const json = AtRestEncryption.encryptJson({ a: 1 }, key, 'transfer-identity:u1');
+      assert.deepEqual(AtRestEncryption.decryptJson(json, key, 'transfer-identity:u1'), { a: 1 });
+      assert.throws(() => AtRestEncryption.decryptJson(json, key, 'transfer-identity:u2'), /authentication failed/);
     });
   });
 
