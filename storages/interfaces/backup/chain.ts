@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createBackupDecryptor, recipientKeyFingerprint } from './BackupCipher.ts';
-import type { BackupDecryptor, DecryptorSecrets, Envelope } from './BackupCipher.ts';
+import type { BackupDecryptor, DecryptorSecrets, DecryptExpectation, Envelope } from './BackupCipher.ts';
 
 const CHAIN_FILE_NAME = 'chain.json';
 const INCREMENTALS_DIR_NAME = 'incrementals';
@@ -163,10 +163,19 @@ function readCleartextFile (filePath: string): string | null {
   }
 }
 
-/** Read a (possibly encrypted) file of the backup without following a symbolic link. */
-function readBackupBytes (filePath: string, decryptor: BackupDecryptor | null): Buffer {
+/**
+ * Read a (possibly encrypted) file of the backup without following a
+ * symbolic link. `expect` names the file (path relative to its run, run,
+ * chain): an encrypted file carrying another identity is refused.
+ */
+function readBackupBytes (filePath: string, decryptor: BackupDecryptor | null, expect?: DecryptExpectation): Buffer {
   const raw = readNoFollow(filePath);
-  return decryptor ? decryptor.decryptBuffer(raw) : raw;
+  return decryptor ? decryptor.decryptBuffer(raw, expect) : raw;
+}
+
+/** The identity the files of a chain run carry (a run bootstrapped from a backup before chains names no chain). */
+function runIdentityOf (chain: Chain | null, run: Pick<ChainRun, 'runId' | 'bootstrapped'>): { runId: string, chainId: string | null } {
+  return { runId: run.runId, chainId: chain != null && run.bootstrapped !== true ? chain.chainId : null };
 }
 
 /**
@@ -428,7 +437,7 @@ function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun
   if (runDir === '' || !existsNoFollow(manifestPath)) {
     throw new BackupChainError('incomplete', missingRunMessage(dir, run.runId, previousRunId, 'its manifest'));
   }
-  const manifest = JSON.parse(readBackupBytes(manifestPath, decryptor).toString('utf8'));
+  const manifest = JSON.parse(readBackupBytes(manifestPath, decryptor, { path: MANIFEST_FILE_NAME, ...runIdentityOf(chain, run) }).toString('utf8'));
   const pre = run.bootstrapped === true && manifest.chainId == null && manifest.runId == null;
   if (!pre && (manifest.chainId !== chain.chainId || manifest.runId !== run.runId || (manifest.parentRunId ?? null) !== (run.parentRunId ?? null))) {
     throw new BackupChainError('mismatch', `Run ${run.runId} of the backup chain at ${dir} does not belong to this chain (its manifest names another chain, run or parent run): refused.`);
@@ -560,7 +569,7 @@ function planBackupRun (dir: string, options: PlanOptions = {}): RunPlan {
     }
     let manifest;
     try {
-      manifest = JSON.parse(readBackupBytes(path.join(dir, MANIFEST_FILE_NAME), decryptor).toString('utf8'));
+      manifest = JSON.parse(readBackupBytes(path.join(dir, MANIFEST_FILE_NAME), decryptor, { path: MANIFEST_FILE_NAME, runId: FULL_RUN_ID, chainId: null }).toString('utf8'));
     } catch (err) {
       if (envelope?.mode === 'symmetric') throw new BackupChainError('secret', `The passphrase does not decrypt the existing backup at ${dir}: refused (nothing written).`);
       throw new BackupChainError('secret', `Cannot read the manifest of the existing backup at ${dir}: ${(err as Error).message}.`);
@@ -581,7 +590,7 @@ function planBackupRun (dir: string, options: PlanOptions = {}): RunPlan {
       }
       try {
         const decryptor = createBackupDecryptor(envelope, { passphrase: options.passphrase ?? undefined });
-        readBackupBytes(path.join(runDir, MANIFEST_FILE_NAME), decryptor);
+        readBackupBytes(path.join(runDir, MANIFEST_FILE_NAME), decryptor, { path: MANIFEST_FILE_NAME, ...runIdentityOf(chain, latest) });
       } catch (err) {
         throw new BackupChainError('secret', `The passphrase does not decrypt the existing backup chain at ${dir}: refused (nothing written).`);
       }
@@ -683,7 +692,7 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
   let manifest;
   try {
     const decryptor = envelope == null ? null : createBackupDecryptor(envelope, secrets);
-    manifest = JSON.parse(readBackupBytes(manifestPath, decryptor).toString('utf8'));
+    manifest = JSON.parse(readBackupBytes(manifestPath, decryptor, { path: MANIFEST_FILE_NAME, runId: FULL_RUN_ID, chainId: null }).toString('utf8'));
   } catch (err) {
     return report('unknown', 'UNKNOWN: the manifest cannot be read (' + (err as Error).message + ')');
   }
@@ -722,6 +731,7 @@ export {
   checkRunEnvelope,
   isRealDirectory,
   readBackupBytes,
+  runIdentityOf,
   planBackupRun,
   inspectBackup
 };

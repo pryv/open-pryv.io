@@ -105,34 +105,79 @@ function resolveDataKey (envelope, args) {
   if (envelope.mode === 'symmetric') {
     if (!args.passphrase) fail('this backup is passphrase-encrypted; pass --passphrase or set PRYV_BACKUP_PASSPHRASE');
     return crypto.scryptSync(args.passphrase, Buffer.from(envelope.salt, 'base64'), KEY,
-      { N: envelope.N, r: envelope.r, p: envelope.p });
+      { N: envelope.N, r: envelope.r, p: envelope.p, maxmem: 256 * 1024 * 1024 });
   }
   fail('unknown encryption mode: ' + envelope.mode);
 }
 
-function decryptFile (dataKey, full) {
+// Authenticated data of frame i of a format-2 file: the header digest, the
+// frame index (8 bytes) and a final flag.
+function frameAad (digest, i, final) {
+  const b = Buffer.alloc(9);
+  b.writeUInt32BE(Math.floor(i / 0x100000000), 0);
+  b.writeUInt32BE(i >>> 0, 4);
+  b[8] = final ? 1 : 0;
+  return Buffer.concat([digest, b]);
+}
+
+function openFrame (fileKey, i, payload, aad) {
+  if (payload.length < TAG) throw new Error('truncated chunk');
+  const d = crypto.createDecipheriv('aes-256-gcm', fileKey, counterNonce(i), { authTagLength: TAG });
+  if (aad) d.setAAD(aad);
+  d.setAuthTag(payload.subarray(payload.length - TAG));
+  return Buffer.concat([d.update(payload.subarray(0, payload.length - TAG)), d.final()]);
+}
+
+// Decrypt one file. Format 2 (the header names the file, its run and chain;
+// every frame is bound to the header and its position; the last frame is
+// flagged final): the identity must be the one expected, and a file cut short
+// or extended is refused. Format 1 (earlier releases) is read as it is.
+function decryptFile (dataKey, full, expect) {
   if (full.length < MAGIC.length + 4 || !full.subarray(0, MAGIC.length).equals(MAGIC)) {
     throw new Error('not an encrypted backup file (bad magic)');
   }
   const headerLen = full.readUInt32BE(MAGIC.length);
   const headerStart = MAGIC.length + 4;
   const headerEnd = headerStart + headerLen;
+  if (full.length < headerEnd) throw new Error('truncated encrypted file (header)');
   const header = JSON.parse(full.subarray(headerStart, headerEnd).toString('utf8'));
+  if (header.v !== 1 && header.v !== 2) throw new Error('unsupported file format version ' + header.v);
+  if (header.v === 2 && expect != null) {
+    const other = header.path !== expect.path || header.run !== expect.runId ||
+      (expect.chainId !== undefined && header.chain !== expect.chainId);
+    if (other) throw new Error('carries the identity of ' + header.path + ' (run ' + header.run + '): refused');
+  }
+  const digest = header.v === 2 ? crypto.createHash('sha256').update(full.subarray(0, headerEnd)).digest() : null;
   const fileKey = deriveFileKey(dataKey, Buffer.from(header.salt, 'base64'));
   const out = [];
   let off = headerEnd;
   let idx = 0;
+  let final = false;
   while (off < full.length) {
+    if (final) throw new Error('data after the final frame');
+    if (off + 4 > full.length) throw new Error('truncated chunk');
     const len = full.readUInt32BE(off);
     off += 4;
+    if (off + len > full.length) throw new Error('truncated chunk');
     const payload = full.subarray(off, off + len);
     off += len;
-    const ct = payload.subarray(0, payload.length - TAG);
-    const tag = payload.subarray(payload.length - TAG);
-    const d = crypto.createDecipheriv('aes-256-gcm', fileKey, counterNonce(idx++));
-    d.setAuthTag(tag);
-    out.push(Buffer.concat([d.update(ct), d.final()]));
+    if (digest == null) {
+      out.push(openFrame(fileKey, idx++, payload, null));
+      continue;
+    }
+    try {
+      out.push(openFrame(fileKey, idx, payload, frameAad(digest, idx, false)));
+    } catch (e) {
+      try {
+        out.push(openFrame(fileKey, idx, payload, frameAad(digest, idx, true)));
+        final = true;
+      } catch (e2) {
+        throw new Error('authentication failed (frame ' + idx + '): wrong key, or the file was altered');
+      }
+    }
+    idx++;
   }
+  if (digest != null && !final) throw new Error('truncated encrypted file (no final frame)');
   return Buffer.concat(out);
 }
 
@@ -199,20 +244,39 @@ function main () {
     return dataKeys.get(p);
   }
 
+  // The identity every file must carry: its path relative to its run, the run
+  // id ("full" at the root) and the chain id (chain.json; none for a backup
+  // written outside a chain, unknown for a run decrypted alone).
+  const chainPath = path.join(args.dir, 'chain.json');
+  const chainInfo = fs.existsSync(chainPath) ? JSON.parse(fs.readFileSync(chainPath, 'utf8')) : null;
+  const alone = chainInfo == null && path.basename(path.dirname(path.resolve(args.dir))) === 'incrementals';
+  function expectOf (runRoot, rel) {
+    const relInRun = path.relative(runRoot, rel).split(path.sep).join('/');
+    if (alone) return { path: relInRun, runId: path.basename(path.resolve(args.dir)), chainId: undefined };
+    const runId = runRoot === '.' ? 'full' : path.basename(runRoot);
+    let chainId = null;
+    if (chainInfo != null) chainId = runRoot === '.' && chainInfo.runs[0] && chainInfo.runs[0].bootstrapped === true ? null : chainInfo.chainId;
+    return { path: relInRun, runId, chainId };
+  }
+
   const files = walk(args.dir, args.dir, []);
   let n = 0;
   for (const rel of files) {
     const runRoot = runRootOf(args.dir, rel);
     // Cleartext files, and a chain.json temporary file an interrupted run left.
     if (SKIP.has(path.relative(runRoot, rel)) || path.basename(rel).startsWith('.chain.json.')) continue;
-    const plain = decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, rel)));
+    let plain;
+    try {
+      plain = decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, rel)), expectOf(runRoot, rel));
+    } catch (err) {
+      fail(rel + ': ' + err.message);
+    }
     writePrivate(path.join(outDir, rel), plain);
     n++;
   }
   // The mirror of a chain is a plaintext chain.
-  const chainPath = path.join(args.dir, 'chain.json');
-  if (fs.existsSync(chainPath)) {
-    const chain = JSON.parse(fs.readFileSync(chainPath, 'utf8'));
+  if (chainInfo != null) {
+    const chain = chainInfo;
     chain.encryption = null;
     writePrivate(path.join(outDir, 'chain.json'), JSON.stringify(chain, null, 2));
     console.log('Backup chain: ' + chain.runs.length + ' run(s)');

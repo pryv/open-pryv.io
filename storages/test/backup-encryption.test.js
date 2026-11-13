@@ -35,6 +35,22 @@ function writeV1ChainFixture (dir) {
   }
 }
 
+// Frames of an encrypted file: [{ start, end }] of each `len | payload`, after the header.
+function framesOf (buf) {
+  const headerEnd = MAGIC.length + 4 + buf.readUInt32BE(MAGIC.length);
+  const frames = [];
+  for (let off = headerEnd; off < buf.length;) {
+    const len = buf.readUInt32BE(off);
+    frames.push({ start: off, end: off + 4 + len });
+    off += 4 + len;
+  }
+  return { headerEnd, frames };
+}
+
+function headerOf (buf) {
+  return JSON.parse(buf.subarray(MAGIC.length + 4, MAGIC.length + 4 + buf.readUInt32BE(MAGIC.length)).toString('utf8'));
+}
+
 function rsaKeypair () {
   return crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048,
@@ -94,7 +110,7 @@ describe('[BENC] backup encryption', () => {
       assert.deepStrictEqual(back, plain);
     });
 
-    it('[BKE04] empty input round-trips (header only, no frames)', () => {
+    it('[BKE04] empty input round-trips', () => {
       const enc = createBackupEncryptor({ passphrase: 'pw' });
       const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' });
       assert.deepStrictEqual(dec.decryptBuffer(enc.encryptBuffer(Buffer.alloc(0))), Buffer.alloc(0));
@@ -112,6 +128,88 @@ describe('[BENC] backup encryption', () => {
       const cipherBytes = enc.encryptBuffer(Buffer.from('secret payload'));
       cipherBytes[cipherBytes.length - 1] ^= 0xff; // flip a byte in the last tag
       assert.throws(() => dec.decryptBuffer(cipherBytes));
+    });
+
+    const RUN = { runId: 'full', chainId: 'ab'.repeat(16) };
+
+    it('[BKAD1] format 2: the header names the file, its run and chain; every file ends with one final frame (an empty file too)', async () => {
+      const enc = createBackupEncryptor({ passphrase: 'pw', chunkSize: 1024, run: RUN });
+      const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' }, RUN);
+      const plain = crypto.randomBytes(3000);
+      const bytes = enc.encryptBuffer(plain, 'users/u1/streams.jsonl');
+      const header = headerOf(bytes);
+      assert.deepStrictEqual({ v: header.v, chunk: header.chunk, path: header.path, run: header.run, chain: header.chain },
+        { v: 2, chunk: 1024, path: 'users/u1/streams.jsonl', run: 'full', chain: RUN.chainId });
+      assert.strictEqual(framesOf(bytes).frames.length, 3);
+      assert.deepStrictEqual(dec.decryptBuffer(bytes, { path: 'users/u1/streams.jsonl' }), plain);
+      // the stream writes the same layout, and the buffer and stream readers read either
+      const streamed = await runStream(enc.encryptStream('users/u1/attachments/f1'), plain);
+      assert.strictEqual(framesOf(streamed).frames.length, 3);
+      assert.deepStrictEqual(await runStream(dec.decryptStream({ path: 'users/u1/attachments/f1' }), streamed), plain);
+      assert.deepStrictEqual(dec.decryptBuffer(streamed, { path: 'users/u1/attachments/f1' }), plain);
+      // a multiple of the chunk size: no empty trailing frame, the last full one is final
+      const exact = await runStream(enc.encryptStream('x'), crypto.randomBytes(2048));
+      assert.strictEqual(framesOf(exact).frames.length, 2);
+      // empty: the header and one final frame of 16 bytes (the tag only)
+      for (const empty of [enc.encryptBuffer(Buffer.alloc(0), 'e'), await runStream(enc.encryptStream('e'), Buffer.alloc(0))]) {
+        const { frames } = framesOf(empty);
+        assert.strictEqual(frames.length, 1);
+        assert.strictEqual(empty.readUInt32BE(frames[0].start), 16);
+        assert.deepStrictEqual(dec.decryptBuffer(empty, { path: 'e' }), Buffer.alloc(0));
+      }
+    });
+
+    it('[BKAD2] a file cut at a frame boundary, missing a frame, extended or cut mid-frame is refused (buffer and stream)', async () => {
+      const enc = createBackupEncryptor({ passphrase: 'pw', chunkSize: 64, run: RUN });
+      const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' }, RUN);
+      const bytes = enc.encryptBuffer(crypto.randomBytes(200), 'f'); // 4 frames
+      const { frames } = framesOf(bytes);
+      assert.strictEqual(frames.length, 4);
+      const last = frames[3];
+      const cases = [
+        ['no final frame', bytes.subarray(0, last.start), /no final frame/],
+        ['a middle frame dropped', Buffer.concat([bytes.subarray(0, frames[1].start), bytes.subarray(frames[2].start)]), /authentication failed/],
+        ['a frame after the final one', Buffer.concat([bytes, bytes.subarray(last.start, last.end)]), /data after the final frame/],
+        ['cut mid-frame', bytes.subarray(0, last.start + 10), /truncated/]
+      ];
+      for (const [what, damaged, re] of cases) {
+        assert.throws(() => dec.decryptBuffer(damaged, { path: 'f' }), re, what + ' (buffer)');
+        await assert.rejects(runStream(dec.decryptStream({ path: 'f' }), damaged), re, what + ' (stream)');
+      }
+    });
+
+    it('[BKAD3] a header-only file is refused in format 2, read as empty in format 1', async () => {
+      const enc = createBackupEncryptor({ passphrase: 'pw', run: RUN });
+      const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' }, RUN);
+      const bytes = enc.encryptBuffer(Buffer.from('content'), 'f');
+      const headerOnly = bytes.subarray(0, framesOf(bytes).headerEnd);
+      assert.throws(() => dec.decryptBuffer(headerOnly, { path: 'f' }), /no final frame/);
+      await assert.rejects(runStream(dec.decryptStream({ path: 'f' }), headerOnly), /no final frame/);
+      const v1 = Buffer.from(V1.symmetricBuffer.hex, 'hex');
+      const v1HeaderOnly = v1.subarray(0, framesOf(v1).headerEnd);
+      const v1dec = createBackupDecryptor(V1.symmetricBuffer.envelope, { passphrase: V1.symmetricBuffer.passphrase });
+      assert.deepStrictEqual(v1dec.decryptBuffer(v1HeaderOnly), Buffer.alloc(0));
+    });
+
+    it('[BKAD4] a file presented under another name, in another run, or carrying a frame of another file is refused', () => {
+      const enc = createBackupEncryptor({ passphrase: 'pw', chunkSize: 64, run: RUN });
+      const dec = createBackupDecryptor(enc.envelope, { passphrase: 'pw' }, RUN);
+      const a = enc.encryptBuffer(Buffer.from('accesses of A'.repeat(10)), 'users/A/accesses.jsonl.gz');
+      const b = enc.encryptBuffer(Buffer.from('accesses of B'.repeat(10)), 'users/B/accesses.jsonl.gz');
+      assert.throws(() => dec.decryptBuffer(a, { path: 'users/B/accesses.jsonl.gz' }), /file users\/B\/accesses.jsonl.gz of run full carries the identity of users\/A\/accesses.jsonl.gz/);
+      // a frame of B moved into A (same index)
+      const fa = framesOf(a).frames;
+      const fb = framesOf(b).frames;
+      const mixed = Buffer.concat([a.subarray(0, fa[0].start), b.subarray(fb[0].start, fb[0].end), a.subarray(fa[0].end)]);
+      assert.throws(() => dec.decryptBuffer(mixed, { path: 'users/A/accesses.jsonl.gz' }), /authentication failed/);
+      // the same bytes read as a file of another run, or of another chain
+      assert.throws(() => dec.decryptBuffer(a, { path: 'users/A/accesses.jsonl.gz', runId: '20261013T142501Z-3f9a1c7e' }), /refused/);
+      assert.throws(() => dec.decryptBuffer(a, { path: 'users/A/accesses.jsonl.gz', chainId: 'cd'.repeat(16) }), /refused/);
+      // an encryptor bound to a run does not write for another one
+      assert.throws(() => enc.forRun({ runId: 'other', chainId: RUN.chainId }), /bound to run full, this writer writes run other/);
+      const dir = path.join(os.tmpdir(), 'pryv-bkad4-' + process.pid + '-' + Date.now());
+      assert.throws(() => createFilesystemBackupWriter(dir, { encryptor: enc, run: { runId: 'full', path: '.', parentRunId: null, chainId: 'cd'.repeat(16) } }), /bound to run full/);
+      assert.ok(!fs.existsSync(dir), 'refused before anything is written');
     });
 
     it('[BKAD5] files of the first format version (buffers, a stream, a two-run chain) still decrypt and restore', async () => {
@@ -231,7 +329,12 @@ describe('[BENC] backup encryption', () => {
       for (const f of files) {
         const bytes = fs.readFileSync(f);
         assert.ok(bytes.subarray(0, MAGIC.length).equals(MAGIC), `${f} is encrypted (magic)`);
-        const text = bytes.toString('latin1');
+        // The cleartext header names the file by its place in the backup (the
+        // directory layout already shows it) and nothing else.
+        const header = headerOf(bytes);
+        assert.deepStrictEqual(Object.keys(header).sort(), ['chain', 'chunk', 'path', 'run', 'salt', 'v']);
+        assert.strictEqual(header.path, path.relative(tmp, f).split(path.sep).join('/'));
+        const text = bytes.subarray(framesOf(bytes).headerEnd).toString('latin1');
         for (const m of markers) {
           assert.ok(!text.includes(m), `${f} must not leak plaintext "${m}"`);
         }
@@ -370,6 +473,68 @@ describe('[BENC] backup encryption', () => {
       const aloneMirror = path.join(tmp, 'elsewhere-' + incId + '-decrypted');
       const aloneStreams = fs.readFileSync(path.join(aloneMirror, 'users', userId, 'streams.jsonl'), 'utf8');
       assert.deepStrictEqual(aloneStreams.trim().split('\n').map((l) => JSON.parse(l)), [{ id: 's1', name: 'Diary renamed' }]);
+    });
+
+    /** Run the bundled script; resolves { status, stdout, stderr } (no throw on exit 1). */
+    function runScript (script, args, opts = {}) {
+      const { spawnSync } = require('node:child_process');
+      const r = spawnSync(process.execPath, [script, ...args], { encoding: 'utf8', ...opts });
+      return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+    }
+
+    it('[BKAD6] the bundled script refuses a file cut short or swapped (naming it), and decrypts a chain of a first-format run followed by a current one', async () => {
+      const { STANDALONE_DECRYPT_SCRIPT } = require('../interfaces/backup/restoreReadme.ts');
+      const chainId = 'ef'.repeat(16);
+      const root = path.join(tmp, 'chain');
+      const full = createFilesystemBackupWriter(root, { compress: false, encryptor: createBackupEncryptor({ passphrase: 'pw' }), run: { runId: 'full', path: '.', parentRunId: null, chainId } });
+      const fu = await full.openUser(userId, username);
+      await fu.writeStreams(streams);
+      await fu.writeEvents(events);
+      await fu.writeAttachment('e1', 'att-1', Readable.from(attachmentBytes));
+      const u2 = await full.openUser('u-0002', 'bob');
+      await u2.writeStreams([{ id: 'b1', name: 'Bob' }]);
+      await full.writeManifest({ coreVersion: 'test', config: {}, backupType: 'full', snapshotBefore: 100, backupTimestamp: 1, userManifests: [await fu.close(), await u2.close()] });
+      const script = path.join(root, 'decrypt-backup.mjs');
+      const ok = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm0')]);
+      assert.strictEqual(ok.status, 0, ok.stderr);
+
+      // cut at the final frame boundary: refused, the file named
+      const streamsPath = path.join(root, 'users', userId, 'streams.jsonl');
+      const original = fs.readFileSync(streamsPath);
+      const { frames } = framesOf(original);
+      fs.writeFileSync(streamsPath, original.subarray(0, frames[frames.length - 1].start));
+      const cut = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm1')]);
+      assert.strictEqual(cut.status, 1);
+      assert.match(cut.stderr, /users\/u-0001\/streams.jsonl: truncated encrypted file \(no final frame\)/);
+      fs.writeFileSync(streamsPath, original);
+
+      // the streams of bob presented as alice's: refused
+      fs.copyFileSync(path.join(root, 'users', 'u-0002', 'streams.jsonl'), streamsPath);
+      const swapped = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm2')]);
+      assert.strictEqual(swapped.status, 1);
+      assert.match(swapped.stderr, /users\/u-0001\/streams.jsonl: carries the identity of users\/u-0002\/streams.jsonl/);
+      fs.writeFileSync(streamsPath, original);
+
+      // a chain written by the first format, continued by the current one
+      const mixed = path.join(tmp, 'mixed');
+      writeV1ChainFixture(mixed);
+      const incId = '20261102T120000Z-1a1a1a1a';
+      const inc = createFilesystemBackupWriter(mixed, { compress: false, encryptor: createBackupEncryptor({ passphrase: V1.chain.passphrase }), run: { runId: incId, path: 'incrementals/' + incId, parentRunId: V1.chain.incId, chainId: V1.chain.chainId } });
+      const iu = await inc.openUser('fx-user-1', 'fxalice');
+      await iu.writeStreams([{ id: 's1', name: 'One renamed again' }]);
+      await iu.writeEvents([{ id: 'e3', streamIds: ['s1'], content: 'e3', modified: 1200 }]);
+      await inc.writeManifest({ coreVersion: 'test', config: {}, backupType: 'incremental', snapshotBefore: 3000, backupTimestamp: 3, userManifests: [await iu.close()], scope: 'all' });
+      fs.writeFileSync(path.join(mixed, 'decrypt-backup.mjs'), STANDALONE_DECRYPT_SCRIPT);
+      const mirror = path.join(tmp, 'mixed-plain');
+      const r = runScript(path.join(mixed, 'decrypt-backup.mjs'), [mixed, '--passphrase', V1.chain.passphrase, '--out', mirror]);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.match(fs.readFileSync(path.join(mirror, 'users', 'fx-user-1', 'streams.jsonl'), 'utf8'), /"One"/);
+      assert.match(fs.readFileSync(path.join(mirror, 'incrementals', incId, 'users', 'fx-user-1', 'streams.jsonl'), 'utf8'), /One renamed again/);
+      // and the restore reads the same chain
+      const reader = createFilesystemBackupReader(mixed, { secrets: { passphrase: V1.chain.passphrase } });
+      const gotStreams = [];
+      for await (const s of (await reader.openUser('fx-user-1')).readStreams()) gotStreams.push(s);
+      assert.deepStrictEqual(gotStreams, [{ id: 's1', name: 'One renamed again' }]);
     });
 
     // Every entry below `root` with a mode other than 0700 (directory) / 0600 (file).

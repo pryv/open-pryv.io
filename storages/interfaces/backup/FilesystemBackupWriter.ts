@@ -63,7 +63,10 @@ interface WriterOptions {
 interface ResolvedWriterOptions {
   maxChunkSize: number;
   compress: boolean;
+  /** Bound to the run written (every file header names it). */
   encryptor: BackupEncryptor | null;
+  /** The directory of the run written: file paths are named relative to it. */
+  runDir: string;
 }
 
 // A backup holds full account data: what it creates is for its owner only.
@@ -81,12 +84,18 @@ function writePrivateFile (filePath: string, data: Buffer | string): void {
   fs.chmodSync(filePath, PRIVATE_FILE_MODE);
 }
 
+/** The path of a file relative to its run directory, `/`-separated. */
+function runRelativePath (runDir: string, filePath: string): string {
+  return path.relative(runDir, filePath).split(path.sep).join('/');
+}
+
 /**
  * Write a buffer to disk, encrypting it first when an encryptor is configured.
  * This is the single choke point that guarantees only ciphertext is flushed.
  */
-function persist (filePath: string, buffer: Buffer, encryptor: BackupEncryptor | null): void {
-  writePrivateFile(filePath, encryptor ? encryptor.encryptBuffer(buffer) : buffer);
+function persist (filePath: string, buffer: Buffer, opts: ResolvedWriterOptions): void {
+  const rel = runRelativePath(opts.runDir, filePath);
+  writePrivateFile(filePath, opts.encryptor ? opts.encryptor.encryptBuffer(buffer, rel) : buffer);
 }
 
 /**
@@ -94,10 +103,14 @@ function persist (filePath: string, buffer: Buffer, encryptor: BackupEncryptor |
  */
 function createFilesystemBackupWriter (outputPath: string, options?: WriterOptions): BackupWriter {
   const opts: ResolvedWriterOptions = Object.assign(
-    { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true, encryptor: null },
+    { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true, encryptor: null, runDir: outputPath },
     options
   );
   const run: WriterRun | null = options?.run ?? null;
+  // Every file header names this run: an encryptor bound to another run is refused here.
+  if (opts.encryptor != null) {
+    opts.encryptor = opts.encryptor.forRun(run != null ? { runId: run.runId, chainId: run.chainId } : { runId: FULL_RUN_ID, chainId: null });
+  }
   const isIncrementalRun = run != null && run.path !== '.';
   let baseChain: Chain | null = null;
   if (run != null) {
@@ -142,6 +155,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
     runDir = path.join(incDir, run!.runId);
     fs.mkdirSync(runDir, { mode: PRIVATE_DIR_MODE }); // fails when it exists
   }
+  opts.runDir = runDir;
 
   // Write the cleartext crypto envelope so restore can discover key model +
   // wrapped data key. It carries crypto headers only — never user data.
@@ -171,7 +185,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
       const platformDir = path.join(runDir, 'platform');
       makePrivateDir(platformDir);
       const filePath = path.join(platformDir, jsonlFileName('platform', opts.compress));
-      await writeJsonlFile(filePath, data, opts.compress, opts.encryptor);
+      await writeJsonlFile(filePath, data, opts.compress, opts);
     },
 
     async writeManifest (params: BackupWriteManifestParams) {
@@ -192,7 +206,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         manifest.parentRunId = run.parentRunId;
       }
       const filePath = path.join(runDir, 'manifest.json');
-      persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts.encryptor);
+      persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts);
       if (run == null) return;
 
       // The run joins the chain only once its manifest is written.
@@ -256,22 +270,22 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
   return createUserBackupWriter({
     async writeStreams (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('streams', opts.compress));
-      stats.streams = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.streams = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeAccesses (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('accesses', opts.compress));
-      stats.accesses = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.accesses = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeProfile (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('profile', opts.compress));
-      stats.profile = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.profile = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeWebhooks (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('webhooks', opts.compress));
-      stats.webhooks = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.webhooks = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeEvents (items: AsyncIterable<unknown> | unknown[]) {
@@ -294,7 +308,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       const seriesDir = path.join(userDir, 'series');
       makePrivateDir(seriesDir);
       const filePath = path.join(seriesDir, jsonlFileName('series', opts.compress));
-      stats.series = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.series = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeAttachment (eventId: string, fileId: string, readStream: Readable) {
@@ -306,7 +320,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       // never written in the clear (attachments already stream; the transform
       // keeps memory bounded).
       if (opts.encryptor) {
-        await pipeline(readStream, opts.encryptor.encryptStream(), writeStream);
+        await pipeline(readStream, opts.encryptor.encryptStream(runRelativePath(opts.runDir, filePath)), writeStream);
       } else {
         await pipeline(readStream, writeStream);
       }
@@ -317,17 +331,17 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
     async writeAccountData (data: unknown) {
       const filePath = path.join(userDir, jsonlFileName('account', opts.compress));
       // Account data is a single object, not a collection — write as one JSON line
-      await writeJsonlFile(filePath, [data], opts.compress, opts.encryptor);
+      await writeJsonlFile(filePath, [data], opts.compress, opts);
     },
 
     async writeExternalIds (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('external-ids', opts.compress));
-      stats.externalIds = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.externalIds = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeSsoBindings (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('sso-bindings', opts.compress));
-      stats.ssoBindings = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.ssoBindings = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async close () {
@@ -339,7 +353,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
         chunks
       };
       const filePath = path.join(userDir, 'user-manifest.json');
-      persist(filePath, Buffer.from(JSON.stringify(userManifest, null, 2), 'utf8'), opts.encryptor);
+      persist(filePath, Buffer.from(JSON.stringify(userManifest, null, 2), 'utf8'), opts);
       return userManifest;
     }
   });
@@ -357,7 +371,7 @@ function jsonlFileName (baseName: string, compress: boolean): string {
  * Write items to a single JSONL file (optionally gzip-compressed).
  * Returns the count of items written.
  */
-async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> | unknown[], compress: boolean, encryptor: BackupEncryptor | null): Promise<number> {
+async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> | unknown[], compress: boolean, opts: ResolvedWriterOptions): Promise<number> {
   let count = 0;
   const lines: string[] = [];
   for await (const item of items) {
@@ -367,7 +381,7 @@ async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> |
   const content = lines.join('\n') + (lines.length > 0 ? '\n' : '');
   const buffer = Buffer.from(content, 'utf8');
 
-  persist(filePath, compress ? zlib.gzipSync(buffer) : buffer, encryptor);
+  persist(filePath, compress ? zlib.gzipSync(buffer) : buffer, opts);
   return count;
 }
 
@@ -395,7 +409,7 @@ async function writeChunkedJsonlFiles (dir: string, baseName: string, items: Asy
     const content = currentLines.join('\n') + '\n';
     const raw = Buffer.from(content, 'utf8');
     const output = opts.compress ? zlib.gzipSync(raw) : raw;
-    persist(filePath, output, opts.encryptor);
+    persist(filePath, output, opts);
     chunkFiles.push(fileName);
     chunkIndex++;
     currentLines = [];

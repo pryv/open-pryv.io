@@ -157,7 +157,8 @@ async function runBackup (args) {
   }
 
   // A fresh data key (hybrid) or a fresh salt (symmetric) for every run.
-  const encryptor = buildEncryptor(args);
+  // Bound to this run: every file header names the run and its chain.
+  const encryptor = buildEncryptor(args, { runId: plan.runId, chainId: plan.chainId });
   if (encryptor) {
     console.log(`Encryption: ${encryptor.envelope.mode} (${encryptor.envelope.alg}) — destination bytes are ciphertext only`);
   }
@@ -482,14 +483,14 @@ function storeCheckDetail (store) {
  * that can decrypt its own output. The passphrase may also come from the
  * PRYV_BACKUP_PASSPHRASE env var so it doesn't appear in the process list.
  */
-function buildEncryptor (args) {
+function buildEncryptor (args, run) {
   const { createBackupEncryptor } = require('storages/interfaces/backup/index.ts');
   const passphrase = args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE;
   if (args.recipientPubkey) {
-    return createBackupEncryptor({ recipientPubKeyPem: fs.readFileSync(args.recipientPubkey, 'utf8') });
+    return createBackupEncryptor({ recipientPubKeyPem: fs.readFileSync(args.recipientPubkey, 'utf8'), run });
   }
   if (passphrase) {
-    return createBackupEncryptor({ passphrase });
+    return createBackupEncryptor({ passphrase, run });
   }
   return null;
 }
