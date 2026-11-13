@@ -34,6 +34,15 @@ const FULL_RUN_ID = 'full';
 const CHAIN_FORMAT_VERSION = 1;
 /** The first release that writes backup chains (named in the operator messages). */
 const CHAIN_RELEASE = '2.0.0-rc.51';
+/** The first release whose runs list their files in the manifest (named in the operator messages). */
+const INTEGRITY_RELEASE = '2.0.0-rc.85';
+/** Version of the `integrity` object of a run's manifest. */
+const INTEGRITY_VERSION = 2;
+/** Files at the root of a backup that belong to no run (the chain's own files). */
+const ROOT_NON_RUN_FILES = new Set([CHAIN_FILE_NAME, '.chain.lock', INCREMENTALS_DIR_NAME]);
+const CHAIN_TMP_RE = /^\.chain\.json\..*\.tmp$/;
+/** Files of a run directory the file table does not list (it is in the first, the second is written after it). */
+const RUN_UNLISTED_FILES = new Set([MANIFEST_FILE_NAME, 'manifest.sig']);
 
 /**
  * An incremental run exports the items changed after the previous run's
@@ -93,7 +102,17 @@ type Chain = {
   runs: ChainRun[];
 };
 
-type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted' | 'concurrent';
+type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted' | 'concurrent' | 'integrity' | 'signature';
+
+/** The file table of a run (`integrity` in its manifest): path relative to the run -> size, sha256 of the bytes on disk. */
+type FileTable = Map<string, { size: number, sha256: string }>;
+
+type RunIntegrity = {
+  version: number;
+  /** 2: every file of the run is in cipher format 2; null: a plaintext run. */
+  cipher: number | null;
+  files: FileTable;
+};
 
 class BackupChainError extends Error {
   code: BackupChainErrorCode;
@@ -214,6 +233,131 @@ function readEnvelope (runDir: string): Envelope | null {
   const text = readCleartextFile(path.join(runDir, ENVELOPE_FILE_NAME));
   if (text == null) return null;
   return JSON.parse(text);
+}
+
+// ---------------------------------------------------------------------------
+// The file table of a run (manifest `integrity`)
+// ---------------------------------------------------------------------------
+
+function integrityError (runId: string, dir: string, what: string): BackupChainError {
+  return new BackupChainError('integrity', `Run ${runId} of the backup at ${dir}: ${what}: refused.`);
+}
+
+/**
+ * The file table of a run's manifest; null for a run written before runs
+ * listed their files. A malformed table is refused.
+ */
+function runIntegrityOf (manifest: Record<string, unknown> | null, runId: string, dir: string): RunIntegrity | null {
+  const integrity = manifest?.integrity as { version?: unknown, cipher?: unknown, files?: unknown } | undefined;
+  if (integrity == null) return null;
+  const bad = (): BackupChainError => integrityError(runId, dir, 'its manifest carries a malformed file table');
+  if (integrity.version !== INTEGRITY_VERSION || (integrity.cipher !== null && integrity.cipher !== 2) || !Array.isArray(integrity.files)) throw bad();
+  const files: FileTable = new Map();
+  for (const f of integrity.files as Array<{ path?: unknown, size?: unknown, sha256?: unknown }>) {
+    if (typeof f?.path !== 'string' || f.path === '' || f.path.split('/').some((s) => s === '' || s === '.' || s === '..') ||
+      typeof f.size !== 'number' || !Number.isSafeInteger(f.size) || f.size < 0 ||
+      typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256) || files.has(f.path)) throw bad();
+    files.set(f.path, { size: f.size, sha256: f.sha256 });
+  }
+  return { version: integrity.version, cipher: integrity.cipher as number | null, files };
+}
+
+/**
+ * The regular files of a run directory, relative to it (`/`-separated),
+ * without the manifest and its signature; at the root of a backup, without
+ * the chain's own files and the `incrementals/` tree. Anything else than a
+ * regular file or a directory (a symbolic link, a special file) is refused.
+ */
+function listRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string): Map<string, number> {
+  const out = new Map<string, number>();
+  (function walk (abs: string, rel: string) {
+    for (const name of fs.readdirSync(abs).sort()) {
+      const childRel = rel === '' ? name : rel + '/' + name;
+      if (rel === '' && (RUN_UNLISTED_FILES.has(name) || (isRoot && (ROOT_NON_RUN_FILES.has(name) || CHAIN_TMP_RE.test(name))))) continue;
+      const childAbs = path.join(abs, name);
+      const stat = fs.lstatSync(childAbs);
+      if (stat.isDirectory()) walk(childAbs, childRel);
+      else if (stat.isFile()) out.set(childRel, stat.size);
+      else throw integrityError(runId, dir, `${childRel} is not a regular file (symbolic link or special file)`);
+    }
+  })(runDir, '');
+  return out;
+}
+
+/** Completeness of a run against its file table: no file added, none missing, none resized (sizes only, nothing read). */
+function checkRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string, integrity: RunIntegrity): void {
+  const present = listRunFiles(runDir, isRoot, runId, dir);
+  for (const [rel, size] of present) {
+    const listed = integrity.files.get(rel);
+    if (listed == null) throw integrityError(runId, dir, `unlisted file ${rel} (not in the run's manifest)`);
+    if (listed.size !== size) throw integrityError(runId, dir, `file ${rel}: size differs from the run's manifest (${size}, listed ${listed.size})`);
+  }
+  for (const rel of integrity.files.keys()) {
+    if (!present.has(rel)) throw integrityError(runId, dir, `missing file ${rel} (listed by the run's manifest)`);
+  }
+}
+
+/** Check bytes read from a run against its file table. */
+function checkFileHash (raw: Buffer, rel: string, integrity: RunIntegrity, runId: string, dir: string): void {
+  const listed = integrity.files.get(rel);
+  if (listed == null) throw integrityError(runId, dir, `unlisted file ${rel} (not in the run's manifest)`);
+  if (raw.length !== listed.size || crypto.createHash('sha256').update(raw).digest('hex') !== listed.sha256) {
+    throw integrityError(runId, dir, `file ${rel} differs from the run's manifest (hash)`);
+  }
+}
+
+/** Size and sha256 of a file, read in pieces (an attachment may be large), without following a symbolic link. */
+function hashFileNoFollow (filePath: string): { size: number, sha256: string } {
+  let fd: number;
+  try {
+    fd = fs.openSync(filePath, NO_FOLLOW_READ_FLAGS);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ELOOP') throw new Error(`Backup file ${filePath} is a symbolic link: refused`);
+    throw err;
+  }
+  try {
+    const hash = crypto.createHash('sha256');
+    const buf = Buffer.alloc(1024 * 1024);
+    let size = 0;
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      hash.update(buf.subarray(0, n));
+      size += n;
+    }
+    return { size, sha256: hash.digest('hex') };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Check every file of a run's table under `prefix` (e.g. one user's
+ * directory) against its size and hash, before any of it is used.
+ */
+function checkFilesUnder (runDir: string, prefix: string, integrity: RunIntegrity, runId: string, dir: string): void {
+  for (const [rel, listed] of integrity.files) {
+    if (!rel.startsWith(prefix)) continue;
+    const got = hashFileNoFollow(path.join(runDir, ...rel.split('/')));
+    if (got.size !== listed.size || got.sha256 !== listed.sha256) throw integrityError(runId, dir, `file ${rel} differs from the run's manifest (hash)`);
+  }
+}
+
+/** The message of a legacy run (no file table). */
+function legacyRunNotice (runId: string): string {
+  return `Run ${runId}: written before ${INTEGRITY_RELEASE}, its file list is not verified`;
+}
+
+/** A run without file table after one with: refused (a host of an earlier release wrote into the chain, or the run was replaced). */
+function legacyAfterVerifiedError (runId: string, previousRunId: string, dir: string): BackupChainError {
+  return new BackupChainError('integrity', `Run ${runId} of the backup at ${dir} was written in the format of a release before ${INTEGRITY_RELEASE} ` +
+    `after run ${previousRunId}, which was not: refused (a backup host running an earlier release wrote into this chain, or the run was replaced). ` +
+    `--through-run ${previousRunId} restores up to the last verified run.`);
+}
+
+/** The file format version the run pins (`2` refuses a file of the first format), or undefined. */
+function requiredFormatOf (integrity: RunIntegrity | null): number | undefined {
+  return integrity?.cipher === 2 ? 2 : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +586,28 @@ function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun
   if (!pre && (manifest.chainId !== chain.chainId || manifest.runId !== run.runId || (manifest.parentRunId ?? null) !== (run.parentRunId ?? null))) {
     throw new BackupChainError('mismatch', `Run ${run.runId} of the backup chain at ${dir} does not belong to this chain (its manifest names another chain, run or parent run): refused.`);
   }
+  checkChainEntry(dir, run, manifest);
   return manifest;
+}
+
+/**
+ * The entry of a run in `chain.json` (cleartext) must say what the run's
+ * manifest says (authenticated in an encrypted run): its users, its scope,
+ * its snapshot time. An edited entry could otherwise withhold an account
+ * from the restore, or have one taken for deleted.
+ */
+function checkChainEntry (dir: string, run: ChainRun, manifest: Record<string, unknown>): void {
+  const mismatch = (field: string): BackupChainError => new BackupChainError('mismatch',
+    `Run ${run.runId} of the backup chain at ${dir}: chain.json disagrees with the run's manifest (${field}): chain.json was edited; refused.`);
+  const manifestUsers = Array.isArray(manifest.users) ? (manifest.users as Array<{ userId?: unknown }>).map((u) => u?.userId).filter((id): id is string => typeof id === 'string') : [];
+  const a = [...new Set(manifestUsers)].sort();
+  const b = [...new Set(run.users)].sort();
+  if (a.length !== b.length || a.some((id, i) => id !== b[i])) throw mismatch('users');
+  if (((manifest.snapshotBefore as number | null | undefined) || null) !== (run.snapshotBefore || null)) throw mismatch('snapshotBefore');
+  const manifestScope = (manifest.scope as RunScope | undefined) ?? null;
+  const entryScope = run.scope ?? null;
+  // A run bootstrapped from a backup before chains has no scope in its entry: unknown, never evidence.
+  if (entryScope !== manifestScope && !(run.bootstrapped === true && entryScope == null)) throw mismatch('scope');
 }
 
 /**
@@ -615,7 +780,7 @@ function planBackupRun (dir: string, options: PlanOptions = {}): RunPlan {
 // Inspecting a backup directory (`bin/backup.js --inspect`)
 // ---------------------------------------------------------------------------
 
-type InspectStatus = 'ok' | 'damaged' | 'incomplete' | 'unknown' | 'invalid';
+type InspectStatus = 'ok' | 'damaged' | 'incomplete' | 'unknown' | 'invalid' | 'failed';
 
 interface InspectReport {
   lines: string[];
@@ -632,7 +797,7 @@ function isoOf (snapshotBefore: number | null | undefined): string {
  * secret (`chain.json` is cleartext); a backup written before chains needs
  * the secret of its encryption to read the root manifest.
  */
-function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {}): InspectReport {
+function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, verifyFiles?: boolean } = {}): InspectReport {
   const lines: string[] = [`Backup directory: ${dir}`];
   const report = (status: InspectStatus, verdict: string): InspectReport => ({ lines, verdict, status });
   if (!existsNoFollow(dir)) return report('invalid', 'INVALID: no such directory');
@@ -672,6 +837,38 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
         return report('incomplete', `INCOMPLETE: run ${run.runId} has no encryption.json`);
       }
     }
+    // The file table of each run: readable with the secret of an encrypted
+    // chain (or in the clear); checked file by file with verifyFiles.
+    const secrets = options.secrets ?? {};
+    const hasSecret = !!(secrets.passphrase || secrets.privateKeyPem);
+    let unreadable = false;
+    let lastVerified: string | null = null;
+    for (let i = 0; i < chain.runs.length; i++) {
+      const run = chain.runs[i];
+      const runDir = runDirectory(root, run);
+      if (chain.encryption != null && !hasSecret) {
+        lines.push(`  ${run.runId}: files: not readable without the secret`);
+        unreadable = true;
+        continue;
+      }
+      let manifest: Record<string, unknown>;
+      try {
+        const envelope = readEnvelope(runDir);
+        const decryptor = envelope == null ? null : createBackupDecryptor(envelope, secrets, runIdentityOf(chain, run));
+        manifest = readRunManifest(root, dir, chain, run, i > 0 ? chain.runs[i - 1].runId : null, decryptor);
+      } catch (err) {
+        if (err instanceof BackupChainError) return report('invalid', 'INVALID: ' + err.message);
+        lines.push(`  ${run.runId}: files: not readable (${(err as Error).message})`);
+        unreadable = true;
+        continue;
+      }
+      const result = inspectRunFiles(dir, run.runId, runDir, run.path === '.', manifest, options.verifyFiles === true);
+      if (result.failure != null) return report('failed', 'FAILED: ' + result.failure);
+      if (result.legacy && lastVerified != null) return report('failed', 'FAILED: ' + legacyAfterVerifiedError(run.runId, lastVerified, dir).message);
+      if (!result.legacy) lastVerified = run.runId;
+      lines.push(`  ${run.runId}: ${result.line}`);
+    }
+    if (options.verifyFiles === true && unreadable) return report('unknown', 'UNKNOWN: the files cannot be verified without the secret: pass --passphrase-file / --private-key');
     return report('ok', `OK (${chain.runs.length} run${chain.runs.length === 1 ? '' : 's'})`);
   }
 
@@ -701,11 +898,50 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
     lines.push(damagedRestoreMessage(dir));
     return report('damaged', 'DAMAGED: the root manifest says "incremental" and there is no chain.json');
   }
-  return report('ok', `OK (full backup written before ${CHAIN_RELEASE}, one run)`);
+  const result = inspectRunFiles(dir, FULL_RUN_ID, root, true, manifest, options.verifyFiles === true);
+  if (result.failure != null) return report('failed', 'FAILED: ' + result.failure);
+  lines.push(`  ${FULL_RUN_ID}: ${result.line}`);
+  return report('ok', result.legacy ? `OK (full backup written before ${CHAIN_RELEASE}, one run)` : 'OK (full backup without chain, one run)');
+}
+
+/**
+ * The `files:` line of a run for `--inspect`: how many files its manifest
+ * lists, or that it lists none (an earlier release); with `verify`, every
+ * listed file present with its size and hash, nothing added.
+ */
+function inspectRunFiles (dir: string, runId: string, runDir: string, isRoot: boolean, manifest: Record<string, unknown>, verify: boolean): { line: string, legacy: boolean, failure?: string } {
+  let integrity: RunIntegrity | null;
+  try {
+    integrity = runIntegrityOf(manifest, runId, dir);
+  } catch (err) {
+    return { line: '', legacy: false, failure: (err as Error).message };
+  }
+  if (integrity == null) return { line: `files: not verified (written before ${INTEGRITY_RELEASE})`, legacy: true };
+  if (!verify) return { line: `files: ${integrity.files.size} listed`, legacy: false };
+  try {
+    checkRunFiles(runDir, isRoot, runId, dir, integrity);
+    checkFilesUnder(runDir, '', integrity, runId, dir);
+  } catch (err) {
+    return { line: '', legacy: false, failure: (err as Error).message };
+  }
+  return { line: `files: ${integrity.files.size} verified`, legacy: false };
 }
 
 export {
   CHAIN_FILE_NAME,
+  MANIFEST_FILE_NAME,
+  INTEGRITY_RELEASE,
+  INTEGRITY_VERSION,
+  readNoFollow,
+  runIntegrityOf,
+  listRunFiles,
+  checkRunFiles,
+  checkFileHash,
+  checkFilesUnder,
+  integrityError,
+  legacyRunNotice,
+  legacyAfterVerifiedError,
+  requiredFormatOf,
   INCREMENTALS_DIR_NAME,
   FULL_RUN_ID,
   INCREMENTAL_OVERLAP_SECONDS,
@@ -735,4 +971,4 @@ export {
   planBackupRun,
   inspectBackup
 };
-export type { Chain, ChainRun, RunScope, DeletedUser, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };
+export type { FileTable, RunIntegrity, Chain, ChainRun, RunScope, DeletedUser, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };

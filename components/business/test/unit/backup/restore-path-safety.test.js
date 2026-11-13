@@ -278,7 +278,7 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
     beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-bkrs-')); });
     afterEach(function () { fs.rmSync(tmp, { recursive: true, force: true }); });
 
-    async function writeBackup (dir, { referencedFileId = 'file-ref', encryptor = null, orphan = null } = {}) {
+    async function writeBackup (dir, { referencedFileId = 'file-ref', encryptor = null, orphan = null, legacy = true } = {}) {
       const writer = createFilesystemBackupWriter(dir, { compress: false, encryptor });
       const uw = await writer.openUser(CUID2_ID, 'validname');
       await uw.writeEvents([{ id: 'evt1', streamIds: ['s1'], type: 'file/attached', attachments: [{ id: referencedFileId }] }]);
@@ -289,8 +289,32 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       const userManifest = await uw.close();
       await writer.writeManifest({ coreVersion: 'test', config: {}, backupType: 'full', backupTimestamp: 1, userManifests: [userManifest] });
       if (encryptor != null) await writer.close();
+      // A plaintext backup is made one of a release before file tables: the
+      // run's file table would refuse every planted entry below at once (as
+      // [BKRS9] checks); here the reader's own checks are under test.
+      if (encryptor == null && legacy) stripFileTable(dir);
       return path.join(dir, 'users', CUID2_ID, 'attachments');
     }
+
+    function stripFileTable (dir) {
+      const manifestPath = path.join(dir, 'manifest.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      delete manifest.integrity;
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    }
+
+    it('[BKRS9] in a backup with a file table, a planted link, an unlisted file or a linked directory is refused before anything is read', async function () {
+      const plant = [
+        ['a link among the attachments', (attachDir) => fs.symlinkSync(path.join(tmp, 'x'), path.join(attachDir, 'file-link')), /attachments\/file-link is not a regular file/],
+        ['an unlisted file', (attachDir) => fs.writeFileSync(path.join(attachDir, 'file-orphan'), 'orphan'), /unlisted file users\/.*\/attachments\/file-orphan/],
+        ['a linked attachments directory', (attachDir) => { fs.rmSync(attachDir, { recursive: true }); fs.mkdirSync(path.join(tmp, 'outside-attach'), { recursive: true }); fs.symlinkSync(path.join(tmp, 'outside-attach'), attachDir); }, /attachments is not a regular file/]
+      ];
+      for (const [what, doPlant, re] of plant) {
+        const backupDir = path.join(tmp, 'backup-' + what.replace(/ /g, '-'));
+        doPlant(await writeBackup(backupDir, { legacy: false }));
+        await assert.rejects(() => createFilesystemBackupReader(backupDir).readManifest(), re, what);
+      }
+    });
 
     async function collect (iterable) {
       const out = [];
@@ -652,9 +676,19 @@ describe('[RXCR] restore on a multi-core platform: accounts routed to another co
     const indexed = makeOrchestrator();
     indexed.o.coreRouting = fakeCoreRouting(indexed.writes);
     statefulIndex(indexed.o);
-    const failing = { ...makeReader(users), async openUser () { throw new Error('backup unreadable'); } };
+    // the account's data fails after it is indexed
+    const failing = { ...makeReader(users), async openUser () { return { readStreams () { throw new Error('backup unreadable'); } }; } };
     await assert.rejects(() => indexed.o.restoreUser(CUID2_ID, failing), /backup unreadable/);
     assert.strictEqual(indexed.o.coreRouting.rows.validname, 'core-a', 'indexed: the row stays');
+
+    // the backup refuses the account (opened before it is indexed): nothing indexed, the row removed
+    const refused = makeOrchestrator();
+    refused.o.coreRouting = fakeCoreRouting(refused.writes);
+    statefulIndex(refused.o);
+    const refusing = { ...makeReader(users), async openUser () { throw new Error('backup refused'); } };
+    await assert.rejects(() => refused.o.restoreUser(CUID2_ID, refusing), /backup refused/);
+    assert.ok(!refused.writes.includes('usersIndex.addUser'), 'not indexed');
+    assert.strictEqual(refused.o.coreRouting.rows.validname, undefined, 'the row this restore wrote is removed');
 
     const found = makeOrchestrator();
     found.o.coreRouting = fakeCoreRouting(found.writes, { rows: { validname: 'core-a' } });

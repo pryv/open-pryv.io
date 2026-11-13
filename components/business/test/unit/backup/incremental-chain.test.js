@@ -508,9 +508,19 @@ describe('[BKCH] backup chain: incremental runs next to the full backup', functi
     const outsideUser = path.join(tmp, 'outside-user');
     fs.renameSync(userDir, outsideUser);
     fs.symlinkSync(outsideUser, userDir);
+    // the run's file table refuses it at once
+    await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(), /users\/u1-full-and-inc is not a regular file \(symbolic link or special file\)/);
+    // runs of a release before file tables: the reader refuses it when the user is opened
+    const manifests = [path.join(dir, 'manifest.json'), path.join(runDir, 'manifest.json')].map((p) => [p, fs.readFileSync(p)]);
+    for (const [p, bytes] of manifests) {
+      const m = JSON.parse(bytes.toString('utf8'));
+      delete m.integrity;
+      fs.writeFileSync(p, JSON.stringify(m));
+    }
     const reader = createFilesystemBackupReader(dir);
     await reader.readManifest();
     await assert.rejects(() => reader.openUser('u1-full-and-inc'), /not a directory of the backup/);
+    for (const [p, bytes] of manifests) fs.writeFileSync(p, bytes);
     fs.unlinkSync(userDir);
     fs.renameSync(outsideUser, userDir);
 
@@ -589,9 +599,13 @@ describe('[BKCH] backup chain: incremental runs next to the full backup', functi
       assert.deepStrictEqual(pm.deletedUsers, []);
       assert.deepStrictEqual((await collect((await prefix.openUser(U2)).readStreams())).map((x) => x.id), ['st-bob']);
 
-      // A run without scope is evidence of nothing.
+      // A run without scope (its manifest and its chain.json entry: a release before scopes) is evidence of nothing.
       delete chain.runs[2].scope;
       fs.writeFileSync(path.join(dir, 'chain.json'), JSON.stringify(chain));
+      const inc2Manifest = path.join(dir, 'incrementals', INC2_ID, 'manifest.json');
+      const m2 = JSON.parse(fs.readFileSync(inc2Manifest, 'utf8'));
+      delete m2.scope;
+      fs.writeFileSync(inc2Manifest, JSON.stringify(m2));
       const noScope = await createFilesystemBackupReader(dir).readManifest();
       assert.deepStrictEqual(noScope.users.map((x) => x.userId), [U1, U2, U3]);
       assert.deepStrictEqual(noScope.deletedUsers, []);
@@ -712,5 +726,186 @@ describe('[BKCH] backup chain: incremental runs next to the full backup', functi
       await runWith(INC2, async () => { throw new Error('series engine down'); }, 3000);
       assert.deepStrictEqual(await seriesOf(), [], 'the newest run with a series file is the second one');
     });
+  });
+});
+
+// Each run's manifest lists its files (size, hash of the bytes on disk); the
+// restore refuses a run whose files or chain.json entry differ from it.
+describe('[BKSM] run file table and chain cross-check', function () {
+  let tmp;
+  beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-bksm-')); });
+  afterEach(function () { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  const V1 = require('../../../../../storages/test/fixtures/backup-cipher-v1.json');
+  const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  const posix = (rel) => rel.split(path.sep).join('/');
+
+  function readPlainManifest (runDir) {
+    return JSON.parse(fs.readFileSync(path.join(runDir, 'manifest.json'), 'utf8'));
+  }
+
+  function rewriteManifest (runDir, edit) {
+    const m = readPlainManifest(runDir);
+    edit(m);
+    fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(m, null, 2));
+  }
+
+  function editChain (dir, edit) {
+    const p = path.join(dir, 'chain.json');
+    const chain = JSON.parse(fs.readFileSync(p, 'utf8'));
+    edit(chain);
+    fs.writeFileSync(p, JSON.stringify(chain, null, 2));
+  }
+
+  async function plainChain (dir) {
+    await writeRun(dir, { run: FULL, scope: 'all', users: fullUsers() });
+    await writeRun(dir, { run: INC1, scope: 'users', snapshotBefore: 2000, users: incUsers() });
+    return path.join(dir, 'incrementals', INC1_ID);
+  }
+
+  /** The table a run should hold: every regular file it wrote, but its manifest (and at the root the chain's files). */
+  function expectedTable (runDir, isRoot) {
+    const files = snapshotFiles(runDir, ['manifest.json', 'manifest.sig', ...(isRoot ? ['chain.json', 'incrementals'] : [])]);
+    return Object.keys(files).map(posix).sort().map((rel) => {
+      const bytes = fs.readFileSync(path.join(runDir, ...rel.split('/')));
+      return { path: rel, size: bytes.length, sha256: sha256(bytes) };
+    });
+  }
+
+  it('[BKSM1] the manifest of every run lists each file it wrote, with the size and hash of its bytes on disk, sorted', async function () {
+    const dir = path.join(tmp, 'plain');
+    const incDir = await plainChain(dir);
+    const full = readPlainManifest(dir);
+    assert.deepStrictEqual(full.integrity, { version: 2, cipher: null, files: expectedTable(dir, true) });
+    assert.ok(full.integrity.files.some((f) => f.path === 'users/u1-full-and-inc/attachments/f1'), 'attachments are listed');
+    assert.ok(!full.integrity.files.some((f) => f.path.startsWith('incrementals/')), 'the root run does not list the incremental runs');
+    assert.deepStrictEqual(readPlainManifest(incDir).integrity, { version: 2, cipher: null, files: expectedTable(incDir, false) });
+
+    // An encrypted run: the table of the ciphertext, in the encrypted manifest, the cleartext files of the run included.
+    const enc = path.join(tmp, 'enc');
+    const encryptor = createBackupEncryptor({ passphrase: 'pw' });
+    await writeRun(enc, { run: FULL, encryptor, users: fullUsers() });
+    const decryptor = createBackupDecryptor(encryptor.envelope, { passphrase: 'pw' }, { runId: 'full', chainId: CHAIN_ID });
+    const encManifest = JSON.parse(decryptor.decryptBuffer(fs.readFileSync(path.join(enc, 'manifest.json')), { path: 'manifest.json' }).toString('utf8'));
+    assert.deepStrictEqual(encManifest.integrity, { version: 2, cipher: 2, files: expectedTable(enc, true) });
+    for (const name of ['encryption.json', 'decrypt-backup.mjs', 'RESTORE-README.md']) {
+      assert.ok(encManifest.integrity.files.some((f) => f.path === name), name + ' is listed');
+    }
+  });
+
+  it('[BKSM2] a file added, removed, cut or changed is refused (plaintext and encrypted runs)', async function () {
+    const dir = path.join(tmp, 'plain');
+    const incDir = await plainChain(dir);
+    const restoreStreams = async (userId) => collect((await createFilesystemBackupReader(dir).openUser(userId)).readStreams());
+    assert.ok((await restoreStreams('u1-full-and-inc')).length > 0, 'control: the chain restores');
+
+    // a chunk planted in the incremental run
+    const planted = path.join(incDir, 'users', 'u1-full-and-inc', 'events', 'events-0002.jsonl');
+    fs.writeFileSync(planted, JSON.stringify({ id: 'e-planted', streamIds: ['s1'], content: 'planted' }) + '\n');
+    await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(),
+      new RegExp(`Run ${INC1_ID} of the backup at .*: unlisted file users/u1-full-and-inc/events/events-0002.jsonl \\(not in the run's manifest\\): refused`));
+    fs.rmSync(planted);
+
+    // a listed file removed
+    const carol = path.join(incDir, 'users', 'u3-inc-only', 'streams.jsonl');
+    const carolBytes = fs.readFileSync(carol);
+    fs.rmSync(carol);
+    await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(), /missing file users\/u3-inc-only\/streams.jsonl/);
+    // cut short
+    fs.writeFileSync(carol, carolBytes.subarray(0, carolBytes.length - 3));
+    await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(), /file users\/u3-inc-only\/streams.jsonl: size differs/);
+    fs.writeFileSync(carol, carolBytes);
+
+    // one byte changed (same size): refused when it is read
+    const alice = path.join(dir, 'users', 'u1-full-and-inc', 'streams.jsonl');
+    const aliceBytes = fs.readFileSync(alice);
+    const flipped = Buffer.from(aliceBytes);
+    flipped[flipped.indexOf('One')] = 'X'.charCodeAt(0);
+    fs.writeFileSync(alice, flipped);
+    await assert.rejects(() => restoreStreams('u1-full-and-inc'), /Run full of the backup at .*: file users\/u1-full-and-inc\/streams.jsonl differs from the run's manifest \(hash\): refused/);
+    fs.writeFileSync(alice, aliceBytes);
+    // an attachment changed: its stream fails
+    const f1 = path.join(dir, 'users', 'u1-full-and-inc', 'attachments', 'f1');
+    const f1Bytes = fs.readFileSync(f1);
+    fs.writeFileSync(f1, Buffer.from(f1Bytes.toString().replace('F1', 'G1')));
+    const reader = createFilesystemBackupReader(dir);
+    await assert.rejects(() => collectAttachments((async () => (await reader.openUser('u1-full-and-inc')).readAttachments())()),
+      /file users\/u1-full-and-inc\/attachments\/f1 differs from the run's manifest \(hash\)/);
+    fs.writeFileSync(f1, f1Bytes);
+    assert.ok((await restoreStreams('u1-full-and-inc')).length > 0, 'restored as it was: readable again');
+
+    // encrypted: a byte flipped in a file of the run
+    const enc = path.join(tmp, 'enc');
+    await writeRun(enc, { run: FULL, encryptor: createBackupEncryptor({ passphrase: 'pw' }), users: fullUsers() });
+    const encEvents = path.join(enc, 'users', 'u1-full-and-inc', 'events', 'events-0001.jsonl');
+    const encBytes = fs.readFileSync(encEvents);
+    encBytes[encBytes.length - 20] ^= 0x01;
+    fs.writeFileSync(encEvents, encBytes);
+    const encReader = createFilesystemBackupReader(enc, { secrets: { passphrase: 'pw' } });
+    await assert.rejects(async () => collect((await encReader.openUser('u1-full-and-inc')).readEvents()), /events-0001.jsonl differs from the run's manifest \(hash\)/);
+  });
+
+  it('[BKSM3] a chain.json entry edited against its run\'s manifest (users, scope, snapshot time) is refused', async function () {
+    const dir = path.join(tmp, 'plain');
+    await plainChain(dir);
+    const original = fs.readFileSync(path.join(dir, 'chain.json'));
+    const restoreOf = () => createFilesystemBackupReader(dir).readManifest();
+    assert.deepStrictEqual((await restoreOf()).users.map((u) => u.userId).sort(), ['u1-full-and-inc', 'u2-full-only', 'u3-inc-only']);
+    const cases = [
+      // carol withheld from the run that holds her
+      ['users', (c) => { c.runs[1].users = c.runs[1].users.filter((id) => id !== 'u3-inc-only'); }],
+      // the account-only run made a whole-core run: bob, whom it does not list, taken for deleted
+      ['scope', (c) => { c.runs[1].scope = 'all'; }],
+      ['snapshotBefore', (c) => { c.runs[1].snapshotBefore = 1500; }]
+    ];
+    for (const [field, edit] of cases) {
+      editChain(dir, edit);
+      await assert.rejects(restoreOf, new RegExp(`Run ${INC1_ID} of the backup chain at .*: chain.json disagrees with the run's manifest \\(${field}\\): chain.json was edited; refused`), field);
+      fs.writeFileSync(path.join(dir, 'chain.json'), original);
+    }
+
+    // A chain started from a full backup written outside any chain (its entry built from its manifest).
+    const pre = path.join(tmp, 'pre');
+    await writeRun(pre, { scope: 'all', users: fullUsers() });
+    const plan = chainApi().planBackupRun(pre, { incremental: true });
+    await writeRun(pre, { run: plan, scope: 'users', snapshotBefore: 2000, users: incUsers() });
+    assert.strictEqual((await createFilesystemBackupReader(pre).readManifest()).users.length, 3, 'control');
+    editChain(pre, (c) => { c.runs[0].users = ['u1-full-and-inc']; });
+    await assert.rejects(() => createFilesystemBackupReader(pre).readManifest(), /Run full of the backup chain at .*: chain.json disagrees with the run's manifest \(users\)/);
+    editChain(pre, (c) => { c.runs[0].users = ['u1-full-and-inc', 'u2-full-only']; c.runs[0].snapshotBefore = 999; });
+    await assert.rejects(() => createFilesystemBackupReader(pre).readManifest(), /\(snapshotBefore\)/);
+  });
+
+  it('[BKSM6] runs of an earlier release restore with a notice before the first run with a file table, are refused after it; a file of the first format is refused in a run of the current one', async function () {
+    const dir = path.join(tmp, 'plain');
+    const incDir = await plainChain(dir);
+    // the full run as an earlier release wrote it: a notice
+    rewriteManifest(dir, (m) => { delete m.integrity; });
+    const warnings = [];
+    await createFilesystemBackupReader(dir, { onWarning: (w) => warnings.push(w) }).readManifest();
+    assert.deepStrictEqual(warnings, ['Run full: written before 2.0.0-rc.85, its file list is not verified']);
+
+    // a run of an earlier release after a run with a file table: refused, naming the way out
+    const dir2 = path.join(tmp, 'plain2');
+    const inc2Dir = await plainChain(dir2);
+    rewriteManifest(inc2Dir, (m) => { delete m.integrity; });
+    await assert.rejects(() => createFilesystemBackupReader(dir2).readManifest(),
+      new RegExp(`Run ${INC1_ID} of the backup at .* was written in the format of a release before 2.0.0-rc.85 after run full, which was not: refused .*--through-run full restores up to the last verified run`));
+    const through = await createFilesystemBackupReader(dir2, { throughRun: 'full' }).readManifest();
+    assert.deepStrictEqual(through.users.map((u) => u.userId), ['u1-full-and-inc', 'u2-full-only']);
+    assert.ok(incDir);
+
+    // a file of the first format in an encrypted run of the current one
+    const enc = path.join(tmp, 'enc');
+    const encryptor = createBackupEncryptor({ passphrase: 'pw' });
+    await writeRun(enc, { run: FULL, encryptor, users: fullUsers() });
+    const target = path.join(enc, 'users', 'u2-full-only', 'streams.jsonl');
+    fs.writeFileSync(target, Buffer.from(V1.symmetricBuffer.hex, 'hex'));
+    const encReader = createFilesystemBackupReader(enc, { secrets: { passphrase: 'pw' } });
+    await assert.rejects(async () => collect((await encReader.openUser('u2-full-only')).readStreams()), /users\/u2-full-only\/streams.jsonl/);
+    // the decryptor of such a run refuses it by its format, before any key is used
+    const dec = createBackupDecryptor(encryptor.envelope, { passphrase: 'pw' }, { runId: 'full', chainId: CHAIN_ID });
+    assert.throws(() => dec.decryptBuffer(Buffer.from(V1.symmetricBuffer.hex, 'hex'), { path: 'users/u2-full-only/streams.jsonl', requireVersion: 2 }),
+      /file users\/u2-full-only\/streams.jsonl of run full is in format version 1 in a run of format 2: refused/);
   });
 });

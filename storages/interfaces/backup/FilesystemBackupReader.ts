@@ -7,7 +7,7 @@
 
 import type { BackupReader, UserBackupReader } from './BackupReader.js';
 import type { BackupDecryptor, DecryptorSecrets, DecryptExpectation } from './BackupCipher.js';
-import type { Chain, ChainRun, DeletedUser } from './chain.ts';
+import type { Chain, ChainRun, DeletedUser, RunIntegrity } from './chain.ts';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -15,12 +15,15 @@ const require = createRequire(import.meta.url);
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { pipeline } = require('node:stream');
+const crypto = require('crypto');
+const { pipeline, Transform } = require('node:stream');
 const { createBackupReader, createUserBackupReader } = require('./BackupReader.ts');
 const { createBackupDecryptor } = require('./BackupCipher.ts');
 const {
   BackupChainError, damagedRestoreMessage, deletedUserMessage, deletedUsersOf, resolveRuns, runDirectory,
-  readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readBackupBytes
+  readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readNoFollow,
+  runIntegrityOf, checkRunFiles, checkFileHash, checkFilesUnder, integrityError, legacyRunNotice, legacyAfterVerifiedError,
+  requiredFormatOf, INTEGRITY_RELEASE
 } = require('./chain.ts');
 
 // Open for reading without following a symbolic link (where the platform has the flag).
@@ -52,6 +55,10 @@ type RunFiles = {
   decryptor: BackupDecryptor | null;
   runId: string;
   chainId: string | null;
+  /** The run's file table: each file read is checked against it (null: a run written before file tables). */
+  integrity: RunIntegrity | null;
+  /** The backup directory, for the messages. */
+  backupDir: string;
 };
 
 /** One run of the backup as the reader applies it. */
@@ -73,12 +80,49 @@ function runRelativePath (files: RunFiles, filePath: string): string {
 }
 
 function expectationOf (files: RunFiles, filePath: string): DecryptExpectation {
-  return { path: runRelativePath(files, filePath), runId: files.runId, chainId: files.chainId };
+  return { path: runRelativePath(files, filePath), runId: files.runId, chainId: files.chainId, requireVersion: requiredFormatOf(files.integrity) };
 }
 
-/** Read a file of a run, decrypting first when the run is encrypted; a symbolic link is refused. */
+/** A file of the first cipher format in a run of the current one: refused. */
+function formatRefusal (err: unknown, files: RunFiles, filePath: string): unknown {
+  if ((err as { code?: unknown } | null)?.code !== 'ERR_BACKUP_OLD_FORMAT') return err;
+  return new BackupChainError('integrity', `Run ${files.runId} of the backup at ${files.backupDir}: file ${runRelativePath(files, filePath)} is in the format of a release before ${INTEGRITY_RELEASE}: refused.`);
+}
+
+/**
+ * Read a file of a run: checked against the run's file table (size and hash
+ * of the bytes on disk), then decrypted when the run is encrypted; a symbolic
+ * link is refused.
+ */
 function loadBytes (filePath: string, files: RunFiles): Buffer {
-  return readBackupBytes(filePath, files.decryptor, expectationOf(files, filePath));
+  const raw = readNoFollow(filePath);
+  if (files.integrity != null) checkFileHash(raw, runRelativePath(files, filePath), files.integrity, files.runId, files.backupDir);
+  if (files.decryptor == null) return raw;
+  try {
+    return files.decryptor.decryptBuffer(raw, expectationOf(files, filePath));
+  } catch (err) {
+    throw formatRefusal(err, files, filePath);
+  }
+}
+
+/** A pass-through that fails at its end when the bytes that went through are not the listed ones. */
+function verifyingStream (files: RunFiles, filePath: string): NodeJS.ReadWriteStream {
+  const rel = runRelativePath(files, filePath);
+  const listed = files.integrity!.files.get(rel);
+  const hash = crypto.createHash('sha256');
+  let size = 0;
+  return new Transform({
+    transform (piece: Buffer, _enc: string, cb: (e?: Error | null, data?: Buffer) => void) {
+      hash.update(piece);
+      size += piece.length;
+      cb(null, piece);
+    },
+    flush (cb: (e?: Error | null) => void) {
+      if (listed == null) return cb(integrityError(files.runId, files.backupDir, `unlisted file ${rel} (not in the run's manifest)`));
+      if (size !== listed.size || hash.digest('hex') !== listed.sha256) return cb(integrityError(files.runId, files.backupDir, `file ${rel} differs from the run's manifest (hash)`));
+      cb();
+    }
+  });
 }
 
 function userIdsOf (manifest: Manifest | null): Set<string> {
@@ -129,6 +173,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       opts.onWarning(`Backup ${inputPath}: ignored, not listed by ${chain == null ? 'any chain.json' : 'chain.json'}: ${resolved.strays.join(', ')}`);
     }
     const out: RunHandle[] = [];
+    let lastVerifiedRunId: string | null = null;
     resolved.runs.forEach((run: ChainRun, i: number) => {
       const isRoot = run.path === '.';
       const previousRunId = i > 0 ? resolved.runs[i - 1].runId : null;
@@ -145,7 +190,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       let decryptor: BackupDecryptor | null = null;
       if (isRoot && opts.decryptor) decryptor = opts.decryptor;
       else if (envelope != null) decryptor = createBackupDecryptor(envelope, opts.secrets ?? {}, identity);
-      const files: RunFiles = { dir, decryptor, ...identity };
+      const files: RunFiles = { dir, decryptor, ...identity, integrity: null, backupDir: inputPath };
 
       let manifest: Manifest | null = null;
       if (chain != null) {
@@ -158,6 +203,20 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
         }
         if (manifest?.backupType === 'incremental' && !opts.allowIncomplete) {
           throw new BackupChainError('damaged', damagedRestoreMessage(inputPath));
+        }
+      }
+      if (manifest != null) {
+        // The run's file table: nothing added, missing or resized; each file
+        // read later is checked against its hash. A run without one was
+        // written by an earlier release: accepted before the first run with
+        // one, refused after it.
+        files.integrity = runIntegrityOf(manifest, run.runId, inputPath);
+        if (files.integrity == null) {
+          if (lastVerifiedRunId != null) throw legacyAfterVerifiedError(run.runId, lastVerifiedRunId, inputPath);
+          opts.onWarning?.(legacyRunNotice(run.runId));
+        } else {
+          checkRunFiles(dir, isRoot, run.runId, inputPath, files.integrity);
+          lastVerifiedRunId = run.runId;
         }
       }
       out.push({ run, dir, files, manifest, compressed: manifest?.compressed !== false, userIds: userIdsOf(manifest), isRoot });
@@ -254,6 +313,10 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
         if (!h.isRoot && !h.userIds.has(userId)) continue;
         const realUserDir = path.join(h.dir, 'users', userId);
         isRealDirectory(realUserDir);
+        // Every file of the account in this run checked against the run's
+        // file table before any is used: a changed file refuses the account
+        // before the restore writes anything of it.
+        if (h.files.integrity != null) checkFilesUnder(h.dir, `users/${userId}/`, h.files.integrity, h.run.runId, inputPath);
         userRuns.push({ userDir: realUserDir, compressed: h.compressed, files: h.files });
       }
       if (userRuns.length === 1) {
@@ -539,15 +602,21 @@ function listAttachmentFiles (attachDir: string): string[] {
 function openAttachment (attachDir: string, fileId: string, files: RunFiles): NodeJS.ReadableStream {
   const filePath = path.join(attachDir, fileId);
   const fileStream = fs.createReadStream(filePath, { flags: NO_FOLLOW_READ_FLAGS });
-  if (files.decryptor == null) return fileStream;
+  // The bytes on disk are checked against the run's file table as they are
+  // read: a difference fails the stream at its end (before the decrypting
+  // side ends), so the consumer sees it as it sees a decryption failure.
+  const stages: NodeJS.ReadWriteStream[] = [];
+  if (files.integrity != null) stages.push(verifyingStream(files, filePath));
   // Decrypt the blob on the fly so the consumer receives plaintext bytes.
-  // pipeline, not pipe: destroying the plaintext side (a consumer that does
-  // not read it) also destroys the file stream and closes its descriptor, and
-  // a failure of the file stream (its open included) reaches the consumer
-  // through the plaintext side instead of being raised with no listener.
-  const plain = files.decryptor.decryptStream(expectationOf(files, filePath));
-  pipeline(fileStream, plain, () => {});
-  return plain;
+  if (files.decryptor != null) stages.push(files.decryptor.decryptStream(expectationOf(files, filePath)));
+  if (stages.length === 0) return fileStream;
+  // pipeline, not pipe: destroying the last side (a consumer that does not
+  // read it) also destroys the file stream and closes its descriptor, and a
+  // failure of the file stream (its open included) reaches the consumer
+  // through the last side instead of being raised with no listener.
+  const last = stages[stages.length - 1];
+  pipeline(fileStream, ...stages, () => {});
+  return last;
 }
 
 /**

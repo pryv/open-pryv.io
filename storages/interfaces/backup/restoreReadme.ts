@@ -53,6 +53,14 @@ const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 // directory (incrementals/<runId>), the script decrypts the whole chain at
 // its root, two levels up; a run directory copied out of its chain is
 // decrypted alone.
+//
+// Integrity: each run's manifest lists every file of the run with its size
+// and hash (runs written by earlier releases list none). The manifest is
+// decrypted first; a file added, missing, resized or changed, or cut short,
+// stops the script with the file named (the files already written stay).
+// --ignore-damaged writes every file that verifies, lists the others and
+// exits 1. The mirror's manifests carry no file list: the mirror restores as
+// a backup written before file lists.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -68,10 +76,11 @@ const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'dec
 function fail (msg) { console.error('Error: ' + msg); process.exit(1); }
 
 function parseArgs (argv) {
-  const a = { dir: null, privateKey: null, privateKeyPassphrase: null, passphrase: null, out: null };
+  const a = { dir: null, privateKey: null, privateKeyPassphrase: null, passphrase: null, out: null, ignoreDamaged: false };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
-    if (v === '--private-key') a.privateKey = argv[++i];
+    if (v === '--ignore-damaged') a.ignoreDamaged = true;
+    else if (v === '--private-key') a.privateKey = argv[++i];
     else if (v === '--private-key-passphrase') a.privateKeyPassphrase = argv[++i];
     else if (v === '--passphrase') a.passphrase = argv[++i];
     else if (v === '--out') a.out = argv[++i];
@@ -259,20 +268,89 @@ function main () {
     return { path: relInRun, runId, chainId };
   }
 
-  const files = walk(args.dir, args.dir, []);
-  let n = 0;
-  for (const rel of files) {
+  // A damaged file stops the script (the files already written stay), or,
+  // with --ignore-damaged, is skipped and listed at the end.
+  const damaged = [];
+  function damage (rel, msg) {
+    if (!args.ignoreDamaged) fail(rel + ': ' + msg);
+    damaged.push(rel + ': ' + msg);
+  }
+  const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+
+  // The files of each run, by run root.
+  const byRun = new Map();
+  for (const rel of walk(args.dir, args.dir, [])) {
     const runRoot = runRootOf(args.dir, rel);
-    // Cleartext files, and a chain.json temporary file an interrupted run left.
-    if (SKIP.has(path.relative(runRoot, rel)) || path.basename(rel).startsWith('.chain.json.')) continue;
-    let plain;
-    try {
-      plain = decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, rel)), expectOf(runRoot, rel));
-    } catch (err) {
-      fail(rel + ': ' + err.message);
+    if (!byRun.has(runRoot)) byRun.set(runRoot, []);
+    byRun.get(runRoot).push(rel);
+  }
+  let n = 0;
+  for (const [runRoot, rels] of byRun) {
+    const runLabel = alone ? path.basename(path.resolve(args.dir)) : (runRoot === '.' ? 'full' : path.basename(runRoot));
+    const inRun = (rel) => path.relative(runRoot, rel).split(path.sep).join('/');
+    // Not files of the run: its manifest and signature (read apart), and at
+    // the root the chain's own files and the incrementals/ tree.
+    const outsideTable = (p) => p === 'manifest.json' || p === 'manifest.sig' ||
+      (runRoot === '.' && (p === 'chain.json' || p === '.chain.lock' || p.startsWith('.chain.json.') || p.startsWith('incrementals/')));
+
+    // The manifest first: its file table says what the run holds.
+    const manifestRel = path.join(runRoot, 'manifest.json');
+    let manifest = null;
+    if (rels.includes(manifestRel)) {
+      try {
+        manifest = JSON.parse(decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, manifestRel)), expectOf(runRoot, manifestRel)).toString('utf8'));
+      } catch (err) {
+        damage(manifestRel, err.message);
+      }
     }
-    writePrivate(path.join(outDir, rel), plain);
-    n++;
+    let table = null;
+    if (manifest != null && manifest.integrity != null) {
+      table = new Map((manifest.integrity.files || []).map((f) => [f.path, f]));
+      const present = new Set();
+      for (const rel of rels) {
+        const p = inRun(rel);
+        if (outsideTable(p)) continue;
+        present.add(p);
+        const listed = table.get(p);
+        if (listed == null) damage(rel, 'unlisted file (not in the run\\'s manifest)');
+        else if (fs.statSync(path.join(args.dir, rel)).size !== listed.size) damage(rel, 'size differs from the run\\'s manifest');
+      }
+      for (const p of table.keys()) {
+        if (!present.has(p)) damage(path.join(runRoot, p), 'missing file (listed by the run\\'s manifest)');
+      }
+    }
+
+    let verified = 0;
+    for (const rel of rels) {
+      const p = inRun(rel);
+      if (outsideTable(p)) continue;
+      const raw = fs.readFileSync(path.join(args.dir, rel));
+      if (table != null) {
+        const listed = table.get(p);
+        if (listed == null || raw.length !== listed.size) continue; // reported above
+        if (sha256(raw) !== listed.sha256) { damage(rel, 'differs from the run\\'s manifest (hash)'); continue; }
+        verified++;
+      }
+      // Cleartext files of the run (checked above, not copied).
+      if (SKIP.has(p)) continue;
+      let plain;
+      try {
+        plain = decryptFile(dataKeyOf(runRoot), raw, expectOf(runRoot, rel));
+      } catch (err) {
+        damage(rel, err.message);
+        continue;
+      }
+      writePrivate(path.join(outDir, rel), plain);
+      n++;
+    }
+    if (manifest != null) {
+      // The mirror's sizes and hashes are not the backup's: its manifest
+      // carries no file table (it restores as a run without one).
+      delete manifest.integrity;
+      writePrivate(path.join(outDir, manifestRel), JSON.stringify(manifest, null, 2));
+      n++;
+    }
+    if (table != null) console.log('Run ' + runLabel + ': ' + verified + ' files verified');
   }
   // The mirror of a chain is a plaintext chain.
   if (chainInfo != null) {
@@ -282,6 +360,11 @@ function main () {
     console.log('Backup chain: ' + chain.runs.length + ' run(s)');
   }
   console.log('Decrypted ' + n + ' file(s) to ' + outDir);
+  if (damaged.length > 0) {
+    console.error('Damaged, not written (' + damaged.length + '):');
+    for (const d of damaged) console.error('  ' + d);
+    process.exit(1);
+  }
 }
 
 main();

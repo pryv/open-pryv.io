@@ -238,6 +238,7 @@ describe('[BENC] backup encryption', () => {
         const atts = {};
         for await (const a of ur.readAttachments()) atts[a.fileId] = (await collectAttachment(a.stream)).toString();
         assert.deepStrictEqual(atts, { f1: 'F1 v1 fixture' });
+        assert.deepStrictEqual(warnings, ['full', V1.chain.incId].map((id) => `Run ${id}: written before 2.0.0-rc.85, its file list is not verified`));
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
@@ -505,15 +506,32 @@ describe('[BENC] backup encryption', () => {
       fs.writeFileSync(streamsPath, original.subarray(0, frames[frames.length - 1].start));
       const cut = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm1')]);
       assert.strictEqual(cut.status, 1);
-      assert.match(cut.stderr, /users\/u-0001\/streams.jsonl: truncated encrypted file \(no final frame\)/);
+      assert.match(cut.stderr, /users\/u-0001\/streams.jsonl: size differs from the run's manifest/);
       fs.writeFileSync(streamsPath, original);
 
       // the streams of bob presented as alice's: refused
       fs.copyFileSync(path.join(root, 'users', 'u-0002', 'streams.jsonl'), streamsPath);
       const swapped = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm2')]);
       assert.strictEqual(swapped.status, 1);
-      assert.match(swapped.stderr, /users\/u-0001\/streams.jsonl: carries the identity of users\/u-0002\/streams.jsonl/);
+      assert.match(swapped.stderr, /users\/u-0001\/streams.jsonl: (size differs|differs from the run's manifest)/);
+
+      // --ignore-damaged: everything else written, the damage listed, exit 1
+      const salvage = path.join(tmp, 'm3');
+      const ignored = runScript(script, [root, '--passphrase', 'pw', '--out', salvage, '--ignore-damaged']);
+      assert.strictEqual(ignored.status, 1);
+      assert.match(ignored.stderr, /Damaged, not written \(1\):\n {2}users\/u-0001\/streams.jsonl: /);
+      assert.ok(!fs.existsSync(path.join(salvage, 'users', userId, 'streams.jsonl')), 'the damaged file is not written');
+      assert.deepStrictEqual(fs.readFileSync(path.join(salvage, 'users', userId, 'attachments', 'att-1')), attachmentBytes);
+      assert.ok(fs.existsSync(path.join(salvage, 'users', 'u-0002', 'streams.jsonl')));
       fs.writeFileSync(streamsPath, original);
+
+      // a sound run: every file verified, the mirror's manifest without file table
+      const good = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm4')]);
+      assert.strictEqual(good.status, 0, good.stderr);
+      assert.match(good.stdout, /Run full: \d+ files verified/);
+      const mirrorManifest = JSON.parse(fs.readFileSync(path.join(tmp, 'm4', 'manifest.json'), 'utf8'));
+      assert.strictEqual(mirrorManifest.integrity, undefined);
+      assert.strictEqual(mirrorManifest.runId, 'full');
 
       // a chain written by the first format, continued by the current one
       const mixed = path.join(tmp, 'mixed');
@@ -531,10 +549,12 @@ describe('[BENC] backup encryption', () => {
       assert.match(fs.readFileSync(path.join(mirror, 'users', 'fx-user-1', 'streams.jsonl'), 'utf8'), /"One"/);
       assert.match(fs.readFileSync(path.join(mirror, 'incrementals', incId, 'users', 'fx-user-1', 'streams.jsonl'), 'utf8'), /One renamed again/);
       // and the restore reads the same chain
-      const reader = createFilesystemBackupReader(mixed, { secrets: { passphrase: V1.chain.passphrase } });
+      const warnings = [];
+      const reader = createFilesystemBackupReader(mixed, { secrets: { passphrase: V1.chain.passphrase }, onWarning: (m) => warnings.push(m) });
       const gotStreams = [];
       for await (const s of (await reader.openUser('fx-user-1')).readStreams()) gotStreams.push(s);
       assert.deepStrictEqual(gotStreams, [{ id: 's1', name: 'One renamed again' }]);
+      assert.strictEqual(warnings.length, 2, 'the two runs of the first format are reported, not the current one');
     });
 
     // Every entry below `root` with a mode other than 0700 (directory) / 0600 (file).

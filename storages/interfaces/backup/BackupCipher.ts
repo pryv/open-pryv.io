@@ -235,7 +235,7 @@ function parseHeader (buf: Buffer): FileHeader & { offset: number } {
 /** Refuse a file whose header names another file, run or chain than the one expected. */
 function checkHeader (header: FileHeader, expect: DecryptExpectation): void {
   if (expect.requireVersion != null && header.v < expect.requireVersion) {
-    throw new BackupFormatError(`BackupCipher: file ${expect.path ?? '(unnamed)'} is in format version ${header.v}, version ${expect.requireVersion} required`);
+    throw new BackupFormatError(`BackupCipher: file ${expect.path ?? '(unnamed)'} of run ${expect.runId ?? '(any)'} is in format version ${header.v} in a run of format ${expect.requireVersion}: refused`);
   }
   if (header.v < FORMAT_VERSION) return;
   const mismatch = (expect.path !== undefined && header.path !== expect.path) ||

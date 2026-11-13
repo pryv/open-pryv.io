@@ -399,6 +399,11 @@ class RestoreOrchestrator {
    * email addresses.
    */
   async _importUser (reader: BackupReaderLike, userId: string, username: string, opts: RestoreOptions, targetUserId: string): Promise<ImportedAccount> {
+    // The account in the backup first: a reader that refuses it (a file that
+    // differs from its run's file table, a link) does so before anything of
+    // the account is written or cleared.
+    const userReader = await reader.openUser(userId);
+
     // Ensure user exists in local index
     try {
       await this.usersLocalIndex.addUser(username, targetUserId);
@@ -408,7 +413,6 @@ class RestoreOrchestrator {
     }
 
     const user = { id: targetUserId };
-    const userReader = await reader.openUser(userId);
 
     // Clear existing data if overwrite requested
     if (opts.overwrite) {

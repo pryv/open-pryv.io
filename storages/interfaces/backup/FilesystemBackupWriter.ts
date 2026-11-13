@@ -16,10 +16,13 @@ const require = createRequire(import.meta.url);
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
+const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.ts');
 const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECRYPT_SCRIPT_NAME } = require('./restoreReadme.ts');
-const { INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, BackupChainError, readChain, writeChainAtomic, chainEncryptionOf } = require('./chain.ts');
+const { INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, MANIFEST_FILE_NAME, INTEGRITY_VERSION, BackupChainError, readChain, writeChainAtomic, chainEncryptionOf } = require('./chain.ts');
+const { FORMAT_VERSION } = require('./BackupCipher.ts');
 
 const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB of raw (pre-gzip) bytes per chunk
 
@@ -67,6 +70,8 @@ interface ResolvedWriterOptions {
   encryptor: BackupEncryptor | null;
   /** The directory of the run written: file paths are named relative to it. */
   runDir: string;
+  /** Every file the run wrote (path relative to the run): size and sha256 of the bytes on disk. */
+  fileTable: Map<string, { size: number, sha256: string }>;
 }
 
 // A backup holds full account data: what it creates is for its owner only.
@@ -89,13 +94,37 @@ function runRelativePath (runDir: string, filePath: string): string {
   return path.relative(runDir, filePath).split(path.sep).join('/');
 }
 
+/** Write a file of the run and list it in the run's file table (size and hash of the bytes written). */
+function writeRunFile (filePath: string, data: Buffer | string, opts: ResolvedWriterOptions): void {
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');
+  writePrivateFile(filePath, bytes);
+  opts.fileTable.set(runRelativePath(opts.runDir, filePath), { size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') });
+}
+
 /**
  * Write a buffer to disk, encrypting it first when an encryptor is configured.
  * This is the single choke point that guarantees only ciphertext is flushed.
  */
 function persist (filePath: string, buffer: Buffer, opts: ResolvedWriterOptions): void {
   const rel = runRelativePath(opts.runDir, filePath);
-  writePrivateFile(filePath, opts.encryptor ? opts.encryptor.encryptBuffer(buffer, rel) : buffer);
+  writeRunFile(filePath, opts.encryptor ? opts.encryptor.encryptBuffer(buffer, rel) : buffer, opts);
+}
+
+/** A pass-through that measures and hashes what flows through it (the bytes written to disk). */
+function measuringStream (onEnd: (size: number, sha256: string) => void): NodeJS.ReadWriteStream {
+  const hash = crypto.createHash('sha256');
+  let size = 0;
+  return new Transform({
+    transform (piece: Buffer, _enc: string, cb: (e?: Error | null, data?: Buffer) => void) {
+      hash.update(piece);
+      size += piece.length;
+      cb(null, piece);
+    },
+    flush (cb: (e?: Error | null) => void) {
+      onEnd(size, hash.digest('hex'));
+      cb();
+    }
+  });
 }
 
 /**
@@ -104,7 +133,8 @@ function persist (filePath: string, buffer: Buffer, opts: ResolvedWriterOptions)
 function createFilesystemBackupWriter (outputPath: string, options?: WriterOptions): BackupWriter {
   const opts: ResolvedWriterOptions = Object.assign(
     { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true, encryptor: null, runDir: outputPath },
-    options
+    options,
+    { fileTable: new Map() }
   );
   const run: WriterRun | null = options?.run ?? null;
   // Every file header names this run: an encryptor bound to another run is refused here.
@@ -165,13 +195,14 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
   // backup written by an earlier version may not know incremental runs, and
   // no run rewrites a file of an earlier one.
   if (opts.encryptor) {
-    writePrivateFile(
+    writeRunFile(
       path.join(runDir, 'encryption.json'),
-      JSON.stringify(opts.encryptor.envelope, null, 2)
+      JSON.stringify(opts.encryptor.envelope, null, 2),
+      opts
     );
-    writePrivateFile(path.join(runDir, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
-    writePrivateFile(path.join(runDir, RESTORE_README_NAME),
-      buildRestoreReadme(opts.encryptor.envelope, isIncrementalRun ? { runId: run!.runId } : {}));
+    writeRunFile(path.join(runDir, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT, opts);
+    writeRunFile(path.join(runDir, RESTORE_README_NAME),
+      buildRestoreReadme(opts.encryptor.envelope, isIncrementalRun ? { runId: run!.runId } : {}), opts);
   }
 
   return createBackupWriter({
@@ -205,7 +236,18 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         manifest.runId = run.runId;
         manifest.parentRunId = run.parentRunId;
       }
-      const filePath = path.join(runDir, 'manifest.json');
+      // Every other file of the run, with the size and hash of its bytes on
+      // disk. In an encrypted run the manifest is itself encrypted and bound
+      // to this run: the table is authenticated with it.
+      manifest.integrity = {
+        version: INTEGRITY_VERSION,
+        cipher: opts.encryptor ? FORMAT_VERSION : null,
+        files: [...opts.fileTable.entries()]
+          .filter(([p]) => p !== MANIFEST_FILE_NAME)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([p, e]) => ({ path: p, size: e.size, sha256: e.sha256 }))
+      };
+      const filePath = path.join(runDir, MANIFEST_FILE_NAME);
       persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts);
       if (run == null) return;
 
@@ -319,12 +361,18 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       // Insert the streaming cipher between read and write so the raw blob is
       // never written in the clear (attachments already stream; the transform
       // keeps memory bounded).
+      // The measuring stream sits last, so the file table holds the bytes on disk.
+      const rel = runRelativePath(opts.runDir, filePath);
+      let measured: { size: number, sha256: string } | null = null;
+      const measure = measuringStream((size, sha256) => { measured = { size, sha256 }; });
       if (opts.encryptor) {
-        await pipeline(readStream, opts.encryptor.encryptStream(runRelativePath(opts.runDir, filePath)), writeStream);
+        await pipeline(readStream, opts.encryptor.encryptStream(rel), measure, writeStream);
       } else {
-        await pipeline(readStream, writeStream);
+        await pipeline(readStream, measure, writeStream);
       }
       fs.chmodSync(filePath, PRIVATE_FILE_MODE);
+      if (measured == null) throw new Error(`Backup writer: attachment ${rel} was not measured`);
+      opts.fileTable.set(rel, measured);
       stats.attachments++;
     },
 

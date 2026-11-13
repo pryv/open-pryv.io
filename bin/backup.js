@@ -517,7 +517,7 @@ function buildDecryptSecrets (args) {
  */
 function runInspect (args) {
   const { inspectBackup } = require('storages/interfaces/backup/index.ts');
-  const report = inspectBackup(args.inspect, { secrets: buildDecryptSecrets(args) });
+  const report = inspectBackup(args.inspect, { secrets: buildDecryptSecrets(args), verifyFiles: args.verifyFiles });
   for (const line of report.lines) console.log(line);
   console.log(report.verdict);
   if (report.status === 'ok') return 0;
@@ -554,6 +554,7 @@ function parseArgs (argv) {
     throughRun: null,
     allowIncomplete: false,
     inspect: null,
+    verifyFiles: false,
     help: false
   };
 
@@ -633,6 +634,9 @@ function parseArgs (argv) {
       case '--inspect':
         args.inspect = argv[++i];
         break;
+      case '--verify-files':
+        args.verifyFiles = true;
+        break;
       case '--help':
       case '-h':
         args.help = true;
@@ -675,6 +679,10 @@ function parseArgs (argv) {
   }
   if (args.allowPlaintext && args.requireEncrypted) {
     console.error('Error: --allow-plaintext and --require-encrypted are mutually exclusive');
+    process.exit(1);
+  }
+  if (args.verifyFiles && !args.inspect) {
+    console.error('Error: --verify-files goes with --inspect');
     process.exit(1);
   }
 
@@ -760,7 +768,15 @@ Inspect (reads the directory only; no storage access):
                             of a version before 2.0.0-rc.51 overwrote the full
                             backup), INCOMPLETE (a run is missing), or UNKNOWN
                             (an encrypted backup without chain.json: pass the
-                            restore secret, --passphrase-file or --private-key)
+                            restore secret, --passphrase-file or --private-key).
+                            With the secret of an encrypted backup (or for a
+                            plaintext one), each run's line says how many files
+                            its manifest lists
+  --verify-files            With --inspect: read every file each run's manifest
+                            lists and check its size and hash, and that no file
+                            was added or removed (FAILED, naming the first
+                            file that differs; needs the secret of an encrypted
+                            backup)
 
 General:
   --help, -h                Show this help
@@ -772,7 +788,7 @@ Restore exit codes (with --verify-integrity):
 
 Inspect exit codes:
   0   OK
-  1   DAMAGED, INCOMPLETE or INVALID
+  1   DAMAGED, INCOMPLETE, INVALID or FAILED
   2   UNKNOWN (the secret is needed to read the manifest)
 `);
 }
