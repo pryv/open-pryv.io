@@ -24,6 +24,8 @@
  * against a real encrypted backup), so it cannot silently drift from the cipher.
  */
 
+import { INTEGRITY_RELEASE } from './chain.ts';
+
 const RESTORE_README_NAME = 'RESTORE-README.md';
 const DECRYPT_SCRIPT_NAME = 'decrypt-backup.mjs';
 
@@ -483,6 +485,18 @@ function buildRestoreReadme (envelope: Record<string, unknown>, options: { runId
     '  run (run from a run directory, it decrypts the whole chain at the root). A full backup',
     '  taken before 2.0.0-rc.51 keeps an older script at its root, which does not know',
     '  incremental runs.',
+    '',
+    '## Integrity',
+    '',
+    "Each run's `manifest.json` lists every file of the run with its size and hash, and every encrypted",
+    'file ends with a marked final block tied to its file and run. `--restore`, `--inspect --verify-files`',
+    'and `decrypt-backup.mjs` refuse a run with a file added, removed, changed or cut short. If the backup',
+    'was signed (`manifest.sig` next to `manifest.json`), pass `--signing-pubkey <pem>` to the restore',
+    'tool or to the script: every run must then carry a valid signature of that key. To salvage a damaged',
+    'backup: `node decrypt-backup.mjs --ignore-damaged ...` writes every file that verifies and lists the',
+    'others; the plaintext mirror is restored with `--restore <mirror> --allow-plaintext` (as an',
+    'unverified chain). A run written before ' + INTEGRITY_RELEASE + ' has no file list and is restored without this',
+    'check.',
     ''
   ].join('\n');
 }

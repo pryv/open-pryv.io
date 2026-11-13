@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### Backup and restore: authenticated files, signed runs
+
+- **Every file of a backup run is now listed in the run's manifest with its size and hash, and the
+  manifest is bound to its run.** `--restore` refuses a run with a file added, removed, resized or
+  changed, a `chain.json` entry that disagrees with the run's manifest (users, scope, snapshot
+  time), and an encrypted file that was cut short: an encrypted file now ends with a marked final
+  block, and each block is tied to its file, its position and its run, so a file truncated at a
+  block boundary, an empty file left in place of a real one, or a file swapped between two accounts
+  is detected instead of restoring as valid. An account's files are checked before anything of the
+  account is written. Backups written by earlier releases restore as before (their runs are
+  reported as "file list not verified"); a run written by an earlier release AFTER a run of this
+  release in the same chain is refused (`--through-run` restores up to the last verified run).
+  A file the backup did not write, left in a run's directory (the backup root included), is
+  refused: keep the backup directory for the backup only.
+- **Signed backups (recommended with a recipient public key).** Pass `--signing-key <ed25519 pem>`
+  at backup: each run gets a `manifest.sig`; pass `--signing-pubkey <pem>` at restore and
+  `--inspect`: every run must then be signed by that key, or the restore is refused. With a
+  recipient public key alone, whoever holds that public key and can write to the backup destination
+  could replace a run; the backup prints a warning when it is not signed. Generate the pair once:
+  `openssl genpkey -algorithm ed25519 -out backup-signing.key.pem` and
+  `openssl pkey -in backup-signing.key.pem -pubout -out backup-signing.pub.pem`; keep the private
+  key on the backup host, the public key with the restore secret. A chain keeps the signing key it
+  started with.
+- `--inspect` shows, per run, the number of listed files and whether the run is signed;
+  `--inspect --verify-files` (with the backup's secret) reads and checks every file.
+- The bundled `decrypt-backup.mjs` applies the same checks and stops at the first damaged file,
+  naming it; `--ignore-damaged` writes everything else and lists what it skipped; `--signing-pubkey`
+  verifies the signatures. Its plaintext mirror restores as an unverified chain.
+- New passphrase-encrypted backups use a stronger key derivation (scrypt N = 2^17); existing
+  backups are unaffected.
+- Two backup runs finishing together into the same directory no longer race on `chain.json`: the
+  second is refused and left aside, as an overlapping run already was. A `.chain.lock` file older
+  than a minute is a leftover of a crashed run and is taken over.
+
+### Cluster and configuration
+
+- **Upgrade note, multi-core:** the bootstrap bundle written by `bin/bootstrap.js` is now
+  authenticated with a new envelope version. A new core must run this release or later to read it;
+  the core issuing the bundle may still be older (its bundle is still read).
+- Keys stored encrypted in the platform database (TLS and ACME account keys, authenticator
+  secrets, observability credentials, transfer identities) are rewritten in a new envelope bound to
+  the row that holds them the next time each is written; existing rows keep decrypting. The TLS
+  and ACME keys are now encrypted under a key derived for that purpose from `letsEncrypt.atRestKey`
+  (the configured value is unchanged).
+- **Upgrade note, multi-core:** a core of an earlier release cannot read a row rewritten in the new
+  envelope (the ACME account key is rewritten the first time an upgraded core uses it, at a
+  certificate issuance or renewal). Upgrade every core of a platform together.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

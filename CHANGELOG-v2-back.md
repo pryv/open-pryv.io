@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### Backup file table, frame authentication, manifest signature, envelope v2
+
+- `storages/interfaces/backup/BackupCipher.ts`: header `v: 2` carries `path`, `run`, `chain`; AAD
+  per frame = sha256(header bytes) || u64 index || final flag; the last frame is flagged and
+  required (an empty plaintext is one empty final frame); `authTagLength: 16`; the decryptor
+  checks the header identity against the path and run it was asked for; v1 files read as before.
+  New symmetric envelopes: scrypt N = 131072 (`maxmem` raised on both sides). `createBackupEncryptor`
+  takes the run (`forRun` binds an unbound encryptor; one bound to another run is refused),
+  `createBackupDecryptor` takes the run; `encryptBuffer` / `encryptStream` / `decryptBuffer` /
+  `decryptStream` take the file's path relative to its run.
+- `FilesystemBackupWriter`: `manifest.integrity = { version: 2, cipher, files[{ path, size, sha256 }] }`
+  of the bytes on disk (measuring transform on the attachment pipeline); `manifest.sig` when a
+  `signingKey` is given (Ed25519 over `"pryv-backup-manifest-v2\n" + chainId + "\n" + runId + "\n" +
+  sha256(manifest.json)`); `chain.json.signing` pin; `withChainLock` (`.chain.lock`, `wx`, stale
+  after 60 s) around the re-read + write of `chain.json` in both branches of `writeManifest`.
+- `FilesystemBackupReader` / `chain.ts`: `BackupChainError` codes `integrity` and `signature`;
+  per applied run: signature (when `signingPubKey` is given, over the manifest bytes before they
+  are decrypted), completeness walk (unlisted, missing, size, no link or special file), format pin
+  (`cipher: 2` refuses a v1 file), hash on read (`readBackupBytes` path and a verifying transform
+  on attachments), every file of an account hashed when the account is opened, chain entry
+  cross-check (`users`, `scope`, `snapshotBefore`), legacy notice, legacy-after-current refusal.
+  `inspectBackup`: `files` and `signed` lines, `verifyFiles`, `signingPubKey`, status `failed`.
+- `RestoreOrchestrator._importUser`: the account is opened in the backup (and its files checked)
+  before it is added to the local index or cleared.
+- `bin/backup.js`: `--signing-key`, `--signing-key-passphrase` (`PRYV_BACKUP_SIGNING_KEY_PASSPHRASE`),
+  `--signing-pubkey`, `--inspect --verify-files`; not-signed warning for a hybrid run.
+- `restoreReadme.ts`: the script reads v1 and v2, verifies the file table manifest-first,
+  `--ignore-damaged`, `--signing-pubkey`, mirror manifests without `integrity`, skips `manifest.sig`
+  and `.chain.lock`; the README gains an "Integrity" section.
+- `components/business/src/acme/AtRestEncryption.ts`: envelope byte 2 with AAD `'pryv-at-rest-v2' ||
+  0 || context`, `authTagLength: 16`, `envelopeVersion()`; `encrypt` / `decrypt` / `*Json` take a
+  context; v1 decrypts without binding. `CertRenewer`: derived key (`AT_REST_PURPOSE`) for v2, raw
+  key for v1 rows, account key rewritten once at `ensureAccount`; contexts `acme-account`,
+  `tls-cert:<hostname>`, `observability:<key>`, `transfer-identity:<userId>`. TOTP secrets use the
+  empty context: no stable account id reaches `TotpService.enroll` / `verify` (they get the
+  username), so a TOTP envelope is bound to its purpose key only.
+- `components/business/src/bootstrap/BundleEncryption.ts`: envelope byte 2, AAD
+  `'pryv-bootstrap-bundle' || version || salt || iv`, `authTagLength: 16`; v1 read.
+- `storages/engines/sqlite/src/userAccountStorage.ts`: no change; `[UASF4]` makes the shared first
+  open observable (a slower `userLocalDirectory` set in the engine's registry, one open for three
+  callers).
+- Residuals: a hybrid run without `--signing-key`, and any run read without `--signing-pubkey`, is
+  authenticated against anyone without the data key only; a plaintext run's file table detects
+  corruption, not tampering; files a restore does not read are not hashed (`--inspect
+  --verify-files` does); two FULL runs started together into one empty directory still both pass
+  the plan check (the lock catches them at `chain.json`, their files may have interleaved); a
+  destination without atomic exclusive create keeps the sub-millisecond `chain.json` window; v1
+  at-rest envelopes stay until their row is rewritten; TOTP envelopes are not bound to the account.
+- Tests: storages `[BKAD1]`..`[BKAD6]`, `[BKDS1]`; business `[BKSM1]`..`[BKSM6]`,
+  `[BKLK1]`..`[BKLK3]`, `[BKRS9]`, `[AREV1]`..`[AREV3]`, `[BNEV1]`; api-server `[BKIS1]`..`[BKIS3]`,
+  `[BKDS2]`, `[AREV3]`; storage `[UASF4]`. Fixtures of the first formats in
+  `storages/test/fixtures/backup-cipher-v1.json`.
+
 ### Access integrity hashed on the wire form
 
 - `business/src/integrity/integrity.ts`: `accesses.compute` / `hash` / `key` canonicalise the access
