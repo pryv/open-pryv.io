@@ -41,6 +41,27 @@ describe('[BUNDLEENC] Bundle encryption', function () {
     it('[BNEV1] a bundle of the first envelope version still decrypts', () => {
       assert.deepEqual(BundleEncryption.decrypt(V1_BUNDLE.armored, V1_BUNDLE.passphrase), V1_BUNDLE.bundle);
     });
+
+    // The envelope bytes of an armored bundle, and back.
+    const unarmor = (armored) => Buffer.from(armored.split('\n').filter((l) => l && !l.startsWith('-----')).join(''), 'base64');
+    const rearmor = (buf) => ['-----BEGIN PRYV BOOTSTRAP BUNDLE-----', ...(buf.toString('base64').match(/.{1,64}/g)), '-----END PRYV BOOTSTRAP BUNDLE-----'].join('\n') + '\n';
+
+    it('[BNEV1] a bundle is written in the current version: its version byte, salt and nonce are authenticated', () => {
+      const armored = BundleEncryption.encrypt(SAMPLE_BUNDLE, 'p');
+      const raw = unarmor(armored);
+      assert.equal(raw[0], 2);
+      assert.deepEqual(BundleEncryption.decrypt(armored, 'p'), SAMPLE_BUNDLE);
+      // the version byte rewritten to 1 (read without authenticated data): refused
+      const downgraded = Buffer.from(raw);
+      downgraded[0] = 1;
+      assert.throws(() => BundleEncryption.decrypt(rearmor(downgraded), 'p'), /authentication failed/);
+      // a byte of the salt or of the nonce flipped: refused
+      for (const at of [1, 1 + 16]) {
+        const flipped = Buffer.from(raw);
+        flipped[at] ^= 0x01;
+        assert.throws(() => BundleEncryption.decrypt(rearmor(flipped), 'p'), /authentication failed/, 'byte ' + at);
+      }
+    });
   });
 
   describe('encrypt() / decrypt() round-trip', () => {
