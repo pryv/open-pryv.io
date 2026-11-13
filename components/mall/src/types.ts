@@ -29,6 +29,7 @@ export type { StoredEvent, StoredStream, StoreSupports };
 export type DataStore = {
   init: (params: Record<string, unknown>) => Promise<unknown>;
   deleteUser: (userId: string) => Promise<unknown>;
+  /** `files.sizeKb` is in BYTES despite its name (published pryv-datastore contract name, kept). */
   getUserStorageInfos?: (userId: string) => Promise<{ streams?: { count: number }; events?: { count: number }; files?: { sizeKb: number } }>;
   /** Capability announcement (content-query support, …) — see
    *  pryv-datastore's DataStore.supports. */
