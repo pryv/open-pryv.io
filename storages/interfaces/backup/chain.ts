@@ -535,6 +535,68 @@ function writeChainAtomic (dir: string, chain: Chain): void {
   fs.renameSync(tmp, path.join(dir, CHAIN_FILE_NAME));
 }
 
+const CHAIN_LOCK_FILE_NAME = '.chain.lock';
+/** A lock older than this belongs to a dead run (the section it guards takes milliseconds). */
+const CHAIN_LOCK_STALE_MS = 60_000;
+
+/**
+ * Run `fn` holding the chain lock of `dir`: a file created with exclusive
+ * create (`wx`), removed afterwards. Another run's lock, younger than
+ * CHAIN_LOCK_STALE_MS, refuses this run (`concurrent`); an older one is a
+ * leftover of a crashed run and is taken over.
+ */
+function withChainLock<T> (dir: string, runId: string, runPath: string, fn: () => T): T {
+  const lockPath = path.join(dir, CHAIN_LOCK_FILE_NAME);
+  const take = (): boolean => {
+    try {
+      const fd = fs.openSync(lockPath, 'wx', PRIVATE_FILE_MODE);
+      try {
+        fs.writeSync(fd, JSON.stringify({ pid: process.pid, runId, at: Date.now() }));
+      } finally {
+        fs.closeSync(fd);
+      }
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw err;
+    }
+  };
+  if (!take()) {
+    let stat: fs.Stats | null = null;
+    try {
+      stat = fs.lstatSync(lockPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    // Released meanwhile (stat null), or stale: one more try.
+    if (stat != null && Date.now() - stat.mtimeMs > CHAIN_LOCK_STALE_MS) {
+      try { fs.unlinkSync(lockPath); } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+    }
+    if ((stat != null && Date.now() - stat.mtimeMs <= CHAIN_LOCK_STALE_MS) || !take()) {
+      let holder = '';
+      try {
+        const held = JSON.parse(readNoFollow(lockPath).toString('utf8'));
+        holder = ` (run ${String(held.runId)}, since ${new Date(held.at).toISOString()})`;
+      } catch (err) { /* unreadable: named without its holder */ }
+      throw new BackupChainError('concurrent', `Another backup run holds ${lockPath}${holder}: run ${runId} is left as a stray ${runPath}/ that restore ignores. ` +
+        'Run the backup again; if no run is in progress, remove the lock file.');
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    releaseChainLock(lockPath);
+  }
+}
+
+function releaseChainLock (lockPath: string): void {
+  try {
+    fs.unlinkSync(lockPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}
+
 /** `<yyyymmddThhmmssZ>-<8 hex>`: sortable for a human; chain order is what counts. */
 function newRunId (now: Date = new Date()): string {
   const stamp = now.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/[-:]/g, '');
@@ -1084,6 +1146,9 @@ export {
   checkFileHash,
   checkFilesUnder,
   SIGNATURE_FILE_NAME,
+  CHAIN_LOCK_FILE_NAME,
+  CHAIN_LOCK_STALE_MS,
+  withChainLock,
   ed25519Key,
   signingKeyFingerprint,
   signManifest,

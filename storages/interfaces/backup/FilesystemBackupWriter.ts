@@ -23,7 +23,7 @@ const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.t
 const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECRYPT_SCRIPT_NAME } = require('./restoreReadme.ts');
 const {
   INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, MANIFEST_FILE_NAME, INTEGRITY_VERSION, SIGNATURE_FILE_NAME, BackupChainError,
-  readChain, writeChainAtomic, chainEncryptionOf, ed25519Key, signingKeyFingerprint, signManifest, checkSigningKey
+  readChain, writeChainAtomic, withChainLock, chainEncryptionOf, ed25519Key, signingKeyFingerprint, signManifest, checkSigningKey
 } = require('./chain.ts');
 const { FORMAT_VERSION } = require('./BackupCipher.ts');
 
@@ -285,26 +285,31 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         users: params.userManifests.map((u) => u.userId)
       };
       if (params.scope != null) entry.scope = params.scope;
-      let chain: Chain;
-      if (isIncrementalRun) {
-        // Another run into this directory (an overlapping schedule) may have
-        // joined the chain since this one was planned: appending to the chain
-        // read then would drop that run's entry.
+      // Re-read, check and write chain.json holding the chain lock: two runs
+      // finishing together cannot both append to the chain they read.
+      withChainLock(outputPath, run.runId, run.path, () => {
+        const concurrent = (): Error => new BackupChainError('concurrent', `Backup writer: another run joined the backup chain at ${outputPath} (or its chain.json changed) while this one was written: ` +
+          `refused; run ${run.runId} is left as a stray ${run.path}/ that restore ignores. Run the backup again.`);
         const current = readChain(outputPath);
-        const unchanged = current == null
-          ? baseChain!.runs.length === 1 && baseChain!.runs[0].bootstrapped === true
-          : current.chainId === run.chainId && current.runs[current.runs.length - 1].runId === run.parentRunId;
-        if (!unchanged) {
-          throw new BackupChainError('concurrent', `Backup writer: another run joined the backup chain at ${outputPath} (or its chain.json changed) while this one was written: ` +
-            `refused; run ${run.runId} is left as a stray ${run.path}/ that restore ignores. Run the backup again.`);
+        let chain: Chain;
+        if (isIncrementalRun) {
+          // Another run into this directory (an overlapping schedule) may have
+          // joined the chain since this one was planned: appending to the chain
+          // read then would drop that run's entry.
+          const unchanged = current == null
+            ? baseChain!.runs.length === 1 && baseChain!.runs[0].bootstrapped === true
+            : current.chainId === run.chainId && current.runs[current.runs.length - 1].runId === run.parentRunId;
+          if (!unchanged) throw concurrent();
+          const base = current ?? baseChain!;
+          checkSigningKey(outputPath, base, signingFingerprint);
+          chain = { ...base, ...(base.signing == null && signing != null ? { signing } : {}), runs: [...base.runs, entry] };
+        } else {
+          // Two full runs into one empty directory: the second finds the first's chain.
+          if (current != null) throw concurrent();
+          chain = { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), ...(signing != null ? { signing } : {}), runs: [entry] };
         }
-        const base = current ?? baseChain!;
-        checkSigningKey(outputPath, base, signingFingerprint);
-        chain = { ...base, ...(base.signing == null && signing != null ? { signing } : {}), runs: [...base.runs, entry] };
-      } else {
-        chain = { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), ...(signing != null ? { signing } : {}), runs: [entry] };
-      }
-      writeChainAtomic(outputPath, chain);
+        writeChainAtomic(outputPath, chain);
+      });
     },
 
     async close () { /* no-op for filesystem */ }

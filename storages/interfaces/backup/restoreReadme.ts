@@ -73,7 +73,7 @@ const TAG = 16;
 const NONCE = 12;
 const KEY = 32;
 const HKDF_INFO = Buffer.from('pryv-backup-file-v1', 'utf8');
-const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'decrypt-backup.mjs']);
+const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'decrypt-backup.mjs', 'manifest.sig', '.chain.lock']);
 
 function fail (msg) { console.error('Error: ' + msg); process.exit(1); }
 

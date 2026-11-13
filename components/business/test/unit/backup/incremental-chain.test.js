@@ -1021,3 +1021,62 @@ describe('[BKSG] signed runs', function () {
     assert.ok(streams.some((s) => s.name === 'FORGED'));
   });
 });
+
+// chain.json is re-read, checked and written under an exclusive lock file.
+describe('[BKLK] chain lock', function () {
+  let tmp;
+  beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-bklk-')); });
+  afterEach(function () { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  it('[BKLK1] a fresh lock of another run refuses the run: chain.json unchanged, the run a stray, the lock left; the lock is no file of a run', async function () {
+    const dir = path.join(tmp, 'backup');
+    await writeRun(dir, { run: FULL, users: fullUsers() });
+    const chainBefore = fs.readFileSync(path.join(dir, 'chain.json'));
+    const lockPath = path.join(dir, '.chain.lock');
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, runId: 'other-run', at: Date.now() }));
+    await assert.rejects(() => writeRun(dir, { run: INC1, snapshotBefore: 2000, users: incUsers() }),
+      new RegExp(`Another backup run holds .*\\.chain\\.lock \\(run other-run, since .*\\): run ${INC1_ID} is left as a stray incrementals/${INC1_ID}/ that restore ignores`));
+    assert.deepStrictEqual(fs.readFileSync(path.join(dir, 'chain.json')), chainBefore, 'chain.json unchanged');
+    assert.ok(fs.existsSync(lockPath), 'the other run\'s lock is left');
+    const report = chainApi().inspectBackup(dir);
+    assert.match(report.lines.join('\n'), new RegExp(`stray .*incrementals/${INC1_ID}`));
+    assert.doesNotMatch(report.lines.join('\n'), /stray .*chain\.lock/);
+    // the lock is neither a file of the root run nor refused by its file table
+    assert.ok(!JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).integrity.files.some((f) => f.path.includes('lock')));
+    assert.strictEqual((await createFilesystemBackupReader(dir).readManifest()).users.length, 2);
+  });
+
+  it('[BKLK2] a lock older than a minute is taken over; a run refused inside the lock removes its own', async function () {
+    const dir = path.join(tmp, 'backup');
+    await writeRun(dir, { run: FULL, users: fullUsers() });
+    const lockPath = path.join(dir, '.chain.lock');
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, runId: 'crashed', at: Date.now() - 600000 }));
+    const tenMinutesAgo = new Date(Date.now() - 600000);
+    fs.utimesSync(lockPath, tenMinutesAgo, tenMinutesAgo);
+    await writeRun(dir, { run: INC1, snapshotBefore: 2000, users: incUsers() });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'chain.json'), 'utf8')).runs.map((r) => r.runId), ['full', INC1_ID]);
+    assert.ok(!fs.existsSync(lockPath), 'no lock remains');
+
+    // planned after INC1, but another run joined first: refused inside the lock, which it removes
+    const sibling = { runId: '20261014T000000Z-5a5a5a5a', path: 'incrementals/20261014T000000Z-5a5a5a5a', parentRunId: INC1_ID, chainId: CHAIN_ID };
+    const baseChain = chainApi().readChain(dir);
+    await writeRun(dir, { run: { ...INC2, baseChain }, snapshotBefore: 3000, users: incUsers() });
+    await assert.rejects(() => writeRun(dir, { run: { ...sibling, baseChain }, snapshotBefore: 3000, users: incUsers() }), /another run joined the backup chain/);
+    assert.ok(!fs.existsSync(lockPath), 'the refused run removed its lock');
+  });
+
+  it('[BKLK3] two runs started from the same backup written before chains: the first creates chain.json, the second is refused', async function () {
+    const dir = path.join(tmp, 'pre');
+    await writeRun(dir, { scope: 'all', users: fullUsers() });
+    const { planBackupRun } = chainApi();
+    const first = planBackupRun(dir, { incremental: true });
+    const second = planBackupRun(dir, { incremental: true });
+    assert.notStrictEqual(first.chainId, second.chainId);
+    await writeRun(dir, { run: first, scope: 'users', snapshotBefore: 2000, users: incUsers() });
+    await assert.rejects(() => writeRun(dir, { run: second, scope: 'users', snapshotBefore: 2000, users: incUsers() }), /another run joined the backup chain/);
+    const chain = chainApi().readChain(dir);
+    assert.deepStrictEqual([chain.chainId, chain.runs.map((r) => r.runId)], [first.chainId, ['full', first.runId]]);
+    assert.ok(!fs.existsSync(path.join(dir, '.chain.lock')));
+    assert.match(chainApi().inspectBackup(dir).lines.join('\n'), new RegExp(`stray .*incrementals/${second.runId}`));
+  });
+});
