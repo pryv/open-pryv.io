@@ -22,8 +22,11 @@ const logger = _internals.lazyLogger('storage:accesses-pg');
 type IntegrityAccesses = {
   isActive: boolean;
   set: (item: AccessItem, deep?: boolean) => void;
-  rowFormHash?: (item: AccessItem) => string;
+  /** The previous (row-form) hash; the upgrade pass refuses to run without it. */
+  rowFormHash: (item: AccessItem) => string;
 };
+/** Rows read per round trip by the upgrade pass (keyset on the primary key). */
+const RECOMPUTE_BATCH_SIZE = 1000;
 type RecomputeResult = { scanned: number; rewritten: number; unverified: number };
 /** Storage item for this collection — the canonical stored shape. */
 type AccessItem = StoredAccess;
@@ -259,31 +262,51 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
    * rewritten only when its stored value is the hash of the row itself (the
    * previous computation): any other value is left for the integrity check
    * to report, never replaced. Idempotent: a second run rewrites nothing.
+   * Each UPDATE is a compare-and-set on the stored value, so concurrent runs
+   * (several cores booting on a shared database) and a run interrupted midway
+   * are safe. Rows are read in batches (keyset on the primary key).
    */
   async recomputeIntegrityOfVersionedRows (): Promise<RecomputeResult> {
     const result: RecomputeResult = { scanned: 0, rewritten: 0, unverified: 0 };
     if (!this.integrityAccesses.isActive) return result;
-    const res = await this.db.query(
-      'SELECT * FROM accesses WHERE head_id IS NOT NULL OR serial IS NOT NULL' +
-      ' OR modified_by_serial IS NOT NULL OR created_by_serial IS NOT NULL'
-    );
-    for (const row of res.rows) {
-      const item = this.rowToItem(row);
-      if (item == null || item.integrity == null) continue;
-      result.scanned++;
-      const stored = item.integrity;
-      this.integrityAccesses.set(item, true);
-      if (item.integrity === stored) continue;
-      const rowForm = this.integrityAccesses.rowFormHash;
-      if (rowForm != null && rowForm(item) !== stored) { // the hash leaves `integrity` out
-        result.unverified++;
-        continue;
-      }
-      const upd = await this.db.query(
-        'UPDATE accesses SET integrity = $1 WHERE user_id = $2 AND id = $3 AND integrity = $4',
-        [item.integrity, row.user_id, row.id, stored]
+    const rowForm = this.integrityAccesses.rowFormHash;
+    if (typeof rowForm !== 'function') {
+      // Without the previous hash a row cannot be checked before it is
+      // rewritten: refuse rather than bless a value nobody verified.
+      throw new Error('access integrity recompute needs integrityAccesses.rowFormHash');
+    }
+    let after: [string, string] | null = null;
+    for (;;) {
+      const res = await this.db.query(
+        'SELECT * FROM accesses WHERE (head_id IS NOT NULL OR serial IS NOT NULL' +
+        ' OR modified_by_serial IS NOT NULL OR created_by_serial IS NOT NULL)' +
+        (after != null ? ' AND (user_id, id) > ($2, $3)' : '') +
+        ' ORDER BY user_id, id LIMIT $1',
+        after != null ? [RECOMPUTE_BATCH_SIZE, after[0], after[1]] : [RECOMPUTE_BATCH_SIZE]
       );
-      result.rewritten += upd.rowCount;
+      for (const row of res.rows) {
+        const item = this.rowToItem(row);
+        if (item == null || item.integrity == null) continue;
+        result.scanned++;
+        const stored = item.integrity;
+        this.integrityAccesses.set(item, true);
+        if (item.integrity === stored) continue;
+        // `set()` replaced `item.integrity`; the row-form hash is still the
+        // hash of the row, as `stableRepresentation.access.hash` deletes
+        // `integrity` before stringifying.
+        if (rowForm(item) !== stored) {
+          result.unverified++;
+          continue;
+        }
+        const upd = await this.db.query(
+          'UPDATE accesses SET integrity = $1 WHERE user_id = $2 AND id = $3 AND integrity = $4',
+          [item.integrity, row.user_id, row.id, stored]
+        );
+        result.rewritten += upd.rowCount;
+      }
+      if (res.rows.length < RECOMPUTE_BATCH_SIZE) break;
+      const last = res.rows[res.rows.length - 1];
+      after = [last.user_id as string, last.id as string];
     }
     logger.info('access integrity recompute: ' + result.scanned + ' versioned rows scanned, ' +
       result.rewritten + ' rewritten, ' + result.unverified + ' left as stored (not the previous row hash)');

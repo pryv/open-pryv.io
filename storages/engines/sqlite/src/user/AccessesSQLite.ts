@@ -26,8 +26,11 @@ const logger = _internals.lazyLogger('storage:accesses-sqlite');
 type IntegrityAccesses = {
   isActive: boolean;
   set: (access: AccessItem, recompute?: boolean) => void;
-  rowFormHash?: (access: AccessItem) => string;
+  /** The previous (row-form) hash; the upgrade pass refuses to run without it. */
+  rowFormHash: (access: AccessItem) => string;
 };
+/** Failed user ids named in the summary warning (the per-user errors name them all). */
+const MAX_FAILED_USERS_LISTED = 20;
 type RecomputeResult = { scanned: number; rewritten: number; unverified: number; failedUsers: number };
 
 /** Rows whose stored form differs from the wire form (see `composeWireAccess`). */
@@ -207,6 +210,12 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     const result: RecomputeResult = { scanned: 0, rewritten: 0, unverified: 0, failedUsers: 0 };
     if (!this.integrityAccesses.isActive) return result;
     const rowForm = this.integrityAccesses.rowFormHash;
+    if (typeof rowForm !== 'function') {
+      // Without the previous hash a row cannot be checked before it is
+      // rewritten: refuse rather than bless a value nobody verified.
+      throw new Error('access integrity recompute needs integrityAccesses.rowFormHash');
+    }
+    const failed: string[] = [];
     for (const userId of await _internals.userLocalDirectory.listUserIds() as string[]) {
       if (!fs.existsSync(UserBaseStorageDb.existingPathForUser(userId))) continue;
       try {
@@ -224,7 +233,10 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
             const stored = item.integrity;
             this.integrityAccesses.set(item, true);
             if (item.integrity === stored) continue;
-            if (rowForm != null && rowForm(item) !== stored) { // the hash leaves `integrity` out
+            // `set()` replaced `item.integrity`; the row-form hash is still the
+            // hash of the row, as `stableRepresentation.access.hash` deletes
+            // `integrity` before stringifying.
+            if (rowForm(item) !== stored) {
               result.unverified++;
               continue;
             }
@@ -233,12 +245,18 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
         }).immediate());
       } catch (err) {
         result.failedUsers++;
+        failed.push(userId);
         logger.error('access integrity recompute failed for user ' + userId + ': ' + (err as Error).message);
       }
     }
     logger.info('access integrity recompute: ' + result.scanned + ' versioned rows scanned, ' +
       result.rewritten + ' rewritten, ' + result.unverified + ' left as stored (not the previous row hash)' +
       (result.failedUsers > 0 ? ', ' + result.failedUsers + ' user databases failed' : ''));
+    if (failed.length > 0) {
+      logger.warn('access integrity recompute: the pass runs again at every start until every user database' +
+        ' succeeds; failed: ' + failed.slice(0, MAX_FAILED_USERS_LISTED).join(', ') +
+        (failed.length > MAX_FAILED_USERS_LISTED ? ' and ' + (failed.length - MAX_FAILED_USERS_LISTED) + ' more' : ''));
+    }
     return result;
   }
 

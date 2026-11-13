@@ -12,8 +12,18 @@
   that were never updated are unchanged; the stored hashes of updated ones are recomputed once at
   upgrade. A copy returned without credentials (token removed, counterparty URLs rewritten, as in
   `accessDeletions` or an app's listing of accesses it does not hold the token of) cannot be
-  re-hashed by its receiver: the value is the server's record, which a holder of the token can
-  verify after restoring it.
+  re-hashed by its receiver: the value is the server's record, which a holder of the credentials
+  can verify after restoring them.
+- **Upgrade:** on PostgreSQL the recompute is a migration, run at boot by default. With
+  `migrations.autoRunOnStart: false`, run `node bin/migrate.js up` before trusting
+  `bin/integrity-check.js`: until then it reports the updated accesses as mismatches. On SQLite the
+  recompute runs at the first start of the new version (and in `bin/integrity-check.js` itself).
+- **`integrity.algorithm` other than `sha256`:** event integrity computed by the storage layer and
+  every check by `bin/integrity-check.js` used sha256 whatever the setting; they now use the
+  configured algorithm. With the default `sha256` nothing changes. With `sha512`, events written
+  before this release by that path carry sha256 hashes and are now reported by the integrity check
+  (they are not recomputed: as for any change of algorithm, items written under another one no
+  longer match), while accesses, which were hashed with the configured algorithm, now verify.
 
 ### Account transfer to a beneficiary
 

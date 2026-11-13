@@ -37,7 +37,7 @@ describe('[AIWA] access integrity verifies on the wire form', function () {
     fixtures = getNewFixture();
     const storageLayer = await storage.getStorageLayer();
     accessStorage = storageLayer.accesses;
-    isPG = accessStorage.constructor.name === 'AccessesPG';
+    isPG = require('storages').pluginLoader.getEngineFor('baseStorage') === 'postgresql';
   });
 
   /** A fresh account: personal, app (manages stream0) and a shared access it created. */
@@ -84,9 +84,12 @@ describe('[AIWA] access integrity verifies on the wire form', function () {
     return res.body.access;
   }
 
+  /** As a client verifies: `usage` (derived at read time) is not covered by the hash. */
   function assertVerifies (access, label) {
     assert.ok(access?.integrity, label + ': carries integrity');
-    assert.equal(stableRepresentation.access.hash(access, integrity.algorithm), access.integrity,
+    const hashed = Object.assign({}, access);
+    delete hashed.usage;
+    assert.equal(stableRepresentation.access.hash(hashed, integrity.algorithm), access.integrity,
       label + ': verifies with the bare library');
   }
 
@@ -302,6 +305,26 @@ describe('[AIWA] access integrity verifies on the wire form', function () {
       assert.ok(res.unverified >= 1, JSON.stringify(res));
       const stored = (await allRows(s.user)).find((r) => r.id === s.sharedId).integrity;
       assert.equal(stored, bogus, 'never replaced');
+    } finally {
+      await writeStoredIntegrity(s.user.id, head.id, good);
+    }
+  });
+
+  it('[AIWQ] without the previous-hash function the recompute refuses to run and rewrites nothing', async function () {
+    const s = await newAccount();
+    await update(s, s.sharedId, { name: 'rev-1' });
+    const head = (await allRows(s.user)).find((r) => r.id === s.sharedId);
+    const good = head.integrity;
+    const legacy = integrity.accesses.rowFormHash(head);
+    await writeStoredIntegrity(s.user.id, head.id, legacy);
+    const stub = { isActive: true, set: integrity.accesses.set };
+    const engine = isPG
+      ? new (require('storages/engines/postgresql/src/user/AccessesPG.ts').AccessesPG)(require('storages').databasePG, stub)
+      : new (require('storages/engines/sqlite/src/user/AccessesSQLite.ts').AccessesSQLite)(stub);
+    try {
+      await assert.rejects(engine.recomputeIntegrityOfVersionedRows(), /rowFormHash/);
+      const stored = (await allRows(s.user)).find((r) => r.id === s.sharedId).integrity;
+      assert.equal(stored, legacy, 'left as stored');
     } finally {
       await writeStoredIntegrity(s.user.id, head.id, good);
     }

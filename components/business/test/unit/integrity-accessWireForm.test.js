@@ -77,6 +77,9 @@ describe('[AIWB] access integrity: canonical (wire) form', function () {
     assert.equal(integrity.accesses.hash(row), stableRepresentation.access.hash(row, integrity.algorithm));
     const withUsage = Object.assign(baseRow(), { usage: { calls: 3 } });
     assert.equal(integrity.accesses.hash(withUsage), integrity.accesses.hash(row));
+    const idLess = { name: 'aiww id-less', type: 'app', permissions: [{ streamId: '*', level: 'read' }] };
+    assert.equal(integrity.accesses.hash(idLess), stableRepresentation.access.hash(idLess, integrity.algorithm),
+      'an object without id hashes as given');
   });
 
   it('[AIWZ] compute() hashes with the configured algorithm, for events and accesses', function () {
