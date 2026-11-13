@@ -21,7 +21,10 @@ const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.ts');
 const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECRYPT_SCRIPT_NAME } = require('./restoreReadme.ts');
-const { INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, MANIFEST_FILE_NAME, INTEGRITY_VERSION, BackupChainError, readChain, writeChainAtomic, chainEncryptionOf } = require('./chain.ts');
+const {
+  INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, MANIFEST_FILE_NAME, INTEGRITY_VERSION, SIGNATURE_FILE_NAME, BackupChainError,
+  readChain, writeChainAtomic, chainEncryptionOf, ed25519Key, signingKeyFingerprint, signManifest, checkSigningKey
+} = require('./chain.ts');
 const { FORMAT_VERSION } = require('./BackupCipher.ts');
 
 const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB of raw (pre-gzip) bytes per chunk
@@ -61,6 +64,12 @@ interface WriterOptions {
   encryptor?: BackupEncryptor | null;
   /** The chain run written (see WriterRun). */
   run?: WriterRun | null;
+  /**
+   * Ed25519 private key (PEM, `{ key, passphrase }` or KeyObject): the run's
+   * manifest is signed (`manifest.sig`) and the chain pinned to the key. A
+   * chain already pinned to a key needs that key.
+   */
+  signingKey?: unknown;
 }
 
 interface ResolvedWriterOptions {
@@ -105,9 +114,11 @@ function writeRunFile (filePath: string, data: Buffer | string, opts: ResolvedWr
  * Write a buffer to disk, encrypting it first when an encryptor is configured.
  * This is the single choke point that guarantees only ciphertext is flushed.
  */
-function persist (filePath: string, buffer: Buffer, opts: ResolvedWriterOptions): void {
+function persist (filePath: string, buffer: Buffer, opts: ResolvedWriterOptions): Buffer {
   const rel = runRelativePath(opts.runDir, filePath);
-  writeRunFile(filePath, opts.encryptor ? opts.encryptor.encryptBuffer(buffer, rel) : buffer, opts);
+  const bytes = opts.encryptor ? opts.encryptor.encryptBuffer(buffer, rel) : buffer;
+  writeRunFile(filePath, bytes, opts);
+  return bytes;
 }
 
 /** A pass-through that measures and hashes what flows through it (the bytes written to disk). */
@@ -167,6 +178,10 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
       throw new Error('Backup writer: invalid full run ' + JSON.stringify({ runId: run.runId, path: run.path }));
     }
   }
+  // The signing key: a chain pinned to one is continued with it only (checked before anything is written).
+  const signingKey = options?.signingKey != null ? ed25519Key(options.signingKey, 'private') : null;
+  const signingFingerprint = signingKey != null ? signingKeyFingerprint(signingKey) : null;
+  if (baseChain != null) checkSigningKey(outputPath, baseChain, signingFingerprint);
 
   // An existing output directory keeps its mode (the operator chose it); the
   // directories created below it are private.
@@ -248,8 +263,15 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
           .map(([p, e]) => ({ path: p, size: e.size, sha256: e.sha256 }))
       };
       const filePath = path.join(runDir, MANIFEST_FILE_NAME);
-      persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts);
+      const manifestBytes = persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts);
+      // The signature of the manifest as written (cleartext, next to it):
+      // the run's authenticity for whoever holds the public key.
+      if (signingKey != null) {
+        const signature = signManifest(manifestBytes, run?.chainId ?? null, run?.runId ?? FULL_RUN_ID, signingKey);
+        writePrivateFile(path.join(runDir, SIGNATURE_FILE_NAME), JSON.stringify(signature, null, 2));
+      }
       if (run == null) return;
+      const signing = signingFingerprint != null ? { alg: 'ed25519' as const, keyFingerprint: signingFingerprint } : null;
 
       // The run joins the chain only once its manifest is written.
       const entry: ChainRun = {
@@ -277,9 +299,10 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
             `refused; run ${run.runId} is left as a stray ${run.path}/ that restore ignores. Run the backup again.`);
         }
         const base = current ?? baseChain!;
-        chain = { ...base, runs: [...base.runs, entry] };
+        checkSigningKey(outputPath, base, signingFingerprint);
+        chain = { ...base, ...(base.signing == null && signing != null ? { signing } : {}), runs: [...base.runs, entry] };
       } else {
-        chain = { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), runs: [entry] };
+        chain = { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), ...(signing != null ? { signing } : {}), runs: [entry] };
       }
       writeChainAtomic(outputPath, chain);
     },

@@ -23,7 +23,7 @@ const {
   BackupChainError, damagedRestoreMessage, deletedUserMessage, deletedUsersOf, resolveRuns, runDirectory,
   readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readNoFollow,
   runIntegrityOf, checkRunFiles, checkFileHash, checkFilesUnder, integrityError, legacyRunNotice, legacyAfterVerifiedError,
-  requiredFormatOf, INTEGRITY_RELEASE
+  requiredFormatOf, INTEGRITY_RELEASE, ed25519Key, verifyManifestSignature
 } = require('./chain.ts');
 
 // Open for reading without following a symbolic link (where the platform has the flag).
@@ -42,6 +42,12 @@ interface ReaderOptions {
   allowIncomplete?: boolean;
   /** Called with what the reader ignores (directories the chain does not list). */
   onWarning?: (message: string) => void;
+  /**
+   * Ed25519 public key (PEM or KeyObject): every applied run must carry a
+   * `manifest.sig` of this key over its manifest, checked before the manifest
+   * is used. Without it, signatures are not checked.
+   */
+  signingPubKey?: unknown;
 }
 
 /**
@@ -151,6 +157,8 @@ function userIdsOf (manifest: Manifest | null): Set<string> {
  */
 function createFilesystemBackupReader (inputPath: string, options?: ReaderOptions): BackupReader {
   const opts: ReaderOptions = options ?? {};
+  // With a public key, every applied run must be signed by it.
+  const signingPubKey = opts.signingPubKey != null ? ed25519Key(opts.signingPubKey, 'public') : null;
   // The backup root may itself be a link the operator chose: everything below
   // it is read from its real path, where no further link is followed.
   const realRoot = (): string => fs.realpathSync(inputPath);
@@ -194,8 +202,10 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
 
       let manifest: Manifest | null = null;
       if (chain != null) {
-        manifest = readRunManifest(root, inputPath, chain, run, previousRunId, decryptor);
+        manifest = readRunManifest(root, inputPath, chain, run, previousRunId, decryptor, signingPubKey);
       } else {
+        // Signed by the key given, before the manifest is used.
+        if (signingPubKey != null) verifyManifestSignature(dir, readNoFollow(path.join(dir, 'manifest.json')), null, run.runId, signingPubKey, inputPath);
         try {
           manifest = JSON.parse(loadBytes(path.join(dir, 'manifest.json'), files).toString('utf8'));
         } catch (err) {

@@ -909,3 +909,115 @@ describe('[BKSM] run file table and chain cross-check', function () {
       /file users\/u2-full-only\/streams.jsonl of run full is in format version 1 in a run of format 2: refused/);
   });
 });
+
+// A run signed with an Ed25519 key the backup host holds: the restore given
+// the public key refuses a run that is not signed by it.
+describe('[BKSG] signed runs', function () {
+  let tmp;
+  beforeEach(function () { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-bksg-')); });
+  afterEach(function () { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+  const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+  const ed25519 = () => crypto.generateKeyPairSync('ed25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+  const fingerprintOf = (publicKeyPem) => 'sha256:' + sha256(crypto.createPublicKey(publicKeyPem).export({ type: 'spki', format: 'der' }));
+
+  async function writeSigned (dir, run, signingKey, extra = {}) {
+    const writer = createFilesystemBackupWriter(dir, { compress: false, run, signingKey, encryptor: extra.encryptor ?? null });
+    const manifests = [];
+    for (const u of extra.users ?? (run.path === '.' ? fullUsers() : incUsers())) {
+      const uw = await writer.openUser(u.userId, u.username);
+      await uw.writeStreams(u.streams ?? []);
+      manifests.push(await uw.close());
+    }
+    await writer.writeManifest({ coreVersion: 'test', config: {}, backupType: 'unused', snapshotBefore: run.path === '.' ? 1000 : 2000, backupTimestamp: 1, userManifests: manifests, scope: 'users' });
+  }
+
+  it('[BKSM4] a signed run carries manifest.sig and pins the chain; the restore given the public key verifies every run, refuses another key, a changed manifest, a run without signature', async function () {
+    const keys = ed25519();
+    const protectedKey = crypto.createPrivateKey(keys.privateKey).export({ type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase: 'kp' });
+    const dir = path.join(tmp, 'signed');
+    const encryptor = () => createBackupEncryptor({ passphrase: 'pw' });
+    await writeSigned(dir, FULL, { key: protectedKey, passphrase: 'kp' }, { encryptor: encryptor() });
+    await writeSigned(dir, INC1, keys.privateKey, { encryptor: encryptor() });
+
+    const fp = fingerprintOf(keys.publicKey);
+    const sig = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.sig'), 'utf8'));
+    assert.deepStrictEqual(Object.keys(sig).sort(), ['alg', 'keyFingerprint', 'manifestSha256', 'signature', 'v']);
+    assert.deepStrictEqual([sig.v, sig.alg, sig.keyFingerprint, sig.manifestSha256], [2, 'ed25519', fp, sha256(fs.readFileSync(path.join(dir, 'manifest.json')))]);
+    assert.ok(crypto.verify(null, Buffer.from(`pryv-backup-manifest-v2\n${CHAIN_ID}\nfull\n${sig.manifestSha256}`), keys.publicKey, Buffer.from(sig.signature, 'base64')));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'chain.json'), 'utf8')).signing, { alg: 'ed25519', keyFingerprint: fp });
+    if (process.platform !== 'win32') assert.strictEqual(fs.statSync(path.join(dir, 'manifest.sig')).mode & 0o777, 0o600);
+
+    const secrets = { passphrase: 'pw' };
+    const read = (signingPubKey) => createFilesystemBackupReader(dir, { secrets, signingPubKey }).readManifest();
+    assert.strictEqual((await read(keys.publicKey)).runs.length, 2, 'verified');
+    await assert.rejects(() => read(ed25519().publicKey), /Run full of the backup at .*: not signed by the key given \(--signing-pubkey\): signed with another key/);
+
+    // a byte of an encrypted manifest changed: refused by its signature, before it is decrypted
+    const incManifest = path.join(dir, 'incrementals', INC1_ID, 'manifest.json');
+    const bytes = fs.readFileSync(incManifest);
+    const changed = Buffer.from(bytes);
+    changed[changed.length - 3] ^= 0x01;
+    fs.writeFileSync(incManifest, changed);
+    await assert.rejects(() => read(keys.publicKey), new RegExp(`Run ${INC1_ID} .*: not signed by the key given \\(--signing-pubkey\\): manifest.json differs from the signed one`));
+    fs.writeFileSync(incManifest, bytes);
+
+    // a run without signature
+    const incSig = path.join(dir, 'incrementals', INC1_ID, 'manifest.sig');
+    const sigBytes = fs.readFileSync(incSig);
+    fs.rmSync(incSig);
+    await assert.rejects(() => read(keys.publicKey), new RegExp(`Run ${INC1_ID} .*: not signed by the key given \\(--signing-pubkey\\): no manifest.sig`));
+    // without a public key, signatures are not checked
+    assert.strictEqual((await read(null)).runs.length, 2);
+    fs.writeFileSync(incSig, sigBytes);
+
+    // a pinned chain is continued with its key only (refused before anything is written)
+    const { planBackupRun } = chainApi();
+    assert.throws(() => planBackupRun(dir, { incremental: true, passphrase: 'pw' }), new RegExp(`is signed with key ${fp}: pass the same --signing-key`));
+    assert.throws(() => planBackupRun(dir, { incremental: true, passphrase: 'pw', signingKeyFingerprint: fingerprintOf(ed25519().publicKey) }), /differs from the one of the backup chain/);
+    assert.strictEqual(planBackupRun(dir, { incremental: true, passphrase: 'pw', signingKeyFingerprint: fp }).parentRunId, INC1_ID);
+    assert.throws(() => createFilesystemBackupWriter(dir, { compress: false, run: INC2, encryptor: encryptor() }), /is signed with key/);
+    assert.ok(!fs.existsSync(path.join(dir, 'incrementals', INC2_ID)), 'nothing written');
+
+    // an unsigned chain is pinned by its first signed run
+    const later = path.join(tmp, 'later');
+    await writeSigned(later, FULL, null);
+    assert.strictEqual(JSON.parse(fs.readFileSync(path.join(later, 'chain.json'), 'utf8')).signing, undefined);
+    await writeSigned(later, INC1, keys.privateKey);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(later, 'chain.json'), 'utf8')).signing, { alg: 'ed25519', keyFingerprint: fp });
+    await assert.rejects(() => createFilesystemBackupReader(later, { signingPubKey: keys.publicKey }).readManifest(), /Run full .*: no manifest.sig/);
+
+    // a key of another type is refused
+    assert.throws(() => createFilesystemBackupWriter(path.join(tmp, 'rsa'), { run: FULL, signingKey: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey }), /not an Ed25519 key/);
+  });
+
+  it('[BKSM5] with the recipient public key only, a run can be replaced: refused when the public signing key is given, accepted without it', async function () {
+    const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    const signing = ed25519();
+    const dir = path.join(tmp, 'hybrid');
+    await writeSigned(dir, FULL, signing.privateKey, { encryptor: createBackupEncryptor({ recipientPubKeyPem: rsa.publicKey }) });
+    await writeSigned(dir, INC1, signing.privateKey, { encryptor: createBackupEncryptor({ recipientPubKeyPem: rsa.publicKey }) });
+
+    // The forge: the incremental run replaced by one of the attacker's (a fresh
+    // data key wrapped with the public key, files and manifest consistent),
+    // chain.json rewritten without the signing pin.
+    fs.rmSync(path.join(dir, 'incrementals', INC1_ID), { recursive: true });
+    const chainPath = path.join(dir, 'chain.json');
+    const chain = JSON.parse(fs.readFileSync(chainPath, 'utf8'));
+    delete chain.signing;
+    chain.runs = chain.runs.slice(0, 1);
+    fs.writeFileSync(chainPath, JSON.stringify(chain, null, 2));
+    await writeSigned(dir, INC1, null, {
+      encryptor: createBackupEncryptor({ recipientPubKeyPem: rsa.publicKey }),
+      users: [{ userId: 'u1-full-and-inc', username: 'alice', streams: [{ id: 's1', name: 'FORGED', modified: 5000 }] }]
+    });
+
+    const secrets = { privateKeyPem: rsa.privateKey };
+    await assert.rejects(() => createFilesystemBackupReader(dir, { secrets, signingPubKey: signing.publicKey }).readManifest(),
+      new RegExp(`Run ${INC1_ID} .*: not signed by the key given \\(--signing-pubkey\\): no manifest.sig`));
+    // Without the public signing key, the forged run is read: the boundary the backup's warning states.
+    const reader = createFilesystemBackupReader(dir, { secrets });
+    const streams = await collect((await reader.openUser('u1-full-and-inc')).readStreams());
+    assert.ok(streams.some((s) => s.name === 'FORGED'));
+  });
+});

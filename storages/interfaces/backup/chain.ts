@@ -23,6 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import type { KeyObject, PrivateKeyInput, PublicKeyInput } from 'node:crypto';
 import { createBackupDecryptor, recipientKeyFingerprint } from './BackupCipher.ts';
 import type { BackupDecryptor, DecryptorSecrets, DecryptExpectation, Envelope } from './BackupCipher.ts';
 
@@ -95,11 +96,28 @@ type DeletedUser = {
   deletedBeforeRunId: string;
 };
 
+/**
+ * The signing key of a chain, set by its first signed run: every later run
+ * must be signed with it. Operational consistency only (chain.json is
+ * cleartext): trust comes from the public key given at restore.
+ */
+type ChainSigning = { alg: 'ed25519', keyFingerprint: string };
+
 type Chain = {
   formatVersion: number;
   chainId: string;
   encryption: ChainEncryption;
+  signing?: ChainSigning;
   runs: ChainRun[];
+};
+
+/** A run's signature file, next to its manifest. */
+type ManifestSignature = {
+  v: number;
+  alg: 'ed25519';
+  keyFingerprint: string;
+  manifestSha256: string;
+  signature: string;
 };
 
 type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted' | 'concurrent' | 'integrity' | 'signature';
@@ -355,6 +373,89 @@ function legacyAfterVerifiedError (runId: string, previousRunId: string, dir: st
     `--through-run ${previousRunId} restores up to the last verified run.`);
 }
 
+// ---------------------------------------------------------------------------
+// Signed runs (`manifest.sig`)
+// ---------------------------------------------------------------------------
+
+const SIGNATURE_FILE_NAME = 'manifest.sig';
+const SIGNATURE_VERSION = 2;
+const SIGNATURE_LABEL = 'pryv-backup-manifest-v2';
+
+/** The bytes signed for a run: a label, the chain and run ids, the hash of `manifest.json` as written. */
+function signedMessage (chainId: string | null, runId: string, manifestSha256: string): Buffer {
+  return Buffer.from(SIGNATURE_LABEL + '\n' + (chainId ?? '') + '\n' + runId + '\n' + manifestSha256, 'utf8');
+}
+
+/** An Ed25519 key (private or public) from a PEM, a KeyObject or `{ key, passphrase }`; anything else is refused. */
+function ed25519Key (key: unknown, kind: 'private' | 'public'): KeyObject {
+  let obj: KeyObject;
+  if (key instanceof crypto.KeyObject) obj = key;
+  else if (kind === 'private') obj = crypto.createPrivateKey(key as PrivateKeyInput | string | Buffer);
+  else obj = crypto.createPublicKey(key as PublicKeyInput | string | Buffer);
+  if (obj.asymmetricKeyType !== 'ed25519') throw new Error(`Backup signing: the ${kind} key is not an Ed25519 key (${String(obj.asymmetricKeyType)})`);
+  if (kind === 'public' && obj.type === 'private') obj = crypto.createPublicKey(obj);
+  if (obj.type !== (kind === 'private' ? 'private' : 'public')) throw new Error(`Backup signing: a ${kind} key is required`);
+  return obj;
+}
+
+/** `sha256:<hex>` of the SPKI DER of the public half of a signing key. */
+function signingKeyFingerprint (key: KeyObject): string {
+  const publicKey = key.type === 'private' ? crypto.createPublicKey(key) : key;
+  return 'sha256:' + crypto.createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
+}
+
+/** The signature file of a run whose `manifest.json` bytes are `manifestBytes`. */
+function signManifest (manifestBytes: Buffer, chainId: string | null, runId: string, privateKey: KeyObject): ManifestSignature {
+  const manifestSha256 = crypto.createHash('sha256').update(manifestBytes).digest('hex');
+  return {
+    v: SIGNATURE_VERSION,
+    alg: 'ed25519',
+    keyFingerprint: signingKeyFingerprint(privateKey),
+    manifestSha256,
+    signature: crypto.sign(null, signedMessage(chainId, runId, manifestSha256), privateKey).toString('base64')
+  };
+}
+
+/** The signature file of a run directory, parsed (null when there is none or it is not JSON). */
+function readManifestSignature (runDir: string): ManifestSignature | null {
+  const text = readCleartextFile(path.join(runDir, SIGNATURE_FILE_NAME));
+  if (text == null) return null;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Verify a run's signature against the public key given at restore: present,
+ * of that key, over these manifest bytes, this run and chain. Returns nothing;
+ * throws a `signature` error naming the run.
+ */
+function verifyManifestSignature (runDir: string, manifestBytes: Buffer, chainId: string | null, runId: string, publicKey: KeyObject, dir: string): void {
+  const refuse = (why: string): BackupChainError => new BackupChainError('signature', `Run ${runId} of the backup at ${dir}: not signed by the key given (--signing-pubkey): ${why}: refused.`);
+  const sig = readManifestSignature(runDir);
+  if (sig == null) throw refuse('no manifest.sig');
+  if (sig.v !== SIGNATURE_VERSION || sig.alg !== 'ed25519' || typeof sig.signature !== 'string') throw refuse('unknown signature format');
+  if (sig.keyFingerprint !== signingKeyFingerprint(publicKey)) throw refuse(`signed with another key (${String(sig.keyFingerprint)})`);
+  const manifestSha256 = crypto.createHash('sha256').update(manifestBytes).digest('hex');
+  if (sig.manifestSha256 !== manifestSha256) throw refuse('manifest.json differs from the signed one');
+  let ok = false;
+  try {
+    ok = crypto.verify(null, signedMessage(chainId, runId, manifestSha256), publicKey, Buffer.from(sig.signature, 'base64'));
+  } catch (err) {
+    ok = false;
+  }
+  if (!ok) throw refuse('the signature does not verify');
+}
+
+/** The `signed:` part of an inspect line. */
+function describeSignature (runDir: string): string {
+  const sig = readManifestSignature(runDir);
+  if (sig == null) return 'signed: no';
+  return `signed: yes, key ${String(sig.keyFingerprint)}`;
+}
+
 /** The file format version the run pins (`2` refuses a file of the first format), or undefined. */
 function requiredFormatOf (integrity: RunIntegrity | null): number | undefined {
   return integrity?.cipher === 2 ? 2 : undefined;
@@ -383,6 +484,9 @@ function validateChain (chain: unknown, dir: string): asserts chain is Chain {
   if (c.formatVersion !== CHAIN_FORMAT_VERSION) throw invalidChain(dir, 'unknown formatVersion ' + JSON.stringify(c.formatVersion));
   if (typeof c.chainId !== 'string' || !CHAIN_ID_RE.test(c.chainId)) throw invalidChain(dir, 'chainId');
   validateEncryption(c.encryption, dir);
+  if (c.signing !== undefined && (c.signing == null || c.signing.alg !== 'ed25519' || typeof c.signing.keyFingerprint !== 'string' || !FINGERPRINT_RE.test(c.signing.keyFingerprint))) {
+    throw invalidChain(dir, 'signing');
+  }
   if (!Array.isArray(c.runs) || c.runs.length === 0) throw invalidChain(dir, 'no runs');
   const seen = new Set<string>();
   c.runs.forEach((run: ChainRun, i: number) => {
@@ -575,13 +679,18 @@ function runDirectory (root: string, run: ChainRun): string {
  * directory grafted from another chain, or a swapped or reordered
  * `chain.json`, is refused). A consistency check, not an authentication.
  */
-function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun, previousRunId: string | null, decryptor: BackupDecryptor | null): Record<string, unknown> {
+function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun, previousRunId: string | null, decryptor: BackupDecryptor | null, signingPubKey?: KeyObject | null): Record<string, unknown> {
   const runDir = runDirectory(root, run);
   const manifestPath = runDir === '' ? '' : path.join(runDir, MANIFEST_FILE_NAME);
   if (runDir === '' || !existsNoFollow(manifestPath)) {
     throw new BackupChainError('incomplete', missingRunMessage(dir, run.runId, previousRunId, 'its manifest'));
   }
-  const manifest = JSON.parse(readBackupBytes(manifestPath, decryptor, { path: MANIFEST_FILE_NAME, ...runIdentityOf(chain, run) }).toString('utf8'));
+  const identity = runIdentityOf(chain, run);
+  // Read once: the signature (when a public key is given) covers these bytes,
+  // checked before anything is decrypted or parsed.
+  const raw = readNoFollow(manifestPath);
+  if (signingPubKey != null) verifyManifestSignature(runDir, raw, identity.chainId, run.runId, signingPubKey, dir);
+  const manifest = JSON.parse((decryptor ? decryptor.decryptBuffer(raw, { path: MANIFEST_FILE_NAME, ...identity }) : raw).toString('utf8'));
   const pre = run.bootstrapped === true && manifest.chainId == null && manifest.runId == null;
   if (!pre && (manifest.chainId !== chain.chainId || manifest.runId !== run.runId || (manifest.parentRunId ?? null) !== (run.parentRunId ?? null))) {
     throw new BackupChainError('mismatch', `Run ${run.runId} of the backup chain at ${dir} does not belong to this chain (its manifest names another chain, run or parent run): refused.`);
@@ -640,6 +749,8 @@ interface PlanOptions {
   /** Only to read the manifest of a hybrid full backup written before chains (once). */
   privateKeyPem?: string | Buffer | null;
   privateKeyPassphrase?: string | null;
+  /** `sha256:<hex>` of the signing key of this run (null: unsigned); a signed chain needs its own key. */
+  signingKeyFingerprint?: string | null;
 }
 
 interface RunPlan {
@@ -673,6 +784,18 @@ function checkKeyModel (dir: string, existing: ChainEncryption, requested: Chain
   }
   if (existing?.mode === 'hybrid' && requested?.mode === 'hybrid' && existing.recipientKeyFingerprint !== requested.recipientKeyFingerprint) {
     throw new BackupChainError('key-model', `The recipient key differs from the one of the backup chain at ${dir}: refused (nothing written). Continue the chain with the same --recipient-pubkey, or start a new chain in a new directory.`);
+  }
+}
+
+/** A chain signed with a key is continued with that key only (checked before anything is written). */
+function checkSigningKey (dir: string, chain: Chain, fingerprint: string | null): void {
+  const pinned = chain.signing?.keyFingerprint ?? null;
+  if (pinned == null) return;
+  if (fingerprint == null) {
+    throw new BackupChainError('key-model', `The backup chain at ${dir} is signed with key ${pinned}: pass the same --signing-key (nothing written).`);
+  }
+  if (fingerprint !== pinned) {
+    throw new BackupChainError('key-model', `The signing key (${fingerprint}) differs from the one of the backup chain at ${dir} (${pinned}): refused (nothing written). Continue the chain with the same --signing-key, or start a new chain in a new directory.`);
   }
 }
 
@@ -762,6 +885,8 @@ function planBackupRun (dir: string, options: PlanOptions = {}): RunPlan {
     }
   }
 
+  checkSigningKey(dir, chain, options.signingKeyFingerprint ?? null);
+
   const last = chain.runs[chain.runs.length - 1];
   const runId = newRunId();
   return {
@@ -797,7 +922,7 @@ function isoOf (snapshotBefore: number | null | undefined): string {
  * secret (`chain.json` is cleartext); a backup written before chains needs
  * the secret of its encryption to read the root manifest.
  */
-function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, verifyFiles?: boolean } = {}): InspectReport {
+function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, verifyFiles?: boolean, signingPubKey?: KeyObject | null } = {}): InspectReport {
   const lines: string[] = [`Backup directory: ${dir}`];
   const report = (status: InspectStatus, verdict: string): InspectReport => ({ lines, verdict, status });
   if (!existsNoFollow(dir)) return report('invalid', 'INVALID: no such directory');
@@ -813,6 +938,7 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, veri
   if (chain != null) {
     lines.push(`Chain: ${chain.chainId}`);
     lines.push(`Encryption: ${describeEncryption(chain.encryption)}`);
+    if (chain.signing != null) lines.push(`Signing key: ${chain.signing.keyFingerprint}`);
     lines.push(`Runs: ${chain.runs.length}`);
     for (const run of chain.runs) {
       lines.push(`  ${run.runId}  ${run.backupType}  scope ${run.scope ?? 'unknown'}  snapshot ${isoOf(run.snapshotBefore)}  ${run.users.length} user(s)`);
@@ -843,9 +969,13 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, veri
     const hasSecret = !!(secrets.passphrase || secrets.privateKeyPem);
     let unreadable = false;
     let lastVerified: string | null = null;
+    const pubKey = options.signingPubKey ?? null;
     for (let i = 0; i < chain.runs.length; i++) {
       const run = chain.runs[i];
       const runDir = runDirectory(root, run);
+      const signed = inspectRunSignature(runDir, runIdentityOf(chain, run).chainId, run.runId, pubKey, dir);
+      if (signed.failure != null) return report('failed', 'FAILED: ' + signed.failure);
+      lines.push(`  ${run.runId}: ${signed.line}`);
       if (chain.encryption != null && !hasSecret) {
         lines.push(`  ${run.runId}: files: not readable without the secret`);
         unreadable = true;
@@ -857,7 +987,7 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, veri
         const decryptor = envelope == null ? null : createBackupDecryptor(envelope, secrets, runIdentityOf(chain, run));
         manifest = readRunManifest(root, dir, chain, run, i > 0 ? chain.runs[i - 1].runId : null, decryptor);
       } catch (err) {
-        if (err instanceof BackupChainError) return report('invalid', 'INVALID: ' + err.message);
+        if (err instanceof BackupChainError) return report(err.code === 'mismatch' ? 'failed' : 'invalid', (err.code === 'mismatch' ? 'FAILED: ' : 'INVALID: ') + err.message);
         lines.push(`  ${run.runId}: files: not readable (${(err as Error).message})`);
         unreadable = true;
         continue;
@@ -898,10 +1028,25 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, veri
     lines.push(damagedRestoreMessage(dir));
     return report('damaged', 'DAMAGED: the root manifest says "incremental" and there is no chain.json');
   }
+  const signed = inspectRunSignature(root, null, FULL_RUN_ID, options.signingPubKey ?? null, dir);
+  if (signed.failure != null) return report('failed', 'FAILED: ' + signed.failure);
+  lines.push(`  ${FULL_RUN_ID}: ${signed.line}`);
   const result = inspectRunFiles(dir, FULL_RUN_ID, root, true, manifest, options.verifyFiles === true);
   if (result.failure != null) return report('failed', 'FAILED: ' + result.failure);
   lines.push(`  ${FULL_RUN_ID}: ${result.line}`);
   return report('ok', result.legacy ? `OK (full backup written before ${CHAIN_RELEASE}, one run)` : 'OK (full backup without chain, one run)');
+}
+
+/** The `signed:` line of a run for `--inspect`; with a public key, the signature verified. */
+function inspectRunSignature (runDir: string, chainId: string | null, runId: string, pubKey: KeyObject | null, dir: string): { line: string, failure?: string } {
+  const line = describeSignature(runDir);
+  if (pubKey == null) return { line: line === 'signed: no' ? line : line + ' (not verified: pass --signing-pubkey)' };
+  try {
+    verifyManifestSignature(runDir, readNoFollow(path.join(runDir, MANIFEST_FILE_NAME)), chainId, runId, pubKey, dir);
+  } catch (err) {
+    return { line, failure: (err as Error).message };
+  }
+  return { line: line + ', verified' };
 }
 
 /**
@@ -938,6 +1083,12 @@ export {
   checkRunFiles,
   checkFileHash,
   checkFilesUnder,
+  SIGNATURE_FILE_NAME,
+  ed25519Key,
+  signingKeyFingerprint,
+  signManifest,
+  verifyManifestSignature,
+  checkSigningKey,
   integrityError,
   legacyRunNotice,
   legacyAfterVerifiedError,
@@ -971,4 +1122,4 @@ export {
   planBackupRun,
   inspectBackup
 };
-export type { FileTable, RunIntegrity, Chain, ChainRun, RunScope, DeletedUser, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };
+export type { FileTable, RunIntegrity, ChainSigning, ManifestSignature, Chain, ChainRun, RunScope, DeletedUser, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };

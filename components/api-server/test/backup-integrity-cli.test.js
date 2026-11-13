@@ -83,6 +83,76 @@ describe('[BKIS] bin/backup.js run file tables, end to end', function () {
     return res;
   }
 
+  function keyFiles (name) {
+    const crypto = require('node:crypto');
+    const pair = crypto.generateKeyPairSync('ed25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    const key = path.join(tmpDir, name + '.key.pem');
+    const pub = path.join(tmpDir, name + '.pub.pem');
+    fs.writeFileSync(key, pair.privateKey, { mode: 0o600 });
+    fs.writeFileSync(pub, pair.publicKey);
+    return { key, pub };
+  }
+
+  function rsaFiles (name) {
+    const crypto = require('node:crypto');
+    const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+    const key = path.join(tmpDir, name + '.key.pem');
+    const pub = path.join(tmpDir, name + '.pub.pem');
+    fs.writeFileSync(key, pair.privateKey, { mode: 0o600 });
+    fs.writeFileSync(pub, pair.publicKey);
+    return { key, pub };
+  }
+
+  it('[BKIS1] a hybrid chain signed with --signing-key: --inspect shows the signatures, the restore with --signing-pubkey verifies them and refuses another key', async function () {
+    const dir = path.join(tmpDir, 'bkis1');
+    const recipient = rsaFiles('bkis1-recipient');
+    const signing = keyFiles('bkis1-signing');
+    const other = keyFiles('bkis1-other');
+    const full = runCli(['--output', dir, '--user', username, '--recipient-pubkey', recipient.pub, '--signing-key', signing.key]);
+    assertOk(full, 'signed full backup');
+    assert.doesNotMatch(full.stderr, /not signed/);
+    assertOk(runCli(['--output', dir, '--user', username, '--incremental', '--recipient-pubkey', recipient.pub, '--signing-key', signing.key]), 'signed incremental');
+
+    const inspect = runCli(['--inspect', dir]);
+    assertOk(inspect, 'inspect');
+    assert.match(inspect.stdout, /Signing key: sha256:[0-9a-f]{64}/);
+    assert.strictEqual(inspect.stdout.match(/signed: yes, key sha256:[0-9a-f]{64} \(not verified: pass --signing-pubkey\)/g)?.length, 2, inspect.stdout);
+    const verified = runCli(['--inspect', dir, '--signing-pubkey', signing.pub]);
+    assertOk(verified, 'inspect --signing-pubkey');
+    assert.strictEqual(verified.stdout.match(/signed: yes, key sha256:[0-9a-f]{64}, verified/g)?.length, 2, verified.stdout);
+
+    const restore = runCli(['--restore', dir, '--user', username, '--private-key', recipient.key, '--signing-pubkey', signing.pub, '--overwrite']);
+    assertOk(restore, 'restore');
+    assert.match(restore.stdout, /Restored: 1 users/);
+    const refused = runCli(['--restore', dir, '--user', username, '--private-key', recipient.key, '--signing-pubkey', other.pub, '--overwrite']);
+    assert.strictEqual(refused.status, 1, refused.stdout + refused.stderr);
+    assert.match(refused.stderr, /not signed by the key given \(--signing-pubkey\)/);
+    assert.doesNotMatch(refused.stdout, /Restore report/);
+  });
+
+  it('[BKIS2] a hybrid backup without --signing-key warns, a symmetric one does not; another --signing-key on a signed chain is refused before anything is written', async function () {
+    const recipient = rsaFiles('bkis2-recipient');
+    const hybrid = runCli(['--output', path.join(tmpDir, 'bkis2-hybrid'), '--user', username, '--recipient-pubkey', recipient.pub]);
+    assertOk(hybrid, 'hybrid backup');
+    assert.match(hybrid.stderr, /WARNING: this backup is not signed: a holder of the recipient public key with write access to the destination could replace a run; pass --signing-key <ed25519 pem> and verify with --signing-pubkey at restore\./);
+    const symmetric = runCli(['--output', path.join(tmpDir, 'bkis2-sym'), '--user', username, '--passphrase-file', passphraseFile]);
+    assertOk(symmetric, 'symmetric backup');
+    assert.doesNotMatch(symmetric.stderr, /not signed/);
+
+    const dir = path.join(tmpDir, 'bkis2-signed');
+    const signing = keyFiles('bkis2-signing');
+    const other = keyFiles('bkis2-other');
+    assertOk(runCli(['--output', dir, '--user', username, '--passphrase-file', passphraseFile, '--signing-key', signing.key]), 'signed full backup');
+    const before = fs.readdirSync(dir).sort();
+    const wrong = runCli(['--output', dir, '--user', username, '--incremental', '--passphrase-file', passphraseFile, '--signing-key', other.key]);
+    assert.strictEqual(wrong.status, 1, wrong.stdout + wrong.stderr);
+    assert.match(wrong.stderr, /The signing key \(sha256:[0-9a-f]{64}\) differs from the one of the backup chain/);
+    const none = runCli(['--output', dir, '--user', username, '--incremental', '--passphrase-file', passphraseFile]);
+    assert.strictEqual(none.status, 1, none.stdout + none.stderr);
+    assert.match(none.stderr, /is signed with key sha256:[0-9a-f]{64}: pass the same --signing-key/);
+    assert.deepStrictEqual(fs.readdirSync(dir).sort(), before, 'nothing written');
+  });
+
   it('[BKIS3] --inspect --verify-files checks every listed file; one byte changed in an attachment fails it and the restore, naming the file', async function () {
     const dir = path.join(tmpDir, 'bkis3');
     backupInto(dir);

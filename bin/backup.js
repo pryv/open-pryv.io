@@ -18,6 +18,7 @@
 //   node bin/backup.js --output /path/to/backup --include-ephemeral
 //   node bin/backup.js --output /path/to/backup --recipient-pubkey recipient.pub.pem
 //   node bin/backup.js --output /path/to/backup --passphrase-file /root/backup-passphrase
+//   node bin/backup.js --output /path/to/backup --recipient-pubkey recipient.pub.pem --signing-key backup-signing.key.pem
 //
 // Restore:
 //   node bin/backup.js --restore /path/to/backup
@@ -29,9 +30,11 @@
 //   node bin/backup.js --restore /path/to/backup --passphrase-file /root/backup-passphrase
 //   node bin/backup.js --restore /path/to/backup --require-encrypted --private-key recipient.key.pem
 //   node bin/backup.js --restore /path/to/backup --through-run 20261013T142501Z-3f9a1c7e
+//   node bin/backup.js --restore /path/to/backup --private-key recipient.key.pem --signing-pubkey backup-signing.pub.pem
 //
 // Inspect (no storage access):
 //   node bin/backup.js --inspect /path/to/backup
+//   node bin/backup.js --inspect /path/to/backup --verify-files --passphrase-file /root/backup-passphrase
 //
 // A full backup and the incremental runs written after it into the same
 // directory form a chain: each incremental run has its own
@@ -82,7 +85,10 @@ require('@pryv/boiler').init({
 
     // Refuse an unexpected plaintext backup before touching any storage.
     if (args.restore) checkRestoreEncryption(args);
-    if (args.output && !args.restore) warnIfPlaintextBackup(args);
+    if (args.output && !args.restore) {
+      warnIfPlaintextBackup(args);
+      warnIfUnsignedHybridBackup(args);
+    }
 
     // Initialize storage subsystems
     await initStorage();
@@ -140,12 +146,14 @@ async function runBackup (args) {
   // directory, another key model, wrong passphrase, other recipient key),
   // decided before anything is written.
   const passphrase = args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE || null;
+  const signingKey = buildSigningKey(args);
   const plan = planBackupRun(args.output, {
     incremental: args.incremental,
     passphrase,
     recipientPubKeyPem: args.recipientPubkey ? fs.readFileSync(args.recipientPubkey, 'utf8') : null,
     privateKeyPem: args.privateKey ? fs.readFileSync(args.privateKey, 'utf8') : null,
-    privateKeyPassphrase: args.privateKeyPassphrase || process.env.PRYV_BACKUP_PRIVATE_KEY_PASSPHRASE || null
+    privateKeyPassphrase: args.privateKeyPassphrase || process.env.PRYV_BACKUP_PRIVATE_KEY_PASSPHRASE || null,
+    signingKeyFingerprint: signingKey != null ? signingKeyFingerprintOf(signingKey) : null
   });
   if (plan.strays.length > 0) {
     console.warn(`WARNING: ignored, not listed by chain.json (an interrupted run?): ${plan.strays.join(', ')}`);
@@ -167,8 +175,10 @@ async function runBackup (args) {
     maxChunkSize: (args.maxChunkSize || 50) * 1024 * 1024,
     compress: args.compress,
     encryptor,
-    run: plan
+    run: plan,
+    signingKey
   });
+  if (signingKey != null) console.log(`Signing: ${signingKeyFingerprintOf(signingKey)} (manifest.sig in every run)`);
 
   const orchestrator = new BackupOrchestrator();
   await orchestrator.init();
@@ -225,6 +235,18 @@ function warnIfPlaintextBackup (args) {
     'Pass --recipient-pubkey <pem> (recommended) or --passphrase-file <path> to encrypt it.');
 }
 
+/**
+ * With a recipient public key the backup host holds no secret: whoever holds
+ * that public key and can write to the destination could mint a run of their
+ * own. Only a signing key the host holds tells such a run apart: say so when
+ * there is none, where cron mails and CI logs will show it.
+ */
+function warnIfUnsignedHybridBackup (args) {
+  if (!args.recipientPubkey || args.signingKey) return;
+  console.error('WARNING: this backup is not signed: a holder of the recipient public key with write access to the destination could replace a run; ' +
+    'pass --signing-key <ed25519 pem> and verify with --signing-pubkey at restore.');
+}
+
 async function runRestore (args) {
   const { createFilesystemBackupReader } = require('storages/interfaces/backup/index.ts');
   const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator.ts').default;
@@ -251,6 +273,7 @@ async function runRestore (args) {
     secrets: buildDecryptSecrets(args),
     throughRun: args.throughRun,
     allowIncomplete: args.allowIncomplete,
+    signingPubKey: args.signingPubkey ? fs.readFileSync(args.signingPubkey, 'utf8') : null,
     onWarning: (message) => console.warn('WARNING: ' + message)
   });
 
@@ -495,6 +518,23 @@ function buildEncryptor (args, run) {
   return null;
 }
 
+/**
+ * The Ed25519 private key that signs each run (--signing-key), or null. A
+ * protected key file takes its passphrase from --signing-key-passphrase or
+ * PRYV_BACKUP_SIGNING_KEY_PASSPHRASE.
+ */
+function buildSigningKey (args) {
+  if (!args.signingKey) return null;
+  const { ed25519Key } = require('storages/interfaces/backup/index.ts');
+  const passphrase = args.signingKeyPassphrase || process.env.PRYV_BACKUP_SIGNING_KEY_PASSPHRASE;
+  const pem = fs.readFileSync(args.signingKey, 'utf8');
+  return ed25519Key(passphrase ? { key: pem, passphrase } : pem, 'private');
+}
+
+function signingKeyFingerprintOf (key) {
+  return require('storages/interfaces/backup/index.ts').signingKeyFingerprint(key);
+}
+
 /** Build the secrets needed to decrypt an encrypted backup (restore or inspect). */
 function buildDecryptSecrets (args) {
   const passphrase = args.decryptPassphrase || args.encryptPassphrase || process.env.PRYV_BACKUP_PASSPHRASE;
@@ -517,7 +557,12 @@ function buildDecryptSecrets (args) {
  */
 function runInspect (args) {
   const { inspectBackup } = require('storages/interfaces/backup/index.ts');
-  const report = inspectBackup(args.inspect, { secrets: buildDecryptSecrets(args), verifyFiles: args.verifyFiles });
+  const { ed25519Key } = require('storages/interfaces/backup/index.ts');
+  const report = inspectBackup(args.inspect, {
+    secrets: buildDecryptSecrets(args),
+    verifyFiles: args.verifyFiles,
+    signingPubKey: args.signingPubkey ? ed25519Key(fs.readFileSync(args.signingPubkey, 'utf8'), 'public') : null
+  });
   for (const line of report.lines) console.log(line);
   console.log(report.verdict);
   if (report.status === 'ok') return 0;
@@ -555,6 +600,9 @@ function parseArgs (argv) {
     allowIncomplete: false,
     inspect: null,
     verifyFiles: false,
+    signingKey: null,
+    signingKeyPassphrase: null,
+    signingPubkey: null,
     help: false
   };
 
@@ -637,6 +685,15 @@ function parseArgs (argv) {
       case '--verify-files':
         args.verifyFiles = true;
         break;
+      case '--signing-key':
+        args.signingKey = argv[++i];
+        break;
+      case '--signing-key-passphrase':
+        args.signingKeyPassphrase = argv[++i];
+        break;
+      case '--signing-pubkey':
+        args.signingPubkey = argv[++i];
+        break;
       case '--help':
       case '-h':
         args.help = true;
@@ -685,6 +742,14 @@ function parseArgs (argv) {
     console.error('Error: --verify-files goes with --inspect');
     process.exit(1);
   }
+  if (args.signingKey && (args.restore || args.inspect)) {
+    console.error('Error: --signing-key signs a backup (--output); restore and inspect verify with --signing-pubkey');
+    process.exit(1);
+  }
+  if (args.signingPubkey && !args.restore && !args.inspect) {
+    console.error('Error: --signing-pubkey goes with --restore or --inspect; a backup is signed with --signing-key');
+    process.exit(1);
+  }
 
   return args;
 }
@@ -721,6 +786,19 @@ Encryption (opt-in — without these flags output is plaintext, with a warning):
                             history: prefer --passphrase-file).
                             Also read from PRYV_BACKUP_PASSPHRASE if omitted.
 
+Signing (recommended with --recipient-pubkey):
+  --signing-key <pem>       Sign each run with this Ed25519 private key: the
+                            run's manifest.sig, verified at restore with
+                            --signing-pubkey. With a recipient public key alone,
+                            whoever holds that public key and can write to the
+                            destination could replace a run (a warning says so).
+                            A chain keeps the signing key it started with.
+                            Generate the pair once:
+                              openssl genpkey -algorithm ed25519 -out backup-signing.key.pem
+                              openssl pkey -in backup-signing.key.pem -pubout -out backup-signing.pub.pem
+  --signing-key-passphrase <s>  Passphrase of a protected signing key (also read
+                            from PRYV_BACKUP_SIGNING_KEY_PASSPHRASE)
+
 Restore:
   --restore, -r <path>      Restore from backup directory (a chain: the full
                             backup, then every incremental run in order; a newer
@@ -756,6 +834,13 @@ Restore:
   --decrypt-passphrase <s>  Same, given on the command line (prefer
                             --passphrase-file; also read from
                             PRYV_BACKUP_PASSPHRASE)
+  --signing-pubkey <pem>    Every run must be signed by this Ed25519 public key
+                            (its manifest.sig), or the restore is refused; also
+                            with --inspect. Without it, signatures are not checked.
+                            Every run's files are checked against its manifest
+                            (a file added, removed, changed or cut short is
+                            refused); runs written before 2.0.0-rc.85 list no
+                            files and are restored without that check
   --require-encrypted       Refuse a backup that is not encrypted
   --allow-plaintext         Restore a plaintext backup even though a decryption
                             secret was supplied (refused by default)

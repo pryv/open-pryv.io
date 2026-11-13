@@ -557,6 +557,36 @@ describe('[BENC] backup encryption', () => {
       assert.strictEqual(warnings.length, 2, 'the two runs of the first format are reported, not the current one');
     });
 
+    it('[BKDS1] the bundled script with --signing-pubkey verifies every run of a signed chain, and refuses another key', async () => {
+      const signing = crypto.generateKeyPairSync('ed25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+      const other = crypto.generateKeyPairSync('ed25519', { publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
+      const chainId = '12'.repeat(16);
+      const incId = '20261103T120000Z-2b2b2b2b';
+      const root = path.join(tmp, 'signed');
+      for (const run of [{ runId: 'full', path: '.', parentRunId: null, chainId }, { runId: incId, path: 'incrementals/' + incId, parentRunId: 'full', chainId }]) {
+        const w = createFilesystemBackupWriter(root, { compress: false, encryptor: createBackupEncryptor({ passphrase: 'pw' }), run, signingKey: signing.privateKey });
+        const uw = await w.openUser(userId, username);
+        await uw.writeStreams(streams);
+        await w.writeManifest({ coreVersion: 'test', config: {}, backupType: 'unused', snapshotBefore: run.path === '.' ? 100 : 200, backupTimestamp: 1, userManifests: [await uw.close()] });
+      }
+      const pub = path.join(tmp, 'signing.pub.pem');
+      const otherPub = path.join(tmp, 'other.pub.pem');
+      fs.writeFileSync(pub, signing.publicKey);
+      fs.writeFileSync(otherPub, other.publicKey);
+      const script = path.join(root, 'decrypt-backup.mjs');
+      const ok = runScript(script, [root, '--passphrase', 'pw', '--signing-pubkey', pub, '--out', path.join(tmp, 's1')]);
+      assert.strictEqual(ok.status, 0, ok.stderr);
+      assert.ok(!fs.existsSync(path.join(tmp, 's1', 'manifest.sig')), 'manifest.sig is not copied');
+      const refused = runScript(script, [root, '--passphrase', 'pw', '--signing-pubkey', otherPub, '--out', path.join(tmp, 's2')]);
+      assert.strictEqual(refused.status, 1);
+      assert.match(refused.stderr, /manifest.sig: not signed by the key given \(--signing-pubkey\): signed with another key/);
+      // a run whose signature was removed
+      fs.rmSync(path.join(root, 'incrementals', incId, 'manifest.sig'));
+      const unsigned = runScript(script, [root, '--passphrase', 'pw', '--signing-pubkey', pub, '--out', path.join(tmp, 's3')]);
+      assert.strictEqual(unsigned.status, 1);
+      assert.match(unsigned.stderr, new RegExp(`incrementals/${incId}/manifest.sig: not signed by the key given \\(--signing-pubkey\\): no manifest.sig`));
+    });
+
     // Every entry below `root` with a mode other than 0700 (directory) / 0600 (file).
     function nonPrivateEntries (root) {
       const found = [];

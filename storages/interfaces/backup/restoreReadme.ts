@@ -60,7 +60,9 @@ const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 // stops the script with the file named (the files already written stay).
 // --ignore-damaged writes every file that verifies, lists the others and
 // exits 1. The mirror's manifests carry no file list: the mirror restores as
-// a backup written before file lists.
+// a backup written before file lists. --signing-pubkey <pem>: every run must
+// carry a manifest.sig of that Ed25519 key (the backup was signed with
+// --signing-key); manifest.sig is not copied to the mirror.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -76,10 +78,11 @@ const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'dec
 function fail (msg) { console.error('Error: ' + msg); process.exit(1); }
 
 function parseArgs (argv) {
-  const a = { dir: null, privateKey: null, privateKeyPassphrase: null, passphrase: null, out: null, ignoreDamaged: false };
+  const a = { dir: null, privateKey: null, privateKeyPassphrase: null, passphrase: null, out: null, ignoreDamaged: false, signingPubKey: null };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
     if (v === '--ignore-damaged') a.ignoreDamaged = true;
+    else if (v === '--signing-pubkey') a.signingPubKey = argv[++i];
     else if (v === '--private-key') a.privateKey = argv[++i];
     else if (v === '--private-key-passphrase') a.privateKeyPassphrase = argv[++i];
     else if (v === '--passphrase') a.passphrase = argv[++i];
@@ -268,6 +271,31 @@ function main () {
     return { path: relInRun, runId, chainId };
   }
 
+  // The public key that must have signed every run (--signing-pubkey).
+  let signingPubKey = null;
+  if (args.signingPubKey) {
+    signingPubKey = crypto.createPublicKey(fs.readFileSync(args.signingPubKey, 'utf8'));
+    if (signingPubKey.asymmetricKeyType !== 'ed25519') fail('--signing-pubkey: not an Ed25519 public key');
+  }
+  const signingFingerprint = signingPubKey == null ? null
+    : 'sha256:' + crypto.createHash('sha256').update(signingPubKey.export({ type: 'spki', format: 'der' })).digest('hex');
+  // Why a run's signature does not verify, or null when it does.
+  function verifySignature (runRoot, manifestRel, manifest, runLabel) {
+    const sigPath = path.join(args.dir, runRoot, 'manifest.sig');
+    if (manifest == null) return 'its manifest cannot be read';
+    if (!fs.existsSync(sigPath)) return 'no manifest.sig';
+    let sig;
+    try { sig = JSON.parse(fs.readFileSync(sigPath, 'utf8')); } catch (e) { return 'manifest.sig is not JSON'; }
+    if (sig.v !== 2 || sig.alg !== 'ed25519') return 'unknown signature format';
+    if (sig.keyFingerprint !== signingFingerprint) return 'signed with another key (' + sig.keyFingerprint + ')';
+    const digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(args.dir, manifestRel))).digest('hex');
+    if (sig.manifestSha256 !== digest) return 'manifest.json differs from the signed one';
+    const message = Buffer.from('pryv-backup-manifest-v2\\n' + (manifest.chainId || '') + '\\n' + runLabel + '\\n' + digest, 'utf8');
+    let ok = false;
+    try { ok = crypto.verify(null, message, signingPubKey, Buffer.from(String(sig.signature), 'base64')); } catch (e) { ok = false; }
+    return ok ? null : 'the signature does not verify';
+  }
+
   // A damaged file stops the script (the files already written stay), or,
   // with --ignore-damaged, is skipped and listed at the end.
   const damaged = [];
@@ -301,6 +329,14 @@ function main () {
         manifest = JSON.parse(decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, manifestRel)), expectOf(runRoot, manifestRel)).toString('utf8'));
       } catch (err) {
         damage(manifestRel, err.message);
+      }
+    }
+    // --signing-pubkey: the run must be signed by that key, over its manifest as written.
+    if (signingPubKey != null) {
+      const why = verifySignature(runRoot, manifestRel, manifest, runLabel);
+      if (why != null) {
+        damage(path.join(runRoot, 'manifest.sig'), 'not signed by the key given (--signing-pubkey): ' + why);
+        continue;
       }
     }
     let table = null;
