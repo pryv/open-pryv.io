@@ -151,13 +151,55 @@ describe('[ASM] audit.getSummary', function () {
     assert.ok(unknown.body.summary.buckets.length >= 1, 'zeros are dense too');
   });
 
+  it('[ASMC] a composite `<id>:<serial>` counts the calls of that version only, its base id every version', async function () {
+    // A versioned access: its calls carry both `access-<id>` and `access-<id>:<serial>`.
+    const token = cuid();
+    const created = await call(personalToken).post(basePath + '/accesses')
+      .send({ type: 'app', name: 'asm-versioned-' + cuid().slice(-6), token, permissions: [{ streamId, level: 'read' }] });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const baseId = created.body.access.id;
+    await call(token).get(basePath + '/events');
+    const upd = await coreRequest.put(basePath + '/accesses/' + baseId).set('Authorization', personalToken)
+      .send({ clientData: { note: 'asmc' } });
+    assert.equal(upd.status, 200, JSON.stringify(upd.body));
+    await call(token).get(basePath + '/events');
+    await call(token).get(basePath + '/events');
+    // The composite term, as the audit rows carry it.
+    const rows = await pollUntil(() => call(personalToken).get(basePath + '/events')
+      .query({ streams: JSON.stringify([':_audit:access-' + baseId]), fromTime: startTime, limit: 100 }),
+    (r) => r.status === 200 && r.body.events.length >= 3, { timeoutMs: 5000 });
+    const composite = rows.body.events.flatMap((e) => e.streamIds)
+      .map((s) => s.replace(/^:_audit:access-/, ''))
+      .find((s) => s.startsWith(baseId + ':'));
+    assert.ok(composite != null, 'a versioned call carries a composite term: ' + JSON.stringify(rows.body.events.map((e) => e.streamIds)));
+    const base = { fromTime: startTime, toTime: Date.now() / 1000 + 60, bucket: 'day' };
+    const all = await summaryUntil(personalToken, Object.assign({ accessIds: [baseId] }, base), 3);
+    assert.equal(sums(all.body.summary.buckets).total, 3, 'the base id counts every version');
+    const one = await summary(personalToken, Object.assign({ accessIds: [composite] }, base));
+    assert.equal(one.status, 200, JSON.stringify(one.body));
+    assert.equal(sums(one.body.summary.buckets).total, 2, 'the composite id counts that version only');
+    const both = await summary(personalToken, Object.assign({ accessIds: [baseId, composite] }, base));
+    assert.equal(sums(both.body.summary.buckets).total, 3, 'a row matching two given ids counts once');
+  });
+
   it('[ASM4] app and shared callers are refused, an app holding a read on the whole audit store included', async function () {
     const query = { fromTime: startTime, bucket: 'day' };
+    // The audit app reads `:_audit:` (every audit stream): the gate is on the access type, not on permissions.
     for (const token of [appToken, sharedToken, auditAppToken]) {
       const res = await summary(token, query);
       assert.equal(res.status, 403, JSON.stringify(res.body));
       assert.equal(res.body.error.id, 'forbidden');
     }
+    // The same inside a batch.
+    const batch = await coreRequest.post(basePath).set('Authorization', auditAppToken)
+      .send([{ method: 'audit.getSummary', params: query }]);
+    assert.equal(batch.status, 200, JSON.stringify(batch.body));
+    assert.equal(batch.body.results[0].error?.id, 'forbidden', JSON.stringify(batch.body.results[0]));
+  });
+
+  it('[ASMD] the token may be given in the query string', async function () {
+    const res = await coreRequest.get(basePath + '/audit/summary').query({ fromTime: startTime, bucket: 'day', auth: personalToken });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
   });
 
   it('[ASM5] a delegate personal access may call it', async function () {
@@ -178,7 +220,10 @@ describe('[ASM] audit.getSummary', function () {
       { fromTime: startTime, bucket: 'day', accessIds: Array.from({ length: 51 }, (_, i) => 'a' + i) },
       { fromTime: startTime, bucket: 'day', accessIds: ["a'b"] },
       { fromTime: startTime, bucket: 'day', accessIds: ['a b'] },
-      { fromTime: startTime, bucket: 'day', accessIds: ['a%'] }
+      { fromTime: startTime, bucket: 'day', accessIds: ['a%'] },
+      { fromTime: 1e13, toTime: 2e13, bucket: 'day' },
+      { fromTime: 8639999999990, toTime: 8640000000100, bucket: 'hour' },
+      { fromTime: startTime, toTime: 'Infinity', bucket: 'day' }
     ];
     for (const query of cases) {
       const res = await summary(personalToken, query);

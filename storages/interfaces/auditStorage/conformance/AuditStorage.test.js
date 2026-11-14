@@ -329,6 +329,8 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
           assert.deepStrictEqual(await summary(dbA, {}), ALL_A);
           assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-b2'] }), []);
           assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-a'] }), ACCESS_A);
+          // Two ids: a disjunction must stay bound to this user on every branch.
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-b2', 'access-a'] }), ACCESS_A);
           assert.deepStrictEqual(await summary(dbB, {}), ['10|events.get|false|2']);
           assert.deepStrictEqual(await summary(dbB, { accessStreamIds: ['access-a'] }), ['10|events.get|false|1']);
         });

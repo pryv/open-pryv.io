@@ -114,6 +114,11 @@ export default async function produceAuditApiMethods (api: Api) {
           return next(errors.invalidParametersFormat('The range spans more than ' + MAX_BUCKETS + ' buckets; ask for a shorter range or a larger bucket.',
             { maxBuckets: MAX_BUCKETS }));
         }
+        // The schema bounds the times; this is a second line for a range the
+        // time-zone arithmetic still cannot represent.
+        if (err instanceof RangeError) {
+          return next(errors.invalidParametersFormat('The range cannot be divided into buckets: ' + err.message));
+        }
         return next(err);
       }
       const userId = (context.user as { id: string }).id;

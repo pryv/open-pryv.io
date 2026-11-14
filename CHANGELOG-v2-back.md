@@ -7,8 +7,8 @@
 - `UserAuditDatabase` contract: new required method `summarize({ fromTime, toTime, slotSeconds,
   accessStreamIds?, deadline? })` returning `{ slot, action, error, count }` groups of head, non-deleted
   rows over `[fromTime, toTime)` (`slot = floor(time / slotSeconds)`, `action` = `content.action`,
-  `error` = type `audit-log/pryv-api-error`). A third-party audit engine must implement it (listed in
-  `REQUIRED_METHODS`). Only `undefined` means "no access filter": an empty, malformed or `'*'` filter
+  `error` = type `audit-log/pryv-api-error`). **BREAKING for third-party audit engines:** the method is
+  listed in `REQUIRED_METHODS`, so an engine without it fails validation at boot. Only `undefined` means "no access filter": an empty, malformed or `'*'` filter
   returns no groups. Past `deadline` the engine throws `summaryBudgetError()`
   (`SUMMARY_BUDGET_ERROR_CODE`).
 - PostgreSQL: one `GROUP BY` on the long-read pool, streams condition from the existing
