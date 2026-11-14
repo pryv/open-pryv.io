@@ -38,6 +38,62 @@ interface DeleteParams {
   options?: { limit?: number };
 }
 
+/** Parameters of {@link UserAuditDatabase.summarize}. */
+export interface SummarizeParams {
+  /** Inclusive lower bound of `time` (Unix seconds). */
+  fromTime: number;
+  /** Exclusive upper bound of `time` (Unix seconds). */
+  toTime: number;
+  /** Width of a slot in seconds: a row falls in slot `floor(time / slotSeconds)`. */
+  slotSeconds: number;
+  /**
+   * Audit stream ids (`access-<id>`) a row must carry at least one of.
+   * `undefined` means no stream filter. Any other value must be a non-empty
+   * array of non-empty strings, none of them `*`; anything else (empty array,
+   * `null`, a non-string item) DENIES and the result is empty, never "no filter".
+   */
+  accessStreamIds?: string[];
+  /** `Date.now()` value after which the engine gives up with a {@link SUMMARY_BUDGET_ERROR_CODE} error. */
+  deadline?: number;
+}
+
+/** One group of {@link UserAuditDatabase.summarize}: rows of a slot, method id and outcome. */
+export interface SummaryGroup {
+  slot: number;
+  /** `content.action` of the rows (the method id), or null when absent. */
+  action: string | null;
+  /** True for rows of type `audit-log/pryv-api-error`. */
+  error: boolean;
+  count: number;
+}
+
+/** `code` of the error `summarize` throws when its deadline is reached. */
+export const SUMMARY_BUDGET_ERROR_CODE = 'SUMMARY_BUDGET';
+
+/** The error an engine throws when `summarize` runs past its deadline (match on `code`). */
+export function summaryBudgetError (): Error & { code: string } {
+  const err = new Error('Audit summary work budget exhausted') as Error & { code: string };
+  err.code = SUMMARY_BUDGET_ERROR_CODE;
+  return err;
+}
+
+/** Row type counted as an error by `summarize`. */
+export const SUMMARY_ERROR_TYPE = 'audit-log/pryv-api-error';
+
+/**
+ * Validates `accessStreamIds` for `summarize`: `undefined` gives `null` (no
+ * filter), a usable list is returned as is, and anything else gives `false`
+ * (deny: the caller must answer with no groups).
+ */
+export function summaryAccessFilter (accessStreamIds: unknown): string[] | null | false {
+  if (accessStreamIds === undefined) return null;
+  if (!Array.isArray(accessStreamIds) || accessStreamIds.length === 0) return false;
+  for (const id of accessStreamIds) {
+    if (typeof id !== 'string' || id.length === 0 || id === '*') return false;
+  }
+  return accessStreamIds as string[];
+}
+
 // Several methods are sync in the SQLite engine and async in the PG engine —
 // the unions below model both; consumers must await.
 export interface UserAuditDatabase {
@@ -61,6 +117,14 @@ export interface UserAuditDatabase {
   minimizeEventHistory (eventId: string, fieldsToRemove: string[]): Promise<void>;
   deleteEventHistory (eventId: string): Promise<void>;
   deleteEvents (params: DeleteParams): Promise<unknown>;
+
+  /**
+   * Counts of head, non-deleted rows with `fromTime <= time < toTime`, grouped
+   * by slot, `content.action` and outcome (error type or not). Raw groups only:
+   * classes and calendar buckets are computed by the caller, once for every
+   * engine. Throws a {@link SUMMARY_BUDGET_ERROR_CODE} error past `deadline`.
+   */
+  summarize (params: SummarizeParams): Promise<SummaryGroup[]>;
 
   // Migration methods — raw rows, converters bypassed
   exportAllEvents (): AuditExportRow[] | Promise<AuditExportRow[]>;
@@ -92,6 +156,7 @@ const REQUIRED_METHODS: string[] = [
   'minimizeEventHistory',
   'deleteEventHistory',
   'deleteEvents',
+  'summarize',
   // Migration methods
   'exportAllEvents',
   'importAllEvents'

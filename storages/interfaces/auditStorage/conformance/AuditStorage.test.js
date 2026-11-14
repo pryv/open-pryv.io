@@ -14,8 +14,11 @@ const require = createRequire(import.meta.url);
  * @param {Function} getStorage - async function returning an initialized Storage instance
  * @param {Function} getUserId - function returning a unique userId for test isolation
  * @param {Function} cleanupFn - async function called after tests for cleanup (receives userId)
+ * @param {Object} [engineHooks] - engine test hooks, all optional:
+ *   `setSummaryChunkRows(rows)` sets the window size of a windowed `summarize`
+ *   and returns the previous one
  */
-export default function conformanceTests (getStorage, getUserId, cleanupFn) {
+export default function conformanceTests (getStorage, getUserId, cleanupFn, engineHooks = {}) {
   const assert = require('node:assert');
   const { validateAuditStorage } = require('../AuditStorage.ts');
   const { validateUserAuditDatabase } = require('../UserAuditDatabase.ts');
@@ -194,6 +197,167 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
           const rows = [];
           for await (const row of emptyDb.exportAllEventsStreamed()) rows.push(row);
           assert.strictEqual(rows.length, 0);
+        });
+      });
+
+      describe('summarize()', () => {
+        const { SUMMARY_BUDGET_ERROR_CODE } = require('../UserAuditDatabase.ts');
+        const H = 3600;
+        const OK = 'audit-log/pryv-api';
+        const ERR = 'audit-log/pryv-api-error';
+        // [id, time, action (undefined: none), type, access streams, extra fields]
+        const rowsA = [
+          ['s-r0', 36000, 'events.get', OK, ['access-c']],
+          ['s-r1', 36005, 'events.get', OK, ['access-a']],
+          ['s-r2', 36100, 'events.get', OK, ['access-a']],
+          ['s-r3', 36200, 'events.get', ERR, ['access-b']],
+          ['s-r8', 36300, undefined, OK, ['access-c']],
+          ['s-r9', 36050, 'events.get', OK, ['access-a', 'access-h'], { headId: 's-r2' }],
+          ['s-r10', 36060, 'events.get', OK, ['access-a', 'access-h'], { deleted: 36061 }],
+          ['s-r4', 39600, 'events.create', OK, ['access-b']],
+          ['s-t1', 39600, 'events.create', OK, ['access-b']],
+          ['s-t2', 39600, 'events.create', ERR, ['access-b']],
+          ['s-r11', 39601, 'events.get', OK, ['access-x_y']],
+          ['s-r12', 39602, 'accesses.get', OK, ['access-xzy']],
+          ['s-r13', 39603, 'events.get', OK, ['access-p%q']],
+          ['s-r5', 43199.5, 'events.create', OK, ['access-a', 'access-a:2']],
+          ['s-r6', 43200, 'events.get', OK, ['access-a']],
+          ['s-r7', 35999, 'events.get', OK, ['access-a']]
+        ];
+        const rowsB = [
+          ['s-b1', 36010, 'events.get', OK, ['access-a', 'access-b2']],
+          ['s-b2', 36020, 'events.get', OK, ['access-b2']]
+        ];
+        const ALL_A = [
+          '10|events.get|false|3', '10|events.get|true|1', '10|null|false|1',
+          '11|accesses.get|false|1', '11|events.create|false|3', '11|events.create|true|1', '11|events.get|false|2',
+          '12|events.get|false|1'
+        ];
+        const ACCESS_A = ['10|events.get|false|2', '11|events.create|false|1', '12|events.get|false|1'];
+
+        let dbA, dbB;
+        const userA = () => userId + '-sum';
+        const userB = () => userId + '-sum2';
+
+        async function insert (db, rows) {
+          for (const [id, time, action, type, accessIds, extra] of rows) {
+            const content = action === undefined ? {} : { action };
+            const actionIds = action === undefined ? [] : ['action-' + action];
+            await db.createEvent(Object.assign({
+              id,
+              streamIds: accessIds.concat(actionIds),
+              type,
+              time,
+              content,
+              created: time,
+              createdBy: 'test',
+              modified: time,
+              modifiedBy: 'test'
+            }, extra || {}));
+          }
+        }
+
+        /** Groups as sorted `slot|action|error|count` strings. */
+        function norm (groups) {
+          assert.ok(Array.isArray(groups));
+          return groups.map((g) => `${g.slot}|${g.action}|${g.error}|${g.count}`).sort();
+        }
+
+        async function summary (db, params) {
+          return norm(await db.summarize(Object.assign({ fromTime: 10 * H, toTime: 13 * H, slotSeconds: H }, params)));
+        }
+
+        before(async () => {
+          dbA = await storage.forUser(userA());
+          dbB = await storage.forUser(userB());
+          await insert(dbA, rowsA);
+          await insert(dbB, rowsB);
+        });
+
+        after(async () => {
+          await storage.deleteUser(userA());
+          await storage.deleteUser(userB());
+        });
+
+        it('[ASQ1] must count head rows grouped by slot, action and outcome', async () => {
+          assert.deepStrictEqual(await summary(dbA, {}), ALL_A);
+          for (const g of await dbA.summarize({ fromTime: 10 * H, toTime: 13 * H, slotSeconds: H })) {
+            assert.strictEqual(typeof g.slot, 'number');
+            assert.strictEqual(typeof g.count, 'number');
+            assert.strictEqual(typeof g.error, 'boolean');
+            assert.ok(g.action === null || typeof g.action === 'string');
+          }
+          // Quarter-hour slots: 36000..36300 all fall in slot 40.
+          assert.deepStrictEqual(await summary(dbA, { slotSeconds: 900, toTime: 36900 }),
+            ['40|events.get|false|3', '40|events.get|true|1', '40|null|false|1']);
+        });
+
+        it('[ASQ2] must count the half-open range [fromTime, toTime)', async () => {
+          assert.deepStrictEqual(await summary(dbA, { toTime: 12 * H }), ALL_A.filter((g) => !g.startsWith('12|')));
+          assert.deepStrictEqual(await summary(dbA, { fromTime: 10 * H + 0.5, toTime: 11 * H }),
+            ['10|events.get|false|2', '10|events.get|true|1', '10|null|false|1']);
+          assert.deepStrictEqual(await summary(dbA, { fromTime: 12 * H, toTime: 12 * H }), []);
+        });
+
+        it('[ASQ3] must filter on access streams, matching ids literally', async () => {
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-a'] }), ACCESS_A);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-a:2'] }), ['11|events.create|false|1']);
+          // A row carrying two of the given ids counts once.
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-a', 'access-a:2'] }), ACCESS_A);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-a', 'access-b'] }), [
+            '10|events.get|false|2', '10|events.get|true|1', '11|events.create|false|3', '11|events.create|true|1', '12|events.get|false|1'
+          ]);
+          // `_` and `%` are not wildcards.
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-x_y'] }), ['11|events.get|false|1']);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-p%q'] }), ['11|events.get|false|1']);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-%'] }), []);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-unknown'] }), []);
+        });
+
+        it('[ASQ3B] must deny, never drop the filter, when the access filter is empty or unreadable', async () => {
+          for (const accessStreamIds of [[], null, ['*'], ['access-a', '*'], [42], [''], 'access-a', {}]) {
+            assert.deepStrictEqual(await summary(dbA, { accessStreamIds }), [], JSON.stringify(accessStreamIds));
+          }
+        });
+
+        it('[ASQ4] must not count history or deleted rows', async () => {
+          assert.deepStrictEqual(await summary(dbA, { fromTime: 36040, toTime: 36070 }), []);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-h'] }), []);
+        });
+
+        it('[ASQ5] must never count another user\'s rows', async () => {
+          assert.deepStrictEqual(await summary(dbA, {}), ALL_A);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-b2'] }), []);
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-a'] }), ACCESS_A);
+          assert.deepStrictEqual(await summary(dbB, {}), ['10|events.get|false|2']);
+          assert.deepStrictEqual(await summary(dbB, { accessStreamIds: ['access-a'] }), ['10|events.get|false|1']);
+        });
+
+        it('[ASQ6] windowed engines must give the same groups whatever the window size', async function () {
+          if (typeof engineHooks.setSummaryChunkRows !== 'function') return this.skip();
+          const cases = [{}, { accessStreamIds: ['access-a', 'access-b'] }, { accessStreamIds: ['access-a'] }, { fromTime: 0, toTime: 100 * H }];
+          const reference = [];
+          for (const params of cases) reference.push(await summary(dbA, params));
+          for (const rows of [1, 3]) {
+            const previous = engineHooks.setSummaryChunkRows(rows);
+            try {
+              for (let i = 0; i < cases.length; i++) {
+                assert.deepStrictEqual(await summary(dbA, cases[i]), reference[i], `window ${rows}, case ${i}`);
+              }
+            } finally {
+              engineHooks.setSummaryChunkRows(previous);
+            }
+          }
+          assert.deepStrictEqual(reference[0], ALL_A);
+        });
+
+        it('[ASQ7] must throw the budget error once the deadline has passed', async () => {
+          for (const accessStreamIds of [undefined, ['access-a']]) {
+            await assert.rejects(
+              dbA.summarize({ fromTime: 10 * H, toTime: 13 * H, slotSeconds: H, accessStreamIds, deadline: Date.now() - 1 }),
+              (err) => err.code === SUMMARY_BUDGET_ERROR_CODE);
+          }
+          assert.deepStrictEqual(await summary(dbA, { deadline: Date.now() + 60_000 }), ALL_A);
         });
       });
 

@@ -9,10 +9,14 @@ import { createRequire } from 'node:module';
 import type { Readable as ReadableType } from 'node:stream';
 import type { DatabasePG } from './DatabasePG.ts';
 
-import type { AuditEvent } from '../../../interfaces/auditStorage/UserAuditDatabase.ts';
+import type { AuditEvent, SummarizeParams, SummaryGroup } from '../../../interfaces/auditStorage/UserAuditDatabase.ts';
 const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
+const { summaryBudgetError, summaryAccessFilter, SUMMARY_ERROR_TYPE } = require('../../../interfaces/auditStorage/UserAuditDatabase.ts');
+
+// SQLSTATE of a statement cancelled by `statement_timeout`.
+const PG_QUERY_CANCELED = '57014';
 
 const ALL_EVENTS_TAG = '..';
 const IDS_SEPARATOR = ' ';
@@ -211,6 +215,58 @@ class UserAuditDatabasePG {
     const res = await this.db.query(sql, values);
     // pg always reports rowCount for DELETE statements.
     return { changes: res.rowCount as number };
+  }
+
+  /**
+   * Grouped counts for the audit summary, in one statement on the long-read
+   * pool (never the write pool, so a summary cannot delay an audit write).
+   *
+   * ⚑ The stream filter is built by `convertCondition`, the authorization
+   * builder `getEvents` uses, never by a matcher of its own. A filter that is
+   * missing, unreadable or degrades to "no filter" answers no groups.
+   */
+  async summarize (params: SummarizeParams): Promise<SummaryGroup[]> {
+    const filter = summaryAccessFilter(params.accessStreamIds);
+    if (filter === false) return [];
+    const values: unknown[] = [this.userId, params.fromTime, params.toTime, params.slotSeconds, SUMMARY_ERROR_TYPE];
+    const conditions = ['user_id = $1', 'time >= $2', 'time < $3', 'deleted IS NULL', 'head_id IS NULL'];
+    if (filter !== null) {
+      const res = convertCondition({ type: 'streamsQuery', content: [[{ any: filter }]] }, values.length + 1, values);
+      // null would mean "every row" and FALSE "no row": neither is a filter here.
+      if (res == null || res.condition === 'FALSE') return [];
+      conditions.push(res.condition);
+    }
+    const sql = 'SELECT floor(time / $4)::bigint AS slot, content->>\'action\' AS action, (type = $5) AS error, count(*)::int AS count ' +
+      'FROM audit_events WHERE ' + conditions.join(' AND ') + ' GROUP BY 1, 2, 3';
+    const rows = await this._summaryQuery(sql, values, params.deadline);
+    return rows.map((row) => ({
+      slot: Number(row.slot),
+      action: row.action == null ? null : String(row.action),
+      error: row.error === true,
+      count: Number(row.count)
+    }));
+  }
+
+  /**
+   * Runs the summary statement with a `statement_timeout` equal to the time
+   * left before `deadline`, set with `set_config(..., true)` (the bindable
+   * form of `SET LOCAL`) inside a transaction so it never outlives the
+   * statement on the pooled connection. A cancelled statement becomes the
+   * budget error.
+   */
+  async _summaryQuery (sql: string, values: unknown[], deadline?: number): Promise<Array<Record<string, unknown>>> {
+    if (deadline == null) return (await this.readDb.query(sql, values)).rows;
+    const remaining = Math.floor(deadline - Date.now());
+    if (remaining <= 0) throw summaryBudgetError();
+    try {
+      return await this.readDb.withTransaction(async (client) => {
+        await client.query('SELECT set_config(\'statement_timeout\', $1, true)', [String(remaining)]);
+        return (await client.query(sql, values)).rows;
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === PG_QUERY_CANCELED) throw summaryBudgetError();
+      throw err;
+    }
   }
 
   async exportAllEvents (): Promise<AuditRow[]> {

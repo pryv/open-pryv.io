@@ -13,6 +13,7 @@ import type { NormalizedCondition, ScalarValue } from '../../../../shared/conten
 // ---- Types ----
 
 import type { StoredEvent } from '../../../../interfaces/_shared/domain.ts';
+import type { SummarizeParams, SummaryGroup } from '../../../../interfaces/auditStorage/UserAuditDatabase.ts';
 
 // EventRow equals the canonical SqliteStmt's default row shape, so the
 // shared statement type applies unparameterized.
@@ -26,6 +27,7 @@ const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const eventsSchema = require('./schema/events.ts');
 const fullTextSearch = require('./fullTextSearch.ts');
 const { toSQLiteQuery } = require('./streamQueryUtils.ts');
+const { summaryBudgetError, summaryAccessFilter, SUMMARY_ERROR_TYPE } = require('../../../../interfaces/auditStorage/UserAuditDatabase.ts');
 
 /** A raw events-table row: arbitrary columns per eventsSchema. */
 type EventRow = Record<string, unknown>;
@@ -514,6 +516,99 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
   return res;
 };
 
+// -- Audit summary --
+
+// At most this many rows are aggregated per synchronous window by `summarize`.
+let summaryChunkRows = 20_000;
+
+/** Test hook: sets the window size of `summarize`, returns the previous one. */
+function _setSummaryChunkRows (rows: number): number {
+  const previous = summaryChunkRows;
+  summaryChunkRows = rows;
+  return previous;
+}
+
+// `floor(time / slot)`: CAST truncates toward zero, the comparison corrects
+// negative non-integral quotients, so the slots are the PostgreSQL engine's.
+const SUMMARY_SLOT = 'CAST(time / @slot AS INTEGER) - (CAST(time / @slot AS INTEGER) * @slot > time)';
+const SUMMARY_SELECT = `SELECT ${SUMMARY_SLOT} AS slot, json_extract(content, '$.action') AS action, (type = @errorType) AS error, count(*) AS count `;
+// Head, non-deleted rows; the unary `+` keeps the planner on the window's own
+// access path (the `time` index or the rowid set).
+const SUMMARY_ROW_FILTER = ' AND +headId IS NULL AND +deleted IS NULL GROUP BY 1, 2, 3';
+
+type SummaryRow = { slot: number, action: unknown, error: number | null, count: number };
+
+/**
+ * Grouped counts for the audit summary (see the audit storage contract).
+ *
+ * Never one statement over the whole range: better-sqlite3 is synchronous, so
+ * a statement over millions of rows would block the worker. The rows are
+ * aggregated in windows of about `summaryChunkRows`, yielding to the event
+ * loop between windows and checking the deadline before each one; the groups
+ * of successive windows are merged here.
+ * - No stream filter: windows on the `time` index. A probe (index only) finds
+ *   the window end strictly above the cursor, so equal times cannot stall it.
+ * - Stream filter: windows on the full-text rowid set, built by the same
+ *   `toSQLiteQuery` as `events.get` and bound as a parameter. A filter that is
+ *   missing, unreadable or degrades to "no filter" answers no groups.
+ */
+UserDatabase.prototype.summarize = async function (this: UserDatabaseInstance, params: SummarizeParams): Promise<SummaryGroup[]> {
+  const filter = summaryAccessFilter(params.accessStreamIds);
+  if (filter === false) return [];
+  let match: string | null = null;
+  if (filter !== null) {
+    match = toSQLiteQuery([[{ any: filter }]]);
+    if (match === null) return [];
+  }
+  const binds = { slot: params.slotSeconds, errorType: SUMMARY_ERROR_TYPE };
+  const groups = new Map<string, SummaryGroup>();
+  const merge = (rows: SummaryRow[]): void => {
+    for (const row of rows) {
+      const action = row.action == null ? null : String(row.action);
+      const error = row.error === 1;
+      const key = row.slot + '|' + error + '|' + (action === null ? '' : '=' + action);
+      const group = groups.get(key);
+      if (group != null) group.count += Number(row.count);
+      else groups.set(key, { slot: Number(row.slot), action, error, count: Number(row.count) });
+    }
+  };
+  const checkDeadline = (): void => {
+    if (params.deadline != null && Date.now() >= params.deadline) throw summaryBudgetError();
+  };
+  const offset = Math.max(summaryChunkRows - 1, 0);
+
+  if (match === null) {
+    const probe = this.db.prepare('SELECT time FROM events WHERE time > @cursor AND time < @to ORDER BY time LIMIT 1 OFFSET @offset');
+    const aggregate = this.db.prepare(SUMMARY_SELECT + 'FROM events WHERE time >= @start AND time < @end' + SUMMARY_ROW_FILTER);
+    let cursor = params.fromTime;
+    for (;;) {
+      checkDeadline();
+      const next = probe.get({ cursor, to: params.toTime, offset }) as { time: number } | undefined;
+      const end = next == null ? params.toTime : next.time;
+      merge(aggregate.all({ ...binds, start: cursor, end }) as SummaryRow[]);
+      if (next == null) break;
+      cursor = end;
+      await new Promise(setImmediate);
+    }
+  } else {
+    const probe = this.db.prepare('SELECT rowid FROM events_fts WHERE streamIds MATCH @match AND rowid > @after ORDER BY rowid LIMIT 1 OFFSET @offset');
+    const aggregate = this.db.prepare(SUMMARY_SELECT +
+      'FROM events NOT INDEXED WHERE rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH @match AND rowid > @after AND rowid <= @upTo)' +
+      ' AND time >= @from AND time < @to' + SUMMARY_ROW_FILTER);
+    let after = Number.MIN_SAFE_INTEGER;
+    for (;;) {
+      checkDeadline();
+      const next = probe.get({ match, after, offset }) as { rowid: number } | undefined;
+      const upTo = next == null ? Number.MAX_SAFE_INTEGER : next.rowid;
+      merge(aggregate.all({ ...binds, match, after, upTo, from: params.fromTime, to: params.toTime }) as SummaryRow[]);
+      if (next == null) break;
+      after = upTo;
+      await new Promise(setImmediate);
+    }
+  }
+  return [...groups.values()];
+};
+
 // -- Migration methods --
 
 /**
@@ -724,4 +819,4 @@ function pagingClause (limit: unknown, skip: unknown): string {
   return clause;
 }
 
-export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap };
+export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setSummaryChunkRows };

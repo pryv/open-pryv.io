@@ -11,6 +11,7 @@ const cuid = require('cuid');
 const userLocalDirectory = require('../../../test/helpers').userLocalDirectory;
 const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage.ts');
 const conformanceTests = require('storages/interfaces/auditStorage/conformance/AuditStorage.test.js').default;
+const { _setSummaryChunkRows } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
 
 describe('[SQCF] UserSQLite conformance', () => {
   conformanceTests(
@@ -23,6 +24,7 @@ describe('[SQCF] UserSQLite conformance', () => {
     () => cuid(),
     async (userId) => {
       await userLocalDirectory.deleteUserDirectory(userId);
-    }
+    },
+    { setSummaryChunkRows: _setSummaryChunkRows }
   );
 });
