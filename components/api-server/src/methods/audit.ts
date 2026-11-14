@@ -29,7 +29,7 @@ import type { MethodContext } from 'business/src/MethodContext.ts';
 import { getParamsValidation, requirePersonalAccess } from './helpers/commonFunctions.ts';
 import * as methodsSchema from '../schema/auditMethods.ts';
 import { MAX_BUCKETS, isValidTimeZone, buildBoundaries, foldGroups, BucketCapError } from 'business/src/audit/summaryBuckets.ts';
-import { SUMMARY_BUDGET_ERROR_CODE } from 'storages/interfaces/auditStorage/UserAuditDatabase.ts';
+import { SUMMARY_BUDGET_ERROR_CODE, SUMMARY_INTERRUPTED_ERROR_CODE, summaryInterruptedError } from 'storages/interfaces/auditStorage/UserAuditDatabase.ts';
 const require = createRequire(import.meta.url);
 
 type Api = { register: (...args: unknown[]) => void };
@@ -45,18 +45,25 @@ type UserAuditDb = {
   summarize (params: { fromTime: number; toTime: number; slotSeconds: number; accessStreamIds?: string[]; deadline?: number }): Promise<Group[]>;
 };
 
-/** Longest a summary may work before it is refused (no partial answer). */
+/** Longest a summary may work before it is refused (no partial answer); starts when the read starts. */
 const SUMMARY_BUDGET_MS = 20 * 1000;
 /** Calls of one account waiting behind the one in flight (per worker). */
 const SUMMARY_MAX_WAITING = 4;
+/** Summaries reading a store at once, all accounts together (per worker). */
+const SUMMARY_MAX_RUNNING = 2;
+/** Calls waiting for one of those slots (per worker); the next is refused at once. */
+const SUMMARY_MAX_QUEUED = 8;
+/** A call whose turn comes later than this after its arrival is refused without reading. */
+const SUMMARY_MAX_WAIT_MS = 10 * 1000;
 
 /** Per-account queue: one summary in flight per account, a few waiting. */
 const queues = new Map<string, { tail: Promise<unknown>; waiting: number }>();
 
-function tooManyRequests (): Error {
-  return new APIError(ErrorIds.TooManyRequests,
-    'Too many audit summaries are pending for this account. Please retry later.',
-    { httpStatus: 429 });
+/** Worker-wide slots: how many summaries read now, and the calls waiting for a slot (first in, first out). */
+const slots = { running: 0, waiting: [] as Array<() => void> };
+
+function tooManyRequests (message = 'Too many audit summaries are pending for this account. Please retry later.'): Error {
+  return new APIError(ErrorIds.TooManyRequests, message, { httpStatus: 429 });
 }
 
 function summaryTooLarge (): Error {
@@ -78,8 +85,43 @@ function enqueue<T> (userId: string, work: () => Promise<T>): Promise<T> {
   return run;
 }
 
-const testHooks: { forceDeadlineInPast: boolean; holdBefore: Promise<unknown> | null } = { forceDeadlineInPast: false, holdBefore: null };
-/** Test seams: an expired budget, and a gate held before the store is read. */
+/**
+ * Runs `work` in one of the worker's summary slots, waiting for one in arrival
+ * order. Refused at once when too many wait, and without reading when the
+ * turn comes more than the wait limit after `arrived`. The slot is released
+ * whatever the outcome.
+ */
+async function withSlot<T> (arrived: number, work: () => Promise<T>): Promise<T> {
+  if (slots.running >= SUMMARY_MAX_RUNNING) {
+    if (slots.waiting.length >= SUMMARY_MAX_QUEUED) throw tooManyRequests('Too many audit summaries are pending. Please retry later.');
+    await new Promise<void>((resolve) => { slots.waiting.push(resolve); });
+  } else {
+    slots.running++;
+  }
+  // The slot is ours here: either taken above or handed over by `release`.
+  try {
+    if (Date.now() - arrived > testHooks.maxWaitMs) throw tooManyRequests('The audit summary waited too long for its turn. Please retry later.');
+    return await work();
+  } finally {
+    const next = slots.waiting.shift();
+    if (next != null) next();
+    else slots.running--;
+  }
+}
+
+const testHooks: {
+  forceDeadlineInPast: boolean;
+  holdBefore: ((userId: string) => Promise<unknown> | null | undefined) | null;
+  interruptions: number;
+  maxWaitMs: number;
+  storeReads: number;
+} = { forceDeadlineInPast: false, holdBefore: null, interruptions: 0, maxWaitMs: SUMMARY_MAX_WAIT_MS, storeReads: 0 };
+/**
+ * Test seams: an expired budget, a gate held (per account) once the worker
+ * slot is taken and before the store is read, a number of coming store reads
+ * replaced by the interruption error, the wait limit, and a count of store
+ * reads started.
+ */
 export const _testHooks = testHooks;
 
 export default async function produceAuditApiMethods (api: Api) {
@@ -123,13 +165,37 @@ export default async function produceAuditApiMethods (api: Api) {
       }
       const userId = (context.user as { id: string }).id;
       const accessStreamIds = params.accessIds?.map((id) => 'access-' + id);
+      const arrived = Date.now();
       try {
-        const groups = await enqueue(userId, async () => {
-          if (testHooks.holdBefore != null) await testHooks.holdBefore;
+        const groups = await enqueue(userId, () => withSlot(arrived, async () => {
+          const hold = testHooks.holdBefore?.(userId);
+          if (hold != null) await hold;
           const deadline = testHooks.forceDeadlineInPast ? Date.now() - 1 : Date.now() + SUMMARY_BUDGET_MS;
-          const userDb: UserAuditDb = await require('storages').auditStorage.forUser(userId);
-          return await userDb.summarize({ fromTime, toTime, slotSeconds: plan.slotSeconds, accessStreamIds, deadline });
-        });
+          const read = async (): Promise<Group[]> => {
+            testHooks.storeReads++;
+            // Resolved on every attempt: a store closed meanwhile is opened again.
+            const userDb: UserAuditDb = await require('storages').auditStorage.forUser(userId);
+            if (testHooks.interruptions > 0) {
+              testHooks.interruptions--;
+              throw summaryInterruptedError();
+            }
+            return await userDb.summarize({ fromTime, toTime, slotSeconds: plan.slotSeconds, accessStreamIds, deadline });
+          };
+          try {
+            return await read();
+          } catch (err) {
+            if ((err as { code?: string })?.code !== SUMMARY_INTERRUPTED_ERROR_CODE) throw err;
+            // Once more, under the same deadline; a second interruption is refused.
+            try {
+              return await read();
+            } catch (again) {
+              if ((again as { code?: string })?.code === SUMMARY_INTERRUPTED_ERROR_CODE) {
+                throw tooManyRequests('The audit summary was interrupted. Please retry.');
+              }
+              throw again;
+            }
+          }
+        }));
         result.summary = {
           bucket: params.bucket,
           timezone,

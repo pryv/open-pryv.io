@@ -291,7 +291,8 @@ describe('[ASM] audit.getSummary', function () {
       _testHooks.forceDeadlineInPast = false;
     }
     let release;
-    _testHooks.holdBefore = new Promise((resolve) => { release = resolve; });
+    const gate = new Promise((resolve) => { release = resolve; });
+    _testHooks.holdBefore = () => gate;
     try {
       const pending = Array.from({ length: 6 }, () => summary(personalToken, { fromTime: startTime, bucket: 'day' }).then((r) => r));
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -305,5 +306,148 @@ describe('[ASM] audit.getSummary', function () {
       _testHooks.holdBefore = null;
       if (release) release();
     }
+  });
+
+  it('[ASME] a summary whose store was closed under it runs once more; interrupted twice, it is refused with too-many-requests', async function () {
+    const query = { fromTime: startTime, toTime: Date.now() / 1000 + 60, bucket: 'day', accessIds: [appAccess.attrs.id] };
+    const reference = await summary(personalToken, query);
+    assert.equal(reference.status, 200, JSON.stringify(reference.body));
+    assert.ok(sums(reference.body.summary.buckets).total > 0);
+    try {
+      _testHooks.interruptions = 1;
+      const once = await summary(personalToken, query);
+      assert.equal(once.status, 200, JSON.stringify(once.body));
+      assert.deepEqual(once.body.summary, reference.body.summary);
+      assert.equal(_testHooks.interruptions, 0);
+      _testHooks.interruptions = 2;
+      const twice = await summary(personalToken, query);
+      assert.equal(twice.status, 429, JSON.stringify(twice.body));
+      assert.equal(twice.body.error.id, 'too-many-requests');
+      assert.equal(twice.body.summary, undefined);
+    } finally {
+      _testHooks.interruptions = 0;
+    }
+  });
+
+  describe('[ASMF] across accounts: two summaries read at once, eight wait, a call that waited too long is refused', function () {
+    const accounts = [];
+    const entered = new Set();
+    let gates;
+
+    before(async function () {
+      for (let i = 0; i < 11; i++) {
+        const name = ('asmf' + i + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
+        const token = cuid();
+        const user = await getNewFixture().user(name);
+        await user.access({ type: 'personal', token });
+        await user.session(token);
+        accounts.push({ name, token, id: user.attrs.id });
+      }
+    });
+
+    beforeEach(function () {
+      gates = new Map();
+      entered.clear();
+      _testHooks.holdBefore = (userId) => {
+        entered.add(userId);
+        return gates.get(userId)?.promise;
+      };
+    });
+
+    afterEach(function () {
+      for (const gate of gates.values()) gate.release();
+      _testHooks.holdBefore = null;
+    });
+
+    function gate (account) {
+      let release;
+      const promise = new Promise((resolve) => { release = resolve; });
+      gates.set(account.id, { promise, release });
+      return release;
+    }
+
+    function sumOf (account) {
+      const call = coreRequest.get('/' + account.name + '/audit/summary')
+        .query({ fromTime: startTime, bucket: 'day' }).set('Authorization', account.token);
+      const tracked = { settled: false };
+      tracked.done = call.then((r) => { tracked.settled = true; return r; });
+      return tracked;
+    }
+
+    async function until (predicate) {
+      const limit = Date.now() + 5000;
+      while (!predicate()) {
+        if (Date.now() > limit) throw new Error('condition not reached');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    it('[ASMF1] with two accounts reading, a third account waits, then answers once a slot is free', async function () {
+      const [a, b, c] = accounts;
+      const releaseA = gate(a);
+      const releaseB = gate(b);
+      const pa = sumOf(a);
+      const pb = sumOf(b);
+      await until(() => entered.has(a.id) && entered.has(b.id));
+      const pc = sumOf(c);
+      await sleep(300);
+      assert.equal(entered.has(c.id), false, 'the third account does not read while two do');
+      assert.equal(pc.settled, false);
+      releaseA();
+      assert.equal((await pa.done).status, 200);
+      const rc = await pc.done;
+      assert.equal(rc.status, 200, JSON.stringify(rc.body));
+      assert.equal(pb.settled, false, 'the second account is still held');
+      releaseB();
+      assert.equal((await pb.done).status, 200);
+    });
+
+    it('[ASMF2] with eight calls waiting for a slot, the next is refused at once', async function () {
+      const [a, b, ...rest] = accounts;
+      const releaseA = gate(a);
+      const releaseB = gate(b);
+      const held = [sumOf(a), sumOf(b)];
+      await until(() => entered.has(a.id) && entered.has(b.id));
+      const waiting = rest.slice(0, 8).map(sumOf);
+      await sleep(300);
+      const started = Date.now();
+      const refused = await sumOf(rest[8]).done;
+      assert.equal(refused.status, 429, JSON.stringify(refused.body));
+      assert.equal(refused.body.error.id, 'too-many-requests');
+      assert.ok(Date.now() - started < 2000, 'refused without waiting');
+      assert.ok(waiting.every((p) => !p.settled), 'the eight wait');
+      releaseA();
+      releaseB();
+      for (const p of [...held, ...waiting]) assert.equal((await p.done).status, 200);
+    });
+
+    it('[ASMF3] a call whose turn comes after the wait limit is refused without reading the store', async function () {
+      const [a, b, c] = accounts;
+      const previous = _testHooks.maxWaitMs;
+      _testHooks.maxWaitMs = 200;
+      try {
+        const releaseA = gate(a);
+        const releaseB = gate(b);
+        const pa = sumOf(a);
+        const pb = sumOf(b);
+        await until(() => entered.has(a.id) && entered.has(b.id));
+        const readsBefore = _testHooks.storeReads;
+        const pc = sumOf(c);
+        await sleep(400);
+        releaseA();
+        const rc = await pc.done;
+        assert.equal(rc.status, 429, JSON.stringify(rc.body));
+        assert.equal(rc.body.error.id, 'too-many-requests');
+        assert.equal((await pa.done).status, 200);
+        assert.equal(entered.has(c.id), false, 'the late call never reached the read');
+        assert.equal(_testHooks.storeReads - readsBefore, 1, 'only the released call read the store');
+        releaseB();
+        assert.equal((await pb.done).status, 200);
+      } finally {
+        _testHooks.maxWaitMs = previous;
+      }
+    });
   });
 });
