@@ -26,6 +26,9 @@
   (`cipher: 2` refuses a v1 file), hash on read (`readBackupBytes` path and a verifying transform
   on attachments), every file of an account hashed when the account is opened, chain entry
   cross-check (`users`, `scope`, `snapshotBefore`), legacy notice, legacy-after-current refusal.
+  `validateChain` accepts `bootstrapped` on run 0 only, and only as `true`; the cross-check
+  tolerates an entry without scope only when the run's MANIFEST carries no chain fields (the
+  cleartext flag alone lifts nothing).
   `inspectBackup`: `files` and `signed` lines, `verifyFiles`, `signingPubKey`, status `failed`.
 - `chain.ts` `isFilesystemLitter` / `isLitterPath`: a fixed list (files `.DS_Store`, `Thumbs.db`,
   `desktop.ini`, `._*`, `.nfs*`; directories `lost+found`, `@eaDir`, `.snapshot`, `.zfs`,

@@ -571,6 +571,8 @@ function validateChain (chain: unknown, dir: string): asserts chain is Chain {
     }
     if (seen.has(run.runId)) throw invalidChain(dir, `run ${run.runId} listed twice`);
     seen.add(run.runId);
+    // Only the full run can predate chains, and the flag only says so.
+    if (run.bootstrapped !== undefined && (i !== 0 || run.bootstrapped !== true)) throw invalidChain(dir, `run ${run.runId}: bootstrapped`);
     if (!Array.isArray(run.users) || !run.users.every((u) => typeof u === 'string')) throw invalidChain(dir, `run ${run.runId}: users`);
     if (run.snapshotBefore != null && typeof run.snapshotBefore !== 'number') throw invalidChain(dir, `run ${run.runId}: snapshotBefore`);
     if (run.scope != null && run.scope !== 'all' && run.scope !== 'users') throw invalidChain(dir, `run ${run.runId}: scope`);
@@ -823,7 +825,7 @@ function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun
   if (!pre && (manifest.chainId !== chain.chainId || manifest.runId !== run.runId || (manifest.parentRunId ?? null) !== (run.parentRunId ?? null))) {
     throw new BackupChainError('mismatch', `Run ${run.runId} of the backup chain at ${dir} does not belong to this chain (its manifest names another chain, run or parent run): refused.`);
   }
-  checkChainEntry(dir, run, manifest);
+  checkChainEntry(dir, run, manifest, pre);
   return manifest;
 }
 
@@ -831,9 +833,11 @@ function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun
  * The entry of a run in `chain.json` (cleartext) must say what the run's
  * manifest says (authenticated in an encrypted run): its users, its scope,
  * its snapshot time. An edited entry could otherwise withhold an account
- * from the restore, or have one taken for deleted.
+ * from the restore, or have one taken for deleted. `pre`: the run's
+ * MANIFEST carries no chain fields (a full backup written before chains),
+ * the only case where an entry without scope is not compared.
  */
-function checkChainEntry (dir: string, run: ChainRun, manifest: Record<string, unknown>): void {
+function checkChainEntry (dir: string, run: ChainRun, manifest: Record<string, unknown>, pre: boolean): void {
   const mismatch = (field: string): BackupChainError => new BackupChainError('mismatch',
     `Run ${run.runId} of the backup chain at ${dir}: chain.json disagrees with the run's manifest (${field}): chain.json was edited; refused.`);
   const manifestUsers = Array.isArray(manifest.users) ? (manifest.users as Array<{ userId?: unknown }>).map((u) => u?.userId).filter((id): id is string => typeof id === 'string') : [];
@@ -844,7 +848,7 @@ function checkChainEntry (dir: string, run: ChainRun, manifest: Record<string, u
   const manifestScope = (manifest.scope as RunScope | undefined) ?? null;
   const entryScope = run.scope ?? null;
   // A run bootstrapped from a backup before chains has no scope in its entry: unknown, never evidence.
-  if (entryScope !== manifestScope && !(run.bootstrapped === true && entryScope == null)) throw mismatch('scope');
+  if (entryScope !== manifestScope && !(pre && entryScope == null)) throw mismatch('scope');
 }
 
 /**

@@ -876,6 +876,33 @@ describe('[BKSM] run file table and chain cross-check', function () {
     await assert.rejects(() => createFilesystemBackupReader(pre).readManifest(), /\(snapshotBefore\)/);
   });
 
+  it('[BKSM3] the "bootstrapped" flag of chain.json does not lift the scope check: refused on a later run, and on the full run when its manifest names the chain', async function () {
+    // the plain chain, and the chain of runs written before file tables (no header identity)
+    const plain = path.join(tmp, 'plain');
+    await plainChain(plain);
+    const legacy = path.join(tmp, 'legacy');
+    for (const [rel, hex] of Object.entries(V1.chain.files)) {
+      const p = path.join(legacy, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, Buffer.from(hex, 'hex'));
+    }
+    const legacySecrets = { secrets: { passphrase: V1.chain.passphrase } };
+    for (const [dir, opts] of [[plain, {}], [legacy, legacySecrets]]) {
+      const original = fs.readFileSync(path.join(dir, 'chain.json'));
+      assert.strictEqual((await createFilesystemBackupReader(dir, opts).readManifest()).runs.length, 2, 'control');
+      editChain(dir, (c) => { c.runs[1].bootstrapped = true; delete c.runs[1].scope; });
+      await assert.rejects(() => createFilesystemBackupReader(dir, opts).readManifest(),
+        (err) => err.code === 'invalid' && /The chain.json of the backup at .* is not valid \(run .*: bootstrapped\): refused/.test(err.message));
+      fs.writeFileSync(path.join(dir, 'chain.json'), original);
+    }
+    // the full run flagged, its scope removed: its manifest names the chain, the scope is compared
+    editChain(plain, (c) => { c.runs[0].bootstrapped = true; delete c.runs[0].scope; });
+    await assert.rejects(() => createFilesystemBackupReader(plain).readManifest(), /Run full of the backup chain at .*: chain.json disagrees with the run's manifest \(scope\)/);
+    // a flag that is not `true` is refused
+    editChain(plain, (c) => { c.runs[0].bootstrapped = false; c.runs[0].scope = 'all'; });
+    await assert.rejects(() => createFilesystemBackupReader(plain).readManifest(), /not valid \(run full: bootstrapped\)/);
+  });
+
   it('[BKSM6] runs of an earlier release restore with a notice before the first run with a file table, are refused after it; a file of the first format is refused in a run of the current one', async function () {
     const dir = path.join(tmp, 'plain');
     const incDir = await plainChain(dir);
