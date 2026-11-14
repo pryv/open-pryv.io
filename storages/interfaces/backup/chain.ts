@@ -128,8 +128,9 @@ type DeletedUser = {
 
 /**
  * The signing key of a chain, set by its full run: every later run must be
- * signed with it (a chain started unsigned stays unsigned). Operational consistency only (chain.json is
- * cleartext): trust comes from the public key given at restore.
+ * signed with it (a chain started unsigned stays unsigned). Operational
+ * consistency only (chain.json is cleartext): trust comes from the public key
+ * given at restore.
  */
 type ChainSigning = { alg: 'ed25519', keyFingerprint: string };
 

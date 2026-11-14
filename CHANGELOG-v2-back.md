@@ -90,7 +90,8 @@
   authenticated against anyone without the data key only; a plaintext run's file table detects
   corruption, not tampering; files a restore does not read are not hashed (`--inspect
   --verify-files` does); two FULL runs started together into one empty directory still both pass
-  the plan check (the lock catches them at `chain.json`, their files may have interleaved); a
+  the plan check (a run that finds the other's files refuses its manifest, the lock catches the
+  second at `chain.json`; files both wrote under the same path may have interleaved); a
   destination without atomic exclusive create keeps the sub-millisecond `chain.json` window; no
   at-rest row is written in v2 yet (every row stays v1 until the release that flips
   `WRITE_VERSION`); TOTP envelopes are not bound to the account.
