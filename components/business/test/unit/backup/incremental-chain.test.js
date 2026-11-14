@@ -927,6 +927,7 @@ describe('[BKSM] run file table and chain cross-check', function () {
     const encryptor = createBackupEncryptor({ passphrase: 'pw' });
     await writeRun(enc, { run: FULL, encryptor, users: fullUsers() });
     const target = path.join(enc, 'users', 'u2-full-only', 'streams.jsonl');
+    const targetBytes = fs.readFileSync(target);
     fs.writeFileSync(target, Buffer.from(V1.symmetricBuffer.hex, 'hex'));
     const encReader = createFilesystemBackupReader(enc, { secrets: { passphrase: 'pw' } });
     await assert.rejects(async () => collect((await encReader.openUser('u2-full-only')).readStreams()), /users\/u2-full-only\/streams.jsonl/);
@@ -936,6 +937,8 @@ describe('[BKSM] run file table and chain cross-check', function () {
       /file users\/u2-full-only\/streams.jsonl of run full is in format version 1 in a run of format 2: refused/);
 
     // the table's cipher must be the run's key model: no cipher in an encrypted run (it would lift the format pin)...
+    fs.writeFileSync(target, targetBytes);
+    assert.strictEqual((await createFilesystemBackupReader(enc, { secrets: { passphrase: 'pw' } }).readManifest()).users.length, 2, 'control: the run reads');
     const encManifestPath = path.join(enc, 'manifest.json');
     const encManifest = JSON.parse(dec.decryptBuffer(fs.readFileSync(encManifestPath), { path: 'manifest.json' }).toString('utf8'));
     encManifest.integrity.cipher = null;
