@@ -24,7 +24,7 @@ const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECR
 const {
   INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, MANIFEST_FILE_NAME, INTEGRITY_VERSION, SIGNATURE_FILE_NAME, BackupChainError,
   readChain, writeChainAtomic, withChainLock, chainEncryptionOf, ed25519Key, signingKeyFingerprint, signManifest, checkSigningKey,
-  isLitterPath
+  isLitterPath, listRunFiles
 } = require('./chain.ts');
 const { FORMAT_VERSION } = require('./BackupCipher.ts');
 
@@ -195,6 +195,17 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
   const signingFingerprint = signingKey != null ? signingKeyFingerprint(signingKey) : null;
   if (baseChain != null) checkSigningKey(outputPath, baseChain, signingFingerprint);
 
+  // A run at the root starts in a directory holding nothing of a run: files
+  // left there (an interrupted full backup, anything else) would sit next to
+  // this run's without being listed, and every restore would refuse it.
+  if (!isIncrementalRun && fs.existsSync(outputPath)) {
+    const present = [...listRunFiles(outputPath, true, run?.runId ?? FULL_RUN_ID, outputPath).keys()];
+    if (present.length > 0) {
+      throw new BackupChainError('exists', `The output directory ${outputPath} holds files of something else than this run (an interrupted backup?): ` +
+        `${present.slice(0, 5).join(', ')}${present.length > 5 ? ', ...' : ''}: use an empty directory or remove them (nothing written).`);
+    }
+  }
+
   // An existing output directory keeps its mode (the operator chose it); the
   // directories created below it are private.
   makePrivateDir(outputPath);
@@ -247,6 +258,16 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
     },
 
     async writeManifest (params: BackupWriteManifestParams) {
+      // Every file of the run directory must be one this run wrote: a file
+      // dropped there meanwhile would make the run one no restore accepts.
+      const written = opts.fileTable;
+      const foreign = [...listRunFiles(runDir, !isIncrementalRun, run?.runId ?? FULL_RUN_ID, outputPath, { listed: written }).keys()]
+        .filter((rel) => !written.has(rel));
+      if (foreign.length > 0) {
+        throw new BackupChainError('exists', `Backup writer: ${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ', ...' : ''} in ${runDir} ` +
+          'was not written by this run: refused, no manifest written. Move it out of the backup directory (it holds the backup only) and run the backup again ' +
+          '(into a new directory, or after removing the files of this run).');
+      }
       const manifest: Record<string, unknown> = {
         formatVersion: 1,
         coreVersion: params.coreVersion,

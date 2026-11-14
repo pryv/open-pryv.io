@@ -951,6 +951,44 @@ describe('[BKSM] run file table and chain cross-check', function () {
     assert.ok(isLitterPath('users/u/@eaDir/x') && isLitterPath('users/u/attachments/._f1') && !isLitterPath('users/u/attachments/f1'));
   });
 
+  it('[BKSM8] a run at the root refuses a directory holding other files (an interrupted backup); a file dropped in a run before its manifest refuses the manifest', async function () {
+    // the leftovers of a full backup that died before its manifest
+    const dir = path.join(tmp, 'interrupted');
+    fs.mkdirSync(path.join(dir, 'users', 'x', 'events'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'users', 'x', 'events', 'events-0009.jsonl'), '{}\n');
+    fs.writeFileSync(path.join(dir, '.DS_Store'), 'litter');
+    const before = snapshotFiles(dir);
+    for (const run of [FULL, null]) {
+      assert.throws(() => createFilesystemBackupWriter(dir, { compress: false, run, encryptor: createBackupEncryptor({ passphrase: 'pw' }) }),
+        (err) => err.code === 'exists' && /The output directory .* holds files of something else than this run \(an interrupted backup\?\): users\/x\/events\/events-0009\.jsonl: use an empty directory or remove them \(nothing written\)/.test(err.message));
+    }
+    assert.deepStrictEqual(snapshotFiles(dir), before, 'nothing written');
+    // litter alone does not count
+    fs.rmSync(path.join(dir, 'users'), { recursive: true });
+    await writeRun(dir, { run: FULL, users: fullUsers() });
+    assert.ok(fs.existsSync(path.join(dir, 'chain.json')));
+
+    // a file created in the run directory while the run is written: the manifest is refused
+    for (const [name, run, prepare] of [
+      ['root', FULL, async () => {}],
+      ['inc', INC1, async (d) => writeRun(d, { run: FULL, users: fullUsers() })]
+    ]) {
+      const d = path.join(tmp, 'dropped-' + name);
+      await prepare(d);
+      const chainBefore = fs.existsSync(path.join(d, 'chain.json')) ? fs.readFileSync(path.join(d, 'chain.json')) : null;
+      const writer = createFilesystemBackupWriter(d, { compress: false, run });
+      const uw = await writer.openUser('u1', 'alice');
+      await uw.writeStreams([{ id: 's1', name: 'One' }]);
+      const userManifest = await uw.close();
+      const runDir = run.path === '.' ? d : path.join(d, run.path);
+      fs.writeFileSync(path.join(runDir, 'users', 'u1', 'cron.log'), 'a redirect landed here');
+      await assert.rejects(() => writer.writeManifest({ coreVersion: 'test', config: {}, backupType: 'full', snapshotBefore: 2000, backupTimestamp: 1, userManifests: [userManifest] }),
+        (err) => err.code === 'exists' && /users\/u1\/cron\.log in .* was not written by this run: refused, no manifest written/.test(err.message));
+      assert.ok(!fs.existsSync(path.join(runDir, 'manifest.json')), name + ': no manifest');
+      assert.deepStrictEqual(fs.existsSync(path.join(d, 'chain.json')) ? fs.readFileSync(path.join(d, 'chain.json')) : null, chainBefore, name + ': chain.json unchanged');
+    }
+  });
+
   it('[BKSM7] the writer refuses to write a file whose name the restore ignores', async function () {
     const writer = createFilesystemBackupWriter(path.join(tmp, 'w'), { compress: false, run: FULL });
     const uw = await writer.openUser('u1', 'alice');

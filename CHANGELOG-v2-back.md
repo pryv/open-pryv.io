@@ -17,6 +17,9 @@
   `signingKey` is given (Ed25519 over `"pryv-backup-manifest-v2\n" + chainId + "\n" + runId + "\n" +
   sha256(manifest.json)`); `chain.json.signing` pin; `withChainLock` (`.chain.lock`, `wx`, stale
   after 60 s) around the re-read + write of `chain.json` in both branches of `writeManifest`.
+  A run at the root refuses, at creation, a directory where `listRunFiles` finds anything (litter
+  aside): `BackupChainError('exists')`, nothing written. `writeManifest` walks the run directory
+  again and refuses (`exists`, no manifest, no `chain.json` entry) a file the run did not write.
 - `FilesystemBackupReader` / `chain.ts`: `BackupChainError` codes `integrity` and `signature`;
   per applied run: signature (when `signingPubKey` is given, over the manifest bytes before they
   are decrypted), completeness walk (unlisted, missing, size, no link or special file), format pin

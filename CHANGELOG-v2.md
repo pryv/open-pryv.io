@@ -15,7 +15,11 @@
   reported as "file list not verified"); a run written by an earlier release AFTER a run of this
   release in the same chain is refused (`--through-run` restores up to the last verified run).
   A file the backup did not write, found in a run's directory (the backup root included), is
-  refused at restore: keep the backup directory for the backup only. Files that operating systems
+  refused at restore: keep the backup directory for the backup only. A backup now refuses to start
+  in a directory that already holds other files (the leftovers of an interrupted full backup:
+  remove them or use a new directory), and refuses to complete a run when a file appeared in its
+  directory while it was written, so such a file is found when the backup is written, not when it
+  is needed. Files that operating systems
   and storage appliances create by themselves (`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`,
   `.nfs*`, `lost+found`, `@eaDir`, `.snapshot`, `.zfs`, ...) are ignored with a notice.
 - **Signed backups (recommended with a recipient public key).** Pass `--signing-key <ed25519 pem>`
