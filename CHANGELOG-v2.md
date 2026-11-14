@@ -41,14 +41,13 @@
 - **Upgrade note, multi-core:** the bootstrap bundle written by `bin/bootstrap.js` is now
   authenticated with a new envelope version. A new core must run this release or later to read it;
   the core issuing the bundle may still be older (its bundle is still read).
-- Keys stored encrypted in the platform database (TLS and ACME account keys, authenticator
-  secrets, observability credentials, transfer identities) are rewritten in a new envelope bound to
-  the row that holds them the next time each is written; existing rows keep decrypting. The TLS
-  and ACME keys are now encrypted under a key derived for that purpose from `letsEncrypt.atRestKey`
-  (the configured value is unchanged).
-- **Upgrade note, multi-core:** a core of an earlier release cannot read a row rewritten in the new
-  envelope (the ACME account key is rewritten the first time an upgraded core uses it, at a
-  certificate issuance or renewal). Upgrade every core of a platform together.
+- Keys stored encrypted at rest (TLS and ACME account keys, authenticator secrets, observability
+  credentials, transfer identities): this release READS a new envelope, bound to the row that
+  holds it with its tag length pinned (the TLS and ACME keys under a key derived for that purpose
+  from `letsEncrypt.atRestKey`, the configured value unchanged), and keeps WRITING the current
+  one, so a core of the previous release still reads every row, during an upgrade and after going
+  back. A later release starts writing the new envelope: every core of a platform must have run
+  this release or a later one before that release is deployed.
 
 ### Account transfer to a beneficiary
 

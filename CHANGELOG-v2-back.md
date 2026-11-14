@@ -32,9 +32,16 @@
   `--ignore-damaged`, `--signing-pubkey`, mirror manifests without `integrity`, skips `manifest.sig`
   and `.chain.lock`; the README gains an "Integrity" section.
 - `components/business/src/acme/AtRestEncryption.ts`: envelope byte 2 with AAD `'pryv-at-rest-v2' ||
-  0 || context`, `authTagLength: 16`, `envelopeVersion()`; `encrypt` / `decrypt` / `*Json` take a
-  context; v1 decrypts without binding. `CertRenewer`: derived key (`AT_REST_PURPOSE`) for v2, raw
-  key for v1 rows, account key rewritten once at `ensureAccount`; contexts `acme-account`,
+  0 || context`, `authTagLength: 16` (both versions), `envelopeVersion()`; `encrypt` / `decrypt` /
+  `*Json` take a context, `encrypt` / `encryptJson` a version (default `WRITE_VERSION`, = 1 in this
+  release: no authenticated data, the context ignored); v1 decrypts without binding. Rows read by
+  every core (TLS and ACME keys, observability credentials) must stay readable by a core of the
+  previous release during an upgrade and after a rollback, hence expand then contract: a later
+  release sets `WRITE_VERSION` to 2. `CertRenewer` option `envelopeVersion` (default
+  `WRITE_VERSION`): 1 writes under the configured key and never rewrites; 2 writes under the
+  derived key (`AT_REST_PURPOSE`) and rewrites a v1 account key once at `ensureAccount` (a failed
+  rewrite is logged, the account still returned); v1 rows always read under the configured key;
+  contexts `acme-account`,
   `tls-cert:<hostname>`, `observability:<key>`, `transfer-identity:<userId>`. TOTP secrets use the
   empty context: no stable account id reaches `TotpService.enroll` / `verify` (they get the
   username), so a TOTP envelope is bound to its purpose key only.
@@ -48,8 +55,9 @@
   corruption, not tampering; files a restore does not read are not hashed (`--inspect
   --verify-files` does); two FULL runs started together into one empty directory still both pass
   the plan check (the lock catches them at `chain.json`, their files may have interleaved); a
-  destination without atomic exclusive create keeps the sub-millisecond `chain.json` window; v1
-  at-rest envelopes stay until their row is rewritten; TOTP envelopes are not bound to the account.
+  destination without atomic exclusive create keeps the sub-millisecond `chain.json` window; no
+  at-rest row is written in v2 yet (every row stays v1 until the release that flips
+  `WRITE_VERSION`); TOTP envelopes are not bound to the account.
 - Tests: storages `[BKAD1]`..`[BKAD6]`, `[BKDS1]`; business `[BKSM1]`..`[BKSM6]`,
   `[BKLK1]`..`[BKLK3]`, `[BKRS9]`, `[AREV1]`..`[AREV3]`, `[BNEV1]`; api-server `[BKIS1]`..`[BKIS3]`,
   `[BKDS2]`, `[AREV3]`; storage `[UASF4]`. Fixtures of the first formats in

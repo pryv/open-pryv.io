@@ -34,9 +34,26 @@ describe('[ATRENC] AtRestEncryption', () => {
       assert.equal(AtRestEncryption.envelopeVersion(V1_ENVELOPE.encoded), 1);
     });
 
-    it('[AREV1] the current version is bound to its context and pins a 16-byte tag', () => {
+    it('[AREV1] by default the first version is written: readable without authenticated data, as by a core of the previous release', () => {
+      assert.equal(AtRestEncryption.WRITE_VERSION, 1);
       const key = crypto.randomBytes(32);
       const encoded = AtRestEncryption.encrypt('secret', key, 'tls-cert:a.example');
+      const raw = Buffer.from(encoded, 'base64');
+      assert.equal(raw[0], 1);
+      // the algorithm of the previous release: AES-256-GCM, no AAD
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, raw.subarray(1, 13));
+      decipher.setAuthTag(raw.subarray(13, 29));
+      assert.equal(Buffer.concat([decipher.update(raw.subarray(29)), decipher.final()]).toString('utf8'), 'secret');
+      assert.equal(AtRestEncryption.decrypt(encoded, key, 'tls-cert:other').toString('utf8'), 'secret');
+      const json = AtRestEncryption.encryptJson({ a: 1 }, key, 'transfer-identity:u1');
+      assert.equal(AtRestEncryption.envelopeVersion(json), 1);
+      assert.deepEqual(AtRestEncryption.decryptJson(json, key), { a: 1 });
+      assert.throws(() => AtRestEncryption.encrypt('secret', key, '', 3), /unsupported envelope version 3/);
+    });
+
+    it('[AREV1] version 2 is bound to its context and pins a 16-byte tag', () => {
+      const key = crypto.randomBytes(32);
+      const encoded = AtRestEncryption.encrypt('secret', key, 'tls-cert:a.example', 2);
       const raw = Buffer.from(encoded, 'base64');
       assert.equal(raw[0], 2);
       assert.equal(AtRestEncryption.envelopeVersion(encoded), 2);
@@ -51,7 +68,7 @@ describe('[ATRENC] AtRestEncryption', () => {
       const shortTag = Buffer.concat([raw.subarray(0, 13), raw.subarray(13, 25), raw.subarray(29)]);
       assert.throws(() => AtRestEncryption.decrypt(shortTag.toString('base64'), key, 'tls-cert:a.example'), /authentication failed|too small/);
       // JSON helpers take the same context
-      const json = AtRestEncryption.encryptJson({ a: 1 }, key, 'transfer-identity:u1');
+      const json = AtRestEncryption.encryptJson({ a: 1 }, key, 'transfer-identity:u1', 2);
       assert.deepEqual(AtRestEncryption.decryptJson(json, key, 'transfer-identity:u1'), { a: 1 });
       assert.throws(() => AtRestEncryption.decryptJson(json, key, 'transfer-identity:u2'), /authentication failed/);
     });

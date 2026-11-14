@@ -75,20 +75,24 @@ describe('[MTOTP] TotpService', function () {
     );
   });
 
-  it('[AREV3] a secret is enrolled in the current envelope version; one stored in the first version still verifies', async function () {
+  it('[AREV3] a secret is enrolled in the first envelope version (readable by the previous release); one stored in version 2 also verifies', async function () {
     const secretsKey = crypto.randomBytes(32).toString('base64');
     const svc = new TotpService({ secretsKey, digits: 6, periodSeconds: 30, driftSteps: 1 });
     const profile = new Profile();
     const extra = await svc.enroll('dave', profile, {});
-    assert.strictEqual(Buffer.from(profile.totp.secret, 'base64')[0], 2);
+    const raw = Buffer.from(profile.totp.secret, 'base64');
+    assert.strictEqual(raw[0], 1);
 
-    // the same secret in an envelope of the first version (no authenticated data)
+    // decrypts as the previous release does: no authenticated data
     const { resolveTotpKey } = require('../../src/mfa/totpKeys.ts');
     const key = await resolveTotpKey({ secretsKey });
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const ct = Buffer.concat([cipher.update(Buffer.from(extra.secret, 'utf8')), cipher.final()]);
-    profile.totp.secret = Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), ct]).toString('base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, raw.subarray(1, 13));
+    decipher.setAuthTag(raw.subarray(13, 29));
+    assert.strictEqual(Buffer.concat([decipher.update(raw.subarray(29)), decipher.final()]).toString('utf8'), extra.secret);
+
+    // the same secret in an envelope of version 2 (bound to its purpose context)
+    const { encrypt } = require('../../src/acme/AtRestEncryption.ts');
+    profile.totp.secret = encrypt(extra.secret, key, '', 2);
     const code = totpCode(base32Decode(extra.secret), { digits: 6, periodSeconds: 30 });
     await svc.verify('dave', profile, { headers: {}, body: { code } });
     assert.ok(profile.totp.lastUsedStep >= 0);

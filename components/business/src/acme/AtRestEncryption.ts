@@ -31,7 +31,7 @@ import crypto from 'node:crypto';
  *     version prefix so we can rev the format later.
  *
  * Wire format (base64 of the concatenated buffer):
- *   version:  1 byte   (2; envelopes of version 1 are still read)
+ *   version:  1 byte   (1 or 2, both read; WRITE_VERSION is written)
  *   iv:       12 bytes (GCM nonce; fresh per encrypt)
  *   tag:      16 bytes (GCM auth tag)
  *   ct:       N bytes  (ciphertext of the plaintext)
@@ -42,10 +42,17 @@ import crypto from 'node:crypto';
  * another row of the same purpose then fails to decrypt. Version 1 (no
  * authenticated data) decrypts with any context. The tag length is pinned
  * to 16 bytes on both sides.
+ *
+ * Several rows are shared by every core of a platform, and a core of an
+ * earlier release reads version 1 only. So this release reads both and
+ * keeps writing version 1 (the context is then ignored); a later release
+ * sets WRITE_VERSION to 2, once every core can read it.
  */
 
 const ENVELOPE_VERSION = 2;
 const LEGACY_ENVELOPE_VERSION = 1;
+/** The version `encrypt` writes when none is given. */
+const WRITE_VERSION = LEGACY_ENVELOPE_VERSION;
 const AAD_LABEL = 'pryv-at-rest-v2';
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -79,25 +86,29 @@ function deriveKey (source: string | Buffer, purpose: string, salt: Buffer = Buf
 
 /**
  * Encrypt a plaintext string or Buffer with a 32-byte key. Returns a
- * base64-encoded envelope (version 2) safe to store in a JSON field.
+ * base64-encoded envelope safe to store in a JSON field.
  *
  * @param key - 32 bytes
- * @param context - the row that holds the envelope (authenticated, not stored)
+ * @param context - the row that holds the envelope (authenticated in version 2, not stored; ignored in version 1)
+ * @param version - envelope version to write (default WRITE_VERSION)
  */
-function encrypt (plaintext: string | Buffer, key: Buffer, context: string = ''): string {
+function encrypt (plaintext: string | Buffer, key: Buffer, context: string = '', version: number = WRITE_VERSION): string {
   if (plaintext == null) {
     throw new Error('AtRestEncryption.encrypt: plaintext is required');
   }
   if (!Buffer.isBuffer(key) || key.length !== KEY_BYTES) {
     throw new Error(`AtRestEncryption.encrypt: key must be a ${KEY_BYTES}-byte Buffer`);
   }
+  if (version !== ENVELOPE_VERSION && version !== LEGACY_ENVELOPE_VERSION) {
+    throw new Error(`AtRestEncryption.encrypt: unsupported envelope version ${version}`);
+  }
   const ptBuf = Buffer.isBuffer(plaintext) ? plaintext : Buffer.from(plaintext, 'utf8');
   const iv = crypto.randomBytes(IV_BYTES);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
-  cipher.setAAD(aadOf(context));
+  if (version === ENVELOPE_VERSION) cipher.setAAD(aadOf(context));
   const ct = Buffer.concat([cipher.update(ptBuf), cipher.final()]);
   const tag = cipher.getAuthTag();
-  const envelope = Buffer.concat([Buffer.from([ENVELOPE_VERSION]), iv, tag, ct]);
+  const envelope = Buffer.concat([Buffer.from([version]), iv, tag, ct]);
   return envelope.toString('base64');
 }
 
@@ -156,8 +167,8 @@ function decrypt (encoded: string, key: Buffer, context: string = ''): Buffer {
 /**
  * Convenience: encrypt a JS object as JSON and return the envelope.
  */
-function encryptJson (obj: unknown, key: Buffer, context: string = ''): string {
-  return encrypt(JSON.stringify(obj), key, context);
+function encryptJson (obj: unknown, key: Buffer, context: string = '', version: number = WRITE_VERSION): string {
+  return encrypt(JSON.stringify(obj), key, context, version);
 }
 
 /**
@@ -170,4 +181,4 @@ function decryptJson (encoded: string, key: Buffer, context: string = ''): unkno
   }
 }
 
-export { ENVELOPE_VERSION, LEGACY_ENVELOPE_VERSION, KEY_BYTES, deriveKey, encrypt, decrypt, encryptJson, decryptJson, envelopeVersion };
+export { ENVELOPE_VERSION, LEGACY_ENVELOPE_VERSION, WRITE_VERSION, KEY_BYTES, deriveKey, encrypt, decrypt, encryptJson, decryptJson, envelopeVersion };

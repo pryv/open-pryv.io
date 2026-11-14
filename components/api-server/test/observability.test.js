@@ -80,14 +80,18 @@ describe('[OBS] observability', function () {
       assert.strictEqual(obs.otlp.headers['api-key'], apiKey);
     });
 
-    it('[AREV3] the stored credential is an envelope of the current version, bound to its setting', async function () {
+    it('[AREV3] the stored credential is written in the first envelope version (readable by the previous release); a version-2 envelope bound to its setting is read', async function () {
       const AtRestEncryption = require('business/src/acme/AtRestEncryption.ts');
       await platform.setObservabilityValue('otlp-headers', JSON.stringify({ 'api-key': 'k' }));
       const rawStored = await getPlatformDB().getObservabilityValue('otlp-headers');
-      assert.strictEqual(AtRestEncryption.envelopeVersion(rawStored), 2);
+      assert.strictEqual(AtRestEncryption.envelopeVersion(rawStored), 1);
       const key = AtRestEncryption.deriveKey(Buffer.from((await getConfig()).get('auth:adminAccessKey'), 'utf8'), 'observability-otlp-headers');
-      assert.strictEqual(AtRestEncryption.decrypt(rawStored, key, 'observability:otlp-headers').toString('utf8'), JSON.stringify({ 'api-key': 'k' }));
-      assert.throws(() => AtRestEncryption.decrypt(rawStored, key, 'observability:other'), /authentication failed/);
+      assert.strictEqual(AtRestEncryption.decrypt(rawStored, key).toString('utf8'), JSON.stringify({ 'api-key': 'k' }));
+
+      const v2 = AtRestEncryption.encrypt(JSON.stringify({ 'api-key': 'k2' }), key, 'observability:otlp-headers', 2);
+      assert.throws(() => AtRestEncryption.decrypt(v2, key, 'observability:other'), /authentication failed/);
+      await getPlatformDB().setObservabilityValue('otlp-headers', v2);
+      assert.strictEqual((await platform.getObservabilityConfig()).otlp.headers['api-key'], 'k2');
     });
 
     it('[OB02] local observability.enabled:false overrides PlatformDB true', async function () {
