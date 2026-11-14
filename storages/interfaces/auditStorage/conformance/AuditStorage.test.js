@@ -320,6 +320,70 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
           }
         });
 
+        it('[ASQB] must deny an id holding a space, a non-ASCII character, or no letter or digit', async () => {
+          for (const bad of ['access-a b', 'access-é', 'accèss-a', 'access-a\tb', '-:_', '%', '--']) {
+            for (const accessStreamIds of [[bad], ['access-a', bad]]) {
+              assert.deepStrictEqual(await summary(dbA, { accessStreamIds }), [], JSON.stringify(accessStreamIds));
+            }
+          }
+          // The same ids, valid, still count.
+          assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-a'] }), ACCESS_A);
+        });
+
+        it('[ASQ8] must never count a row the same engine\'s getEvents would not list for the access filter', async () => {
+          // Rows holding an id glued to another by a non-token character
+          // (`/`, `%`): a full-text engine may list them for a prefix id,
+          // the summary does not count them (the safe direction).
+          const glued = [['s8-g1', ['foo/access-a8']], ['s8-g2', ['access-a8%b']], ['s8-g3', ['access-a8%c', 'other-x']]];
+          const clean = [
+            ['s8-1', ['Access-Mixed8']],
+            ['s8-2', ['access-a8', 'access-a8:2']],
+            ['s8-3', ['access-a8']],
+            ['s8-4', ['xaccess-a8']],
+            ['s8-5', ['access-a8x']],
+            ['s8-6', ['access-a8.b']],
+            ['s8-7', ['access-a8_b']]
+          ];
+          const asRows = (list) => list.map(([id, streams], i) => [id, 50000 + i, 'events.get', OK, streams]);
+          const full = await storage.forUser(userId + '-sum8f');
+          const cleanDb = await storage.forUser(userId + '-sum8c');
+          try {
+            await insert(full, asRows([...clean, ...glued]));
+            await insert(cleanDb, asRows(clean));
+            const requests = [
+              ['access-mixed8'], ['ACCESS-MIXED8'], ['access-a8'], ['ACCESS-A8'], ['access-a8:2'], ['access-unknown8'],
+              ['access-a8%c'], ['access-a8%'], ['access-a8_b'], ['access-a8_'], ['access-a8.b'],
+              ['access-a8', 'access-a8:2'], ['access-a8', 'ACCESS-A8']
+            ];
+            const counted = async (db, ids) => (await db.summarize({ fromTime: 0, toTime: 100000, slotSeconds: H, accessStreamIds: ids }))
+              .reduce((sum, g) => sum + g.count, 0);
+            const listed = async (db, ids) => (await db.getEvents({ query: [{ type: 'streamsQuery', content: [[{ any: ids }]] }] })).length;
+            // An id holding a character a full-text engine splits on (`%`) may
+            // list more there; equality is required for the other ids.
+            const tokenOnly = (ids) => ids.every((id) => /^[A-Za-z0-9_:.-]+$/.test(id));
+            for (const ids of requests) {
+              const label = JSON.stringify(ids);
+              assert.ok(await counted(full, ids) <= await listed(full, ids), label + ': never above what getEvents lists');
+              if (tokenOnly(ids)) {
+                assert.strictEqual(await counted(cleanDb, ids), await listed(cleanDb, ids), label + ': equal without glued rows');
+              } else {
+                assert.ok(await counted(cleanDb, ids) <= await listed(cleanDb, ids), label + ': never above what getEvents lists');
+              }
+            }
+            // `%` and `_` are literal.
+            assert.strictEqual(await counted(full, ['access-a8%']), 0);
+            assert.strictEqual(await counted(full, ['access-a8%c']), 1);
+            assert.strictEqual(await counted(full, ['access-a8_']), 0);
+            assert.strictEqual(await counted(full, ['access-a8_b']), 1);
+            // A row carrying two requested ids counts once.
+            assert.strictEqual(await counted(cleanDb, ['access-a8', 'access-a8:2']), 2);
+            assert.strictEqual(await counted(cleanDb, ['access-a8:2']), 1);
+          } finally {
+            await storage.deleteUser(userId + '-sum8f');
+            await storage.deleteUser(userId + '-sum8c');
+          }
+        });
+
         it('[ASQ4] must not count history or deleted rows', async () => {
           assert.deepStrictEqual(await summary(dbA, { fromTime: 36040, toTime: 36070 }), []);
           assert.deepStrictEqual(await summary(dbA, { accessStreamIds: ['access-h'] }), []);

@@ -252,14 +252,16 @@ class UserAuditDatabasePG {
    * left before `deadline`, set with `set_config(..., true)` (the bindable
    * form of `SET LOCAL`) inside a transaction so it never outlives the
    * statement on the pooled connection. A cancelled statement becomes the
-   * budget error.
+   * budget error. The time left is computed once the client is acquired, so
+   * a wait for a pool client is deducted; none left, no statement runs.
    */
   async _summaryQuery (sql: string, values: unknown[], deadline?: number): Promise<Array<Record<string, unknown>>> {
     if (deadline == null) return (await this.readDb.query(sql, values)).rows;
-    const remaining = Math.floor(deadline - Date.now());
-    if (remaining <= 0) throw summaryBudgetError();
+    if (deadline - Date.now() < 1) throw summaryBudgetError();
     try {
       return await this.readDb.withTransaction(async (client) => {
+        const remaining = Math.floor(deadline - Date.now());
+        if (remaining <= 0) throw summaryBudgetError();
         await client.query('SELECT set_config(\'statement_timeout\', $1, true)', [String(remaining)]);
         return (await client.query(sql, values)).rows;
       });

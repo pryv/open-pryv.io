@@ -74,6 +74,30 @@ describe('[PGSB] PostgreSQL audit summarize: statement timeout', function () {
     assert.ok(Date.now() - started < 2500, 'cancelled by the timeout, not run to completion');
   });
 
+  it('[PGSD] a wait for a read-pool client counts in the budget: none left, no statement runs', async () => {
+    const small = new DatabasePG({ ...helpers.state.config, max: 2 });
+    await small.waitForConnection();
+    const held = [await small.getClient(), await small.getClient()];
+    const statements = [];
+    const readDb = userDb.readDb;
+    userDb.readDb = {
+      query: small.query.bind(small),
+      withTransaction: (fn) => small.withTransaction((client) => fn({
+        query: (text, params) => { statements.push(text); return client.query(text, params); }
+      }))
+    };
+    try {
+      setTimeout(() => { for (const client of held) client.release(); }, 600);
+      await assert.rejects(
+        userDb.summarize({ fromTime: 0, toTime: 100000, slotSeconds: 3600, deadline: Date.now() + 300 }),
+        (err) => err.code === SUMMARY_BUDGET_ERROR_CODE);
+      assert.deepStrictEqual(statements, [], 'no statement ran on the client acquired past the deadline');
+    } finally {
+      userDb.readDb = readDb;
+      await small.close();
+    }
+  });
+
   it('[PGSB2] the timeout does not outlive the summary on the pooled connections', async () => {
     const groups = await userDb.summarize({ fromTime: 0, toTime: 100000, slotSeconds: 3600, deadline: Date.now() + 300 });
     assert.deepStrictEqual(groups, [{ slot: 10, action: 'events.get', error: false, count: 1 }]);

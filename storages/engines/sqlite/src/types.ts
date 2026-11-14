@@ -31,4 +31,6 @@ export type SqliteDb = {
   // `.immediate` runs it under BEGIN IMMEDIATE (the write lock is taken first).
   transaction: <A extends unknown[], R>(fn: (...args: A) => R) => ((...args: A) => R) & { immediate: (...args: A) => R };
   close: () => void;
+  /** False once the handle is closed (better-sqlite3's `open` property). */
+  readonly open: boolean;
 };

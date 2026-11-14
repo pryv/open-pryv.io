@@ -35,7 +35,8 @@ import { classifyMethod } from '../accesses/methodClasses.ts';
 export const MAX_BUCKETS = 750;
 
 export type SummaryBucketUnit = 'hour' | 'day' | 'week';
-export type SlotSeconds = 3600 | 900;
+/** A positive integer: 3600, 900, or a divisor of 900 (see `buildBoundaries`). */
+export type SlotSeconds = number;
 
 export type BoundariesParams = {
   fromTime: number;
@@ -47,7 +48,11 @@ export type BoundariesParams = {
 export type Boundaries = {
   /** B[0] <= fromTime < ... ; B[n] is the first boundary >= toTime; n buckets. */
   boundaries: number[];
-  /** 3600 when every boundary is a whole UTC hour, else 900. */
+  /**
+   * 3600 when every boundary is a whole UTC hour, else 900 when every one is
+   * a multiple of 900, else the greatest common divisor of 900 and every
+   * boundary: a slot then never straddles a boundary.
+   */
   slotSeconds: SlotSeconds;
 };
 
@@ -83,6 +88,7 @@ export class BucketCapError extends Error {
 
 const UNIT_SECONDS: Record<SummaryBucketUnit, number> = { hour: 3600, day: 86400, week: 604800 };
 const HOUR = 3600;
+const QUARTER_HOUR = 900;
 const DAY_STEP = 26 * HOUR;
 const WEEK_STEP = 6 * 86400 + 26 * HOUR;
 /** Largest Unix time (seconds) a JS Date can represent. */
@@ -278,8 +284,26 @@ export function buildBoundaries ({ fromTime, toTime, bucket, timezone = 'UTC' }:
     last = next;
   }
 
-  const slotSeconds: SlotSeconds = boundaries.every((b) => mod(b, HOUR) === 0) ? 3600 : 900;
-  return { boundaries, slotSeconds };
+  return { boundaries, slotSeconds: slotSecondsFor(boundaries) };
+}
+
+function gcd (a: number, b: number): number {
+  while (b !== 0) [a, b] = [b, a % b];
+  return a;
+}
+
+/**
+ * Widest slot that divides every boundary: 3600, else 900, else the greatest
+ * common divisor of 900 and the boundaries (zones at an offset that is not a
+ * multiple of 15 minutes, such as Africa/Monrovia before 1972). Boundaries are
+ * whole seconds; any other value is refused.
+ */
+function slotSecondsFor (boundaries: number[]): SlotSeconds {
+  if (!boundaries.every((b) => Number.isInteger(b))) throw new RangeError('Bucket boundaries must be whole seconds');
+  if (boundaries.every((b) => mod(b, HOUR) === 0)) return HOUR;
+  let slot = QUARTER_HOUR;
+  for (const b of boundaries) slot = gcd(slot, Math.abs(b) % QUARTER_HOUR);
+  return Math.max(slot, 1);
 }
 
 /** Index i of the bucket with boundaries[i] <= t < boundaries[i + 1], or -1. */

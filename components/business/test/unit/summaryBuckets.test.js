@@ -272,4 +272,41 @@ describe('[ASB] audit summary buckets', function () {
       assert.deepEqual(lengths(r.boundaries), [24 * 3600, 23 * 3600, 24 * 3600]);
     });
   });
+
+  describe('[ASB7] a zone whose offset is not a multiple of 15 minutes', function () {
+    it('[ASB7A] Africa/Monrovia in June 1971 (-0:44:30): slot 30, every boundary on a slot, folding equals direct bucketing', function () {
+      const tz = 'Africa/Monrovia';
+      assert.equal(local(tz, utc(1971, 6, 1)).hm, '23:15', 'this runtime knows the -0:44:30 offset');
+      const fromTime = utc(1971, 6, 1);
+      const toTime = utc(1971, 7, 1);
+      const r = buildBoundaries({ fromTime, toTime, bucket: 'day', timezone: tz });
+      assert.equal(r.slotSeconds, 30);
+      for (const b of r.boundaries) {
+        assert.equal(b % r.slotSeconds, 0);
+        assert.equal(local(tz, b).hm, '00:00');
+      }
+      // Random rows: per-bucket counts from the slot groups equal direct bucketing.
+      let seed = 7;
+      const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+      const direct = r.boundaries.slice(0, -1).map(() => 0);
+      const groups = new Map();
+      for (let i = 0; i < 5000; i++) {
+        const t = fromTime + Math.floor(random() * (toTime - fromTime) * 10) / 10;
+        let index = 0;
+        while (r.boundaries[index + 1] <= t) index++;
+        direct[index]++;
+        const slot = Math.floor(t / r.slotSeconds);
+        groups.set(slot, (groups.get(slot) ?? 0) + 1);
+      }
+      const folded = foldGroups([...groups].map(([slot, count]) => ({ slot, action: 'events.get', error: false, count })),
+        { ...r, fromTime, toTime });
+      assert.deepEqual(folded.map((b) => b.reads), direct);
+      assert.equal(direct.reduce((a, b) => a + b, 0), 5000);
+    });
+
+    it('[ASB7B] common zones keep 3600 or 900', function () {
+      assert.equal(buildBoundaries({ fromTime: utc(2026, 1, 5), toTime: utc(2026, 1, 9), bucket: 'day', timezone: 'Europe/Zurich' }).slotSeconds, 3600);
+      assert.equal(buildBoundaries({ fromTime: utc(2026, 1, 5), toTime: utc(2026, 1, 9), bucket: 'day', timezone: 'Asia/Kathmandu' }).slotSeconds, 900);
+    });
+  });
 });

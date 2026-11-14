@@ -44,13 +44,15 @@ export interface SummarizeParams {
   fromTime: number;
   /** Exclusive upper bound of `time` (Unix seconds). */
   toTime: number;
-  /** Width of a slot in seconds: a row falls in slot `floor(time / slotSeconds)`. */
+  /** Width of a slot in seconds, a positive integer: a row falls in slot `floor(time / slotSeconds)`. */
   slotSeconds: number;
   /**
    * Audit stream ids (`access-<id>`) a row must carry at least one of.
    * `undefined` means no stream filter. Any other value must be a non-empty
-   * array of non-empty strings, none of them `*`; anything else (empty array,
-   * `null`, a non-string item) DENIES and the result is empty, never "no filter".
+   * array of strings made only of printable ASCII without space, each holding
+   * at least one letter or digit; anything else (empty array, `null`, `*`, a
+   * non-string item, a space or a non-ASCII character) DENIES and the result
+   * is empty, never "no filter".
    */
   accessStreamIds?: string[];
   /** `Date.now()` value after which the engine gives up with a {@link SUMMARY_BUDGET_ERROR_CODE} error. */
@@ -77,19 +79,35 @@ export function summaryBudgetError (): Error & { code: string } {
   return err;
 }
 
+/** `code` of the error `summarize` throws when its store was closed while it ran (the caller may retry once). */
+export const SUMMARY_INTERRUPTED_ERROR_CODE = 'SUMMARY_INTERRUPTED';
+
+/** The error an engine throws when its store was closed during `summarize` (match on `code`). */
+export function summaryInterruptedError (): Error & { code: string } {
+  const err = new Error('Audit summary interrupted: the store was closed') as Error & { code: string };
+  err.code = SUMMARY_INTERRUPTED_ERROR_CODE;
+  return err;
+}
+
 /** Row type counted as an error by `summarize`. */
 export const SUMMARY_ERROR_TYPE = 'audit-log/pryv-api-error';
+
+// Printable ASCII without space (0x21..0x7E), with at least one letter or digit.
+const SUMMARY_ID_CHARS = /^[\x21-\x7E]+$/;
+const SUMMARY_ID_WORD = /[A-Za-z0-9]/;
 
 /**
  * Validates `accessStreamIds` for `summarize`: `undefined` gives `null` (no
  * filter), a usable list is returned as is, and anything else gives `false`
- * (deny: the caller must answer with no groups).
+ * (deny: the caller must answer with no groups). An item is usable when it is
+ * made only of printable ASCII without space, holds at least one letter or
+ * digit, and is not `*`; one unusable item denies the whole call.
  */
 export function summaryAccessFilter (accessStreamIds: unknown): string[] | null | false {
   if (accessStreamIds === undefined) return null;
   if (!Array.isArray(accessStreamIds) || accessStreamIds.length === 0) return false;
   for (const id of accessStreamIds) {
-    if (typeof id !== 'string' || id.length === 0 || id === '*') return false;
+    if (typeof id !== 'string' || id === '*' || !SUMMARY_ID_CHARS.test(id) || !SUMMARY_ID_WORD.test(id)) return false;
   }
   return accessStreamIds as string[];
 }
@@ -122,7 +140,11 @@ export interface UserAuditDatabase {
    * Counts of head, non-deleted rows with `fromTime <= time < toTime`, grouped
    * by slot, `content.action` and outcome (error type or not). Raw groups only:
    * classes and calendar buckets are computed by the caller, once for every
-   * engine. Throws a {@link SUMMARY_BUDGET_ERROR_CODE} error past `deadline`.
+   * engine. Throws a {@link SUMMARY_BUDGET_ERROR_CODE} error past `deadline`,
+   * and a {@link SUMMARY_INTERRUPTED_ERROR_CODE} error when its store is closed
+   * while it runs (an engine that reads in several steps). The groups never
+   * count a row the engine's `getEvents` would not return for the stream query
+   * `[[{ any: accessStreamIds }]]`.
    */
   summarize (params: SummarizeParams): Promise<SummaryGroup[]>;
 
