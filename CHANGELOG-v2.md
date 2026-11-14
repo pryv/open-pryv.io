@@ -29,8 +29,8 @@
   could replace a run; the backup prints a warning when it is not signed. Generate the pair once:
   `openssl genpkey -algorithm ed25519 -out backup-signing.key.pem` and
   `openssl pkey -in backup-signing.key.pem -pubout -out backup-signing.pub.pem`; keep the private
-  key on the backup host, the public key with the restore secret. A chain keeps the signing key it
-  started with.
+  key on the backup host, the public key with the restore secret. A chain is signed from its full
+  backup on: to start signing, take a new full backup into a new directory.
 - `--inspect` shows, per run, the number of listed files and whether the run is signed;
   `--inspect --verify-files` (with the backup's secret) reads and checks every file.
 - The bundled `decrypt-backup.mjs` applies the same checks and stops at the first damaged file,

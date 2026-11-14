@@ -1094,13 +1094,20 @@ describe('[BKSG] signed runs', function () {
     assert.throws(() => createFilesystemBackupWriter(dir, { compress: false, run: INC2, encryptor: encryptor() }), /is signed with key/);
     assert.ok(!fs.existsSync(path.join(dir, 'incrementals', INC2_ID)), 'nothing written');
 
-    // an unsigned chain is pinned by its first signed run
+    // a chain started unsigned takes no signing key: planned or written, refused before anything is written
     const later = path.join(tmp, 'later');
     await writeSigned(later, FULL, null);
     assert.strictEqual(JSON.parse(fs.readFileSync(path.join(later, 'chain.json'), 'utf8')).signing, undefined);
-    await writeSigned(later, INC1, keys.privateKey);
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(later, 'chain.json'), 'utf8')).signing, { alg: 'ed25519', keyFingerprint: fp });
-    await assert.rejects(() => createFilesystemBackupReader(later, { signingPubKey: keys.publicKey }).readManifest(), /Run full .*: no manifest.sig/);
+    const unsignedChain = /The backup chain at .* has runs that are not signed: a signed chain starts with its full backup\. Continue without --signing-key, or take a new full backup into a new directory with it \(nothing written\)\./;
+    assert.throws(() => planBackupRun(later, { incremental: true, signingKeyFingerprint: fp }), (err) => err.code === 'key-model' && unsignedChain.test(err.message));
+    assert.throws(() => createFilesystemBackupWriter(later, { compress: false, run: INC1, signingKey: keys.privateKey }), (err) => err.code === 'key-model' && unsignedChain.test(err.message));
+    assert.ok(!fs.existsSync(path.join(later, 'incrementals', INC1_ID)), 'nothing written');
+    // a chain started from a backup written before chains (unsigned): the same
+    const pre = path.join(tmp, 'pre-unsigned');
+    await writeRun(pre, { users: fullUsers() });
+    assert.throws(() => planBackupRun(pre, { incremental: true, signingKeyFingerprint: fp }), (err) => err.code === 'key-model' && unsignedChain.test(err.message));
+    // continued unsigned: accepted
+    assert.strictEqual(planBackupRun(later, { incremental: true }).parentRunId, 'full');
 
     // a key of another type is refused
     assert.throws(() => createFilesystemBackupWriter(path.join(tmp, 'rsa'), { run: FULL, signingKey: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey }), /not an Ed25519 key/);

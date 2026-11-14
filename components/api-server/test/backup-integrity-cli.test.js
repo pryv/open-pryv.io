@@ -151,6 +151,14 @@ describe('[BKIS] bin/backup.js run file tables, end to end', function () {
     assert.strictEqual(none.status, 1, none.stdout + none.stderr);
     assert.match(none.stderr, /is signed with key sha256:[0-9a-f]{64}: pass the same --signing-key/);
     assert.deepStrictEqual(fs.readdirSync(dir).sort(), before, 'nothing written');
+
+    // a chain started unsigned takes no signing key
+    const symDir = path.join(tmpDir, 'bkis2-sym');
+    const symBefore = fs.readdirSync(symDir).sort();
+    const late = runCli(['--output', symDir, '--user', username, '--incremental', '--passphrase-file', passphraseFile, '--signing-key', signing.key]);
+    assert.strictEqual(late.status, 1, late.stdout + late.stderr);
+    assert.match(late.stderr, /has runs that are not signed: a signed chain starts with its full backup/);
+    assert.deepStrictEqual(fs.readdirSync(symDir).sort(), symBefore, 'nothing written');
   });
 
   it('[BKIS3] --inspect --verify-files checks every listed file; one byte changed in an attachment fails it and the restore, naming the file', async function () {

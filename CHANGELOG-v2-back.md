@@ -15,7 +15,8 @@
 - `FilesystemBackupWriter`: `manifest.integrity = { version: 2, cipher, files[{ path, size, sha256 }] }`
   of the bytes on disk (measuring transform on the attachment pipeline); `manifest.sig` when a
   `signingKey` is given (Ed25519 over `"pryv-backup-manifest-v2\n" + chainId + "\n" + runId + "\n" +
-  sha256(manifest.json)`); `chain.json.signing` pin; `withChainLock` (`.chain.lock`, `wx`, stale
+  sha256(manifest.json)`); `chain.json.signing` pin, set by the full run only (`checkSigningKey`
+  refuses a signing key on an unsigned chain, `key-model`, before anything is written); `withChainLock` (`.chain.lock`, `wx`, stale
   after 60 s) around the re-read + write of `chain.json` in both branches of `writeManifest`.
   A run at the root refuses, at creation, a directory where `listRunFiles` finds anything (litter
   aside): `BackupChainError('exists')`, nothing written. `writeManifest` walks the run directory

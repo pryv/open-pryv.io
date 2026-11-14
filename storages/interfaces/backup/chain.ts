@@ -127,8 +127,8 @@ type DeletedUser = {
 };
 
 /**
- * The signing key of a chain, set by its first signed run: every later run
- * must be signed with it. Operational consistency only (chain.json is
+ * The signing key of a chain, set by its full run: every later run must be
+ * signed with it (a chain started unsigned stays unsigned). Operational consistency only (chain.json is
  * cleartext): trust comes from the public key given at restore.
  */
 type ChainSigning = { alg: 'ed25519', keyFingerprint: string };
@@ -919,10 +919,20 @@ function checkKeyModel (dir: string, existing: ChainEncryption, requested: Chain
   }
 }
 
-/** A chain signed with a key is continued with that key only (checked before anything is written). */
+/**
+ * A chain signed with a key is continued with that key only; a chain is
+ * signed from its full run on, so an unsigned one takes no signing key
+ * (checked before anything is written).
+ */
 function checkSigningKey (dir: string, chain: Chain, fingerprint: string | null): void {
   const pinned = chain.signing?.keyFingerprint ?? null;
-  if (pinned == null) return;
+  if (pinned == null) {
+    if (fingerprint != null && chain.runs.length > 0) {
+      throw new BackupChainError('key-model', `The backup chain at ${dir} has runs that are not signed: a signed chain starts with its full backup. ` +
+        'Continue without --signing-key, or take a new full backup into a new directory with it (nothing written).');
+    }
+    return;
+  }
   if (fingerprint == null) {
     throw new BackupChainError('key-model', `The backup chain at ${dir} is signed with key ${pinned}: pass the same --signing-key (nothing written).`);
   }

@@ -792,7 +792,9 @@ Signing (recommended with --recipient-pubkey):
                             --signing-pubkey. With a recipient public key alone,
                             whoever holds that public key and can write to the
                             destination could replace a run (a warning says so).
-                            A chain keeps the signing key it started with.
+                            A chain is signed from its full backup on, with
+                            one key: to start signing, take a new full backup
+                            into a new directory.
                             Generate the pair once:
                               openssl genpkey -algorithm ed25519 -out backup-signing.key.pem
                               openssl pkey -in backup-signing.key.pem -pubout -out backup-signing.pub.pem

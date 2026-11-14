@@ -67,8 +67,8 @@ interface WriterOptions {
   run?: WriterRun | null;
   /**
    * Ed25519 private key (PEM, `{ key, passphrase }` or KeyObject): the run's
-   * manifest is signed (`manifest.sig`) and the chain pinned to the key. A
-   * chain already pinned to a key needs that key.
+   * manifest is signed (`manifest.sig`); a full run pins the chain to the
+   * key. A chain pinned to a key needs that key; an unsigned chain takes none.
    */
   signingKey?: unknown;
 }
@@ -335,7 +335,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
           if (!unchanged) throw concurrent();
           const base = current ?? baseChain!;
           checkSigningKey(outputPath, base, signingFingerprint);
-          chain = { ...base, ...(base.signing == null && signing != null ? { signing } : {}), runs: [...base.runs, entry] };
+          chain = { ...base, runs: [...base.runs, entry] };
         } else {
           // Two full runs into one empty directory: the second finds the first's chain.
           if (current != null) throw concurrent();
