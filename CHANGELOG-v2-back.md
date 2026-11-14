@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Audit storage: `summarize` (for `audit.getSummary`)
+
+- `UserAuditDatabase` contract: new required method `summarize({ fromTime, toTime, slotSeconds,
+  accessStreamIds?, deadline? })` returning `{ slot, action, error, count }` groups of head, non-deleted
+  rows over `[fromTime, toTime)` (`slot = floor(time / slotSeconds)`, `action` = `content.action`,
+  `error` = type `audit-log/pryv-api-error`). A third-party audit engine must implement it (listed in
+  `REQUIRED_METHODS`). Only `undefined` means "no access filter": an empty, malformed or `'*'` filter
+  returns no groups. Past `deadline` the engine throws `summaryBudgetError()`
+  (`SUMMARY_BUDGET_ERROR_CODE`).
+- PostgreSQL: one `GROUP BY` on the long-read pool, streams condition from the existing
+  `convertCondition` path; with a deadline, inside `withTransaction` with
+  `set_config('statement_timeout', …, true)`, a timeout (`57014`) maps to the budget error. No new
+  index (`idx_audit_time`).
+- SQLite: windowed aggregation (20 000 rows per window, the event loop released between windows,
+  deadline checked before each), filtered windows on the FTS rowid set built by the existing
+  `toSQLiteQuery`. Test hook `_setSummaryChunkRows`.
+- `business/src/audit/summaryBuckets.ts`: time-zone bucket boundaries (IANA, daylight saving, weeks
+  from Monday, 750-bucket cap) and folding of the engine's groups into dense buckets by method class
+  (`classifyMethod`). Per worker, one summary per account in flight, four waiting, 20 s budget.
+
 ### Access integrity hashed on the wire form
 
 - `business/src/integrity/integrity.ts`: `accesses.compute` / `hash` / `key` canonicalise the access

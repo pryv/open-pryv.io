@@ -113,6 +113,8 @@ const ALL_METHODS = [
   'account.addressAliases.create',
   'account.addressAliases.list',
   'account.addressAliases.delete',
+  // Activity counts of the account's audit trail (personal token).
+  'audit.getSummary',
   // Account transfer to a beneficiary: public, the mailed link is the
   // credential (recorded in the owner's trail).
   'account.transferClaim',

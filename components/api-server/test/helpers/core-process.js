@@ -239,6 +239,7 @@ const http = require('node:http');
   require('api-server/src/methods/service.ts').default(app.api);
   await require('api-server/src/methods/webhooks.ts').default(app.api);
   await require('api-server/src/methods/shared-secrets.ts').default(app.api);
+  await require('api-server/src/methods/audit.ts').default(app.api);
   await require('api-server/src/methods/trackingFunctions.ts').default(app.api);
   await require('api-server/src/methods/account.ts').default(app.api);
   await require('api-server/src/methods/externalIds.ts').default(app.api);

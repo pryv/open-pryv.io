@@ -39,6 +39,7 @@ const SHARED_FIXTURE = {
   'delegations.listControlled': 'read',
   'sharedSecrets.retrieve': 'read',
   getAccessInfo: 'read',
+  'audit.getSummary': 'read',
   'events.create': 'write',
   'events.update': 'write',
   'events.deleteAttachment': 'write',

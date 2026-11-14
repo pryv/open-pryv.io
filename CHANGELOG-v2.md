@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Audit: activity summary for the account owner
+
+- **New method `audit.getSummary`** (`GET /{username}/audit/summary`): activity counts of the
+  account's audit trail per hour, day or week (`bucket`), over `[fromTime, toTime)` (`toTime`
+  defaults to now), with buckets aligned in a given IANA `timezone` (default `UTC`; weeks start on
+  Monday), optionally for some accesses only (`accessIds`, up to 50; a base id counts every version
+  of the access). The answer is `summary: { bucket, timezone, fromTime, toTime, buckets }`, one
+  bucket per period of the range, zeros included, each `{ time, total, reads, writes, session,
+  other, errors }`: `reads` to `other` use the method classes of an access's `usage`, `errors`
+  counts the failed calls among them, the batch envelope (`callBatch`) is not counted. Personal
+  accesses only (the owner's, or a delegate's personal access); app and shared accesses get
+  `forbidden`. A range is limited to 750 buckets (`invalid-parameters-format`); a summary that
+  would take too long is refused with `invalid-operation` (`data.reason: 'summary-too-large'`),
+  never answered in part; summaries of one account run one at a time, and a call arriving while
+  four already wait gets `too-many-requests`; with the audit trail off the method answers
+  `unavailable-method`. The
+  figures count what the platform records (methods the operator's audit filter excludes are not
+  counted), so they can differ from the lifetime `usage` counters. Additive, not breaking.
+
 ### Account transfer to a beneficiary
 
 - **Account transfer to a beneficiary (`account.setAutoDeletion` with `action: 'transfer'`).** Instead

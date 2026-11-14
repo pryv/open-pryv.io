@@ -42,9 +42,9 @@ components/       Source code split by domain
   cache/            Caching layer
   platform/         PlatformDB interface + config-snapshot hash drift
   storage/          Storage facade, uses the engines selected in config
-  audit/            Audit logging (uses SQLite directly)
+  audit/            Audit logging (rows in the auditStorage engine: SQLite by default, or PostgreSQL)
   business/         Cross-domain logic:
-    accesses/  acme/  auth/  backup/  bootstrap/  integrity/
+    accesses/  acme/  audit/ (audit.getSummary buckets)  auth/  backup/  bootstrap/  integrity/
     emails/  multi-email container, verification-mail policy, registration email challenge
     mfa/  notifications/  observability/  series/  system-streams/  users/  webhooks/
   webhooks/         Outbound event delivery (optional named `scopes` filter)
