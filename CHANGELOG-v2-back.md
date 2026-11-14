@@ -24,6 +24,14 @@
   on attachments), every file of an account hashed when the account is opened, chain entry
   cross-check (`users`, `scope`, `snapshotBefore`), legacy notice, legacy-after-current refusal.
   `inspectBackup`: `files` and `signed` lines, `verifyFiles`, `signingPubKey`, status `failed`.
+- `chain.ts` `isFilesystemLitter` / `isLitterPath`: a fixed list (files `.DS_Store`, `Thumbs.db`,
+  `desktop.ini`, `._*`, `.nfs*`; directories `lost+found`, `@eaDir`, `.snapshot`, `.zfs`,
+  `.Spotlight-V100`, `.fseventsd`, `.Trashes`, `.TemporaryItems`, `$RECYCLE.BIN`, `System Volume
+  Information`), not configurable. Skipped, when the table does not list them, by `listRunFiles`
+  (notice `Run <id>: ignored <path> (not a file of the backup)` through `onWarning` and in
+  `--inspect`), `listAttachmentFiles`, `listStrays` and the bundled script (same lists,
+  interpolated); the writer refuses to write such a name. The unlisted-file refusal names the way
+  out. The bundled script walks with `lstat` and reports a link or special file as damage.
 - `RestoreOrchestrator._importUser`: the account is opened in the backup (and its files checked)
   before it is added to the local index or cleared.
 - `bin/backup.js`: `--signing-key`, `--signing-key-passphrase` (`PRYV_BACKUP_SIGNING_KEY_PASSPHRASE`),

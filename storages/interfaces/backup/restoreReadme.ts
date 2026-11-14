@@ -24,14 +24,16 @@
  * against a real encrypted backup), so it cannot silently drift from the cipher.
  */
 
-import { INTEGRITY_RELEASE } from './chain.ts';
+import { INTEGRITY_RELEASE, LITTER_FILE_NAMES, LITTER_FILE_PREFIXES, LITTER_DIR_NAMES } from './chain.ts';
 
 const RESTORE_README_NAME = 'RESTORE-README.md';
 const DECRYPT_SCRIPT_NAME = 'decrypt-backup.mjs';
 
 /**
  * Standalone, dependency-free decrypter. Mirrors the BackupCipher wire format.
- * Kept free of backticks and ${...} so it can live inside this template literal.
+ * Kept free of backticks so it can live inside this template literal; its only
+ * interpolations are the filesystem litter lists, taken from chain.ts so the
+ * script and the restore skip the same names.
  */
 const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 // Standalone decrypter for an encrypted Pryv.io backup.
@@ -195,14 +197,28 @@ function decryptFile (dataKey, full, expect) {
   return Buffer.concat(out);
 }
 
-function walk (dir, base, files) {
-  for (const name of fs.readdirSync(dir)) {
+// Names operating systems and storage appliances create by themselves: not
+// files of the backup, skipped with a notice where no file table lists them.
+const LITTER_FILES = new Set(${JSON.stringify(LITTER_FILE_NAMES)});
+const LITTER_PREFIXES = ${JSON.stringify(LITTER_FILE_PREFIXES)};
+const LITTER_DIRS = new Set(${JSON.stringify(LITTER_DIR_NAMES)});
+function isLitterFile (name) { return LITTER_FILES.has(name) || LITTER_PREFIXES.some((p) => name.startsWith(p)); }
+
+// The regular files of the tree (paths relative to base). Nothing is
+// followed: a symbolic link or special file is collected apart (reported as
+// damage, never read); a litter directory is skipped whole.
+function walk (dir, base, out) {
+  for (const name of fs.readdirSync(dir).sort()) {
     const p = path.join(dir, name);
     const rel = path.relative(base, p);
-    if (fs.statSync(p).isDirectory()) walk(p, base, files);
-    else files.push(rel);
+    const st = fs.lstatSync(p);
+    if (st.isDirectory()) {
+      if (LITTER_DIRS.has(name)) out.ignored.push(rel + path.sep);
+      else walk(p, base, out);
+    } else if (st.isFile()) out.files.push(rel);
+    else out.special.push(rel);
   }
-  return files;
+  return out;
 }
 
 // The run root of a file: the nearest ancestor, among the backup root and
@@ -308,8 +324,11 @@ function main () {
   const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 
   // The files of each run, by run root.
+  const tree = walk(args.dir, args.dir, { files: [], special: [], ignored: [] });
+  for (const rel of tree.special) damage(rel, 'not a regular file (symbolic link or special file): not read');
+  for (const rel of tree.ignored) console.log('Ignored ' + rel + ' (not a file of the backup)');
   const byRun = new Map();
-  for (const rel of walk(args.dir, args.dir, [])) {
+  for (const rel of tree.files) {
     const runRoot = runRootOf(args.dir, rel);
     if (!byRun.has(runRoot)) byRun.set(runRoot, []);
     byRun.get(runRoot).push(rel);
@@ -342,15 +361,21 @@ function main () {
       }
     }
     let table = null;
-    if (manifest != null && manifest.integrity != null) {
-      table = new Map((manifest.integrity.files || []).map((f) => [f.path, f]));
+    if (manifest != null && manifest.integrity != null) table = new Map((manifest.integrity.files || []).map((f) => [f.path, f]));
+    // Litter the table does not list: ignored (neither checked nor copied).
+    const kept = rels.filter((rel) => {
+      if (!isLitterFile(path.basename(rel)) || (table != null && table.has(inRun(rel)))) return true;
+      console.log('Ignored ' + rel + ' (not a file of the backup)');
+      return false;
+    });
+    if (table != null) {
       const present = new Set();
-      for (const rel of rels) {
+      for (const rel of kept) {
         const p = inRun(rel);
         if (outsideTable(p)) continue;
         present.add(p);
         const listed = table.get(p);
-        if (listed == null) damage(rel, 'unlisted file (not in the run\\'s manifest)');
+        if (listed == null) damage(rel, 'unlisted file (not in the run\\'s manifest); if you put it there, move it out of the backup directory (it holds the backup only)');
         else if (fs.statSync(path.join(args.dir, rel)).size !== listed.size) damage(rel, 'size differs from the run\\'s manifest');
       }
       for (const p of table.keys()) {
@@ -359,7 +384,7 @@ function main () {
     }
 
     let verified = 0;
-    for (const rel of rels) {
+    for (const rel of kept) {
       const p = inRun(rel);
       if (outsideTable(p)) continue;
       const raw = fs.readFileSync(path.join(args.dir, rel));
@@ -490,7 +515,10 @@ function buildRestoreReadme (envelope: Record<string, unknown>, options: { runId
     '',
     "Each run's `manifest.json` lists every file of the run with its size and hash, and every encrypted",
     'file ends with a marked final block tied to its file and run. `--restore`, `--inspect --verify-files`',
-    'and `decrypt-backup.mjs` refuse a run with a file added, removed, changed or cut short. If the backup',
+    'and `decrypt-backup.mjs` refuse a run with a file added, removed, changed or cut short: keep this',
+    'directory for the backup only. Files that operating systems and storage appliances create by themselves',
+    '(`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`, `.nfs*`, `lost+found`, `@eaDir`, `.snapshot`, ...) are',
+    'ignored with a notice. If the backup',
     'was signed (`manifest.sig` next to `manifest.json`), pass `--signing-pubkey <pem>` to the restore',
     'tool or to the script: every run must then carry a valid signature of that key. To salvage a damaged',
     'backup: `node decrypt-backup.mjs --ignore-damaged ...` writes every file that verifies and lists the',

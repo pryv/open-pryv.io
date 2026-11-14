@@ -14,8 +14,10 @@
   account is written. Backups written by earlier releases restore as before (their runs are
   reported as "file list not verified"); a run written by an earlier release AFTER a run of this
   release in the same chain is refused (`--through-run` restores up to the last verified run).
-  A file the backup did not write, left in a run's directory (the backup root included), is
-  refused: keep the backup directory for the backup only.
+  A file the backup did not write, found in a run's directory (the backup root included), is
+  refused at restore: keep the backup directory for the backup only. Files that operating systems
+  and storage appliances create by themselves (`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`,
+  `.nfs*`, `lost+found`, `@eaDir`, `.snapshot`, `.zfs`, ...) are ignored with a notice.
 - **Signed backups (recommended with a recipient public key).** Pass `--signing-key <ed25519 pem>`
   at backup: each run gets a `manifest.sig`; pass `--signing-pubkey <pem>` at restore and
   `--inspect`: every run must then be signed by that key, or the restore is refused. With a

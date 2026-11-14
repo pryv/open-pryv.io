@@ -46,6 +46,36 @@ const CHAIN_TMP_RE = /^\.chain\.json\..*\.tmp$/;
 const RUN_UNLISTED_FILES = new Set([MANIFEST_FILE_NAME, 'manifest.sig']);
 
 /**
+ * Names operating systems and storage appliances create by themselves in any
+ * directory. Not a file of the backup: skipped (with a notice) where the run's
+ * file table does not list them, never written by the backup. Fixed on
+ * purpose: no reader path opens a file outside the table, and a short list
+ * can be audited against that.
+ */
+const LITTER_FILE_NAMES = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
+const LITTER_FILE_PREFIXES = ['._', '.nfs'];
+const LITTER_DIR_NAMES = ['lost+found', '@eaDir', '.snapshot', '.zfs', '.Spotlight-V100', '.fseventsd', '.Trashes', '.TemporaryItems', '$RECYCLE.BIN', 'System Volume Information'];
+const LITTER_FILE_SET = new Set(LITTER_FILE_NAMES);
+const LITTER_DIR_SET = new Set(LITTER_DIR_NAMES);
+
+/** Whether a directory entry is filesystem litter (a file, or a directory skipped whole). */
+function isFilesystemLitter (name: string, isDirectory: boolean): boolean {
+  if (isDirectory) return LITTER_DIR_SET.has(name);
+  return LITTER_FILE_SET.has(name) || LITTER_FILE_PREFIXES.some((p) => name.startsWith(p));
+}
+
+/** Whether a `/`-separated path relative to a run names litter (its file, or a directory on the way). */
+function isLitterPath (rel: string): boolean {
+  const parts = rel.split('/');
+  return isFilesystemLitter(parts[parts.length - 1], false) || parts.slice(0, -1).some((p) => isFilesystemLitter(p, true));
+}
+
+/** The notice of an ignored entry (a directory ends with `/`). */
+function ignoredEntryNotice (runId: string, rel: string): string {
+  return `Run ${runId}: ignored ${rel} (not a file of the backup)`;
+}
+
+/**
  * An incremental run exports the items changed after the previous run's
  * snapshot time minus this overlap: an item committed by a write that began
  * before that snapshot and landed after the previous run read its table is
@@ -280,34 +310,69 @@ function runIntegrityOf (manifest: Record<string, unknown> | null, runId: string
   return { version: integrity.version, cipher: integrity.cipher as number | null, files };
 }
 
+/** A file present in a run that its table does not list: refused, with the way out. */
+function unlistedFileError (runId: string, dir: string, rel: string): BackupChainError {
+  return new BackupChainError('integrity', `Run ${runId} of the backup at ${dir}: unlisted file ${rel} (not in the run's manifest): refused. ` +
+    'If you put it there, move it out of the backup directory (it holds the backup only) and run again; ' +
+    '--inspect --verify-files checks a backup ahead of a restore.');
+}
+
+interface ListRunFilesOptions {
+  /** The run's file table: a path it lists is never ignored as litter. */
+  listed?: FileTable | null;
+  /** Called with each litter entry skipped (a directory ends with `/`). */
+  onIgnored?: (rel: string) => void;
+}
+
 /**
  * The regular files of a run directory, relative to it (`/`-separated),
  * without the manifest and its signature; at the root of a backup, without
- * the chain's own files and the `incrementals/` tree. Anything else than a
- * regular file or a directory (a symbolic link, a special file) is refused.
+ * the chain's own files and the `incrementals/` tree. Filesystem litter the
+ * table does not list is skipped (see `isFilesystemLitter`). Anything else
+ * than a regular file or a directory (a symbolic link, a special file) is
+ * refused.
  */
-function listRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string): Map<string, number> {
+function listRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string, options: ListRunFilesOptions = {}): Map<string, number> {
   const out = new Map<string, number>();
+  const listed = options.listed ?? null;
+  const listsUnder = (rel: string): boolean => listed != null && [...listed.keys()].some((p) => p.startsWith(rel + '/'));
   (function walk (abs: string, rel: string) {
     for (const name of fs.readdirSync(abs).sort()) {
       const childRel = rel === '' ? name : rel + '/' + name;
       if (rel === '' && (RUN_UNLISTED_FILES.has(name) || (isRoot && (ROOT_NON_RUN_FILES.has(name) || CHAIN_TMP_RE.test(name))))) continue;
       const childAbs = path.join(abs, name);
       const stat = fs.lstatSync(childAbs);
-      if (stat.isDirectory()) walk(childAbs, childRel);
-      else if (stat.isFile()) out.set(childRel, stat.size);
-      else throw integrityError(runId, dir, `${childRel} is not a regular file (symbolic link or special file)`);
+      if (stat.isDirectory()) {
+        if (isFilesystemLitter(name, true) && !listsUnder(childRel)) {
+          options.onIgnored?.(childRel + '/');
+          continue;
+        }
+        walk(childAbs, childRel);
+      } else if (stat.isFile()) {
+        if (isFilesystemLitter(name, false) && !listed?.has(childRel)) {
+          options.onIgnored?.(childRel);
+          continue;
+        }
+        out.set(childRel, stat.size);
+      } else throw integrityError(runId, dir, `${childRel} is not a regular file (symbolic link or special file)`);
     }
   })(runDir, '');
   return out;
 }
 
-/** Completeness of a run against its file table: no file added, none missing, none resized (sizes only, nothing read). */
-function checkRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string, integrity: RunIntegrity): void {
-  const present = listRunFiles(runDir, isRoot, runId, dir);
+/**
+ * Completeness of a run against its file table: no file added, none missing,
+ * none resized (sizes only, nothing read). Each litter entry skipped is
+ * reported through `onWarning`.
+ */
+function checkRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string, integrity: RunIntegrity, onWarning?: (message: string) => void): void {
+  const present = listRunFiles(runDir, isRoot, runId, dir, {
+    listed: integrity.files,
+    onIgnored: (rel) => onWarning?.(ignoredEntryNotice(runId, rel))
+  });
   for (const [rel, size] of present) {
     const listed = integrity.files.get(rel);
-    if (listed == null) throw integrityError(runId, dir, `unlisted file ${rel} (not in the run's manifest)`);
+    if (listed == null) throw unlistedFileError(runId, dir, rel);
     if (listed.size !== size) throw integrityError(runId, dir, `file ${rel}: size differs from the run's manifest (${size}, listed ${listed.size})`);
   }
   for (const rel of integrity.files.keys()) {
@@ -318,7 +383,7 @@ function checkRunFiles (runDir: string, isRoot: boolean, runId: string, dir: str
 /** Check bytes read from a run against its file table. */
 function checkFileHash (raw: Buffer, rel: string, integrity: RunIntegrity, runId: string, dir: string): void {
   const listed = integrity.files.get(rel);
-  if (listed == null) throw integrityError(runId, dir, `unlisted file ${rel} (not in the run's manifest)`);
+  if (listed == null) throw unlistedFileError(runId, dir, rel);
   if (raw.length !== listed.size || crypto.createHash('sha256').update(raw).digest('hex') !== listed.sha256) {
     throw integrityError(runId, dir, `file ${rel} differs from the run's manifest (hash)`);
   }
@@ -697,6 +762,7 @@ function listStrays (dir: string, chain: Chain | null): string[] {
     return [INCREMENTALS_DIR_NAME];
   }
   return names
+    .filter((name) => !isFilesystemLitter(name, true) && !isFilesystemLitter(name, false))
     .map((name) => INCREMENTALS_DIR_NAME + '/' + name)
     .filter((p) => !listed.has(p))
     .sort();
@@ -1054,7 +1120,7 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, veri
         unreadable = true;
         continue;
       }
-      const result = inspectRunFiles(dir, run.runId, runDir, run.path === '.', manifest, options.verifyFiles === true);
+      const result = inspectRunFiles(dir, run.runId, runDir, run.path === '.', manifest, options.verifyFiles === true, lines);
       if (result.failure != null) return report('failed', 'FAILED: ' + result.failure);
       if (result.legacy && lastVerified != null) return report('failed', 'FAILED: ' + legacyAfterVerifiedError(run.runId, lastVerified, dir).message);
       if (!result.legacy) lastVerified = run.runId;
@@ -1093,7 +1159,7 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, veri
   const signed = inspectRunSignature(root, null, FULL_RUN_ID, options.signingPubKey ?? null, dir);
   if (signed.failure != null) return report('failed', 'FAILED: ' + signed.failure);
   lines.push(`  ${FULL_RUN_ID}: ${signed.line}`);
-  const result = inspectRunFiles(dir, FULL_RUN_ID, root, true, manifest, options.verifyFiles === true);
+  const result = inspectRunFiles(dir, FULL_RUN_ID, root, true, manifest, options.verifyFiles === true, lines);
   if (result.failure != null) return report('failed', 'FAILED: ' + result.failure);
   lines.push(`  ${FULL_RUN_ID}: ${result.line}`);
   return report('ok', result.legacy ? `OK (full backup written before ${CHAIN_RELEASE}, one run)` : 'OK (full backup without chain, one run)');
@@ -1116,7 +1182,7 @@ function inspectRunSignature (runDir: string, chainId: string | null, runId: str
  * lists, or that it lists none (an earlier release); with `verify`, every
  * listed file present with its size and hash, nothing added.
  */
-function inspectRunFiles (dir: string, runId: string, runDir: string, isRoot: boolean, manifest: Record<string, unknown>, verify: boolean): { line: string, legacy: boolean, failure?: string } {
+function inspectRunFiles (dir: string, runId: string, runDir: string, isRoot: boolean, manifest: Record<string, unknown>, verify: boolean, lines: string[]): { line: string, legacy: boolean, failure?: string } {
   let integrity: RunIntegrity | null;
   try {
     integrity = runIntegrityOf(manifest, runId, dir);
@@ -1126,7 +1192,7 @@ function inspectRunFiles (dir: string, runId: string, runDir: string, isRoot: bo
   if (integrity == null) return { line: `files: not verified (written before ${INTEGRITY_RELEASE})`, legacy: true };
   if (!verify) return { line: `files: ${integrity.files.size} listed`, legacy: false };
   try {
-    checkRunFiles(runDir, isRoot, runId, dir, integrity);
+    checkRunFiles(runDir, isRoot, runId, dir, integrity, (notice) => lines.push('  ' + notice));
     checkFilesUnder(runDir, '', integrity, runId, dir);
   } catch (err) {
     return { line: '', legacy: false, failure: (err as Error).message };
@@ -1139,6 +1205,13 @@ export {
   MANIFEST_FILE_NAME,
   INTEGRITY_RELEASE,
   INTEGRITY_VERSION,
+  LITTER_FILE_NAMES,
+  LITTER_FILE_PREFIXES,
+  LITTER_DIR_NAMES,
+  isFilesystemLitter,
+  isLitterPath,
+  ignoredEntryNotice,
+  unlistedFileError,
   readNoFollow,
   runIntegrityOf,
   listRunFiles,

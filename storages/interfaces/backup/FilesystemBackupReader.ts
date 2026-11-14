@@ -23,7 +23,7 @@ const {
   BackupChainError, damagedRestoreMessage, deletedUserMessage, deletedUsersOf, resolveRuns, runDirectory,
   readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readNoFollow,
   runIntegrityOf, checkRunFiles, checkFileHash, checkFilesUnder, integrityError, legacyRunNotice, legacyAfterVerifiedError,
-  requiredFormatOf, INTEGRITY_RELEASE, ed25519Key, verifyManifestSignature
+  requiredFormatOf, INTEGRITY_RELEASE, ed25519Key, verifyManifestSignature, isFilesystemLitter, unlistedFileError
 } = require('./chain.ts');
 
 // Open for reading without following a symbolic link (where the platform has the flag).
@@ -124,7 +124,7 @@ function verifyingStream (files: RunFiles, filePath: string): NodeJS.ReadWriteSt
       cb(null, piece);
     },
     flush (cb: (e?: Error | null) => void) {
-      if (listed == null) return cb(integrityError(files.runId, files.backupDir, `unlisted file ${rel} (not in the run's manifest)`));
+      if (listed == null) return cb(unlistedFileError(files.runId, files.backupDir, rel));
       if (size !== listed.size || hash.digest('hex') !== listed.sha256) return cb(integrityError(files.runId, files.backupDir, `file ${rel} differs from the run's manifest (hash)`));
       cb();
     }
@@ -225,7 +225,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
           if (lastVerifiedRunId != null) throw legacyAfterVerifiedError(run.runId, lastVerifiedRunId, inputPath);
           opts.onWarning?.(legacyRunNotice(run.runId));
         } else {
-          checkRunFiles(dir, isRoot, run.runId, inputPath, files.integrity);
+          checkRunFiles(dir, isRoot, run.runId, inputPath, files.integrity, opts.onWarning);
           lastVerifiedRunId = run.runId;
         }
       }
@@ -596,10 +596,12 @@ async function * readChunkedJsonl (dir: string, baseName: string, compressed: bo
 /**
  * The attachment files of a directory. Nothing is followed: a symbolic link
  * or any other non-regular entry is refused, it could make the restore import
- * a file from outside the backup.
+ * a file from outside the backup. Filesystem litter (`.DS_Store`, `._*`, ...)
+ * is not an attachment: skipped.
  */
 function listAttachmentFiles (attachDir: string): string[] {
   return fs.readdirSync(attachDir).filter((f: string) => {
+    if (isFilesystemLitter(f, false)) return false;
     const stat = fs.lstatSync(path.join(attachDir, f));
     if (stat.isDirectory()) return false;
     if (!stat.isFile()) {
@@ -671,7 +673,7 @@ async function buildFileIdMapping (userDir: string, files: RunFiles): Promise<Ma
   if (!isRealDirectory(eventsDir)) return map;
 
   // Detect compression from file extensions
-  const names: string[] = fs.readdirSync(eventsDir);
+  const names: string[] = fs.readdirSync(eventsDir).filter((f: string) => !isFilesystemLitter(f, false));
   const compressed = names.some((f: string) => f.endsWith('.gz'));
 
   for await (const item of readChunkedJsonl(eventsDir, 'events', compressed, files)) {

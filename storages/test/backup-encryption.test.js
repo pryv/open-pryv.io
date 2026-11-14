@@ -533,6 +533,42 @@ describe('[BENC] backup encryption', () => {
       assert.strictEqual(mirrorManifest.integrity, undefined);
       assert.strictEqual(mirrorManifest.runId, 'full');
 
+      // filesystem litter: ignored with a notice, not copied; an unlisted README still named
+      const litter = [
+        path.join(root, '.DS_Store'),
+        path.join(root, 'users', userId, 'attachments', '.DS_Store'),
+        path.join(root, 'users', userId, 'events', '._events-0001.jsonl'),
+        path.join(root, 'lost+found', 'recovered'),
+        path.join(root, 'users', userId, '@eaDir', 'thumb')
+      ];
+      for (const p of litter) {
+        fs.mkdirSync(path.dirname(p), { recursive: true });
+        fs.writeFileSync(p, 'litter');
+      }
+      const withLitter = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm5')]);
+      assert.strictEqual(withLitter.status, 0, withLitter.stderr);
+      for (const name of ['.DS_Store', 'users/u-0001/attachments/.DS_Store', 'users/u-0001/events/._events-0001.jsonl', 'lost+found/', 'users/u-0001/@eaDir/']) {
+        assert.ok(withLitter.stdout.includes('Ignored ' + name + ' (not a file of the backup)'), name + ' ignored: ' + withLitter.stdout);
+      }
+      assert.ok(!fs.existsSync(path.join(tmp, 'm5', '.DS_Store')) && !fs.existsSync(path.join(tmp, 'm5', 'lost+found')), 'litter not copied');
+      fs.writeFileSync(path.join(root, 'README'), 'notes');
+      const withReadme = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm6')]);
+      assert.strictEqual(withReadme.status, 1);
+      assert.match(withReadme.stderr, /README: unlisted file \(not in the run's manifest\); if you put it there, move it out of the backup directory/);
+      fs.rmSync(path.join(root, 'README'));
+      for (const p of litter) fs.rmSync(p);
+      fs.rmSync(path.join(root, 'lost+found'), { recursive: true });
+      fs.rmSync(path.join(root, 'users', userId, '@eaDir'), { recursive: true });
+      // a symbolic link in the tree: reported as damage, never followed
+      if (process.platform !== 'win32') {
+        const link = path.join(root, 'users', userId, 'linked');
+        fs.symlinkSync(path.join(tmp, 'm4'), link);
+        const linked = runScript(script, [root, '--passphrase', 'pw', '--out', path.join(tmp, 'm7')]);
+        assert.strictEqual(linked.status, 1);
+        assert.match(linked.stderr, /users\/u-0001\/linked: not a regular file \(symbolic link or special file\): not read/);
+        fs.rmSync(link);
+      }
+
       // a chain written by the first format, continued by the current one
       const mixed = path.join(tmp, 'mixed');
       writeV1ChainFixture(mixed);

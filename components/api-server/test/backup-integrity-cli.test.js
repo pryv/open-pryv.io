@@ -166,9 +166,13 @@ describe('[BKIS] bin/backup.js run file tables, end to end', function () {
     const unknown = runCli(['--inspect', dir, '--verify-files']);
     assert.strictEqual(unknown.status, 2, unknown.stdout + unknown.stderr);
 
+    // a .DS_Store left by a file browser is ignored with a notice
+    fs.writeFileSync(path.join(dir, '.DS_Store'), 'litter');
     const verified = runCli(['--inspect', dir, '--verify-files', '--passphrase-file', passphraseFile]);
     assertOk(verified, 'inspect --verify-files');
     assert.match(verified.stdout, /full: files: \d+ verified/);
+    assert.match(verified.stdout, /Run full: ignored \.DS_Store \(not a file of the backup\)/);
+    fs.rmSync(path.join(dir, '.DS_Store'));
 
     const [userId] = fs.readdirSync(path.join(dir, 'users'));
     const attachDir = path.join(dir, 'users', userId, 'attachments');

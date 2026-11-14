@@ -908,6 +908,56 @@ describe('[BKSM] run file table and chain cross-check', function () {
     assert.throws(() => dec.decryptBuffer(Buffer.from(V1.symmetricBuffer.hex, 'hex'), { path: 'users/u2-full-only/streams.jsonl', requireVersion: 2 }),
       /file users\/u2-full-only\/streams.jsonl of run full is in format version 1 in a run of format 2: refused/);
   });
+
+  it('[BKSM7] files that operating systems and storage appliances create are ignored with one notice each; any other unlisted file is refused, naming the way out', async function () {
+    const dir = path.join(tmp, 'plain');
+    const incDir = await plainChain(dir);
+    const u1 = path.join(dir, 'users', 'u1-full-and-inc');
+    const litter = [
+      [path.join(dir, '.DS_Store'), 'Run full: ignored .DS_Store (not a file of the backup)'],
+      [path.join(u1, 'events', '._events-0001.jsonl'), 'Run full: ignored users/u1-full-and-inc/events/._events-0001.jsonl (not a file of the backup)'],
+      [path.join(u1, 'attachments', '.DS_Store'), 'Run full: ignored users/u1-full-and-inc/attachments/.DS_Store (not a file of the backup)'],
+      [path.join(dir, 'lost+found', 'recovered-0001'), 'Run full: ignored lost+found/ (not a file of the backup)'],
+      [path.join(u1, '@eaDir', 'thumb.jpg'), 'Run full: ignored users/u1-full-and-inc/@eaDir/ (not a file of the backup)'],
+      [path.join(incDir, 'Thumbs.db'), `Run ${INC1_ID}: ignored Thumbs.db (not a file of the backup)`]
+    ];
+    for (const [p] of litter) {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, 'litter');
+    }
+    const warnings = [];
+    const reader = createFilesystemBackupReader(dir, { onWarning: (w) => warnings.push(w) });
+    assert.deepStrictEqual((await reader.readManifest()).users.map((u) => u.userId).sort(), ['u1-full-and-inc', 'u2-full-only', 'u3-inc-only']);
+    assert.deepStrictEqual(warnings.slice().sort(), litter.map(([, w]) => w).sort(), 'one notice per ignored entry');
+    const attachments = await collectAttachments((await reader.openUser('u1-full-and-inc')).readAttachments());
+    assert.deepStrictEqual(Object.keys(attachments).sort(), ['f1', 'f2', 'f3'], 'litter is not an attachment');
+    assert.strictEqual((await collect((await reader.openUser('u1-full-and-inc')).readEvents())).length, 6);
+    // --inspect --verify-files names the same entries and passes
+    const report = chainApi().inspectBackup(dir, { verifyFiles: true });
+    assert.strictEqual(report.status, 'ok', report.verdict);
+    assert.match(report.lines.join('\n'), /Run full: ignored \.DS_Store \(not a file of the backup\)/);
+
+    // anything else is refused, with the remedy
+    for (const other of [path.join(dir, 'README'), path.join(u1, 'notes.txt')]) {
+      fs.writeFileSync(other, 'someone worked here');
+      await assert.rejects(() => createFilesystemBackupReader(dir).readManifest(),
+        /unlisted file .*(README|notes\.txt) \(not in the run's manifest\): refused\. If you put it there, move it out of the backup directory \(it holds the backup only\) and run again; --inspect --verify-files checks a backup ahead of a restore\./);
+      fs.rmSync(other);
+    }
+    // a listed path is never ignored: the litter predicate applies to unlisted entries only
+    const { isFilesystemLitter, isLitterPath } = chainApi();
+    assert.ok(isFilesystemLitter('._x', false) && isFilesystemLitter('.nfs0001', false) && isFilesystemLitter('$RECYCLE.BIN', true));
+    assert.ok(!isFilesystemLitter('lost+found', false) && !isFilesystemLitter('.DS_Store', true) && !isFilesystemLitter('events-0001.jsonl', false));
+    assert.ok(isLitterPath('users/u/@eaDir/x') && isLitterPath('users/u/attachments/._f1') && !isLitterPath('users/u/attachments/f1'));
+  });
+
+  it('[BKSM7] the writer refuses to write a file whose name the restore ignores', async function () {
+    const writer = createFilesystemBackupWriter(path.join(tmp, 'w'), { compress: false, run: FULL });
+    const uw = await writer.openUser('u1', 'alice');
+    await assert.rejects(() => uw.writeAttachment('e1', '._f1', Readable.from([Buffer.from('x')])), /has a name the restore ignores as filesystem litter: refused/);
+    const litterUser = await writer.openUser('lost+found', 'bob');
+    await assert.rejects(() => litterUser.writeStreams([]), /lost\+found\/streams.jsonl has a name the restore ignores/);
+  });
 });
 
 // A run signed with an Ed25519 key the backup host holds: the restore given
