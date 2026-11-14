@@ -8,19 +8,37 @@
   accessStreamIds?, deadline? })` returning `{ slot, action, error, count }` groups of head, non-deleted
   rows over `[fromTime, toTime)` (`slot = floor(time / slotSeconds)`, `action` = `content.action`,
   `error` = type `audit-log/pryv-api-error`). **BREAKING for third-party audit engines:** the method is
-  listed in `REQUIRED_METHODS`, so an engine without it fails validation at boot. Only `undefined` means "no access filter": an empty, malformed or `'*'` filter
-  returns no groups. Past `deadline` the engine throws `summaryBudgetError()`
-  (`SUMMARY_BUDGET_ERROR_CODE`).
+  listed in `REQUIRED_METHODS`, so an engine without it fails validation at boot. Only `undefined` means "no access filter": an empty, malformed or `'*'` filter,
+  or an id that is not printable ASCII without space or holds no letter or digit, returns no
+  groups (`summaryAccessFilter`, shared by the engines). The groups never count a row the engine's
+  `getEvents` would not return for the same stream query. Past `deadline` the engine throws
+  `summaryBudgetError()` (`SUMMARY_BUDGET_ERROR_CODE`); an engine whose store is closed while it
+  reads throws `summaryInterruptedError()` (`SUMMARY_INTERRUPTED_ERROR_CODE`). `slotSeconds` is a
+  positive integer.
 - PostgreSQL: one `GROUP BY` on the long-read pool, streams condition from the existing
   `convertCondition` path; with a deadline, inside `withTransaction` with
-  `set_config('statement_timeout', …, true)`, a timeout (`57014`) maps to the budget error. No new
-  index (`idx_audit_time`).
-- SQLite: windowed aggregation (20 000 rows per window, the event loop released between windows,
-  deadline checked before each), filtered windows on the FTS rowid set built by the existing
-  `toSQLiteQuery`. Test hook `_setSummaryChunkRows`.
+  `set_config('statement_timeout', …, true)`, the time left computed once the pool client is
+  acquired (none left: the budget error, no statement), a timeout (`57014`) maps to the budget
+  error. No new index (`idx_audit_time`).
+- SQLite: windowed aggregation on the `time` index of the range, with or without an access filter
+  (10 000 rows per window, the event loop released between windows, deadline checked before each,
+  the handle checked after each yield). The access filter does not read the full-text index: the
+  aggregate also groups by the lower-cased stored stream ids and a group is kept when one stored
+  term equals a requested id (ASCII case folded), matched in JS; the ids never reach SQLite. This
+  is a subset of the full-text match of `getEvents` (a stored id glued to another by a non-token
+  character is listed there, not counted). Test hooks `_setSummaryChunkRows`, `_summaryCounters`.
 - `business/src/audit/summaryBuckets.ts`: time-zone bucket boundaries (IANA, daylight saving, weeks
   from Monday, 750-bucket cap) and folding of the engine's groups into dense buckets by method class
-  (`classifyMethod`). Per worker, one summary per account in flight, four waiting, 20 s budget.
+  (`classifyMethod`). `slotSeconds` is 3600, else 900, else the greatest common divisor of 900 and
+  every boundary (zones whose offset is not a multiple of 15 minutes), so a slot never straddles a
+  boundary.
+- `audit.getSummary`, per worker: one summary per account in flight and four waiting; across
+  accounts two read at once and eight wait for a slot (first in, first out), the next is refused,
+  and a call whose turn comes more than 10 s after its arrival is refused without reading
+  (`too-many-requests`); 20 s budget from the start of the read. A summary interrupted by a closed
+  store is run once more on a store resolved again, a second interruption answers
+  `too-many-requests`. Caps are per worker process; a `callBatch` of summaries runs them one after
+  the other.
 
 ### Access integrity hashed on the wire form
 

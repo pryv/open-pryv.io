@@ -15,9 +15,11 @@
   accesses only (the owner's, or a delegate's personal access); app and shared accesses get
   `forbidden`. A range is limited to 750 buckets (`invalid-parameters-format`); a summary that
   would take too long is refused with `invalid-operation` (`data.reason: 'summary-too-large'`),
-  never answered in part; summaries of one account run one at a time, and a call arriving while
-  four already wait gets `too-many-requests`; with the audit trail off the method answers
-  `unavailable-method`. The
+  never answered in part; summaries of one account run one at a time, and a few run at once on a
+  server: `too-many-requests` (retry later) answers a call arriving while four of the account's
+  already wait or while the server's queue of summaries is full, a call that waited more than 10 s
+  for its turn, and a summary interrupted twice (no partial answer); with the audit trail off the
+  method answers `unavailable-method`. The
   figures count what the platform records (methods the operator's audit filter excludes are not
   counted), so they can differ from the lifetime `usage` counters. Additive, not breaking.
 
