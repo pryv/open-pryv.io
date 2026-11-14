@@ -124,6 +124,10 @@ describe('[BKIS] bin/backup.js run file tables, end to end', function () {
     const restore = runCli(['--restore', dir, '--user', username, '--private-key', recipient.key, '--signing-pubkey', signing.pub, '--overwrite']);
     assertOk(restore, 'restore');
     assert.match(restore.stdout, /Restored: 1 users/);
+    assert.doesNotMatch(restore.stderr, /NOT verified/);
+    const unverified = runCli(['--restore', dir, '--user', username, '--private-key', recipient.key, '--overwrite']);
+    assertOk(unverified, 'restore without --signing-pubkey');
+    assert.match(unverified.stderr, /WARNING: This backup is signed \(key sha256:[0-9a-f]{64}\): signatures are NOT verified; pass --signing-pubkey to verify them/);
     const refused = runCli(['--restore', dir, '--user', username, '--private-key', recipient.key, '--signing-pubkey', other.pub, '--overwrite']);
     assert.strictEqual(refused.status, 1, refused.stdout + refused.stderr);
     assert.match(refused.stderr, /not signed by the key given \(--signing-pubkey\)/);

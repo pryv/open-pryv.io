@@ -39,6 +39,27 @@
   `--inspect`), `listAttachmentFiles`, `listStrays` and the bundled script (same lists,
   interpolated); the writer refuses to write such a name. The unlisted-file refusal names the way
   out. The bundled script walks with `lstat` and reports a link or special file as damage.
+- Bounds and checks on what a backup file says: a header over 64 KiB, a `chunk` outside
+  1..16 MiB, a frame payload over `chunk + 16` are refused before anything is buffered (both
+  formats, buffer and stream, and the bundled script); an encryptor refuses such a chunk size. A
+  run's table `cipher` must match its key model (`cipher: null` with a decryptor, or `2` without,
+  is a malformed table). A backup without `chain.json` whose manifest cannot be read is refused by
+  `openUser`, `readPlatformData` and `readServerMappings` too, not only `readManifest`. A signed
+  backup (chain pin or a `manifest.sig`) read without `signingPubKey` gets one `onWarning`
+  notice. `manifest.sig` that is not a JSON object is reported as not readable; fingerprints,
+  run ids and times read from cleartext files are printed only when well formed. The bundled
+  script verifies a run's signature over the raw manifest bytes, with the chain id of
+  `chain.json`, before decrypting the manifest (a run decrypted alone takes it from its manifest).
+- Chain lock takeover: a stale `.chain.lock` is removed only by the run holding
+  `.chain.lock.takeover` (`wx`), after looking at the lock again; an existing takeover file
+  refuses the run (`concurrent`, both files named). Staleness compares the lock file's mtime with
+  the local clock: a destination whose clock runs over a minute ahead of the host defeats the
+  lock, one behind makes a crashed lock linger.
+- Backup format compatibility: a backup written by this release is restored with this release or
+  later (an earlier one answers `unsupported file format version 2`). Key derivation of new
+  passphrase backups (scrypt N = 2^17, r = 8) needs about 134 MiB of memory and a fraction of a
+  second, once per run at restore and inspect; a `decrypt-backup.mjs` left at the root by an
+  earlier release has no `maxmem` and cannot derive the new parameters (use the newest run's copy).
 - `RestoreOrchestrator._importUser`: the account is opened in the backup (and its files checked)
   before it is added to the local index or cleared.
 - `bin/backup.js`: `--signing-key`, `--signing-key-passphrase` (`PRYV_BACKUP_SIGNING_KEY_PASSPHRASE`),
@@ -73,7 +94,7 @@
   destination without atomic exclusive create keeps the sub-millisecond `chain.json` window; no
   at-rest row is written in v2 yet (every row stays v1 until the release that flips
   `WRITE_VERSION`); TOTP envelopes are not bound to the account.
-- Tests: storages `[BKAD1]`..`[BKAD6]`, `[BKDS1]`; business `[BKSM1]`..`[BKSM6]`,
+- Tests: storages `[BKAD1]`..`[BKAD6]`, `[BKDS1]`; business `[BKSM1]`..`[BKSM9]`,
   `[BKLK1]`..`[BKLK3]`, `[BKRS9]`, `[AREV1]`..`[AREV3]`, `[BNEV1]`; api-server `[BKIS1]`..`[BKIS3]`,
   `[BKDS2]`, `[AREV3]`; storage `[UASF4]`. Fixtures of the first formats in
   `storages/test/fixtures/backup-cipher-v1.json`.

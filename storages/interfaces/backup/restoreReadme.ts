@@ -77,7 +77,7 @@ const TAG = 16;
 const NONCE = 12;
 const KEY = 32;
 const HKDF_INFO = Buffer.from('pryv-backup-file-v1', 'utf8');
-const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'decrypt-backup.mjs', 'manifest.sig', '.chain.lock']);
+const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'decrypt-backup.mjs', 'manifest.sig', '.chain.lock', '.chain.lock.takeover']);
 
 function fail (msg) { console.error('Error: ' + msg); process.exit(1); }
 
@@ -153,11 +153,13 @@ function decryptFile (dataKey, full, expect) {
     throw new Error('not an encrypted backup file (bad magic)');
   }
   const headerLen = full.readUInt32BE(MAGIC.length);
+  if (headerLen > 64 * 1024) throw new Error('file header too large');
   const headerStart = MAGIC.length + 4;
   const headerEnd = headerStart + headerLen;
   if (full.length < headerEnd) throw new Error('truncated encrypted file (header)');
   const header = JSON.parse(full.subarray(headerStart, headerEnd).toString('utf8'));
   if (header.v !== 1 && header.v !== 2) throw new Error('unsupported file format version ' + header.v);
+  if (!Number.isSafeInteger(header.chunk) || header.chunk < 1 || header.chunk > 16 * 1024 * 1024) throw new Error('invalid chunk size in the file header');
   if (header.v === 2 && expect != null) {
     const other = header.path !== expect.path || header.run !== expect.runId ||
       (expect.chainId !== undefined && header.chain !== expect.chainId);
@@ -173,6 +175,7 @@ function decryptFile (dataKey, full, expect) {
     if (final) throw new Error('data after the final frame');
     if (off + 4 > full.length) throw new Error('truncated chunk');
     const len = full.readUInt32BE(off);
+    if (len > header.chunk + TAG) throw new Error('frame longer than the file chunk size');
     off += 4;
     if (off + len > full.length) throw new Error('truncated chunk');
     const payload = full.subarray(off, off + len);
@@ -297,18 +300,20 @@ function main () {
   }
   const signingFingerprint = signingPubKey == null ? null
     : 'sha256:' + crypto.createHash('sha256').update(signingPubKey.export({ type: 'spki', format: 'der' })).digest('hex');
-  // Why a run's signature does not verify, or null when it does.
-  function verifySignature (runRoot, manifestRel, manifest, runLabel) {
+  // Why a run's signature does not verify, or null when it does: over the
+  // manifest bytes as written, for the chain id given.
+  function verifySignature (runRoot, manifestRaw, chainId, runLabel) {
     const sigPath = path.join(args.dir, runRoot, 'manifest.sig');
-    if (manifest == null) return 'its manifest cannot be read';
     if (!fs.existsSync(sigPath)) return 'no manifest.sig';
     let sig;
-    try { sig = JSON.parse(fs.readFileSync(sigPath, 'utf8')); } catch (e) { return 'manifest.sig is not JSON'; }
-    if (sig.v !== 2 || sig.alg !== 'ed25519') return 'unknown signature format';
-    if (sig.keyFingerprint !== signingFingerprint) return 'signed with another key (' + sig.keyFingerprint + ')';
-    const digest = crypto.createHash('sha256').update(fs.readFileSync(path.join(args.dir, manifestRel))).digest('hex');
+    try { sig = JSON.parse(fs.readFileSync(sigPath, 'utf8')); } catch (e) { return 'manifest.sig is not readable'; }
+    if (sig == null || sig.v !== 2 || sig.alg !== 'ed25519') return 'unknown signature format';
+    if (sig.keyFingerprint !== signingFingerprint) {
+      return 'signed with another key (' + (/^sha256:[0-9a-f]{64}$/.test(String(sig.keyFingerprint)) ? sig.keyFingerprint : 'unreadable fingerprint') + ')';
+    }
+    const digest = crypto.createHash('sha256').update(manifestRaw).digest('hex');
     if (sig.manifestSha256 !== digest) return 'manifest.json differs from the signed one';
-    const message = Buffer.from('pryv-backup-manifest-v2\\n' + (manifest.chainId || '') + '\\n' + runLabel + '\\n' + digest, 'utf8');
+    const message = Buffer.from('pryv-backup-manifest-v2\\n' + (chainId || '') + '\\n' + runLabel + '\\n' + digest, 'utf8');
     let ok = false;
     try { ok = crypto.verify(null, message, signingPubKey, Buffer.from(String(sig.signature), 'base64')); } catch (e) { ok = false; }
     return ok ? null : 'the signature does not verify';
@@ -340,26 +345,39 @@ function main () {
     // Not files of the run: its manifest and signature (read apart), and at
     // the root the chain's own files and the incrementals/ tree.
     const outsideTable = (p) => p === 'manifest.json' || p === 'manifest.sig' ||
-      (runRoot === '.' && (p === 'chain.json' || p === '.chain.lock' || p.startsWith('.chain.json.') || p.startsWith('incrementals/')));
+      (runRoot === '.' && (p === 'chain.json' || p === '.chain.lock' || p === '.chain.lock.takeover' || p.startsWith('.chain.json.') || p.startsWith('incrementals/')));
 
-    // The manifest first: its file table says what the run holds.
+    // The manifest first: its file table says what the run holds. Read once:
+    // the signature covers these bytes.
     const manifestRel = path.join(runRoot, 'manifest.json');
+    const manifestRaw = rels.includes(manifestRel) ? fs.readFileSync(path.join(args.dir, manifestRel)) : null;
     let manifest = null;
-    if (rels.includes(manifestRel)) {
+    let manifestRead = false;
+    const readManifest = () => {
+      manifestRead = true;
+      if (manifestRaw == null) return;
       try {
-        manifest = JSON.parse(decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, manifestRel)), expectOf(runRoot, manifestRel)).toString('utf8'));
+        manifest = JSON.parse(decryptFile(dataKeyOf(runRoot), manifestRaw, expectOf(runRoot, manifestRel)).toString('utf8'));
       } catch (err) {
         damage(manifestRel, err.message);
       }
-    }
-    // --signing-pubkey: the run must be signed by that key, over its manifest as written.
+    };
+    // --signing-pubkey: the run must be signed by that key, over its manifest
+    // as written, checked before the manifest is decrypted. The chain id comes
+    // from chain.json; only a run decrypted alone takes it from its manifest.
     if (signingPubKey != null) {
-      const why = verifySignature(runRoot, manifestRel, manifest, runLabel);
+      let why;
+      if (manifestRaw == null) why = 'no manifest.json';
+      else if (alone) {
+        readManifest();
+        why = manifest == null ? 'its manifest cannot be read' : verifySignature(runRoot, manifestRaw, manifest.chainId || null, runLabel);
+      } else why = verifySignature(runRoot, manifestRaw, expectOf(runRoot, manifestRel).chainId, runLabel);
       if (why != null) {
         damage(path.join(runRoot, 'manifest.sig'), 'not signed by the key given (--signing-pubkey): ' + why);
         continue;
       }
     }
+    if (!manifestRead) readManifest();
     let table = null;
     if (manifest != null && manifest.integrity != null) table = new Map((manifest.integrity.files || []).map((f) => [f.path, f]));
     // Litter the table does not list: ignored (neither checked nor copied).

@@ -23,7 +23,8 @@ const {
   BackupChainError, damagedRestoreMessage, deletedUserMessage, deletedUsersOf, resolveRuns, runDirectory,
   readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readNoFollow,
   runIntegrityOf, checkRunFiles, checkFileHash, checkFilesUnder, integrityError, legacyRunNotice, legacyAfterVerifiedError,
-  requiredFormatOf, INTEGRITY_RELEASE, ed25519Key, verifyManifestSignature, isFilesystemLitter, unlistedFileError
+  requiredFormatOf, INTEGRITY_RELEASE, ed25519Key, verifyManifestSignature, isFilesystemLitter, unlistedFileError,
+  claimedSigningKey
 } = require('./chain.ts');
 
 // Open for reading without following a symbolic link (where the platform has the flag).
@@ -221,6 +222,12 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
         // written by an earlier release: accepted before the first run with
         // one, refused after it.
         files.integrity = runIntegrityOf(manifest, run.runId, inputPath);
+        // The table's cipher must be the run's key model: `cipher: null` in an
+        // encrypted run would lift the format pin, `cipher: 2` in a plaintext
+        // run names files that are not there.
+        if (files.integrity != null && (files.integrity.cipher != null) !== (decryptor != null)) {
+          throw integrityError(run.runId, inputPath, 'its manifest carries a malformed file table (its cipher is not the run\'s key model)');
+        }
         if (files.integrity == null) {
           if (lastVerifiedRunId != null) throw legacyAfterVerifiedError(run.runId, lastVerifiedRunId, inputPath);
           opts.onWarning?.(legacyRunNotice(run.runId));
@@ -234,14 +241,25 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
     if (out.length > 1) {
       deleted = new Map(deletedUsersOf(resolved.runs).map((d: DeletedUser) => [d.userId, d]));
     }
+    // A signed backup read without the public key: said once, it is not verified.
+    if (signingPubKey == null && opts.onWarning) {
+      const claimed = claimedSigningKey(chain, out.map((h) => h.dir));
+      if (claimed != null) opts.onWarning(`This backup is signed (key ${claimed}): signatures are NOT verified; pass --signing-pubkey to verify them`);
+    }
     handles = out;
     return handles;
   }
 
+  /** The runs applied; a backup without chain.json whose manifest cannot be read is refused by every read. */
+  function openRunsChecked (): RunHandle[] {
+    const runs = openRuns();
+    if (rootManifestError != null) throw rootManifestError;
+    return runs;
+  }
+
   return createBackupReader({
     async readManifest () {
-      const runs = openRuns();
-      if (rootManifestError != null) throw rootManifestError;
+      const runs = openRunsChecked();
       if (runs.length === 1) return runs[0].manifest;
       // Every user of the applied runs, the newest entry of each; the users
       // deleted along the chain apart.
@@ -274,7 +292,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
 
     readPlatformData () {
       // Platform rows are a full export on every run: the newest run that has them.
-      const runs = openRuns();
+      const runs = openRunsChecked();
       for (let i = runs.length - 1; i >= 0; i--) {
         const h = runs[i];
         const platformDir = path.join(h.dir, 'platform');
@@ -297,7 +315,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
      * surfaced when restoring pryv.me onto the v2 cluster.
      */
     readServerMappings () {
-      const root = openRuns()[0];
+      const root = openRunsChecked()[0];
       const registerDir = path.join(root.dir, 'register');
       const filePath = path.join(registerDir, jsonlFileName('servers', root.compressed));
       if (!isRealDirectory(registerDir) || !fs.existsSync(filePath)) return emptyIterator();
@@ -314,7 +332,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       // full backup), an incremental run when it lists the user. `users/` and
       // the user directory of each must be real directories of the backup: a
       // link there would make every read of this user leave the backup.
-      const runs = openRuns();
+      const runs = openRunsChecked();
       const deletedUser = deleted.get(userId);
       if (deletedUser != null) throw new BackupChainError('deleted', deletedUserMessage(deletedUser));
       const userRuns: UserRun[] = [];

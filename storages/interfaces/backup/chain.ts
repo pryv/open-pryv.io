@@ -40,7 +40,7 @@ const INTEGRITY_RELEASE = '2.0.0-rc.85';
 /** Version of the `integrity` object of a run's manifest. */
 const INTEGRITY_VERSION = 2;
 /** Files at the root of a backup that belong to no run (the chain's own files). */
-const ROOT_NON_RUN_FILES = new Set([CHAIN_FILE_NAME, '.chain.lock', INCREMENTALS_DIR_NAME]);
+const ROOT_NON_RUN_FILES = new Set([CHAIN_FILE_NAME, '.chain.lock', '.chain.lock.takeover', INCREMENTALS_DIR_NAME]);
 const CHAIN_TMP_RE = /^\.chain\.json\..*\.tmp$/;
 /** Files of a run directory the file table does not list (it is in the first, the second is written after it). */
 const RUN_UNLISTED_FILES = new Set([MANIFEST_FILE_NAME, 'manifest.sig']);
@@ -481,15 +481,24 @@ function signManifest (manifestBytes: Buffer, chainId: string | null, runId: str
   };
 }
 
-/** The signature file of a run directory, parsed (null when there is none or it is not JSON). */
-function readManifestSignature (runDir: string): ManifestSignature | null {
+/** The signature file of a run directory: absent, present but not readable (not a JSON object), or parsed. */
+type SignatureFile = { state: 'absent' } | { state: 'unreadable' } | { state: 'present', sig: ManifestSignature };
+
+function readManifestSignature (runDir: string): SignatureFile {
   const text = readCleartextFile(path.join(runDir, SIGNATURE_FILE_NAME));
-  if (text == null) return null;
+  if (text == null) return { state: 'absent' };
   try {
-    return JSON.parse(text);
+    const sig = JSON.parse(text);
+    if (sig == null || typeof sig !== 'object') return { state: 'unreadable' };
+    return { state: 'present', sig };
   } catch (err) {
-    return null;
+    return { state: 'unreadable' };
   }
+}
+
+/** A fingerprint read from a cleartext file, printed only when it has the expected form. */
+function printableFingerprint (value: unknown): string {
+  return typeof value === 'string' && FINGERPRINT_RE.test(value) ? value : 'unreadable fingerprint';
 }
 
 /**
@@ -499,10 +508,12 @@ function readManifestSignature (runDir: string): ManifestSignature | null {
  */
 function verifyManifestSignature (runDir: string, manifestBytes: Buffer, chainId: string | null, runId: string, publicKey: KeyObject, dir: string): void {
   const refuse = (why: string): BackupChainError => new BackupChainError('signature', `Run ${runId} of the backup at ${dir}: not signed by the key given (--signing-pubkey): ${why}: refused.`);
-  const sig = readManifestSignature(runDir);
-  if (sig == null) throw refuse('no manifest.sig');
+  const file = readManifestSignature(runDir);
+  if (file.state === 'absent') throw refuse('no manifest.sig');
+  if (file.state === 'unreadable') throw refuse('manifest.sig is not readable');
+  const sig = file.sig;
   if (sig.v !== SIGNATURE_VERSION || sig.alg !== 'ed25519' || typeof sig.signature !== 'string') throw refuse('unknown signature format');
-  if (sig.keyFingerprint !== signingKeyFingerprint(publicKey)) throw refuse(`signed with another key (${String(sig.keyFingerprint)})`);
+  if (sig.keyFingerprint !== signingKeyFingerprint(publicKey)) throw refuse(`signed with another key (${printableFingerprint(sig.keyFingerprint)})`);
   const manifestSha256 = crypto.createHash('sha256').update(manifestBytes).digest('hex');
   if (sig.manifestSha256 !== manifestSha256) throw refuse('manifest.json differs from the signed one');
   let ok = false;
@@ -516,9 +527,26 @@ function verifyManifestSignature (runDir: string, manifestBytes: Buffer, chainId
 
 /** The `signed:` part of an inspect line. */
 function describeSignature (runDir: string): string {
-  const sig = readManifestSignature(runDir);
-  if (sig == null) return 'signed: no';
-  return `signed: yes, key ${String(sig.keyFingerprint)}`;
+  const file = readManifestSignature(runDir);
+  if (file.state === 'absent') return 'signed: no';
+  if (file.state === 'unreadable') return 'signed: manifest.sig is not readable';
+  return `signed: yes, key ${printableFingerprint(file.sig.keyFingerprint)}`;
+}
+
+/**
+ * The key a backup is signed with, as its cleartext files say (the chain's
+ * pin, else the first `manifest.sig` of the runs given); null when nothing
+ * says it is signed. Not a verification: for the notice of a restore given no
+ * public key.
+ */
+function claimedSigningKey (chain: Chain | null, runDirs: string[]): string | null {
+  if (chain?.signing != null) return printableFingerprint(chain.signing.keyFingerprint);
+  for (const runDir of runDirs) {
+    const file = readManifestSignature(runDir);
+    if (file.state === 'present') return printableFingerprint(file.sig.keyFingerprint);
+    if (file.state === 'unreadable') return 'unreadable fingerprint';
+  }
+  return null;
 }
 
 /** The file format version the run pins (`2` refuses a file of the first format), or undefined. */
@@ -603,6 +631,7 @@ function writeChainAtomic (dir: string, chain: Chain): void {
 }
 
 const CHAIN_LOCK_FILE_NAME = '.chain.lock';
+const CHAIN_LOCK_TAKEOVER_FILE_NAME = '.chain.lock.takeover';
 /** A lock older than this belongs to a dead run (the section it guards takes milliseconds). */
 const CHAIN_LOCK_STALE_MS = 60_000;
 
@@ -614,9 +643,11 @@ const CHAIN_LOCK_STALE_MS = 60_000;
  */
 function withChainLock<T> (dir: string, runId: string, runPath: string, fn: () => T): T {
   const lockPath = path.join(dir, CHAIN_LOCK_FILE_NAME);
-  const take = (): boolean => {
+  const takeoverPath = path.join(dir, CHAIN_LOCK_TAKEOVER_FILE_NAME);
+  /** Create `p` exclusively; false when it exists. */
+  const createExclusive = (p: string): boolean => {
     try {
-      const fd = fs.openSync(lockPath, 'wx', PRIVATE_FILE_MODE);
+      const fd = fs.openSync(p, 'wx', PRIVATE_FILE_MODE);
       try {
         fs.writeSync(fd, JSON.stringify({ pid: process.pid, runId, at: Date.now() }));
       } finally {
@@ -628,25 +659,47 @@ function withChainLock<T> (dir: string, runId: string, runPath: string, fn: () =
       throw err;
     }
   };
-  if (!take()) {
-    let stat: fs.Stats | null = null;
+  const take = (): boolean => createExclusive(lockPath);
+  const lockAge = (): number | null => {
     try {
-      stat = fs.lstatSync(lockPath);
+      return Date.now() - fs.lstatSync(lockPath).mtimeMs;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      return null;
     }
-    // Released meanwhile (stat null), or stale: one more try.
-    if (stat != null && Date.now() - stat.mtimeMs > CHAIN_LOCK_STALE_MS) {
-      try { fs.unlinkSync(lockPath); } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
-    }
-    if ((stat != null && Date.now() - stat.mtimeMs <= CHAIN_LOCK_STALE_MS) || !take()) {
-      let holder = '';
+  };
+  const refuse = (): BackupChainError => {
+    let holder = '';
+    try {
+      const held = JSON.parse(readNoFollow(lockPath).toString('utf8'));
+      const heldRun = typeof held.runId === 'string' && RUN_ID_RE.test(held.runId) ? held.runId : 'unknown';
+      const since = Number.isFinite(held.at) ? new Date(held.at).toISOString() : 'unknown';
+      holder = ` (run ${heldRun}, since ${since})`;
+    } catch (err) { /* unreadable: named without its holder */ }
+    return new BackupChainError('concurrent', `Another backup run holds ${lockPath}${holder}: run ${runId} is left as a stray ${runPath}/ that restore ignores. ` +
+      `Run the backup again; if no run is in progress, remove ${lockPath} (and ${takeoverPath} if present).`);
+  };
+  if (!take()) {
+    const age = lockAge();
+    if (age != null && age <= CHAIN_LOCK_STALE_MS) throw refuse();
+    if (age == null) {
+      // Released meanwhile: one more try.
+      if (!take()) throw refuse();
+    } else {
+      // Stale: taken over by one run at a time (a second exclusive file), which
+      // looks at the lock again before removing it, so a run that found the
+      // same stale lock never removes the fresh lock of the run that took it.
+      if (!createExclusive(takeoverPath)) throw refuse();
       try {
-        const held = JSON.parse(readNoFollow(lockPath).toString('utf8'));
-        holder = ` (run ${String(held.runId)}, since ${new Date(held.at).toISOString()})`;
-      } catch (err) { /* unreadable: named without its holder */ }
-      throw new BackupChainError('concurrent', `Another backup run holds ${lockPath}${holder}: run ${runId} is left as a stray ${runPath}/ that restore ignores. ` +
-        'Run the backup again; if no run is in progress, remove the lock file.');
+        const again = lockAge();
+        if (again != null && again <= CHAIN_LOCK_STALE_MS) throw refuse();
+        if (again != null) {
+          try { fs.unlinkSync(lockPath); } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+        }
+        if (!take()) throw refuse();
+      } finally {
+        releaseChainLock(takeoverPath);
+      }
     }
   }
   try {
@@ -1240,6 +1293,7 @@ export {
   signingKeyFingerprint,
   signManifest,
   verifyManifestSignature,
+  claimedSigningKey,
   checkSigningKey,
   integrityError,
   legacyRunNotice,

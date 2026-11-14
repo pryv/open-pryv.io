@@ -201,11 +201,29 @@ function decryptFrameV2 (fileKey: Buffer, header: FileHeader, index: number, pay
   }
 }
 
+/**
+ * Bounds on lengths read from a file, checked before anything is buffered:
+ * the writer never exceeds them, a tampered file could otherwise make the
+ * reader hold gigabytes before failing.
+ */
+const MAX_HEADER_BYTES = 64 * 1024;
+const MAX_CHUNK_BYTES = 16 * 1024 * 1024;
+
+function checkHeaderLength (headerLen: number): void {
+  if (headerLen > MAX_HEADER_BYTES) throw new Error(`BackupCipher: file header of ${headerLen} bytes (at most ${MAX_HEADER_BYTES}): refused`);
+}
+
+/** A frame payload longer than the file's chunk and its tag: refused before it is buffered. */
+function checkFrameLength (len: number, header: FileHeader): void {
+  if (len > header.chunk + TAG_BYTES) throw new Error(`BackupCipher: frame of ${len} bytes, longer than the file's chunk size (${header.chunk}): refused`);
+}
+
 function parseHeader (buf: Buffer): FileHeader & { offset: number } {
   if (buf.length < MAGIC.length + 4 || !buf.subarray(0, MAGIC.length).equals(MAGIC)) {
     throw new Error('BackupCipher: not a Pryv encrypted backup file (bad magic)');
   }
   const headerLen = buf.readUInt32BE(MAGIC.length);
+  checkHeaderLength(headerLen);
   const headerStart = MAGIC.length + 4;
   const headerEnd = headerStart + headerLen;
   if (buf.length < headerEnd) throw new Error('BackupCipher: truncated encrypted file (header)');
@@ -217,6 +235,9 @@ function parseHeader (buf: Buffer): FileHeader & { offset: number } {
   }
   if (header == null || (header.v !== 1 && header.v !== FORMAT_VERSION)) {
     throw new Error('BackupCipher: unsupported file format version ' + JSON.stringify(header?.v));
+  }
+  if (!Number.isSafeInteger(header.chunk) || header.chunk < 1 || header.chunk > MAX_CHUNK_BYTES) {
+    throw new Error('BackupCipher: invalid chunk size in the file header: refused');
   }
   const bytes = buf.subarray(0, headerEnd);
   return {
@@ -277,6 +298,7 @@ function decryptBuffer (dataKey: Buffer, full: Buffer, expect: DecryptExpectatio
     if (finalSeen) throw new Error('BackupCipher: data after the final frame');
     if (off + 4 > full.length) throw new Error('BackupCipher: truncated chunk');
     const len = full.readUInt32BE(off);
+    checkFrameLength(len, header);
     off += 4;
     if (off + len > full.length) throw new Error('BackupCipher: truncated chunk');
     const payload = full.subarray(off, off + len);
@@ -344,6 +366,7 @@ function createDecryptStream (dataKey: Buffer, expect: DecryptExpectation): Node
         if (header == null) {
           if (buffered.length < MAGIC.length + 4) return cb();
           const headerLen = buffered.readUInt32BE(MAGIC.length);
+          checkHeaderLength(headerLen);
           const headerEnd = MAGIC.length + 4 + headerLen;
           if (buffered.length < headerEnd) return cb();
           const parsed = parseHeader(buffered.subarray(0, headerEnd));
@@ -355,6 +378,7 @@ function createDecryptStream (dataKey: Buffer, expect: DecryptExpectation): Node
         while (buffered.length >= 4) {
           if (finalSeen) throw new Error('BackupCipher: data after the final frame');
           const len = buffered.readUInt32BE(0);
+          checkFrameLength(len, header);
           if (buffered.length < 4 + len) break;
           const payload = buffered.subarray(4, 4 + len);
           if (header.v === 1) {
@@ -441,6 +465,7 @@ function bindEncryptor (envelope: Envelope, chunk: number, dataKey: Buffer, fing
  */
 function createBackupEncryptor (opts: EncryptorOptions): BackupEncryptor {
   const chunk = opts.chunkSize || DEFAULT_CHUNK;
+  if (!Number.isSafeInteger(chunk) || chunk < 1 || chunk > MAX_CHUNK_BYTES) throw new Error(`createBackupEncryptor: chunkSize must be 1..${MAX_CHUNK_BYTES}`);
   let dataKey: Buffer;
   let envelope: Envelope;
   if (opts.recipientPubKeyPem) {

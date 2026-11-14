@@ -30,14 +30,20 @@
   `openssl genpkey -algorithm ed25519 -out backup-signing.key.pem` and
   `openssl pkey -in backup-signing.key.pem -pubout -out backup-signing.pub.pem`; keep the private
   key on the backup host, the public key with the restore secret. A chain is signed from its full
-  backup on: to start signing, take a new full backup into a new directory.
+  backup on: to start signing, take a new full backup into a new directory. A restore of a signed
+  backup without `--signing-pubkey` warns that the signatures are not verified.
 - `--inspect` shows, per run, the number of listed files and whether the run is signed;
   `--inspect --verify-files` (with the backup's secret) reads and checks every file.
 - The bundled `decrypt-backup.mjs` applies the same checks and stops at the first damaged file,
   naming it; `--ignore-damaged` writes everything else and lists what it skipped; `--signing-pubkey`
   verifies the signatures. Its plaintext mirror restores as an unverified chain.
-- New passphrase-encrypted backups use a stronger key derivation (scrypt N = 2^17); existing
-  backups are unaffected.
+- New passphrase-encrypted backups use a stronger key derivation (scrypt N = 2^17, about 134 MiB
+  of memory once per run at restore); existing backups are unaffected.
+- **Upgrade note:** a backup written by this release is restored with this release or later.
+  After going back to an earlier release, start a new chain in a new directory: a run that an
+  earlier release appends to a chain of this release is refused at restore (`--through-run` stops
+  before it; the `decrypt-backup.mjs` of a current run still decrypts the whole chain into a
+  plaintext mirror that restores).
 - Two backup runs finishing together into the same directory no longer race on `chain.json`: the
   second is refused and left aside, as an overlapping run already was. A `.chain.lock` file older
   than a minute is a leftover of a crashed run and is taken over.

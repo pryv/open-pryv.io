@@ -176,6 +176,30 @@ describe('[BENC] backup encryption', () => {
         assert.throws(() => dec.decryptBuffer(damaged, { path: 'f' }), re, what + ' (buffer)');
         await assert.rejects(runStream(dec.decryptStream({ path: 'f' }), damaged), re, what + ' (stream)');
       }
+
+      // lengths taken from the file are bounded before anything is buffered
+      const hugeHeader = Buffer.from(bytes);
+      hugeHeader.writeUInt32BE(0x7fffffff, MAGIC.length);
+      const longFrame = Buffer.from(bytes);
+      longFrame.writeUInt32BE(64 + 16 + 1, frames[0].start);
+      const headerLen = bytes.readUInt32BE(MAGIC.length);
+      const header = headerOf(bytes);
+      const withChunk = (chunk) => {
+        const h = Buffer.from(JSON.stringify({ ...header, chunk }), 'utf8');
+        const len = Buffer.alloc(4);
+        len.writeUInt32BE(h.length);
+        return Buffer.concat([MAGIC, len, h, bytes.subarray(MAGIC.length + 4 + headerLen)]);
+      };
+      const bounds = [
+        ['a header length of 2 GiB', hugeHeader, /file header of 2147483647 bytes \(at most 65536\): refused/],
+        ['a frame longer than the chunk', longFrame, /frame of 81 bytes, longer than the file's chunk size \(64\): refused/],
+        ['a chunk size of 0', withChunk(0), /invalid chunk size in the file header/],
+        ['a chunk size over 16 MiB', withChunk(16 * 1024 * 1024 + 1), /invalid chunk size in the file header/]
+      ];
+      for (const [what, damaged, re] of bounds) {
+        assert.throws(() => dec.decryptBuffer(damaged, { path: 'f' }), re, what + ' (buffer)');
+        await assert.rejects(runStream(dec.decryptStream({ path: 'f' }), damaged), re, what + ' (stream)');
+      }
     });
 
     it('[BKAD3] a header-only file is refused in format 2, read as empty in format 1', async () => {
@@ -616,6 +640,16 @@ describe('[BENC] backup encryption', () => {
       const refused = runScript(script, [root, '--passphrase', 'pw', '--signing-pubkey', otherPub, '--out', path.join(tmp, 's2')]);
       assert.strictEqual(refused.status, 1);
       assert.match(refused.stderr, /manifest.sig: not signed by the key given \(--signing-pubkey\): signed with another key/);
+      // a changed manifest: refused by its signature, before it is decrypted
+      const incManifest = path.join(root, 'incrementals', incId, 'manifest.json');
+      const manifestBytes = fs.readFileSync(incManifest);
+      const changed = Buffer.from(manifestBytes);
+      changed[changed.length - 3] ^= 0x01;
+      fs.writeFileSync(incManifest, changed);
+      const tampered = runScript(script, [root, '--passphrase', 'pw', '--signing-pubkey', pub, '--out', path.join(tmp, 's4')]);
+      assert.strictEqual(tampered.status, 1);
+      assert.match(tampered.stderr, new RegExp(`incrementals/${incId}/manifest.sig: not signed by the key given \\(--signing-pubkey\\): manifest.json differs from the signed one`));
+      fs.writeFileSync(incManifest, manifestBytes);
       // a run whose signature was removed
       fs.rmSync(path.join(root, 'incrementals', incId, 'manifest.sig'));
       const unsigned = runScript(script, [root, '--passphrase', 'pw', '--signing-pubkey', pub, '--out', path.join(tmp, 's3')]);

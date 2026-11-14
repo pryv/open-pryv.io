@@ -934,6 +934,28 @@ describe('[BKSM] run file table and chain cross-check', function () {
     const dec = createBackupDecryptor(encryptor.envelope, { passphrase: 'pw' }, { runId: 'full', chainId: CHAIN_ID });
     assert.throws(() => dec.decryptBuffer(Buffer.from(V1.symmetricBuffer.hex, 'hex'), { path: 'users/u2-full-only/streams.jsonl', requireVersion: 2 }),
       /file users\/u2-full-only\/streams.jsonl of run full is in format version 1 in a run of format 2: refused/);
+
+    // the table's cipher must be the run's key model: no cipher in an encrypted run (it would lift the format pin)...
+    const encManifestPath = path.join(enc, 'manifest.json');
+    const encManifest = JSON.parse(dec.decryptBuffer(fs.readFileSync(encManifestPath), { path: 'manifest.json' }).toString('utf8'));
+    encManifest.integrity.cipher = null;
+    fs.writeFileSync(encManifestPath, encryptor.forRun({ runId: 'full', chainId: CHAIN_ID }).encryptBuffer(Buffer.from(JSON.stringify(encManifest)), 'manifest.json'));
+    await assert.rejects(() => createFilesystemBackupReader(enc, { secrets: { passphrase: 'pw' } }).readManifest(),
+      /Run full of the backup at .*: its manifest carries a malformed file table \(its cipher is not the run's key model\): refused/);
+    // ... a cipher in a plaintext run
+    rewriteManifest(dir2, (m) => { m.integrity.cipher = 2; });
+    await assert.rejects(() => createFilesystemBackupReader(dir2, { throughRun: 'full' }).readManifest(), /Run full .*: its manifest carries a malformed file table \(its cipher is not the run's key model\)/);
+  });
+
+  it('[BKSM9] a backup without chain.json whose manifest cannot be read is refused by every read, not only the manifest', async function () {
+    const dir = path.join(tmp, 'pre');
+    await writeRun(dir, { encryptor: createBackupEncryptor({ passphrase: 'pw' }), users: fullUsers(), platform: [{ key: 'k', value: 'v' }] });
+    const reader = () => createFilesystemBackupReader(dir, { secrets: { passphrase: 'wrong' } });
+    const failed = /authentication failed|unable to authenticate|Unsupported state/;
+    await assert.rejects(async () => reader().readManifest(), failed);
+    await assert.rejects(async () => reader().openUser('u1-full-and-inc'), failed);
+    await assert.rejects(async () => collect(reader().readPlatformData()), failed);
+    await assert.rejects(async () => collect(reader().readServerMappings()), failed);
   });
 
   it('[BKSM7] files that operating systems and storage appliances create are ignored with one notice each; any other unlisted file is refused, naming the way out', async function () {
@@ -1082,8 +1104,15 @@ describe('[BKSG] signed runs', function () {
     const sigBytes = fs.readFileSync(incSig);
     fs.rmSync(incSig);
     await assert.rejects(() => read(keys.publicKey), new RegExp(`Run ${INC1_ID} .*: not signed by the key given \\(--signing-pubkey\\): no manifest.sig`));
-    // without a public key, signatures are not checked
+    // without a public key, signatures are not checked, and the restore says so once
     assert.strictEqual((await read(null)).runs.length, 2);
+    fs.writeFileSync(incSig, sigBytes);
+    const notices = [];
+    await createFilesystemBackupReader(dir, { secrets, onWarning: (w) => notices.push(w) }).readManifest();
+    assert.deepStrictEqual(notices, [`This backup is signed (key ${fp}): signatures are NOT verified; pass --signing-pubkey to verify them`]);
+    // a manifest.sig that is not JSON is named as such
+    fs.writeFileSync(incSig, 'not json');
+    await assert.rejects(() => read(keys.publicKey), new RegExp(`Run ${INC1_ID} .*: not signed by the key given \\(--signing-pubkey\\): manifest.sig is not readable`));
     fs.writeFileSync(incSig, sigBytes);
 
     // a pinned chain is continued with its key only (refused before anything is written)
@@ -1178,6 +1207,24 @@ describe('[BKLK] chain lock', function () {
     await writeRun(dir, { run: INC1, snapshotBefore: 2000, users: incUsers() });
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'chain.json'), 'utf8')).runs.map((r) => r.runId), ['full', INC1_ID]);
     assert.ok(!fs.existsSync(lockPath), 'no lock remains');
+    assert.ok(!fs.existsSync(lockPath + '.takeover'), 'no takeover file remains');
+
+    // a stale lock another run is taking over (its takeover file present): refused, both files named
+    const { withChainLock } = chainApi();
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, runId: 'crashed', at: 0 }));
+    fs.utimesSync(lockPath, tenMinutesAgo, tenMinutesAgo);
+    fs.writeFileSync(lockPath + '.takeover', '{}');
+    let ran = false;
+    assert.throws(() => withChainLock(dir, 'r-test', 'incrementals/r-test', () => { ran = true; }),
+      (err) => err.code === 'concurrent' && err.message.includes(`remove ${lockPath} (and ${lockPath}.takeover if present)`));
+    assert.ok(!ran && fs.existsSync(lockPath), 'the stale lock is left to the run taking it over');
+    fs.rmSync(lockPath + '.takeover');
+    withChainLock(dir, 'r-test', 'incrementals/r-test', () => { ran = true; });
+    assert.ok(ran && !fs.existsSync(lockPath) && !fs.existsSync(lockPath + '.takeover'));
+    // a lock holder's cleartext fields are printed only when well formed
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 1, runId: '\u001b[31mx', at: 'soon' }));
+    assert.throws(() => withChainLock(dir, 'r-test', 'incrementals/r-test', () => {}), /\(run unknown, since unknown\)/);
+    fs.rmSync(lockPath);
 
     // planned after INC1, but another run joined first: refused inside the lock, which it removes
     const sibling = { runId: '20261014T000000Z-5a5a5a5a', path: 'incrementals/20261014T000000Z-5a5a5a5a', parentRunId: INC1_ID, chainId: CHAIN_ID };
