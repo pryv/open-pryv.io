@@ -96,6 +96,9 @@ const MAX_DATE_SECONDS = 8.64e12;
 
 export function isValidTimeZone (tz: unknown): boolean {
   if (typeof tz !== 'string' || tz.length === 0) return false;
+  // Named zones only: an offset identifier such as `+00:07` is accepted by
+  // Intl and would shrink the slots to a minute on any range.
+  if (tz[0] === '+' || tz[0] === '-') return false;
   try {
     // eslint-disable-next-line no-new
     new Intl.DateTimeFormat('en', { timeZone: tz });

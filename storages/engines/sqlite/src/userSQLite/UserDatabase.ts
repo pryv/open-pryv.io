@@ -587,6 +587,9 @@ UserDatabase.prototype.summarize = async function (this: UserDatabaseInstance, p
   };
   const offset = Math.max(summaryChunkRows - 1, 0);
   const db = this.db;
+  // The handle may already be closed when it is handed out (evicted or the
+  // account deleted while it was being resolved).
+  if (!db.open) throw summaryInterruptedError();
 
   const probe = db.prepare('SELECT time FROM events WHERE time > @cursor AND time < @to ORDER BY time LIMIT 1 OFFSET @offset');
   const aggregate = db.prepare(wanted === null

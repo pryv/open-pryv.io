@@ -214,6 +214,7 @@ describe('[ASM] audit.getSummary', function () {
       { fromTime: startTime },
       { fromTime: startTime, bucket: 'month' },
       { fromTime: startTime, bucket: 'day', timezone: 'Mars/Olympus_Mons' },
+      { fromTime: startTime, bucket: 'day', timezone: '+00:07' },
       { fromTime: now, toTime: now, bucket: 'day' },
       { fromTime: now, toTime: now - 10, bucket: 'day' },
       { fromTime: now - 751 * 3600, toTime: now, bucket: 'hour' },

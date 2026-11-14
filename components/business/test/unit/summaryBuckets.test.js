@@ -66,6 +66,9 @@ describe('[ASB] audit summary buckets', function () {
       assert.equal(isValidTimeZone('Europe/Zurich'), true);
       assert.equal(isValidTimeZone('Mars/Olympus'), false);
       assert.equal(isValidTimeZone(''), false);
+      // Offset identifiers are refused: named zones only.
+      assert.equal(isValidTimeZone('+00:07'), false);
+      assert.equal(isValidTimeZone('-05:00'), false);
       assert.equal(isValidTimeZone(42), false);
       assert.throws(() => buildBoundaries({ fromTime: 0, toTime: 3600, bucket: 'hour', timezone: 'Mars/Olympus' }), RangeError);
       assert.throws(() => buildBoundaries({ fromTime: 3600, toTime: 3600, bucket: 'hour' }), RangeError);
