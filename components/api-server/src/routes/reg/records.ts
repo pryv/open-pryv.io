@@ -113,7 +113,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return res.status(500).json({
-        error: { id: 'unexpected', message: 'Failed to persist DNS record: ' + message }
+        error: { id: 'unexpected-error', message: 'Failed to persist DNS record: ' + message }
       });
     }
 
@@ -145,7 +145,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return res.status(500).json({
-        error: { id: 'unexpected', message: 'Failed to delete DNS record: ' + message }
+        error: { id: 'unexpected-error', message: 'Failed to delete DNS record: ' + message }
       });
     }
 
