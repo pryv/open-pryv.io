@@ -24,7 +24,7 @@ const path = require('node:path');
 const os = require('node:os');
 
 const AtRestEncryption = require('../../src/acme/AtRestEncryption.ts');
-const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName } = require('../../src/acme/CertRenewer.ts');
+const { CertRenewer, PlatformDBDnsWriter, acmeChallengeName, AT_REST_PURPOSE } = require('../../src/acme/CertRenewer.ts');
 
 function makeFakePlatformDB () {
   const kv = new Map(); // key → value (mirrors rqlite's keyValue table in-memory)
@@ -248,6 +248,87 @@ describe('[CERTRENEWER] CertRenewer', function () {
       });
       await assert.rejects(renewer.renew({ dnsWriter: { create () {}, remove () {} } }), /hostname is required/);
       await assert.rejects(renewer.renew({ hostname: 'x' }), /dnsWriter/);
+    });
+  });
+
+  describe('[AREV2] envelope versions', () => {
+    // An envelope of the first version: no authenticated data, the configured key itself.
+    function v1Envelope (plaintext, key) {
+      const iv = crypto.randomBytes(12);
+      const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+      const ct = Buffer.concat([cipher.update(Buffer.from(plaintext, 'utf8')), cipher.final()]);
+      return Buffer.concat([Buffer.from([1]), iv, cipher.getAuthTag(), ct]).toString('base64');
+    }
+
+    it('[AREV2] by default: rows of the first version are read and written as they are; the account is not rewritten; a renewed cert is in the first version under the configured key', async () => {
+      const db = makeFakePlatformDB();
+      const accountKeyPem = '-----BEGIN RSA PRIVATE KEY-----\nV1-ACCOUNT\n-----END RSA PRIVATE KEY-----';
+      db._kv.set('acme-account', { accountKey: v1Envelope(accountKeyPem, atRestKey), accountUrl: 'https://acme/acct/v1', email: 'v1@x.com' });
+      db._kv.set('cert/v1.test', { certPem: 'CERT', chainPem: '', keyPem: v1Envelope('V1-TLS-KEY', atRestKey), issuedAt: 1, expiresAt: 2 });
+      const { lib, events } = makeFakeAcmeLib({ bundlePem: realCertPem('a.test'), identifierForChallenge: 'a.test' });
+      const renewer = new CertRenewer({ platformDB: db, atRestKey, email: 'v1@x.com', acmeLib: lib });
+
+      assert.equal((await renewer.getAccount()).accountKey, accountKeyPem);
+      assert.equal((await renewer.getCertificate('v1.test')).keyPem, 'V1-TLS-KEY');
+      const account = await renewer.ensureAccount();
+      assert.equal(account.accountKey, accountKeyPem);
+      assert.equal(events.find((e) => e[0] === 'createAccount'), undefined, 'the stored account is kept, not recreated');
+      assert.equal(db._calls.filter((c) => c[0] === 'setAcmeAccount').length, 0, 'the account row is not rewritten');
+
+      await renewer.renew({ hostname: 'a.test', dnsWriter: { async create () {}, async remove () {} } });
+      const stored = db._kv.get('cert/a.test');
+      assert.equal(AtRestEncryption.envelopeVersion(stored.keyPem), 1);
+      // readable by a core of the previous release: the configured key, no authenticated data
+      assert.match(AtRestEncryption.decrypt(stored.keyPem, atRestKey).toString('utf8'), /BEGIN PRIVATE KEY/);
+      assert.match((await renewer.getCertificate('a.test')).keyPem, /BEGIN PRIVATE KEY/);
+    });
+
+    it('[AREV2] with envelopeVersion 2: the account is rewritten once; a failed rewrite is logged and does not block', async () => {
+      const db = makeFakePlatformDB();
+      const accountKeyPem = '-----BEGIN RSA PRIVATE KEY-----\nV1-ACCOUNT\n-----END RSA PRIVATE KEY-----';
+      db._kv.set('acme-account', { accountKey: v1Envelope(accountKeyPem, atRestKey), accountUrl: 'https://acme/acct/v1', email: 'v1@x.com' });
+      const lines = [];
+      const failing = { ...db, async setAcmeAccount () { throw new Error('platform unreachable'); } };
+      const renewer = new CertRenewer({ platformDB: failing, atRestKey, email: 'v1@x.com', envelopeVersion: 2, log: (l) => lines.push(l) });
+      const account = await renewer.ensureAccount();
+      assert.equal(account.accountKey, accountKeyPem);
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /could not rewrite the ACME account key.*platform unreachable/);
+      assert.equal(AtRestEncryption.envelopeVersion(db._kv.get('acme-account').accountKey), 1, 'kept as is');
+    });
+
+    it('[AREV2] with envelopeVersion 2: rows of the first version are read with the configured key; the account is rewritten once in the current version; renewed certs are bound to their hostname', async () => {
+      const db = makeFakePlatformDB();
+      const accountKeyPem = '-----BEGIN RSA PRIVATE KEY-----\nV1-ACCOUNT\n-----END RSA PRIVATE KEY-----';
+      db._kv.set('acme-account', { accountKey: v1Envelope(accountKeyPem, atRestKey), accountUrl: 'https://acme/acct/v1', email: 'v1@x.com' });
+      db._kv.set('cert/v1.test', { certPem: 'CERT', chainPem: '', keyPem: v1Envelope('V1-TLS-KEY', atRestKey), issuedAt: 1, expiresAt: 2 });
+      const { lib, events } = makeFakeAcmeLib({ bundlePem: realCertPem('a.test'), identifierForChallenge: 'a.test' });
+      const renewer = new CertRenewer({ platformDB: db, atRestKey, email: 'v1@x.com', acmeLib: lib, envelopeVersion: 2 });
+
+      assert.equal((await renewer.getAccount()).accountKey, accountKeyPem);
+      assert.equal((await renewer.getCertificate('v1.test')).keyPem, 'V1-TLS-KEY');
+
+      // ensureAccount rewrites the account once, in the current version, under the derived key
+      const account = await renewer.ensureAccount();
+      assert.equal(account.accountKey, accountKeyPem);
+      assert.equal(events.find((e) => e[0] === 'createAccount'), undefined, 'the stored account is kept, not recreated');
+      const rewritten = db._kv.get('acme-account').accountKey;
+      assert.equal(AtRestEncryption.envelopeVersion(rewritten), 2);
+      const derived = AtRestEncryption.deriveKey(atRestKey, AT_REST_PURPOSE);
+      assert.equal(AtRestEncryption.decrypt(rewritten, derived, 'acme-account').toString('utf8'), accountKeyPem);
+      assert.throws(() => AtRestEncryption.decrypt(rewritten, atRestKey, 'acme-account'), /authentication failed/, 'not under the configured key itself');
+      const writes = db._calls.filter((c) => c[0] === 'setAcmeAccount').length;
+      await renewer.ensureAccount();
+      assert.equal(db._calls.filter((c) => c[0] === 'setAcmeAccount').length, writes, 'written back once');
+
+      // a renewed cert is in the current version, bound to its hostname
+      await renewer.renew({ hostname: 'a.test', dnsWriter: { async create () {}, async remove () {} } });
+      const stored = db._kv.get('cert/a.test');
+      assert.equal(AtRestEncryption.envelopeVersion(stored.keyPem), 2);
+      assert.match((await renewer.getCertificate('a.test')).keyPem, /BEGIN PRIVATE KEY/);
+      // the key of hostname a.test stored as hostname b.test's: refused
+      db._kv.set('cert/b.test', { ...stored });
+      await assert.rejects(renewer.getCertificate('b.test'), /authentication failed/);
     });
   });
 

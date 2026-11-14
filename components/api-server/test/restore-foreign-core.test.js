@@ -277,7 +277,25 @@ describe('[RXCR] restore of an account the platform routes to another core', fun
       const text = gz ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
       const out = Buffer.from(text.split('\n').map((line) => line.trim() === '' ? line : JSON.stringify({ ...JSON.parse(line), content: 'tampered' })).join('\n'), 'utf8');
       fs.writeFileSync(file, gz ? zlib.gzipSync(out) : out);
+      relistInRunTable(u.dir, f);
     }
+  }
+
+  /**
+   * List the rewritten file in its run's file table (a plaintext run): the
+   * backup is then one written that way, whose events fail their integrity
+   * after the restore, not one whose files were changed after it was written.
+   */
+  function relistInRunTable (backupDir, f) {
+    const parts = f.split(path.sep);
+    const [runDir, rel] = parts[0] === 'incrementals' ? [path.join(backupDir, parts[0], parts[1]), parts.slice(2).join('/')] : [backupDir, parts.join('/')];
+    const manifestPath = path.join(runDir, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const bytes = fs.readFileSync(path.join(runDir, ...rel.split('/')));
+    const entry = manifest.integrity.files.find((e) => e.path === rel);
+    entry.size = bytes.length;
+    entry.sha256 = require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   }
 
   it('[RXCR24] an account a --verify-integrity rollback undoes is removed with its routing row, its platform rows and its index entry when the restore created it (a value another account holds stays with it), emptied but kept when it existed before', async function () {

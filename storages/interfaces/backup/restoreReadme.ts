@@ -24,12 +24,16 @@
  * against a real encrypted backup), so it cannot silently drift from the cipher.
  */
 
+import { INTEGRITY_RELEASE, LITTER_FILE_NAMES, LITTER_FILE_PREFIXES, LITTER_DIR_NAMES } from './chain.ts';
+
 const RESTORE_README_NAME = 'RESTORE-README.md';
 const DECRYPT_SCRIPT_NAME = 'decrypt-backup.mjs';
 
 /**
  * Standalone, dependency-free decrypter. Mirrors the BackupCipher wire format.
- * Kept free of backticks and ${...} so it can live inside this template literal.
+ * Kept free of backticks so it can live inside this template literal; its only
+ * interpolations are the filesystem litter lists, taken from chain.ts so the
+ * script and the restore skip the same names.
  */
 const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 // Standalone decrypter for an encrypted Pryv.io backup.
@@ -53,6 +57,16 @@ const STANDALONE_DECRYPT_SCRIPT = `#!/usr/bin/env node
 // directory (incrementals/<runId>), the script decrypts the whole chain at
 // its root, two levels up; a run directory copied out of its chain is
 // decrypted alone.
+//
+// Integrity: each run's manifest lists every file of the run with its size
+// and hash (runs written by earlier releases list none). The manifest is
+// decrypted first; a file added, missing, resized or changed, or cut short,
+// stops the script with the file named (the files already written stay).
+// --ignore-damaged writes every file that verifies, lists the others and
+// exits 1. The mirror's manifests carry no file list: the mirror restores as
+// a backup written before file lists. --signing-pubkey <pem>: every run must
+// carry a manifest.sig of that Ed25519 key (the backup was signed with
+// --signing-key); manifest.sig is not copied to the mirror.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -63,15 +77,17 @@ const TAG = 16;
 const NONCE = 12;
 const KEY = 32;
 const HKDF_INFO = Buffer.from('pryv-backup-file-v1', 'utf8');
-const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'decrypt-backup.mjs']);
+const SKIP = new Set(['encryption.json', 'chain.json', 'RESTORE-README.md', 'decrypt-backup.mjs', 'manifest.sig', '.chain.lock', '.chain.lock.takeover']);
 
 function fail (msg) { console.error('Error: ' + msg); process.exit(1); }
 
 function parseArgs (argv) {
-  const a = { dir: null, privateKey: null, privateKeyPassphrase: null, passphrase: null, out: null };
+  const a = { dir: null, privateKey: null, privateKeyPassphrase: null, passphrase: null, out: null, ignoreDamaged: false, signingPubKey: null };
   for (let i = 0; i < argv.length; i++) {
     const v = argv[i];
-    if (v === '--private-key') a.privateKey = argv[++i];
+    if (v === '--ignore-damaged') a.ignoreDamaged = true;
+    else if (v === '--signing-pubkey') a.signingPubKey = argv[++i];
+    else if (v === '--private-key') a.privateKey = argv[++i];
     else if (v === '--private-key-passphrase') a.privateKeyPassphrase = argv[++i];
     else if (v === '--passphrase') a.passphrase = argv[++i];
     else if (v === '--out') a.out = argv[++i];
@@ -105,45 +121,107 @@ function resolveDataKey (envelope, args) {
   if (envelope.mode === 'symmetric') {
     if (!args.passphrase) fail('this backup is passphrase-encrypted; pass --passphrase or set PRYV_BACKUP_PASSPHRASE');
     return crypto.scryptSync(args.passphrase, Buffer.from(envelope.salt, 'base64'), KEY,
-      { N: envelope.N, r: envelope.r, p: envelope.p });
+      { N: envelope.N, r: envelope.r, p: envelope.p, maxmem: 256 * 1024 * 1024 });
   }
   fail('unknown encryption mode: ' + envelope.mode);
 }
 
-function decryptFile (dataKey, full) {
+// Authenticated data of frame i of a format-2 file: the header digest, the
+// frame index (8 bytes) and a final flag.
+function frameAad (digest, i, final) {
+  const b = Buffer.alloc(9);
+  b.writeUInt32BE(Math.floor(i / 0x100000000), 0);
+  b.writeUInt32BE(i >>> 0, 4);
+  b[8] = final ? 1 : 0;
+  return Buffer.concat([digest, b]);
+}
+
+function openFrame (fileKey, i, payload, aad) {
+  if (payload.length < TAG) throw new Error('truncated chunk');
+  const d = crypto.createDecipheriv('aes-256-gcm', fileKey, counterNonce(i), { authTagLength: TAG });
+  if (aad) d.setAAD(aad);
+  d.setAuthTag(payload.subarray(payload.length - TAG));
+  return Buffer.concat([d.update(payload.subarray(0, payload.length - TAG)), d.final()]);
+}
+
+// Decrypt one file. Format 2 (the header names the file, its run and chain;
+// every frame is bound to the header and its position; the last frame is
+// flagged final): the identity must be the one expected, and a file cut short
+// or extended is refused. Format 1 (earlier releases) is read as it is.
+function decryptFile (dataKey, full, expect) {
   if (full.length < MAGIC.length + 4 || !full.subarray(0, MAGIC.length).equals(MAGIC)) {
     throw new Error('not an encrypted backup file (bad magic)');
   }
   const headerLen = full.readUInt32BE(MAGIC.length);
+  if (headerLen > 64 * 1024) throw new Error('file header too large');
   const headerStart = MAGIC.length + 4;
   const headerEnd = headerStart + headerLen;
+  if (full.length < headerEnd) throw new Error('truncated encrypted file (header)');
   const header = JSON.parse(full.subarray(headerStart, headerEnd).toString('utf8'));
+  if (header.v !== 1 && header.v !== 2) throw new Error('unsupported file format version ' + header.v);
+  if (!Number.isSafeInteger(header.chunk) || header.chunk < 1 || header.chunk > 16 * 1024 * 1024) throw new Error('invalid chunk size in the file header');
+  if (header.v === 2 && expect != null) {
+    const other = header.path !== expect.path || header.run !== expect.runId ||
+      (expect.chainId !== undefined && header.chain !== expect.chainId);
+    if (other) throw new Error('carries the identity of ' + header.path + ' (run ' + header.run + '): refused');
+  }
+  const digest = header.v === 2 ? crypto.createHash('sha256').update(full.subarray(0, headerEnd)).digest() : null;
   const fileKey = deriveFileKey(dataKey, Buffer.from(header.salt, 'base64'));
   const out = [];
   let off = headerEnd;
   let idx = 0;
+  let final = false;
   while (off < full.length) {
+    if (final) throw new Error('data after the final frame');
+    if (off + 4 > full.length) throw new Error('truncated chunk');
     const len = full.readUInt32BE(off);
+    if (len > header.chunk + TAG) throw new Error('frame longer than the file chunk size');
     off += 4;
+    if (off + len > full.length) throw new Error('truncated chunk');
     const payload = full.subarray(off, off + len);
     off += len;
-    const ct = payload.subarray(0, payload.length - TAG);
-    const tag = payload.subarray(payload.length - TAG);
-    const d = crypto.createDecipheriv('aes-256-gcm', fileKey, counterNonce(idx++));
-    d.setAuthTag(tag);
-    out.push(Buffer.concat([d.update(ct), d.final()]));
+    if (digest == null) {
+      out.push(openFrame(fileKey, idx++, payload, null));
+      continue;
+    }
+    try {
+      out.push(openFrame(fileKey, idx, payload, frameAad(digest, idx, false)));
+    } catch (e) {
+      try {
+        out.push(openFrame(fileKey, idx, payload, frameAad(digest, idx, true)));
+        final = true;
+      } catch (e2) {
+        throw new Error('authentication failed (frame ' + idx + '): wrong key, or the file was altered');
+      }
+    }
+    idx++;
   }
+  if (digest != null && !final) throw new Error('truncated encrypted file (no final frame)');
   return Buffer.concat(out);
 }
 
-function walk (dir, base, files) {
-  for (const name of fs.readdirSync(dir)) {
+// Names operating systems and storage appliances create by themselves: not
+// files of the backup, skipped with a notice where no file table lists them.
+const LITTER_FILES = new Set(${JSON.stringify(LITTER_FILE_NAMES)});
+const LITTER_PREFIXES = ${JSON.stringify(LITTER_FILE_PREFIXES)};
+const LITTER_DIRS = new Set(${JSON.stringify(LITTER_DIR_NAMES)});
+function isLitterFile (name) { return LITTER_FILES.has(name) || LITTER_PREFIXES.some((p) => name.startsWith(p)); }
+
+// The regular files of the tree (paths relative to base). Nothing is
+// followed: a symbolic link or special file is collected apart (reported as
+// damage, never read); a litter directory is skipped whole.
+function walk (dir, base, out) {
+  for (const name of fs.readdirSync(dir).sort()) {
     const p = path.join(dir, name);
     const rel = path.relative(base, p);
-    if (fs.statSync(p).isDirectory()) walk(p, base, files);
-    else files.push(rel);
+    const st = fs.lstatSync(p);
+    if (st.isDirectory()) {
+      if (LITTER_DIRS.has(name)) out.ignored.push(rel + path.sep);
+      else walk(p, base, out);
+    } else if (st.isFile()) out.files.push(rel);
+    else out.special.push(rel);
   }
-  return files;
+  return out;
 }
 
 // The run root of a file: the nearest ancestor, among the backup root and
@@ -199,25 +277,175 @@ function main () {
     return dataKeys.get(p);
   }
 
-  const files = walk(args.dir, args.dir, []);
-  let n = 0;
-  for (const rel of files) {
+  // The identity every file must carry: its path relative to its run, the run
+  // id ("full" at the root) and the chain id (chain.json; none for a backup
+  // written outside a chain, unknown for a run decrypted alone).
+  const chainPath = path.join(args.dir, 'chain.json');
+  const chainInfo = fs.existsSync(chainPath) ? JSON.parse(fs.readFileSync(chainPath, 'utf8')) : null;
+  const alone = chainInfo == null && path.basename(path.dirname(path.resolve(args.dir))) === 'incrementals';
+  function expectOf (runRoot, rel) {
+    const relInRun = path.relative(runRoot, rel).split(path.sep).join('/');
+    if (alone) return { path: relInRun, runId: path.basename(path.resolve(args.dir)), chainId: undefined };
+    const runId = runRoot === '.' ? 'full' : path.basename(runRoot);
+    let chainId = null;
+    if (chainInfo != null) chainId = runRoot === '.' && chainInfo.runs[0] && chainInfo.runs[0].bootstrapped === true ? null : chainInfo.chainId;
+    return { path: relInRun, runId, chainId };
+  }
+
+  // The public key that must have signed every run (--signing-pubkey).
+  let signingPubKey = null;
+  if (args.signingPubKey) {
+    signingPubKey = crypto.createPublicKey(fs.readFileSync(args.signingPubKey, 'utf8'));
+    if (signingPubKey.asymmetricKeyType !== 'ed25519') fail('--signing-pubkey: not an Ed25519 public key');
+  }
+  const signingFingerprint = signingPubKey == null ? null
+    : 'sha256:' + crypto.createHash('sha256').update(signingPubKey.export({ type: 'spki', format: 'der' })).digest('hex');
+  // Why a run's signature does not verify, or null when it does: over the
+  // manifest bytes as written, for the chain id given.
+  function verifySignature (runRoot, manifestRaw, chainId, runLabel) {
+    const sigPath = path.join(args.dir, runRoot, 'manifest.sig');
+    if (!fs.existsSync(sigPath)) return 'no manifest.sig';
+    let sig;
+    try { sig = JSON.parse(fs.readFileSync(sigPath, 'utf8')); } catch (e) { return 'manifest.sig is not readable'; }
+    if (sig == null || sig.v !== 2 || sig.alg !== 'ed25519') return 'unknown signature format';
+    if (sig.keyFingerprint !== signingFingerprint) {
+      return 'signed with another key (' + (/^sha256:[0-9a-f]{64}$/.test(String(sig.keyFingerprint)) ? sig.keyFingerprint : 'unreadable fingerprint') + ')';
+    }
+    const digest = crypto.createHash('sha256').update(manifestRaw).digest('hex');
+    if (sig.manifestSha256 !== digest) return 'manifest.json differs from the signed one';
+    const message = Buffer.from('pryv-backup-manifest-v2\\n' + (chainId || '') + '\\n' + runLabel + '\\n' + digest, 'utf8');
+    let ok = false;
+    try { ok = crypto.verify(null, message, signingPubKey, Buffer.from(String(sig.signature), 'base64')); } catch (e) { ok = false; }
+    return ok ? null : 'the signature does not verify';
+  }
+
+  // A damaged file stops the script (the files already written stay), or,
+  // with --ignore-damaged, is skipped and listed at the end.
+  const damaged = [];
+  function damage (rel, msg) {
+    if (!args.ignoreDamaged) fail(rel + ': ' + msg);
+    damaged.push(rel + ': ' + msg);
+  }
+  const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+
+  // The files of each run, by run root.
+  const tree = walk(args.dir, args.dir, { files: [], special: [], ignored: [] });
+  for (const rel of tree.special) damage(rel, 'not a regular file (symbolic link or special file): not read');
+  for (const rel of tree.ignored) console.log('Ignored ' + rel + ' (not a file of the backup)');
+  const byRun = new Map();
+  for (const rel of tree.files) {
     const runRoot = runRootOf(args.dir, rel);
-    // Cleartext files, and a chain.json temporary file an interrupted run left.
-    if (SKIP.has(path.relative(runRoot, rel)) || path.basename(rel).startsWith('.chain.json.')) continue;
-    const plain = decryptFile(dataKeyOf(runRoot), fs.readFileSync(path.join(args.dir, rel)));
-    writePrivate(path.join(outDir, rel), plain);
-    n++;
+    if (!byRun.has(runRoot)) byRun.set(runRoot, []);
+    byRun.get(runRoot).push(rel);
+  }
+  let n = 0;
+  for (const [runRoot, rels] of byRun) {
+    const runLabel = alone ? path.basename(path.resolve(args.dir)) : (runRoot === '.' ? 'full' : path.basename(runRoot));
+    const inRun = (rel) => path.relative(runRoot, rel).split(path.sep).join('/');
+    // Not files of the run: its manifest and signature (read apart), and at
+    // the root the chain's own files and the incrementals/ tree.
+    const outsideTable = (p) => p === 'manifest.json' || p === 'manifest.sig' ||
+      (runRoot === '.' && (p === 'chain.json' || p === '.chain.lock' || p === '.chain.lock.takeover' || p.startsWith('.chain.json.') || p.startsWith('incrementals/')));
+
+    // The manifest first: its file table says what the run holds. Read once:
+    // the signature covers these bytes.
+    const manifestRel = path.join(runRoot, 'manifest.json');
+    const manifestRaw = rels.includes(manifestRel) ? fs.readFileSync(path.join(args.dir, manifestRel)) : null;
+    let manifest = null;
+    let manifestRead = false;
+    const readManifest = () => {
+      manifestRead = true;
+      if (manifestRaw == null) return;
+      try {
+        manifest = JSON.parse(decryptFile(dataKeyOf(runRoot), manifestRaw, expectOf(runRoot, manifestRel)).toString('utf8'));
+      } catch (err) {
+        damage(manifestRel, err.message);
+      }
+    };
+    // --signing-pubkey: the run must be signed by that key, over its manifest
+    // as written, checked before the manifest is decrypted. The chain id comes
+    // from chain.json; only a run decrypted alone takes it from its manifest.
+    if (signingPubKey != null) {
+      let why;
+      if (manifestRaw == null) why = 'no manifest.json';
+      else if (alone) {
+        readManifest();
+        why = manifest == null ? 'its manifest cannot be read' : verifySignature(runRoot, manifestRaw, manifest.chainId || null, runLabel);
+      } else why = verifySignature(runRoot, manifestRaw, expectOf(runRoot, manifestRel).chainId, runLabel);
+      if (why != null) {
+        damage(path.join(runRoot, 'manifest.sig'), 'not signed by the key given (--signing-pubkey): ' + why);
+        continue;
+      }
+    }
+    if (!manifestRead) readManifest();
+    let table = null;
+    if (manifest != null && manifest.integrity != null) table = new Map((manifest.integrity.files || []).map((f) => [f.path, f]));
+    // Litter the table does not list: ignored (neither checked nor copied).
+    const kept = rels.filter((rel) => {
+      if (!isLitterFile(path.basename(rel)) || (table != null && table.has(inRun(rel)))) return true;
+      console.log('Ignored ' + rel + ' (not a file of the backup)');
+      return false;
+    });
+    if (table != null) {
+      const present = new Set();
+      for (const rel of kept) {
+        const p = inRun(rel);
+        if (outsideTable(p)) continue;
+        present.add(p);
+        const listed = table.get(p);
+        if (listed == null) damage(rel, 'unlisted file (not in the run\\'s manifest); if you put it there, move it out of the backup directory (it holds the backup only)');
+        else if (fs.statSync(path.join(args.dir, rel)).size !== listed.size) damage(rel, 'size differs from the run\\'s manifest');
+      }
+      for (const p of table.keys()) {
+        if (!present.has(p)) damage(path.join(runRoot, p), 'missing file (listed by the run\\'s manifest)');
+      }
+    }
+
+    let verified = 0;
+    for (const rel of kept) {
+      const p = inRun(rel);
+      if (outsideTable(p)) continue;
+      const raw = fs.readFileSync(path.join(args.dir, rel));
+      if (table != null) {
+        const listed = table.get(p);
+        if (listed == null || raw.length !== listed.size) continue; // reported above
+        if (sha256(raw) !== listed.sha256) { damage(rel, 'differs from the run\\'s manifest (hash)'); continue; }
+        verified++;
+      }
+      // Cleartext files of the run (checked above, not copied).
+      if (SKIP.has(p)) continue;
+      let plain;
+      try {
+        plain = decryptFile(dataKeyOf(runRoot), raw, expectOf(runRoot, rel));
+      } catch (err) {
+        damage(rel, err.message);
+        continue;
+      }
+      writePrivate(path.join(outDir, rel), plain);
+      n++;
+    }
+    if (manifest != null) {
+      // The mirror's sizes and hashes are not the backup's: its manifest
+      // carries no file table (it restores as a run without one).
+      delete manifest.integrity;
+      writePrivate(path.join(outDir, manifestRel), JSON.stringify(manifest, null, 2));
+      n++;
+    }
+    if (table != null) console.log('Run ' + runLabel + ': ' + verified + ' files verified');
   }
   // The mirror of a chain is a plaintext chain.
-  const chainPath = path.join(args.dir, 'chain.json');
-  if (fs.existsSync(chainPath)) {
-    const chain = JSON.parse(fs.readFileSync(chainPath, 'utf8'));
+  if (chainInfo != null) {
+    const chain = chainInfo;
     chain.encryption = null;
     writePrivate(path.join(outDir, 'chain.json'), JSON.stringify(chain, null, 2));
     console.log('Backup chain: ' + chain.runs.length + ' run(s)');
   }
   console.log('Decrypted ' + n + ' file(s) to ' + outDir);
+  if (damaged.length > 0) {
+    console.error('Damaged, not written (' + damaged.length + '):');
+    for (const d of damaged) console.error('  ' + d);
+    process.exit(1);
+  }
 }
 
 main();
@@ -300,6 +528,21 @@ function buildRestoreReadme (envelope: Record<string, unknown>, options: { runId
     '  run (run from a run directory, it decrypts the whole chain at the root). A full backup',
     '  taken before 2.0.0-rc.51 keeps an older script at its root, which does not know',
     '  incremental runs.',
+    '',
+    '## Integrity',
+    '',
+    "Each run's `manifest.json` lists every file of the run with its size and hash, and every encrypted",
+    'file ends with a marked final block tied to its file and run. `--restore`, `--inspect --verify-files`',
+    'and `decrypt-backup.mjs` refuse a run with a file added, removed, changed or cut short: keep this',
+    'directory for the backup only. Files that operating systems and storage appliances create by themselves',
+    '(`.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`, `.nfs*`, `lost+found`, `@eaDir`, `.snapshot`, ...) are',
+    'ignored with a notice. If the backup',
+    'was signed (`manifest.sig` next to `manifest.json`), pass `--signing-pubkey <pem>` to the restore',
+    'tool or to the script: every run must then carry a valid signature of that key. To salvage a damaged',
+    'backup: `node decrypt-backup.mjs --ignore-damaged ...` writes every file that verifies and lists the',
+    'others; the plaintext mirror is restored with `--restore <mirror> --allow-plaintext` (as an',
+    'unverified chain). A run written before ' + INTEGRITY_RELEASE + ' has no file list and is restored without this',
+    'check.',
     ''
   ].join('\n');
 }

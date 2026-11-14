@@ -28,7 +28,7 @@ const { sanitize, INTERNAL_FIELDS } = require('./sanitize.ts');
 const { createFilesystemBackupWriter } = require('./FilesystemBackupWriter.ts');
 const { createFilesystemBackupReader } = require('./FilesystemBackupReader.ts');
 const { createBackupEncryptor, createBackupDecryptor, DEFAULT_CHUNK } = require('./BackupCipher.ts');
-const { BackupChainError, readChain, planBackupRun, inspectBackup } = require('./chain.ts');
+const { BackupChainError, readChain, planBackupRun, inspectBackup, ed25519Key, signingKeyFingerprint } = require('./chain.ts');
 
 export {
   BackupWriter,
@@ -58,5 +58,7 @@ export {
   BackupChainError,
   readChain,
   planBackupRun,
-  inspectBackup
+  inspectBackup,
+  ed25519Key,
+  signingKeyFingerprint
 };

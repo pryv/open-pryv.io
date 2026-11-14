@@ -6,8 +6,8 @@
  */
 
 import type { BackupReader, UserBackupReader } from './BackupReader.js';
-import type { BackupDecryptor, DecryptorSecrets } from './BackupCipher.js';
-import type { Chain, ChainRun, DeletedUser } from './chain.ts';
+import type { BackupDecryptor, DecryptorSecrets, DecryptExpectation } from './BackupCipher.js';
+import type { Chain, ChainRun, DeletedUser, RunIntegrity } from './chain.ts';
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -15,12 +15,16 @@ const require = createRequire(import.meta.url);
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { pipeline } = require('node:stream');
+const crypto = require('crypto');
+const { pipeline, Transform } = require('node:stream');
 const { createBackupReader, createUserBackupReader } = require('./BackupReader.ts');
 const { createBackupDecryptor } = require('./BackupCipher.ts');
 const {
   BackupChainError, damagedRestoreMessage, deletedUserMessage, deletedUsersOf, resolveRuns, runDirectory,
-  readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readBackupBytes
+  readRunManifest, readEnvelope, checkRunEnvelope, isRealDirectory, readNoFollow,
+  runIntegrityOf, checkRunFiles, checkFileHash, checkFilesUnder, integrityError, legacyRunNotice, legacyAfterVerifiedError,
+  requiredFormatOf, INTEGRITY_RELEASE, ed25519Key, verifyManifestSignature, isFilesystemLitter, unlistedFileError,
+  claimedSigningKey
 } = require('./chain.ts');
 
 // Open for reading without following a symbolic link (where the platform has the flag).
@@ -39,14 +43,37 @@ interface ReaderOptions {
   allowIncomplete?: boolean;
   /** Called with what the reader ignores (directories the chain does not list). */
   onWarning?: (message: string) => void;
+  /**
+   * Ed25519 public key (PEM or KeyObject): every applied run must carry a
+   * `manifest.sig` of this key over its manifest, checked before the manifest
+   * is used. Without it, signatures are not checked.
+   */
+  signingPubKey?: unknown;
 }
+
+/**
+ * How the files of one run are read: decrypted when the run is encrypted,
+ * each file checked against the identity its header must carry (its path
+ * relative to the run directory, the run, the chain).
+ */
+type RunFiles = {
+  /** The run's directory, below the backup's real root. */
+  dir: string;
+  decryptor: BackupDecryptor | null;
+  runId: string;
+  chainId: string | null;
+  /** The run's file table: each file read is checked against it (null: a run written before file tables). */
+  integrity: RunIntegrity | null;
+  /** The backup directory, for the messages. */
+  backupDir: string;
+};
 
 /** One run of the backup as the reader applies it. */
 type RunHandle = {
   run: ChainRun;
   /** The run's directory, below the backup's real root. */
   dir: string;
-  decryptor: BackupDecryptor | null;
+  files: RunFiles;
   manifest: Manifest | null;
   compressed: boolean;
   /** Ids of the users the run lists (its manifest). */
@@ -54,9 +81,55 @@ type RunHandle = {
   isRoot: boolean;
 };
 
-/** Read a file, decrypting first when a decryptor is configured; a symbolic link is refused. */
-function loadBytes (filePath: string, decryptor: BackupDecryptor | null): Buffer {
-  return readBackupBytes(filePath, decryptor);
+/** The path of a file relative to its run directory, `/`-separated. */
+function runRelativePath (files: RunFiles, filePath: string): string {
+  return path.relative(files.dir, filePath).split(path.sep).join('/');
+}
+
+function expectationOf (files: RunFiles, filePath: string): DecryptExpectation {
+  return { path: runRelativePath(files, filePath), runId: files.runId, chainId: files.chainId, requireVersion: requiredFormatOf(files.integrity) };
+}
+
+/** A file of the first cipher format in a run of the current one: refused. */
+function formatRefusal (err: unknown, files: RunFiles, filePath: string): unknown {
+  if ((err as { code?: unknown } | null)?.code !== 'ERR_BACKUP_OLD_FORMAT') return err;
+  return new BackupChainError('integrity', `Run ${files.runId} of the backup at ${files.backupDir}: file ${runRelativePath(files, filePath)} is in the format of a release before ${INTEGRITY_RELEASE}: refused.`);
+}
+
+/**
+ * Read a file of a run: checked against the run's file table (size and hash
+ * of the bytes on disk), then decrypted when the run is encrypted; a symbolic
+ * link is refused.
+ */
+function loadBytes (filePath: string, files: RunFiles): Buffer {
+  const raw = readNoFollow(filePath);
+  if (files.integrity != null) checkFileHash(raw, runRelativePath(files, filePath), files.integrity, files.runId, files.backupDir);
+  if (files.decryptor == null) return raw;
+  try {
+    return files.decryptor.decryptBuffer(raw, expectationOf(files, filePath));
+  } catch (err) {
+    throw formatRefusal(err, files, filePath);
+  }
+}
+
+/** A pass-through that fails at its end when the bytes that went through are not the listed ones. */
+function verifyingStream (files: RunFiles, filePath: string): NodeJS.ReadWriteStream {
+  const rel = runRelativePath(files, filePath);
+  const listed = files.integrity!.files.get(rel);
+  const hash = crypto.createHash('sha256');
+  let size = 0;
+  return new Transform({
+    transform (piece: Buffer, _enc: string, cb: (e?: Error | null, data?: Buffer) => void) {
+      hash.update(piece);
+      size += piece.length;
+      cb(null, piece);
+    },
+    flush (cb: (e?: Error | null) => void) {
+      if (listed == null) return cb(unlistedFileError(files.runId, files.backupDir, rel));
+      if (size !== listed.size || hash.digest('hex') !== listed.sha256) return cb(integrityError(files.runId, files.backupDir, `file ${rel} differs from the run's manifest (hash)`));
+      cb();
+    }
+  });
 }
 
 function userIdsOf (manifest: Manifest | null): Set<string> {
@@ -85,6 +158,8 @@ function userIdsOf (manifest: Manifest | null): Set<string> {
  */
 function createFilesystemBackupReader (inputPath: string, options?: ReaderOptions): BackupReader {
   const opts: ReaderOptions = options ?? {};
+  // With a public key, every applied run must be signed by it.
+  const signingPubKey = opts.signingPubKey != null ? ed25519Key(opts.signingPubKey, 'public') : null;
   // The backup root may itself be a link the operator chose: everything below
   // it is read from its real path, where no further link is followed.
   const realRoot = (): string => fs.realpathSync(inputPath);
@@ -107,6 +182,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       opts.onWarning(`Backup ${inputPath}: ignored, not listed by ${chain == null ? 'any chain.json' : 'chain.json'}: ${resolved.strays.join(', ')}`);
     }
     const out: RunHandle[] = [];
+    let lastVerifiedRunId: string | null = null;
     resolved.runs.forEach((run: ChainRun, i: number) => {
       const isRoot = run.path === '.';
       const previousRunId = i > 0 ? resolved.runs[i - 1].runId : null;
@@ -117,16 +193,22 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       }
       const envelope = readEnvelope(dir);
       if (chain != null) checkRunEnvelope(inputPath, chain, run, envelope);
+      // The identity the files of this run carry: a run written outside any
+      // chain (a full backup before chains, bootstrapped into one) names none.
+      const identity = { runId: run.runId, chainId: chain != null && run.bootstrapped !== true ? chain.chainId : null };
       let decryptor: BackupDecryptor | null = null;
       if (isRoot && opts.decryptor) decryptor = opts.decryptor;
-      else if (envelope != null) decryptor = createBackupDecryptor(envelope, opts.secrets ?? {});
+      else if (envelope != null) decryptor = createBackupDecryptor(envelope, opts.secrets ?? {}, identity);
+      const files: RunFiles = { dir, decryptor, ...identity, integrity: null, backupDir: inputPath };
 
       let manifest: Manifest | null = null;
       if (chain != null) {
-        manifest = readRunManifest(root, inputPath, chain, run, previousRunId, decryptor);
+        manifest = readRunManifest(root, inputPath, chain, run, previousRunId, decryptor, signingPubKey);
       } else {
+        // Signed by the key given, before the manifest is used.
+        if (signingPubKey != null) verifyManifestSignature(dir, readNoFollow(path.join(dir, 'manifest.json')), null, run.runId, signingPubKey, inputPath);
         try {
-          manifest = JSON.parse(loadBytes(path.join(dir, 'manifest.json'), decryptor).toString('utf8'));
+          manifest = JSON.parse(loadBytes(path.join(dir, 'manifest.json'), files).toString('utf8'));
         } catch (err) {
           rootManifestError = err as Error;
         }
@@ -134,19 +216,50 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
           throw new BackupChainError('damaged', damagedRestoreMessage(inputPath));
         }
       }
-      out.push({ run, dir, decryptor, manifest, compressed: manifest?.compressed !== false, userIds: userIdsOf(manifest), isRoot });
+      if (manifest != null) {
+        // The run's file table: nothing added, missing or resized; each file
+        // read later is checked against its hash. A run without one was
+        // written by an earlier release: accepted before the first run with
+        // one, refused after it.
+        files.integrity = runIntegrityOf(manifest, run.runId, inputPath);
+        // The table's cipher must be the run's key model: `cipher: null` in an
+        // encrypted run would lift the format pin, `cipher: 2` in a plaintext
+        // run names files that are not there.
+        if (files.integrity != null && (files.integrity.cipher != null) !== (decryptor != null)) {
+          throw integrityError(run.runId, inputPath, 'its manifest carries a malformed file table (its cipher is not the run\'s key model)');
+        }
+        if (files.integrity == null) {
+          if (lastVerifiedRunId != null) throw legacyAfterVerifiedError(run.runId, lastVerifiedRunId, inputPath);
+          opts.onWarning?.(legacyRunNotice(run.runId));
+        } else {
+          checkRunFiles(dir, isRoot, run.runId, inputPath, files.integrity, opts.onWarning);
+          lastVerifiedRunId = run.runId;
+        }
+      }
+      out.push({ run, dir, files, manifest, compressed: manifest?.compressed !== false, userIds: userIdsOf(manifest), isRoot });
     });
     if (out.length > 1) {
       deleted = new Map(deletedUsersOf(resolved.runs).map((d: DeletedUser) => [d.userId, d]));
+    }
+    // A signed backup read without the public key: said once, it is not verified.
+    if (signingPubKey == null && opts.onWarning) {
+      const claimed = claimedSigningKey(chain, out.map((h) => h.dir));
+      if (claimed != null) opts.onWarning(`This backup is signed (key ${claimed}): signatures are NOT verified; pass --signing-pubkey to verify them`);
     }
     handles = out;
     return handles;
   }
 
+  /** The runs applied; a backup without chain.json whose manifest cannot be read is refused by every read. */
+  function openRunsChecked (): RunHandle[] {
+    const runs = openRuns();
+    if (rootManifestError != null) throw rootManifestError;
+    return runs;
+  }
+
   return createBackupReader({
     async readManifest () {
-      const runs = openRuns();
-      if (rootManifestError != null) throw rootManifestError;
+      const runs = openRunsChecked();
       if (runs.length === 1) return runs[0].manifest;
       // Every user of the applied runs, the newest entry of each; the users
       // deleted along the chain apart.
@@ -179,12 +292,12 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
 
     readPlatformData () {
       // Platform rows are a full export on every run: the newest run that has them.
-      const runs = openRuns();
+      const runs = openRunsChecked();
       for (let i = runs.length - 1; i >= 0; i--) {
         const h = runs[i];
         const platformDir = path.join(h.dir, 'platform');
         const filePath = path.join(platformDir, jsonlFileName('platform', h.compressed));
-        if (isRealDirectory(platformDir) && fs.existsSync(filePath)) return readJsonlFile(filePath, h.compressed, h.decryptor);
+        if (isRealDirectory(platformDir) && fs.existsSync(filePath)) return readJsonlFile(filePath, h.compressed, h.files);
       }
       return emptyIterator();
     },
@@ -202,11 +315,11 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
      * surfaced when restoring pryv.me onto the v2 cluster.
      */
     readServerMappings () {
-      const root = openRuns()[0];
+      const root = openRunsChecked()[0];
       const registerDir = path.join(root.dir, 'register');
       const filePath = path.join(registerDir, jsonlFileName('servers', root.compressed));
       if (!isRealDirectory(registerDir) || !fs.existsSync(filePath)) return emptyIterator();
-      return readJsonlFile(filePath, root.compressed, root.decryptor);
+      return readJsonlFile(filePath, root.compressed, root.files);
     },
 
     async openUser (userId: string): Promise<UserBackupReader> {
@@ -219,7 +332,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       // full backup), an incremental run when it lists the user. `users/` and
       // the user directory of each must be real directories of the backup: a
       // link there would make every read of this user leave the backup.
-      const runs = openRuns();
+      const runs = openRunsChecked();
       const deletedUser = deleted.get(userId);
       if (deletedUser != null) throw new BackupChainError('deleted', deletedUserMessage(deletedUser));
       const userRuns: UserRun[] = [];
@@ -228,10 +341,14 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
         if (!h.isRoot && !h.userIds.has(userId)) continue;
         const realUserDir = path.join(h.dir, 'users', userId);
         isRealDirectory(realUserDir);
-        userRuns.push({ userDir: realUserDir, compressed: h.compressed, decryptor: h.decryptor });
+        // Every file of the account in this run checked against the run's
+        // file table before any is used: a changed file refuses the account
+        // before the restore writes anything of it.
+        if (h.files.integrity != null) checkFilesUnder(h.dir, `users/${userId}/`, h.files.integrity, h.run.runId, inputPath);
+        userRuns.push({ userDir: realUserDir, compressed: h.compressed, files: h.files });
       }
       if (userRuns.length === 1) {
-        return createFilesystemUserBackupReader(userRuns[0].userDir, runs[0].manifest, userRuns[0].decryptor);
+        return createFilesystemUserBackupReader(userRuns[0].userDir, runs[0].manifest, userRuns[0].files);
       }
       return createMergedUserBackupReader(userRuns);
     },
@@ -244,48 +361,48 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
 // FilesystemUserBackupReader: one run
 // ---------------------------------------------------------------------------
 
-function createFilesystemUserBackupReader (userDir: string, manifest: Manifest | null, decryptor: BackupDecryptor | null): UserBackupReader {
+function createFilesystemUserBackupReader (userDir: string, manifest: Manifest | null, files: RunFiles): UserBackupReader {
   const compressed = manifest?.compressed !== false;
 
   return createUserBackupReader({
     async readUserManifest () {
       const filePath = path.join(userDir, 'user-manifest.json');
-      return JSON.parse(loadBytes(filePath, decryptor).toString('utf8'));
+      return JSON.parse(loadBytes(filePath, files).toString('utf8'));
     },
 
     readStreams () {
-      return readUserJsonl(userDir, 'streams', compressed, decryptor);
+      return readUserJsonl(userDir, 'streams', compressed, files);
     },
 
     readAccesses () {
-      return readUserJsonl(userDir, 'accesses', compressed, decryptor);
+      return readUserJsonl(userDir, 'accesses', compressed, files);
     },
 
     readProfile () {
-      return readUserJsonl(userDir, 'profile', compressed, decryptor);
+      return readUserJsonl(userDir, 'profile', compressed, files);
     },
 
     readWebhooks () {
-      return readUserJsonl(userDir, 'webhooks', compressed, decryptor);
+      return readUserJsonl(userDir, 'webhooks', compressed, files);
     },
 
     readEvents () {
-      return readChunkedJsonl(path.join(userDir, 'events'), 'events', compressed, decryptor);
+      return readChunkedJsonl(path.join(userDir, 'events'), 'events', compressed, files);
     },
 
     readAudit () {
-      return readChunkedJsonl(path.join(userDir, 'audit'), 'audit', compressed, decryptor);
+      return readChunkedJsonl(path.join(userDir, 'audit'), 'audit', compressed, files);
     },
 
     readSeries () {
       const seriesDir = path.join(userDir, 'series');
       const filePath = path.join(seriesDir, jsonlFileName('series', compressed));
       if (!isRealDirectory(seriesDir) || !fs.existsSync(filePath)) return emptyIterator();
-      return readJsonlFile(filePath, compressed, decryptor);
+      return readJsonlFile(filePath, compressed, files);
     },
 
     readAttachments () {
-      return readAttachmentsFromDir(path.join(userDir, 'attachments'), userDir, decryptor);
+      return readAttachmentsFromDir(path.join(userDir, 'attachments'), userDir, files);
     },
 
     async readAccountData () {
@@ -293,18 +410,18 @@ function createFilesystemUserBackupReader (userDir: string, manifest: Manifest |
       if (!fs.existsSync(filePath)) return null;
       // Account data is a single JSON object stored as one JSONL line
       const items: unknown[] = [];
-      for await (const item of readJsonlFile(filePath, compressed, decryptor)) {
+      for await (const item of readJsonlFile(filePath, compressed, files)) {
         items.push(item);
       }
       return items[0] || null;
     },
 
     readExternalIds () {
-      return readUserJsonl(userDir, 'external-ids', compressed, decryptor);
+      return readUserJsonl(userDir, 'external-ids', compressed, files);
     },
 
     readSsoBindings () {
-      return readUserJsonl(userDir, 'sso-bindings', compressed, decryptor);
+      return readUserJsonl(userDir, 'sso-bindings', compressed, files);
     }
   });
 }
@@ -313,7 +430,7 @@ function createFilesystemUserBackupReader (userDir: string, manifest: Manifest |
 // Merged user reader: several runs of a chain, newest first
 // ---------------------------------------------------------------------------
 
-type UserRun = { userDir: string, compressed: boolean, decryptor: BackupDecryptor | null };
+type UserRun = { userDir: string, compressed: boolean, files: RunFiles };
 
 /** The id an item is superseded by: `id` (streams, accesses, webhooks, events). */
 function itemId (item: unknown): string | null {
@@ -353,13 +470,13 @@ function createMergedUserBackupReader (runs: UserRun[]): UserBackupReader {
   const userFile = (r: UserRun, baseName: string): string => path.join(r.userDir, jsonlFileName(baseName, r.compressed));
 
   const mergedEvents = (): AsyncGenerator<unknown> => newestFirstById(
-    runs.map((r) => () => readChunkedJsonl(path.join(r.userDir, 'events'), 'events', r.compressed, r.decryptor)), itemId);
+    runs.map((r) => () => readChunkedJsonl(path.join(r.userDir, 'events'), 'events', r.compressed, r.files)), itemId);
 
   /** A whole-collection file: the newest run that has it. */
   function newestFile (baseName: string): AsyncIterable<unknown> {
     for (const r of runs) {
       const filePath = userFile(r, baseName);
-      if (fs.existsSync(filePath)) return readJsonlFile(filePath, r.compressed, r.decryptor);
+      if (fs.existsSync(filePath)) return readJsonlFile(filePath, r.compressed, r.files);
     }
     return emptyIterator();
   }
@@ -368,17 +485,17 @@ function createMergedUserBackupReader (runs: UserRun[]): UserBackupReader {
     async readUserManifest () {
       for (const r of runs) {
         const filePath = path.join(r.userDir, 'user-manifest.json');
-        if (fs.existsSync(filePath)) return JSON.parse(loadBytes(filePath, r.decryptor).toString('utf8'));
+        if (fs.existsSync(filePath)) return JSON.parse(loadBytes(filePath, r.files).toString('utf8'));
       }
       throw new Error('No user manifest in the backup chain for this user');
     },
 
     readStreams () {
-      return newestFirstById(runs.map((r) => () => readUserJsonl(r.userDir, 'streams', r.compressed, r.decryptor)), itemId);
+      return newestFirstById(runs.map((r) => () => readUserJsonl(r.userDir, 'streams', r.compressed, r.files)), itemId);
     },
 
     readAccesses () {
-      return newestFirstById(runs.map((r) => () => readUserJsonl(r.userDir, 'accesses', r.compressed, r.decryptor)), itemId);
+      return newestFirstById(runs.map((r) => () => readUserJsonl(r.userDir, 'accesses', r.compressed, r.files)), itemId);
     },
 
     readProfile () {
@@ -386,7 +503,7 @@ function createMergedUserBackupReader (runs: UserRun[]): UserBackupReader {
     },
 
     readWebhooks () {
-      return newestFirstById(runs.map((r) => () => readUserJsonl(r.userDir, 'webhooks', r.compressed, r.decryptor)), itemId);
+      return newestFirstById(runs.map((r) => () => readUserJsonl(r.userDir, 'webhooks', r.compressed, r.files)), itemId);
     },
 
     readEvents () {
@@ -394,14 +511,14 @@ function createMergedUserBackupReader (runs: UserRun[]): UserBackupReader {
     },
 
     readAudit () {
-      return newestFirstById(runs.map((r) => () => readChunkedJsonl(path.join(r.userDir, 'audit'), 'audit', r.compressed, r.decryptor)), auditRowId);
+      return newestFirstById(runs.map((r) => () => readChunkedJsonl(path.join(r.userDir, 'audit'), 'audit', r.compressed, r.files)), auditRowId);
     },
 
     readSeries () {
       for (const r of runs) {
         const seriesDir = path.join(r.userDir, 'series');
         const filePath = path.join(seriesDir, jsonlFileName('series', r.compressed));
-        if (isRealDirectory(seriesDir) && fs.existsSync(filePath)) return readJsonlFile(filePath, r.compressed, r.decryptor);
+        if (isRealDirectory(seriesDir) && fs.existsSync(filePath)) return readJsonlFile(filePath, r.compressed, r.files);
       }
       return emptyIterator();
     },
@@ -442,7 +559,7 @@ async function * readMergedAttachments (runs: UserRun[], mergedEvents: () => Asy
     for (const fileId of listAttachmentFiles(attachDir)) {
       if (yielded.has(fileId)) continue;
       yielded.add(fileId);
-      yield { eventId: fileIdToEventId.get(fileId) ?? null, fileId, stream: openAttachment(attachDir, fileId, run.decryptor) };
+      yield { eventId: fileIdToEventId.get(fileId) ?? null, fileId, stream: openAttachment(attachDir, fileId, run.files) };
     }
   }
 }
@@ -455,18 +572,18 @@ function jsonlFileName (baseName: string, compressed: boolean): string {
   return compressed ? baseName + '.jsonl.gz' : baseName + '.jsonl';
 }
 
-function readUserJsonl (userDir: string, baseName: string, compressed: boolean, decryptor: BackupDecryptor | null): AsyncIterable<unknown> {
+function readUserJsonl (userDir: string, baseName: string, compressed: boolean, files: RunFiles): AsyncIterable<unknown> {
   const filePath = path.join(userDir, jsonlFileName(baseName, compressed));
   if (!fs.existsSync(filePath)) return emptyIterator();
-  return readJsonlFile(filePath, compressed, decryptor);
+  return readJsonlFile(filePath, compressed, files);
 }
 
 /**
  * Read a JSONL file (optionally encrypted, optionally gzip-compressed) and
  * yield parsed objects. Decryption is the outermost layer (applied first).
  */
-async function * readJsonlFile (filePath: string, compressed: boolean, decryptor: BackupDecryptor | null): AsyncGenerator<unknown> {
-  let buffer = loadBytes(filePath, decryptor);
+async function * readJsonlFile (filePath: string, compressed: boolean, files: RunFiles): AsyncGenerator<unknown> {
+  let buffer = loadBytes(filePath, files);
   if (compressed) {
     buffer = zlib.gunzipSync(buffer);
   }
@@ -483,24 +600,26 @@ async function * readJsonlFile (filePath: string, compressed: boolean, decryptor
  * Read chunked JSONL files from a directory, yielding all items in order.
  * Chunk files are sorted alphabetically (events-0001, events-0002, ...).
  */
-async function * readChunkedJsonl (dir: string, baseName: string, compressed: boolean, decryptor: BackupDecryptor | null): AsyncGenerator<unknown> {
+async function * readChunkedJsonl (dir: string, baseName: string, compressed: boolean, files: RunFiles): AsyncGenerator<unknown> {
   if (!isRealDirectory(dir)) return;
   const ext = compressed ? '.jsonl.gz' : '.jsonl';
-  const files = fs.readdirSync(dir)
+  const names = fs.readdirSync(dir)
     .filter((f: string) => f.startsWith(baseName + '-') && f.endsWith(ext))
     .sort();
-  for (const file of files) {
-    yield * readJsonlFile(path.join(dir, file), compressed, decryptor);
+  for (const file of names) {
+    yield * readJsonlFile(path.join(dir, file), compressed, files);
   }
 }
 
 /**
  * The attachment files of a directory. Nothing is followed: a symbolic link
  * or any other non-regular entry is refused, it could make the restore import
- * a file from outside the backup.
+ * a file from outside the backup. Filesystem litter (`.DS_Store`, `._*`, ...)
+ * is not an attachment: skipped.
  */
 function listAttachmentFiles (attachDir: string): string[] {
   return fs.readdirSync(attachDir).filter((f: string) => {
+    if (isFilesystemLitter(f, false)) return false;
     const stat = fs.lstatSync(path.join(attachDir, f));
     if (stat.isDirectory()) return false;
     if (!stat.isFile()) {
@@ -510,17 +629,24 @@ function listAttachmentFiles (attachDir: string): string[] {
   });
 }
 
-function openAttachment (attachDir: string, fileId: string, decryptor: BackupDecryptor | null): NodeJS.ReadableStream {
-  const fileStream = fs.createReadStream(path.join(attachDir, fileId), { flags: NO_FOLLOW_READ_FLAGS });
-  if (decryptor == null) return fileStream;
+function openAttachment (attachDir: string, fileId: string, files: RunFiles): NodeJS.ReadableStream {
+  const filePath = path.join(attachDir, fileId);
+  const fileStream = fs.createReadStream(filePath, { flags: NO_FOLLOW_READ_FLAGS });
+  // The bytes on disk are checked against the run's file table as they are
+  // read: a difference fails the stream at its end (before the decrypting
+  // side ends), so the consumer sees it as it sees a decryption failure.
+  const stages: NodeJS.ReadWriteStream[] = [];
+  if (files.integrity != null) stages.push(verifyingStream(files, filePath));
   // Decrypt the blob on the fly so the consumer receives plaintext bytes.
-  // pipeline, not pipe: destroying the plaintext side (a consumer that does
-  // not read it) also destroys the file stream and closes its descriptor, and
-  // a failure of the file stream (its open included) reaches the consumer
-  // through the plaintext side instead of being raised with no listener.
-  const plain = decryptor.decryptStream();
-  pipeline(fileStream, plain, () => {});
-  return plain;
+  if (files.decryptor != null) stages.push(files.decryptor.decryptStream(expectationOf(files, filePath)));
+  if (stages.length === 0) return fileStream;
+  // pipeline, not pipe: destroying the last side (a consumer that does not
+  // read it) also destroys the file stream and closes its descriptor, and a
+  // failure of the file stream (its open included) reaches the consumer
+  // through the last side instead of being raised with no listener.
+  const last = stages[stages.length - 1];
+  pipeline(fileStream, ...stages, () => {});
+  return last;
 }
 
 /**
@@ -531,16 +657,16 @@ function openAttachment (attachDir: string, fileId: string, decryptor: BackupDec
  * symbolic link, or a symbolic link or any other non-regular entry in it, is
  * refused, it could make the restore import a file from outside the backup.
  */
-async function * readAttachmentsFromDir (attachDir: string, userDir: string, decryptor: BackupDecryptor | null): AsyncGenerator<{ eventId: string | null, fileId: string, stream: NodeJS.ReadableStream }> {
+async function * readAttachmentsFromDir (attachDir: string, userDir: string, files: RunFiles): AsyncGenerator<{ eventId: string | null, fileId: string, stream: NodeJS.ReadableStream }> {
   if (!isRealDirectory(attachDir)) return;
   // Build fileId -> eventId mapping from events data
-  const fileIdToEventId = await buildFileIdMapping(userDir, decryptor);
+  const fileIdToEventId = await buildFileIdMapping(userDir, files);
 
-  const files = listAttachmentFiles(attachDir);
+  const fileIds = listAttachmentFiles(attachDir);
 
-  for (const fileId of files) {
+  for (const fileId of fileIds) {
     const eventId = fileIdToEventId.get(fileId) ?? null;
-    yield { eventId, fileId, stream: openAttachment(attachDir, fileId, decryptor) };
+    yield { eventId, fileId, stream: openAttachment(attachDir, fileId, files) };
   }
 }
 
@@ -559,16 +685,16 @@ function addAttachmentRefs (map: Map<string, string>, item: unknown): void {
 /**
  * Scan events JSONL to build a fileId -> eventId mapping for attachment restore.
  */
-async function buildFileIdMapping (userDir: string, decryptor: BackupDecryptor | null): Promise<Map<string, string>> {
+async function buildFileIdMapping (userDir: string, files: RunFiles): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const eventsDir = path.join(userDir, 'events');
   if (!isRealDirectory(eventsDir)) return map;
 
   // Detect compression from file extensions
-  const files: string[] = fs.readdirSync(eventsDir);
-  const compressed = files.some((f: string) => f.endsWith('.gz'));
+  const names: string[] = fs.readdirSync(eventsDir).filter((f: string) => !isFilesystemLitter(f, false));
+  const compressed = names.some((f: string) => f.endsWith('.gz'));
 
-  for await (const item of readChunkedJsonl(eventsDir, 'events', compressed, decryptor)) {
+  for await (const item of readChunkedJsonl(eventsDir, 'events', compressed, files)) {
     addAttachmentRefs(map, item);
   }
   return map;
