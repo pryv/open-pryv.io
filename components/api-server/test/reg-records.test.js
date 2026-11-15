@@ -286,6 +286,28 @@ describe('[RGRC] Register records admin endpoint', () => {
       assert.strictEqual(res.body.error.id, 'unknown-resource');
     });
 
+    it('[RR17] a storage failure answers 500 unexpected-error, on update and on delete', async () => {
+      const sub = '_acme-fail-' + cuid();
+      const { setDnsRecord, deleteDnsRecord } = platform;
+      await platform.setDnsRecord(sub, { txt: ['kept'] });
+      platform.setDnsRecord = async () => { throw new Error('store down'); };
+      platform.deleteDnsRecord = async () => { throw new Error('store down'); };
+      try {
+        let res = await coreRequest.post('/reg/records')
+          .set('Authorization', adminAccessKey)
+          .send({ subdomain: sub, records: { txt: ['new'] } });
+        assert.strictEqual(res.status, 500, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'unexpected-error');
+        res = await coreRequest.delete('/reg/records/' + sub).set('Authorization', adminAccessKey);
+        assert.strictEqual(res.status, 500, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'unexpected-error');
+      } finally {
+        platform.setDnsRecord = setDnsRecord;
+        platform.deleteDnsRecord = deleteDnsRecord;
+        await platform.deleteDnsRecord(sub);
+      }
+    });
+
     it('[RR12] must 404 on unknown subdomain', async () => {
       const sub = '_never-existed-' + cuid();
       const res = await coreRequest.delete('/reg/records/' + sub)

@@ -68,6 +68,16 @@
 - Two backup runs finishing together into the same directory no longer race on `chain.json`: the
   second is refused and left aside, as an overlapping run already was. A `.chain.lock` file older
   than a minute is a leftover of a crashed run and is taken over.
+- `--inspect` of a backup written before chains answers FAILED (exit 1), not UNKNOWN (exit 2),
+  when its manifest is damaged: plaintext that cannot be read, or bytes that are not JSON once
+  decrypted. UNKNOWN is kept for a missing secret, and for a manifest whose decryption fails
+  authentication (a wrong passphrase cannot be told apart from an altered file).
+
+### Admin API
+
+- `POST /reg/records` and `DELETE /reg/records/{subdomain}` answer a storage failure with the
+  standard `unexpected-error` id (HTTP 500), instead of an `unexpected` id that no other route
+  uses.
 
 ### Cluster and configuration
 
