@@ -202,6 +202,13 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     const report = runCli(['--inspect', damaged, '--passphrase-file', v1PassphraseFile]);
     assert.strictEqual(report.status, 1, report.stdout + report.stderr);
     assert.match(report.stdout, /DAMAGED: the root manifest says "incremental" and there is no chain.json/);
+    // a wrong secret may be at fault: UNKNOWN; a manifest that cannot be the
+    // backup's (a moved file of the current format, plaintext garbage): FAILED
+    const wrongPassphraseFile = path.join(tmpDir, 'wrong-passphrase');
+    fs.writeFileSync(wrongPassphraseFile, 'not-the-passphrase\n', { mode: 0o600 });
+    const wrongSecret = runCli(['--inspect', damaged, '--passphrase-file', wrongPassphraseFile]);
+    assert.strictEqual(wrongSecret.status, 2, wrongSecret.stdout + wrongSecret.stderr);
+    assert.match(wrongSecret.stdout, /UNKNOWN: the manifest cannot be decrypted: wrong secret, or the file is damaged/);
 
     // The same move with files of the current format: the manifest names its run, refused as such.
     const moved = path.join(tmpDir, 'moved');
@@ -215,6 +222,15 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     const movedRestore = runCli(['--restore', moved, '--user', username, '--passphrase-file', passphraseFile, '--overwrite']);
     assert.strictEqual(movedRestore.status, 1, movedRestore.stdout + movedRestore.stderr);
     assert.match(movedRestore.stderr, /manifest.json of run full carries the identity of manifest.json \(run /);
+    const movedInspect = runCli(['--inspect', moved, '--passphrase-file', passphraseFile]);
+    assert.strictEqual(movedInspect.status, 1, movedInspect.stdout + movedInspect.stderr);
+    assert.match(movedInspect.stdout, /FAILED: the manifest cannot be read \(.*carries the identity of/);
+    const garbage = path.join(tmpDir, 'garbage');
+    fs.mkdirSync(garbage);
+    fs.writeFileSync(path.join(garbage, 'manifest.json'), '{ not json');
+    const garbageInspect = runCli(['--inspect', garbage]);
+    assert.strictEqual(garbageInspect.status, 1, garbageInspect.stdout + garbageInspect.stderr);
+    assert.match(garbageInspect.stdout, /FAILED: the manifest is not valid JSON/);
 
     const restore = runCli(['--restore', damaged, '--user', 'fxalice', '--passphrase-file', v1PassphraseFile, '--overwrite']);
     assert.strictEqual(restore.status, 1, restore.stdout + restore.stderr);
