@@ -178,24 +178,45 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     assert.match(ok.stdout, /OK \(2 runs\)/);
     assert.doesNotMatch(ok.stdout, /Storage initialized/);
 
-    // The old layout: no chain.json, the delta's manifest and envelope at the root.
+    // The old layout, left by a release before chains (files of the first
+    // format, which name no run): no chain.json, the delta's manifest and
+    // envelope at the root. Built from a chain of that format.
+    const V1 = require('../../../storages/test/fixtures/backup-cipher-v1.json');
     const damaged = path.join(tmpDir, 'damaged');
-    fs.cpSync(dir, damaged, { recursive: true });
-    const runId = fs.readdirSync(path.join(damaged, 'incrementals'))[0];
+    for (const [rel, hex] of Object.entries(V1.chain.files)) {
+      const p = path.join(damaged, ...rel.split('/'));
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, Buffer.from(hex, 'hex'));
+    }
     for (const name of ['manifest.json', 'encryption.json']) {
-      fs.copyFileSync(path.join(damaged, 'incrementals', runId, name), path.join(damaged, name));
+      fs.copyFileSync(path.join(damaged, 'incrementals', V1.chain.incId, name), path.join(damaged, name));
     }
     fs.rmSync(path.join(damaged, 'chain.json'));
     fs.rmSync(path.join(damaged, 'incrementals'), { recursive: true });
+    const v1PassphraseFile = path.join(tmpDir, 'v1-passphrase');
+    fs.writeFileSync(v1PassphraseFile, V1.chain.passphrase + '\n', { mode: 0o600 });
 
     const unknown = runCli(['--inspect', damaged]);
     assert.strictEqual(unknown.status, 2, unknown.stdout + unknown.stderr);
     assert.match(unknown.stdout, /UNKNOWN: pass --passphrase-file \/ --private-key/);
-    const report = runCli(['--inspect', damaged, '--passphrase-file', passphraseFile]);
+    const report = runCli(['--inspect', damaged, '--passphrase-file', v1PassphraseFile]);
     assert.strictEqual(report.status, 1, report.stdout + report.stderr);
     assert.match(report.stdout, /DAMAGED: the root manifest says "incremental" and there is no chain.json/);
 
-    const restore = runCli(['--restore', damaged, '--user', username, '--passphrase-file', passphraseFile, '--overwrite']);
+    // The same move with files of the current format: the manifest names its run, refused as such.
+    const moved = path.join(tmpDir, 'moved');
+    fs.cpSync(dir, moved, { recursive: true });
+    const runId = fs.readdirSync(path.join(moved, 'incrementals'))[0];
+    for (const name of ['manifest.json', 'encryption.json']) {
+      fs.copyFileSync(path.join(moved, 'incrementals', runId, name), path.join(moved, name));
+    }
+    fs.rmSync(path.join(moved, 'chain.json'));
+    fs.rmSync(path.join(moved, 'incrementals'), { recursive: true });
+    const movedRestore = runCli(['--restore', moved, '--user', username, '--passphrase-file', passphraseFile, '--overwrite']);
+    assert.strictEqual(movedRestore.status, 1, movedRestore.stdout + movedRestore.stderr);
+    assert.match(movedRestore.stderr, /manifest.json of run full carries the identity of manifest.json \(run /);
+
+    const restore = runCli(['--restore', damaged, '--user', 'fxalice', '--passphrase-file', v1PassphraseFile, '--overwrite']);
     assert.strictEqual(restore.status, 1, restore.stdout + restore.stderr);
     assert.match(restore.stderr, /holds only the delta of an incremental run that overwrote its full backup/);
     assert.doesNotMatch(restore.stdout, /Restored:/);

@@ -189,6 +189,11 @@ function stableJson (value: unknown): string {
     : v);
 }
 
+/** The account an identity envelope is bound to (authenticated with it): it does not decrypt as another account's. */
+function identityContext (userId: string): string {
+  return 'transfer-identity:' + userId;
+}
+
 export function createAutoDeletionState (storage: AccountStorage) {
   const kv = storage.getKeyValueDataForStore(BOOKKEEPING_STORE_ID);
   return {
@@ -215,13 +220,13 @@ export function createAutoDeletionState (storage: AccountStorage) {
     async getIdentity (userId: string, key: Buffer): Promise<Identity | null> {
       const envelope = await storage.getAccountField(userId, IDENTITY_FIELD);
       if (typeof envelope !== 'string' || envelope.length === 0) return null;
-      return decryptJson(envelope, key) as Identity;
+      return decryptJson(envelope, key, identityContext(userId)) as Identity;
     },
 
     /** Replaces the identity; the previous one is erased, not kept as a version. */
     async setIdentity (userId: string, identity: Identity, key: Buffer, createdBy: string): Promise<void> {
       await storage.deleteAccountField(userId, IDENTITY_FIELD);
-      await storage.setAccountField(userId, IDENTITY_FIELD, encryptJson(identity, key), createdBy);
+      await storage.setAccountField(userId, IDENTITY_FIELD, encryptJson(identity, key, identityContext(userId)), createdBy);
     },
 
     /** Removes the identity and every earlier version of it. */

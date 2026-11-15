@@ -224,7 +224,25 @@ describe('[RSER] restore of an account with an erasure record', function () {
       const text = gz ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
       const out = Buffer.from(change(text), 'utf8');
       fs.writeFileSync(file, gz ? zlib.gzipSync(out) : out);
+      relistInRunTable(u.dir, f);
     }
+  }
+
+  /**
+   * List the rewritten file in its run's file table (a plaintext run): the
+   * backup is then one written that way, whose content fails later, not one
+   * whose files were changed after it was written.
+   */
+  function relistInRunTable (backupDir, f) {
+    const parts = f.split(path.sep);
+    const [runDir, rel] = parts[0] === 'incrementals' ? [path.join(backupDir, parts[0], parts[1]), parts.slice(2).join('/')] : [backupDir, parts.join('/')];
+    const manifestPath = path.join(runDir, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const bytes = fs.readFileSync(path.join(runDir, ...rel.split('/')));
+    const entry = manifest.integrity.files.find((e) => e.path === rel);
+    entry.size = bytes.length;
+    entry.sha256 = require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   }
 
   /** A restore orchestrator of this process, its log lines captured. */

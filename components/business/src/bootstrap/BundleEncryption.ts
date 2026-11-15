@@ -17,11 +17,15 @@ const require = createRequire(import.meta.url);
  * a specific format spec, and every dep adds supply-chain surface.
  *
  * Wire format (base64-decoded struct):
- *   version: 1 byte  — schema version of this envelope (currently 1)
+ *   version: 1 byte  — schema version of this envelope (2; version 1 is still read)
  *   salt:    16 bytes — scrypt salt
  *   iv:      12 bytes — AES-GCM nonce
  *   tag:     16 bytes — AES-GCM auth tag
  *   ct:      N bytes  — ciphertext of the JSON-encoded bundle
+ *
+ * Version 2 authenticates the header with the ciphertext (AAD =
+ * 'pryv-bootstrap-bundle' | version | salt | iv) and pins the tag length to
+ * 16 bytes: a version byte, salt or nonce changed in transit is refused.
  *
  * The full payload is base64-encoded and wrapped in a PEM-style ASCII
  * armor so operators can copy/paste it safely.
@@ -29,7 +33,9 @@ const require = createRequire(import.meta.url);
 
 const crypto = require('node:crypto');
 
-const ENVELOPE_VERSION = 1;
+const ENVELOPE_VERSION = 2;
+const LEGACY_ENVELOPE_VERSION = 1;
+const AAD_LABEL = Buffer.from('pryv-bootstrap-bundle', 'utf8');
 const SCRYPT_N = 2 ** 15; // 32768 — ~100ms on a modern laptop
 const SCRYPT_R = 8;
 const SCRYPT_P = 1;
@@ -61,11 +67,12 @@ function encrypt (bundle: Record<string, unknown>, passphrase: string): string {
   const iv = crypto.randomBytes(IV_BYTES);
   const key = scryptKey(passphrase, salt);
 
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const version = Buffer.from([ENVELOPE_VERSION]);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
+  cipher.setAAD(Buffer.concat([AAD_LABEL, version, salt, iv]));
   const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
 
-  const version = Buffer.from([ENVELOPE_VERSION]);
   const envelope = Buffer.concat([version, salt, iv, tag, ct]);
 
   return armor(envelope.toString('base64'));
@@ -98,8 +105,8 @@ function decrypt (armored: string, passphrase: string): unknown {
   }
 
   const version = envelope[0];
-  if (version !== ENVELOPE_VERSION) {
-    throw new Error(`BundleEncryption.decrypt: unsupported envelope version ${version} (this binary understands ${ENVELOPE_VERSION})`);
+  if (version !== ENVELOPE_VERSION && version !== LEGACY_ENVELOPE_VERSION) {
+    throw new Error(`BundleEncryption.decrypt: unsupported envelope version ${version} (this binary understands ${LEGACY_ENVELOPE_VERSION} and ${ENVELOPE_VERSION})`);
   }
 
   let offset = 1;
@@ -110,7 +117,8 @@ function decrypt (armored: string, passphrase: string): unknown {
 
   const key = scryptKey(passphrase, salt);
 
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: TAG_BYTES });
+  if (version === ENVELOPE_VERSION) decipher.setAAD(Buffer.concat([AAD_LABEL, Buffer.from([version]), salt, iv]));
   decipher.setAuthTag(tag);
 
   let plaintext: Buffer;
@@ -166,4 +174,4 @@ function deArmor (armored: string): string {
     .replace(/\s+/g, '');
 }
 
-export { ENVELOPE_VERSION, encrypt, decrypt, generatePassphrase };
+export { ENVELOPE_VERSION, LEGACY_ENVELOPE_VERSION, encrypt, decrypt, generatePassphrase };

@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const AtRestEncryption = require('../../src/acme/AtRestEncryption.ts');
 const {
   createAutoDeletionState,
   isMaterialChange,
@@ -137,6 +138,23 @@ describe('[ADKS] account auto-deletion state', function () {
     assert.equal(storage.fields.get('u1/' + IDENTITY_FIELD).length, 1, 'the previous identity is not kept as a version');
     await state.eraseIdentity('u1');
     assert.equal(await state.getIdentity('u1', key), null);
+  });
+
+  it('[AREV3] the identity is written in the first envelope version (readable by the previous release); a version-2 envelope is bound to its account', async function () {
+    const storage = fakeStorage();
+    const state = createAutoDeletionState(storage);
+    const key = crypto.randomBytes(32);
+    await state.setIdentity('u1', { name: 'Ada Lovelace' }, key, 'acc1');
+    const written = storage.fields.get('u1/' + IDENTITY_FIELD)[0];
+    assert.equal(Buffer.from(written, 'base64')[0], 1, 'first envelope version');
+    assert.deepEqual(AtRestEncryption.decryptJson(written, key), { name: 'Ada Lovelace' }, 'no authenticated data');
+
+    // version 2, as a later release writes it: bound to the account
+    const envelope = AtRestEncryption.encryptJson({ name: 'Ada Lovelace' }, key, 'transfer-identity:u1', 2);
+    await storage.setAccountField('u1', IDENTITY_FIELD, envelope, 'acc1');
+    await storage.setAccountField('u2', IDENTITY_FIELD, envelope, 'acc2');
+    await assert.rejects(state.getIdentity('u2', key), /authentication failed/);
+    assert.deepEqual(await state.getIdentity('u1', key), { name: 'Ada Lovelace' });
   });
 
   it('[ADKS6] the identity key is the configured one, else derived from the admin key', function () {

@@ -23,8 +23,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import type { KeyObject, PrivateKeyInput, PublicKeyInput } from 'node:crypto';
 import { createBackupDecryptor, recipientKeyFingerprint } from './BackupCipher.ts';
-import type { BackupDecryptor, DecryptorSecrets, Envelope } from './BackupCipher.ts';
+import type { BackupDecryptor, DecryptorSecrets, DecryptExpectation, Envelope } from './BackupCipher.ts';
 
 const CHAIN_FILE_NAME = 'chain.json';
 const INCREMENTALS_DIR_NAME = 'incrementals';
@@ -34,6 +35,45 @@ const FULL_RUN_ID = 'full';
 const CHAIN_FORMAT_VERSION = 1;
 /** The first release that writes backup chains (named in the operator messages). */
 const CHAIN_RELEASE = '2.0.0-rc.51';
+/** The first release whose runs list their files in the manifest (named in the operator messages). */
+const INTEGRITY_RELEASE = '2.0.0-rc.85';
+/** Version of the `integrity` object of a run's manifest. */
+const INTEGRITY_VERSION = 2;
+/** Files at the root of a backup that belong to no run (the chain's own files). */
+const ROOT_NON_RUN_FILES = new Set([CHAIN_FILE_NAME, '.chain.lock', '.chain.lock.takeover', INCREMENTALS_DIR_NAME]);
+const CHAIN_TMP_RE = /^\.chain\.json\..*\.tmp$/;
+/** Files of a run directory the file table does not list (it is in the first, the second is written after it). */
+const RUN_UNLISTED_FILES = new Set([MANIFEST_FILE_NAME, 'manifest.sig']);
+
+/**
+ * Names operating systems and storage appliances create by themselves in any
+ * directory. Not a file of the backup: skipped (with a notice) where the run's
+ * file table does not list them, never written by the backup. Fixed on
+ * purpose: no reader path opens a file outside the table, and a short list
+ * can be audited against that.
+ */
+const LITTER_FILE_NAMES = ['.DS_Store', 'Thumbs.db', 'desktop.ini'];
+const LITTER_FILE_PREFIXES = ['._', '.nfs'];
+const LITTER_DIR_NAMES = ['lost+found', '@eaDir', '.snapshot', '.zfs', '.Spotlight-V100', '.fseventsd', '.Trashes', '.TemporaryItems', '$RECYCLE.BIN', 'System Volume Information'];
+const LITTER_FILE_SET = new Set(LITTER_FILE_NAMES);
+const LITTER_DIR_SET = new Set(LITTER_DIR_NAMES);
+
+/** Whether a directory entry is filesystem litter (a file, or a directory skipped whole). */
+function isFilesystemLitter (name: string, isDirectory: boolean): boolean {
+  if (isDirectory) return LITTER_DIR_SET.has(name);
+  return LITTER_FILE_SET.has(name) || LITTER_FILE_PREFIXES.some((p) => name.startsWith(p));
+}
+
+/** Whether a `/`-separated path relative to a run names litter (its file, or a directory on the way). */
+function isLitterPath (rel: string): boolean {
+  const parts = rel.split('/');
+  return isFilesystemLitter(parts[parts.length - 1], false) || parts.slice(0, -1).some((p) => isFilesystemLitter(p, true));
+}
+
+/** The notice of an ignored entry (a directory ends with `/`). */
+function ignoredEntryNotice (runId: string, rel: string): string {
+  return `Run ${runId}: ignored ${rel} (not a file of the backup)`;
+}
 
 /**
  * An incremental run exports the items changed after the previous run's
@@ -86,14 +126,42 @@ type DeletedUser = {
   deletedBeforeRunId: string;
 };
 
+/**
+ * The signing key of a chain, set by its full run: every later run must be
+ * signed with it (a chain started unsigned stays unsigned). Operational
+ * consistency only (chain.json is cleartext): trust comes from the public key
+ * given at restore.
+ */
+type ChainSigning = { alg: 'ed25519', keyFingerprint: string };
+
 type Chain = {
   formatVersion: number;
   chainId: string;
   encryption: ChainEncryption;
+  signing?: ChainSigning;
   runs: ChainRun[];
 };
 
-type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted' | 'concurrent';
+/** A run's signature file, next to its manifest. */
+type ManifestSignature = {
+  v: number;
+  alg: 'ed25519';
+  keyFingerprint: string;
+  manifestSha256: string;
+  signature: string;
+};
+
+type BackupChainErrorCode = 'invalid' | 'exists' | 'damaged' | 'incomplete' | 'mismatch' | 'key-model' | 'secret' | 'deleted' | 'concurrent' | 'integrity' | 'signature';
+
+/** The file table of a run (`integrity` in its manifest): path relative to the run -> size, sha256 of the bytes on disk. */
+type FileTable = Map<string, { size: number, sha256: string }>;
+
+type RunIntegrity = {
+  version: number;
+  /** 2: every file of the run is in cipher format 2; null: a plaintext run. */
+  cipher: number | null;
+  files: FileTable;
+};
 
 class BackupChainError extends Error {
   code: BackupChainErrorCode;
@@ -163,10 +231,19 @@ function readCleartextFile (filePath: string): string | null {
   }
 }
 
-/** Read a (possibly encrypted) file of the backup without following a symbolic link. */
-function readBackupBytes (filePath: string, decryptor: BackupDecryptor | null): Buffer {
+/**
+ * Read a (possibly encrypted) file of the backup without following a
+ * symbolic link. `expect` names the file (path relative to its run, run,
+ * chain): an encrypted file carrying another identity is refused.
+ */
+function readBackupBytes (filePath: string, decryptor: BackupDecryptor | null, expect?: DecryptExpectation): Buffer {
   const raw = readNoFollow(filePath);
-  return decryptor ? decryptor.decryptBuffer(raw) : raw;
+  return decryptor ? decryptor.decryptBuffer(raw, expect) : raw;
+}
+
+/** The identity the files of a chain run carry (a run bootstrapped from a backup before chains names no chain). */
+function runIdentityOf (chain: Chain | null, run: Pick<ChainRun, 'runId' | 'bootstrapped'>): { runId: string, chainId: string | null } {
+  return { runId: run.runId, chainId: chain != null && run.bootstrapped !== true ? chain.chainId : null };
 }
 
 /**
@@ -208,6 +285,277 @@ function readEnvelope (runDir: string): Envelope | null {
 }
 
 // ---------------------------------------------------------------------------
+// The file table of a run (manifest `integrity`)
+// ---------------------------------------------------------------------------
+
+function integrityError (runId: string, dir: string, what: string): BackupChainError {
+  return new BackupChainError('integrity', `Run ${runId} of the backup at ${dir}: ${what}: refused.`);
+}
+
+/**
+ * The file table of a run's manifest; null for a run written before runs
+ * listed their files. A malformed table is refused.
+ */
+function runIntegrityOf (manifest: Record<string, unknown> | null, runId: string, dir: string): RunIntegrity | null {
+  const integrity = manifest?.integrity as { version?: unknown, cipher?: unknown, files?: unknown } | undefined;
+  if (integrity == null) return null;
+  const bad = (): BackupChainError => integrityError(runId, dir, 'its manifest carries a malformed file table');
+  if (integrity.version !== INTEGRITY_VERSION || (integrity.cipher !== null && integrity.cipher !== 2) || !Array.isArray(integrity.files)) throw bad();
+  const files: FileTable = new Map();
+  for (const f of integrity.files as Array<{ path?: unknown, size?: unknown, sha256?: unknown }>) {
+    if (typeof f?.path !== 'string' || f.path === '' || f.path.split('/').some((s) => s === '' || s === '.' || s === '..') ||
+      typeof f.size !== 'number' || !Number.isSafeInteger(f.size) || f.size < 0 ||
+      typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256) || files.has(f.path)) throw bad();
+    files.set(f.path, { size: f.size, sha256: f.sha256 });
+  }
+  return { version: integrity.version, cipher: integrity.cipher as number | null, files };
+}
+
+/** A file present in a run that its table does not list: refused, with the way out. */
+function unlistedFileError (runId: string, dir: string, rel: string): BackupChainError {
+  return new BackupChainError('integrity', `Run ${runId} of the backup at ${dir}: unlisted file ${rel} (not in the run's manifest): refused. ` +
+    'If you put it there, move it out of the backup directory (it holds the backup only) and run again; ' +
+    '--inspect --verify-files checks a backup ahead of a restore.');
+}
+
+interface ListRunFilesOptions {
+  /** The run's file table: a path it lists is never ignored as litter. */
+  listed?: FileTable | null;
+  /** Called with each litter entry skipped (a directory ends with `/`). */
+  onIgnored?: (rel: string) => void;
+}
+
+/**
+ * The regular files of a run directory, relative to it (`/`-separated),
+ * without the manifest and its signature; at the root of a backup, without
+ * the chain's own files and the `incrementals/` tree. Filesystem litter the
+ * table does not list is skipped (see `isFilesystemLitter`). Anything else
+ * than a regular file or a directory (a symbolic link, a special file) is
+ * refused.
+ */
+function listRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string, options: ListRunFilesOptions = {}): Map<string, number> {
+  const out = new Map<string, number>();
+  const listed = options.listed ?? null;
+  const listsUnder = (rel: string): boolean => listed != null && [...listed.keys()].some((p) => p.startsWith(rel + '/'));
+  (function walk (abs: string, rel: string) {
+    for (const name of fs.readdirSync(abs).sort()) {
+      const childRel = rel === '' ? name : rel + '/' + name;
+      if (rel === '' && (RUN_UNLISTED_FILES.has(name) || (isRoot && (ROOT_NON_RUN_FILES.has(name) || CHAIN_TMP_RE.test(name))))) continue;
+      const childAbs = path.join(abs, name);
+      const stat = fs.lstatSync(childAbs);
+      if (stat.isDirectory()) {
+        if (isFilesystemLitter(name, true) && !listsUnder(childRel)) {
+          options.onIgnored?.(childRel + '/');
+          continue;
+        }
+        walk(childAbs, childRel);
+      } else if (stat.isFile()) {
+        if (isFilesystemLitter(name, false) && !listed?.has(childRel)) {
+          options.onIgnored?.(childRel);
+          continue;
+        }
+        out.set(childRel, stat.size);
+      } else throw integrityError(runId, dir, `${childRel} is not a regular file (symbolic link or special file)`);
+    }
+  })(runDir, '');
+  return out;
+}
+
+/**
+ * Completeness of a run against its file table: no file added, none missing,
+ * none resized (sizes only, nothing read). Each litter entry skipped is
+ * reported through `onWarning`.
+ */
+function checkRunFiles (runDir: string, isRoot: boolean, runId: string, dir: string, integrity: RunIntegrity, onWarning?: (message: string) => void): void {
+  const present = listRunFiles(runDir, isRoot, runId, dir, {
+    listed: integrity.files,
+    onIgnored: (rel) => onWarning?.(ignoredEntryNotice(runId, rel))
+  });
+  for (const [rel, size] of present) {
+    const listed = integrity.files.get(rel);
+    if (listed == null) throw unlistedFileError(runId, dir, rel);
+    if (listed.size !== size) throw integrityError(runId, dir, `file ${rel}: size differs from the run's manifest (${size}, listed ${listed.size})`);
+  }
+  for (const rel of integrity.files.keys()) {
+    if (!present.has(rel)) throw integrityError(runId, dir, `missing file ${rel} (listed by the run's manifest)`);
+  }
+}
+
+/** Check bytes read from a run against its file table. */
+function checkFileHash (raw: Buffer, rel: string, integrity: RunIntegrity, runId: string, dir: string): void {
+  const listed = integrity.files.get(rel);
+  if (listed == null) throw unlistedFileError(runId, dir, rel);
+  if (raw.length !== listed.size || crypto.createHash('sha256').update(raw).digest('hex') !== listed.sha256) {
+    throw integrityError(runId, dir, `file ${rel} differs from the run's manifest (hash)`);
+  }
+}
+
+/** Size and sha256 of a file, read in pieces (an attachment may be large), without following a symbolic link. */
+function hashFileNoFollow (filePath: string): { size: number, sha256: string } {
+  let fd: number;
+  try {
+    fd = fs.openSync(filePath, NO_FOLLOW_READ_FLAGS);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ELOOP') throw new Error(`Backup file ${filePath} is a symbolic link: refused`);
+    throw err;
+  }
+  try {
+    const hash = crypto.createHash('sha256');
+    const buf = Buffer.alloc(1024 * 1024);
+    let size = 0;
+    for (;;) {
+      const n = fs.readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      hash.update(buf.subarray(0, n));
+      size += n;
+    }
+    return { size, sha256: hash.digest('hex') };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Check every file of a run's table under `prefix` (e.g. one user's
+ * directory) against its size and hash, before any of it is used.
+ */
+function checkFilesUnder (runDir: string, prefix: string, integrity: RunIntegrity, runId: string, dir: string): void {
+  for (const [rel, listed] of integrity.files) {
+    if (!rel.startsWith(prefix)) continue;
+    const got = hashFileNoFollow(path.join(runDir, ...rel.split('/')));
+    if (got.size !== listed.size || got.sha256 !== listed.sha256) throw integrityError(runId, dir, `file ${rel} differs from the run's manifest (hash)`);
+  }
+}
+
+/** The message of a legacy run (no file table). */
+function legacyRunNotice (runId: string): string {
+  return `Run ${runId}: written before ${INTEGRITY_RELEASE}, its file list is not verified`;
+}
+
+/** A run without file table after one with: refused (a host of an earlier release wrote into the chain, or the run was replaced). */
+function legacyAfterVerifiedError (runId: string, previousRunId: string, dir: string): BackupChainError {
+  return new BackupChainError('integrity', `Run ${runId} of the backup at ${dir} was written in the format of a release before ${INTEGRITY_RELEASE} ` +
+    `after run ${previousRunId}, which was not: refused (a backup host running an earlier release wrote into this chain, or the run was replaced). ` +
+    `--through-run ${previousRunId} restores up to the last verified run.`);
+}
+
+// ---------------------------------------------------------------------------
+// Signed runs (`manifest.sig`)
+// ---------------------------------------------------------------------------
+
+const SIGNATURE_FILE_NAME = 'manifest.sig';
+const SIGNATURE_VERSION = 2;
+const SIGNATURE_LABEL = 'pryv-backup-manifest-v2';
+
+/** The bytes signed for a run: a label, the chain and run ids, the hash of `manifest.json` as written. */
+function signedMessage (chainId: string | null, runId: string, manifestSha256: string): Buffer {
+  return Buffer.from(SIGNATURE_LABEL + '\n' + (chainId ?? '') + '\n' + runId + '\n' + manifestSha256, 'utf8');
+}
+
+/** An Ed25519 key (private or public) from a PEM, a KeyObject or `{ key, passphrase }`; anything else is refused. */
+function ed25519Key (key: unknown, kind: 'private' | 'public'): KeyObject {
+  let obj: KeyObject;
+  if (key instanceof crypto.KeyObject) obj = key;
+  else if (kind === 'private') obj = crypto.createPrivateKey(key as PrivateKeyInput | string | Buffer);
+  else obj = crypto.createPublicKey(key as PublicKeyInput | string | Buffer);
+  if (obj.asymmetricKeyType !== 'ed25519') throw new Error(`Backup signing: the ${kind} key is not an Ed25519 key (${String(obj.asymmetricKeyType)})`);
+  if (kind === 'public' && obj.type === 'private') obj = crypto.createPublicKey(obj);
+  if (obj.type !== (kind === 'private' ? 'private' : 'public')) throw new Error(`Backup signing: a ${kind} key is required`);
+  return obj;
+}
+
+/** `sha256:<hex>` of the SPKI DER of the public half of a signing key. */
+function signingKeyFingerprint (key: KeyObject): string {
+  const publicKey = key.type === 'private' ? crypto.createPublicKey(key) : key;
+  return 'sha256:' + crypto.createHash('sha256').update(publicKey.export({ type: 'spki', format: 'der' })).digest('hex');
+}
+
+/** The signature file of a run whose `manifest.json` bytes are `manifestBytes`. */
+function signManifest (manifestBytes: Buffer, chainId: string | null, runId: string, privateKey: KeyObject): ManifestSignature {
+  const manifestSha256 = crypto.createHash('sha256').update(manifestBytes).digest('hex');
+  return {
+    v: SIGNATURE_VERSION,
+    alg: 'ed25519',
+    keyFingerprint: signingKeyFingerprint(privateKey),
+    manifestSha256,
+    signature: crypto.sign(null, signedMessage(chainId, runId, manifestSha256), privateKey).toString('base64')
+  };
+}
+
+/** The signature file of a run directory: absent, present but not readable (not a JSON object), or parsed. */
+type SignatureFile = { state: 'absent' } | { state: 'unreadable' } | { state: 'present', sig: ManifestSignature };
+
+function readManifestSignature (runDir: string): SignatureFile {
+  const text = readCleartextFile(path.join(runDir, SIGNATURE_FILE_NAME));
+  if (text == null) return { state: 'absent' };
+  try {
+    const sig = JSON.parse(text);
+    if (sig == null || typeof sig !== 'object') return { state: 'unreadable' };
+    return { state: 'present', sig };
+  } catch (err) {
+    return { state: 'unreadable' };
+  }
+}
+
+/** A fingerprint read from a cleartext file, printed only when it has the expected form. */
+function printableFingerprint (value: unknown): string {
+  return typeof value === 'string' && FINGERPRINT_RE.test(value) ? value : 'unreadable fingerprint';
+}
+
+/**
+ * Verify a run's signature against the public key given at restore: present,
+ * of that key, over these manifest bytes, this run and chain. Returns nothing;
+ * throws a `signature` error naming the run.
+ */
+function verifyManifestSignature (runDir: string, manifestBytes: Buffer, chainId: string | null, runId: string, publicKey: KeyObject, dir: string): void {
+  const refuse = (why: string): BackupChainError => new BackupChainError('signature', `Run ${runId} of the backup at ${dir}: not signed by the key given (--signing-pubkey): ${why}: refused.`);
+  const file = readManifestSignature(runDir);
+  if (file.state === 'absent') throw refuse('no manifest.sig');
+  if (file.state === 'unreadable') throw refuse('manifest.sig is not readable');
+  const sig = file.sig;
+  if (sig.v !== SIGNATURE_VERSION || sig.alg !== 'ed25519' || typeof sig.signature !== 'string') throw refuse('unknown signature format');
+  if (sig.keyFingerprint !== signingKeyFingerprint(publicKey)) throw refuse(`signed with another key (${printableFingerprint(sig.keyFingerprint)})`);
+  const manifestSha256 = crypto.createHash('sha256').update(manifestBytes).digest('hex');
+  if (sig.manifestSha256 !== manifestSha256) throw refuse('manifest.json differs from the signed one');
+  let ok = false;
+  try {
+    ok = crypto.verify(null, signedMessage(chainId, runId, manifestSha256), publicKey, Buffer.from(sig.signature, 'base64'));
+  } catch (err) {
+    ok = false;
+  }
+  if (!ok) throw refuse('the signature does not verify');
+}
+
+/** The `signed:` part of an inspect line. */
+function describeSignature (runDir: string): string {
+  const file = readManifestSignature(runDir);
+  if (file.state === 'absent') return 'signed: no';
+  if (file.state === 'unreadable') return 'signed: manifest.sig is not readable';
+  return `signed: yes, key ${printableFingerprint(file.sig.keyFingerprint)}`;
+}
+
+/**
+ * The key a backup is signed with, as its cleartext files say (the chain's
+ * pin, else the first `manifest.sig` of the runs given); null when nothing
+ * says it is signed. Not a verification: for the notice of a restore given no
+ * public key.
+ */
+function claimedSigningKey (chain: Chain | null, runDirs: string[]): string | null {
+  if (chain?.signing != null) return printableFingerprint(chain.signing.keyFingerprint);
+  for (const runDir of runDirs) {
+    const file = readManifestSignature(runDir);
+    if (file.state === 'present') return printableFingerprint(file.sig.keyFingerprint);
+    if (file.state === 'unreadable') return 'unreadable fingerprint';
+  }
+  return null;
+}
+
+/** The file format version the run pins (`2` refuses a file of the first format), or undefined. */
+function requiredFormatOf (integrity: RunIntegrity | null): number | undefined {
+  return integrity?.cipher === 2 ? 2 : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // chain.json
 // ---------------------------------------------------------------------------
 
@@ -230,6 +578,9 @@ function validateChain (chain: unknown, dir: string): asserts chain is Chain {
   if (c.formatVersion !== CHAIN_FORMAT_VERSION) throw invalidChain(dir, 'unknown formatVersion ' + JSON.stringify(c.formatVersion));
   if (typeof c.chainId !== 'string' || !CHAIN_ID_RE.test(c.chainId)) throw invalidChain(dir, 'chainId');
   validateEncryption(c.encryption, dir);
+  if (c.signing !== undefined && (c.signing == null || c.signing.alg !== 'ed25519' || typeof c.signing.keyFingerprint !== 'string' || !FINGERPRINT_RE.test(c.signing.keyFingerprint))) {
+    throw invalidChain(dir, 'signing');
+  }
   if (!Array.isArray(c.runs) || c.runs.length === 0) throw invalidChain(dir, 'no runs');
   const seen = new Set<string>();
   c.runs.forEach((run: ChainRun, i: number) => {
@@ -249,6 +600,8 @@ function validateChain (chain: unknown, dir: string): asserts chain is Chain {
     }
     if (seen.has(run.runId)) throw invalidChain(dir, `run ${run.runId} listed twice`);
     seen.add(run.runId);
+    // Only the full run can predate chains, and the flag only says so.
+    if (run.bootstrapped !== undefined && (i !== 0 || run.bootstrapped !== true)) throw invalidChain(dir, `run ${run.runId}: bootstrapped`);
     if (!Array.isArray(run.users) || !run.users.every((u) => typeof u === 'string')) throw invalidChain(dir, `run ${run.runId}: users`);
     if (run.snapshotBefore != null && typeof run.snapshotBefore !== 'number') throw invalidChain(dir, `run ${run.runId}: snapshotBefore`);
     if (run.scope != null && run.scope !== 'all' && run.scope !== 'users') throw invalidChain(dir, `run ${run.runId}: scope`);
@@ -276,6 +629,93 @@ function writeChainAtomic (dir: string, chain: Chain): void {
   fs.writeFileSync(tmp, JSON.stringify(chain, null, 2), { mode: PRIVATE_FILE_MODE, flag: 'wx' });
   fs.chmodSync(tmp, PRIVATE_FILE_MODE);
   fs.renameSync(tmp, path.join(dir, CHAIN_FILE_NAME));
+}
+
+const CHAIN_LOCK_FILE_NAME = '.chain.lock';
+const CHAIN_LOCK_TAKEOVER_FILE_NAME = '.chain.lock.takeover';
+/** A lock older than this belongs to a dead run (the section it guards takes milliseconds). */
+const CHAIN_LOCK_STALE_MS = 60_000;
+
+/**
+ * Run `fn` holding the chain lock of `dir`: a file created with exclusive
+ * create (`wx`), removed afterwards. Another run's lock, younger than
+ * CHAIN_LOCK_STALE_MS, refuses this run (`concurrent`); an older one is a
+ * leftover of a crashed run and is taken over.
+ */
+function withChainLock<T> (dir: string, runId: string, runPath: string, fn: () => T): T {
+  const lockPath = path.join(dir, CHAIN_LOCK_FILE_NAME);
+  const takeoverPath = path.join(dir, CHAIN_LOCK_TAKEOVER_FILE_NAME);
+  /** Create `p` exclusively; false when it exists. */
+  const createExclusive = (p: string): boolean => {
+    try {
+      const fd = fs.openSync(p, 'wx', PRIVATE_FILE_MODE);
+      try {
+        fs.writeSync(fd, JSON.stringify({ pid: process.pid, runId, at: Date.now() }));
+      } finally {
+        fs.closeSync(fd);
+      }
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw err;
+    }
+  };
+  const take = (): boolean => createExclusive(lockPath);
+  const lockAge = (): number | null => {
+    try {
+      return Date.now() - fs.lstatSync(lockPath).mtimeMs;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      return null;
+    }
+  };
+  const refuse = (): BackupChainError => {
+    let holder = '';
+    try {
+      const held = JSON.parse(readNoFollow(lockPath).toString('utf8'));
+      const heldRun = typeof held.runId === 'string' && RUN_ID_RE.test(held.runId) ? held.runId : 'unknown';
+      const since = Number.isFinite(held.at) ? new Date(held.at).toISOString() : 'unknown';
+      holder = ` (run ${heldRun}, since ${since})`;
+    } catch (err) { /* unreadable: named without its holder */ }
+    return new BackupChainError('concurrent', `Another backup run holds ${lockPath}${holder}: run ${runId} is left as a stray ${runPath}/ that restore ignores. ` +
+      `Run the backup again; if no run is in progress, remove ${lockPath} (and ${takeoverPath} if present).`);
+  };
+  if (!take()) {
+    const age = lockAge();
+    if (age != null && age <= CHAIN_LOCK_STALE_MS) throw refuse();
+    if (age == null) {
+      // Released meanwhile: one more try.
+      if (!take()) throw refuse();
+    } else {
+      // Stale: taken over by one run at a time (a second exclusive file), which
+      // looks at the lock again before removing it, so a run that found the
+      // same stale lock never removes the fresh lock of the run that took it.
+      if (!createExclusive(takeoverPath)) throw refuse();
+      try {
+        const again = lockAge();
+        if (again != null && again <= CHAIN_LOCK_STALE_MS) throw refuse();
+        if (again != null) {
+          try { fs.unlinkSync(lockPath); } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+        }
+        if (!take()) throw refuse();
+      } finally {
+        releaseChainLock(takeoverPath);
+      }
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    releaseChainLock(lockPath);
+  }
+}
+
+function releaseChainLock (lockPath: string): void {
+  try {
+    fs.unlinkSync(lockPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
 }
 
 /** `<yyyymmddThhmmssZ>-<8 hex>`: sortable for a human; chain order is what counts. */
@@ -378,6 +818,7 @@ function listStrays (dir: string, chain: Chain | null): string[] {
     return [INCREMENTALS_DIR_NAME];
   }
   return names
+    .filter((name) => !isFilesystemLitter(name, true) && !isFilesystemLitter(name, false))
     .map((name) => INCREMENTALS_DIR_NAME + '/' + name)
     .filter((p) => !listed.has(p))
     .sort();
@@ -422,18 +863,46 @@ function runDirectory (root: string, run: ChainRun): string {
  * directory grafted from another chain, or a swapped or reordered
  * `chain.json`, is refused). A consistency check, not an authentication.
  */
-function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun, previousRunId: string | null, decryptor: BackupDecryptor | null): Record<string, unknown> {
+function readRunManifest (root: string, dir: string, chain: Chain, run: ChainRun, previousRunId: string | null, decryptor: BackupDecryptor | null, signingPubKey?: KeyObject | null): Record<string, unknown> {
   const runDir = runDirectory(root, run);
   const manifestPath = runDir === '' ? '' : path.join(runDir, MANIFEST_FILE_NAME);
   if (runDir === '' || !existsNoFollow(manifestPath)) {
     throw new BackupChainError('incomplete', missingRunMessage(dir, run.runId, previousRunId, 'its manifest'));
   }
-  const manifest = JSON.parse(readBackupBytes(manifestPath, decryptor).toString('utf8'));
+  const identity = runIdentityOf(chain, run);
+  // Read once: the signature (when a public key is given) covers these bytes,
+  // checked before anything is decrypted or parsed.
+  const raw = readNoFollow(manifestPath);
+  if (signingPubKey != null) verifyManifestSignature(runDir, raw, identity.chainId, run.runId, signingPubKey, dir);
+  const manifest = JSON.parse((decryptor ? decryptor.decryptBuffer(raw, { path: MANIFEST_FILE_NAME, ...identity }) : raw).toString('utf8'));
   const pre = run.bootstrapped === true && manifest.chainId == null && manifest.runId == null;
   if (!pre && (manifest.chainId !== chain.chainId || manifest.runId !== run.runId || (manifest.parentRunId ?? null) !== (run.parentRunId ?? null))) {
     throw new BackupChainError('mismatch', `Run ${run.runId} of the backup chain at ${dir} does not belong to this chain (its manifest names another chain, run or parent run): refused.`);
   }
+  checkChainEntry(dir, run, manifest, pre);
   return manifest;
+}
+
+/**
+ * The entry of a run in `chain.json` (cleartext) must say what the run's
+ * manifest says (authenticated in an encrypted run): its users, its scope,
+ * its snapshot time. An edited entry could otherwise withhold an account
+ * from the restore, or have one taken for deleted. `pre`: the run's
+ * MANIFEST carries no chain fields (a full backup written before chains),
+ * the only case where an entry without scope is not compared.
+ */
+function checkChainEntry (dir: string, run: ChainRun, manifest: Record<string, unknown>, pre: boolean): void {
+  const mismatch = (field: string): BackupChainError => new BackupChainError('mismatch',
+    `Run ${run.runId} of the backup chain at ${dir}: chain.json disagrees with the run's manifest (${field}): chain.json was edited; refused.`);
+  const manifestUsers = Array.isArray(manifest.users) ? (manifest.users as Array<{ userId?: unknown }>).map((u) => u?.userId).filter((id): id is string => typeof id === 'string') : [];
+  const a = [...new Set(manifestUsers)].sort();
+  const b = [...new Set(run.users)].sort();
+  if (a.length !== b.length || a.some((id, i) => id !== b[i])) throw mismatch('users');
+  if (((manifest.snapshotBefore as number | null | undefined) || null) !== (run.snapshotBefore || null)) throw mismatch('snapshotBefore');
+  const manifestScope = (manifest.scope as RunScope | undefined) ?? null;
+  const entryScope = run.scope ?? null;
+  // A run bootstrapped from a backup before chains has no scope in its entry: unknown, never evidence.
+  if (entryScope !== manifestScope && !(pre && entryScope == null)) throw mismatch('scope');
 }
 
 /**
@@ -466,6 +935,8 @@ interface PlanOptions {
   /** Only to read the manifest of a hybrid full backup written before chains (once). */
   privateKeyPem?: string | Buffer | null;
   privateKeyPassphrase?: string | null;
+  /** `sha256:<hex>` of the signing key of this run (null: unsigned); a signed chain needs its own key. */
+  signingKeyFingerprint?: string | null;
 }
 
 interface RunPlan {
@@ -499,6 +970,28 @@ function checkKeyModel (dir: string, existing: ChainEncryption, requested: Chain
   }
   if (existing?.mode === 'hybrid' && requested?.mode === 'hybrid' && existing.recipientKeyFingerprint !== requested.recipientKeyFingerprint) {
     throw new BackupChainError('key-model', `The recipient key differs from the one of the backup chain at ${dir}: refused (nothing written). Continue the chain with the same --recipient-pubkey, or start a new chain in a new directory.`);
+  }
+}
+
+/**
+ * A chain signed with a key is continued with that key only; a chain is
+ * signed from its full run on, so an unsigned one takes no signing key
+ * (checked before anything is written).
+ */
+function checkSigningKey (dir: string, chain: Chain, fingerprint: string | null): void {
+  const pinned = chain.signing?.keyFingerprint ?? null;
+  if (pinned == null) {
+    if (fingerprint != null && chain.runs.length > 0) {
+      throw new BackupChainError('key-model', `The backup chain at ${dir} has runs that are not signed: a signed chain starts with its full backup. ` +
+        'Continue without --signing-key, or take a new full backup into a new directory with it (nothing written).');
+    }
+    return;
+  }
+  if (fingerprint == null) {
+    throw new BackupChainError('key-model', `The backup chain at ${dir} is signed with key ${pinned}: pass the same --signing-key (nothing written).`);
+  }
+  if (fingerprint !== pinned) {
+    throw new BackupChainError('key-model', `The signing key (${fingerprint}) differs from the one of the backup chain at ${dir} (${pinned}): refused (nothing written). Continue the chain with the same --signing-key, or start a new chain in a new directory.`);
   }
 }
 
@@ -560,7 +1053,7 @@ function planBackupRun (dir: string, options: PlanOptions = {}): RunPlan {
     }
     let manifest;
     try {
-      manifest = JSON.parse(readBackupBytes(path.join(dir, MANIFEST_FILE_NAME), decryptor).toString('utf8'));
+      manifest = JSON.parse(readBackupBytes(path.join(dir, MANIFEST_FILE_NAME), decryptor, { path: MANIFEST_FILE_NAME, runId: FULL_RUN_ID, chainId: null }).toString('utf8'));
     } catch (err) {
       if (envelope?.mode === 'symmetric') throw new BackupChainError('secret', `The passphrase does not decrypt the existing backup at ${dir}: refused (nothing written).`);
       throw new BackupChainError('secret', `Cannot read the manifest of the existing backup at ${dir}: ${(err as Error).message}.`);
@@ -581,12 +1074,14 @@ function planBackupRun (dir: string, options: PlanOptions = {}): RunPlan {
       }
       try {
         const decryptor = createBackupDecryptor(envelope, { passphrase: options.passphrase ?? undefined });
-        readBackupBytes(path.join(runDir, MANIFEST_FILE_NAME), decryptor);
+        readBackupBytes(path.join(runDir, MANIFEST_FILE_NAME), decryptor, { path: MANIFEST_FILE_NAME, ...runIdentityOf(chain, latest) });
       } catch (err) {
         throw new BackupChainError('secret', `The passphrase does not decrypt the existing backup chain at ${dir}: refused (nothing written).`);
       }
     }
   }
+
+  checkSigningKey(dir, chain, options.signingKeyFingerprint ?? null);
 
   const last = chain.runs[chain.runs.length - 1];
   const runId = newRunId();
@@ -606,7 +1101,7 @@ function planBackupRun (dir: string, options: PlanOptions = {}): RunPlan {
 // Inspecting a backup directory (`bin/backup.js --inspect`)
 // ---------------------------------------------------------------------------
 
-type InspectStatus = 'ok' | 'damaged' | 'incomplete' | 'unknown' | 'invalid';
+type InspectStatus = 'ok' | 'damaged' | 'incomplete' | 'unknown' | 'invalid' | 'failed';
 
 interface InspectReport {
   lines: string[];
@@ -623,7 +1118,7 @@ function isoOf (snapshotBefore: number | null | undefined): string {
  * secret (`chain.json` is cleartext); a backup written before chains needs
  * the secret of its encryption to read the root manifest.
  */
-function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {}): InspectReport {
+function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, verifyFiles?: boolean, signingPubKey?: KeyObject | null } = {}): InspectReport {
   const lines: string[] = [`Backup directory: ${dir}`];
   const report = (status: InspectStatus, verdict: string): InspectReport => ({ lines, verdict, status });
   if (!existsNoFollow(dir)) return report('invalid', 'INVALID: no such directory');
@@ -639,6 +1134,7 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
   if (chain != null) {
     lines.push(`Chain: ${chain.chainId}`);
     lines.push(`Encryption: ${describeEncryption(chain.encryption)}`);
+    if (chain.signing != null) lines.push(`Signing key: ${chain.signing.keyFingerprint}`);
     lines.push(`Runs: ${chain.runs.length}`);
     for (const run of chain.runs) {
       lines.push(`  ${run.runId}  ${run.backupType}  scope ${run.scope ?? 'unknown'}  snapshot ${isoOf(run.snapshotBefore)}  ${run.users.length} user(s)`);
@@ -663,6 +1159,42 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
         return report('incomplete', `INCOMPLETE: run ${run.runId} has no encryption.json`);
       }
     }
+    // The file table of each run: readable with the secret of an encrypted
+    // chain (or in the clear); checked file by file with verifyFiles.
+    const secrets = options.secrets ?? {};
+    const hasSecret = !!(secrets.passphrase || secrets.privateKeyPem);
+    let unreadable = false;
+    let lastVerified: string | null = null;
+    const pubKey = options.signingPubKey ?? null;
+    for (let i = 0; i < chain.runs.length; i++) {
+      const run = chain.runs[i];
+      const runDir = runDirectory(root, run);
+      const signed = inspectRunSignature(runDir, runIdentityOf(chain, run).chainId, run.runId, pubKey, dir);
+      if (signed.failure != null) return report('failed', 'FAILED: ' + signed.failure);
+      lines.push(`  ${run.runId}: ${signed.line}`);
+      if (chain.encryption != null && !hasSecret) {
+        lines.push(`  ${run.runId}: files: not readable without the secret`);
+        unreadable = true;
+        continue;
+      }
+      let manifest: Record<string, unknown>;
+      try {
+        const envelope = readEnvelope(runDir);
+        const decryptor = envelope == null ? null : createBackupDecryptor(envelope, secrets, runIdentityOf(chain, run));
+        manifest = readRunManifest(root, dir, chain, run, i > 0 ? chain.runs[i - 1].runId : null, decryptor);
+      } catch (err) {
+        if (err instanceof BackupChainError) return report(err.code === 'mismatch' ? 'failed' : 'invalid', (err.code === 'mismatch' ? 'FAILED: ' : 'INVALID: ') + err.message);
+        lines.push(`  ${run.runId}: files: not readable (${(err as Error).message})`);
+        unreadable = true;
+        continue;
+      }
+      const result = inspectRunFiles(dir, run.runId, runDir, run.path === '.', manifest, options.verifyFiles === true, lines);
+      if (result.failure != null) return report('failed', 'FAILED: ' + result.failure);
+      if (result.legacy && lastVerified != null) return report('failed', 'FAILED: ' + legacyAfterVerifiedError(run.runId, lastVerified, dir).message);
+      if (!result.legacy) lastVerified = run.runId;
+      lines.push(`  ${run.runId}: ${result.line}`);
+    }
+    if (options.verifyFiles === true && unreadable) return report('unknown', 'UNKNOWN: the files cannot be verified without the secret: pass --passphrase-file / --private-key');
     return report('ok', `OK (${chain.runs.length} run${chain.runs.length === 1 ? '' : 's'})`);
   }
 
@@ -683,7 +1215,7 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
   let manifest;
   try {
     const decryptor = envelope == null ? null : createBackupDecryptor(envelope, secrets);
-    manifest = JSON.parse(readBackupBytes(manifestPath, decryptor).toString('utf8'));
+    manifest = JSON.parse(readBackupBytes(manifestPath, decryptor, { path: MANIFEST_FILE_NAME, runId: FULL_RUN_ID, chainId: null }).toString('utf8'));
   } catch (err) {
     return report('unknown', 'UNKNOWN: the manifest cannot be read (' + (err as Error).message + ')');
   }
@@ -692,11 +1224,82 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets } = {
     lines.push(damagedRestoreMessage(dir));
     return report('damaged', 'DAMAGED: the root manifest says "incremental" and there is no chain.json');
   }
-  return report('ok', `OK (full backup written before ${CHAIN_RELEASE}, one run)`);
+  const signed = inspectRunSignature(root, null, FULL_RUN_ID, options.signingPubKey ?? null, dir);
+  if (signed.failure != null) return report('failed', 'FAILED: ' + signed.failure);
+  lines.push(`  ${FULL_RUN_ID}: ${signed.line}`);
+  const result = inspectRunFiles(dir, FULL_RUN_ID, root, true, manifest, options.verifyFiles === true, lines);
+  if (result.failure != null) return report('failed', 'FAILED: ' + result.failure);
+  lines.push(`  ${FULL_RUN_ID}: ${result.line}`);
+  return report('ok', result.legacy ? `OK (full backup written before ${CHAIN_RELEASE}, one run)` : 'OK (full backup without chain, one run)');
+}
+
+/** The `signed:` line of a run for `--inspect`; with a public key, the signature verified. */
+function inspectRunSignature (runDir: string, chainId: string | null, runId: string, pubKey: KeyObject | null, dir: string): { line: string, failure?: string } {
+  const line = describeSignature(runDir);
+  if (pubKey == null) return { line: line === 'signed: no' ? line : line + ' (not verified: pass --signing-pubkey)' };
+  try {
+    verifyManifestSignature(runDir, readNoFollow(path.join(runDir, MANIFEST_FILE_NAME)), chainId, runId, pubKey, dir);
+  } catch (err) {
+    return { line, failure: (err as Error).message };
+  }
+  return { line: line + ', verified' };
+}
+
+/**
+ * The `files:` line of a run for `--inspect`: how many files its manifest
+ * lists, or that it lists none (an earlier release); with `verify`, every
+ * listed file present with its size and hash, nothing added.
+ */
+function inspectRunFiles (dir: string, runId: string, runDir: string, isRoot: boolean, manifest: Record<string, unknown>, verify: boolean, lines: string[]): { line: string, legacy: boolean, failure?: string } {
+  let integrity: RunIntegrity | null;
+  try {
+    integrity = runIntegrityOf(manifest, runId, dir);
+  } catch (err) {
+    return { line: '', legacy: false, failure: (err as Error).message };
+  }
+  if (integrity == null) return { line: `files: not verified (written before ${INTEGRITY_RELEASE})`, legacy: true };
+  if (!verify) return { line: `files: ${integrity.files.size} listed`, legacy: false };
+  try {
+    checkRunFiles(runDir, isRoot, runId, dir, integrity, (notice) => lines.push('  ' + notice));
+    checkFilesUnder(runDir, '', integrity, runId, dir);
+  } catch (err) {
+    return { line: '', legacy: false, failure: (err as Error).message };
+  }
+  return { line: `files: ${integrity.files.size} verified`, legacy: false };
 }
 
 export {
   CHAIN_FILE_NAME,
+  MANIFEST_FILE_NAME,
+  INTEGRITY_RELEASE,
+  INTEGRITY_VERSION,
+  LITTER_FILE_NAMES,
+  LITTER_FILE_PREFIXES,
+  LITTER_DIR_NAMES,
+  isFilesystemLitter,
+  isLitterPath,
+  ignoredEntryNotice,
+  unlistedFileError,
+  readNoFollow,
+  runIntegrityOf,
+  listRunFiles,
+  checkRunFiles,
+  checkFileHash,
+  checkFilesUnder,
+  SIGNATURE_FILE_NAME,
+  CHAIN_LOCK_FILE_NAME,
+  CHAIN_LOCK_STALE_MS,
+  withChainLock,
+  ed25519Key,
+  signingKeyFingerprint,
+  signManifest,
+  verifyManifestSignature,
+  claimedSigningKey,
+  checkSigningKey,
+  integrityError,
+  legacyRunNotice,
+  legacyAfterVerifiedError,
+  requiredFormatOf,
   INCREMENTALS_DIR_NAME,
   FULL_RUN_ID,
   INCREMENTAL_OVERLAP_SECONDS,
@@ -722,7 +1325,8 @@ export {
   checkRunEnvelope,
   isRealDirectory,
   readBackupBytes,
+  runIdentityOf,
   planBackupRun,
   inspectBackup
 };
-export type { Chain, ChainRun, RunScope, DeletedUser, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };
+export type { FileTable, RunIntegrity, ChainSigning, ManifestSignature, Chain, ChainRun, RunScope, DeletedUser, ChainEncryption, RunPlan, PlanOptions, InspectReport, InspectStatus };

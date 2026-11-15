@@ -16,10 +16,17 @@ const require = createRequire(import.meta.url);
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
+const crypto = require('crypto');
+const { Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const { createBackupWriter, createUserBackupWriter } = require('./BackupWriter.ts');
 const { STANDALONE_DECRYPT_SCRIPT, buildRestoreReadme, RESTORE_README_NAME, DECRYPT_SCRIPT_NAME } = require('./restoreReadme.ts');
-const { INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, BackupChainError, readChain, writeChainAtomic, chainEncryptionOf } = require('./chain.ts');
+const {
+  INCREMENTALS_DIR_NAME, FULL_RUN_ID, RUN_ID_RE, MANIFEST_FILE_NAME, INTEGRITY_VERSION, SIGNATURE_FILE_NAME, BackupChainError,
+  readChain, writeChainAtomic, withChainLock, chainEncryptionOf, ed25519Key, signingKeyFingerprint, signManifest, checkSigningKey,
+  isLitterPath, listRunFiles
+} = require('./chain.ts');
+const { FORMAT_VERSION } = require('./BackupCipher.ts');
 
 const DEFAULT_MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB of raw (pre-gzip) bytes per chunk
 
@@ -58,12 +65,23 @@ interface WriterOptions {
   encryptor?: BackupEncryptor | null;
   /** The chain run written (see WriterRun). */
   run?: WriterRun | null;
+  /**
+   * Ed25519 private key (PEM, `{ key, passphrase }` or KeyObject): the run's
+   * manifest is signed (`manifest.sig`); a full run pins the chain to the
+   * key. A chain pinned to a key needs that key; an unsigned chain takes none.
+   */
+  signingKey?: unknown;
 }
 
 interface ResolvedWriterOptions {
   maxChunkSize: number;
   compress: boolean;
+  /** Bound to the run written (every file header names it). */
   encryptor: BackupEncryptor | null;
+  /** The directory of the run written: file paths are named relative to it. */
+  runDir: string;
+  /** Every file the run wrote (path relative to the run): size and sha256 of the bytes on disk. */
+  fileTable: Map<string, { size: number, sha256: string }>;
 }
 
 // A backup holds full account data: what it creates is for its owner only.
@@ -81,12 +99,55 @@ function writePrivateFile (filePath: string, data: Buffer | string): void {
   fs.chmodSync(filePath, PRIVATE_FILE_MODE);
 }
 
+/** The path of a file relative to its run directory, `/`-separated. */
+function runRelativePath (runDir: string, filePath: string): string {
+  return path.relative(runDir, filePath).split(path.sep).join('/');
+}
+
+/**
+ * The path of a file the run is about to write, relative to the run: a name
+ * the restore skips as filesystem litter is refused (the two sets stay apart).
+ */
+function runFilePath (opts: ResolvedWriterOptions, filePath: string): string {
+  const rel = runRelativePath(opts.runDir, filePath);
+  if (isLitterPath(rel)) throw new Error(`Backup writer: ${rel} has a name the restore ignores as filesystem litter: refused`);
+  return rel;
+}
+
+/** Write a file of the run and list it in the run's file table (size and hash of the bytes written). */
+function writeRunFile (filePath: string, data: Buffer | string, opts: ResolvedWriterOptions): void {
+  runFilePath(opts, filePath);
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data, 'utf8');
+  writePrivateFile(filePath, bytes);
+  opts.fileTable.set(runRelativePath(opts.runDir, filePath), { size: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') });
+}
+
 /**
  * Write a buffer to disk, encrypting it first when an encryptor is configured.
  * This is the single choke point that guarantees only ciphertext is flushed.
  */
-function persist (filePath: string, buffer: Buffer, encryptor: BackupEncryptor | null): void {
-  writePrivateFile(filePath, encryptor ? encryptor.encryptBuffer(buffer) : buffer);
+function persist (filePath: string, buffer: Buffer, opts: ResolvedWriterOptions): Buffer {
+  const rel = runFilePath(opts, filePath);
+  const bytes = opts.encryptor ? opts.encryptor.encryptBuffer(buffer, rel) : buffer;
+  writeRunFile(filePath, bytes, opts);
+  return bytes;
+}
+
+/** A pass-through that measures and hashes what flows through it (the bytes written to disk). */
+function measuringStream (onEnd: (size: number, sha256: string) => void): NodeJS.ReadWriteStream {
+  const hash = crypto.createHash('sha256');
+  let size = 0;
+  return new Transform({
+    transform (piece: Buffer, _enc: string, cb: (e?: Error | null, data?: Buffer) => void) {
+      hash.update(piece);
+      size += piece.length;
+      cb(null, piece);
+    },
+    flush (cb: (e?: Error | null) => void) {
+      onEnd(size, hash.digest('hex'));
+      cb();
+    }
+  });
 }
 
 /**
@@ -94,10 +155,15 @@ function persist (filePath: string, buffer: Buffer, encryptor: BackupEncryptor |
  */
 function createFilesystemBackupWriter (outputPath: string, options?: WriterOptions): BackupWriter {
   const opts: ResolvedWriterOptions = Object.assign(
-    { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true, encryptor: null },
-    options
+    { maxChunkSize: DEFAULT_MAX_CHUNK_SIZE, compress: true, encryptor: null, runDir: outputPath },
+    options,
+    { fileTable: new Map() }
   );
   const run: WriterRun | null = options?.run ?? null;
+  // Every file header names this run: an encryptor bound to another run is refused here.
+  if (opts.encryptor != null) {
+    opts.encryptor = opts.encryptor.forRun(run != null ? { runId: run.runId, chainId: run.chainId } : { runId: FULL_RUN_ID, chainId: null });
+  }
   const isIncrementalRun = run != null && run.path !== '.';
   let baseChain: Chain | null = null;
   if (run != null) {
@@ -124,6 +190,21 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
       throw new Error('Backup writer: invalid full run ' + JSON.stringify({ runId: run.runId, path: run.path }));
     }
   }
+  // The signing key: a chain pinned to one is continued with it only (checked before anything is written).
+  const signingKey = options?.signingKey != null ? ed25519Key(options.signingKey, 'private') : null;
+  const signingFingerprint = signingKey != null ? signingKeyFingerprint(signingKey) : null;
+  if (baseChain != null) checkSigningKey(outputPath, baseChain, signingFingerprint);
+
+  // A run at the root starts in a directory holding nothing of a run: files
+  // left there (an interrupted full backup, anything else) would sit next to
+  // this run's without being listed, and every restore would refuse it.
+  if (!isIncrementalRun && fs.existsSync(outputPath)) {
+    const present = [...listRunFiles(outputPath, true, run?.runId ?? FULL_RUN_ID, outputPath).keys()];
+    if (present.length > 0) {
+      throw new BackupChainError('exists', `The output directory ${outputPath} holds files of something else than this run (an interrupted backup?): ` +
+        `${present.slice(0, 5).join(', ')}${present.length > 5 ? ', ...' : ''}: use an empty directory or remove them (nothing written).`);
+    }
+  }
 
   // An existing output directory keeps its mode (the operator chose it); the
   // directories created below it are private.
@@ -142,6 +223,7 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
     runDir = path.join(incDir, run!.runId);
     fs.mkdirSync(runDir, { mode: PRIVATE_DIR_MODE }); // fails when it exists
   }
+  opts.runDir = runDir;
 
   // Write the cleartext crypto envelope so restore can discover key model +
   // wrapped data key. It carries crypto headers only — never user data.
@@ -151,13 +233,14 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
   // backup written by an earlier version may not know incremental runs, and
   // no run rewrites a file of an earlier one.
   if (opts.encryptor) {
-    writePrivateFile(
+    writeRunFile(
       path.join(runDir, 'encryption.json'),
-      JSON.stringify(opts.encryptor.envelope, null, 2)
+      JSON.stringify(opts.encryptor.envelope, null, 2),
+      opts
     );
-    writePrivateFile(path.join(runDir, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT);
-    writePrivateFile(path.join(runDir, RESTORE_README_NAME),
-      buildRestoreReadme(opts.encryptor.envelope, isIncrementalRun ? { runId: run!.runId } : {}));
+    writeRunFile(path.join(runDir, DECRYPT_SCRIPT_NAME), STANDALONE_DECRYPT_SCRIPT, opts);
+    writeRunFile(path.join(runDir, RESTORE_README_NAME),
+      buildRestoreReadme(opts.encryptor.envelope, isIncrementalRun ? { runId: run!.runId } : {}), opts);
   }
 
   return createBackupWriter({
@@ -171,10 +254,20 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
       const platformDir = path.join(runDir, 'platform');
       makePrivateDir(platformDir);
       const filePath = path.join(platformDir, jsonlFileName('platform', opts.compress));
-      await writeJsonlFile(filePath, data, opts.compress, opts.encryptor);
+      await writeJsonlFile(filePath, data, opts.compress, opts);
     },
 
     async writeManifest (params: BackupWriteManifestParams) {
+      // Every file of the run directory must be one this run wrote: a file
+      // dropped there meanwhile would make the run one no restore accepts.
+      const written = opts.fileTable;
+      const foreign = [...listRunFiles(runDir, !isIncrementalRun, run?.runId ?? FULL_RUN_ID, outputPath, { listed: written }).keys()]
+        .filter((rel) => !written.has(rel));
+      if (foreign.length > 0) {
+        throw new BackupChainError('exists', `Backup writer: ${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? ', ...' : ''} in ${runDir} ` +
+          'was not written by this run: refused, no manifest written. Move it out of the backup directory (it holds the backup only) and run the backup again ' +
+          '(into a new directory, or after removing the files of this run).');
+      }
       const manifest: Record<string, unknown> = {
         formatVersion: 1,
         coreVersion: params.coreVersion,
@@ -191,9 +284,27 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         manifest.runId = run.runId;
         manifest.parentRunId = run.parentRunId;
       }
-      const filePath = path.join(runDir, 'manifest.json');
-      persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts.encryptor);
+      // Every other file of the run, with the size and hash of its bytes on
+      // disk. In an encrypted run the manifest is itself encrypted and bound
+      // to this run: the table is authenticated with it.
+      manifest.integrity = {
+        version: INTEGRITY_VERSION,
+        cipher: opts.encryptor ? FORMAT_VERSION : null,
+        files: [...opts.fileTable.entries()]
+          .filter(([p]) => p !== MANIFEST_FILE_NAME)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([p, e]) => ({ path: p, size: e.size, sha256: e.sha256 }))
+      };
+      const filePath = path.join(runDir, MANIFEST_FILE_NAME);
+      const manifestBytes = persist(filePath, Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'), opts);
+      // The signature of the manifest as written (cleartext, next to it):
+      // the run's authenticity for whoever holds the public key.
+      if (signingKey != null) {
+        const signature = signManifest(manifestBytes, run?.chainId ?? null, run?.runId ?? FULL_RUN_ID, signingKey);
+        writePrivateFile(path.join(runDir, SIGNATURE_FILE_NAME), JSON.stringify(signature, null, 2));
+      }
       if (run == null) return;
+      const signing = signingFingerprint != null ? { alg: 'ed25519' as const, keyFingerprint: signingFingerprint } : null;
 
       // The run joins the chain only once its manifest is written.
       const entry: ChainRun = {
@@ -207,25 +318,31 @@ function createFilesystemBackupWriter (outputPath: string, options?: WriterOptio
         users: params.userManifests.map((u) => u.userId)
       };
       if (params.scope != null) entry.scope = params.scope;
-      let chain: Chain;
-      if (isIncrementalRun) {
-        // Another run into this directory (an overlapping schedule) may have
-        // joined the chain since this one was planned: appending to the chain
-        // read then would drop that run's entry.
+      // Re-read, check and write chain.json holding the chain lock: two runs
+      // finishing together cannot both append to the chain they read.
+      withChainLock(outputPath, run.runId, run.path, () => {
+        const concurrent = (): Error => new BackupChainError('concurrent', `Backup writer: another run joined the backup chain at ${outputPath} (or its chain.json changed) while this one was written: ` +
+          `refused; run ${run.runId} is left as a stray ${run.path}/ that restore ignores. Run the backup again.`);
         const current = readChain(outputPath);
-        const unchanged = current == null
-          ? baseChain!.runs.length === 1 && baseChain!.runs[0].bootstrapped === true
-          : current.chainId === run.chainId && current.runs[current.runs.length - 1].runId === run.parentRunId;
-        if (!unchanged) {
-          throw new BackupChainError('concurrent', `Backup writer: another run joined the backup chain at ${outputPath} (or its chain.json changed) while this one was written: ` +
-            `refused; run ${run.runId} is left as a stray ${run.path}/ that restore ignores. Run the backup again.`);
+        let chain: Chain;
+        if (isIncrementalRun) {
+          // Another run into this directory (an overlapping schedule) may have
+          // joined the chain since this one was planned: appending to the chain
+          // read then would drop that run's entry.
+          const unchanged = current == null
+            ? baseChain!.runs.length === 1 && baseChain!.runs[0].bootstrapped === true
+            : current.chainId === run.chainId && current.runs[current.runs.length - 1].runId === run.parentRunId;
+          if (!unchanged) throw concurrent();
+          const base = current ?? baseChain!;
+          checkSigningKey(outputPath, base, signingFingerprint);
+          chain = { ...base, runs: [...base.runs, entry] };
+        } else {
+          // Two full runs into one empty directory: the second finds the first's chain.
+          if (current != null) throw concurrent();
+          chain = { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), ...(signing != null ? { signing } : {}), runs: [entry] };
         }
-        const base = current ?? baseChain!;
-        chain = { ...base, runs: [...base.runs, entry] };
-      } else {
-        chain = { formatVersion: 1, chainId: run.chainId, encryption: chainEncryptionOf(opts.encryptor), runs: [entry] };
-      }
-      writeChainAtomic(outputPath, chain);
+        writeChainAtomic(outputPath, chain);
+      });
     },
 
     async close () { /* no-op for filesystem */ }
@@ -256,22 +373,22 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
   return createUserBackupWriter({
     async writeStreams (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('streams', opts.compress));
-      stats.streams = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.streams = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeAccesses (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('accesses', opts.compress));
-      stats.accesses = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.accesses = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeProfile (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('profile', opts.compress));
-      stats.profile = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.profile = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeWebhooks (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('webhooks', opts.compress));
-      stats.webhooks = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.webhooks = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeEvents (items: AsyncIterable<unknown> | unknown[]) {
@@ -294,40 +411,46 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
       const seriesDir = path.join(userDir, 'series');
       makePrivateDir(seriesDir);
       const filePath = path.join(seriesDir, jsonlFileName('series', opts.compress));
-      stats.series = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.series = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeAttachment (eventId: string, fileId: string, readStream: Readable) {
       const attachDir = path.join(userDir, 'attachments');
-      makePrivateDir(attachDir);
       const filePath = path.join(attachDir, fileId);
+      const rel = runFilePath(opts, filePath);
+      makePrivateDir(attachDir);
       const writeStream = fs.createWriteStream(filePath, { mode: PRIVATE_FILE_MODE });
       // Insert the streaming cipher between read and write so the raw blob is
       // never written in the clear (attachments already stream; the transform
       // keeps memory bounded).
+      // The measuring stream sits last, so the file table holds the bytes on disk.
+      let measured: { size: number, sha256: string } | null = null;
+      const measure = measuringStream((size, sha256) => { measured = { size, sha256 }; });
       if (opts.encryptor) {
-        await pipeline(readStream, opts.encryptor.encryptStream(), writeStream);
+        await pipeline(readStream, opts.encryptor.encryptStream(rel), measure, writeStream);
       } else {
-        await pipeline(readStream, writeStream);
+        await pipeline(readStream, measure, writeStream);
       }
       fs.chmodSync(filePath, PRIVATE_FILE_MODE);
+      if (measured == null) throw new Error(`Backup writer: attachment ${rel} was not measured`);
+      opts.fileTable.set(rel, measured);
       stats.attachments++;
     },
 
     async writeAccountData (data: unknown) {
       const filePath = path.join(userDir, jsonlFileName('account', opts.compress));
       // Account data is a single object, not a collection — write as one JSON line
-      await writeJsonlFile(filePath, [data], opts.compress, opts.encryptor);
+      await writeJsonlFile(filePath, [data], opts.compress, opts);
     },
 
     async writeExternalIds (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('external-ids', opts.compress));
-      stats.externalIds = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.externalIds = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async writeSsoBindings (items: AsyncIterable<unknown> | unknown[]) {
       const filePath = path.join(userDir, jsonlFileName('sso-bindings', opts.compress));
-      stats.ssoBindings = await writeJsonlFile(filePath, items, opts.compress, opts.encryptor);
+      stats.ssoBindings = await writeJsonlFile(filePath, items, opts.compress, opts);
     },
 
     async close () {
@@ -339,7 +462,7 @@ function createFilesystemUserBackupWriter (userDir: string, userId: string, user
         chunks
       };
       const filePath = path.join(userDir, 'user-manifest.json');
-      persist(filePath, Buffer.from(JSON.stringify(userManifest, null, 2), 'utf8'), opts.encryptor);
+      persist(filePath, Buffer.from(JSON.stringify(userManifest, null, 2), 'utf8'), opts);
       return userManifest;
     }
   });
@@ -357,7 +480,7 @@ function jsonlFileName (baseName: string, compress: boolean): string {
  * Write items to a single JSONL file (optionally gzip-compressed).
  * Returns the count of items written.
  */
-async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> | unknown[], compress: boolean, encryptor: BackupEncryptor | null): Promise<number> {
+async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> | unknown[], compress: boolean, opts: ResolvedWriterOptions): Promise<number> {
   let count = 0;
   const lines: string[] = [];
   for await (const item of items) {
@@ -367,7 +490,7 @@ async function writeJsonlFile (filePath: string, items: AsyncIterable<unknown> |
   const content = lines.join('\n') + (lines.length > 0 ? '\n' : '');
   const buffer = Buffer.from(content, 'utf8');
 
-  persist(filePath, compress ? zlib.gzipSync(buffer) : buffer, encryptor);
+  persist(filePath, compress ? zlib.gzipSync(buffer) : buffer, opts);
   return count;
 }
 
@@ -395,7 +518,7 @@ async function writeChunkedJsonlFiles (dir: string, baseName: string, items: Asy
     const content = currentLines.join('\n') + '\n';
     const raw = Buffer.from(content, 'utf8');
     const output = opts.compress ? zlib.gzipSync(raw) : raw;
-    persist(filePath, output, opts.encryptor);
+    persist(filePath, output, opts);
     chunkFiles.push(fileName);
     chunkIndex++;
     currentLines = [];

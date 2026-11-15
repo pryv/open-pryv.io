@@ -397,7 +397,7 @@ function build (opts: BuildOpts = {} as BuildOpts) {
   const clockSkewSeconds = clockSkewSecondsFromConfig(config.get('cluster:clockSkewSeconds'));
 
   const certRenewer = new CertRenewer({
-    platformDB, atRestKey, email, directoryUrl, acmeLib
+    platformDB, atRestKey, email, directoryUrl, acmeLib, log
   });
 
   const fileMaterializer = new FileMaterializer({
