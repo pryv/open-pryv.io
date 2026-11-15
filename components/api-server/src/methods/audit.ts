@@ -20,7 +20,7 @@
  * activity of every other access.
  */
 
-import { createRequire } from 'node:module';
+import * as storages from 'storages';
 import { getConfig } from '@pryv/boiler';
 import timestamp from 'unix-timestamp';
 import { factory as errors, APIError, ErrorIds } from 'errors';
@@ -30,7 +30,6 @@ import { getParamsValidation, requirePersonalAccess } from './helpers/commonFunc
 import * as methodsSchema from '../schema/auditMethods.ts';
 import { MAX_BUCKETS, isValidTimeZone, buildBoundaries, foldGroups, BucketCapError } from 'business/src/audit/summaryBuckets.ts';
 import { SUMMARY_BUDGET_ERROR_CODE, SUMMARY_INTERRUPTED_ERROR_CODE, summaryInterruptedError } from 'storages/interfaces/auditStorage/UserAuditDatabase.ts';
-const require = createRequire(import.meta.url);
 
 type Api = { register: (...args: unknown[]) => void };
 type SummaryParams = {
@@ -174,7 +173,8 @@ export default async function produceAuditApiMethods (api: Api) {
           const read = async (): Promise<Group[]> => {
             testHooks.storeReads++;
             // Resolved on every attempt: a store closed meanwhile is opened again.
-            const userDb: UserAuditDb = await require('storages').auditStorage.forUser(userId);
+            const auditStorage = storages.auditStorage as { forUser (userId: string): Promise<UserAuditDb> };
+            const userDb: UserAuditDb = await auditStorage.forUser(userId);
             if (testHooks.interruptions > 0) {
               testHooks.interruptions--;
               throw summaryInterruptedError();
