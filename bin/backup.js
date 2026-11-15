@@ -553,7 +553,8 @@ function buildDecryptSecrets (args) {
 /**
  * Print what a backup directory holds (the runs of its chain, or the one run
  * of a full backup written before chains) and one verdict. Exit code: 0 OK,
- * 1 DAMAGED / INCOMPLETE / INVALID, 2 UNKNOWN (the secret is needed).
+ * 1 DAMAGED / INCOMPLETE / INVALID / FAILED, 2 UNKNOWN (the secret is needed,
+ * or the one given does not decrypt the manifest).
  */
 function runInspect (args) {
   const { inspectBackup } = require('storages/interfaces/backup/index.ts');
@@ -876,6 +877,7 @@ Restore exit codes (with --verify-integrity):
 Inspect exit codes:
   0   OK
   1   DAMAGED, INCOMPLETE, INVALID or FAILED
-  2   UNKNOWN (the secret is needed to read the manifest)
+  2   UNKNOWN (the secret is needed to read the manifest, or the one
+      given does not decrypt it)
 `);
 }

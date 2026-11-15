@@ -1212,12 +1212,28 @@ function inspectBackup (dir: string, options: { secrets?: DecryptorSecrets, veri
   if (envelope != null && !secrets.passphrase && !secrets.privateKeyPem) {
     return report('unknown', 'UNKNOWN: pass --passphrase-file / --private-key to read the manifest');
   }
+  // UNKNOWN only when the secret may be at fault: a passphrase that is not
+  // the backup's derives a key all the same, and its decryption fails
+  // authentication as an altered file would. Any other failure is damage.
+  let decryptor: BackupDecryptor | null;
+  try {
+    decryptor = envelope == null ? null : createBackupDecryptor(envelope, secrets);
+  } catch (err) {
+    return report('unknown', 'UNKNOWN: the secret given does not open this backup (' + (err as Error).message + ')');
+  }
+  let bytes: Buffer;
+  try {
+    bytes = readBackupBytes(manifestPath, decryptor, { path: MANIFEST_FILE_NAME, runId: FULL_RUN_ID, chainId: null });
+  } catch (err) {
+    const message = (err as Error).message;
+    if (decryptor == null || !/authentication failed|unable to authenticate/.test(message)) return report('failed', 'FAILED: the manifest cannot be read (' + message + ')');
+    return report('unknown', 'UNKNOWN: the manifest cannot be decrypted: wrong secret, or the file is damaged (' + message + ')');
+  }
   let manifest;
   try {
-    const decryptor = envelope == null ? null : createBackupDecryptor(envelope, secrets);
-    manifest = JSON.parse(readBackupBytes(manifestPath, decryptor, { path: MANIFEST_FILE_NAME, runId: FULL_RUN_ID, chainId: null }).toString('utf8'));
+    manifest = JSON.parse(bytes.toString('utf8'));
   } catch (err) {
-    return report('unknown', 'UNKNOWN: the manifest cannot be read (' + (err as Error).message + ')');
+    return report('failed', 'FAILED: the manifest is not valid JSON (' + (err as Error).message + ')');
   }
   lines.push(`Manifest: ${String(manifest.backupType)}, snapshot ${isoOf(manifest.snapshotBefore)}, ${Array.isArray(manifest.users) ? manifest.users.length : 0} user(s)`);
   if (manifest.backupType === 'incremental') {
