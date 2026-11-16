@@ -20,7 +20,29 @@ const { getConfig, getLogger } = require('@pryv/boiler');
 const Mall = require('./Mall.ts').default;
 const storeDataUtils = require('./helpers/storeDataUtils.ts');
 
-export { getMall, storeDataUtils };
+export { getMall, storeDataUtils, planCustomStores, BUILT_IN_STORE_IDS };
+
+/** Ids of the stores the mall registers itself. */
+const BUILT_IN_STORE_IDS = ['local', 'account', '_audit'];
+
+type CustomStoreDef = { id: string; name: string; path: string; settings?: unknown; override?: boolean };
+
+/**
+ * Sort the `custom:dataStores` entries: `before` are registered ahead of the built-in
+ * stores, as additional stores (covered by a `*` permission); `replacing` are registered
+ * after them and replace the built-in store of the same id (`override: true`; like the
+ * built-in they replace, not covered by `*`); `ignored` use a built-in id without
+ * `override: true` and are not registered (the built-in store keeps the id).
+ */
+function planCustomStores (defs: CustomStoreDef[] | null | undefined): { before: CustomStoreDef[]; replacing: CustomStoreDef[]; ignored: CustomStoreDef[] } {
+  const plan = { before: [] as CustomStoreDef[], replacing: [] as CustomStoreDef[], ignored: [] as CustomStoreDef[] };
+  for (const def of defs ?? []) {
+    if (!BUILT_IN_STORE_IDS.includes(def.id)) plan.before.push(def);
+    else if (def.override === true) plan.replacing.push(def);
+    else plan.ignored.push(def);
+  }
+  return plan;
+}
 
 let mall: MallType | undefined;
 let initializing = false;
@@ -54,20 +76,23 @@ async function buildMall () {
   mall = newMall;
 
   // load external stores from config (imported after to avoid cycles);
-  const customStoresDef = config.get('custom:dataStores');
-  if (customStoresDef) {
-    for (const storeDef of customStoresDef) {
-      logger.info(`Loading store "${storeDef.name}" with id "${storeDef.id}" from ${storeDef.path}`);
-      const storeMod = require(storeDef.path);
-      const store = storeMod.default ?? storeMod;
-      const storeDescription = {
-        id: storeDef.id,
-        name: storeDef.name,
-        includeInStarPermission: true,
-        settings: storeDef.settings
-      };
-      newMall.addStore(store, storeDescription);
-    }
+  const plan = planCustomStores(config.get('custom:dataStores'));
+  const addCustomStore = (storeDef: CustomStoreDef, includeInStarPermission: boolean) => {
+    const storeMod = require(storeDef.path);
+    const store = storeMod.default ?? storeMod;
+    newMall.addStore(store, {
+      id: storeDef.id,
+      name: storeDef.name,
+      includeInStarPermission,
+      settings: storeDef.settings
+    });
+  };
+  for (const storeDef of plan.ignored) {
+    logger.warn(`Store "${storeDef.name}" from ${storeDef.path} uses the id "${storeDef.id}" of a built-in store and is not loaded: set "override: true" on its custom:dataStores entry to replace the built-in store`);
+  }
+  for (const storeDef of plan.before) {
+    logger.info(`Loading store "${storeDef.name}" with id "${storeDef.id}" from ${storeDef.path}`);
+    addCustomStore(storeDef, true);
   }
 
   // Load built-in data store from storages barrel
@@ -87,6 +112,12 @@ async function buildMall () {
   if (config.get('audit:active')) {
     const auditDataStore = require('audit/src/datastore/auditDataStore.ts').default;
     newMall.addStore(auditDataStore, { id: '_audit', name: 'Audit', settings: {} });
+  }
+
+  // custom stores replacing a built-in one, registered last so they win the id
+  for (const storeDef of plan.replacing) {
+    logger.info(`Loading store "${storeDef.name}" from ${storeDef.path}: replaces the built-in store "${storeDef.id}"`);
+    addCustomStore(storeDef, false);
   }
 
   await newMall.init();

@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Starts the local PostgreSQL instance from var-pryv/postgresql-bin.
-# Mirrors the start-mongo pattern.
+# Starts the local PostgreSQL instance from bin-ext/postgresql (data in var-pryv/).
+# An install still in the previous place (var-pryv/postgresql-bin) is used as is;
+# ./storages/engines/postgresql/scripts/setup installs it again in bin-ext/.
 #
 # Modes:
 #   DEVELOPMENT=true  — attached (foreground) process
@@ -12,7 +13,12 @@ SCRIPT_FOLDER=$(cd $(dirname "$0"); pwd)
 VAR_PRYV_FOLDER=${VAR_PRYV_FOLDER:-$SCRIPT_FOLDER/../../../../var-pryv}
 VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
 
-PG_BIN=$VAR_PRYV_FOLDER/postgresql-bin/bin
+REPO_ROOT=$(cd "$SCRIPT_FOLDER/../../../.." && pwd)
+PG_BIN=$REPO_ROOT/bin-ext/postgresql/bin
+if [[ ! -x "$PG_BIN/pg_ctl" && -x "$VAR_PRYV_FOLDER/postgresql-bin/bin/pg_ctl" ]]; then
+  PG_BIN=$VAR_PRYV_FOLDER/postgresql-bin/bin
+  echo "Using PostgreSQL from its previous place ($PG_BIN): run ./storages/engines/postgresql/scripts/setup to install it in bin-ext/postgresql."
+fi
 PG_DATA=$VAR_PRYV_FOLDER/postgresql-data
 PG_LOGS=$VAR_PRYV_FOLDER/postgresql-logs
 

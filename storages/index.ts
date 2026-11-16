@@ -122,6 +122,16 @@ async function _doInit (config?: BoilerConfig) {
   const cfg = config!;
   await pluginLoader.init(cfg);
 
+  // DATABASE_URL (Dokku / Heroku style) fills the PostgreSQL connection fields
+  // still at their default-config values; explicit configuration wins.
+  if (pluginLoader.listEngines().includes('postgresql')) {
+    const { applyDatabaseUrl } = require('./engines/postgresql/src/databaseUrl.ts');
+    const fromUrl: string[] = applyDatabaseUrl(cfg);
+    if (fromUrl.length > 0) {
+      getLogger('storages').info('PostgreSQL connection: ' + fromUrl.join(', ') + ' taken from DATABASE_URL');
+    }
+  }
+
   // Pre-populate getLogger and config on all engine _internals so that
   // Database/DatabasePG constructors (step 1) can use them before initEngines (step 3).
   for (const engineName of pluginLoader.listEngines()) {

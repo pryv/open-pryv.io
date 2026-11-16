@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Local PostgreSQL install in `bin-ext/postgresql/`
+
+- `storages/engines/postgresql/scripts/setup` builds PostgreSQL into `bin-ext/postgresql/` (data
+  and logs stay in `var-pryv/`), like the other engines' binaries. An install left in
+  `var-pryv/postgresql-bin/` is not moved (its client tools load libpq from that absolute path):
+  setup builds again into `bin-ext/`, then removes the old install once no server runs from it
+  (restart a running one with `scripts/start`, then run setup again). `scripts/start` and the
+  `clean-test-data` recipes use `bin-ext/postgresql/` first, the old place while it is there.
+- `storages.init()` applies `DATABASE_URL` to the PostgreSQL connection fields
+  (`storages/engines/postgresql/src/databaseUrl.ts`, uses boiler's `getScopeAndValue` to tell a
+  `default-file` value from an explicit one). The mall sorts `custom:dataStores` with
+  `planCustomStores()` (exported from `components/mall`).
+
 ### Dependency: `@pryv/stable-object-representation` 1.2.0
 
 - Bumped from 1.1.4 to 1.2.0: the library now leaves `usage` out of an access's hash and its

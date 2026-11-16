@@ -872,7 +872,7 @@ The image sets `NODE_ENV=production`; the override must point the data paths at 
 
 **After `dokku ps:restart`**, always run `dokku proxy:build-config <app>`. Dokku's nginx upstream list does not refresh on container restart; without rebuilding the proxy config, the public URL will 502 even though the container is healthy. A request from inside the container (`docker exec <container> node -e "fetch('http://127.0.0.1:3000/reg/service/info').then(r => console.log(r.status))"`) succeeds throughout — the symptom is only visible externally.
 
-**PostgreSQL via `dokku postgres:link`** exports `DATABASE_URL` into the container environment. Open-Pryv.io v2 reads `storages.engines.postgresql.{host,port,database,user,password}` from `override-config.yml` directly — `DATABASE_URL` is **not** auto-consumed today. Populate the concrete keys in your override-config. A future `--from-database-url` convenience is tracked in the roadmap.
+**PostgreSQL via `dokku postgres:link`** exports `DATABASE_URL` into the container environment, and Open-Pryv.io uses it: each of `storages.engines.postgresql.{host,port,database,user,password}` still at its `default-config.yml` value takes the value of the URL, while a value set in your override-config (or by an environment variable) wins. Boot logs which fields came from `DATABASE_URL`, never their values. Query parameters (`sslmode`, ...) are not read.
 
 **Port 53 (UDP and TCP)** for DNS-active mode (`dns.active: true` + embedded DNS server) is not supported by `dokku ports:set`. Workaround:
 

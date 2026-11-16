@@ -286,11 +286,15 @@ clean-test-data:
     #!/usr/bin/env bash
     set -uo pipefail
     # Resolve PG client binaries: prefer the local from-source install at
-    # ./var-pryv/postgresql-bin/bin/ (Linux dev + Darwin dev when the
-    # PG setup script ran), fall back to system `dropdb`/`createdb`
-    # found on PATH (Darwin operators using Homebrew / Postgres.app /
-    # the system PG that ships with macOS).
-    if [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
+    # ./bin-ext/postgresql/bin/ (Linux dev + Darwin dev when the PG setup
+    # script ran; ./var-pryv/postgresql-bin/bin/ until setup has moved an
+    # older install), fall back to system `dropdb`/`createdb` found on PATH
+    # (Darwin operators using Homebrew / Postgres.app / the system PG that
+    # ships with macOS).
+    if [ -x ./bin-ext/postgresql/bin/dropdb ]; then
+      DROPDB=./bin-ext/postgresql/bin/dropdb
+      CREATEDB=./bin-ext/postgresql/bin/createdb
+    elif [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
       DROPDB=./var-pryv/postgresql-bin/bin/dropdb
       CREATEDB=./var-pryv/postgresql-bin/bin/createdb
     else
@@ -449,9 +453,13 @@ clean-test-data-parallel WORKERS='':
       fi
     fi
     # Resolve PG binaries (mirror of `clean-test-data`): prefer the local
-    # from-source install at ./var-pryv/postgresql-bin/bin/, fall back to
-    # system tooling on PATH (Darwin Homebrew / Postgres.app).
-    if [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
+    # from-source install at ./bin-ext/postgresql/bin/ (or its previous
+    # place ./var-pryv/postgresql-bin/bin/), fall back to system tooling on
+    # PATH (Darwin Homebrew / Postgres.app).
+    if [ -x ./bin-ext/postgresql/bin/dropdb ]; then
+      DROPDB=./bin-ext/postgresql/bin/dropdb
+      CREATEDB=./bin-ext/postgresql/bin/createdb
+    elif [ -x ./var-pryv/postgresql-bin/bin/dropdb ]; then
       DROPDB=./var-pryv/postgresql-bin/bin/dropdb
       CREATEDB=./var-pryv/postgresql-bin/bin/createdb
     else

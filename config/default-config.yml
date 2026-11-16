@@ -706,6 +706,9 @@ custom:
       type: email/string
       name: Email
       isRequiredInValidation: true
+  # Each entry: { id, name, path, settings }. An entry using the id of a built-in
+  # store (`local`, `account`, `_audit`) is not loaded (boot warning) unless it sets
+  # `override: true`, which makes it replace that built-in store.
   dataStores: []
 
 # === PER-CORE: local cache toggle ===

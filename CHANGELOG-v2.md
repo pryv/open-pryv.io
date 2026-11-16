@@ -200,6 +200,23 @@
   stream ids. A backup taken from a PostgreSQL platform (or a v1 export) that holds such an id
   does not restore onto SQLite until the stream is renamed.
 
+### Operators: `DATABASE_URL`, custom stores replacing a built-in one
+
+- **PostgreSQL from `DATABASE_URL`.** When the environment sets `DATABASE_URL` (as Dokku's
+  `postgres:link` or Heroku do), each of `storages.engines.postgresql` `host`, `port`, `database`,
+  `user` and `password` still at its `default-config.yml` value takes the value of the URL; a value
+  set in your configuration (override file, environment variables) wins. A field the URL leaves out
+  keeps its configured value; query parameters (`sslmode`, ...) are not read. Boot logs which
+  fields came from it (never the values). A `DATABASE_URL` that is not a `postgres://` /
+  `postgresql://` URL fails the boot.
+- **`custom.dataStores` entry `override: true`.** A custom store whose id is that of a built-in
+  store (`local`, `account`, `_audit`) replaces it when its entry sets `override: true`; like the
+  built-in, it is then not covered by a `*` permission. Without the flag the entry is not loaded
+  and boot logs a warning naming it (the built-in store kept the id before too, but the entry was
+  loaded). **Fix:** such an entry used to put its id on the list of stores a `*` permission covers,
+  so with a custom entry named `account` or `_audit` an access holding `*` reached the built-in
+  account or audit store; it no longer does.
+
 ## 2.0.0-rc.84 - 2026-11-13
 
 > **Upgrade advice for operators.** One storage migration on PostgreSQL (the access integrity

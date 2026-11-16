@@ -1,13 +1,20 @@
 #!/bin/bash
 set -e
 
-# Sets up PostgreSQL (compiled from source, local to var-pryv/) for server app(s)
-# Mirrors the setup-mongodb pattern: fully self-contained, no system packages.
+# Sets up PostgreSQL (compiled from source, local to the repository) for server app(s).
+# Fully self-contained, no system packages. Binaries live in bin-ext/, data in var-pryv/,
+# like the other engines.
 #
 # Result:
-#   var-pryv/postgresql-bin/   — compiled binaries (bin/, lib/, share/)
-#   var-pryv/postgresql-data/  — data directory (created by initdb)
-#   var-pryv/postgresql-logs/  — log files
+#   bin-ext/postgresql/        compiled binaries (bin/, lib/, share/)
+#   var-pryv/postgresql-data/  data directory (created by initdb)
+#   var-pryv/postgresql-logs/  log files
+#
+# An install left by an older version of this script in var-pryv/postgresql-bin/ is not
+# moved (its client tools load libpq from that absolute path): PostgreSQL is built again
+# into bin-ext/postgresql/, then the old install is removed once no server runs from it
+# (restart a running one with ./storages/engines/postgresql/scripts/start, then run this
+# script again). The data directory is kept as is.
 
 PG_VERSION=16.8
 
@@ -23,11 +30,17 @@ fi
 mkdir -p "$VAR_PRYV_FOLDER"
 VAR_PRYV_FOLDER="$(cd "$VAR_PRYV_FOLDER" && pwd)"
 
-PG_INSTALL_DIR=$VAR_PRYV_FOLDER/postgresql-bin
+REPO_ROOT=$(cd "$SCRIPT_FOLDER/../../../.." && pwd)
+PG_INSTALL_DIR=$REPO_ROOT/bin-ext/postgresql
+PG_OLD_INSTALL_DIR=$VAR_PRYV_FOLDER/postgresql-bin
 PG_DATA_DIR=$VAR_PRYV_FOLDER/postgresql-data
 PG_LOGS_DIR=$VAR_PRYV_FOLDER/postgresql-logs
 
 mkdir -p "$PG_LOGS_DIR"
+
+if [[ -x "$PG_OLD_INSTALL_DIR/bin/pg_ctl" && ! -x "$PG_INSTALL_DIR/bin/pg_ctl" ]]; then
+  echo "PostgreSQL found at its previous place ($PG_OLD_INSTALL_DIR): building it again into $PG_INSTALL_DIR"
+fi
 
 echo ""
 echo "Checking for PostgreSQL ($PG_INSTALL_DIR)..."
@@ -102,6 +115,20 @@ else
 
   cd "$SCRIPT_FOLDER"
   echo "Build complete."
+fi
+
+# --- Remove an install left at the previous place (var-pryv/postgresql-bin/) ---
+
+if [[ -d "$PG_OLD_INSTALL_DIR" && -x "$PG_INSTALL_DIR/bin/pg_ctl" ]]; then
+  if pgrep -f "^$PG_OLD_INSTALL_DIR/bin/postgres" >/dev/null 2>&1; then
+    echo ""
+    echo "A PostgreSQL server still runs from $PG_OLD_INSTALL_DIR: restart it from $PG_INSTALL_DIR"
+    echo "($PG_OLD_INSTALL_DIR/bin/pg_ctl stop -D $PG_DATA_DIR, then ./storages/engines/postgresql/scripts/start),"
+    echo "then run this script again to remove the old install."
+  else
+    rm -rf "$PG_OLD_INSTALL_DIR"
+    echo "Removed the previous install ($PG_OLD_INSTALL_DIR)"
+  fi
 fi
 
 # --- Initialize data directory ---
