@@ -192,8 +192,9 @@
   (`:_cmc:apps:...`) holding a space; the SQLite engine then filed the events of that stream under
   each space-separated part of the id, so they also appeared in another stream. `streams.create`
   now answers `invalid-item-id` for an id holding whitespace or a control character, and for the
-  id `..`, on every storage engine. **Breaking** only for a client that created such ids; existing
-  streams are unchanged.
+  id `..`, on every storage engine; a CMC membership offer naming such a stream id is refused
+  (`cmc-membership-permissions-invalid`), since accepting it creates the stream. **Breaking** only
+  for a client that created such ids; existing streams are unchanged.
 - With the SQLite engine, writing or restoring an event whose stream id is empty, `..`, or holds a
   space or NUL is refused with an error naming the event, instead of being stored under other
   stream ids. A backup taken from a PostgreSQL platform (or a v1 export) that holds such an id

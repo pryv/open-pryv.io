@@ -435,6 +435,12 @@ function membershipOfferViolations (request: unknown): string[] {
         C.NS_APPS + ':<app>[:<path>] streams only (got ' + JSON.stringify(p.streamId) + ')');
       continue;
     }
+    // Accepting the offer creates the stream: the same rule as streams.create
+    // (no whitespace or control character in a stream id).
+    if (/[\s\u0000-\u001f\u007f]/.test(p.streamId)) { // eslint-disable-line no-control-regex
+      errors.push('request.permissions: a stream id holds no whitespace or control character (got ' + JSON.stringify(p.streamId) + ')');
+      continue;
+    }
     if (typeof p.level !== 'string' || !MEMBERSHIP_LEVELS.has(p.level)) {
       errors.push('request.permissions: a membership holds read or contribute at most (got ' +
         JSON.stringify(p.level) + ' on ' + p.streamId + ')');

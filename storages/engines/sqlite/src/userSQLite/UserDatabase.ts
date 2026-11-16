@@ -182,7 +182,8 @@ function termsOf (streamIds: unknown): string[] {
  * Known limit: of several stored ids differing only by ASCII case, the first
  * found is listed (inserts list each); audit ids have one spelling (method
  * ids, lower-case access ids), and the user events store never reads this
- * table.
+ * table. Cost: about one row per term; a stream id that folds into a range
+ * without being in it (`Action-items`) has all its rows read at each fill.
  */
 function fillTerms (udb: UserDatabaseInstance): void {
   const vocabulary = udb.db.prepare('SELECT term FROM events_fts_v WHERE term >= ? AND term < ?');

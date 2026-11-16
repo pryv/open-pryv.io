@@ -126,6 +126,8 @@ describe('[CMCMB] cmc group accounts: the member role and the membership offer',
         { permissions: [{ streamId: TEAM_A, level: 'create-only' }] },
         { permissions: [{ streamId: TEAM_A, level: 'read' }, { feature: 'selfRevoke', setting: 'forbidden' }] },
         { permissions: [{ streamId: TEAM_A, level: 'read' }], accessType: 'app' },
+        { permissions: [{ streamId: TEAM_A + ' victim', level: 'read' }] },
+        { permissions: [{ streamId: TEAM_A + '\tvictim', level: 'read' }] },
       ];
       for (const c of cases) {
         const violations = V.membershipOfferViolations({ ...MEMBERSHIP_OFFER_REQUEST, ...c });

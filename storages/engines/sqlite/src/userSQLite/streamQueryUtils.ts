@@ -64,12 +64,15 @@ function toSQLiteStreamFilter (streamQuery: AndBlock[] | null): { fts: string | 
     // characters below (no quote, backslash or control character: the text
     // built from it is valid JSON) is split into its ids, each looked up in
     // the list (built once per statement: the cost per row does not grow
-    // with the list); any other row is checked id by id.
+    // with the list); any other row is checked id by id. `GLOB` stops at a
+    // NUL, hence the separate NUL test (a legacy row may hold one). A row
+    // with no stored ids gives NULL, as the id-by-id form does.
     const list = [...new Set(ids.filter(isMatchable).map(String))];
     if (list.length === 0) return '0';
     const json = JSON.stringify(list);
     params.push(json, json);
-    return 'CASE WHEN streamIds NOT GLOB \'*[^A-Za-z0-9 _:.-]*\' ' +
+    return 'CASE WHEN streamIds IS NULL THEN NULL ' +
+      'WHEN instr(streamIds, char(0)) = 0 AND streamIds NOT GLOB \'*[^A-Za-z0-9 _:.-]*\' ' +
       `THEN EXISTS (SELECT 1 FROM json_each('["' || replace(streamIds, '${IDS_SEPARATOR}', '","') || '"]') WHERE value IN (SELECT value FROM json_each(?))) ` +
       `ELSE EXISTS (SELECT 1 FROM json_each(?) WHERE instr(${PADDED_IDS}, '${IDS_SEPARATOR}' || value || '${IDS_SEPARATOR}') > 0) END`;
   };
@@ -90,7 +93,8 @@ function toSQLiteStreamFilter (streamQuery: AndBlock[] | null): { fts: string | 
   const positive = blocks.map((andBlock) => typeof andBlock === 'string'
     ? andBlock
     : andBlock.filter((andItem) => andItem.any != null && andItem.any.length > 0 && andItem.any.indexOf('*') === -1));
-  const fts = positiveIds(positive).every((id) => HAS_TOKEN_CHAR.test(id)) ? toSQLiteQuery(positive) : null;
+  // No prefilter when a positive id holds NUL: full text refuses it.
+  const fts = positiveIds(positive).every((id) => HAS_TOKEN_CHAR.test(id) && !String(id).includes('\u0000')) ? toSQLiteQuery(positive) : null;
   return { fts, exact: { sql, params } };
 }
 

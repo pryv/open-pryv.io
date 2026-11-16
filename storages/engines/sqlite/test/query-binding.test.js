@@ -189,6 +189,24 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
     assert.deepStrictEqual(alone, []);
     assert.deepStrictEqual(await ids([streams([[{ any: ['a\u0000b', '/'] }]])]), ['slash']);
     assert.deepStrictEqual(await ids([streams([[{ any: ['a\u0000b', '/', ...q(6)] }]])]), ['slash']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['a\u0000b', 'abc'] }]])]), ['lower']);
+  });
+
+  it('[SQQBN] a stored row holding NUL (written before the write guard) never breaks nor widens a long list', async function () {
+    const otherId = cuid();
+    const otherDb = await storage.forUser(otherId);
+    try {
+      await fill(otherDb);
+      const raw = otherDb.db.prepare('INSERT INTO events (eventid, streamIds, time, type) VALUES (?, ?, 1000, ?)');
+      raw.run('nul1', 'abc\u0000 ..', 'misc/x');
+      raw.run('nul2', 'a\u0000","x ..', 'misc/x');
+      const list = ['x', 'abc', ...q(6)];
+      const got = async (block) => (await otherDb.getEvents({ query: [streams([block])] })).map((e) => e.id).sort();
+      assert.deepStrictEqual(await got([{ any: list }]), ['lower', 'pair']);
+      assert.deepStrictEqual(await got([{ any: ['*'] }, { not: list }]), [...without('lower', 'pair'), 'nul1', 'nul2'].sort());
+    } finally {
+      await userLocalDirectory.deleteUserDirectory(otherId);
+    }
   });
 
   it('[SQQBD] a non-ASCII id matches its stored case only (no case folding at all)', async function () {
