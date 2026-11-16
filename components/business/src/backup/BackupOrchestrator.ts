@@ -104,6 +104,14 @@ class BackupOrchestrator {
     this.logger.info(`Starting ${isIncremental ? 'incremental' : 'full'} backup of ${userCount} users (snapshot before ${snapshotBefore})`);
 
     for (const [username, userId] of Object.entries(allUsers)) {
+      // An account deleted since the listing is left out: opening its stores
+      // would create its directory and empty databases again (this process
+      // does not hear of the erasure), and the run would list an account that
+      // no longer exists.
+      if (await this.usersLocalIndex.getUsername(userId) == null) {
+        this.logger.info(`Skipping user ${username} (${userId}): deleted since the backup started`);
+        continue;
+      }
       const since = perUserSince[userId] ?? null;
       this.logger.info(`Backing up user: ${username} (${userId})${since != null ? ' (incremental since ' + since + ')' : ''}`);
       const userManifest = await this._backupSingleUser(writer, userId, username, snapshotBefore, since, options);

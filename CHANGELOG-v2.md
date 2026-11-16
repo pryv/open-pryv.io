@@ -157,6 +157,11 @@
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
 
+### Per-user storage: deleted accounts, closed handles, failed restores
+
+- `bin/backup.js`: an account deleted while a full backup runs is left out of the run, instead of
+  being backed up empty and having its directory and empty databases created again on disk.
+
 ## 2.0.0-rc.84 - 2026-11-13
 
 > **Upgrade advice for operators.** One storage migration on PostgreSQL (the access integrity

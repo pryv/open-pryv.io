@@ -138,6 +138,16 @@
   `[BKDS2]`, `[AREV3]`; storage `[UASF4]`. Fixtures of the first formats in
   `storages/test/fixtures/backup-cipher-v1.json`.
 
+### Per-user storage lifecycle: deleted accounts, closed handles, failed restores
+
+- `BackupOrchestrator.backupAllUsers`: an account listed at the start of the run and no longer in
+  the local users index when its turn comes is skipped (logged), its stores never opened. A backup
+  runs in a process of its own, which does not hear of an erasure: opening the stores of such an
+  account created its directory and empty databases again. The API workers of the core already
+  refuse to create an erased account's directory again (`userLocalDirectory` erased ids). Residuals,
+  unchanged: an account deleted while its own export runs, a sibling worker that opens the account
+  in the milliseconds before it hears of the erasure. Test `[BKDU1]`.
+
 ### Access integrity hashed on the wire form
 
 - `business/src/integrity/integrity.ts`: `accesses.compute` / `hash` / `key` canonicalise the access
