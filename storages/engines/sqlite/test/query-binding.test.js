@@ -144,7 +144,8 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
       [[{ any: many }, { not: ['y', 'abc'] }]],
       [[{ any: ['*'] }, { not: many }]],
       [[{ any: many.slice(0, 4) }], [{ any: many.slice(4) }, { not: ['x'] }]],
-      [[{ any: ['abc'] }], [{ any: ['*'] }, { not: many }]]
+      [[{ any: ['abc'] }], [{ any: ['*'] }, { not: many }]],
+      [[{ any: ['abc', 'x', 'q1', 'q2'] }, { any: ['x', 'y', 'access-ab', 'q3'] }, { not: ['q4', 'q5'] }]]
     ];
     const withShortcut = [];
     for (const q of queries) withShortcut.push(await ids([streams(q)]));
@@ -155,6 +156,24 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
       _setShortcutMinIds(previous);
     }
     assert.deepStrictEqual(withShortcut[0], ['lower', 'near1', 'pair', 'upper']);
+    assert.deepStrictEqual(withShortcut[5], ['pair'], 'two "any" groups are ANDed');
+  });
+
+  it('[SQQBF] an item with no id, or with both "any" and "not", is refused (never read as "every event")', function () {
+    const bad = [
+      [[{ any: [] }]],
+      [[{ not: [] }]],
+      [[{}]],
+      [[{ any: [] }, { any: ['abc'] }]],
+      [[{ any: ['abc'], not: ['x'] }]],
+      [[{ any: ['abc'] }], [{ any: [] }]]
+    ];
+    for (const q of bad) assert.throws(() => userDb.getEvents({ query: [streams(q)] }), /exactly one non-empty any or not/, JSON.stringify(q));
+  });
+
+  it('[SQQBG] a stream id holding NUL never returns more than its own events', async function () {
+    assert.throws(() => userDb.getEvents({ query: [streams([[{ any: ['a\u0000b'] }]])] }));
+    assert.deepStrictEqual(await ids([streams([[{ any: ['a\u0000b', '/'] }]])]), ['slash']);
   });
 
   it('[SQQBD] a non-ASCII id matches its stored case only (ASCII folding, as `lower`)', async function () {
@@ -181,6 +200,32 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
     assert.ok(listed.includes('action-callbatch'), JSON.stringify(listed));
     assert.deepStrictEqual(await ids([streams([[{ any: ['action-callbatch'] }]])]), ['audit']);
     assert.deepStrictEqual(await ids([streams([[{ any: ['action-callBatch'] }]])]), ['audit']);
+  });
+
+  it('[SQQBH] deleting with a "not" filter keeps exactly the matching events, by the full-text path (8+ ids) and the plain one', async function () {
+    const many = ['abc', 'x', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6'];
+    for (const [not, oneByOne, kept] of [[many, true, ['lower', 'pair', 'upper']], [['abc'], false, ['lower', 'upper']]]) {
+      const otherId = cuid();
+      const otherDb = await storage.forUser(otherId);
+      try {
+        for (const e of events) {
+          await otherDb.createEvent({ time: 1000, created: 1000, createdBy: 'test', modified: 1000, modifiedBy: 'test', ...e });
+        }
+        const messages = [];
+        const debug = otherDb.logger.debug;
+        otherDb.logger.debug = (msg) => { if (typeof msg === 'string') messages.push(msg); };
+        try {
+          await otherDb.deleteEvents({ query: [streams([[{ any: ['*'] }, { not }]])] });
+        } finally {
+          otherDb.logger.debug = debug;
+        }
+        assert.strictEqual(messages.some((m) => m.startsWith('DELETE events one by one')), oneByOne, messages.join('\n'));
+        const left = (await otherDb.getEvents({ query: [] })).map((e) => e.id).sort();
+        assert.deepStrictEqual(left, kept, JSON.stringify(not));
+      } finally {
+        await userLocalDirectory.deleteUserDirectory(otherId);
+      }
+    }
   });
 
   it('[SQQB5] paging values are bound; an unknown column is refused', async function () {
