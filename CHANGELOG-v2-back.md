@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### SQLite events / audit query: bound values, exact stream ids
+
+- `userSQLite/UserDatabase.ts`: the events query builder (`converters`, `jsonConditionToSql`,
+  `prepareQuery`, `pagingClause`, `modifiedSincePlan`) returns `{ sql, params }`: every value is a
+  bound parameter (`?`), including the JSON path, the `LIKE` patterns (`%` / `_` escaped in types
+  too), the full-text `MATCH` argument and `LIMIT` / `OFFSET`. Column names are checked against the
+  events schema (`column()`, an unknown one throws), in conditions and in `ORDER BY`.
+  `schema/events.ts` `coerceValueForColumn` (SQL literal text) is removed with its `[SQLE]` test.
+- Stream filter (`streamQueryUtils.ts` `toSQLiteStreamFilter`): the full-text index stays the
+  candidate prefilter, on the positive ids only (a superset; never used as the condition); an
+  exact, case-sensitive condition then checks the stored ids, mirroring the any / not / OR
+  structure: below 8 ids per group, `instr(' ' || streamIds || ' ', ' id ')`; from 8 ids, the
+  group is one bound JSON list, and a row whose stored ids hold only `[A-Za-z0-9 _:.-]` is split
+  into its ids (`json_each` over the row text) each looked up in the list (built once per
+  statement, so the per-row cost does not grow with the list), any other row checked id by id
+  against the list. No limit on the bound-variable count; an id that is not a full-text token in
+  the list changes nothing. `NOT INDEXED` only with a prefilter: a `not`-only filter walks the
+  `time` index with no full-text read. An item with neither or both of `any` / `not` is refused.
+  `deleteEvents` reads the candidates one by one only when the query uses the full-text index.
+  Fuzzed against a case-sensitive set reference (36 000 statements, no difference).
+- Audit terms (`UserDatabase.ts`): the `access-` / `action-` children are kept in a new table
+  `events_stream_terms` in stored case, filled on insert and, when the table is new or the
+  lower-cased `events_terms` of earlier releases is present (dropped then), from the full-text
+  vocabulary plus one row read per term (the stored id equal to it once lower-cased).
+- Stream id write guard: `schema/events.ts` `toDB` throws for a stream id that is empty, `..`, or
+  holds a space or NUL; `streams.create` refuses whitespace or control characters in the final id
+  and the reserved id `..`; a CMC membership offer naming such an id is refused.
+- Test harness: `test-helpers` `helpers-base.ts` integrity hook writes a stderr line naming the
+  check (platform or users index) still running after 5 s; the unloaded
+  `components/api-server/test/hooks.js` is removed.
+- Tests `[SQQB1-9]`, `[SQQBA-M]`, `[SQQP10]` (stored-case terms, migration from `events_terms`),
+  `[SQCS1-5]` (API, both engines), `[ASTE]` `[SQCS4]`, `[MB02]`; `[SQQP]` plan test binds nulls for `EXPLAIN`.
+
 ### Access integrity hashed on the wire form
 
 - `business/src/integrity/integrity.ts`: `accesses.compute` / `hash` / `key` canonicalise the access

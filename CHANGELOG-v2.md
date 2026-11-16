@@ -1,5 +1,45 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.85 - 2026-11-16
+
+> **Upgrade advice for operators.** Security release for platforms on the **SQLite** storage engine
+> (PostgreSQL platforms are not affected by the two fixes, only by the stream-id rule below). No
+> migration and no configuration change; the SQLite audit store rebuilds its list of access /
+> action children once per file at first open. **Breaking** only for a client creating stream ids
+> holding whitespace, control characters, or the id `..`. Before upgrading a SQLite core, check
+> for stored access permissions on lower-cased `:_audit:action-…` ids (they grant nothing after
+> the upgrade) and for stream ids holding a space (writing an event there is refused).
+
+### SQLite storage engine: stream ids are matched exactly, case included
+
+- **Security fix.** With the SQLite engine, `events.get` and the stream scope of an access
+  matched stream ids without regard to letter case, and matched an id that is part of a longer
+  one: an access allowed on stream `diary` could read the events of a stream `Diary`, and `abc`
+  matched an event of a stream `abc/def`. Stream ids are now compared whole and
+  case-sensitively, as the PostgreSQL engine always did; this also holds for the audit store.
+  Accounts holding two streams whose ids differ only by case are the ones
+  affected. The id `..` and the empty id match no event (`..` matched every event), and an id
+  holding no letter, digit or `-_:.` (such as `/`) now finds its events (it found none).
+- With the SQLite engine, the children of `:_audit:actions` are listed with the method's own
+  spelling (`:_audit:action-callBatch`, previously `:_audit:action-callbatch`), and an audit query
+  needs that spelling. A client that stored an id from an earlier listing must list again.
+- With the SQLite engine, `%` and `_` in a `types` class (`note_x/*`) are literal characters, no
+  longer wildcards, and `/*` alone is an exact type, not a class.
+
+### Stream ids: whitespace and `..` refused
+
+- **Security fix (SQLite storage engine).** `streams.create` accepted a path-style id
+  (`:_cmc:apps:...`) holding a space; the SQLite engine then filed the events of that stream under
+  each space-separated part of the id, so they also appeared in another stream. `streams.create`
+  now answers `invalid-item-id` for an id holding whitespace or a control character, and for the
+  id `..`, on every storage engine; a CMC membership offer naming such a stream id is refused
+  (`cmc-membership-permissions-invalid`), since accepting it creates the stream. **Breaking** only
+  for a client that created such ids; existing streams are unchanged.
+- With the SQLite engine, writing or restoring an event whose stream id is empty, `..`, or holds a
+  space or NUL is refused with an error naming the event, instead of being stored under other
+  stream ids. A backup taken from a PostgreSQL platform (or a v1 export) that holds such an id
+  does not restore onto SQLite until the stream is renamed.
+
 ## 2.0.0-rc.84 - 2026-11-13
 
 > **Upgrade advice for operators.** One storage migration on PostgreSQL (the access integrity
