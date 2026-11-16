@@ -31,7 +31,7 @@
     "@aws-sdk/lib-storage": "^3.864.0",
     "@paralleldrive/cuid2": "^3.3.0",
     "@pryv/datastore": "https://github.com/pryv/pryv-datastore.git",
-    "@pryv/stable-object-representation": "^1.1.4",
+    "@pryv/stable-object-representation": "^1.2.0",
     "acme-client": "^5.4.0",
     "ajv": "^8.20.0",
     "ajv-draft-04": "^1.0.0",

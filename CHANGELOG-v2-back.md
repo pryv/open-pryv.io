@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Dependency: `@pryv/stable-object-representation` 1.2.0
+
+- Bumped from 1.1.4 to 1.2.0: the library now leaves `usage` out of an access's hash and its
+  `compute(item, algorithm)` honours the algorithm. The core's own `usage` strip in `canonicalAccess`
+  and its `key()` + `hash(…, algorithm)` composition stay (same results); hashes are unchanged.
+
 ### Audit storage: `summarize` (for `audit.getSummary`)
 
 - `UserAuditDatabase` contract: new required method `summarize({ fromTime, toTime, slotSeconds,
