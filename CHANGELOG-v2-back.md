@@ -174,19 +174,31 @@
   events schema (`column()`, an unknown one throws), in conditions and in `ORDER BY`.
   `schema/events.ts` `coerceValueForColumn` (SQL literal text) is removed with its `[SQLE]` test.
 - Stream filter (`streamQueryUtils.ts` `toSQLiteStreamFilter`): the full-text index stays the
-  candidate prefilter, on the positive ids only (a superset); an exact condition then checks the
-  stored ids, `instr(lower(' ' || streamIds || ' '), lower(' id '))`, mirroring the any / not / OR
-  structure. ASCII case folding is kept on purpose: the SQLite audit store lists its
-  `action-` / `access-` children lower-cased, a client sends such an id back, and
-  `UserDatabase.summarize` folds the same way (unchanged; `[ASQ8]` equality holds). From 8 ids,
-  each a single full-text token, a row whose stored ids hold token characters only is decided by
-  the full-text index (exact on such a row); for one block only the dropped rows are looked up
-  (`rowid NOT IN (… MATCH nots)`). Lists over 32 ids are bound as one JSON value (`json_each`),
-  so a large expanded tree stays under the bound-variable limit. `NOT INDEXED` only with a
-  prefilter: a `not`-only filter walks the `time` index. Measured on a 1M-row audit file (limit
-  16): one access unchanged, 50 ids 77 -> 173 ms, `not` with 300 ids unchanged, `not` with 3 ids
-  237 -> 0 ms. Residual: two legacy ids differing only by letter case still match each other.
-  Tests `[SQQB1-9]`, `[SQQBA-E]`; `[SQQP]` plan test binds nulls for `EXPLAIN`.
+  candidate prefilter, on the positive ids only (a superset; never used as the condition); an
+  exact, case-sensitive condition then checks the stored ids, mirroring the any / not / OR
+  structure: below 8 ids per group, `instr(' ' || streamIds || ' ', ' id ')`; from 8 ids, the
+  group is one bound JSON list, and a row whose stored ids hold only `[A-Za-z0-9 _:.-]` is split
+  into its ids (`json_each` over the row text) each looked up in the list (built once per
+  statement, so the per-row cost does not grow with the list), any other row checked id by id
+  against the list. No limit on the bound-variable count; an id that is not a full-text token in
+  the list changes nothing. `NOT INDEXED` only with a prefilter: a `not`-only filter walks the
+  `time` index with no full-text read. An item with neither or both of `any` / `not` is refused.
+  `deleteEvents` reads the candidates one by one only when the query uses the full-text index.
+  Fuzzed against a case-sensitive set reference (36 000 statements, no difference).
+- Audit terms (`UserDatabase.ts`): the `access-` / `action-` children are kept in a new table
+  `events_stream_terms` in stored case, filled on insert and, when the table is new or the
+  lower-cased `events_terms` of earlier releases is present (dropped then), from the full-text
+  vocabulary plus one row read per term (the stored id equal to it once lower-cased). `summarize`
+  groups on the stored ids and compares the requested ids as given (`[ASQ8]` requires equal counts
+  on both engines).
+- Stream id write guard: `schema/events.ts` `toDB` throws for a stream id that is empty, `..`, or
+  holds a space or NUL; `streams.create` refuses whitespace or control characters in the final id
+  and the reserved id `..`.
+- Test harness: `test-helpers` `helpers-base.ts` integrity hook writes a stderr line naming the
+  check (platform or users index) still running after 5 s; the unloaded
+  `components/api-server/test/hooks.js` is removed.
+- Tests `[SQQB1-9]`, `[SQQBA-M]`, `[SQQP10]` (stored-case terms, migration from `events_terms`),
+  `[SQCS1-5]` (API, both engines), `[ASTE]` `[SQCS4]`; `[SQQP]` plan test binds nulls for `EXPLAIN`.
 
 ### Access integrity hashed on the wire form
 

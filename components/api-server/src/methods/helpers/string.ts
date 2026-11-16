@@ -15,6 +15,7 @@ function isReservedId (s: string) {
     case 'null':
     case 'undefined':
     case '*':
+    case '..': // the SQLite engine's tag on every event
       return true;
     default:
       return false;

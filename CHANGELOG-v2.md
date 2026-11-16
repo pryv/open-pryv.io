@@ -170,16 +170,34 @@
   clean; an account that was on the core before an `--overwrite` restore is left empty. The
   restore's error is reported; a failure of the cleanup is logged with what to do next.
 
-### SQLite storage: exact stream matching in `events.get`
+### SQLite storage engine: stream ids are matched exactly, case included
 
-- On the SQLite engine, the `streams` filter of `events.get` (and of the audit store) matches a
-  stream id only when it equals a stored id, ignoring ASCII letter case. It no longer matches a
-  part of another id (`abc` matched an event of a stream `abc/def`), nor two neighbouring ids
-  (`x y`). The id `..` and the empty id match no event (`..` matched every event). An id holding
-  no letter, digit or `-_:.` (such as `/`) now finds its events (it found none). Ids created
-  through the API are unaffected. The PostgreSQL engine already matched exactly.
-- On the SQLite engine, `%` and `_` in a `types` class (`note_x/*`) are literal characters, no
+- **Security fix.** With the SQLite engine, `events.get` and the stream scope of an access
+  matched stream ids without regard to letter case, and matched an id that is part of a longer
+  one: an access allowed on stream `diary` could read the events of a stream `Diary`, and `abc`
+  matched an event of a stream `abc/def`. Stream ids are now compared whole and
+  case-sensitively, as the PostgreSQL engine always did; this also holds for the audit store and
+  `audit.getSummary`. Accounts holding two streams whose ids differ only by case are the ones
+  affected. The id `..` and the empty id match no event (`..` matched every event), and an id
+  holding no letter, digit or `-_:.` (such as `/`) now finds its events (it found none).
+- With the SQLite engine, the children of `:_audit:actions` are listed with the method's own
+  spelling (`:_audit:action-callBatch`, previously `:_audit:action-callbatch`), and an audit query
+  needs that spelling. A client that stored an id from an earlier listing must list again.
+- With the SQLite engine, `%` and `_` in a `types` class (`note_x/*`) are literal characters, no
   longer wildcards, and `/*` alone is an exact type, not a class.
+
+### Stream ids: whitespace and `..` refused
+
+- **Security fix (SQLite storage engine).** `streams.create` accepted a path-style id
+  (`:_cmc:apps:...`) holding a space; the SQLite engine then filed the events of that stream under
+  each space-separated part of the id, so they also appeared in another stream. `streams.create`
+  now answers `invalid-item-id` for an id holding whitespace or a control character, and for the
+  id `..`, on every storage engine. **Breaking** only for a client that created such ids; existing
+  streams are unchanged.
+- With the SQLite engine, writing or restoring an event whose stream id is empty, `..`, or holds a
+  space or NUL is refused with an error naming the event, instead of being stored under other
+  stream ids. A backup taken from a PostgreSQL platform (or a v1 export) that holds such an id
+  does not restore onto SQLite until the stream is renamed.
 
 ## 2.0.0-rc.84 - 2026-11-13
 

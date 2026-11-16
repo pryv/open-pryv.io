@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 
 const { ALL_EVENTS_TAG } = require('./schema/events.ts');
 
-export { toSQLiteQuery, toSQLiteStreamFilter, _setShortcutMinIds };
+export { toSQLiteQuery, toSQLiteStreamFilter, _setSetFrom };
 export type { SqlPart };
 
 /** A piece of SQL and the values of its `?` placeholders, in order. */
@@ -19,18 +19,16 @@ type SqlPart = { sql: string, params: unknown[] };
 /**
  * The stream filter of an events query, for SQLite:
  * - `exact`: the condition itself, on the stored stream ids (space-separated
- *   in `events.streamIds`): an id matches only an equal stored id, ASCII
- *   letter case folded (SQLite `lower`, as the audit summary and the audit
- *   stream listing, whose `action-…` / `access-…` ids are lower-cased).
- *   Every id is a bound value.
+ *   in `events.streamIds`): an id matches only an equal stored id, letter
+ *   case included (stream ids are case-sensitive: `abc` and `ABC` are two
+ *   streams, and this is the authorization filter). Every id is a bound value.
  * - `fts`: a full-text expression (bound as the `MATCH` argument) selecting
  *   a superset of the rows `exact` keeps, so the full-text index can choose
  *   the candidates: the positive terms only. A full-text phrase is looser
- *   than id equality (case folded, split on punctuation), so a `NOT` there
- *   could drop rows the exact condition keeps. Null when the positive terms
- *   select every row, or when a positive id holds no token character (its
- *   phrase is empty and full text would match none of its rows): `exact`
- *   alone then.
+ *   than id equality (case folded, split on punctuation), so it is never used
+ *   as the condition itself. Null when the positive terms select every row,
+ *   or when a positive id holds no token character (its phrase is empty and
+ *   full text would match none of its rows): `exact` alone then.
  * Null when the query keeps every event.
  */
 function toSQLiteStreamFilter (streamQuery: AndBlock[] | null): { fts: string | null, exact: SqlPart } | null {
@@ -57,17 +55,23 @@ function toSQLiteStreamFilter (streamQuery: AndBlock[] | null): { fts: string | 
   const hasId = (id: string): string => {
     if (!isMatchable(id)) return '0';
     params.push(IDS_SEPARATOR + id + IDS_SEPARATOR);
-    return `instr(lower('${IDS_SEPARATOR}' || streamIds || '${IDS_SEPARATOR}'), lower(?)) > 0`;
+    return `instr(${PADDED_IDS}, ?) > 0`;
   };
   const anyOf = (ids: string[]): string => {
-    if (ids.length === 1) return hasId(ids[0]);
-    if (ids.length <= LIST_AS_JSON_FROM) return '(' + ids.map(hasId).join(' OR ') + ')';
-    // A long list (an expanded stream tree) is one bound value: no limit on
-    // the number of bound variables.
-    const padded = ids.filter(isMatchable).map((id) => IDS_SEPARATOR + id + IDS_SEPARATOR);
-    if (padded.length === 0) return '0';
-    params.push(JSON.stringify(padded));
-    return `EXISTS (SELECT 1 FROM json_each(?) WHERE instr(lower('${IDS_SEPARATOR}' || streamIds || '${IDS_SEPARATOR}'), lower(value)) > 0)`;
+    if (ids.length < setFrom) return ids.length === 1 ? hasId(ids[0]) : '(' + ids.map(hasId).join(' OR ') + ')';
+    // Many ids (an expanded stream tree): one bound JSON list, so no limit on
+    // the number of bound variables. A row whose stored ids hold only the
+    // characters below (no quote, backslash or control character: the text
+    // built from it is valid JSON) is split into its ids, each looked up in
+    // the list (built once per statement: the cost per row does not grow
+    // with the list); any other row is checked id by id.
+    const list = [...new Set(ids.filter(isMatchable).map(String))];
+    if (list.length === 0) return '0';
+    const json = JSON.stringify(list);
+    params.push(json, json);
+    return 'CASE WHEN streamIds NOT GLOB \'*[^A-Za-z0-9 _:.-]*\' ' +
+      `THEN EXISTS (SELECT 1 FROM json_each('["' || replace(streamIds, '${IDS_SEPARATOR}', '","') || '"]') WHERE value IN (SELECT value FROM json_each(?))) ` +
+      `ELSE EXISTS (SELECT 1 FROM json_each(?) WHERE instr(${PADDED_IDS}, '${IDS_SEPARATOR}' || value || '${IDS_SEPARATOR}') > 0) END`;
   };
   const exactBlock = (andBlock: AndBlock): string => {
     if (typeof andBlock === 'string') return hasId(andBlock);
@@ -76,8 +80,8 @@ function toSQLiteStreamFilter (streamQuery: AndBlock[] | null): { fts: string | 
       if (andItem.any != null && andItem.any.length > 0) {
         if (andItem.any.indexOf('*') > -1) continue;
         parts.push(anyOf(andItem.any));
-      } else if (andItem.not != null && andItem.not.length > 0) {
-        parts.push('NOT ' + anyOf(andItem.not));
+      } else {
+        parts.push('NOT ' + anyOf(andItem.not as string[]));
       }
     }
     return parts.length === 0 ? '1' : parts.join(' AND ');
@@ -87,54 +91,24 @@ function toSQLiteStreamFilter (streamQuery: AndBlock[] | null): { fts: string | 
     ? andBlock
     : andBlock.filter((andItem) => andItem.any != null && andItem.any.length > 0 && andItem.any.indexOf('*') === -1));
   const fts = positiveIds(positive).every((id) => HAS_TOKEN_CHAR.test(id)) ? toSQLiteQuery(positive) : null;
-  const exact = { sql, params };
-  const ids = [...positiveIds(blocks), ...notIds(blocks)];
-  if (ids.length < shortcutMinIds || !ids.every((id) => SINGLE_TOKEN.test(id) && isMatchable(id))) return { fts, exact };
-  // Many ids, each one full-text token: on a row whose stored ids are made
-  // of token characters only (ids from the API, system and audit ids), the
-  // full-text expression, `NOT` included, is that exact condition (a token
-  // is a whole stored id, ASCII case folded as `lower`). That row costs one
-  // pattern check and one look-up in a full-text result instead of one
-  // `instr` per id; any other row takes the exact condition.
-  let viaFullText: SqlPart;
-  const nots = notIds(blocks);
-  if (blocks.length === 1) {
-    // One block: its positive terms are the prefilter (or none), exact on
-    // such a row, so only the rows to drop are looked up (a small set, not
-    // the rows kept).
-    viaFullText = nots.length === 0
-      ? { sql: '1', params: [] }
-      : { sql: 'rowid NOT IN (SELECT rowid FROM events_fts WHERE streamIds MATCH ?)', params: ['(' + addQuotes(nots).join(' OR ') + ')'] };
-  } else if (fts !== null) {
-    const full = toSQLiteQuery(blocks) as string;
-    viaFullText = full === fts ? { sql: '1', params: [] } : { sql: 'rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH ?)', params: [full] };
-  } else {
-    return { fts, exact };
-  }
-  return {
-    fts,
-    exact: {
-      sql: `CASE WHEN streamIds NOT GLOB '*[^A-Za-z0-9 _:.-]*' THEN ${viaFullText.sql} ELSE ${sql} END`,
-      params: [...viaFullText.params, ...params]
-    }
-  };
+  return { fts, exact: { sql, params } };
 }
 
 const IDS_SEPARATOR = ' ';
+const PADDED_IDS = `'${IDS_SEPARATOR}' || streamIds || '${IDS_SEPARATOR}'`;
 // The token characters of the full-text table (`fullTextSearch.ts`: unicode61,
 // tokenchars '-_:.'), ASCII only.
-const SINGLE_TOKEN = /^[A-Za-z0-9_:.-]+$/;
 const HAS_TOKEN_CHAR = /[A-Za-z0-9_:.-]/;
-let shortcutMinIds = 8;
-const LIST_AS_JSON_FROM = 32;
+let setFrom = 8;
 
 /**
  * An id that can equal a stored one: not empty, not the tag every event
- * carries, no separator (it would join two stored ids).
+ * carries, no separator (it would join two stored ids), no NUL (refused at
+ * write; SQLite's text functions and `length()` disagree on such text).
  */
 function isMatchable (id: string): boolean {
   const text = String(id);
-  return text !== '' && text !== ALL_EVENTS_TAG && !text.includes(IDS_SEPARATOR);
+  return text !== '' && text !== ALL_EVENTS_TAG && !text.includes(IDS_SEPARATOR) && !text.includes('\u0000');
 }
 
 function positiveIds (blocks: AndBlock[]): string[] {
@@ -147,10 +121,10 @@ function notIds (blocks: AndBlock[]): string[] {
   return blocks.flatMap((andBlock) => typeof andBlock === 'string' ? [] : andBlock.flatMap((andItem) => andItem.not ?? []));
 }
 
-/** Test hook: the number of ids from which the full-text shortcut applies; returns the previous one. */
-function _setShortcutMinIds (n: number): number {
-  const previous = shortcutMinIds;
-  shortcutMinIds = n;
+/** Test hook: the number of ids from which a group is one bound list; returns the previous one. */
+function _setSetFrom (n: number): number {
+  const previous = setFrom;
+  setFrom = n;
   return previous;
 }
 

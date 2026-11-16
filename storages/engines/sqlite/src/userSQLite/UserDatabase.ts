@@ -123,24 +123,30 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   // expanded by every events.get that names their parents). Read from the
   // full-text vocabulary, a listing decoded every posting of those terms: two
   // per audit row, ~50-130 ms per call on 2M rows. Kept here instead, filled
-  // on insert, and from the vocabulary once when the table is new. Exact for
-  // rows inserted and deleted (an audit log); not maintained on updates.
-  // The table is created and filled in one transaction: a stop in between
+  // on insert, and from the vocabulary when the table is new. Exact for rows
+  // inserted and deleted (an audit log); not maintained on updates. Terms keep
+  // the stored case (stream ids are case-sensitive). `events_terms` is the
+  // lower-cased table of earlier releases: when present (first open after the
+  // upgrade, or after a rollback wrote to it again) it is dropped and this
+  // table rebuilt. Created and filled in one transaction: a stop in between
   // must not leave it existing and empty for good.
   const t0 = Date.now();
   let filled = false;
   await concurrentSafeWrite.execute(() => {
     this.db.transaction(() => {
-      if (this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events_terms'").get() != null) return;
-      this.db.prepare('CREATE TABLE events_terms (term TEXT PRIMARY KEY) WITHOUT ROWID').run();
+      const hasTable = (name: string): boolean => this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) != null;
+      if (!hasTable('events_terms') && hasTable(TERMS_TABLE)) return;
+      this.db.prepare('DROP TABLE IF EXISTS events_terms').run();
+      this.db.prepare(`CREATE TABLE IF NOT EXISTS ${TERMS_TABLE} (term TEXT PRIMARY KEY) WITHOUT ROWID`).run();
+      this.db.prepare(`DELETE FROM ${TERMS_TABLE}`).run();
       fillTerms(this);
       filled = true;
     }).immediate();
   });
   const elapsed = Date.now() - t0;
   if (filled && elapsed > 1000) this.logger.info(`listed the access / action terms in ${elapsed} ms (once per database)`);
-  this.eventQueries.getTerms = this.db.prepare('SELECT term FROM events_terms WHERE term >= ? AND term < ? ORDER BY term');
-  this.eventQueries.addTerm = this.db.prepare('INSERT OR IGNORE INTO events_terms (term) VALUES (?)');
+  this.eventQueries.getTerms = this.db.prepare(`SELECT term FROM ${TERMS_TABLE} WHERE term >= ? AND term < ? ORDER BY term`);
+  this.eventQueries.addTerm = this.db.prepare(`INSERT OR IGNORE INTO ${TERMS_TABLE} (term) VALUES (?)`);
 
   // Head events only: a history version is a row of its own (headId set), never
   // addressed by its own id (same as the PostgreSQL engine's `head_id IS NULL`).
@@ -154,34 +160,52 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   this.eventQueries.deleteById = this.db.prepare('DELETE FROM events WHERE eventid = ?');
 };
 
+const TERMS_TABLE = 'events_stream_terms';
 // `[from, to)` ranges of the kept terms; '.' follows '-'.
 const TERM_RANGES: Array<[string, string]> = [['access-', 'access.'], ['action-', 'action.']];
 
 /**
  * The kept terms of a row's stream ids (an array, or the stored
- * space-separated string), lowercased as the full-text tokenizer does.
+ * space-separated string), in stored case.
  */
 function termsOf (streamIds: unknown): string[] {
   const ids = Array.isArray(streamIds) ? streamIds : (typeof streamIds === 'string' ? streamIds.split(' ') : []);
-  const out: string[] = [];
-  for (const id of ids) {
-    if (typeof id !== 'string') continue;
-    const term = id.toLowerCase();
-    if (TERM_RANGES.some(([from, to]) => term >= from && term < to)) out.push(term);
-  }
-  return out;
+  return ids.filter((id): id is string => typeof id === 'string' && TERM_RANGES.some(([from, to]) => id >= from && id < to));
 }
 
+/**
+ * Fill the terms table from the full-text vocabulary, which is lower-cased:
+ * for each vocabulary term, the rows holding it are read (through the
+ * full-text table, streamed) until one holds a stored id equal to it once
+ * lower-cased, and every in-range stored id of the rows read is kept. A term
+ * no stored id equals (`foo/access-x` tokenises to `access-x`) lists nothing.
+ * Known limit: of several stored ids differing only by ASCII case, the first
+ * found is listed (inserts list each); audit ids have one spelling (method
+ * ids, lower-case access ids), and the user events store never reads this
+ * table.
+ */
 function fillTerms (udb: UserDatabaseInstance): void {
-  const fill = udb.db.prepare('INSERT OR IGNORE INTO events_terms (term) SELECT term FROM events_fts_v WHERE term >= ? AND term < ?');
-  for (const [from, to] of TERM_RANGES) fill.run(from, to);
+  const vocabulary = udb.db.prepare('SELECT term FROM events_fts_v WHERE term >= ? AND term < ?');
+  const rowsWith = udb.db.prepare('SELECT streamIds FROM events_fts WHERE streamIds MATCH ?');
+  const add = udb.db.prepare(`INSERT OR IGNORE INTO ${TERMS_TABLE} (term) VALUES (?)`);
+  for (const [from, to] of TERM_RANGES) {
+    for (const { term } of vocabulary.all(from, to) as Array<{ term: string }>) {
+      const found = new Set<string>();
+      for (const row of rowsWith.iterate('"' + term.replace(/"/g, '""') + '"') as Iterable<{ streamIds: string | null }>) {
+        const ids = termsOf(row.streamIds);
+        for (const id of ids) found.add(id);
+        if (ids.some((id) => id.toLowerCase() === term)) break;
+      }
+      for (const id of found) add.run(id);
+    }
+  }
 }
 
-/** Refill `events_terms` from the full-text vocabulary (terms with no row left drop out). */
+/** Refill the terms table (terms with no row left drop out). */
 async function rebuildTerms (udb: UserDatabaseInstance): Promise<void> {
   await concurrentSafeWrite.execute(() => {
     udb.db.transaction(() => {
-      udb.db.prepare('DELETE FROM events_terms').run();
+      udb.db.prepare(`DELETE FROM ${TERMS_TABLE}`).run();
       fillTerms(udb);
     })();
   });
@@ -491,8 +515,8 @@ UserDatabase.prototype.deleteEventHistory = async function (this: UserDatabaseIn
 
 UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance, params: GetParams): Promise<{ changes: number } | null> {
   const query = prepareEventsDeleteQuery(params);
-  if (query.sql.includes('MATCH')) {
-    this.logger.debug(`DELETE events one by one as query includes "MATCH": ${query.sql}`);
+  if (query.usesFullText) {
+    this.logger.debug(`DELETE events one by one as the query reads the full-text index: ${query.sql}`);
     // HACK: SQLite does not know how to delete with "MATCH" statement,
     //       so we're getting events that match and deleting them one by one
     const selectEventsToBeDeleted = prepareEventsGetQuery(this.db, params);
@@ -556,10 +580,10 @@ type SummaryRow = { slot: number, action: unknown, error: number | null, count: 
  * interruption error, never a statement on a closed handle.
  *
  * Stream filter: the full-text index is not read. The aggregate also groups
- * by the row's lower-cased stored stream ids, and a group is kept when one of
- * its space-separated terms equals a requested id, ASCII case folded. The
- * ids never reach SQLite. This is the exact match `events.get` applies on this
- * engine (stored ids compared whole, ASCII case folded; the validator admits
+ * by the row's stored stream ids, and a group is kept when one of its
+ * space-separated terms equals a requested id, letter case included. The ids
+ * never reach SQLite. This is the exact, case-sensitive match `events.get`
+ * applies on this engine (stored ids compared whole; the validator admits
  * printable ASCII ids only, holding a letter or a digit), so the summary
  * counts exactly the rows `events.get` lists for the same ids. A filter
  * that is missing or unreadable answers no groups.
@@ -567,7 +591,7 @@ type SummaryRow = { slot: number, action: unknown, error: number | null, count: 
 UserDatabase.prototype.summarize = async function (this: UserDatabaseInstance, params: SummarizeParams): Promise<SummaryGroup[]> {
   const filter: string[] | null | false = summaryAccessFilter(params.accessStreamIds);
   if (filter === false) return [];
-  const wanted = filter === null ? null : new Set(filter.map((id) => id.toLowerCase()));
+  const wanted = filter === null ? null : new Set(filter);
   const binds = { slot: params.slotSeconds, errorType: SUMMARY_ERROR_TYPE };
   const groups = new Map<string, SummaryGroup>();
   const merge = (rows: SummaryRow[]): void => {
@@ -593,7 +617,7 @@ UserDatabase.prototype.summarize = async function (this: UserDatabaseInstance, p
   const probe = db.prepare('SELECT time FROM events WHERE time > @cursor AND time < @to ORDER BY time LIMIT 1 OFFSET @offset');
   const aggregate = db.prepare(wanted === null
     ? SUMMARY_SELECT + ', count(*) AS count' + SUMMARY_WINDOW + ' GROUP BY 1, 2, 3'
-    : SUMMARY_SELECT + ', lower(streamIds) AS terms, count(*) AS count' + SUMMARY_WINDOW + ' GROUP BY 1, 2, 3, 4');
+    : SUMMARY_SELECT + ', streamIds AS terms, count(*) AS count' + SUMMARY_WINDOW + ' GROUP BY 1, 2, 3, 4');
   let cursor = params.fromTime;
   for (;;) {
     checkDeadline();

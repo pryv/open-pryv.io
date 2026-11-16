@@ -191,28 +191,28 @@ describe('[SQQP] userSQLite events.get query plans', function () {
   });
 
   // Last: it deletes the audit-shaped row.
-  it('[SQQP10] access and action terms are kept on insert, filled once for an existing file, and dropped once their rows are gone', async function () {
-    const vocab = (prefix) => userDb.db.prepare('SELECT term FROM events_fts_v WHERE term LIKE ? ORDER BY term').all(prefix + '%').map((r) => r.term);
+  it('[SQQP10] access and action terms are kept on insert in stored case, filled for an existing file, and dropped once their rows are gone', async function () {
     const terms = () => ({ accesses: userDb.getAllAccesses().map((r) => r.term), actions: userDb.getAllActions().map((r) => r.term) });
-    const fromVocab = () => ({ accesses: vocab('access-'), actions: vocab('action-') });
-    await userDb.createEvent({
-      id: 'sqqp-audit-2',
-      streamIds: ['access-Z', 'action-events.get'],
-      type: 'audit-log/pryv-api',
-      time: 501,
-      created: 501,
-      createdBy: 'test',
-      modified: 501,
-      modifiedBy: 'test'
-    });
-    assert.deepStrictEqual(terms(), { accesses: ['access-x', 'access-x:1', 'access-z'], actions: ['action-events.get', 'action-y'] });
-    assert.deepStrictEqual(terms(), fromVocab());
-    // A file from before the table: filled from the vocabulary when opened.
-    userDb.db.exec('DROP TABLE events_terms');
+    const add = (id, streamIds) => userDb.createEvent({ id, streamIds, type: 'audit-log/pryv-api', time: 501, created: 501, createdBy: 'test', modified: 501, modifiedBy: 'test' });
+    await add('sqqp-audit-2', ['access-Z', 'action-events.get', 'action-callBatch']);
+    // Neither is an access id: `Access-Up` does not start with `access-`, and
+    // `foo/access-odd` only holds the full-text token `access-odd`.
+    await add('sqqp-odd', ['Access-Up', 'foo/access-odd']);
+    const expected = { accesses: ['access-Z', 'access-x', 'access-x:1'], actions: ['action-callBatch', 'action-events.get', 'action-y'] };
+    assert.deepStrictEqual(terms(), expected, 'on insert');
+    // (i) The table missing: refilled in stored case from the rows.
+    userDb.db.exec('DROP TABLE events_stream_terms');
     await userDb.init();
-    assert.deepStrictEqual(terms(), fromVocab());
+    assert.deepStrictEqual(terms(), expected, 'refilled');
+    // (ii) A file from an earlier release: its lower-cased `events_terms` is
+    // dropped and the table rebuilt, even next to a stale one.
+    userDb.db.exec("DELETE FROM events_stream_terms; INSERT INTO events_stream_terms (term) VALUES ('access-stale')");
+    userDb.db.exec("CREATE TABLE events_terms (term TEXT PRIMARY KEY) WITHOUT ROWID; INSERT INTO events_terms (term) VALUES ('access-z'), ('action-callbatch')");
+    await userDb.init();
+    assert.deepStrictEqual(terms(), expected, 'rebuilt from an earlier release');
+    assert.strictEqual(userDb.db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'events_terms'").get(), undefined);
+    // (iii) After a delete, the terms with no row left are gone.
     await userDb.deleteEvents({ query: [{ type: 'equal', content: { field: 'id', value: 'sqqp-audit' } }] });
-    assert.deepStrictEqual(terms(), { accesses: ['access-z'], actions: ['action-events.get'] });
-    assert.deepStrictEqual(terms(), fromVocab());
+    assert.deepStrictEqual(terms(), { accesses: ['access-Z'], actions: ['action-callBatch', 'action-events.get'] });
   });
 });

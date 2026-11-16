@@ -263,6 +263,8 @@ function init (opts: any = {}) {
   Object.assign(global, baseGlobals, opts.globals || {});
 }
 
+const SLOW_CHECK_MS = 5000;
+
 /**
  * Get mocha hooks for integrity checks
  */
@@ -282,10 +284,23 @@ function getMochaHooks (isParallelMode = false) {
 
   async function checkIndexAndPlatformIntegrity (title: any) {
     await initIndexPlatform();
-    const checks = [
-      await platform.checkIntegrity(),
-      await usersIndex.checkIntegrity()
-    ];
+    // A check still running after SLOW_CHECK_MS is reported with the side it
+    // is on: a rare hang of this hook (mocha timeout) stops the whole run, and
+    // the report tells the platform side from the users index side.
+    const started = Date.now();
+    let side = 'platform';
+    const watch = setTimeout(() => {
+      process.stderr.write(`[integrity hook] ${title}: ${side} check still running after ${Date.now() - started} ms\n`);
+    }, SLOW_CHECK_MS);
+    watch.unref();
+    const checks: any[] = [];
+    try {
+      checks.push(await platform.checkIntegrity());
+      side = 'users index';
+      checks.push(await usersIndex.checkIntegrity());
+    } finally {
+      clearTimeout(watch);
+    }
     for (const check of checks) {
       if (check.errors.length > 0) {
         const checkStr = util.inspect(checks, false, null, true);

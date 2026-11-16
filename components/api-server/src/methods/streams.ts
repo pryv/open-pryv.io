@@ -310,8 +310,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       const isPathStyleId = streamId.startsWith(':_cmc:');
       const keepAsGiven = isPathStyleId || commonFns.isValidStreamIdForCreation(streamId);
       const slugId = keepAsGiven ? streamId : slugify(streamId);
+      // Whitespace or a control character is refused in the final id on every
+      // branch (a path-style id is kept as given): the SQLite engine stores an
+      // event's stream ids separated by spaces, so such an id would file its
+      // events under other streams too.
       if (string.isReservedId(streamId) || string.isReservedId(slugId) ||
-          string.isBuiltInPropertyName(streamId) || string.isBuiltInPropertyName(slugId)) {
+          string.isBuiltInPropertyName(streamId) || string.isBuiltInPropertyName(slugId) ||
+          /[\s\u0000-\u001f\u007f]/.test(slugId)) { // eslint-disable-line no-control-regex
         return process.nextTick(next.bind(null, errors.invalidItemId('The specified id "' + params.id + '" is not allowed.')));
       }
       params.id = storeDataUtils.getFullItemId(storeId, slugId);

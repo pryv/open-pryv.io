@@ -358,17 +358,15 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
             const counted = async (db, ids) => (await db.summarize({ fromTime: 0, toTime: 100000, slotSeconds: H, accessStreamIds: ids }))
               .reduce((sum, g) => sum + g.count, 0);
             const listed = async (db, ids) => (await db.getEvents({ query: [{ type: 'streamsQuery', content: [[{ any: ids }]] }] })).length;
-            // An id holding a character a full-text engine splits on (`%`) may
-            // list more there; equality is required for the other ids.
-            const tokenOnly = (ids) => ids.every((id) => /^[A-Za-z0-9_:.-]+$/.test(id));
+            // Both match stored ids whole and case-sensitively: equal counts.
             for (const ids of requests) {
               const label = JSON.stringify(ids);
-              assert.ok(await counted(full, ids) <= await listed(full, ids), label + ': never above what getEvents lists');
-              if (tokenOnly(ids)) {
-                assert.strictEqual(await counted(cleanDb, ids), await listed(cleanDb, ids), label + ': equal without glued rows');
-              } else {
-                assert.ok(await counted(cleanDb, ids) <= await listed(cleanDb, ids), label + ': never above what getEvents lists');
-              }
+              assert.strictEqual(await counted(full, ids), await listed(full, ids), label + ': equal to what getEvents lists');
+              assert.strictEqual(await counted(cleanDb, ids), await listed(cleanDb, ids), label + ': equal without glued rows');
+            }
+            // Letter case is part of the id.
+            for (const [ids, n] of [[['Access-Mixed8'], 1], [['access-mixed8'], 0], [['ACCESS-MIXED8'], 0], [['ACCESS-A8'], 0], [['access-a8'], 2], [['access-a8', 'ACCESS-A8'], 2]]) {
+              assert.strictEqual(await counted(cleanDb, ids), n, JSON.stringify(ids));
             }
             // `%` and `_` are literal.
             assert.strictEqual(await counted(full, ['access-a8%']), 0);
