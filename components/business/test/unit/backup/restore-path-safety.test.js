@@ -584,6 +584,7 @@ function statefulIndex (o) {
   const byName = new Map();
   o.usersLocalIndex.addUser = async (username, userId) => { byName.set(username, userId); };
   o.usersLocalIndex.getUserId = async (username) => byName.get(username) ?? null;
+  o.usersLocalIndex.getAllByUsernameMap = async () => byName;
   o.usersLocalIndex.deleteById = async (userId) => {
     for (const [name, id] of byName) if (id === userId) byName.delete(name);
   };
@@ -1034,5 +1035,17 @@ describe('[RSFC] restore: an account whose import fails once written to is clear
     assert.deepStrictEqual(clears, [CUID1_ID, CUID2_ID, CUID2_ID]);
     assert.strictEqual(await o.usersLocalIndex.getUserId('firstuser'), CUID1_ID, 'the account restored before is kept');
     assert.strictEqual(await o.usersLocalIndex.getUserId('validname'), CUID2_ID, 'an account indexed before keeps its entry');
+  });
+
+  it('[RSFC4] an account on this core under another name (renamed since the backup) keeps its entry', async function () {
+    const { o, clears } = failingAfterEvents(CUID2_ID);
+    await o.usersLocalIndex.addUser('renamedname', CUID2_ID);
+    o.usersLocalIndex.getUsername = async (userId) => {
+      for (const [name, id] of await o.usersLocalIndex.getAllByUsernameMap()) if (id === userId) return name;
+      return null;
+    };
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users, makeUserReader({ events })), { overwrite: true }), /ENOSPC/);
+    assert.ok(clears.includes(CUID2_ID), 'the account is emptied');
+    assert.strictEqual(await o.usersLocalIndex.getUserId('renamedname'), CUID2_ID, 'its entry under its current name stays');
   });
 });

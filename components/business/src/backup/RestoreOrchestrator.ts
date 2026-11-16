@@ -410,7 +410,9 @@ class RestoreOrchestrator {
     let indexedHere = false;
     try {
       await this.usersLocalIndex.addUser(username, targetUserId);
-      indexedHere = true;
+      // An account this core indexed before (under another name) keeps its
+      // entries: releasing by id would remove them too.
+      indexedHere = this.preExistingAccounts?.has(targetUserId) !== true;
     } catch (e) {
       // User may already exist — that's fine if we're overwriting
       if (!opts.overwrite) throw e;
