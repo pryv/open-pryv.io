@@ -167,12 +167,12 @@ describe('[CQRY] Content-query conditions', () => {
         for (const field of ['content', 'clientData']) {
           const [condition] = validateAndNormalizeConditions([rawCondition], field);
           const where = jsonConditionToSql(condition);
-          const got = db.prepare(`SELECT rowidx FROM events WHERE ${where} ORDER BY rowidx`).all().map((r) => r.rowidx);
+          const got = db.prepare(`SELECT rowidx FROM events WHERE ${where.sql} ORDER BY rowidx`).all(...where.params).map((r) => r.rowidx);
           const expected = FIXTURES
             .map((fixture, idx) => ({ fixture, idx }))
             .filter(({ fixture }) => matchesConditions({ [field]: fixture }, [condition]))
             .map(({ idx }) => idx);
-          assert.deepStrictEqual(got, expected, `field=${field} WHERE ${where}`);
+          assert.deepStrictEqual(got, expected, `field=${field} WHERE ${where.sql} ${JSON.stringify(where.params)}`);
         }
       });
     }

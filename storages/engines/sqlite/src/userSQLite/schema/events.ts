@@ -13,7 +13,6 @@ type Schema = {
   toDB: (event: EventLike) => DbEvent;
   fromDB: (dbEvent: DbEvent) => EventLike;
   fromDBHistory: (event: DbEvent) => EventLike;
-  coerceValueForColumn: (column: string, value: unknown) => unknown;
 };
 type EventLike = { id?: string; streamIds?: string[]; time?: number; endTime?: number | null; deleted?: number | null; integrity?: string | null; headId?: string | null; type?: string; content?: unknown; description?: string; created?: number; clientData?: unknown; attachments?: unknown; trashed?: boolean; createdBy?: string; modifiedBy?: string; modified?: number; [k: string]: unknown };
 type DbEvent = { eventid?: string; streamIds?: string | string[]; trashed?: number | boolean; content?: string | null; attachments?: string | null; clientData?: string | null; [k: string]: unknown };
@@ -43,8 +42,7 @@ const schema: Schema = {
 
   toDB,
   fromDB,
-  fromDBHistory,
-  coerceValueForColumn
+  fromDBHistory
 };
 
 const IDS_SEPARATOR = ' ';
@@ -135,23 +133,6 @@ function fromDBHistory (dbEvent: DbEvent): EventLike {
   return event;
 }
 
-/**
- * - Add eventual '' to values that are not of type "REAL" and escape possible '
- * - Transform booleans to 0/1
- * - Check that numbers are numbers
- * Does not handle "null" values
- */
-function coerceValueForColumn (column: string, value: unknown): unknown {
-  return coerceFns[schema.dbSchema[column].coerce as keyof typeof coerceFns](value);
-}
-
-const coerceFns = {
-  // SQL string literals escape ' by doubling; backslash is NOT an escape in SQLite
-  txt: (value: unknown) => { return "'" + (value + '').replaceAll("'", "''") + "'"; },
-  num: (value: unknown) => { return (typeof value === 'number') ? value : parseFloat(value as string); },
-  bool: (value: unknown) => { return value ? 1 : 0; }
-};
-
 const dbSchema = schema.dbSchema;
 const ALL_EVENTS_TAG = schema.ALL_EVENTS_TAG;
-export { dbSchema, ALL_EVENTS_TAG, toDB, fromDB, fromDBHistory, coerceValueForColumn };
+export { dbSchema, ALL_EVENTS_TAG, toDB, fromDB, fromDBHistory };
