@@ -36,6 +36,17 @@ type SqlPart = { sql: string, params: unknown[] };
 function toSQLiteStreamFilter (streamQuery: AndBlock[] | null): { fts: string | null, exact: SqlPart } | null {
   if (streamQuery == null) return null;
   const blocks = streamQuery;
+  // An item holds a non-empty `any` or a non-empty `not`, not both: this is
+  // the authorization filter, an item with no id is refused rather than read
+  // as "no constraint".
+  for (const andBlock of blocks) {
+    if (typeof andBlock === 'string') continue;
+    for (const andItem of andBlock) {
+      const hasAny = andItem.any != null && andItem.any.length > 0;
+      const hasNot = andItem.not != null && andItem.not.length > 0;
+      if (hasAny === hasNot) throw new Error('Stream query item needs exactly one non-empty any or not');
+    }
+  }
   // A block with no id (`*`, or nothing) keeps every event, and so does an OR
   // holding one. Decided on the ids, not on the full-text text, where an id
   // `..` reads as the tag every event carries.

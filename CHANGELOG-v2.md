@@ -178,6 +178,8 @@
   (`x y`). The id `..` and the empty id match no event (`..` matched every event). An id holding
   no letter, digit or `-_:.` (such as `/`) now finds its events (it found none). Ids created
   through the API are unaffected. The PostgreSQL engine already matched exactly.
+- On the SQLite engine, `%` and `_` in a `types` class (`note_x/*`) are literal characters, no
+  longer wildcards, and `/*` alone is an exact type, not a class.
 
 ## 2.0.0-rc.84 - 2026-11-13
 
