@@ -18,6 +18,7 @@ import type { SummarizeParams, SummaryGroup } from '../../../../interfaces/audit
 // EventRow equals the canonical SqliteStmt's default row shape, so the
 // shared statement type applies unparameterized.
 import type { SqliteDb, SqliteStmt } from '../types.ts';
+import type { SqlPart } from './streamQueryUtils.ts';
 const require = createRequire(import.meta.url);
 
 const SQLite3 = require('better-sqlite3');
@@ -26,7 +27,7 @@ const { Readable } = require('stream');
 const concurrentSafeWrite = require('../concurrentSafeWrite.ts');
 const eventsSchema = require('./schema/events.ts');
 const fullTextSearch = require('./fullTextSearch.ts');
-const { toSQLiteQuery } = require('./streamQueryUtils.ts');
+const { toSQLiteStreamFilter } = require('./streamQueryUtils.ts');
 const { summaryBudgetError, summaryInterruptedError, summaryAccessFilter, SUMMARY_ERROR_TYPE } = require('../../../../interfaces/auditStorage/UserAuditDatabase.ts');
 
 /** A raw events-table row: arbitrary columns per eventsSchema. */
@@ -201,9 +202,9 @@ UserDatabase.prototype.close = function (this: UserDatabaseInstance): void {
 UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params: GetParams): DomainEvent[] | null {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
-  const queryString = prepareEventsGetQuery(this.db, params);
-  this.logger.debug(`GET events: ${queryString}`);
-  const res = this.db.prepare(queryString).all();
+  const query = prepareEventsGetQuery(this.db, params);
+  this.logger.debug(`GET events: ${query.sql}`);
+  const res = this.db.prepare(query.sql).all(...query.params);
   if (res != null) {
     return res.map(eventsSchema.fromDB);
   }
@@ -213,10 +214,9 @@ UserDatabase.prototype.getEvents = function (this: UserDatabaseInstance, params:
 UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance, params: GetParams): NodeReadable {
   params.query.push({ type: 'equal', content: { field: 'deleted', value: null } });
   params.query.push({ type: 'equal', content: { field: 'headId', value: null } });
-  const queryString = prepareEventsGetQuery(this.db, params);
-  this.logger.debug(`GET events streamed: ${queryString}`);
-  const query = this.db.prepare(queryString);
-  return readableEventsStreamForIterator(query.iterate());
+  const query = prepareEventsGetQuery(this.db, params);
+  this.logger.debug(`GET events streamed: ${query.sql}`);
+  return readableEventsStreamForIterator(this.db.prepare(query.sql).iterate(...query.params));
 };
 
 /**
@@ -233,12 +233,12 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
  *   0.1 ms on 500k rows); `NOT INDEXED` rules that plan out.
  * - `modifiedSince` with no stream filter: see `modifiedSincePlan`.
  */
-function prepareEventsGetQuery (db: SqliteDb, params: GetParams): string {
-  const hasStreamFilter = (params.query || []).some((item) =>
-    item.type === 'streamsQuery' && toSQLiteQuery(item.content as Parameters<typeof toSQLiteQuery>[0]) !== null);
-  if (hasStreamFilter) return 'SELECT * FROM events NOT INDEXED ' + prepareQuery(params);
+function prepareEventsGetQuery (db: SqliteDb, params: GetParams): SqlPart & { usesFullText: boolean } {
+  const tail = prepareQuery(params);
+  if (tail.usesFullText) return { ...tail, sql: 'SELECT * FROM events NOT INDEXED ' + tail.sql };
   const plan = modifiedSincePlan(db, params);
-  return 'SELECT * FROM events ' + plan.indexedBy + prepareQuery(plan.params);
+  const planned = plan.params === params ? tail : prepareQuery(plan.params);
+  return { ...planned, sql: 'SELECT * FROM events ' + plan.indexedBy + planned.sql };
 }
 
 // Above this many rows modified since the bound, the time index is walked.
@@ -263,8 +263,8 @@ function modifiedSincePlan (db: SqliteDb, params: GetParams): { indexedBy: strin
     q.type === 'greater' && (q.content as { field?: string })?.field === 'modified');
   if (item == null) return { indexedBy: '', params };
   const content = item.content as { field: string, value: unknown };
-  const bound = eventsSchema.coerceValueForColumn('modified', content.value);
-  const row = db.prepare(`SELECT count(*) AS n FROM (SELECT 1 FROM events WHERE modified > ${bound} LIMIT ${modifiedProbeCap})`).get() as { n: number };
+  const row = db.prepare('SELECT count(*) AS n FROM (SELECT 1 FROM events WHERE modified > ? LIMIT ?)')
+    .get(bindValue('modified', content.value), modifiedProbeCap) as { n: number };
   if (row.n < modifiedProbeCap) return { indexedBy: 'INDEXED BY events_modified ', params };
   const query = params.query.map((q) => q === item ? { type: 'greater', content: { ...content, noIndex: true } } : q);
   return { indexedBy: '', params: { ...params, query } };
@@ -490,14 +490,14 @@ UserDatabase.prototype.deleteEventHistory = async function (this: UserDatabaseIn
 };
 
 UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance, params: GetParams): Promise<{ changes: number } | null> {
-  const queryString = prepareEventsDeleteQuery(params);
-  if (queryString.indexOf('MATCH') > 0) {
-    this.logger.debug(`DELETE events one by one as query includes "MATCH": ${queryString}`);
+  const query = prepareEventsDeleteQuery(params);
+  if (query.sql.includes('MATCH')) {
+    this.logger.debug(`DELETE events one by one as query includes "MATCH": ${query.sql}`);
     // HACK: SQLite does not know how to delete with "MATCH" statement,
     //       so we're getting events that match and deleting them one by one
     const selectEventsToBeDeleted = prepareEventsGetQuery(this.db, params);
 
-    for (const event of this.db.prepare(selectEventsToBeDeleted).iterate() as Iterable<{ eventid: string }>) {
+    for (const event of this.db.prepare(selectEventsToBeDeleted.sql).iterate(...selectEventsToBeDeleted.params) as Iterable<{ eventid: string }>) {
       this.logger.debug(`  > DELETE event: ${event.eventid}`);
       await concurrentSafeWrite.execute(() => {
         this.eventQueries.deleteById.run(event.eventid);
@@ -508,9 +508,9 @@ UserDatabase.prototype.deleteEvents = async function (this: UserDatabaseInstance
   }
   // else
   let res: { changes: number } | null = null;
-  this.logger.debug(`DELETE events: ${queryString}`);
+  this.logger.debug(`DELETE events: ${query.sql}`);
   await concurrentSafeWrite.execute(() => {
-    res = this.db.prepare(queryString).run();
+    res = this.db.prepare(query.sql).run(...query.params);
   });
   if ((res as { changes: number } | null)?.changes) await rebuildTerms(this);
   return res;
@@ -643,15 +643,42 @@ UserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInsta
   }
 };
 
-function prepareEventsDeleteQuery (params: GetParams): string {
+function prepareEventsDeleteQuery (params: GetParams): SqlPart & { usesFullText: boolean } {
   if (params.streams) { throw new Error(`Events DELETE with stream query not supported yet: ${JSON.stringify(params)}`); }
-  return 'DELETE FROM events ' + prepareQuery(params, true);
+  const tail = prepareQuery(params, true);
+  return { ...tail, sql: 'DELETE FROM events ' + tail.sql };
 }
 
-const converters: Record<string, (content: unknown) => string | null> = {
+/**
+ * A column of the events table, for the SQL text: never a value. Anything
+ * else is refused (column names cannot be bound).
+ */
+function column (field: string): string {
+  if (!Object.hasOwn(eventsSchema.dbSchema, field)) throw new Error(`Unknown events column: ${JSON.stringify(field)}`);
+  return field;
+}
+
+/** The value bound for `field`: text, a number, or 0 / 1. */
+function bindValue (field: string, value: unknown): unknown {
+  switch (eventsSchema.dbSchema[column(field)].coerce) {
+    case 'num': {
+      const n = typeof value === 'number' ? value : parseFloat(value as string);
+      if (Number.isNaN(n)) throw new Error(`Not a number for events column ${field}: ${JSON.stringify(value)}`);
+      return n;
+    }
+    case 'bool': return value ? 1 : 0;
+    default: return String(value);
+  }
+}
+
+// Every value is a bound parameter (`?`); the SQL text holds column names
+// (checked by `column`), operators and constants only.
+// `usesFullText`: the condition selects its rows through the full-text index
+// (the statement then reads the rows of that set, see `prepareEventsGetQuery`).
+const converters: Record<string, (content: unknown) => (SqlPart & { usesFullText?: boolean }) | null> = {
   equal: (content: unknown) => {
     const c = content as { field: string, value: unknown };
-    const realField = (c.field === 'id') ? 'eventid' : c.field;
+    const realField = column((c.field === 'id') ? 'eventid' : c.field);
     // Unary `+` keeps the planner off an index for conditions nearly every row
     // meets (not deleted, head version, not trashed). Without statistics it
     // picked those indexes, then scanned and sorted the whole table before
@@ -659,127 +686,145 @@ const converters: Record<string, (content: unknown) => string | null> = {
     // `trashed = 1` keeps its index: few rows are trashed, so it is selective.
     const nonSelective = (c.value === null && (realField === 'deleted' || realField === 'headId')) ||
       (realField === 'trashed' && c.value === false);
-    const column = nonSelective ? '+' + realField : realField;
-    if (c.value === null) return `${column} IS NULL`;
-    const value = eventsSchema.coerceValueForColumn(realField, c.value);
-    return `${column} = ${value}`;
+    const col = nonSelective ? '+' + realField : realField;
+    if (c.value === null) return { sql: `${col} IS NULL`, params: [] };
+    return { sql: `${col} = ?`, params: [bindValue(realField, c.value)] };
   },
   greater: (content: unknown) => {
     const c = content as { field: string, value: unknown, noIndex?: boolean };
-    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
-    return `${c.noIndex === true ? '+' : ''}${c.field} > ${value}`;
+    return { sql: `${c.noIndex === true ? '+' : ''}${column(c.field)} > ?`, params: [bindValue(c.field, c.value)] };
   },
   greaterOrEqual: (content: unknown) => {
     const c = content as { field: string, value: unknown };
-    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
-    return `${c.field} >= ${value}`;
+    return { sql: `${column(c.field)} >= ?`, params: [bindValue(c.field, c.value)] };
   },
   lowerOrEqual: (content: unknown) => {
     const c = content as { field: string, value: unknown };
-    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
-    return `${c.field} <= ${value}`;
+    return { sql: `${column(c.field)} <= ?`, params: [bindValue(c.field, c.value)] };
   },
   greaterOrEqualOrNull: (content: unknown) => {
     const c = content as { field: string, value: unknown };
-    const value = eventsSchema.coerceValueForColumn(c.field, c.value);
-    return `(${c.field} >= ${value} OR ${c.field} IS NULL)`;
+    const col = column(c.field);
+    return { sql: `(${col} >= ? OR ${col} IS NULL)`, params: [bindValue(c.field, c.value)] };
   },
   typesList: (content: unknown) => {
     const list = content as string[];
     if (list.length === 0) return null;
+    const params: unknown[] = [];
     const lt = list.map((type: string) => {
-      const typeCorced = eventsSchema.coerceValueForColumn('type', type);
+      const text = String(type);
       // unsupported "*" query for types
-      const starPos = typeCorced.indexOf('/*');
+      const starPos = text.indexOf('/*');
       if (starPos > 0) {
         // Keep the slash: `note/*` matches `note/...`, never `notebook/...`.
-        const classWithSlash = typeCorced.substring(0, starPos + 1);
-        return `type LIKE ${classWithSlash}%'`;
+        params.push(escapeLike(text.substring(0, starPos + 1)) + '%');
+        return "type LIKE ? ESCAPE '!'";
       }
-      return `type = ${typeCorced}`;
+      params.push(text);
+      return 'type = ?';
     });
-    return '(' + lt.join(' OR ') + ')';
+    return { sql: '(' + lt.join(' OR ') + ')', params };
   },
   streamsQuery: (content: unknown) => {
-    const str = toSQLiteQuery(content);
-    if (str === null) return null;
-    // The expression is an SQL string literal: a single quote inside it is doubled.
-    return 'rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH \'' + str.replace(/'/g, "''") + '\')';
+    const filter = toSQLiteStreamFilter(content as Parameters<typeof toSQLiteStreamFilter>[0]);
+    if (filter === null) return null;
+    if (filter.fts === null) return filter.exact;
+    return {
+      sql: `rowid IN (SELECT rowid FROM events_fts WHERE streamIds MATCH ?) AND ${filter.exact.sql}`,
+      params: [filter.fts, ...filter.exact.params],
+      usesFullText: true
+    };
   },
   jsonCondition: (content: unknown) => {
     return jsonConditionToSql(content as NormalizedCondition);
   }
 };
 
+/** `%`, `_` and the escape character `!` match themselves in a `LIKE … ESCAPE '!'` pattern. */
+function escapeLike (text: string): string {
+  return text.replace(/[!%_]/g, (m) => '!' + m);
+}
+
 /**
  * Translate a normalized content/clientData condition to SQL.
  * Matching is strict on JSON types (semantics defined by the reference
  * matcher in storages/shared/contentQueryConditions.ts): `json_type()`
  * guards keep JSON `true` from matching `1` (json_extract maps both to 1)
- * and keep array/object values out of scalar comparisons.
+ * and keep array/object values out of scalar comparisons. The JSON path and
+ * every value are bound parameters.
  */
-function jsonConditionToSql (condition: NormalizedCondition): string {
+function jsonConditionToSql (condition: NormalizedCondition): SqlPart {
   const col = condition.field === 'clientData' ? 'clientData' : 'content';
-  // Segments are grammar-validated ([a-zA-Z0-9_:-]) — always quote them so
+  // Segments are grammar-validated ([a-zA-Z0-9_:-]); quoted in the path so
   // ':' and '-' never need json-path escaping rules.
   const jsonPath = condition.path === null
     ? '$'
     : '$' + condition.path.map((segment) => `."${segment}"`).join('');
-  const jx = `json_extract(${col}, '${jsonPath}')`;
-  const jt = `json_type(${col}, '${jsonPath}')`;
+  const params: unknown[] = [];
+  // Each call writes one placeholder and binds its value, in text order.
+  const jx = (): string => { params.push(jsonPath); return `json_extract(${col}, ?)`; };
+  const jt = (): string => { params.push(jsonPath); return `json_type(${col}, ?)`; };
+  const bind = (value: unknown): string => { params.push(value); return '?'; };
+  const list = (values: unknown[]): string => values.map(bind).join(', ');
 
   const eqSql = (value: ScalarValue): string => {
-    if (typeof value === 'boolean') return `${jt} = '${value ? 'true' : 'false'}'`;
-    if (typeof value === 'number') return `(${jt} IN ('integer', 'real') AND ${jx} = ${value})`;
-    return `(${jt} = 'text' AND ${jx} = ${sqliteString(value)})`;
+    if (typeof value === 'boolean') return `${jt()} = '${value ? 'true' : 'false'}'`;
+    if (typeof value === 'number') return `(${jt()} IN ('integer', 'real') AND ${jx()} = ${bind(value)})`;
+    return `(${jt()} = 'text' AND ${jx()} = ${bind(value)})`;
   };
 
-  switch (condition.op) {
-    case 'eq':
-      return eqSql(condition.value as ScalarValue);
-    case 'neq':
-      return `(${jt} IS NOT NULL AND NOT ${eqSql(condition.value as ScalarValue)})`;
-    case 'in': {
-      const values = condition.value as ScalarValue[];
-      const strings = values.filter((v): v is string => typeof v === 'string');
-      const numbers = values.filter((v): v is number => typeof v === 'number');
-      const booleans = values.filter((v): v is boolean => typeof v === 'boolean');
-      const groups: string[] = [];
-      if (strings.length > 0) groups.push(`(${jt} = 'text' AND ${jx} IN (${strings.map(sqliteString).join(', ')}))`);
-      if (numbers.length > 0) groups.push(`(${jt} IN ('integer', 'real') AND ${jx} IN (${numbers.join(', ')}))`);
-      if (booleans.includes(true) && booleans.includes(false)) groups.push(`${jt} IN ('true', 'false')`);
-      else if (booleans.length > 0) groups.push(`${jt} = '${booleans[0] ? 'true' : 'false'}'`);
-      return groups.length === 1 ? groups[0] : `(${groups.join(' OR ')})`;
+  const sql = ((): string => {
+    switch (condition.op) {
+      case 'eq':
+        return eqSql(condition.value as ScalarValue);
+      case 'neq': {
+        const present = `${jt()} IS NOT NULL`;
+        return `(${present} AND NOT ${eqSql(condition.value as ScalarValue)})`;
+      }
+      case 'in': {
+        const values = condition.value as ScalarValue[];
+        const strings = values.filter((v): v is string => typeof v === 'string');
+        const numbers = values.filter((v): v is number => typeof v === 'number');
+        const booleans = values.filter((v): v is boolean => typeof v === 'boolean');
+        const groups: string[] = [];
+        if (strings.length > 0) groups.push(`(${jt()} = 'text' AND ${jx()} IN (${list(strings)}))`);
+        if (numbers.length > 0) groups.push(`(${jt()} IN ('integer', 'real') AND ${jx()} IN (${list(numbers)}))`);
+        if (booleans.includes(true) && booleans.includes(false)) groups.push(`${jt()} IN ('true', 'false')`);
+        else if (booleans.length > 0) groups.push(`${jt()} = '${booleans[0] ? 'true' : 'false'}'`);
+        return groups.length === 1 ? groups[0] : `(${groups.join(' OR ')})`;
+      }
+      case 'exists':
+        return `${jt()} IS ${condition.value === true ? 'NOT ' : ''}NULL`;
+      case 'gt':
+      case 'gte':
+      case 'lt':
+      case 'lte': {
+        const sqlOp = { gt: '>', gte: '>=', lt: '<', lte: '<=' }[condition.op];
+        return `(${jt()} IN ('integer', 'real') AND ${jx()} ${sqlOp} ${bind(condition.value as number)})`;
+      }
+      case 'prefix':
+        return `(${jt()} = 'text' AND ${jx()} LIKE ${bind(escapeLike(condition.value as string) + '%')} ESCAPE '!')`;
+      default:
+        throw new Error(`Unsupported JSON condition operator: ${(condition as { op: string }).op}`);
     }
-    case 'exists':
-      return `${jt} IS ${condition.value === true ? 'NOT ' : ''}NULL`;
-    case 'gt':
-    case 'gte':
-    case 'lt':
-    case 'lte': {
-      const sqlOp = { gt: '>', gte: '>=', lt: '<', lte: '<=' }[condition.op];
-      return `(${jt} IN ('integer', 'real') AND ${jx} ${sqlOp} ${condition.value as number})`;
-    }
-    case 'prefix': {
-      const escaped = (condition.value as string).replace(/[!%_]/g, (m) => '!' + m);
-      return `(${jt} = 'text' AND ${jx} LIKE ${sqliteString(escaped + '%')} ESCAPE '!')`;
-    }
-    default:
-      throw new Error(`Unsupported JSON condition operator: ${(condition as { op: string }).op}`);
-  }
+  })();
+  return { sql, params };
 }
 
-/** Proper SQLite string literal ('' doubling — backslash is NOT an escape in SQL). */
-function sqliteString (value: string): string {
-  return "'" + value.replaceAll("'", "''") + "'";
-}
-
-function prepareQuery (params: GetParams = { query: [] }, isDelete = false): string {
+/**
+ * The `WHERE` / `ORDER BY` / `LIMIT` / `OFFSET` tail of an events statement
+ * and its bound values. `usesFullText`: the condition reads `events_fts`.
+ */
+function prepareQuery (params: GetParams = { query: [] }, isDelete = false): SqlPart & { usesFullText: boolean } {
   const ands: string[] = [];
+  const values: unknown[] = [];
+  let usesFullText = false;
   for (const item of params.query) {
     const newCondition = converters[item.type](item.content);
     if (newCondition != null) {
-      ands.push(newCondition);
+      ands.push(newCondition.sql);
+      values.push(...newCondition.params);
+      if (newCondition.usesFullText === true) usesFullText = true;
     }
   }
 
@@ -794,30 +839,29 @@ function prepareQuery (params: GetParams = { query: [] }, isDelete = false): str
       const sorts: string[] = [];
       for (const [field, order] of Object.entries(sort)) {
         const orderStr = order > 0 ? 'ASC' : 'DESC';
-        sorts.push(`${field} ${orderStr}`);
+        sorts.push(`${column(field)} ${orderStr}`);
       }
       queryString += ' ORDER BY ' + sorts.join(', ');
     }
   }
 
-  queryString += pagingClause(params.options?.limit, params.options?.skip);
-  return queryString;
+  const paging = pagingClause(params.options?.limit, params.options?.skip);
+  return { sql: queryString + paging.sql, params: [...values, ...paging.params], usesFullText };
 }
 
 /**
  * `LIMIT` / `OFFSET` as the PostgreSQL engine applies them: a given limit
  * (0 included) caps the rows, and an offset alone needs `LIMIT -1` (no limit),
  * since SQLite has no `OFFSET` without `LIMIT`. Only non-negative integers
- * reach the SQL text.
+ * are applied, bound.
  */
-function pagingClause (limit: unknown, skip: unknown): string {
+function pagingClause (limit: unknown, skip: unknown): SqlPart {
   const hasLimit = Number.isInteger(limit) && (limit as number) >= 0;
   const hasSkip = Number.isInteger(skip) && (skip as number) > 0;
-  let clause = '';
-  if (hasLimit) clause += ' LIMIT ' + limit;
-  else if (hasSkip) clause += ' LIMIT -1';
-  if (hasSkip) clause += ' OFFSET ' + skip;
-  return clause;
+  const part: SqlPart = { sql: '', params: [] };
+  if (hasLimit || hasSkip) { part.sql += ' LIMIT ?'; part.params.push(hasLimit ? limit : -1); }
+  if (hasSkip) { part.sql += ' OFFSET ?'; part.params.push(skip); }
+  return part;
 }
 
 export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setSummaryChunkRows, _summaryCounters };

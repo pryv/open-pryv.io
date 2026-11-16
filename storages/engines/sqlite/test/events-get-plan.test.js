@@ -80,7 +80,9 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     }
     const rows = [];
     for await (const e of stream) rows.push(e);
-    const plan = userDb.db.prepare('EXPLAIN QUERY PLAN ' + sql).all().map((r) => r.detail).join(' | ');
+    // Values are bound (`?`): the plan does not depend on them.
+    const placeholders = (sql.match(/\?/g) || []).length;
+    const plan = userDb.db.prepare('EXPLAIN QUERY PLAN ' + sql).all(...new Array(placeholders).fill(null)).map((r) => r.detail).join(' | ');
     return { rows, plan, sql };
   }
 
@@ -152,7 +154,7 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     try {
       // 61 rows modified since 1: over the cap, the time index is walked.
       const many = await run({ modifiedSince: 1, fromTime: -1e12, toTime: 1e12 }, { limit: 10 });
-      assert.match(many.sql, /\+modified > 1/, many.sql);
+      assert.match(many.sql, /\+modified > \?/, many.sql);
       assert.match(many.plan, /USING INDEX events_time/, many.plan);
       assert.doesNotMatch(many.plan, /TEMP B-TREE/, many.plan);
       assert.deepStrictEqual(many.rows.map((e) => e.id), Array.from({ length: 10 }, (_, k) => 'sqqp-' + (59 - k)));

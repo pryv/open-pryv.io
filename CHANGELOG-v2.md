@@ -170,6 +170,15 @@
   clean; an account that was on the core before an `--overwrite` restore is left empty. The
   restore's error is reported; a failure of the cleanup is logged with what to do next.
 
+### SQLite storage: exact stream matching in `events.get`
+
+- On the SQLite engine, the `streams` filter of `events.get` (and of the audit store) matches a
+  stream id only when it equals a stored id, ignoring ASCII letter case. It no longer matches a
+  part of another id (`abc` matched an event of a stream `abc/def`), nor two neighbouring ids
+  (`x y`). The id `..` and the empty id match no event (`..` matched every event). An id holding
+  no letter, digit or `-_:.` (such as `/`) now finds its events (it found none). Ids created
+  through the API are unaffected. The PostgreSQL engine already matched exactly.
+
 ## 2.0.0-rc.84 - 2026-11-13
 
 > **Upgrade advice for operators.** One storage migration on PostgreSQL (the access integrity

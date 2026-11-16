@@ -159,6 +159,29 @@
   `_releaseUnindexedClaim` then removes the routing row too. A cleanup failure is logged, the
   original error rethrown. Tests `[RSFC1-3]`, `[RXCR11]` updated.
 
+### SQLite events / audit query: bound values, exact stream ids
+
+- `userSQLite/UserDatabase.ts`: the events query builder (`converters`, `jsonConditionToSql`,
+  `prepareQuery`, `pagingClause`, `modifiedSincePlan`) returns `{ sql, params }`: every value is a
+  bound parameter (`?`), including the JSON path, the `LIKE` patterns (`%` / `_` escaped in types
+  too), the full-text `MATCH` argument and `LIMIT` / `OFFSET`. Column names are checked against the
+  events schema (`column()`, an unknown one throws), in conditions and in `ORDER BY`.
+  `schema/events.ts` `coerceValueForColumn` (SQL literal text) is removed with its `[SQLE]` test.
+- Stream filter (`streamQueryUtils.ts` `toSQLiteStreamFilter`): the full-text index stays the
+  candidate prefilter, on the positive ids only (a superset); an exact condition then checks the
+  stored ids, `instr(lower(' ' || streamIds || ' '), lower(' id '))`, mirroring the any / not / OR
+  structure. ASCII case folding is kept on purpose: the SQLite audit store lists its
+  `action-` / `access-` children lower-cased, a client sends such an id back, and
+  `UserDatabase.summarize` folds the same way (unchanged; `[ASQ8]` equality holds). From 8 ids,
+  each a single full-text token, a row whose stored ids hold token characters only is decided by
+  the full-text index (exact on such a row); for one block only the dropped rows are looked up
+  (`rowid NOT IN (… MATCH nots)`). Lists over 32 ids are bound as one JSON value (`json_each`),
+  so a large expanded tree stays under the bound-variable limit. `NOT INDEXED` only with a
+  prefilter: a `not`-only filter walks the `time` index. Measured on a 1M-row audit file (limit
+  16): one access unchanged, 50 ids 77 -> 173 ms, `not` with 300 ids unchanged, `not` with 3 ids
+  237 -> 0 ms. Residual: two legacy ids differing only by letter case still match each other.
+  Tests `[SQQB1-9]`, `[SQQBA-E]`; `[SQQP]` plan test binds nulls for `EXPLAIN`.
+
 ### Access integrity hashed on the wire form
 
 - `business/src/integrity/integrity.ts`: `accesses.compute` / `hash` / `key` canonicalise the access
