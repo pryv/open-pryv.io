@@ -131,6 +131,43 @@ describe('[SQXH] SQLite per-user handles follow the file on disk', function () {
     }
   });
 
+  // The file check of a cached handle awaits a `stat`; a handle that leaves
+  // the cache meanwhile (eviction, `closeUser`) is closed by its removal and
+  // must not be handed out: its first statement would throw "The database
+  // connection is not open".
+  it('[SQXC] a handle closed while its file is checked is not handed out', async function () {
+    const userId = cuid();
+    const storage = new Storage('sqxc-' + cuid.slug());
+    await storage.init();
+    const { userAccountStorage: accountStorage } = require('../src/userAccountStorage.ts');
+    await accountStorage.init();
+    try {
+      await (await storage.forUser(userId)).createEvent(event('kept'));
+      await UserBaseStorageDb.forUser(userId);
+      await accountStorage.addPasswordHash(userId, 'hash', 'test');
+
+      // Each call starts its `stat`; the handle is closed before it resolves.
+      const pending = storage.forUser(userId);
+      storage.closeUser(userId);
+      const userDb = await pending;
+      assert.strictEqual(userDb.db.open, true, 'events / audit storage');
+      assert.deepStrictEqual(await eventIds(userDb), ['kept']);
+
+      const pendingBase = UserBaseStorageDb.forUser(userId);
+      UserBaseStorageDb.evict(userId);
+      assert.strictEqual((await pendingBase).db.open, true, 'base storage');
+
+      const pendingHash = accountStorage.getPasswordHash(userId);
+      accountStorage.closeUser(userId);
+      assert.strictEqual(await pendingHash, 'hash', 'account storage');
+    } finally {
+      storage.close();
+      UserBaseStorageDb.evict(userId);
+      accountStorage.closeUser(userId);
+      await userLocalDirectory.deleteUserDirectory(userId);
+    }
+  });
+
   // After an account erasure, a request still holding the id must not create
   // the user's directory and databases again: every opener refuses.
   it('[SQXE] after an account erasure, no per-user database is opened or created again', async function () {

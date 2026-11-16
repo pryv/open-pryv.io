@@ -161,6 +161,9 @@
 
 - `bin/backup.js`: an account deleted while a full backup runs is left out of the run, instead of
   being backed up empty and having its directory and empty databases created again on disk.
+- SQLite storage: a call that reached an account's database while the server was closing it (a
+  busy server letting go of the least used accounts) could fail with `unexpected-error` (HTTP 500);
+  the database is now opened again for it.
 
 ## 2.0.0-rc.84 - 2026-11-13
 

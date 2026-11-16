@@ -392,14 +392,18 @@ function closeUser (userId: string): void {
  * A cached connection is only reused while it still points at the file on
  * disk (see `fileIdentity`): when another process deleted or replaced the
  * account file (account deletion, restore), the stale connection is closed
- * and the file opened again. Costs one `stat` per call.
+ * and the file opened again. Costs one `stat` per call. A connection that
+ * left the cache during that `stat` (evicted, `closeUser`) was closed by its
+ * removal: it is never handed out.
  */
 async function getUserDB (userId: string): Promise<SQLite3Instance> {
   const cached = dbCache!.get(userId) as CachedAccountDb | undefined;
   if (cached != null) {
-    if (cached.fileId != null && await fileIdentity(cached.dbPath) === cached.fileId) return cached.db;
+    const sameFile = cached.fileId != null && await fileIdentity(cached.dbPath) === cached.fileId;
+    const stillCached = dbCache!.get(userId) === cached;
+    if (sameFile && stillCached) return cached.db;
     // Another caller may have reopened it while we were checking.
-    if (dbCache!.get(userId) === cached) dbCache!.delete(userId); // dispose closes the stale connection
+    if (stillCached) dbCache!.delete(userId); // dispose closes the stale connection
   }
   const current = dbCache!.get(userId) as CachedAccountDb | undefined;
   if (current != null) return current.db;

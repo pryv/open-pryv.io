@@ -61,14 +61,17 @@ class UserBaseStorageDb {
    * disk (see `fileIdentity`): when the user's directory was wiped (account
    * deletion, here or in another process) or the file replaced (restore),
    * the stale handle is closed and the file opened again. Costs one `stat`
-   * per call.
+   * per call. A handle that left the cache during that `stat` (evicted)
+   * was closed by its removal: it is never handed out.
    */
   static async forUser (userId: string): Promise<UserBaseStorageDb> {
     const cached = UserBaseStorageDb.cache.get(userId);
     if (cached != null) {
-      if (cached.fileId != null && await fileIdentity(cached.dbPath) === cached.fileId) return cached;
+      const sameFile = cached.fileId != null && await fileIdentity(cached.dbPath) === cached.fileId;
+      const stillCached = UserBaseStorageDb.cache.get(userId) === cached;
+      if (sameFile && stillCached) return cached;
       // Another caller may have reopened it while we were checking.
-      if (UserBaseStorageDb.cache.get(userId) === cached) UserBaseStorageDb.cache.delete(userId); // dispose closes the stale handle
+      if (stillCached) UserBaseStorageDb.cache.delete(userId); // dispose closes the stale handle
     }
     const current = UserBaseStorageDb.cache.get(userId);
     if (current != null) return current;

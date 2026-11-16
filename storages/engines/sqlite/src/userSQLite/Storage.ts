@@ -72,16 +72,21 @@ class SqliteStorage {
    * A cached handle is only reused while it still points at the file on
    * disk (see `fileIdentity`): when another process deleted or replaced the
    * user's file (account deletion, restore), the stale handle is closed and
-   * the file opened again. Costs one `stat` per call.
+   * the file opened again. Costs one `stat` per call. A handle that left the
+   * cache during that `stat` (evicted, `closeUser`, `deleteUser`) was closed
+   * by its removal: it is never handed out, the user's database is resolved
+   * again.
    */
   async forUser (userId: string): Promise<UserDbLike> {
     this.logger.debug('forUser: ' + userId);
     this.checkInitialized();
     const cached = this.userDBsCache.get(userId);
     if (cached != null) {
-      if (cached.fileId != null && await fileIdentity(this.existingPathForUser(userId)) === cached.fileId) return cached;
+      const sameFile = cached.fileId != null && await fileIdentity(this.existingPathForUser(userId)) === cached.fileId;
+      const stillCached = this.userDBsCache.get(userId) === cached;
+      if (sameFile && stillCached) return cached;
       // Another caller may have reopened it while we were checking.
-      if (this.userDBsCache.get(userId) === cached) {
+      if (stillCached) {
         this.logger.debug(`forUser: ${this.id} database of ${userId} was removed or replaced, reopening`);
         this.userDBsCache.delete(userId); // dispose closes the stale handle
       }

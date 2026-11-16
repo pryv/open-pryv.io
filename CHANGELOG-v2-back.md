@@ -147,6 +147,12 @@
   refuse to create an erased account's directory again (`userLocalDirectory` erased ids). Residuals,
   unchanged: an account deleted while its own export runs, a sibling worker that opens the account
   in the milliseconds before it hears of the erasure. Test `[BKDU1]`.
+- SQLite per-user handle caches (`SqliteStorage.forUser`, `UserBaseStorageDb.forUser`,
+  `userAccountStorage` `getUserDB`): the cached handle is returned only if it is still the cached
+  one once its file check (`stat`) resolves. An entry removed meanwhile (LRU eviction,
+  `closeUser`, `deleteUser`) was closed by its `dispose`, and was handed out closed: its first
+  statement threw "The database connection is not open". The user's database is now resolved
+  again. `UserDatabase.summarize` keeps its own open check. Test `[SQXC]`.
 
 ### Access integrity hashed on the wire form
 
