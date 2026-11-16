@@ -153,6 +153,11 @@
   `closeUser`, `deleteUser`) was closed by its `dispose`, and was handed out closed: its first
   statement threw "The database connection is not open". The user's database is now resolved
   again. `UserDatabase.summarize` keeps its own open check. Test `[SQXC]`.
+- `RestoreOrchestrator._importUser`: the account's writes run in `_writeUserData`; on any failure
+  there, `_clearFailedAccount` clears the account (`_clearUserData`, as before an overwrite) and,
+  when this restore added the index entry, releases it (`usersLocalIndex.deleteById`), so
+  `_releaseUnindexedClaim` then removes the routing row too. A cleanup failure is logged, the
+  original error rethrown. Tests `[RSFC1-3]`, `[RXCR11]` updated.
 
 ### Access integrity hashed on the wire form
 

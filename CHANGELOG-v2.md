@@ -164,6 +164,11 @@
 - SQLite storage: a call that reached an account's database while the server was closing it (a
   busy server letting go of the least used accounts) could fail with `unexpected-error` (HTTP 500);
   the database is now opened again for it.
+- `bin/backup.js --restore`: an account whose restore fails once its data is being written (a database
+  error, a full disk) is no longer left half-restored. What was written for it is cleared and the
+  account is removed from the core's index (and its routing row released), so a new restore starts
+  clean; an account that was on the core before an `--overwrite` restore is left empty. The
+  restore's error is reported; a failure of the cleanup is logged with what to do next.
 
 ## 2.0.0-rc.84 - 2026-11-13
 

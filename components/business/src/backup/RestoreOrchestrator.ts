@@ -375,9 +375,11 @@ class RestoreOrchestrator {
 
   /**
    * Remove the routing row this restore wrote for `username` when the account
-   * did not reach this core's index (its restore failed first): the name is
-   * then free again on every core. Once the account is indexed the row stays
-   * (a retry confirms it; the erasure put back removes it with the account).
+   * is not in this core's index after its restore failed (it failed before
+   * the account was indexed, or the index entry it added was released): the
+   * name is then free again on every core. An account still indexed keeps
+   * the row (a retry confirms it; the erasure put back removes it with the
+   * account).
    */
   async _releaseUnindexedClaim (username: string): Promise<void> {
     const routing = this.coreRouting;
@@ -385,10 +387,10 @@ class RestoreOrchestrator {
     try {
       if (await this._isNameIndexed(username)) return;
       if (await routing.deleteUserCoreIfValue(username, routing.coreId)) {
-        this.logger.warn(`Restore of user ${username} failed before the account was indexed: the routing row this restore wrote is removed`);
+        this.logger.warn(`Restore of user ${username} failed and the account is not in this core's index: the routing row this restore wrote is removed`);
       }
     } catch (err: unknown) {
-      this.logger.error(`Restore of user ${username} failed before the account was indexed, and the routing row this restore wrote could not be removed (${errorMessage(err)}): ` +
+      this.logger.error(`Restore of user ${username} failed and the account is not in this core's index, and the routing row this restore wrote could not be removed (${errorMessage(err)}): ` +
         'run bin/reconcile-user-cores.js on this core to remove it');
     }
   }
@@ -405,13 +407,46 @@ class RestoreOrchestrator {
     const userReader = await reader.openUser(userId);
 
     // Ensure user exists in local index
+    let indexedHere = false;
     try {
       await this.usersLocalIndex.addUser(username, targetUserId);
+      indexedHere = true;
     } catch (e) {
       // User may already exist — that's fine if we're overwriting
       if (!opts.overwrite) throw e;
     }
 
+    try {
+      return await this._writeUserData(userReader, username, opts, targetUserId);
+    } catch (err) {
+      await this._clearFailedAccount(targetUserId, username, indexedHere, err);
+      throw err;
+    }
+  }
+
+  /**
+   * A restore that failed once the account was written to (a database
+   * error, a full disk): what was written for it is cleared, as the clear
+   * before an overwrite does, and the index entry this restore added is
+   * released, so no half-restored account stays. An account indexed before
+   * the restore (`--overwrite`) keeps its entry, emptied. A failure of this
+   * cleanup is logged; the restore's own error is the one reported.
+   */
+  async _clearFailedAccount (userId: string, username: string, indexedHere: boolean, cause: unknown): Promise<void> {
+    const what = `Restore of user ${username} (${userId}) failed (${errorMessage(cause)})`;
+    try {
+      await this._clearUserData({ id: userId }, userId, username);
+      if (indexedHere) await this.usersLocalIndex.deleteById(userId);
+      this.logger.error(`${what}: what was written for it is cleared` +
+        (indexedHere ? ' and the account is removed from this core\'s index' : '; the account, on this core before the restore, is left empty'));
+    } catch (err: unknown) {
+      this.logger.error(`${what}, and clearing what was written for it failed too (${errorMessage(err)}): ` +
+        'the account is left partly restored; restore it again with --overwrite, or delete it');
+    }
+  }
+
+  /** Write the data of one account, opened in the backup and indexed. */
+  async _writeUserData (userReader: UserReader, username: string, opts: RestoreOptions, targetUserId: string): Promise<ImportedAccount> {
     const user = { id: targetUserId };
 
     // Clear existing data if overwrite requested
@@ -1321,6 +1356,7 @@ type UsersLocalIndexLike = {
   getUserId (username: string): Promise<string>;
   getUsername (userId: string): Promise<string>;
   getAliasesForId? (userId: string): Promise<string[]>;
+  deleteById (userId: string): Promise<unknown>;
 };
 type UserAccountStorageLike = {
   _importAll (userId: string, data: unknown): Promise<unknown>;

@@ -584,6 +584,9 @@ function statefulIndex (o) {
   const byName = new Map();
   o.usersLocalIndex.addUser = async (username, userId) => { byName.set(username, userId); };
   o.usersLocalIndex.getUserId = async (username) => byName.get(username) ?? null;
+  o.usersLocalIndex.deleteById = async (userId) => {
+    for (const [name, id] of byName) if (id === userId) byName.delete(name);
+  };
 }
 
 describe('[RXCR] restore on a multi-core platform: accounts routed to another core', function () {
@@ -665,7 +668,7 @@ describe('[RXCR] restore on a multi-core platform: accounts routed to another co
     assert.strictEqual(rearmed.updatedAt, stopped.updatedAt);
   });
 
-  it('[RXCR11] a routing row the restore wrote is removed when the account fails before it is indexed; it stays once indexed, or when it was there', async function () {
+  it('[RXCR11] a routing row the restore wrote is removed when the account fails, before or after it is indexed; it stays when it was there', async function () {
     const { o, writes } = makeOrchestrator();
     o.coreRouting = fakeCoreRouting(writes);
     o.usersLocalIndex.addUser = async () => { throw new Error('index refused'); };
@@ -676,10 +679,12 @@ describe('[RXCR] restore on a multi-core platform: accounts routed to another co
     const indexed = makeOrchestrator();
     indexed.o.coreRouting = fakeCoreRouting(indexed.writes);
     statefulIndex(indexed.o);
-    // the account's data fails after it is indexed
+    // the account's data fails after it is indexed: the account is cleared and
+    // its index entry released, so the row this restore wrote goes too
     const failing = { ...makeReader(users), async openUser () { return { readStreams () { throw new Error('backup unreadable'); } }; } };
     await assert.rejects(() => indexed.o.restoreUser(CUID2_ID, failing), /backup unreadable/);
-    assert.strictEqual(indexed.o.coreRouting.rows.validname, 'core-a', 'indexed: the row stays');
+    assert.strictEqual(await indexed.o.usersLocalIndex.getUserId('validname'), null, 'the index entry is released');
+    assert.strictEqual(indexed.o.coreRouting.rows.validname, undefined, 'the row this restore wrote is removed');
 
     // the backup refuses the account (opened before it is indexed): nothing indexed, the row removed
     const refused = makeOrchestrator();
@@ -970,5 +975,64 @@ describe('[RXPR] restore: the platform rows of a single-account restore, and the
     only.platformDB = storeWithCores(onlyWrites, [{ id: 'core-b', available: true }]);
     await only.restorePlatform(makeReaderWithPlatform(users, { platformRows, serverMappings }));
     assert.ok(onlyWrites.includes('routing.set:validname=core-b'), JSON.stringify(onlyWrites));
+  });
+});
+
+describe('[RSFC] restore: an account whose import fails once written to is cleared', function () {
+  const users = [{ userId: CUID1_ID, username: 'firstuser' }, { userId: CUID2_ID, username: 'validname' }];
+
+  // An orchestrator whose account store fails (a full disk) for `failingId`,
+  // after the account's events are imported; the clears it runs, by user id.
+  function failingAfterEvents (failingId) {
+    const { o, writes } = makeOrchestrator();
+    statefulIndex(o);
+    const errors = [];
+    o.logger = { info () {}, warn () {}, error (msg) { errors.push(msg); } };
+    o.userAccountStorage._importAll = async (userId) => {
+      writes.push('account._importAll:' + userId);
+      if (userId === failingId) throw new Error('ENOSPC: no space left on device');
+    };
+    const clears = [];
+    const clearUserData = o._clearUserData.bind(o);
+    o._clearUserData = async (user, userId, username) => {
+      clears.push(userId);
+      return await clearUserData(user, userId, username);
+    };
+    return { o, writes, errors, clears };
+  }
+
+  const events = [{ id: 'evt1', streamIds: ['s1'], type: 'note/txt', content: 'restored', time: 1 }];
+
+  it('[RSFC1] what was written is cleared and the index entry released; the error is the import\'s', async function () {
+    const { o, writes, errors, clears } = failingAfterEvents(CUID2_ID);
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users, makeUserReader({ events }))), /ENOSPC/);
+    assert.ok(writes.indexOf('events.importAll') < writes.indexOf('account._importAll:' + CUID2_ID), 'failed after the events: ' + JSON.stringify(writes));
+    assert.deepStrictEqual(clears, [CUID2_ID], 'cleared once, after the failure');
+    assert.ok(writes.lastIndexOf('events.clearAll') > writes.indexOf('events.importAll'), JSON.stringify(writes));
+    assert.strictEqual(await o.usersLocalIndex.getUserId('validname'), null, 'the index entry is released');
+    assert.ok(errors.some((e) => /validname .*failed \(ENOSPC.*cleared and the account is removed from this core's index/.test(e)), JSON.stringify(errors));
+  });
+
+  it('[RSFC2] a failing cleanup is logged and does not hide the import\'s error', async function () {
+    const { o, errors } = failingAfterEvents(CUID2_ID);
+    o._clearUserData = async () => { throw new Error('database unreachable'); };
+    await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader(users, makeUserReader({ events }))), /ENOSPC/);
+    assert.ok(errors.some((e) => /ENOSPC.*clearing what was written for it failed too \(database unreachable\)/.test(e)), JSON.stringify(errors));
+  });
+
+  it('[RSFC3] an account already on this core (overwrite) is emptied and keeps its index entry; the accounts restored before stay', async function () {
+    const { o, clears } = failingAfterEvents(CUID2_ID);
+    // On this core before the restore; the index refuses a name it holds.
+    const addUser = o.usersLocalIndex.addUser;
+    await addUser('validname', CUID2_ID);
+    o.usersLocalIndex.addUser = async (username, userId) => {
+      if (await o.usersLocalIndex.getUserId(username) != null) throw new Error('already indexed');
+      return await addUser(username, userId);
+    };
+    await assert.rejects(() => o.restoreAllUsers(makeReader(users, makeUserReader({ events })), { skipPlatform: true }), /ENOSPC/);
+    // overwrite (the default of a whole restore): each account cleared before its import
+    assert.deepStrictEqual(clears, [CUID1_ID, CUID2_ID, CUID2_ID]);
+    assert.strictEqual(await o.usersLocalIndex.getUserId('firstuser'), CUID1_ID, 'the account restored before is kept');
+    assert.strictEqual(await o.usersLocalIndex.getUserId('validname'), CUID2_ID, 'an account indexed before keeps its entry');
   });
 });
