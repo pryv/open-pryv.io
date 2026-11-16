@@ -558,11 +558,10 @@ type SummaryRow = { slot: number, action: unknown, error: number | null, count: 
  * Stream filter: the full-text index is not read. The aggregate also groups
  * by the row's lower-cased stored stream ids, and a group is kept when one of
  * its space-separated terms equals a requested id, ASCII case folded. The
- * ids never reach SQLite. Exact term equality is a subset of the phrase match
- * of `events.get` (the validator admits printable ASCII ids only, holding a
- * letter or a digit), so no row is counted that `events.get` would not list;
- * a stored id glued to another by a non-token character, or equal only
- * through Unicode folding, is listed there and not counted here. A filter
+ * ids never reach SQLite. This is the exact match `events.get` applies on this
+ * engine (stored ids compared whole, ASCII case folded; the validator admits
+ * printable ASCII ids only, holding a letter or a digit), so the summary
+ * counts exactly the rows `events.get` lists for the same ids. A filter
  * that is missing or unreadable answers no groups.
  */
 UserDatabase.prototype.summarize = async function (this: UserDatabaseInstance, params: SummarizeParams): Promise<SummaryGroup[]> {
