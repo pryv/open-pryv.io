@@ -13,11 +13,11 @@ const cuid = require('cuid');
 
 const helpers = require('../../../test/helpers');
 const { SqliteStorage: Storage } = require('../src/userSQLite/Storage.ts');
-const { _setShortcutMinIds } = require('../src/userSQLite/streamQueryUtils.ts');
+const { _setSetFrom } = require('../src/userSQLite/streamQueryUtils.ts');
 
 // The events query of the SQLite engine, called directly (no API validator in
 // front): every value is bound, never SQL text, and a stream id matches only
-// an equal stored id (ASCII case folded), never a phrase inside another id.
+// an equal stored id (letter case included), never a phrase inside another id.
 describe('[SQQB] SQLite events query: bound values, exact stream ids', function () {
   const userLocalDirectory = helpers.userLocalDirectory;
   const userId = cuid();
@@ -35,10 +35,19 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
     { id: 'near3', streamIds: ['foo', 'access-a:3'], type: 'log/user-api' },
     { id: 'slash', streamIds: ['/'], type: 'misc/x' },
     { id: 'at', streamIds: ['@'], type: 'misc/x' },
-    { id: 'ete', streamIds: ['Été'], type: 'misc/x' }
+    { id: 'ete', streamIds: ['Été'], type: 'misc/x' },
+    { id: 'znum', streamIds: ['123'], type: 'misc/x' },
+    { id: 'zbool', streamIds: ['true'], type: 'misc/x' }
   ];
   const ALL = events.map((e) => e.id).sort();
   const without = (...out) => ALL.filter((id) => !out.includes(id));
+  const q = (n, prefix = 'q') => Array.from({ length: n }, (_, k) => prefix + k);
+
+  async function fill (db) {
+    for (const e of events) {
+      await db.createEvent({ time: 1000, created: 1000, createdBy: 'test', modified: 1000, modifiedBy: 'test', ...e });
+    }
+  }
 
   before(async function () {
     await helpers.dependencies.init();
@@ -46,9 +55,7 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
     storage = new Storage('sqqb-' + cuid.slug());
     await storage.init();
     userDb = await storage.forUser(userId);
-    for (const e of events) {
-      await userDb.createEvent({ time: 1000, created: 1000, createdBy: 'test', modified: 1000, modifiedBy: 'test', ...e });
-    }
+    await fill(userDb);
   });
 
   after(async function () {
@@ -61,16 +68,29 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
   }
   const streams = (content) => ({ type: 'streamsQuery', content });
 
-  it('[SQQB1] an "any" id matches only an equal stored id (ASCII case folded), not a phrase inside another id', async function () {
-    assert.deepStrictEqual(await ids([streams([[{ any: ['abc'] }]])]), ['lower', 'upper']);
+  /** The SQL text of a `getEvents` call (from its debug line) and its rows. */
+  function sqlAndIds (query) {
+    let sql = null;
+    const debug = userDb.logger.debug;
+    userDb.logger.debug = (msg) => { if (typeof msg === 'string' && msg.startsWith('GET events: ')) sql = msg; };
+    try {
+      return { rows: userDb.getEvents({ query, options: { sort: { time: -1 }, limit: 50 } }).map((e) => e.id).sort(), sql };
+    } finally {
+      userDb.logger.debug = debug;
+    }
+  }
+
+  it('[SQQB1] an "any" id matches only an equal stored id, letter case included, not a phrase inside another id', async function () {
+    assert.deepStrictEqual(await ids([streams([[{ any: ['abc'] }]])]), ['lower']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['ABC'] }]])]), ['upper']);
     assert.deepStrictEqual(await ids([streams([[{ any: ['def'] }]])]), []);
     assert.deepStrictEqual(await ids([streams([[{ any: ['abc/def'] }]])]), ['split']);
-    assert.deepStrictEqual(await ids([streams([[{ any: ['ABC/DEF', 'x'] }]])]), ['pair', 'split']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['ABC/DEF', 'x'] }]])]), ['pair']);
   });
 
   it('[SQQB2] a "not" id drops only an equal stored id', async function () {
-    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: ['abc'] }]])]), without('lower', 'upper'));
-    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'abc/def'] }, { not: ['def'] }]])]), ['lower', 'split', 'upper']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: ['abc'] }]])]), without('lower'));
+    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'abc/def'] }, { not: ['def'] }]])]), ['lower', 'split']);
     assert.deepStrictEqual(await ids([streams([[{ any: ['abc/def'] }], [{ any: ['x'] }, { not: ['y'] }]])]), ['split']);
   });
 
@@ -98,65 +118,57 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
     assert.deepStrictEqual(await ids([streams([[{ any: ['access-a:3'] }]])]), ['near3']);
   });
 
-  // From 8 single-token ids, a row of token characters only is matched through
-  // the full-text index; the other rows (`abc/def`, quotes) by the exact check.
+  // From 8 ids a group is one bound list: a row of token characters only is
+  // split and its ids looked up in the list; the other rows (`abc/def`,
+  // quotes, `Été`) are checked id by id.
   it('[SQQB8] with many ids, rows of any kind still match exactly, with "any" and with "not"', async function () {
-    const more = ['q1', 'q2', 'q3', 'q4'];
-    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'access-a', 'access-ab', 'x', ...more] }]])]), ['lower', 'near1', 'pair', 'upper']);
-    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: ['abc', 'x', 'q0', ...more, 'q5'] }]])]), without('lower', 'upper', 'pair'));
-    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'abc/def', 'x'] }, { not: ['y', 'q0', ...more, 'q5'] }]])]), ['lower', 'split', 'upper'], 'an id that is not one token: the exact check only');
-    assert.deepStrictEqual(await ids([streams([[{ any: ['ABC', 'x', 'access-ab', 'q0', ...more] }, { not: ['abc'] }]])]), ['near1', 'pair']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'access-a', 'access-ab', 'x', ...q(4)] }]])]), ['lower', 'near1', 'pair']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['ABC', 'access-a', 'access-ab', 'x', ...q(4)] }]])]), ['near1', 'pair', 'upper']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: ['abc', 'x', ...q(6)] }]])]), without('lower', 'pair'));
+    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'abc/def', 'x'] }, { not: ['y', ...q(7)] }]])]), ['lower', 'split']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['ABC', 'x', 'access-ab', ...q(5)] }, { not: ['abc'] }]])]), ['near1', 'pair', 'upper']);
   });
 
   it('[SQQB9] an id with no full-text token character (`/`, `@`) still finds its events', async function () {
     assert.deepStrictEqual(await ids([streams([[{ any: ['/'] }]])]), ['slash']);
-    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', '@'] }]])]), ['at', 'lower', 'upper']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', '@'] }]])]), ['at', 'lower']);
   });
 
   it('[SQQBA] the tag every event carries, and the empty id, match no event', async function () {
-    const q = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7'];
     assert.deepStrictEqual(await ids([streams([[{ any: ['..'] }]])]), []);
     assert.deepStrictEqual(await ids([streams([[{ any: [''] }]])]), []);
-    assert.deepStrictEqual(await ids([streams([[{ any: ['..', ...q] }]])]), []);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['..', ...q(7)] }]])]), []);
     assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: ['..'] }]])]), ALL);
-    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: ['..', ...q] }]])]), ALL);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: ['..', ...q(7)] }]])]), ALL);
   });
 
-  it('[SQQBB] "not" only with many ids walks the time index (no read of the whole table)', async function () {
-    let sql = null;
-    const debug = userDb.logger.debug;
-    userDb.logger.debug = (msg) => { if (typeof msg === 'string' && msg.startsWith('GET events: ')) sql = msg; };
-    let rows;
-    try {
-      rows = userDb.getEvents({ query: [streams([[{ any: ['*'] }, { not: ['abc', 'x', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6'] }]])], options: { sort: { time: -1 }, limit: 50 } });
-    } finally {
-      userDb.logger.debug = debug;
-    }
-    assert.deepStrictEqual(rows.map((e) => e.id).sort(), without('lower', 'upper', 'pair'));
+  it('[SQQBB] "not" only with many ids walks the time index, no full-text read', function () {
+    const { rows, sql } = sqlAndIds([streams([[{ any: ['*'] }, { not: ['abc', 'x', ...q(6)] }]])]);
+    assert.deepStrictEqual(rows, without('lower', 'pair'));
     assert.ok(!sql.includes('NOT INDEXED'), sql);
-    assert.ok(sql.includes('rowid NOT IN (SELECT rowid FROM events_fts'), sql);
+    assert.ok(!sql.includes('events_fts'), sql);
   });
 
-  it('[SQQBC] with many ids, the full-text shortcut gives the rows of the exact condition alone', async function () {
-    const many = ['abc', 'x', 'access-ab', 'access-a', 'q1', 'q2', 'q3', 'q4'];
+  it('[SQQBC] with many ids, the bound list gives the rows of the id-by-id condition', async function () {
+    const many = ['abc', 'x', 'access-ab', 'access-a', ...q(4)];
     const queries = [
       [[{ any: many }]],
       [[{ any: many }, { not: ['y', 'abc'] }]],
       [[{ any: ['*'] }, { not: many }]],
       [[{ any: many.slice(0, 4) }], [{ any: many.slice(4) }, { not: ['x'] }]],
       [[{ any: ['abc'] }], [{ any: ['*'] }, { not: many }]],
-      [[{ any: ['abc', 'x', 'q1', 'q2'] }, { any: ['x', 'y', 'access-ab', 'q3'] }, { not: ['q4', 'q5'] }]]
+      [[{ any: ['abc', 'x', ...q(6)] }, { any: ['x', 'y', 'access-ab', ...q(5, 'p')] }, { not: ['q4', 'q5'] }]]
     ];
-    const withShortcut = [];
-    for (const q of queries) withShortcut.push(await ids([streams(q)]));
-    const previous = _setShortcutMinIds(1e9);
+    const asList = [];
+    for (const query of queries) asList.push(await ids([streams(query)]));
+    const previous = _setSetFrom(1e9);
     try {
-      for (const [i, q] of queries.entries()) assert.deepStrictEqual(await ids([streams(q)]), withShortcut[i], JSON.stringify(q));
+      for (const [i, query] of queries.entries()) assert.deepStrictEqual(await ids([streams(query)]), asList[i], JSON.stringify(query));
     } finally {
-      _setShortcutMinIds(previous);
+      _setSetFrom(previous);
     }
-    assert.deepStrictEqual(withShortcut[0], ['lower', 'near1', 'pair', 'upper']);
-    assert.deepStrictEqual(withShortcut[5], ['pair'], 'two "any" groups are ANDed');
+    assert.deepStrictEqual(asList[0], ['lower', 'near1', 'pair']);
+    assert.deepStrictEqual(asList[5], ['pair'], 'two "any" groups are ANDed');
   });
 
   it('[SQQBF] an item with no id, or with both "any" and "not", is refused (never read as "every event")', function () {
@@ -168,64 +180,94 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
       [[{ any: ['abc'], not: ['x'] }]],
       [[{ any: ['abc'] }], [{ any: [] }]]
     ];
-    for (const q of bad) assert.throws(() => userDb.getEvents({ query: [streams(q)] }), /exactly one non-empty any or not/, JSON.stringify(q));
+    for (const query of bad) assert.throws(() => userDb.getEvents({ query: [streams(query)] }), /exactly one non-empty any or not/, JSON.stringify(query));
   });
 
   it('[SQQBG] a stream id holding NUL never returns more than its own events', async function () {
-    assert.throws(() => userDb.getEvents({ query: [streams([[{ any: ['a\u0000b'] }]])] }));
+    let alone;
+    try { alone = await ids([streams([[{ any: ['a\u0000b'] }]])]); } catch (e) { alone = []; } // refused or empty
+    assert.deepStrictEqual(alone, []);
     assert.deepStrictEqual(await ids([streams([[{ any: ['a\u0000b', '/'] }]])]), ['slash']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['a\u0000b', '/', ...q(6)] }]])]), ['slash']);
   });
 
-  it('[SQQBD] a non-ASCII id matches its stored case only (ASCII folding, as `lower`)', async function () {
-    const q = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7'];
-    assert.deepStrictEqual(await ids([streams([[{ any: ['été', ...q] }]])]), []);
-    assert.deepStrictEqual(await ids([streams([[{ any: ['Été', ...q] }]])]), ['ete']);
+  it('[SQQBD] a non-ASCII id matches its stored case only (no case folding at all)', async function () {
+    assert.deepStrictEqual(await ids([streams([[{ any: ['été', ...q(7)] }]])]), []);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['Été', ...q(7)] }]])]), ['ete']);
   });
 
   it('[SQQBE] a list longer than the bound-variable limit of SQLite (an expanded tree) is matched exactly', async function () {
-    const filler = Array.from({ length: 40000 }, (_, k) => 'f' + k);
-    assert.deepStrictEqual(await ids([streams([[{ any: [...filler, 'abc', 'abc/def', '..'] }]])]), ['lower', 'split', 'upper']);
-    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: [...filler, 'abc', 'x'] }]])]), without('lower', 'upper', 'pair'));
+    const filler = q(40000, 'f');
+    assert.deepStrictEqual(await ids([streams([[{ any: [...filler, 'abc', 'abc/def', '..'] }]])]), ['lower', 'split']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: [...filler, 'abc', 'x'] }]])]), without('lower', 'pair'));
     assert.deepStrictEqual(await ids([streams([[{ any: [...filler, '/', 'access-ab'] }, { not: ['@'] }]])]), ['near1', 'slash']);
-    const previous = _setShortcutMinIds(1e9);
-    try {
-      assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: [...filler, 'abc', 'x'] }]])]), without('lower', 'upper', 'pair'), 'exact condition alone');
-    } finally {
-      _setShortcutMinIds(previous);
-    }
   });
 
-  it('[SQQB6] an audit action listed by the store (lower-cased) finds the rows of its camelCase id', async function () {
+  it('[SQQBI] one id that is not a full-text token in a long list keeps the bound list', function () {
+    const { rows, sql } = sqlAndIds([streams([[{ any: ['abc', 'x', 'a/b', 'é', ...q(4)] }]])]);
+    assert.deepStrictEqual(rows, ['lower', 'pair']);
+    assert.ok(sql.includes("json_each('[\"'"), sql);
+  });
+
+  it('[SQQBJ] a long list on rows outside the token characters is matched id by id, with "any" and with "not"', async function () {
+    const odd = ['abc/def', "it's", 'Été', '/', '@', ...q(3)];
+    assert.deepStrictEqual(await ids([streams([[{ any: odd }]])]), ['at', 'ete', 'quote', 'slash', 'split']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['*'] }, { not: odd }]])]), without('at', 'ete', 'quote', 'slash', 'split'));
+  });
+
+  it('[SQQBK] ids differing only by case are distinct, in one list and across groups and blocks', async function () {
+    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'ABC', ...q(6)] }]])]), ['lower', 'upper']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['abc', 'ABC', ...q(6)] }, { not: ['ABC', ...q(7, 'p')] }]])]), ['lower']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['ABC', ...q(7)] }], [{ any: ['*'] }, { not: ['abc', 'ABC', 'x', ...q(5)] }]])]), without('lower', 'pair'));
+  });
+
+  it('[SQQBL] ids that read as JSON values or JSON syntax match only equal stored ids', async function () {
+    assert.deepStrictEqual(await ids([streams([[{ any: ['123', 'true', 'null', '","', '"]', ...q(3)] }]])]), ['zbool', 'znum']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['null', '","', '"]', '1', ...q(4)] }]])]), []);
+  });
+
+  it('[SQQB6] audit actions are listed in stored case and found in that case only', async function () {
     const listed = userDb.getAllActions().map((t) => t.term);
-    assert.ok(listed.includes('action-callbatch'), JSON.stringify(listed));
-    assert.deepStrictEqual(await ids([streams([[{ any: ['action-callbatch'] }]])]), ['audit']);
+    assert.ok(listed.includes('action-callBatch'), JSON.stringify(listed));
+    assert.ok(!listed.includes('action-callbatch'), JSON.stringify(listed));
     assert.deepStrictEqual(await ids([streams([[{ any: ['action-callBatch'] }]])]), ['audit']);
+    assert.deepStrictEqual(await ids([streams([[{ any: ['action-callbatch'] }]])]), []);
   });
 
-  it('[SQQBH] deleting with a "not" filter keeps exactly the matching events, by the full-text path (8+ ids) and the plain one', async function () {
-    const many = ['abc', 'x', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6'];
-    for (const [not, oneByOne, kept] of [[many, true, ['lower', 'pair', 'upper']], [['abc'], false, ['lower', 'upper']]]) {
+  it('[SQQBH] deleting with a stream filter keeps exactly the other events (full-text candidates one by one, or one statement)', async function () {
+    const cases = [
+      [[{ any: ['*'] }, { not: ['abc', 'x', ...q(6)] }], false, ['lower', 'pair']],
+      [[{ any: ['*'] }, { not: ['abc'] }], false, ['lower']],
+      [[{ any: ['abc', 'x'] }], true, without('lower', 'pair')]
+    ];
+    for (const [block, oneByOne, kept] of cases) {
       const otherId = cuid();
       const otherDb = await storage.forUser(otherId);
       try {
-        for (const e of events) {
-          await otherDb.createEvent({ time: 1000, created: 1000, createdBy: 'test', modified: 1000, modifiedBy: 'test', ...e });
-        }
+        await fill(otherDb);
         const messages = [];
         const debug = otherDb.logger.debug;
         otherDb.logger.debug = (msg) => { if (typeof msg === 'string') messages.push(msg); };
         try {
-          await otherDb.deleteEvents({ query: [streams([[{ any: ['*'] }, { not }]])] });
+          await otherDb.deleteEvents({ query: [streams([block])] });
         } finally {
           otherDb.logger.debug = debug;
         }
         assert.strictEqual(messages.some((m) => m.startsWith('DELETE events one by one')), oneByOne, messages.join('\n'));
         const left = (await otherDb.getEvents({ query: [] })).map((e) => e.id).sort();
-        assert.deepStrictEqual(left, kept, JSON.stringify(not));
+        assert.deepStrictEqual(left, kept, JSON.stringify(block));
       } finally {
         await userLocalDirectory.deleteUserDirectory(otherId);
       }
     }
+  });
+
+  it('[SQQBM] an event whose stream id is empty, "..", or holds a space or NUL is not stored', async function () {
+    const before = userDb.countEvents();
+    for (const bad of [['a b'], [''], ['..'], ['a\u0000b'], ['ok', ' x']]) {
+      await assert.rejects(() => userDb.createEvent({ id: cuid(), time: 1000, streamIds: bad, type: 'misc/x' }), /cannot be stored/, JSON.stringify(bad));
+    }
+    assert.strictEqual(userDb.countEvents(), before);
   });
 
   it('[SQQB5] paging values are bound; an unknown column is refused', async function () {

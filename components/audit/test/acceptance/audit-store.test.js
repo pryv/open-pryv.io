@@ -261,6 +261,27 @@ describe('[ASTE] Audit Streams and Events', function () {
       assert.strictEqual(res.body.error.id, 'invalid-access-token');
     });
   });
+
+  it('[SQCS4] a listed action child keeps the method\'s spelling and finds its rows; another case finds none', async () => {
+    const child = ':_audit:action-getAccessInfo';
+    await validGet('/' + username + '/access-info', appAccess);
+    await pollUntil(
+      async () => (await coreRequest.get(eventsPath).set('Authorization', personalToken).query({ streams: [child] })).body.events ?? [],
+      (events) => events.length >= 1);
+    const listing = await coreRequest.get(streamsPath).query({ parentId: ':_audit:actions' }).set('Authorization', personalToken);
+    assert.strictEqual(listing.status, 200, JSON.stringify(listing.body));
+    const ids = listing.body.streams.map((s) => s.id);
+    assert.ok(ids.includes(child), JSON.stringify(ids));
+    assert.ok(!ids.includes(child.toLowerCase()), JSON.stringify(ids));
+    for (const id of ids) {
+      const res = await coreRequest.get(eventsPath).set('Authorization', personalToken).query({ streams: [id] });
+      assert.strictEqual(res.status, 200, id + ' ' + JSON.stringify(res.body));
+      assert.ok(res.body.events.length >= 1, id);
+    }
+    const other = await coreRequest.get(eventsPath).set('Authorization', personalToken).query({ streams: [child.toLowerCase()] });
+    if (other.status === 200) assert.deepStrictEqual(other.body.events, []);
+    else assert.ok(other.status >= 400, JSON.stringify(other.body));
+  });
 });
 
 function validateResults (auditLogs, expectedAccessId, expectedErrorId) {

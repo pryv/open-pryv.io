@@ -55,6 +55,14 @@ function toDB (event: EventLike): DbEvent {
     dbEvent.streamIds = schema.ALL_EVENTS_TAG;
   } else {
     if (!Array.isArray(event.streamIds)) throw new Error('streamIds must be an Array');
+    // The stored form is the ids joined by a space plus the tag every event
+    // carries: an id that is empty, the tag, or holds the separator (or NUL)
+    // would be read back as other stream ids.
+    for (const id of event.streamIds) {
+      if (typeof id !== 'string' || id === '' || id === schema.ALL_EVENTS_TAG || id.includes(IDS_SEPARATOR) || id.includes('\u0000')) {
+        throw new Error(`Event ${JSON.stringify(event.id)}: stream id ${JSON.stringify(id)} cannot be stored (empty, "${schema.ALL_EVENTS_TAG}", or holding a space or NUL)`);
+      }
+    }
     dbEvent.streamIds = event.streamIds.join(IDS_SEPARATOR) + IDS_SEPARATOR + schema.ALL_EVENTS_TAG;
   }
 
