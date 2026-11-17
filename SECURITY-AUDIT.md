@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 24 (2026-11-17), covering releases 2.0.0-rc.40 to 2.0.0-rc.85.
+**Report revision:** 25 (2026-11-17), covering releases 2.0.0-rc.40 to 2.0.0-rc.86.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -81,8 +81,9 @@ items reported through the public issue tracker, are described but not counted:
 | Low | 4 | 0 | 0 |
 | **Total** | **73** | **0** | **0** |
 
-Seven of the fixed findings have a second, longer-term step planned for a later major version
-(section 5).
+Six of the fixed findings have a second, longer-term step planned for a later major version
+(section 5); the second step of a seventh, the 2.0.0-rc.51 backup finding, shipped in
+2.0.0-rc.86.
 
 **Severity scale.** *Critical*: account takeover, data of another account, or a server-side file or
 process compromised, by a caller with little or no privilege. *High*: the same class with a
@@ -139,6 +140,7 @@ its applicability is stated with it.
 | 2.0.0-rc.83 | 2026-11-12 | none (not an audit release) | yes (2026-11-12) |
 | 2.0.0-rc.84 | 2026-11-13 | none (not an audit release); lower-severity fixes: the `integrity` of an updated access verifies on the form the API returns (stored hashes recomputed once at upgrade, no operator action beyond the migration run at boot), history snapshots of an access no longer carry its internal call counters | yes (2026-11-13) |
 | 2.0.0-rc.85 | 2026-11-17 | 1 High, 2 Medium (SQLite storage engine), lower-severity fixes; operator action: none beyond the upgrade for the fixes; before upgrading a SQLite core, look for access permissions on lower-cased `:_audit:action-` ids and for stream ids holding whitespace or equal to `..` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-17) |
+| 2.0.0-rc.86 | 2026-11-17 | no new finding; completion steps of earlier findings (every file of a backup run authenticated and runs signed, planned in section 5 since the first revision; cache invalidation between the processes of a core), lower-severity fixes (among them a `custom.dataStores` entry named after a built-in store, which came within reach of `*` permissions); operator action: a backup written by this release restores with this release or later, keep the backup directory for the backup only, sign backups taken with a recipient public key (`--signing-key`, `--signing-pubkey`); on a multi-core platform a new core joins with a bootstrap bundle only on this release or later; a `custom.dataStores` entry named `local`, `account` or `_audit` is no longer loaded without `override: true` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-17) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -291,8 +293,10 @@ These are the main checks that held, summarised:
   stream ids are resolved to their store before the query runs, so the exclusions of internal
   plugin streams and of hidden account fields apply whatever spelling is used; no read path
   around them was found.
-- **The `*` scope** never reaches the account or audit stores; non-personal tokens read only their
-  own audit stream (for deletion records, only since 2.0.0-rc.65: see that release below).
+- **The `*` scope** never reaches the account or audit stores (with a custom data store configured
+  under the id of a built-in store, only since 2.0.0-rc.86: see that release below); non-personal
+  tokens read only their own audit stream (for deletion records, only since 2.0.0-rc.65: see that
+  release below).
 - **Access aliases** (checked in the 2.0.0-rc.66 follow-up): an access created with `randomAlias`
   cannot obtain the account's username or former usernames through any account stream of the
   shipped configuration (for a custom account stream named after a server-managed field, only
@@ -530,6 +534,8 @@ defect, planned work, or accepted. Items accepted as they are, with the reason:
   invalidation is followed before reading, kept across stream writes and replayed on reconnection;
   account deletion always broadcasts its invalidation.
 - **Operator action:** none.
+- **Completed in 2.0.0-rc.86:** the cases where a process could still miss an invalidation, and
+  serve the old value until its maximum age, are closed (see 2.0.0-rc.86 below).
 
 #### Single-event reads skipped the exclusions of `events.get`
 
@@ -983,6 +989,8 @@ maintainers' platforms every count was zero).
   release (`node bin/backup.js --inspect <dir>`, with the restore secret for an encrypted one); a
   directory reported `DAMAGED` holds only its last delta: take a new full backup into a new
   directory and continue with `--incremental` from there.
+- **Completed in 2.0.0-rc.86:** every file of a backup run is now authenticated, and runs can be
+  signed (the step planned in section 5 since the first revision; see 2.0.0-rc.86 below).
 
 #### Lower-severity fixes in 2.0.0-rc.51
 
@@ -2273,6 +2281,108 @@ stream-id rule of the third item.
 - **Operator action:** none beyond the upgrade; the checks of the items above concern SQLite cores
   only.
 
+### Fixed in 2.0.0-rc.86 (deployed)
+
+2.0.0-rc.86 carries no new counted finding. It ships the backup step planned in section 5 since the
+first revision (the second step of the 2.0.0-rc.51 backup finding) and completes the 2.0.0-rc.43
+cache item; each was reviewed independently before merge, and the reviews made alongside found the
+lower-severity items listed last.
+
+#### Encrypted backups: authenticated files and signed runs
+
+- **Completes** the 2.0.0-rc.51 finding "Incremental backups overwrote the full backup they
+  continued" (High; not counted again).
+- **What changed:** each backup run's manifest now lists every file with its size and hash, and the
+  manifest is bound to its run; an encrypted file ends with a marked final block and each block is
+  tied to its file, position and run. A restore refuses a run whose files were added, removed,
+  changed, swapped between accounts or cut at a block boundary, and a `chain.json` entry that
+  disagrees with the run's manifest. With a recipient public key the host holds no decrypt secret,
+  so authenticity against a writer who holds that public key comes from an optional Ed25519
+  signature of each run (`--signing-key` at backup, `--signing-pubkey` at restore; the backup warns
+  when it is not signed). Runs written by earlier releases are restored as before and reported as
+  unverified; a run of an earlier release appended after a run of this one is refused. The server
+  now reads at-rest envelopes (TLS and ACME keys, authenticator secrets, observability credentials,
+  transfer identities) that carry authenticated data naming their purpose and row, with the tag
+  length pinned; it starts writing them in a later release, once every core can read them. The
+  bootstrap bundle is authenticated with its version, salt and nonce from this release on.
+- **Operator action:** none for existing backups, which restore as before. Keep the backup
+  directory for the backup only: a file the backup did not write is refused at restore (files that
+  operating systems and storage appliances create by themselves are ignored with a notice), and a
+  backup refuses to start in a directory that holds other files. With a recipient public key, sign
+  the backups: generate an Ed25519 pair once, pass `--signing-key` at backup and `--signing-pubkey`
+  at restore and `--inspect`; a chain is signed from its full backup on, so start signing with a new
+  full backup into a new directory. A backup written by this release is restored with this release
+  or later; after going back to an earlier release, start a new chain in a new directory. On a
+  multi-core platform, a new core must run this release or later to read a bootstrap bundle, and
+  every core must have run this release before the later release that starts writing the new at-rest
+  envelope is deployed.
+
+#### Cache invalidation between the processes of a core
+
+- **Completes** the 2.0.0-rc.43 finding "Cached accesses could outlive their deletion or narrowing"
+  (Medium; not counted again). Since that release every cached value has a maximum age
+  (`caching.accessMaxAgeSeconds`, 60 s by default); the review of what still rested on that maximum
+  age alone found the cases below, each bounded by it.
+- **What could happen:** a process could keep, until its maximum age, an access, a stream tree or a
+  username mapping whose invalidation it missed, so a deleted or narrowed access could keep working
+  on that process for up to that age: when the value was read while the process was subscribing to
+  its account's invalidations, before the broker had registered the subscription; when the broker
+  was stalled without closing its connections; when the invalidation was published by a process
+  that was disconnected from the broker at that moment (it was dropped); when a process stopped
+  following an account that it still served from its cache; and, for usernames, when a lookup
+  straddled a rename or a deletion.
+- **What changed:** the broker acknowledges each subscription, and a value read from storage is
+  cached only if its account's subscription was acknowledged before the read started; each process
+  pings the broker every second and suspends its caches (every request reads storage) when about
+  5 s pass without an answer, until the broker answers again; an invalidation published while its
+  process is disconnected is sent once the connection is back; an account no longer followed has its
+  cached accesses and streams dropped; the username map takes the same guard, and account deletion
+  clears the account's cache entries again once every removal has completed. Debug logs of the
+  message bus no longer print message payloads (an invalidation carries the token of an access that
+  is still valid).
+- **Residual:** a process holds at most 10000 invalidations while disconnected; beyond that the
+  oldest are dropped, with a warning, and the values they concerned are bounded by the maximum age
+  again.
+- **Operator action:** none. The first request for an account in each process now reads storage;
+  the next ones use the cache.
+
+#### Lower-severity fixes in 2.0.0-rc.86
+
+- **A custom data store named after a built-in store came within reach of `*` permissions** (Low; a
+  configuration error only; custom data stores are outside the scope of this review, section 2.3). A
+  `custom.dataStores` entry whose id was that of a built-in store (`local`, `account`, `_audit`) did
+  not replace the built-in store, but its id was added to the stores that a `*` permission covers,
+  so with an entry named `account` or `_audit` an access holding `*` reached the built-in account
+  or audit store. Such an entry is now not loaded, and a boot warning names it, unless it sets
+  `override: true`; it then replaces the built-in store and, like the built-in, is not covered by
+  `*`.
+- **A full backup re-created the directory of an account erased while it ran** (Low; closes the
+  backup residual noted under 2.0.0-rc.53): `bin/backup.js` runs in a process of its own, which does
+  not hear of an erasure, so an account erased during a full backup was backed up empty and its
+  directory and empty databases were created again on disk (no account data). Such an account is
+  now left out of the run.
+- **A large SQLite account could hold an API worker** (Low; availability, SQLite storage engine): a
+  page of events over a stream filter that most rows of a large account meet (for example the audit
+  trail of every access, `streams: [':_audit:accesses']`, over a million rows) read every matching
+  row before applying the page size, about 10 s during which the worker answered no other call. Such
+  a page is now read in time order and stops at its end (about 0.1 s), with the same results.
+- **Backups:** two runs finishing together into the same directory no longer race on `chain.json`
+  (the second is refused and left aside, as an overlapping run already was); new passphrase-encrypted
+  backups use a stronger key derivation (scrypt N = 2^17).
+- Not security fixes, listed for operators: on SQLite, a call that reached an account's database
+  while the server was closing it could fail with `unexpected-error` (HTTP 500), and an event written
+  into a stream whose id holds a space (created before 2.0.0-rc.85) answered HTTP 500 instead of
+  `invalid-parameters-format`; a restore that failed while writing an account left it half-restored
+  (what was written is now cleared and the account removed from the core's index); `--inspect`
+  answers FAILED instead of UNKNOWN for a damaged manifest of a backup written before chains;
+  `POST /reg/records` and `DELETE /reg/records/{subdomain}` answer a storage failure with
+  `unexpected-error`.
+- New in this release, not a finding: `audit.getSummary` (activity counts of the account's audit
+  trail), for personal accesses only, with a bounded range, one summary at a time per account and a
+  few at once per server (`too-many-requests` otherwise).
+- **Operator action:** check the boot log for a warning naming a `custom.dataStores` entry; set
+  `override: true` on it if it is meant to replace the built-in store, otherwise rename it.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2296,6 +2406,14 @@ negotiates; these are accepted, each with its reason, until an rqlite release ca
 library. `npm` / `npx` were removed from the image in rc.50. The rqlite ports listen on loopback
 (HTTP) and behind mutual TLS (Raft).
 
+**Backups.** A plaintext backup's file list detects corruption, not tampering; a backup read
+without `--signing-pubkey` is authenticated against anyone without its data key only. A signed
+chain is verified only when the restore is given the public key; the restore warns when a signed
+chain is read without it. Dropping the last runs from `chain.json` is not detected, signed or not:
+the restore then yields the earlier state (as `--through-run` does). Keep the run count from
+`--inspect` with the restore secret if rollback matters. The chain lock relies on exclusive create
+and on the destination's clock being within a minute of the host's.
+
 **Planned for the next major version:**
 
 - Cluster join: a certificate-signing-request flow (the joiner generates its key; short-lived node
@@ -2309,16 +2427,13 @@ library. `npm` / `npx` were removed from the image in rc.50. The rqlite ports li
 - HF series keyed by account id instead of username. Until then, a username change moves the
   account's series under the new name (since 2.0.0-rc.66; `bin/gather-former-series.js` gathers
   those that changes made with earlier releases left under a former name).
-- Encrypted backups: a signed manifest and authenticated frames (hybrid encryption gives
-  confidentiality, not authenticity). Until then: the backup chain index and the per-run manifests
-  introduced in rc.51 are checked for consistency but not signed, and an encrypted backup file that
-  is empty or truncated at a frame boundary is not detected as such. Both are closed by the signed
-  manifest.
 - Access requests: a second secret held by the requester, so that the poll key alone no longer
   retrieves the delivered token.
 - Delegation teardown across cores: a peer check of the delegate's identity.
 - Token hardening: a minimum length for caller-chosen access tokens and hashed token storage;
-  authenticated data on encryption envelopes; signed webhook deliveries.
+  authenticated data on the encryption envelopes of keys stored at rest (read since 2.0.0-rc.86,
+  written from a later release; the new envelope binds an authenticator secret to its purpose, not
+  to its account); signed webhook deliveries.
 
 **Access deletion records.** A deleted access leaves a deletion record (its name, permissions and
 timestamps) that is kept until the account is erased by default; API answers never return its
@@ -2380,3 +2495,4 @@ This report is updated with every release that carries a security fix:
 | 22 | 2026-11-12 | 2.0.0-rc.40 to 2.0.0-rc.83 | Release table adds 2.0.0-rc.83 (not an audit release: `features.passwordResetByEmail` in service info, the admin route `GET /system/migrations-status`); counts unchanged. |
 | 23 | 2026-11-13 | 2.0.0-rc.40 to 2.0.0-rc.84 | Release table adds 2.0.0-rc.84 (not an audit release; lower-severity fixes: access integrity verifiable after an update, history snapshots without internal call counters); counts unchanged. Deployed on the maintainers' platforms (2026-11-13). |
 | 24 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.85 | Adds 2.0.0-rc.85 (review of how the SQLite storage engine builds its queries and matches stream ids): 1 High and 2 Medium findings, all on the SQLite engine, and lower-severity fixes; the planned move of the SQLite engine to bound values ships (removed from section 5, section 4.1 updated). Deployed on the maintainers' platforms (2026-11-17). |
+| 25 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.86 | Adds 2.0.0-rc.86: no new finding, counts unchanged; the second step of the 2.0.0-rc.51 backup finding ships (every file of a backup run authenticated, signed runs; removed from section 5, which gains the backup residual risks; six findings keep a planned second step), the 2.0.0-rc.43 cache item is completed (cache invalidation between the processes of a core), and lower-severity fixes, among them a custom data store named after a built-in store that came within reach of `*` permissions (section 4.1 qualified). Deployed on the maintainers' platforms (2026-11-17). |
