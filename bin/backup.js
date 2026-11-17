@@ -842,7 +842,7 @@ Restore:
                             with --inspect. Without it, signatures are not checked.
                             Every run's files are checked against its manifest
                             (a file added, removed, changed or cut short is
-                            refused); runs written before 2.0.0-rc.85 list no
+                            refused); runs written before 2.0.0-rc.86 list no
                             files and are restored without that check
   --require-encrypted       Refuse a backup that is not encrypted
   --allow-plaintext         Restore a plaintext backup even though a decryption

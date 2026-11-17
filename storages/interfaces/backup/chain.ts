@@ -36,7 +36,7 @@ const CHAIN_FORMAT_VERSION = 1;
 /** The first release that writes backup chains (named in the operator messages). */
 const CHAIN_RELEASE = '2.0.0-rc.51';
 /** The first release whose runs list their files in the manifest (named in the operator messages). */
-const INTEGRITY_RELEASE = '2.0.0-rc.85';
+const INTEGRITY_RELEASE = '2.0.0-rc.86';
 /** Version of the `integrity` object of a run's manifest. */
 const INTEGRITY_VERSION = 2;
 /** Files at the root of a backup that belong to no run (the chain's own files). */

@@ -255,15 +255,59 @@ UserDatabase.prototype.getEventsStreamed = function (this: UserDatabaseInstance,
  *   and `NOT INDEXED` so the rows are always read from that set (cost follows
  *   the matches). When the planner walks the `time` index instead, a stream
  *   holding few events costs a scan of the whole index (measured 128 ms vs
- *   0.1 ms on 500k rows); `NOT INDEXED` rules that plan out.
+ *   0.1 ms on 500k rows); `NOT INDEXED` rules that plan out. Except for a
+ *   small page of a filter most rows meet: see `walksTimeIndex`.
  * - `modifiedSince` with no stream filter: see `modifiedSincePlan`.
  */
 function prepareEventsGetQuery (db: SqliteDb, params: GetParams): SqlPart & { usesFullText: boolean } {
-  const tail = prepareQuery(params);
-  if (tail.usesFullText) return { ...tail, sql: 'SELECT * FROM events NOT INDEXED ' + tail.sql };
+  let tail = prepareQuery(params);
+  if (tail.usesFullText) {
+    if (!walksTimeIndex(db, params)) return { ...tail, sql: 'SELECT * FROM events NOT INDEXED ' + tail.sql };
+    params = { ...params, query: params.query.map((q) => q.type === 'streamsQuery' ? { type: 'streamsQueryExact', content: q.content } : q) };
+    tail = prepareQuery(params);
+  }
   const plan = modifiedSincePlan(db, params);
   const planned = plan.params === params ? tail : prepareQuery(plan.params);
   return { ...planned, sql: 'SELECT * FROM events ' + plan.indexedBy + planned.sql };
+}
+
+// Full-text candidates counted at most, to choose the plan of a stream filter.
+let candidateProbeCap = 20_000;
+
+/**
+ * The rowid set reads every row the full-text index selects before `LIMIT`. A
+ * filter most rows meet (an expanded `:_audit:accesses` on an audit log of
+ * millions of rows) then reads them all for a page of 20: seconds, while the
+ * worker waits (better-sqlite3 is synchronous).
+ *
+ * So, for a page sorted by time, count the candidates (capped). At the cap,
+ * walking the `time` index with the exact condition reads about
+ * `page * rows / candidates` rows before it stops, the rowid set at least the
+ * cap: the walk is taken when its estimate is not above the cap. Same rows
+ * either way (the full-text set only narrows the exact condition).
+ */
+function walksTimeIndex (db: SqliteDb, params: GetParams): boolean {
+  const options = params.options ?? {};
+  const limit = options.limit;
+  if (!Number.isInteger(limit) || (limit as number) < 0) return false;
+  const sort = Object.keys(options.sort ?? {});
+  if (sort.length !== 1 || sort[0] !== 'time') return false;
+  const items = params.query.filter((q) => q.type === 'streamsQuery');
+  if (items.length !== 1) return false;
+  const filter = toSQLiteStreamFilter(items[0].content as Parameters<typeof toSQLiteStreamFilter>[0]);
+  if (filter?.fts == null) return false;
+  const candidates = (db.prepare('SELECT count(*) AS n FROM (SELECT 1 FROM events_fts WHERE streamIds MATCH ? LIMIT ?)')
+    .get(filter.fts, candidateProbeCap) as { n: number }).n;
+  if (candidates < candidateProbeCap) return false;
+  const rows = (db.prepare('SELECT max(rowid) AS n FROM events').get() as { n: number | null }).n ?? 0;
+  const skip = Number.isInteger(options.skip) && (options.skip as number) > 0 ? options.skip as number : 0;
+  return ((limit as number) + skip) * rows <= candidates * candidateProbeCap;
+}
+
+function _setCandidateProbeCap (cap: number): number {
+  const previous = candidateProbeCap;
+  candidateProbeCap = cap;
+  return previous;
 }
 
 // Above this many rows modified since the bound, the time index is walked.
@@ -759,6 +803,11 @@ const converters: Record<string, (content: unknown) => (SqlPart & { usesFullText
       usesFullText: true
     };
   },
+  // The same condition without the full-text set (see `walksTimeIndex`).
+  streamsQueryExact: (content: unknown) => {
+    const filter = toSQLiteStreamFilter(content as Parameters<typeof toSQLiteStreamFilter>[0]);
+    return filter === null ? null : filter.exact;
+  },
   jsonCondition: (content: unknown) => {
     return jsonConditionToSql(content as NormalizedCondition);
   }
@@ -888,4 +937,4 @@ function pagingClause (limit: unknown, skip: unknown): SqlPart {
   return part;
 }
 
-export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setSummaryChunkRows, _summaryCounters };
+export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setCandidateProbeCap, _setSummaryChunkRows, _summaryCounters };

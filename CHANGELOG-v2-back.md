@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### SQLite events query: plan for a filter most rows meet; write-guard error
+
+- `UserDatabase` `prepareEventsGetQuery`: before reading a stream filter's full-text rowid set, a
+  page sorted by time counts the candidates (capped, `candidateProbeCap` 20 000, test hook
+  `_setCandidateProbeCap`). At the cap, when `(limit + skip) x max(rowid) <= candidates x cap`, the
+  `time` index is walked with the exact condition alone (`streamsQueryExact`), so the read stops at
+  `LIMIT`. Measured on 1M audit rows, 3000 accesses, `LIMIT 20`: all accesses 10.4 s -> 137 ms, 300
+  accesses 217 ms -> 14 ms, one access 0.4 ms either way. `[SQQPA]` checks both plans return the
+  same rows.
+- `schema/events.ts` `toDB`: an empty `streamIds` list is stored as the tag alone (it read back as
+  `['']`), `[SQQBL]`; a stream id it cannot store throws `UnstorableStreamIdError`, which
+  `localUserEventsSQLite` turns into `invalid-parameters-format` `[SQCS6]`. `INTEGRITY_RELEASE`
+  (backup chain) is `2.0.0-rc.86`: rc.85 was cut without the backup integrity work.
+
 ### Local PostgreSQL install in `bin-ext/postgresql/`
 
 - `storages/engines/postgresql/scripts/setup` builds PostgreSQL into `bin-ext/postgresql/` (data

@@ -187,6 +187,17 @@
   so with a custom entry named `account` or `_audit` an access holding `*` reached the built-in
   account or audit store; it no longer does.
 
+### SQLite storage: large audit pages, legacy stream ids
+
+- A page of events over a stream filter that most rows of a large account meet (the audit trail of
+  every access, `streams: [':_audit:accesses']`, on an audit log of a million rows) is read by time
+  and stops at the page's end: about 0.1 s instead of 10 s, during which the server answered no
+  other call. Same results.
+- `events.create` / `events.update` on SQLite, into a stream created before stream ids were refused
+  whitespace (2.0.0-rc.85) and whose id holds a space: refused with `invalid-parameters-format`
+  (HTTP 400) naming the stream, instead of `unexpected-error` (HTTP 500). Such events cannot be
+  stored on SQLite; file them in another stream.
+
 ## 2.0.0-rc.85 - 2026-11-16
 
 > **Upgrade advice for operators.** Security release for platforms on the **SQLite** storage engine

@@ -47,11 +47,27 @@ const schema: Schema = {
 
 const IDS_SEPARATOR = ' ';
 
+/**
+ * Thrown by `toDB` for a stream id the stored form cannot hold. Such a stream
+ * can still exist: one created before stream ids were refused whitespace.
+ * The store turns it into a 4xx naming the stream.
+ */
+class UnstorableStreamIdError extends Error {
+  streamId: unknown;
+  constructor (eventId: unknown, streamId: unknown) {
+    super(`Event ${JSON.stringify(eventId)}: stream id ${JSON.stringify(streamId)} cannot be stored (empty, "${schema.ALL_EVENTS_TAG}", or holding a space or NUL)`);
+    this.name = 'UnstorableStreamIdError';
+    this.streamId = streamId;
+  }
+}
+
 function toDB (event: EventLike): DbEvent {
   const dbEvent: DbEvent = {};
   dbEvent.eventid = event.id;
 
-  if (event.streamIds == null) {
+  // An empty list (`removeStreams` can empty one) is stored like no list: the
+  // tag alone, read back without `streamIds`. Joined, it would read back as [''].
+  if (event.streamIds == null || (Array.isArray(event.streamIds) && event.streamIds.length === 0)) {
     dbEvent.streamIds = schema.ALL_EVENTS_TAG;
   } else {
     if (!Array.isArray(event.streamIds)) throw new Error('streamIds must be an Array');
@@ -60,7 +76,7 @@ function toDB (event: EventLike): DbEvent {
     // would be read back as other stream ids.
     for (const id of event.streamIds) {
       if (typeof id !== 'string' || id === '' || id === schema.ALL_EVENTS_TAG || id.includes(IDS_SEPARATOR) || id.includes('\u0000')) {
-        throw new Error(`Event ${JSON.stringify(event.id)}: stream id ${JSON.stringify(id)} cannot be stored (empty, "${schema.ALL_EVENTS_TAG}", or holding a space or NUL)`);
+        throw new UnstorableStreamIdError(event.id, id);
       }
     }
     dbEvent.streamIds = event.streamIds.join(IDS_SEPARATOR) + IDS_SEPARATOR + schema.ALL_EVENTS_TAG;
@@ -143,4 +159,4 @@ function fromDBHistory (dbEvent: DbEvent): EventLike {
 
 const dbSchema = schema.dbSchema;
 const ALL_EVENTS_TAG = schema.ALL_EVENTS_TAG;
-export { dbSchema, ALL_EVENTS_TAG, toDB, fromDB, fromDBHistory };
+export { dbSchema, ALL_EVENTS_TAG, toDB, fromDB, fromDBHistory, UnstorableStreamIdError };

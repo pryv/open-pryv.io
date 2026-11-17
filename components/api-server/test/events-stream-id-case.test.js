@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
 /**
@@ -67,6 +70,18 @@ describe('[SQCS] stream ids differing only by case are distinct streams', functi
       assert.strictEqual(s.status, 400, JSON.stringify(id) + ' ' + JSON.stringify(s.body));
       assert.strictEqual(s.body.error.id, 'invalid-item-id', JSON.stringify(s.body));
     }
+  });
+
+  it('[SQCS6] on SQLite, an event filed in a stream whose id holds a space (created before the rule) is refused with a 400 naming the stream', async function () {
+    if (process.env.STORAGE_ENGINE !== 'sqlite') this.skip();
+    const { getMall } = require('mall');
+    const mall = await getMall();
+    const streamId = 'sqcs legacy';
+    await mall.streams.create(username, { id: streamId, name: 'Sqcs legacy', parentId: null });
+    const e = await coreRequest.post(`/${username}/events`).set('Authorization', personalToken).send({ streamIds: [streamId], type: 'note/txt', content: 'x' });
+    assert.strictEqual(e.status, 400, JSON.stringify(e.body));
+    assert.strictEqual(e.body.error.id, 'invalid-parameters-format', JSON.stringify(e.body));
+    assert.ok(e.body.error.message.includes(JSON.stringify(streamId)), e.body.error.message);
   });
 
   it('[SQCS3] deleting one stream with its events leaves the events of the other', async function () {

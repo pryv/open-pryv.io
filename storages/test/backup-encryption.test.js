@@ -262,7 +262,7 @@ describe('[BENC] backup encryption', () => {
         const atts = {};
         for await (const a of ur.readAttachments()) atts[a.fileId] = (await collectAttachment(a.stream)).toString();
         assert.deepStrictEqual(atts, { f1: 'F1 v1 fixture' });
-        assert.deepStrictEqual(warnings, ['full', V1.chain.incId].map((id) => `Run ${id}: written before 2.0.0-rc.85, its file list is not verified`));
+        assert.deepStrictEqual(warnings, ['full', V1.chain.incId].map((id) => `Run ${id}: written before 2.0.0-rc.86, its file list is not verified`));
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }

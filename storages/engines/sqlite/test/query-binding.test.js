@@ -14,6 +14,7 @@ const cuid = require('cuid');
 const helpers = require('../../../test/helpers');
 const { SqliteStorage: Storage } = require('../src/userSQLite/Storage.ts');
 const { _setSetFrom } = require('../src/userSQLite/streamQueryUtils.ts');
+const eventsSchema = require('../src/userSQLite/schema/events.ts');
 
 // The events query of the SQLite engine, called directly (no API validator in
 // front): every value is bound, never SQL text, and a stream id matches only
@@ -286,6 +287,20 @@ describe('[SQQB] SQLite events query: bound values, exact stream ids', function 
       await assert.rejects(() => userDb.createEvent({ id: cuid(), time: 1000, streamIds: bad, type: 'misc/x' }), /cannot be stored/, JSON.stringify(bad));
     }
     assert.strictEqual(userDb.countEvents(), before);
+    await assert.rejects(() => userDb.createEvent({ id: cuid(), time: 1000, streamIds: ['a b'], type: 'misc/x' }), (err) => err instanceof eventsSchema.UnstorableStreamIdError && err.streamId === 'a b');
+  });
+
+  it('[SQQBL] an empty stream list is stored like none: read back without streamIds, not as [""]', async function () {
+    assert.strictEqual(eventsSchema.toDB({ id: 'e', streamIds: [] }).streamIds, eventsSchema.ALL_EVENTS_TAG);
+    const otherId = cuid();
+    const otherDb = await storage.forUser(otherId);
+    try {
+      await otherDb.createEvent({ id: 'empty', time: 1000, streamIds: [], type: 'misc/x' });
+      const stored = await otherDb.getOneEvent('empty');
+      assert.strictEqual(stored.streamIds, undefined, JSON.stringify(stored));
+    } finally {
+      await userLocalDirectory.deleteUserDirectory(otherId);
+    }
   });
 
   it('[SQQB5] paging values are bound; an unknown column is refused', async function () {

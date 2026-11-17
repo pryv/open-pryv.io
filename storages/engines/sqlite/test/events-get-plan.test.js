@@ -12,7 +12,7 @@ const cuid = require('cuid');
 const userLocalDirectory = require('../../../test/helpers').userLocalDirectory;
 const { SqliteStorage: Storage } = require('storages/engines/sqlite/src/userSQLite/Storage.ts');
 const { localStorePrepareOptions, localStorePrepareQuery } = require('storage/src/localStoreEventQueries.ts');
-const { _setModifiedProbeCap } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
+const { _setModifiedProbeCap, _setCandidateProbeCap } = require('storages/engines/sqlite/src/userSQLite/UserDatabase.ts');
 
 /**
  * `events.get` on a large per-user file (an audit log of several GB) must not
@@ -178,6 +178,43 @@ describe('[SQQP] userSQLite events.get query plans', function () {
       }
     } finally {
       _setModifiedProbeCap(previous);
+    }
+  });
+
+  it('[SQQPA] a small page of a filter most rows meet walks the time index; the same rows as the rowid set', async function () {
+    const previous = _setCandidateProbeCap(20);
+    try {
+      // 40 of the 61 rows hold `a`: at the cap (20), a page of 3 (3 x 61 rows <= 20 x 20) walks the time index.
+      const walk = await run({ streams: [[{ any: ['a'] }]], toTime: 1e12 }, { limit: 3 });
+      assert.ok(!walk.sql.includes('events_fts') && !walk.sql.includes('NOT INDEXED'), walk.sql);
+      assert.match(walk.plan, /USING INDEX events_time/, walk.plan);
+      assert.doesNotMatch(walk.plan, /TEMP B-TREE/, walk.plan);
+      // A page whose walk would read more rows than the cap keeps the rowid set.
+      const large = await run({ streams: [[{ any: ['a'] }]], toTime: 1e12 }, { limit: 50 });
+      assert.match(large.sql, /NOT INDEXED/, large.sql);
+      // A filter under the cap keeps the rowid set.
+      const few = await run({ streams: [[{ any: ['sqqp-none'] }]], toTime: 1e12 }, { limit: 3 });
+      assert.match(few.sql, /NOT INDEXED/, few.sql);
+      // Both plans return the same rows (order, skip, `not`, OR of blocks, trashed).
+      const cases = [
+        [{ streams: [[{ any: ['a'] }]], toTime: 1e12 }, { limit: 3 }],
+        [{ streams: [[{ any: ['a'] }]], toTime: 1e12 }, { limit: 2, skip: 3, sortAscending: true }],
+        [{ streams: [[{ any: ['a'] }, { not: ['b'] }]], toTime: 1030 }, { limit: 4 }],
+        [{ streams: [[{ any: ['b'] }], [{ any: ['c'] }]], toTime: 1059 }, { limit: 4 }],
+        [{ state: 'trashed', streams: [[{ any: ['a'] }]] }, { limit: 2 }]
+      ];
+      for (const [q, o] of cases) {
+        const walked = await run(q, o);
+        assert.ok(!walked.sql.includes('NOT INDEXED'), 'walked ' + JSON.stringify([q, o]));
+        _setCandidateProbeCap(1e9);
+        const set = await run(q, o);
+        _setCandidateProbeCap(20);
+        assert.match(set.sql, /NOT INDEXED/, set.sql);
+        assert.deepStrictEqual(walked.rows.map((e) => e.id), set.rows.map((e) => e.id), JSON.stringify([q, o]));
+        assert.ok(set.rows.length > 0, JSON.stringify([q, o]));
+      }
+    } finally {
+      _setCandidateProbeCap(previous);
     }
   });
 

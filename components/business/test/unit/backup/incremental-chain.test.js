@@ -910,14 +910,14 @@ describe('[BKSM] run file table and chain cross-check', function () {
     rewriteManifest(dir, (m) => { delete m.integrity; });
     const warnings = [];
     await createFilesystemBackupReader(dir, { onWarning: (w) => warnings.push(w) }).readManifest();
-    assert.deepStrictEqual(warnings, ['Run full: written before 2.0.0-rc.85, its file list is not verified']);
+    assert.deepStrictEqual(warnings, ['Run full: written before 2.0.0-rc.86, its file list is not verified']);
 
     // a run of an earlier release after a run with a file table: refused, naming the way out
     const dir2 = path.join(tmp, 'plain2');
     const inc2Dir = await plainChain(dir2);
     rewriteManifest(inc2Dir, (m) => { delete m.integrity; });
     await assert.rejects(() => createFilesystemBackupReader(dir2).readManifest(),
-      new RegExp(`Run ${INC1_ID} of the backup at .* was written in the format of a release before 2.0.0-rc.85 after run full, which was not: refused .*--through-run full restores up to the last verified run`));
+      new RegExp(`Run ${INC1_ID} of the backup at .* was written in the format of a release before 2.0.0-rc.86 after run full, which was not: refused .*--through-run full restores up to the last verified run`));
     const through = await createFilesystemBackupReader(dir2, { throughRun: 'full' }).readManifest();
     assert.deepStrictEqual(through.users.map((u) => u.userId), ['u1-full-and-inc', 'u2-full-only']);
     assert.ok(incDir);

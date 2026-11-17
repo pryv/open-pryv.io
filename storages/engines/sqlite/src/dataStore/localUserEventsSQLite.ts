@@ -23,6 +23,20 @@ const errors = ds.errors;
 const timestamp = require('unix-timestamp');
 const { DeletionModesFields } = require('../../../../shared/DeletionModesFields.ts');
 const { localStoreEventQueries } = require('../../../../shared/localStoreEventQueries.ts');
+const { UnstorableStreamIdError } = require('../userSQLite/schema/events.ts');
+
+/**
+ * A 4xx for an event filed in a stream whose id this engine cannot store
+ * (one created before such ids were refused), else null. In the server the
+ * data-store errors carry the API factory's methods; alone, the engine falls
+ * back on its own 400.
+ */
+function unstorableStreamIdError (err: unknown): Error | null {
+  if (!(err instanceof UnstorableStreamIdError)) return null;
+  const streamId = (err as { streamId?: unknown }).streamId;
+  const make = errors.invalidParametersFormat ?? errors.invalidRequestStructure;
+  return make(`Events cannot be stored in stream ${JSON.stringify(streamId)} on this platform: its id holds a space or NUL`, { streamId }, err);
+}
 /** Datastore-level event: the canonical stored shape plus the open tail the
  *  deletion-mode field scrubbing indexes dynamically. */
 type EventLike = StoredEvent & { [k: string]: unknown };
@@ -171,7 +185,7 @@ const userEvents = ds.createUserEvents({
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' && e.message?.includes('events.eventid') === true) {
         throw errors.itemAlreadyExists('event', { id: event.id }, err);
       }
-      throw errors.unexpectedError(err);
+      throw unstorableStreamIdError(err) ?? errors.unexpectedError(err);
     }
   },
 
@@ -191,7 +205,7 @@ const userEvents = ds.createUserEvents({
       if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' && e.message?.includes('events.eventid') === true) {
         throw errors.itemAlreadyExists('event', { id: eventData.id }, err);
       }
-      throw errors.unexpectedError(err);
+      throw unstorableStreamIdError(err) ?? errors.unexpectedError(err);
     }
   },
 
@@ -218,7 +232,7 @@ const userEvents = ds.createUserEvents({
         return { next: { ...next, id: eventId }, versionItem };
       });
     } catch (err: unknown) {
-      throw errors.unexpectedError(err);
+      throw unstorableStreamIdError(err) ?? errors.unexpectedError(err);
     }
   },
 
