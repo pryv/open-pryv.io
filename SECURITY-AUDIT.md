@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 23 (2026-11-13), covering releases 2.0.0-rc.40 to 2.0.0-rc.84.
+**Report revision:** 24 (2026-11-17), covering releases 2.0.0-rc.40 to 2.0.0-rc.85.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -56,7 +56,9 @@ an account's stored address and of the background work of an account being erase
 2026, added those fixed in 2.0.0-rc.72, and a follow-up review of email uniqueness in cleartext PII
 mode and of backup restore, made in November 2026, added the one fixed in 2.0.0-rc.73, and a
 review of the OAuth2 client revoke, made in November 2026 alongside the work on client metadata
-documents, added the one fixed in 2.0.0-rc.74; they were fixed under the same rules (tests that
+documents, added the one fixed in 2.0.0-rc.74, and a review of how the SQLite storage engine builds
+its queries and matches stream ids, made in November 2026 alongside the planned move of that engine
+to bound values, added those fixed in 2.0.0-rc.85; they were fixed under the same rules (tests that
 fail without the fix, independent review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
@@ -67,17 +69,17 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 70 findings, each rated and described individually in
+The review and its follow-ups recorded 73 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
 | Severity | Fixed | Open | Accepted |
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
-| High | 22 | 0 | 0 |
-| Medium | 38 | 0 | 0 |
+| High | 23 | 0 | 0 |
+| Medium | 40 | 0 | 0 |
 | Low | 4 | 0 | 0 |
-| **Total** | **70** | **0** | **0** |
+| **Total** | **73** | **0** | **0** |
 
 Seven of the fixed findings have a second, longer-term step planned for a later major version
 (section 5).
@@ -136,6 +138,7 @@ its applicability is stated with it.
 | 2.0.0-rc.82 | 2026-11-12 | no finding; default change: `oauth.audienceBoundSessions` is `true`; operator action: set it to `false` explicitly on a core whose resource servers do not exchange yet (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-12) |
 | 2.0.0-rc.83 | 2026-11-12 | none (not an audit release) | yes (2026-11-12) |
 | 2.0.0-rc.84 | 2026-11-13 | none (not an audit release); lower-severity fixes: the `integrity` of an updated access verifies on the form the API returns (stored hashes recomputed once at upgrade, no operator action beyond the migration run at boot), history snapshots of an access no longer carry its internal call counters | yes (2026-11-13) |
+| 2.0.0-rc.85 | 2026-11-17 | 1 High, 2 Medium (SQLite storage engine), lower-severity fixes; operator action: none beyond the upgrade for the fixes; before upgrading a SQLite core, look for access permissions on lower-cased `:_audit:action-` ids and for stream ids holding whitespace or equal to `..` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-17) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -310,8 +313,9 @@ These are the main checks that held, summarised:
   budgets, constant-time comparison, expiry, links built from configuration, never from the `Host`
   header.
 - **SQL construction:** every PostgreSQL statement is scoped by user id and parameterised (content
-  conditions, type wildcards and stream lists included); the SQLite engine quotes and escapes the
-  values it inlines (moving it to placeholders is planned, section 5).
+  conditions, type wildcards and stream lists included); the SQLite engine quoted and escaped the
+  values it inlined, and binds every value since 2.0.0-rc.85 (its stream-id matching was not exact
+  until then: see that release below).
 - **Query validation:** stream ids in queries refuse quotes, control characters and unknown
   properties; content conditions use a fixed operator set and path grammar.
 - **Prototype pollution:** no path was found by which request data (JSON bodies, multipart bodies,
@@ -2179,6 +2183,96 @@ releases.
   `oauth.audienceBoundSessions: false` explicitly before upgrading; otherwise none beyond the
   upgrade.
 
+### Fixed in 2.0.0-rc.85 (deployed)
+
+2.0.0-rc.85 is a security release for platforms on the SQLite storage engine. It ships the move of
+that engine's queries to bound values, planned in section 5 since the first revision. The review of
+how the engine builds its queries and matches stream ids, made alongside that work, found the
+following in earlier releases. PostgreSQL platforms are not affected by them; they get only the
+stream-id rule of the third item.
+
+#### On SQLite, a stream named `..` gave an access the events of the account's other streams
+
+- **Severity:** High (SQLite storage engine only; an app or shared access allowed to create a
+  stream, that is holding `manage` on one of the account's streams). Affected: 2.0.0-rc.84 and
+  earlier releases on the SQLite engine.
+- **What could happen:** the SQLite engine tags every stored event with the id `..` and found the
+  events of a stream by full-text matching, so a stream query naming `..` matched every event of
+  the account. `..` was not a reserved stream id: an access allowed to create a stream could create
+  one named `..` under a stream it manages, which its event reads then covered, and these reads
+  returned the events of the account's other streams too, beyond the access's permissions. Once
+  such a stream existed, every access allowed to read its parent stream got the same events, a
+  read-only one included. The exclusions applied to every read (internal plugin streams, shared
+  secrets, e-mails, the streams the access is refused) still held, and account fields were not
+  reachable this way. With the PostgreSQL engine `..` was an ordinary id and returned nothing
+  extra.
+- **What changed:** `..` is a reserved stream id (`streams.create` answers `invalid-item-id`, on
+  every storage engine), and the SQLite engine compares stream ids whole: `..` and the empty id
+  match no event.
+- **Operator action:** none beyond the upgrade. A read-only check for past use is recommended on
+  SQLite cores: a stream whose id is `..` (writing an event into an existing one is refused after
+  the upgrade); any hit is handled case by case. The maintainers ran this check on the platforms
+  they operate before the deploy and found none.
+
+#### On SQLite, stream ids were matched without regard to letter case
+
+- **Severity:** Medium (SQLite storage engine only; an account holding two streams whose ids
+  differ only by case, and an access allowed on one of them and not the other). Affected: every
+  release on the SQLite engine before 2.0.0-rc.85.
+- **What could happen:** stream ids are case-sensitive in the API (`diary` and `Diary` are two
+  streams), but with the SQLite engine `events.get` and the stream scope of an access matched them
+  in any case: an access allowed on `diary` also read the events of `Diary`.
+- **What changed:** stream ids are compared whole and case-sensitively, as the PostgreSQL engine
+  always did, the audit store included. With the SQLite engine, the children of `:_audit:actions`
+  are now listed with the method's own spelling (`:_audit:action-callBatch`, previously
+  `:_audit:action-callbatch`), and an audit query needs that spelling.
+- **Operator action:** none for the fix. An access permission stored on a lower-cased
+  `:_audit:action-` id (copied from an earlier listing) grants nothing after the upgrade: before
+  upgrading a SQLite core, look for permissions whose `streamId` starts with `:_audit:action-` and
+  is not an exact method id, and give them the method's spelling. The maintainers ran this check
+  on the platforms they operate before the deploy and found none.
+
+#### On SQLite, a stream id holding a space filed its events into other streams
+
+- **Severity:** Medium (SQLite storage engine only; a caller able to create a stream under the
+  consent plugin's app area, `:_cmc:apps`). Affected: 2.0.0-rc.84 and earlier releases on the
+  SQLite engine.
+- **What could happen:** the SQLite engine stores the stream ids of an event as one text separated
+  by spaces. `streams.create` kept a path-style id (`:_cmc:apps:...`) as given, a space included, so
+  the events written into a stream `:_cmc:apps:x a` were stored, and read back, as filed in both
+  `:_cmc:apps:x` and `a`: they appeared in stream `a`, readable by the accesses scoped to it and
+  returned by its queries. This was a write into a stream the caller held no permission on.
+- **What changed:** `streams.create` answers `invalid-item-id` for an id holding whitespace or a
+  control character, and for the id `..`, on every storage engine; a CMC membership offer naming
+  such a stream id is refused (`cmc-membership-permissions-invalid`), since accepting it creates
+  the stream. With the SQLite engine, writing or restoring an event whose stream id is empty, `..`,
+  or holds a space or NUL is refused with an error naming the event. **Breaking** only for a client
+  that created such ids; existing streams are unchanged. A backup taken from a PostgreSQL platform
+  (or a v1 export) that holds such an id does not restore onto SQLite until the stream is renamed.
+- **Operator action:** none for the fix. Before upgrading a SQLite core, look for stream ids
+  holding whitespace: writing an event into such a stream is refused after the upgrade, and its
+  events stored earlier stay filed under each part of the id. The maintainers ran this check on the
+  platforms they operate before the deploy and found none.
+
+#### Lower-severity fixes in 2.0.0-rc.85
+
+- **SQLite query values are bound** (planned at revision 1, section 5): the SQLite events and
+  audit queries carried their values as quoted and escaped SQL text; every value is now a bound
+  parameter (condition values, JSON paths, `LIKE` patterns, the full-text argument, paging), and
+  column names are checked against the events schema. No injection path through the escaped form
+  was found (section 4.1); binding removes the dependence on escaping.
+- **The SQLite stream filter matched part of a longer id** (Low): full-text matching found a stream
+  id inside a longer one, so `abc` matched an event of a stream `abc/def`. Full text is now only a
+  prefilter, and the stored ids are compared whole; an id holding no letter, digit or `-_:.` (such
+  as `/`) now finds its events (it found none).
+- Not security fixes, listed for operators: with the SQLite engine, `%` and `_` in a `types` class
+  (`note_x/*`) are literal characters, no longer wildcards, and `/*` alone is an exact type, not a
+  class; the SQLite audit store rebuilds its list of access and action children once per file at
+  its first open (no migration, no configuration change). A client that stored an audit child id
+  from an earlier listing must list again.
+- **Operator action:** none beyond the upgrade; the checks of the items above concern SQLite cores
+  only.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2225,8 +2319,6 @@ library. `npm` / `npx` were removed from the image in rc.50. The rqlite ports li
 - Delegation teardown across cores: a peer check of the delegate's identity.
 - Token hardening: a minimum length for caller-chosen access tokens and hashed token storage;
   authenticated data on encryption envelopes; signed webhook deliveries.
-- The SQLite event engine moving from escaped inline values to placeholders, as the PostgreSQL
-  engine does.
 
 **Access deletion records.** A deleted access leaves a deletion record (its name, permissions and
 timestamps) that is kept until the account is erased by default; API answers never return its
@@ -2287,3 +2379,4 @@ This report is updated with every release that carries a security fix:
 | 21 | 2026-11-12 | 2.0.0-rc.40 to 2.0.0-rc.82 | Release table adds 2.0.0-rc.80 and rc.81 (not audit releases); section 4 adds 2.0.0-rc.82: the default of `oauth.audienceBoundSessions` is now `true`, closing by default the direct use at the data API of a token issued for a resource server (described with 2.0.0-rc.73); no finding, counts unchanged. Deployed on the maintainers' platforms (2026-11-12). |
 | 22 | 2026-11-12 | 2.0.0-rc.40 to 2.0.0-rc.83 | Release table adds 2.0.0-rc.83 (not an audit release: `features.passwordResetByEmail` in service info, the admin route `GET /system/migrations-status`); counts unchanged. |
 | 23 | 2026-11-13 | 2.0.0-rc.40 to 2.0.0-rc.84 | Release table adds 2.0.0-rc.84 (not an audit release; lower-severity fixes: access integrity verifiable after an update, history snapshots without internal call counters); counts unchanged. Deployed on the maintainers' platforms (2026-11-13). |
+| 24 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.85 | Adds 2.0.0-rc.85 (review of how the SQLite storage engine builds its queries and matches stream ids): 1 High and 2 Medium findings, all on the SQLite engine, and lower-severity fixes; the planned move of the SQLite engine to bound values ships (removed from section 5, section 4.1 updated). Deployed on the maintainers' platforms (2026-11-17). |
