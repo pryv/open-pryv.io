@@ -90,6 +90,14 @@ storages:
       # write. Raise auditReadPoolSize, not auditPoolSize, for read throughput.
       # auditPoolSize: 5      # audit writes and short reads
       # auditReadPoolSize: 5  # streamed audit reads only
+      # Time limits on the database work of API request handling (the API,
+      # HFS and previews workers of the clustered server). A statement running
+      # longer is stopped and the request answers 503 api-unavailable; a
+      # streamed response is limited per batch of rows, not as a whole. A
+      # transaction left idle longer is closed. Schema migrations, command-line
+      # tools, account deletion and background jobs are not limited. 0: off.
+      statementTimeoutMs: 30000
+      idleInTransactionTimeoutMs: 60000
     sqlite:
       path: 'REPLACE ME'
     filesystem:

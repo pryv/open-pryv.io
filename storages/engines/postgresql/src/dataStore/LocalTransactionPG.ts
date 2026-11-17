@@ -10,7 +10,7 @@
  */
 type PgClient = {
   query: (text: string, params?: unknown[]) => Promise<unknown>;
-  release: () => void;
+  release: (err?: unknown) => void;
 };
 type DbLike = { getClient: () => Promise<PgClient> };
 
@@ -29,14 +29,21 @@ class LocalTransactionPG {
   }
 
   async exec (func: (tx: LocalTransactionPG) => Promise<void>): Promise<void> {
+    let broken = false;
     try {
       await func(this);
       await this.client!.query('COMMIT');
     } catch (err) {
-      await this.client!.query('ROLLBACK');
+      // Best effort: on a terminated connection the rollback fails too, and
+      // must not hide the original cause.
+      try {
+        await this.client!.query('ROLLBACK');
+      } catch (rollbackErr) {
+        broken = true;
+      }
       throw err;
     } finally {
-      this.client!.release();
+      this.client!.release(broken ? new Error('transaction rollback failed; discarding client') : undefined);
       this.client = null;
     }
   }

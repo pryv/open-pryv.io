@@ -12,6 +12,15 @@ import { ErrorIds } from './ErrorIds.ts';
 import { ErrorMessages } from './ErrorMessages.ts';
 import { isCapacityRefusal } from 'utils/src/concurrencyLimit.ts';
 
+/** PostgreSQL's SQLSTATE for a statement cancelled (here: by statement_timeout). */
+const STATEMENT_CANCELLED_CODE = '57014';
+const STATEMENT_CANCELLED_MESSAGE = 'The operation ran longer than this server allows and was stopped. ' +
+  'Narrow the request (time range, streams, limit) or retry later.';
+
+function isStatementCancelled (err: unknown): err is Error & { code: string; statementText?: string } {
+  return err instanceof Error && (err as { code?: unknown }).code === STATEMENT_CANCELLED_CODE;
+}
+
 /**
  * The full factory contract — one entry per error producer below.
  * Keeping the interface next to the assignments means a signature change
@@ -249,6 +258,18 @@ factory.payloadTooLarge = function (message: string, data?: unknown) {
 };
 
 factory.unexpectedError = function (sourceError: unknown, message?: string) {
+  // A database statement stopped by the server's time limit (PostgreSQL
+  // SQLSTATE 57014): a limit doing its job, not a fault. It was rolled back,
+  // so a retry is correct; no delay is known, so no Retry-After.
+  if (isStatementCancelled(sourceError)) {
+    return new APIError(ErrorIds.ApiUnavailable, STATEMENT_CANCELLED_MESSAGE,
+      { httpStatus: 503, innerError: sourceError });
+  }
+  // Already mapped below (a data store wraps its errors before they reach a
+  // method, which may wrap again): keep the answer as it is.
+  if (sourceError instanceof APIError && isStatementCancelled(sourceError.innerError)) {
+    return sourceError;
+  }
   // A work refused for a per-process capacity ceiling (the password-check
   // slots) never ran: the caller retries later, guided by Retry-After.
   if (isCapacityRefusal(sourceError)) {

@@ -380,6 +380,17 @@ if (isMissingOrSentinel(get('storages.base.engine'))) {
   }
 }
 
+// storages.engines.postgresql.statementTimeoutMs / idleInTransactionTimeoutMs:
+// the same check master.js runs at boot (integers >= 0; a warning below 1000 ms).
+try {
+  const { describePgTimeLimits } = require('../storages/engines/postgresql/src/timeLimits.ts');
+  const report = describePgTimeLimits(get('storages.engines.postgresql'));
+  for (const p of report.problems) problems.push(`${p.path.join('.')} ${p.message}.`);
+  for (const w of report.warnings) warnings.push(w);
+} catch (err) {
+  warnings.push(`storages.engines.postgresql time limits could not be checked here (${err.message}); master.js still checks them at boot.`);
+}
+
 // storages.series.engine: postgresql needs a PostgreSQL base engine (mirrors
 // checkSeriesEngineDependency in config/plugins/config-validation.js). The
 // series engine defaults to postgresql, so a file that only switches the base

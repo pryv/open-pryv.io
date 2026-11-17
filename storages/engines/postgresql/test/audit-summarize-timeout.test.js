@@ -106,4 +106,25 @@ describe('[PGSB] PostgreSQL audit summarize: statement timeout', function () {
       assert.strictEqual(res.rows[0].statement_timeout, '0');
     }
   });
+
+  it('[PGSB3] on a pool with its own statement limit, the summary\'s limit does not replace it', async () => {
+    const { setRequestServingForTests } = require('../src/DatabasePG.ts');
+    setRequestServingForTests(true);
+    const limited = new DatabasePG({ ...helpers.state.config, statementTimeoutMs: 1500, max: 1 });
+    setRequestServingForTests(null);
+    await limited.waitForConnection();
+    try {
+      const limitedStorage = new AuditStoragePG(limited);
+      await limitedStorage.init();
+      const limitedUserDb = await limitedStorage.forUser(userId);
+      const groups = await limitedUserDb.summarize({ fromTime: 0, toTime: 100000, slotSeconds: 3600, deadline: Date.now() + 300 });
+      assert.deepStrictEqual(groups, [{ slot: 10, action: 'events.get', error: false, count: 1 }]);
+      for (let i = 0; i < 3; i++) {
+        const res = await limited.query('SHOW statement_timeout');
+        assert.strictEqual(res.rows[0].statement_timeout, '1500ms');
+      }
+    } finally {
+      await limited.close();
+    }
+  });
 });

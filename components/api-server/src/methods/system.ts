@@ -33,6 +33,7 @@ const methodsSchema = require('../schema/systemMethods.ts');
 const string = require('./helpers/string.ts');
 const { fromCallback } = require('utils');
 const { getStorageLayer, getUsersLocalIndex } = require('storage');
+const storages = require('storages');
 const { ready, getLogger } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getEventTypesLoadState } = require('business').types;
@@ -410,10 +411,11 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   systemAPI.register('system.checkPlatformIntegrity',
     async function performSystemsChecks (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
-        result.checks = [
+        // an operator's whole-core scan, not a request to bound
+        result.checks = await storages.runMaintenance(async () => [
           await platform.checkIntegrity(),
           await usersIndex.checkIntegrity()
-        ];
+        ]);
         return next();
       } catch (err) {
         return next(err);

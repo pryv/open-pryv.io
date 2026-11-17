@@ -174,7 +174,9 @@ async function _doInit (config?: BoilerConfig) {
   // engines without it serve content queries by scan, which is correct).
   const bsModule = pluginLoader.getEngineModule(baseEngine);
   if (typeof bsModule.reconcileContentIndexes === 'function') {
-    await bsModule.reconcileContentIndexes(cfg.get('storages:contentIndexes') || []);
+    // Index builds run past any request time limit; cut short, one would
+    // leave an invalid index rebuilt at every boot.
+    await runMaintenance(() => bsModule.reconcileContentIndexes(cfg.get('storages:contentIndexes') || []));
   }
 
   // 5. UserAccountStorage (uses same engine as baseStorage)
@@ -296,9 +298,38 @@ function _setPlatformDBForTest (db: unknown): void {
   platformDB = db;
 }
 
+let pgRunMaintenance: (<T>(fn: () => Promise<T>) => Promise<T>) | null = null;
+
+/**
+ * Run `fn` outside the database time limits that apply while serving
+ * requests: long legitimate work in a request-serving process (account
+ * erasure, background jobs, index builds). Elsewhere it only runs `fn`.
+ */
+function runMaintenance<T> (fn: () => Promise<T>): Promise<T> {
+  if (pgRunMaintenance == null) {
+    try {
+      pgRunMaintenance = require('./engines/postgresql/src/DatabasePG.ts').runMaintenance;
+    } catch (e) {
+      pgRunMaintenance = (f) => f();
+    }
+  }
+  return pgRunMaintenance!(fn);
+}
+
+/** Whether the current call runs inside `runMaintenance` (false without PostgreSQL). */
+function isInMaintenance (): boolean {
+  try {
+    return require('./engines/postgresql/src/DatabasePG.ts').isInMaintenance();
+  } catch (e) {
+    return false;
+  }
+}
+
 export {
   init,
   reset,
+  runMaintenance,
+  isInMaintenance,
   pluginLoader,
   databasePG,
   connection,

@@ -358,11 +358,22 @@ class Deletion {
       // credential still cached by a high-frequency worker.
       'dropHFDataAgain'
     ];
+    // Each step runs outside the database time limits of request handling: a
+    // large account's rows take longer to remove than any request may, and an
+    // erasure that can never finish is an erasure failure. Only the step: its
+    // `next` is called from outside the scope, so what follows in the chain
+    // (later methods, the answer, the audit write) stays limited.
     return [
       this.openErasureRecord.bind(this),
       ...steps.map((name) => this.#recordedStep(name, (this[name] as StepFn).bind(this))),
       this.closeErasureRecord.bind(this)
-    ];
+    ].map((step) => (context: MethodContext, params: unknown, result: ResultBag, next: Next) => {
+      let stepDone!: Next;
+      const nextCalled = new Promise<{ err?: unknown }>((resolve) => { stepDone = (err) => resolve({ err }); });
+      nextCalled.then(({ err }) => next(err))
+        .catch((chainErr: unknown) => this.logger.error('account erasure: the method chain after a step failed', chainErr));
+      return require('storages').runMaintenance(async () => step(context, params, result, stepDone));
+    });
   }
 
   /**

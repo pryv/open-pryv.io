@@ -49,3 +49,50 @@ describe('[UNXE] unexpected errors keep their detail on the server', function ()
     assert.strictEqual(err.message, 'Unexpected error: the mail service is not configured');
   });
 });
+
+describe('[UNXS] a statement stopped by the database time limit', function () {
+  function cancelled () {
+    const err = new Error('canceling statement due to statement timeout');
+    err.code = '57014';
+    err.statementText = 'SELECT * FROM events WHERE user_id = $1';
+    return err;
+  }
+
+  it('[UNXS1] answers 503 api-unavailable, without Retry-After, the source kept as innerError', function () {
+    const source = cancelled();
+    const err = factory.unexpectedError(source);
+    assert.strictEqual(err.id, ErrorIds.ApiUnavailable);
+    assert.strictEqual(err.httpStatus, 503);
+    assert.match(err.message, /ran longer than this server allows/);
+    assert.strictEqual(err.innerError, source);
+    assert.strictEqual(err.httpHeaders?.['Retry-After'], undefined);
+    assert.ok(!JSON.stringify(errorHandling.getPublicErrorData(err)).includes('SELECT'));
+  });
+
+  it('[UNXS2] is logged once at warn, with the statement text and never at error level', function () {
+    const err = factory.unexpectedError(cancelled());
+    const logged = { debug: [], info: [], warn: [], error: [] };
+    const logger = Object.fromEntries(Object.keys(logged).map((level) => [level, (msg, meta) => logged[level].push({ msg, meta })]));
+    errorHandling.logError(err, { url: '/alice/events', method: 'GET' }, logger);
+    assert.strictEqual(logged.error.length, 0);
+    assert.strictEqual(logged.info.length, 0);
+    assert.strictEqual(logged.warn.length, 1);
+    assert.strictEqual(logged.warn[0].meta.statement, 'SELECT * FROM events WHERE user_id = $1');
+    assert.strictEqual(logged.warn[0].meta.context.location, '/alice/events');
+  });
+
+  it('[UNXS4] wrapped again (a data store wraps it, then the method), it stays the 503', function () {
+    const once = factory.unexpectedError(cancelled());
+    once.message = 'Error from data store "local": ' + once.message;
+    const twice = factory.unexpectedError(once);
+    assert.strictEqual(twice, once);
+    assert.strictEqual(twice.httpStatus, 503);
+    assert.strictEqual(twice.id, ErrorIds.ApiUnavailable);
+  });
+
+  it('[UNXS3] another database error is still a 500', function () {
+    const err = new Error('deadlock detected');
+    err.code = '40P01';
+    assert.strictEqual(factory.unexpectedError(err).httpStatus, 500);
+  });
+});

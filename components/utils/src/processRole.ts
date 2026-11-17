@@ -7,13 +7,13 @@
 
 /**
  * Whether this process serves API requests: a worker of the clustered server
- * (`bin/master.js`) of type `api` or `hfs`. The master, every command-line
- * tool and the single-process entry points answer false, so the limits
- * meant for request handling never apply to them.
+ * (`bin/master.js`) of type `api`, `hfs` or `previews`. The master, every
+ * command-line tool and the single-process entry points answer false, so the
+ * limits meant for request handling never apply to them.
  */
 function isRequestServingProcess (): boolean {
   const type = process.env.PRYV_WORKER_TYPE;
-  return type === 'api' || type === 'hfs';
+  return type === 'api' || type === 'hfs' || type === 'previews';
 }
 
 export { isRequestServingProcess };
