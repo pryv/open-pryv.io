@@ -116,13 +116,14 @@ class UsersLocalIndex {
       // Resolve a primary username first (common path), then fall back to the
       // alias index so de-identifying / superseded-username aliases route to
       // the same user. Both kinds share the name->userId cache.
+      const cacheEpoch = cache.getUserIdEpoch();
       userId = await this.db.getIdForName(username);
       isCanonical = userId != null;
       if (userId == null) {
         userId = await this.db.getIdForAlias(username);
       }
       if (userId != null) {
-        cache.setUserId(username, userId, isCanonical);
+        cache.setUserId(username, userId, isCanonical, cacheEpoch);
       }
     }
     logger.debug('idForName', username, userId);

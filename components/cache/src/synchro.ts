@@ -17,6 +17,7 @@ interface CacheModule {
   unsetUserById: (userId: string, propagate: boolean) => void;
   setUntrusted: () => void;
   flushAfterReconnect: () => void;
+  dropUserLocal: (userId: string) => void;
 }
 
 interface AccessLogicRef {
@@ -28,15 +29,19 @@ let cache: CacheModule | null = null;
 // Upper bound on followed users: covers every user the access and streams
 // caches can hold at once. A listener is only dropped by eviction from this
 // map (never on a data bust, which would leave the worker deaf for that user
-// until its next fill); the cache entries' max age bounds what an evicted
-// listener can miss.
+// until its next fill). Cache hits refresh it (see touchListener), and when it
+// goes, what is cached for the user goes with it: nothing is served for a user
+// this process no longer follows.
 const MAX_LISTENERS = 8000;
 /**
  * userId -> listener remover
  */
 const listenerMap = new LRUCache<string, () => void>({
   max: MAX_LISTENERS,
-  dispose: (remove) => { remove(); }
+  dispose: (remove, userId) => {
+    remove();
+    cache?.dropUserLocal(userId);
+  }
 });
 const MESSAGES = {
   UNSET_ACCESS_LOGIC: 'unset-access-logic',
@@ -56,6 +61,22 @@ function registerListenerForUserId (userId: string): void {
 function removeListenerForUserId (userId: string): void {
   logger.debug('disable listener for user:', userId);
   listenerMap.delete(userId); // dispose removes the subscription
+}
+/** On a cache hit: keeps the user's listener among the most recent. */
+function touchListener (userId: string): void {
+  listenerMap.get(userId);
+}
+/**
+ * True when this process follows the user and the broker confirmed it: a bust
+ * published from now on reaches this process. A cache fill whose storage read
+ * starts before that can miss one, so it must not be kept.
+ */
+function isFollowing (userId: string): boolean {
+  return listenerMap.has(userId) && pubsub.cache.isSubscribed(userId);
+}
+/** Same for the channel every process follows (name busts). */
+function isFollowingNames (): boolean {
+  return cache != null && pubsub.cache.isSubscribed(MESSAGES.UNSET_USER);
 }
 // listener
 function handleMessage (userId: string, msg: Message): void {
@@ -122,6 +143,9 @@ export {
   setCache,
   listenerMap,
   removeListenerForUserId,
+  touchListener,
+  isFollowing,
+  isFollowingNames,
   MESSAGES
 };
 

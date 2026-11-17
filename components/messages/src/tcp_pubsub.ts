@@ -21,10 +21,18 @@ type DeliverHook = (scope: Scope, event: string, payload: Payload) => void;
 type LocalPubsub = { _emit (event: string, payload: Payload): void };
 type WireMessage =
   | { t: 'welcome'; cid: ClientId }
-  | { t: 'sub'; scope: Scope }
+  | { t: 'sub'; scope: Scope; n?: number }
+  | { t: 'subok'; scope: Scope; n?: number }
   | { t: 'unsub'; scope: Scope }
   | { t: 'pub'; scope: Scope; event: string; payload: Payload }
-  | { t: 'msg'; scope: Scope; event: string; payload: Payload };
+  | { t: 'msg'; scope: Scope; event: string; payload: Payload }
+  | { t: 'ping' }
+  | { t: 'pong' };
+// A subscription is confirmed once the broker acknowledged it: from then on
+// every message published to its scope is routed to this process. A message
+// routed before that is not, so state built on the subscription (a cache fill)
+// must wait for the confirmation.
+type TransportSubscription = { unsubscribe (): void; isConfirmed (): boolean };
 
 let testDeliverHook: DeliverHook | null = null;
 // Told when the broker connection drops and when it is back (subscriptions
@@ -42,11 +50,23 @@ let initPromise: Promise<void> | null = null;
 // serving stale cache (e.g. a revoked access), so we retry with capped backoff
 // and re-run broker election on each attempt (the freed port lets a survivor
 // take over as the new broker).
+const MAX_OUTBOX = 10000;
 const INITIAL_RECONNECT_DELAY_MS = 200;
 const MAX_RECONNECT_DELAY_MS = 5000;
 let reconnectTimer: NodeJS.Timeout | null = null;
 let reconnectDelay = INITIAL_RECONNECT_DELAY_MS;
 let shuttingDown = false;
+
+// Heartbeat. A broker whose event loop is stuck keeps its sockets open, so no
+// `close` tells the clients that invalidations are no longer routed. Each client
+// pings; a ping left unanswered past the deadline is reported as a disconnection
+// (caches stop serving), the next answer as a reconnection (caches are flushed).
+let heartbeatIntervalMs = 1000;
+let heartbeatDeadlineMs = 5000;
+let heartbeatTimer: NodeJS.Timeout | null = null;
+let heartbeatLastTick = 0;
+let pingSentAt: number | null = null;
+let brokerStalled = false;
 
 // ──────────────────────────────────────────────────────────────────────
 // TcpBroker — net.createServer, tracks clients + subscriptions
@@ -111,15 +131,18 @@ class TcpBroker {
         const scope = msg.scope;
         if (!this.subscriptions.has(scope)) this.subscriptions.set(scope, new Set());
         this.subscriptions.get(scope)!.add(senderCid);
+        const socket = this.clients.get(senderCid);
+        if (socket != null) this._send(socket, { t: 'subok', scope, n: msg.n });
         break;
       }
-      case 'unsub': {
-        const scope = msg.scope;
-        if (this.subscriptions.has(scope)) {
-          this.subscriptions.get(scope)!.delete(senderCid);
-        }
+      case 'ping': {
+        const socket = this.clients.get(senderCid);
+        if (socket != null) this._send(socket, { t: 'pong' });
         break;
       }
+      case 'unsub':
+        this._unsubscribe(msg.scope, senderCid);
+        break;
       case 'pub': {
         this._route(senderCid, msg.scope, msg.event, msg.payload);
         break;
@@ -145,10 +168,19 @@ class TcpBroker {
     }
   }
 
+  // An empty scope is removed: one is created per user ever followed.
+  _unsubscribe (scope: Scope, cid: ClientId) {
+    const subs = this.subscriptions.get(scope);
+    if (subs == null) return;
+    subs.delete(cid);
+    if (subs.size === 0) this.subscriptions.delete(scope);
+  }
+
   _removeClient (cid: ClientId) {
     this.clients.delete(cid);
-    for (const subs of this.subscriptions.values()) {
+    for (const [scope, subs] of this.subscriptions) {
       subs.delete(cid);
+      if (subs.size === 0) this.subscriptions.delete(scope);
     }
   }
 
@@ -173,15 +205,29 @@ class TcpClient {
   socket: Socket | null;
   cid: ClientId | null;
   localSubs: Map<Scope, LocalPubsub>;
+  // Scopes the current broker acknowledged (cleared when the connection drops).
+  confirmedScopes: Set<Scope>;
+  // scope -> number of its current subscription (client-wide, increasing): the
+  // broker echoes it in `subok`, so an answer to an earlier one confirms nothing.
+  subGenerations: Map<Scope, number>;
+  nextSubSeq: number;
+  // Publications made while disconnected, sent once the connection is back: a
+  // bust published then must still reach the processes that cached its data.
+  outbox: WireMessage[];
   _buffer: string;
   _welcomeResolve: ((value?: unknown) => void) | null;
   _onDisconnect: (() => void) | null;
   _intentionalClose: boolean;
+  _outboxOverflowWarned = false;
 
   constructor (onDisconnect: (() => void) | null = null) {
     this.socket = null;
     this.cid = null;
     this.localSubs = new Map(); // scope → pubsub instance (survives reconnects → source of truth for re-subscribe)
+    this.confirmedScopes = new Set();
+    this.subGenerations = new Map();
+    this.nextSubSeq = 1;
+    this.outbox = [];
     this._buffer = '';
     this._welcomeResolve = null;
     this._onDisconnect = onDisconnect;
@@ -206,6 +252,7 @@ class TcpClient {
       // let the module schedule a reconnect. Skipped on close() (intentional teardown).
       socket.on('close', () => {
         this.cid = null;
+        this.confirmedScopes.clear();
         if (this._intentionalClose) return;
         if (this._onDisconnect != null) this._onDisconnect();
       });
@@ -216,8 +263,15 @@ class TcpClient {
   // fresh broker learns our subscriptions again (localSubs persisted across the drop).
   resubscribe () {
     for (const scope of this.localSubs.keys()) {
-      this.send({ t: 'sub', scope });
+      this.send({ t: 'sub', scope, n: this.subGenerations.get(scope) });
     }
+  }
+
+  // After resubscribe(): what was published during the gap goes out now.
+  flushOutbox () {
+    const pending = this.outbox;
+    this.outbox = [];
+    for (const msg of pending) this.send(msg);
   }
 
   _onData (chunk: Buffer) {
@@ -244,6 +298,12 @@ class TcpClient {
           this._welcomeResolve = null;
         }
         break;
+      case 'subok':
+        if (msg.n != null && this.subGenerations.get(msg.scope) === msg.n) this.confirmedScopes.add(msg.scope);
+        break;
+      case 'pong':
+        onPong();
+        break;
       case 'msg': {
         const pubsub = this.localSubs.get(msg.scope);
         if (pubsub) {
@@ -258,12 +318,23 @@ class TcpClient {
   send (obj: WireMessage) {
     if (this.socket && !this.socket.destroyed) {
       this.socket.write(JSON.stringify(obj) + '\n');
+      return;
     }
+    if (obj.t !== 'pub') return; // subscriptions are re-sent by resubscribe()
+    if (this.outbox.length >= MAX_OUTBOX) {
+      this.outbox.shift();
+      if (!this._outboxOverflowWarned) {
+        this._outboxOverflowWarned = true;
+        logger.warn('pubsub: more than ' + MAX_OUTBOX + ' messages published while disconnected, the oldest are dropped (caches are flushed on reconnect; other processes keep theirs up to their max age)');
+      }
+    }
+    this.outbox.push(obj);
   }
 
   close () {
     this._intentionalClose = true;
     this.cid = null;
+    this.confirmedScopes.clear();
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
@@ -318,6 +389,7 @@ async function _doInit () {
   // Keep the same client instance for the process lifetime so localSubs (and thus
   // re-subscription state) survive broker loss and reconnects.
   client = new TcpClient(onClientDisconnected);
+  _startHeartbeat();
   try {
     await _electBrokerAndConnect(port);
     logger.debug('connected as client, cid=', client.cid);
@@ -330,9 +402,55 @@ async function _doInit () {
 
 function onClientDisconnected () {
   if (shuttingDown) return;
+  // A stall in progress ends with the connection: the reconnect reports the recovery.
+  brokerStalled = false;
+  pingSentAt = null;
   logger.error('pubsub broker connection lost — reconnecting (cache invalidations paused until restored)');
   _notifyConnectionState('disconnected');
   _scheduleReconnect();
+}
+
+function _startHeartbeat () {
+  if (heartbeatTimer != null) return;
+  heartbeatLastTick = Date.now();
+  heartbeatTimer = setInterval(_heartbeatTick, heartbeatIntervalMs);
+  heartbeatTimer.unref(); // must never keep the process alive
+}
+
+function _stopHeartbeat () {
+  if (heartbeatTimer != null) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  pingSentAt = null;
+  brokerStalled = false;
+}
+
+function _heartbeatTick () {
+  const now = Date.now();
+  const lateMs = now - heartbeatLastTick - heartbeatIntervalMs;
+  heartbeatLastTick = now;
+  if (client == null || client.cid == null) { pingSentAt = null; return; }
+  // This tick ran late: this process's own event loop was blocked, and the
+  // broker's answer may be waiting unread. Measure again from now.
+  if (lateMs > heartbeatDeadlineMs / 2) pingSentAt = null;
+  if (pingSentAt == null) {
+    pingSentAt = now;
+    client.send({ t: 'ping' });
+    return;
+  }
+  // Stalled: keep asking, so the first answer after recovery ends the stall.
+  if (brokerStalled) { client.send({ t: 'ping' }); return; }
+  if (now - pingSentAt > heartbeatDeadlineMs) {
+    brokerStalled = true;
+    logger.error('pubsub broker not answering for ' + (now - pingSentAt) + ' ms: cache invalidations treated as paused until it answers');
+    _notifyConnectionState('disconnected');
+  }
+}
+
+function onPong () {
+  pingSentAt = null;
+  if (!brokerStalled) return;
+  brokerStalled = false;
+  logger.info('pubsub broker answering again');
+  _notifyConnectionState('reconnected');
 }
 
 function _notifyConnectionState (state: ConnectionState) {
@@ -367,6 +485,7 @@ async function _reconnect () {
   try {
     await _electBrokerAndConnect(port);
     client.resubscribe();
+    client.flushOutbox();
     logger.info('pubsub reconnected, subscriptions restored');
     _notifyConnectionState('reconnected');
   } catch (err: unknown) {
@@ -378,32 +497,48 @@ async function _reconnect () {
 async function deliver (scopeName: Scope, eventName: string, payload: Payload) {
   await init();
   if (testDeliverHook != null) testDeliverHook(scopeName, eventName, payload);
-  logger.debug('deliver', scopeName, eventName, payload);
+  // Not the payload: a cache bust carries the token of an access that is still valid.
+  logger.debug('deliver', scopeName, eventName);
   if (payload == null) payload = '';
   if (client == null) return;
   client.send({ t: 'pub', scope: scopeName, event: eventName, payload });
 }
 
-async function subscribe (scopeName: Scope, pubsub: LocalPubsub) {
+// This process is the broker and its client is connected to it.
+function isOwnBroker (localClient: TcpClient): boolean {
+  return broker != null && broker.server != null && localClient.cid != null && broker.clients.has(localClient.cid);
+}
+
+async function subscribe (scopeName: Scope, pubsub: LocalPubsub): Promise<TransportSubscription> {
   await init();
   logger.debug('subscribe', scopeName);
-  if (client == null) return { unsubscribe () {} };
+  if (client == null) return { unsubscribe () {}, isConfirmed: () => false };
   const localClient = client;
+  // Only the latest subscription to a scope may confirm or end it: an earlier
+  // one released late must not cancel its successor.
+  const generation = localClient.nextSubSeq++;
+  localClient.subGenerations.set(scopeName, generation);
+  localClient.confirmedScopes.delete(scopeName); // confirmed again by this subscription's answer
+  const isCurrent = () => localClient.subGenerations.get(scopeName) === generation;
   localClient.localSubs.set(scopeName, pubsub);
-  if (broker != null) {
-    // Same process — register directly on broker (no TCP round-trip)
-    if (!broker.subscriptions.has(scopeName)) broker.subscriptions.set(scopeName, new Set());
-    broker.subscriptions.get(scopeName)!.add(localClient.cid!);
+  if (isOwnBroker(localClient)) {
+    // Same process, connected to it: register directly on the broker (no TCP
+    // round-trip), which confirms the subscription at once.
+    if (!broker!.subscriptions.has(scopeName)) broker!.subscriptions.set(scopeName, new Set());
+    broker!.subscriptions.get(scopeName)!.add(localClient.cid!);
+    localClient.confirmedScopes.add(scopeName);
   } else {
-    localClient.send({ t: 'sub', scope: scopeName });
+    localClient.send({ t: 'sub', scope: scopeName, n: generation });
   }
   return {
+    isConfirmed: () => isCurrent() && localClient.confirmedScopes.has(scopeName),
     unsubscribe () {
+      if (!isCurrent()) return;
+      localClient.subGenerations.delete(scopeName);
       localClient.localSubs.delete(scopeName);
-      if (broker != null) {
-        if (broker.subscriptions.has(scopeName)) {
-          broker.subscriptions.get(scopeName)!.delete(localClient.cid!);
-        }
+      localClient.confirmedScopes.delete(scopeName);
+      if (isOwnBroker(localClient)) {
+        broker!._unsubscribe(scopeName, localClient.cid!);
       } else {
         localClient.send({ t: 'unsub', scope: scopeName });
       }
@@ -419,6 +554,7 @@ function setTestDeliverHook (deliverHook: DeliverHook | null) {
 // test can drive a fresh init against a controlled broker. Not used in production.
 function _closeForTests () {
   shuttingDown = true;
+  _stopHeartbeat();
   if (reconnectTimer != null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   if (client != null) { client.close(); client = null; }
   if (broker != null) { broker.close(); broker = null; }
@@ -437,4 +573,12 @@ function _emitConnectionStateForTests (state: ConnectionState): void {
   _notifyConnectionState(state);
 }
 
-export { init, deliver, subscribe, setTestDeliverHook, onConnectionStateChange, _closeForTests, _isConnectedForTests, _emitConnectionStateForTests };
+// Test-only: shorter heartbeat timings (restarts the timer when it runs).
+function _setHeartbeatForTests (intervalMs: number, deadlineMs: number): void {
+  heartbeatIntervalMs = intervalMs;
+  heartbeatDeadlineMs = deadlineMs;
+  if (heartbeatTimer != null) { _stopHeartbeat(); _startHeartbeat(); }
+}
+
+export { init, deliver, subscribe, setTestDeliverHook, onConnectionStateChange, _closeForTests, _isConnectedForTests, _emitConnectionStateForTests, _setHeartbeatForTests };
+export type { TransportSubscription };

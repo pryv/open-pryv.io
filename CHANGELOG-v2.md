@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Cache invalidation between the processes of a core
+
+- **A process keeps an access, a stream tree or a name only when it is sure to hear its
+  invalidation.** The internal message broker now acknowledges each subscription, and a value
+  read from storage is cached only if its user's subscription was acknowledged before the read
+  started (the first request for a user in a process reads storage, the next ones use the cache).
+  Previously an invalidation sent between the subscription and its registration by the broker was
+  missed, and the stale value served until its maximum age (`caching:accessMaxAgeSeconds`, 60 s by
+  default).
+- **A stalled broker is detected.** Each process pings the broker every second; a ping left
+  unanswered for about 5 s (5 to 6 s) suspends the caches as a lost connection does (every request reads storage),
+  and the next answer flushes them. Previously only a closed connection did, and a broker whose
+  event loop was stuck left the caches serving values whose invalidation was not delivered.
+- **An invalidation published while its process is disconnected from the broker is sent once the
+  connection is back** (up to 10000 per process; beyond that the oldest are dropped, with a
+  warning). Previously it was dropped, and the processes that stayed connected kept the old value
+  until its maximum age.
+- **A user no longer followed is no longer served from the cache.** A process follows at most 8000
+  users; reads from the cache now keep a user among them, and a user dropped from them has its
+  cached accesses and streams dropped too (before, a user could stay cached without its
+  invalidations being received).
+- **Names:** the name to account map takes the same guard as accesses and streams (a lookup whose
+  read straddles a rename or a deletion no longer caches the old mapping), and account deletion
+  clears the account's cache entries again once every removal has completed.
+- Debug logs of the message bus no longer print message payloads (an invalidation carries the
+  token of an access that is still valid).
+
 ### Audit: activity summary for the account owner
 
 - **New method `audit.getSummary`** (`GET /{username}/audit/summary`): activity counts of the

@@ -10,7 +10,20 @@ const require = createRequire(import.meta.url);
 /* global it, describe, before */
 
 const assert = require('node:assert');
+const { setTimeout } = require('timers/promises');
 const cache = require('cache').default;
+const synchro = require('../../src/synchro.ts');
+
+// A fill is only kept once the broker confirmed the user's subscription
+// (an epoch captured before that never matches): start following, then wait.
+async function followed (userId) {
+  cache.getAccessLogicEpoch(userId);
+  const started = Date.now();
+  while (!synchro.isFollowing(userId)) {
+    if (Date.now() - started > 2000) throw new Error('subscription not confirmed for ' + userId);
+    await setTimeout(5);
+  }
+}
 
 /**
  * Fences the set-after-unset race: a caller captures getAccessLogicEpoch()
@@ -36,8 +49,9 @@ describe('[CEP] Access-logic unset epoch', function () {
     assert.ok(cache.getAccessLogicForToken(u, 'stale-tok') == null, 'stale entry must not be re-inserted');
   });
 
-  it('[CEP2] setAccessLogic inserts when the epoch is unchanged', function () {
+  it('[CEP2] setAccessLogic inserts when the epoch is unchanged', async function () {
     const u = freshUserId();
+    await followed(u);
     const epoch = cache.getAccessLogicEpoch(u);
     cache.setAccessLogic(u, { id: 'a', token: 'tok' }, epoch);
     const cached = cache.getAccessLogicForToken(u, 'tok');
@@ -59,8 +73,20 @@ describe('[CEP] Access-logic unset epoch', function () {
     assert.ok(cache.getAccessLogicForToken(u, 'tok') == null, 'stale entry must not be re-inserted');
   });
 
-  it('[CEP5] a pre-clear epoch cannot recur after clear() plus a later bump (monotonic counter, no ABA)', function () {
+  it('[CEP6] an epoch captured before the broker confirmed the subscription never lets the fill in', async function () {
     const u = freshUserId();
+    const epoch = cache.getAccessLogicEpoch(u); // first sight of the user: not confirmed yet
+    assert.strictEqual(synchro.isFollowing(u), false);
+    await followed(u); // confirmed while the "read" was in flight
+    cache.setAccessLogic(u, { id: 'a', token: 'tok' }, epoch);
+    assert.ok(cache.getAccessLogicForToken(u, 'tok') == null, 'a bust routed before the confirmation could have been missed');
+    cache.setAccessLogic(u, { id: 'a', token: 'tok' }, cache.getAccessLogicEpoch(u));
+    assert.ok(cache.getAccessLogicForToken(u, 'tok') != null, 'the next fill is kept');
+  });
+
+  it('[CEP5] a pre-clear epoch cannot recur after clear() plus a later bump (monotonic counter, no ABA)', async function () {
+    const u = freshUserId();
+    await followed(u);
     cache.unsetAccessLogic(u, { id: 'x', token: 'y' }); // epoch(u) now > 0
     const epochBeforeClear = cache.getAccessLogicEpoch(u);
     assert.ok(epochBeforeClear > 0);

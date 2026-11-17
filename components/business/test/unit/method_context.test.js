@@ -254,11 +254,22 @@ describe('[MCTX] MethodContext', () => {
     });
 
     it('[MCEC] control: caches the access when no unset intervenes', async () => {
+      // A fill is kept once the user's invalidation channel is confirmed by the
+      // broker: start following the user, then wait for that.
+      cache.getAccessLogicEpoch(userId);
+      for (let i = 0; i < 400 && cache.getAccessLogicEpoch(userId) < 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
       const storage = { accesses: { findOne: sinon.fake.yields(null, staleAccess) } };
       await mc.retrieveAccessFromToken(storage);
       const cached = cache.getAccessLogicForToken(userId, staleAccess.token);
       assert.ok(cached != null, 'entry should be cached');
       assert.strictEqual(cached.id, staleAccess.id);
+    });
+
+    it('[MCEN] the first read for a user not yet followed is not cached', async () => {
+      const storage = { accesses: { findOne: sinon.fake.yields(null, staleAccess) } };
+      await mc.retrieveAccessFromToken(storage);
+      assert.ok(mc.access != null, 'the request is served');
+      assert.ok(cache.getAccessLogicForToken(userId, staleAccess.token) == null, 'an invalidation could have been missed: not cached');
     });
   });
 });

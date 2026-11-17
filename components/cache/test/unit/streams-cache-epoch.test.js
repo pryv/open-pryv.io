@@ -10,7 +10,19 @@ const require = createRequire(import.meta.url);
 /* global it, describe, before */
 
 const assert = require('node:assert');
+const { setTimeout } = require('timers/promises');
 const cache = require('cache').default;
+const synchro = require('../../src/synchro.ts');
+
+// A fill is only kept once the broker confirmed the user's subscription.
+async function followed (userId) {
+  cache.getStreamsEpoch(userId, 'local');
+  const started = Date.now();
+  while (!synchro.isFollowing(userId)) {
+    if (Date.now() - started > 2000) throw new Error('subscription not confirmed for ' + userId);
+    await setTimeout(5);
+  }
+}
 
 /**
  * Fences the streams-cache set-after-unset race (mirror of the access-logic
@@ -34,8 +46,9 @@ describe('[SEP] Streams-cache unset epoch', function () {
     assert.ok(cache.getStreams(u, 'local') == null, 'stale stream tree must not be re-inserted');
   });
 
-  it('[SEP2] setStreams inserts when the epoch is unchanged', function () {
+  it('[SEP2] setStreams inserts when the epoch is unchanged', async function () {
     const u = freshUserId();
+    await followed(u);
     const epoch = cache.getStreamsEpoch(u, 'local');
     cache.setStreams(u, 'local', ['fresh'], epoch);
     assert.deepStrictEqual(cache.getStreams(u, 'local'), ['fresh']);
@@ -55,8 +68,20 @@ describe('[SEP] Streams-cache unset epoch', function () {
     assert.ok(cache.getStreams(u, 'local') == null, 'stale stream tree must not be re-inserted');
   });
 
-  it('[SEP5] a pre-clear epoch cannot recur after clear() plus a later bump (monotonic, no ABA)', function () {
+  it('[SEP6] an epoch captured before the broker confirmed the subscription never lets the fill in', async function () {
     const u = freshUserId();
+    const epoch = cache.getStreamsEpoch(u, 'local'); // first sight of the user: not confirmed yet
+    assert.strictEqual(synchro.isFollowing(u), false);
+    await followed(u);
+    cache.setStreams(u, 'local', ['early'], epoch);
+    assert.ok(cache.getStreams(u, 'local') == null, 'a bust routed before the confirmation could have been missed');
+    cache.setStreams(u, 'local', ['next'], cache.getStreamsEpoch(u, 'local'));
+    assert.deepStrictEqual(cache.getStreams(u, 'local'), ['next']);
+  });
+
+  it('[SEP5] a pre-clear epoch cannot recur after clear() plus a later bump (monotonic, no ABA)', async function () {
+    const u = freshUserId();
+    await followed(u);
     cache.unsetStreams(u, 'local'); // epoch now > 0
     const epochBeforeClear = cache.getStreamsEpoch(u, 'local');
     assert.ok(epochBeforeClear > 0);

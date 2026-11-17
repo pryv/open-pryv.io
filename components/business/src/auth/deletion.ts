@@ -17,6 +17,7 @@ const { accountSeriesNamespaces, seriesNamespace } = require('business/src/serie
 const { runDeletionTeardownSteps, runDeletionGuards } = require('business/src/auth/deletionTeardown.ts');
 const { storedWebhookIds, signalWebhooksStopped } = require('business/src/webhooks/accountSignals.ts') as typeof import('../webhooks/accountSignals.ts');
 const errors = require('errors').factory;
+const cache = require('cache').default;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
 const { getLogger } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
@@ -593,6 +594,10 @@ class Deletion {
         ...(nameIsOurs ? [fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ username: context.user.username }, cb))] : []),
         fromCallback((cb: (err: Error | null) => void) => this.storageLayer.sessions.remove({ userId: context.user.id }, cb))
       ]);
+      // The repository busts the account's cache entries inside deleteOne, which
+      // can finish before the removals above commit: a lookup in between could
+      // re-cache what they remove. Bust again now that all have settled.
+      cache.unsetUserById(context.user.id);
       const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
       if (failed != null) throw failed.reason;
     } catch (error) {

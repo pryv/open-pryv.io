@@ -19,7 +19,10 @@ type PubSubOptions = {
   forwardToTests?: boolean;
   forwardToInternal?: boolean;
 };
-type Subscription = { unsubscribe: () => void };
+type Subscription = { unsubscribe: () => void; isConfirmed: () => boolean };
+// A keyed subscription, recorded as soon as it is asked for: `sub` is set when
+// the transport answers, so a removal before that still unsubscribes.
+type KeyedSubscription = { sub: Subscription | null; counter: number };
 type Transport = {
   subscribe (scope: string, target: PubSub): Promise<Subscription>;
   deliver (scope: string, eventName: string, payload: unknown): void;
@@ -35,7 +38,7 @@ class PubSub extends EventEmitter {
   transport!: Transport | null;
   scopeName: string;
   logger: Logger;
-  transportSubMap: Record<string, { sub: Subscription; counter: number }>; // map that contains transport subscriptions by key
+  transportSubMap: Map<string, KeyedSubscription>; // transport subscriptions by key
 
   constructor (scopeName: string, options: PubSubOptions = {}) {
     super();
@@ -47,7 +50,7 @@ class PubSub extends EventEmitter {
 
     this.scopeName = scopeName;
     this.logger = logger.getLogger(this.scopeName);
-    this.transportSubMap = {};
+    this.transportSubMap = new Map();
 
     if (this.options.transport !== CONSTANTS.TRANSPORT_MODE_NONE) {
       initTransport();
@@ -60,15 +63,31 @@ class PubSub extends EventEmitter {
   on (eventName: string, listener: (...args: unknown[]) => void) {
     // keyed listeners
     if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY)) {
-      if (this.transportSubMap[eventName] == null) { // not yet listening .. subscribe
+      const existing = this.transportSubMap.get(eventName);
+      if (existing == null) { // not yet listening .. subscribe
+        const entry: KeyedSubscription = { sub: null, counter: 1 };
+        this.transportSubMap.set(eventName, entry);
         transport.subscribe(this.scopeName + '.' + eventName, this).then((sub: Subscription) => {
-          this.transportSubMap[eventName] = { sub, counter: 1 };
+          // Removed (or replaced) while the transport answered: let it go.
+          if (this.transportSubMap.get(eventName) !== entry) { sub.unsubscribe(); return; }
+          entry.sub = sub;
+        }, (err: Error) => {
+          // Never confirmed: nothing built on this key is trusted.
+          this.logger.warn('subscribe failed for', eventName, err?.message);
         });
       } else {
-        this.transportSubMap[eventName].counter++; // count listeners
+        existing.counter++; // count listeners
       }
     }
     super.on(eventName, listener);
+  }
+
+  /**
+   * True once the transport confirmed the keyed subscription for `eventName`:
+   * every message published to it from then on reaches this process.
+   */
+  isSubscribed (eventName: string): boolean {
+    return this.transportSubMap.get(eventName)?.sub?.isConfirmed() === true;
   }
 
   /**
@@ -79,19 +98,21 @@ class PubSub extends EventEmitter {
     this.on(eventName, listener);
     return () => {
       this.off(eventName, listener);
-      if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY) && (this.transportSubMap[eventName] != null)) {
+      const entry = this.transportSubMap.get(eventName);
+      if ((transport != null) && (this.options.transport === CONSTANTS.TRANSPORT_MODE_KEY) && (entry != null)) {
         this.logger.debug('off', eventName);
-        this.transportSubMap[eventName].counter--;
-        if (this.transportSubMap[eventName].counter === 0) { // no more listeners
-          this.transportSubMap[eventName].sub.unsubscribe();
-          delete this.transportSubMap[eventName];
+        entry.counter--;
+        if (entry.counter === 0) { // no more listeners
+          this.transportSubMap.delete(eventName);
+          entry.sub?.unsubscribe(); // not answered yet: the answer unsubscribes
         }
       }
     };
   }
 
   emit (eventName: string, payload: unknown) {
-    this.logger.debug('emit', eventName, payload, this.options);
+    // Not the payload: a cache bust carries the token of an access that is still valid.
+    this.logger.debug('emit', eventName, this.options);
     if (this.options.forwardToInternal) super.emit(eventName, payload); // forward to internal listener
 
     if (this.options.forwardToTests) forwardToTests(eventName, payload);
@@ -104,7 +125,7 @@ class PubSub extends EventEmitter {
 
   _emit (eventName: string, payload: unknown) {
     super.emit(eventName, payload); // forward to internal listener
-    this.logger.debug('_emit', eventName, payload);
+    this.logger.debug('_emit', eventName);
   }
 }
 

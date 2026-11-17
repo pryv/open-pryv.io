@@ -14,6 +14,9 @@ const { LRUCache: LRU } = require('lru-cache');
 type SynchroModule = {
   setCache (cache: unknown): void;
   registerListenerForUserId (userId: string): void;
+  touchListener (userId: string): void;
+  isFollowing (userId: string): boolean;
+  isFollowingNames (): boolean;
   removeListenerForUserId (userId: string): void;
   unsetUser (username: string | null, userId?: string | null): void;
   unsetUserData (userId: string): void;
@@ -24,6 +27,10 @@ const _caches: Record<string, InstanceType<typeof LRU>> = {};
 const MAX_PER_CACHE_SIZE = 2000; // maximum elements for each cache (namespace)
 const MAX_USERNAMES = 20000; // name -> userId entries (usernames and aliases)
 const DEFAULT_MAX_AGE_SECONDS = 60;
+// Returned by the epoch getters while this process does not yet follow the
+// user (subscription not confirmed by the broker): no epoch ever equals it, so
+// the fill that captured it is not kept.
+const NOT_FOLLOWED = -1;
 // Max age of every cached entry (accesses, streams, name -> userId). Bounds how
 // long a worker that missed an invalidation message can serve stale data.
 let maxAgeMs = DEFAULT_MAX_AGE_SECONDS * 1000;
@@ -103,6 +110,14 @@ function _resetEpochs () {
   accessLogicEpochFloor = ++accessLogicEpochCounter;
   streamsEpochByKey.clear();
   streamsEpochFloor = ++streamsEpochCounter;
+  userNamesEpoch++;
+}
+/**
+ * The cache follows `userId` (listener registered and confirmed by the broker).
+ * Always true when there is no cross-process synchro to wait for.
+ */
+function _isFollowed (userId: string): boolean {
+  return !isSynchroActive || synchro!.isFollowing(userId);
 }
 /**
  * Broker connection lost: stop serving and filling until it is back.
@@ -126,6 +141,17 @@ function getMaxAgeMs (): number {
   return maxAgeMs;
 }
 // --------------- Users ---------------//
+// Name-map "unset epoch": the set-after-unset fence of the accesses and streams
+// caches, for name -> userId. Any name bust (rename, alias removal, deletion,
+// here or in another process) moves it, so a lookup whose storage read straddles
+// one does not re-cache the old mapping. One counter for the whole map: name
+// busts are rare, an extra miss after one is cheap.
+let userNamesEpoch = 0;
+/** Called before the storage read whose result goes to setUserId. */
+function getUserIdEpoch (): number {
+  if (isSynchroActive && !synchro!.isFollowingNames()) return NOT_FOLLOWED;
+  return userNamesEpoch;
+}
 function getUserId (username: string) {
   if (!isActive || !isTrusted) { return; }
   debug.get('user-id', username);
@@ -134,9 +160,11 @@ function getUserId (username: string) {
 /**
  * @param primary - `username` is the account's canonical username (not an
  *   alias): lets {@link isCanonicalUsername} answer without a storage read.
+ * @param expectedEpoch - from {@link getUserIdEpoch}, captured before the read.
  */
-function setUserId (username: string, userId: string, primary = false) {
+function setUserId (username: string, userId: string, primary = false, expectedEpoch?: number) {
   if (!isActive || !isTrusted) { return; }
+  if (expectedEpoch != null && expectedEpoch !== userNamesEpoch) { return; }
   debug.set('user-id', username, userId);
   userIdForUsername.set(username, { id: userId, primary });
 }
@@ -152,6 +180,7 @@ function isCanonicalUsername (username: string): boolean {
  */
 function unsetUser (username: string, notifyOtherProcesses = true) {
   if (!isActive) { return; }
+  userNamesEpoch++;
   debug.unset('user-id', username);
   const userId = (userIdForUsername.peek(username, { allowStale: true }) as UserNameEntry | undefined)?.id;
   if (notifyOtherProcesses && isSynchroActive) { synchro!.unsetUser(username, userId); }
@@ -164,6 +193,7 @@ function unsetUser (username: string, notifyOtherProcesses = true) {
  */
 function unsetUserById (userId: string, notifyOtherProcesses = true) {
   if (!isActive) { return; }
+  userNamesEpoch++;
   debug.unset('user-id', userId);
   if (notifyOtherProcesses && isSynchroActive) { synchro!.unsetUser(null, userId); }
   _unsetUserLocal(userId);
@@ -187,6 +217,10 @@ function unsetUserData (userId: string, notifyOtherProcesses = true) {
   _unsetStreams(userId, 'local'); // for now we hardcode local streams
   _clearAccessLogics(userId);
 }
+/** The user's listener is gone: drop its data here (other processes keep theirs). */
+function dropUserLocal (userId: string) {
+  unsetUserData(userId, false);
+}
 // --------------- Streams ---------------//
 // Per-(user, store) "streams unset epoch": the same set-after-unset fence as the
 // access-logic epoch above, for the streams cache. A producer captures the epoch
@@ -206,6 +240,7 @@ function _streamsEpochKey (userId: string, storeId: string): string {
  */
 function getStreamsEpoch (userId: string, storeId = 'local'): number {
   _followUser(userId);
+  if (!_isFollowed(userId)) return NOT_FOLLOWED;
   return streamsEpochByKey.get(_streamsEpochKey(userId, storeId)) ?? streamsEpochFloor;
 }
 function _peekStreamsEpoch (userId: string, storeId: string): number {
@@ -218,7 +253,9 @@ function _bumpStreamsEpoch (userId: string, storeId: string): void {
   streamsEpochByKey.set(_streamsEpochKey(userId, storeId), ++streamsEpochCounter);
 }
 function getStreams (userId: string, storeId = 'local') {
-  return get(NS.STREAMS_FOR_USERID + storeId, userId);
+  const streams = get(NS.STREAMS_FOR_USERID + storeId, userId);
+  if (streams != null && isSynchroActive) synchro!.touchListener(userId);
+  return streams;
 }
 function setStreams (userId: string, storeId = 'local', streams?: unknown, expectedEpoch?: number) {
   if (!isActive) { return; }
@@ -244,8 +281,8 @@ function unsetStreams (userId: string, _storeId = 'local') {
 // setAccessLogic, which skips the insert when the epoch moved. The counter is
 // globally monotonic (never reset), so an epoch captured before a clear()/LRU
 // eviction can never match a later read, making both safe by construction. The
-// map holds one small entry per user ever invalidated since boot: unbounded but
-// tiny, no eviction needed.
+// map holds one small entry per user ever invalidated (or whose listener was
+// evicted) since boot: unbounded but tiny, no eviction needed.
 let accessLogicEpochCounter = 0;
 let accessLogicEpochFloor = 0;
 const accessLogicEpochByUserId = new Map<string, number>();
@@ -256,6 +293,7 @@ const accessLogicEpochByUserId = new Map<string, number>();
  */
 function getAccessLogicEpoch (userId: string): number {
   _followUser(userId);
+  if (!_isFollowed(userId)) return NOT_FOLLOWED;
   return _peekAccessLogicEpoch(userId);
 }
 function _peekAccessLogicEpoch (userId: string): number {
@@ -274,15 +312,20 @@ type AccessLogicsOfUser = { tokens: Map<string, CachedAccessLogic>; ids: Map<str
 function getAccessLogicsOfUser (userId: string): AccessLogicsOfUser | null {
   return (get(NS.ACCESS_LOGICS_FOR_USERID, userId) as AccessLogicsOfUser | undefined) ?? null;
 }
+function _getAccessLogicsOnHit (userId: string): AccessLogicsOfUser | null {
+  const accessLogics = getAccessLogicsOfUser(userId);
+  if (accessLogics != null && isSynchroActive) synchro!.touchListener(userId);
+  return accessLogics;
+}
 function getAccessLogicForToken (userId: string, token: string) {
   if (!isActive) { return null; }
-  const accessLogics = getAccessLogicsOfUser(userId);
+  const accessLogics = _getAccessLogicsOnHit(userId);
   if (accessLogics == null) { return null; }
   return accessLogics.tokens.get(token) ?? null;
 }
 function getAccessLogicForId (userId: string, accessId: string) {
   if (!isActive) { return null; }
-  const accessLogics = getAccessLogicsOfUser(userId);
+  const accessLogics = _getAccessLogicsOnHit(userId);
   if (accessLogics == null) { return null; }
   return accessLogics.ids.get(accessId) ?? null;
 }
@@ -331,11 +374,13 @@ const NS = {
 const cache = {
   clear,
   getUserId,
+  getUserIdEpoch,
   setUserId,
   isCanonicalUsername,
   unsetUser,
   unsetUserById,
   unsetUserData,
+  dropUserLocal,
   setUntrusted,
   flushAfterReconnect,
   getMaxAgeMs,

@@ -22,9 +22,10 @@ const { describeBindError } = require('test-helpers/src/portHolder.ts');
 
 // Minimal newline-delimited-JSON broker that speaks the tcp_pubsub protocol, so
 // the module joins as a client and we control when the broker dies.
-function makeRawBroker (port) {
+function makeRawBroker (port, answers = { subok: false, pong: false }) {
   const sockets = new Set();
   const subs = new Map(); // scope → Set<socket>
+  const pubs = []; // events published to this broker, in order
   let nextCid = 1;
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -41,9 +42,19 @@ function makeRawBroker (port) {
         if (msg.t === 'sub') {
           if (!subs.has(msg.scope)) subs.set(msg.scope, new Set());
           subs.get(msg.scope).add(socket);
+          if (answers.subok) socket.write(JSON.stringify({ t: 'subok', scope: msg.scope, n: msg.n }) + '\n');
+        } else if (msg.t === 'ping') {
+          if (answers.blockOnceMs) {
+            // Same process as the module: blocks its event loop with a ping outstanding.
+            const until = Date.now() + answers.blockOnceMs;
+            answers.blockOnceMs = 0;
+            while (Date.now() < until) { /* busy */ }
+          }
+          if (answers.pong) socket.write(JSON.stringify({ t: 'pong' }) + '\n');
         } else if (msg.t === 'unsub') {
           subs.get(msg.scope)?.delete(socket);
         } else if (msg.t === 'pub') {
+          pubs.push(msg.event);
           const out = JSON.stringify({ t: 'msg', scope: msg.scope, event: msg.event, payload: msg.payload }) + '\n';
           for (const s of subs.get(msg.scope) ?? []) {
             if (s !== socket && !s.destroyed) s.write(out);
@@ -55,6 +66,7 @@ function makeRawBroker (port) {
     socket.on('close', () => sockets.delete(socket));
   });
   return {
+    pubs,
     listen () {
       return new Promise((resolve, reject) => {
         // A port collision here is an environment problem (another checkout or a
@@ -163,6 +175,107 @@ describe('[PRCN] TcpPubsub reconnect after broker loss', function () {
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
     assert.ok(received.includes('evt-after'), 'invalidation delivered after reconnect');
+  });
+
+  it('[RC20] a subscription is confirmed only once the broker acknowledged it', async () => {
+    // The default raw broker routes but never acknowledges.
+    const unconfirmed = await tcpPubsub.subscribe('rc20-silent', stub);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.strictEqual(unconfirmed.isConfirmed(), false, 'not acknowledged: not confirmed');
+    tcpPubsub._closeForTests();
+    await rawBroker.kill();
+    rawBroker = makeRawBroker(port, { subok: true, pong: true });
+    await rawBroker.listen();
+    await tcpPubsub.init();
+    await waitFor(() => tcpPubsub._isConnectedForTests());
+    const sub = await tcpPubsub.subscribe('rc20-acked', stub);
+    await waitFor(() => sub.isConfirmed(), 4000);
+    sub.unsubscribe();
+    assert.strictEqual(sub.isConfirmed(), false, 'ended: no longer confirmed');
+  });
+
+  it('[RC21] a stale subscription released late does not end its successor', async () => {
+    const first = await tcpPubsub.subscribe('rc21-scope', stub);
+    const second = await tcpPubsub.subscribe('rc21-scope', stub);
+    first.unsubscribe(); // late release of the earlier one
+    await publishVia(port, 'rc21-scope', 'evt-rc21');
+    await waitFor(() => received.includes('evt-rc21'));
+    second.unsubscribe();
+  });
+
+  it('[RC22] a broker that stops answering is reported as a disconnection, its next answer as a reconnection', async () => {
+    tcpPubsub._closeForTests();
+    await rawBroker.kill();
+    const answers = { subok: true, pong: true };
+    rawBroker = makeRawBroker(port, answers);
+    await rawBroker.listen();
+    tcpPubsub._setHeartbeatForTests(50, 300);
+    const states = [];
+    const remove = tcpPubsub.onConnectionStateChange((state) => states.push(state));
+    try {
+      await tcpPubsub.init();
+      await waitFor(() => tcpPubsub._isConnectedForTests()).catch((err) => { throw new Error(err.message + ' (connected) states=' + JSON.stringify(states)); });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      assert.deepStrictEqual(states, [], 'answering broker: nothing reported');
+      answers.pong = false; // stuck event loop: socket open, no answer
+      await waitFor(() => states.includes('disconnected'), 3000).catch((err) => { throw new Error(err.message + ' (disconnected) states=' + JSON.stringify(states)); });
+      assert.strictEqual(tcpPubsub._isConnectedForTests(), true, 'the socket itself stayed open');
+      answers.pong = true;
+      await waitFor(() => states.includes('reconnected'), 3000).catch((err) => { throw new Error(err.message + ' (reconnected) states=' + JSON.stringify(states)); });
+      assert.deepStrictEqual(states, ['disconnected', 'reconnected']);
+    } finally {
+      remove();
+      tcpPubsub._setHeartbeatForTests(1000, 5000);
+    }
+  });
+
+  async function ackingBroker (answers = { subok: true, pong: true }) {
+    tcpPubsub._closeForTests();
+    await rawBroker.kill();
+    rawBroker = makeRawBroker(port, answers);
+    await rawBroker.listen();
+    await tcpPubsub.init();
+    await waitFor(() => tcpPubsub._isConnectedForTests());
+  }
+
+  it('[RC23] a confirmation does not survive the connection: lost with the broker, given again by the next one', async () => {
+    await ackingBroker();
+    const sub = await tcpPubsub.subscribe('rc23-scope', stub);
+    await waitFor(() => sub.isConfirmed());
+    await rawBroker.kill();
+    rawBroker = null;
+    await waitFor(() => !sub.isConfirmed(), 4000);
+    // the module takes the freed port as broker and re-subscribes over TCP
+    await waitFor(() => tcpPubsub._isConnectedForTests(), 8000);
+    await waitFor(() => sub.isConfirmed(), 8000);
+  });
+
+  it('[RC24] a pause of this process\'s own event loop is not taken for a stalled broker', async () => {
+    tcpPubsub._setHeartbeatForTests(50, 300);
+    const states = [];
+    const remove = tcpPubsub.onConnectionStateChange((state) => states.push(state));
+    try {
+      const answers = { subok: true, pong: true, blockOnceMs: 0 };
+      await ackingBroker(answers);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      answers.blockOnceMs = 700; // at the next ping: blocked well past the deadline
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      assert.strictEqual(answers.blockOnceMs, 0, 'the pause happened');
+      assert.deepStrictEqual(states, [], 'nothing reported');
+    } finally {
+      remove();
+      tcpPubsub._setHeartbeatForTests(1000, 5000);
+    }
+  });
+
+  it('[RC25] what is published while disconnected is sent once the connection is back', async () => {
+    await rawBroker.kill();
+    await waitFor(() => !tcpPubsub._isConnectedForTests());
+    // Take the freed port before the module's first reconnect attempt (200 ms).
+    rawBroker = makeRawBroker(port);
+    await rawBroker.listen();
+    await tcpPubsub.deliver('rc25-scope', 'evt-gap', { action: 'x' }); // still disconnected
+    await waitFor(() => rawBroker.pubs.includes('evt-gap'), 8000);
   });
 
   it('[RC19] tells listeners the connection dropped, then that it is back', async () => {

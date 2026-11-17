@@ -115,9 +115,11 @@ describe('[CMAX] Cache max age and re-synchronisation', function () {
       tcpPubsub._emitConnectionStateForTests('reconnected'); // never leave the cache suspended
     });
 
-    it('[CMA5] while disconnected nothing is served or cached; on reconnect everything is dropped and fills in flight are fenced', function () {
+    it('[CMA5] while disconnected nothing is served or cached; on reconnect everything is dropped and fills in flight are fenced', async function () {
       const u = freshUserId();
       cache.setAccessLogic(u, { id: 'a', token: 'tok' });
+      for (let i = 0; i < 400 && !synchro.isFollowing(u); i++) await setTimeout(5);
+      assert.ok(synchro.isFollowing(u), 'subscription confirmed');
       cache.setUserId('name-' + u, u);
       cache.setStreams(u, 'local', ['s']);
       const epochBefore = cache.getAccessLogicEpoch(u); // a fill in flight

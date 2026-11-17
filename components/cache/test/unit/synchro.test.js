@@ -125,6 +125,36 @@ describe('[SYNC] Synchro', function () {
     assert.strictEqual(synchro.listenerMap.has('toto-id'), true, 'listener should be kept');
   });
 
+  it('[SYL1] a user whose listener goes has nothing served from the cache any more', () => {
+    cache.setAccessLogic('syl1-id', { id: 'a', token: 'syl1-tok' });
+    cache.setStreams('syl1-id', 'local', ['s']);
+    assert.ok(cache.getAccessLogicForToken('syl1-id', 'syl1-tok') != null);
+    synchro.removeListenerForUserId('syl1-id'); // same path as an eviction from the listener LRU
+    assert.ok(cache.getAccessLogicForToken('syl1-id', 'syl1-tok') == null, 'accesses dropped with the listener');
+    assert.ok(cache.getStreams('syl1-id', 'local') == null, 'streams dropped with the listener');
+  });
+
+  it('[SYL2] a cache hit keeps the user among the most recently followed', () => {
+    cache.setAccessLogic('syl2-a', { id: 'a', token: 'syl2-tok' });
+    cache.setStreams('syl2-b', 'local', ['s']);
+    assert.strictEqual([...synchro.listenerMap.keys()][0], 'syl2-b');
+    assert.ok(cache.getAccessLogicForToken('syl2-a', 'syl2-tok') != null);
+    assert.strictEqual([...synchro.listenerMap.keys()][0], 'syl2-a', 'the hit refreshed the listener');
+    assert.ok(cache.getStreams('syl2-b', 'local') != null);
+    assert.strictEqual([...synchro.listenerMap.keys()][0], 'syl2-b');
+  });
+
+  it('[SYL3] a name lookup straddling a name bust does not re-cache the old mapping', async () => {
+    for (let i = 0; i < 400 && cache.getUserIdEpoch() < 0; i++) await setTimeout(5);
+    const epoch = cache.getUserIdEpoch();
+    assert.ok(epoch >= 0, 'the name channel is followed');
+    cache.unsetUser('syl3-name'); // a rename or deletion lands during the storage read
+    cache.setUserId('syl3-name', 'syl3-old-id', true, epoch);
+    assert.strictEqual(cache.getUserId('syl3-name'), undefined, 'stale mapping not cached');
+    cache.setUserId('syl3-name', 'syl3-id', true, cache.getUserIdEpoch());
+    assert.strictEqual(cache.getUserId('syl3-name'), 'syl3-id');
+  });
+
   it('[Y5GU] Listeners should receive transport messages UNSET_USER', async () => {
     cache.setUserId('toto', 'toto-id');
     cache.setStreams('toto-id', 'local', 'titi');
