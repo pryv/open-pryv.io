@@ -216,7 +216,7 @@ describe('[BKIS] bin/backup.js run file tables, end to end', function () {
 
     const restore = runCli(['--restore', mirror, '--user', username, '--allow-plaintext', '--overwrite']);
     assertOk(restore, 'restore of the mirror');
-    assert.match(restore.stderr, /WARNING: Run full: written before 2\.0\.0-rc\.85, its file list is not verified/);
+    assert.match(restore.stderr, /WARNING: Run full: written before 2\.0\.0-rc\.86, its file list is not verified/);
     assert.match(restore.stdout, /Restored: 1 users/);
     const res = await api('get', '/events');
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
