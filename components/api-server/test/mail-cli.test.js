@@ -169,11 +169,10 @@ describe('[MAILCLI] bin/mail.js CLI', () => {
     const res = runCli(['templates', 'seed']);
     assert.strictEqual(res.status, 0, res.stderr);
     const rows = await platformDB.getAllMailTemplates();
-    // 15 template types (welcome-email, reset-password, verify-email,
+    // 9 template types (welcome-email, reset-password, verify-email,
     // email-challenge, mfa-change, external-id-released,
     // account-deletion-scheduled, account-deletion-reminder,
-    // account-deletion-blocked, account-transfer-named, -claim, -started,
-    // -cancelled, -lapsed, -completed) x 2 languages x 2 parts.
-    assert.strictEqual(rows.length, 60);
+    // account-deletion-blocked) x 2 languages x 2 parts.
+    assert.strictEqual(rows.length, 36);
   });
 });
