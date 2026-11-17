@@ -104,8 +104,13 @@ errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLik
                   ? apiError.innerError.stack || apiError.innerError.message
                   : apiError.innerError.message;
     }
+    const inner = apiError.innerError as (Error & { code?: unknown; statementText?: unknown }) | undefined;
     if (apiError.id === ErrorIds.UnexpectedError) {
       logger.error(logMsg, metadata);
+    } else if (inner?.code === '57014') {
+      // A statement stopped by the database time limit: the operator's signal
+      // for tuning it. Its text (truncated), never its parameters.
+      logger.warn(logMsg, { ...metadata, statement: typeof inner.statementText === 'string' ? inner.statementText : undefined });
     } else {
       logger.info(logMsg, metadata);
     }

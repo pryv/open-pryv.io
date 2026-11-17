@@ -250,7 +250,10 @@ function createAuditStorage (): unknown {
     port: pgConfig.port,
     database: pgConfig.database,
     user: pgConfig.user,
-    password: pgConfig.password
+    password: pgConfig.password,
+    // the audit pools are limited like the main one (request-serving only)
+    statementTimeoutMs: pgConfig.statementTimeoutMs,
+    idleInTransactionTimeoutMs: pgConfig.idleInTransactionTimeoutMs
   };
   const auditDb = new DatabasePG({ ...connection, max: pgConfig.auditPoolSize || 5 });
   // ⚑ A SECOND pool, for streamed audit reads only.

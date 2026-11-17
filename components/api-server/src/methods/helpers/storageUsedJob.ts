@@ -7,6 +7,7 @@
 import { getLogger } from '@pryv/boiler';
 import type { ConfigLike, Logger } from '@pryv/boiler';
 import { Size } from 'storage';
+import { runMaintenance } from 'storages';
 import { getUsersRepository } from 'business/src/users/index.ts';
 
 /**
@@ -72,7 +73,8 @@ export function startStorageUsedJob (config: ConfigLike, options: { firstPassDel
     if (stopped) return;
     timer = setTimeout(() => {
       const t0 = Date.now();
-      computeStorageUsedForAllAccounts(logger)
+      // a background pass is not a request: no request time limit
+      runMaintenance(() => computeStorageUsedForAllAccounts(logger))
         .then((r) => logger.info(`storage-size pass: ${r.updated} of ${r.accounts} account(s) updated${r.failed > 0 ? `, ${r.failed} failed` : ''} in ${Date.now() - t0} ms`))
         .catch((err: unknown) => logger.error('storage-size pass failed: ' + (err instanceof Error ? err.message : String(err))))
         .finally(() => schedule(intervalMs));

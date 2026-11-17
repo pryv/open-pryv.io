@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### PostgreSQL: time limits on the database work of API requests (behaviour change, on by default)
+
+- **A database statement issued while serving an API request is stopped after
+  `storages.engines.postgresql.statementTimeoutMs` (default 30000 ms), and a transaction left idle
+  is closed after `idleInTransactionTimeoutMs` (default 60000 ms).** A request stopped this way
+  answers `503 api-unavailable` (no `Retry-After`: the statement was rolled back, a retry is
+  correct; narrowing the request is the better answer for an expensive read). Previously a slow
+  or runaway query ran for as long as it took, holding its connection even after the client had
+  gone away.
+- **A streamed response is limited per batch of rows, not as a whole:** a long download (events,
+  audit, exports) is unaffected however long it takes the client to read it; only a single batch
+  needing more than the limit is stopped. A response already streaming when that happens is cut,
+  as on any other mid-stream failure.
+- **Not limited:** schema migrations and boot-time index builds, the command-line tools (backup,
+  restore, integrity checks, migrations, backfills), account deletion (self-service, admin and the
+  auto-deletion sweep), the periodic background jobs and `system.checkPlatformIntegrity`. The
+  limits apply to the API, HFS and previews workers of the clustered server (`bin/master.js`);
+  the single-process entry points are not limited.
+- How to see it acting: each stopped statement logs one warning line with the request and the
+  statement text (truncated, never its parameters). Tune with the two keys; `0` switches either
+  off. Both must be integers >= 0 (the boot refuses the config otherwise; a non-zero value below
+  1000 warns, as seconds typed for milliseconds). Both are sent to PostgreSQL as connection
+  parameters.
+- Connections: the unlimited work above runs on a separate small pool, so each of a worker's
+  PostgreSQL pools may open up to 2 more connections (at boot for the schema check, and while such
+  work runs; idle ones close after 30 s). Leave that headroom in `max_connections`.
+- What it bounds: a runaway or orphaned statement, and how long one request can occupy a
+  connection. It does not stop many slow requests sent in a row; a per-account cap on requests in
+  flight is a separate measure.
+
 ### Password checks: a bounded number at a time per API worker
 
 - **Password hashing and verification, and OAuth client-secret verification, run at most

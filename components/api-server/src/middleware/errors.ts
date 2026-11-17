@@ -35,12 +35,13 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => L
   }
   // NOTE next is not used, since the request is terminated on all errors.
 
-  return async function handleError (error: Error & { status?: number; httpStatus?: number }, req: Request & { context?: unknown }, res: Response, next: NextFunction) {
+  return async function handleError (error: Error & { status?: number; httpStatus?: number; code?: string }, req: Request & { context?: unknown }, res: Response, next: NextFunction) {
     if (!(error instanceof APIError) && error.status) {
       // it should be coming from Express' bodyParser: just wrap the error
       error = errorsFactory.invalidRequestStructure(error.message);
-    } else if (!(error instanceof APIError) && isCapacityRefusal(error)) {
-      // A route outside the method chain hit the password-check ceiling.
+    } else if (!(error instanceof APIError) && (isCapacityRefusal(error) || error.code === '57014')) {
+      // A route outside the method chain hit the password-check ceiling, or a
+      // database statement it ran was stopped by the server's time limit.
       error = errorsFactory.unexpectedError(error);
     }
     if (req.context != null) {

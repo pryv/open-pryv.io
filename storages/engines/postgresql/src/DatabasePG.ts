@@ -10,10 +10,62 @@ import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { Pool } = require('pg');
 const { setTimeout } = require('timers/promises');
 const { _internals } = require('./_internals.ts');
-const Cursor = require('pg-cursor');
+const { isRequestServingProcess } = require('utils');
+
+/**
+ * Set while `runMaintenance(fn)` runs: every DatabasePG then serves `fn`'s
+ * statements from its maintenance pool, which carries no time limit.
+ */
+const maintenanceScope = new AsyncLocalStorage();
+
+/** Connections of the maintenance pool, per DatabasePG (internal constant). */
+const MAINTENANCE_POOL_MAX = 2;
+
+// Tests only: forces the request-serving role on (true) or follows the
+// process role (null). Read when a DatabasePG is constructed.
+let requestServingOverride: boolean | null = null;
+
+/**
+ * Run `fn` with every statement it issues, on any DatabasePG, taken from the
+ * unlimited maintenance pool: long legitimate work inside a request-serving
+ * process (account erasure, background jobs, boot DDL). Outside such a process
+ * the pools are unlimited already and this only runs `fn`.
+ */
+function runMaintenance<T> (fn: () => Promise<T>): Promise<T> {
+  return maintenanceScope.run(true, fn);
+}
+
+/** Whether the current call runs inside `runMaintenance`. */
+function isInMaintenance (): boolean {
+  return maintenanceScope.getStore() === true;
+}
+
+/** Tests only: see `requestServingOverride`. */
+function setRequestServingForTests (value: boolean | null): void {
+  requestServingOverride = value;
+}
+
+/** A statement cancelled by `statement_timeout` (SQLSTATE 57014). */
+const STATEMENT_CANCELLED = '57014';
+/** How much of a cancelled statement's text is kept for the log line. */
+const STATEMENT_TEXT_MAX = 200;
+
+/**
+ * Tag a cancelled statement's error with its text (truncated, never its
+ * parameters), so the single place mapping it to an API answer can log it.
+ */
+function tagCancelled (err: unknown, text: string): void {
+  if (err != null && typeof err === 'object' && (err as PgError).code === STATEMENT_CANCELLED) {
+    (err as PgError).statementText = text.replace(/\s+/g, ' ').trim().slice(0, STATEMENT_TEXT_MAX);
+  }
+}
+
+/** Every cursor name in this process is distinct (one transaction holds one). */
+let cursorSeq = 0;
 
 interface PgClient {
   query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
@@ -27,17 +79,6 @@ interface PgClient {
   // 'error' event that ends the process.
   on: (event: string, handler: (err: Error) => void) => void;
   removeListener: (event: string, handler: (err: Error) => void) => void;
-}
-
-interface PgCursor {
-  read: (rowCount: number) => Promise<Array<Record<string, unknown>>>;
-  close: () => Promise<void>;
-}
-
-// A pooled client viewed through the cursor API: pg's client.query(cursor)
-// returns the cursor object rather than a result promise.
-interface CursorClient {
-  query: (cursor: unknown) => PgCursor;
 }
 
 interface PgPool {
@@ -64,6 +105,7 @@ interface PgError extends Error {
   constraint?: string;
   isDuplicate?: boolean;
   isDuplicateIndex?: (key: string) => boolean;
+  statementText?: string;
 }
 
 interface PgSettings {
@@ -73,6 +115,9 @@ interface PgSettings {
   user: string;
   password?: string;
   max?: number;
+  // Applied only in a request-serving process; 0 or absent: no limit.
+  statementTimeoutMs?: number;
+  idleInTransactionTimeoutMs?: number;
 }
 
 interface PoolConfig {
@@ -84,6 +129,9 @@ interface PoolConfig {
   max: number;
   idleTimeoutMillis: number;
   connectionTimeoutMillis: number;
+  // Sent by pg as connection parameters; absent when off.
+  statement_timeout?: number;
+  idle_in_transaction_session_timeout?: number;
 }
 
 /**
@@ -97,6 +145,10 @@ class DatabasePG {
   logger: Logger;
   _connectingPromise: Promise<void> | null;
   _schemaReady: boolean;
+  // True when the main pool carries a time limit: the maintenance pool is
+  // then a distinct, unlimited one.
+  limited: boolean;
+  _maintenancePool: PgPool | null;
 
   constructor (settings: PgSettings) {
     this.logger = _internals.getLogger('database-pg');
@@ -110,10 +162,75 @@ class DatabasePG {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 60000
     };
+    // The limits protect request handling only: the master, the command-line
+    // tools and the single-process entry points stay unlimited by construction.
+    const requestServing = requestServingOverride ?? isRequestServingProcess();
+    const statementTimeoutMs = requestServing ? (settings.statementTimeoutMs || 0) : 0;
+    const idleInTransactionTimeoutMs = requestServing ? (settings.idleInTransactionTimeoutMs || 0) : 0;
+    if (statementTimeoutMs > 0) this.poolConfig.statement_timeout = statementTimeoutMs;
+    if (idleInTransactionTimeoutMs > 0) this.poolConfig.idle_in_transaction_session_timeout = idleInTransactionTimeoutMs;
+    this.limited = statementTimeoutMs > 0 || idleInTransactionTimeoutMs > 0;
     this.pool = null;
+    this._maintenancePool = null;
     this.connected = false;
     this._connectingPromise = null;
     this._schemaReady = false;
+  }
+
+  /**
+   * The pool serving a call made now: the maintenance pool inside
+   * `runMaintenance` (when the main pool is limited), else the main pool.
+   */
+  _poolForCall (): PgPool {
+    if (this.limited && isInMaintenance()) return this._maintenance();
+    return this.pool!;
+  }
+
+  /** The unlimited maintenance pool, created on first use. */
+  _maintenance (): PgPool {
+    if (!this.limited) return this.pool!;
+    if (this._maintenancePool == null) {
+      const { statement_timeout: _s, idle_in_transaction_session_timeout: _i, ...unlimited } = this.poolConfig;
+      this._maintenancePool = new Pool({ ...unlimited, max: MAINTENANCE_POOL_MAX });
+      this._maintenancePool!.on('error', (err: Error) => {
+        this.logger.error('Unexpected PG maintenance pool error', err);
+      });
+    }
+    return this._maintenancePool!;
+  }
+
+  /**
+   * A checked-out client listens for its own 'error' (the pool removes its
+   * listener while the client is out, and an unhandled 'error' ends the
+   * process: a terminated idle transaction is one way to get there). The
+   * release then discards a client whose connection was lost.
+   */
+  _guardClient (client: PgClient): PgClient {
+    let lost = false;
+    const onError = (err: Error): void => {
+      lost = true;
+      this.logger.warn('PostgreSQL connection lost while checked out: ' + err.message);
+    };
+    client.on('error', onError);
+    // For the hold, a statement stopped by the time limit keeps its text for
+    // the log line, as on the pool's own queries. Restored at release, so a
+    // reused client never stacks wrappers.
+    const clientQuery = client.query;
+    client.query = async (text: string, params?: unknown[]): Promise<PgQueryResult> => {
+      try {
+        return await clientQuery.call(client, text, params);
+      } catch (err) {
+        if (typeof text === 'string') tagCancelled(err, text);
+        throw err;
+      }
+    };
+    const poolRelease = client.release;
+    client.release = (err?: unknown): void => {
+      client.removeListener('error', onError);
+      client.query = clientQuery;
+      poolRelease(err ?? (lost ? new Error('PostgreSQL connection lost while checked out; discarding client') : undefined));
+    };
+    return client;
   }
 
   /**
@@ -174,7 +291,12 @@ class DatabasePG {
   async query (text: string, params?: unknown[]): Promise<PgQueryResult> {
     await this.ensureConnect();
     this.logger.debug('Query:', text.replace(/\s+/g, ' ').trim());
-    return this.pool!.query(text, params);
+    try {
+      return await this._poolForCall().query(text, params);
+    } catch (err) {
+      tagCancelled(err, text);
+      throw err;
+    }
   }
 
   /**
@@ -191,11 +313,19 @@ class DatabasePG {
    * error at the `yield` — leaves a perfectly healthy connection, and
    * discarding it would make a burst of aborts churn the pool instead of
    * leaking it: better than a leak, still wrong.
+   *
+   * The cursor is DECLAREd in a transaction and read with one FETCH per batch,
+   * so a statement time limit bounds each batch, not the whole stream (a
+   * protocol-level portal keeps one statement running from the first row to
+   * the last, consumer's drain time included). Both settings are local to the
+   * transaction: a reader slower than the idle-in-transaction limit between
+   * two batches is not cut, and the cursor is planned for the whole result,
+   * like the query it replaces.
    */
   async * queryIterable (text: string, params: unknown[] = [], batchSize: number = 1000): AsyncGenerator<Record<string, unknown>> {
     await this.ensureConnect();
     this.logger.debug('Query (cursor):', text.replace(/\s+/g, ' ').trim());
-    const client = await this.pool!.connect();
+    const client = await this._poolForCall().connect();
 
     // ⚑ The pool removes its own idle `'error'` listener when it hands a client
     // out and re-attaches it on release. For the millisecond-long holds
@@ -220,29 +350,34 @@ class DatabasePG {
     };
     client.on('error', swallowClientError);
 
-    let cursor: PgCursor;
-    try {
-      // Inside the try: if opening the cursor throws, the client must still go
-      // back, and it is the cursor that is suspect, not the consumer.
-      cursor = (client as unknown as CursorClient).query(new Cursor(text, params));
-    } catch (err) {
-      client.removeListener('error', swallowClientError);
-      client.release(err);
-      throw err;
-    }
-
+    const cursorName = 'pryv_cursor_' + (++cursorSeq);
+    const rowsPerFetch = Number.isFinite(batchSize) ? Math.max(1, Math.floor(batchSize)) : 1000;
+    const fetchSql = `FETCH ${rowsPerFetch} FROM ${cursorName}`;
+    // Set by any failure of the transaction's own statements (BEGIN, DECLARE,
+    // FETCH): the connection is then in an unknown state and is discarded,
+    // which also ends the transaction server-side.
     let cursorFailed = false;
+    let completed = false;
     try {
+      try {
+        await client.query('BEGIN; SET LOCAL idle_in_transaction_session_timeout = 0; SET LOCAL cursor_tuple_fraction = 1');
+        await client.query(`DECLARE ${cursorName} NO SCROLL CURSOR FOR ${text}`, params);
+      } catch (err) {
+        cursorFailed = true;
+        tagCancelled(err, text);
+        throw err;
+      }
       for (;;) {
         let rows: Array<Record<string, unknown>>;
         try {
-          rows = await cursor.read(batchSize);
+          rows = (await client.query(fetchSql)).rows;
         } catch (err) {
-          // Only a read failure means the connection is in an unknown state.
+          // Only a statement failure means the connection is in an unknown state.
           cursorFailed = true;
+          tagCancelled(err, text);
           throw err;
         }
-        if (rows.length === 0) break;
+        if (rows.length === 0) { completed = true; break; }
         // Deliberately NOT `yield * rows`. Delegating to the array's iterator
         // parks the generator inside that delegation, and an array iterator has
         // no `throw` method — so a consumer abort (which arrives as
@@ -252,38 +387,44 @@ class DatabasePG {
         for (const row of rows) yield row;
       }
     } finally {
-      // ⚑ Only close the portal on a connection that can still answer.
-      // `cursor.close()` waits for a `readyForQuery` that a dead backend will
-      // never send, so closing on a lost connection never settles: the release
-      // below would never run (pool slot gone until restart) and the generator
-      // would never finish, so `Readable.from`'s destroy never completes and
-      // the response chain never settles either. A discarded client has no
-      // portal worth closing anyway.
+      // ⚑ Only end the transaction on a connection that can still answer.
+      // A statement sent to a dead backend waits for a `readyForQuery` that
+      // will never come: the release below would never run (pool slot gone
+      // until restart) and the generator would never finish, so
+      // `Readable.from`'s destroy never completes and the response chain never
+      // settles either. A discarded client has no transaction worth ending.
       //
-      // Two ways to know it is not worth trying: `cursor.read` threw
+      // Two ways to know it is not worth trying: a statement of ours failed
       // (`cursorFailed`), or the client reported the loss to our listener while
       // the generator was parked at a yield (`connectionLost`) — the second is
       // the path an aborting consumer takes, where nothing was mid-read. The
       // race covers the remainder, a backend that dies during an otherwise
-      // healthy close's round trip.
+      // healthy round trip. A consumer that stopped early rolls back (the
+      // cursor goes with it); a complete read commits.
+      let endFailed = false;
       if (!cursorFailed && !connectionLost) {
-        try { await Promise.race([cursor.close(), lost]); } catch (e) { /* best-effort cursor cleanup */ }
+        try {
+          await Promise.race([client.query(completed ? 'COMMIT' : 'ROLLBACK'), lost]);
+        } catch (e) {
+          endFailed = true;
+        }
       }
       client.removeListener('error', swallowClientError);
       // Re-read `connectionLost`: the race above exists precisely because it can
-      // become true while we are waiting on the close.
-      client.release(cursorFailed || connectionLost
-        ? new Error('queryIterable: connection lost or cursor read failed; discarding client')
+      // become true while we are waiting on the end of the transaction.
+      client.release(cursorFailed || connectionLost || endFailed
+        ? new Error('queryIterable: connection lost or cursor statement failed; discarding client')
         : undefined);
     }
   }
 
   /**
-   * Get a client from the pool for use in transactions.
+   * Get a client from the pool for use in transactions. The caller releases
+   * it; a client whose connection was lost meanwhile is then discarded.
    */
   async getClient (): Promise<PgClient> {
     await this.ensureConnect();
-    return this.pool!.connect();
+    return this._guardClient(await this._poolForCall().connect());
   }
 
   /**
@@ -291,16 +432,23 @@ class DatabasePG {
    */
   async withTransaction<T> (fn: (client: PgClient) => Promise<T>): Promise<T> {
     const client = await this.getClient();
+    let broken = false;
     try {
       await client.query('BEGIN');
       const result = await fn(client);
       await client.query('COMMIT');
       return result;
     } catch (err) {
-      await client.query('ROLLBACK');
+      // Best effort: on a terminated connection the rollback fails too, and
+      // must not hide the original cause.
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        broken = true;
+      }
       throw err;
     } finally {
-      client.release();
+      client.release(broken ? new Error('withTransaction: rollback failed; discarding client') : undefined);
     }
   }
 
@@ -320,7 +468,9 @@ class DatabasePG {
    */
   async _initSchemaOnce (): Promise<void> {
     if (this._schemaReady) return;
-    const client = await this.pool!.connect();
+    // From the unlimited pool: waiting for the lock is a statement too, and
+    // another process may hold it for a long index build.
+    const client = this._guardClient(await this._maintenance().connect());
     try {
       await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_KEY]);
       try {
@@ -339,6 +489,10 @@ class DatabasePG {
    * Close the pool.
    */
   async close (): Promise<void> {
+    if (this._maintenancePool) {
+      await this._maintenancePool.end();
+      this._maintenancePool = null;
+    }
     if (this.pool) {
       await this.pool.end();
       this.pool = null;
@@ -674,4 +828,4 @@ CREATE TABLE IF NOT EXISTS attachment_files (
 );
 `;
 
-export { DatabasePG };
+export { DatabasePG, runMaintenance, isInMaintenance, setRequestServingForTests, STATEMENT_CANCELLED };

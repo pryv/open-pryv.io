@@ -967,6 +967,18 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   passwordCheckConcurrency: 2
 # #   passwordCheckQueue: 50
 
+# # storages.engines.postgresql.statementTimeoutMs / idleInTransactionTimeoutMs
+# # — time limits on the database work of API request handling (default 30000
+# # and 60000 ms). A longer statement is stopped (503 api-unavailable); a
+# # streamed response is limited per batch of rows; an idle transaction is
+# # closed. Migrations, command-line tools, account deletion and background
+# # jobs are not limited. 0 turns a limit off.
+# # storages:
+# #   engines:
+# #     postgresql:
+# #       statementTimeoutMs: 30000
+# #       idleInTransactionTimeoutMs: 60000
+
 # # account.storageUsed.intervalHours: the core recomputes each account's
 # # storageUsed (account.get) every N hours (default 24, first pass ~15 min
 # # after boot); 0 turns it off (then run components/api-server/bin/nightly).

@@ -9,6 +9,7 @@ import type { ConfigLike } from '@pryv/boiler';
 import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
 import { getStorageLayer } from 'storage';
+import { runMaintenance } from 'storages';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { runDeletionGuards } from 'business/src/auth/deletionTeardown.ts';
 import { getErasuresLocal } from 'business/src/auth/erasures.ts';
@@ -188,7 +189,8 @@ export async function startAccountAutoDeletionSweep (config: ConfigLike, options
   const schedule = (delayMs: number): void => {
     if (stopped) return;
     timer = setTimeout(() => {
-      sweep.runPass()
+      // a background pass is not a request: no request time limit
+      runMaintenance(() => sweep.runPass())
         .catch((err: unknown) => logger.error('account auto-deletion sweep failed: ' + (err instanceof Error ? err.message : String(err))))
         .finally(() => schedule(adConfig.sweepIntervalMs));
     }, delayMs);

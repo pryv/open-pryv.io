@@ -587,6 +587,15 @@ function checkPasswordCheckLimit (config, problems) {
   }
 }
 
+// storages.engines.postgresql.statementTimeoutMs / idleInTransactionTimeoutMs:
+// integers >= 0. A typo must not silently drop the limit.
+function checkPgTimeLimits (config, problems) {
+  const { describePgTimeLimits } = require('../../storages/engines/postgresql/src/timeLimits.ts');
+  for (const p of describePgTimeLimits(config.get('storages:engines:postgresql')).problems) {
+    problems.push({ message: p.path.join('.') + ' ' + p.message + '.', path: p.path, payload: { value: config.get(p.path.join(':')) } });
+  }
+}
+
 // core.id becomes a DNS label and the host of derived core URLs; on a
 // multi-core deployment core.url is where peers send the admin key.
 function checkCoreIdentity (config, problems) {
@@ -710,6 +719,7 @@ async function validate (config) {
   checkAutoDeletion(config, problems);
   checkStorageUsed(config, problems);
   checkPasswordCheckLimit(config, problems);
+  checkPgTimeLimits(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
@@ -874,6 +884,8 @@ function collectWarnings (config) {
   warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
   warnings.push(...revocationLagWarnings(config));
   warnings.push(...describeAutoDeletion(config).warnings);
+  const { describePgTimeLimits } = require('../../storages/engines/postgresql/src/timeLimits.ts');
+  warnings.push(...describePgTimeLimits(config.get('storages:engines:postgresql')).warnings);
   warnings.push(...oauthWarnings(config));
   const { describeClientMetadataConfig } = require('../../components/oauth2/src/clientMetadataConfig.ts');
   warnings.push(...describeClientMetadataConfig(config.get('oauth:clientMetadataDocuments')).warnings);
@@ -1018,6 +1030,7 @@ module.exports = {
   checkTrustedProxies,
   checkIntegrityAlgorithm,
   checkAutoDeletion,
+  checkPgTimeLimits,
   checkUserDataRootPersistence,
   checkCoreIdentity,
   checkRaftTls,

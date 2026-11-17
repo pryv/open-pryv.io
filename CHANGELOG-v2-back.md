@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### PostgreSQL time limits: per-batch cursor, maintenance pool, guarded clients
+
+- `DatabasePG`: the pools of a request-serving process (`utils.isRequestServingProcess()`, now
+  `api` / `hfs` / `previews`) carry `statement_timeout` / `idle_in_transaction_session_timeout`
+  from the two config keys (main pool, both audit pools, the dedicated files pool); every other
+  process builds unlimited pools.
+- `queryIterable` runs `BEGIN; SET LOCAL idle_in_transaction_session_timeout = 0; SET LOCAL
+  cursor_tuple_fraction = 1`, `DECLARE … NO SCROLL CURSOR`, one `FETCH` per batch, `COMMIT` on a
+  complete read, `ROLLBACK` on an early stop, and discards the client on any failed statement or
+  lost connection: the limit is per batch. `pg-cursor` (a protocol-level portal, one statement
+  timer for the whole stream) is no longer used and is removed from the dependencies.
+- `storages.runMaintenance(fn)` / `isInMaintenance()`: an `AsyncLocalStorage` scope in which every
+  `DatabasePG` serves `fn`'s statements from its own lazily created unlimited pool (2 connections).
+  Used by the erasure steps (`Deletion.erasureSteps`, so `auth.delete` and `eraseAccount`), the
+  auto-deletion sweep and storage-size passes, `reconcileContentIndexes` in `storages.init`, and
+  `system.checkPlatformIntegrity`; `_initSchemaOnce` always takes the maintenance pool.
+- `getClient` attaches an `'error'` listener for the hold and discards the client on release when
+  its connection was lost; `withTransaction` and `LocalTransactionPG.exec` make `ROLLBACK`
+  best-effort (a failed rollback discards the client and never hides the original error).
+- A cancelled statement (SQLSTATE 57014) carries `statementText` (truncated, no parameters);
+  `errors.factory.unexpectedError` maps it first to 503 `api-unavailable` (also from the API error
+  middleware for routes outside the method chain), and `errorHandling.logError` logs it at warn
+  with that text. `storages/engines/postgresql/src/timeLimits.ts`: one reading of the two keys for
+  the boot validation and `bin/check-config.js`.
+
 ### Bounded bcrypt concurrency
 
 - `utils/src/concurrencyLimit.ts`: a generic per-process limiter (slots, first-in-first-out queue
@@ -10,7 +35,8 @@
   shared instance; `encryption.withBcryptSlot` lets `oauth2/clientSecret.ts` use the same slots
   with its own cost factor. A slot is held for one bcrypt call: the password-history loop re-queues
   between comparisons. Unconfigured it is a pass-through; `api-server/src/server.ts` configures it
-  when `utils.isRequestServingProcess()` (`PRYV_WORKER_TYPE` `api` / `hfs`).
+  when `utils.isRequestServingProcess()` (`PRYV_WORKER_TYPE` `api` / `hfs` / `previews`; only
+  the API worker issues password checks).
 - The refusal is mapped once per surface: `errors.factory.unexpectedError` (and the API error
   middleware, for routes outside the method chain) to 429 `too-many-requests`; the OAuth
   `guardRoute` to 503 `temporarily_unavailable`. `verifySecret` rethrows it instead of answering

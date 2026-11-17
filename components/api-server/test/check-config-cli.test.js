@@ -765,3 +765,44 @@ describe('[CKPC] bin/check-config.js auth.passwordCheckConcurrency / passwordChe
     assert.doesNotMatch(below.stdout + below.stderr, /thread pool size/);
   });
 });
+
+describe('[CKPT] bin/check-config.js storages.engines.postgresql time limits', function () {
+  this.timeout(60000);
+  const withPg = (lines) => BASE.replace('\nstorages:\n', '\nstorages:\n  engines:\n    postgresql:\n' + lines);
+
+  it('[CKPT1] integers >= 0 pass; a negative, fractional or quoted value is a problem', () => {
+    for (const ok of ['      statementTimeoutMs: 0\n      idleInTransactionTimeoutMs: 0\n', '      statementTimeoutMs: 30000\n      idleInTransactionTimeoutMs: 60000\n']) {
+      const res = runCheck(withPg(ok));
+      assert.strictEqual(res.status, 0, ok + res.stdout + res.stderr);
+    }
+    for (const key of ['statementTimeoutMs', 'idleInTransactionTimeoutMs']) {
+      for (const bad of ['-1', '1.5', '"30000"']) {
+        const res = runCheck(withPg(`      ${key}: ${bad}\n`));
+        assert.strictEqual(res.status, 1, key + bad + res.stdout + res.stderr);
+        assert.match(res.stderr, new RegExp(`storages\\.engines\\.postgresql\\.${key} must be an integer number of milliseconds >= 0`));
+      }
+    }
+  });
+
+  it('[CKPT2] warns on a value that looks like seconds', () => {
+    const res = runCheck(withPg('      statementTimeoutMs: 30\n'));
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout + res.stderr, /statementTimeoutMs is 30 ms: a value in milliseconds is expected/);
+  });
+
+  it('[CKPT3] the boot validation refuses the same values', () => {
+    const { checkPgTimeLimits } = require('../../../config/plugins/config-validation.js');
+    const run = (pg) => {
+      const problems = [];
+      checkPgTimeLimits({ get: (key) => key === 'storages:engines:postgresql' ? pg : undefined }, problems);
+      return problems;
+    };
+    assert.deepStrictEqual(run({ statementTimeoutMs: 0, idleInTransactionTimeoutMs: 60000 }), []);
+    assert.deepStrictEqual(run(undefined), []);
+    for (const bad of [-1, 1.5, '30000']) {
+      const problems = run({ idleInTransactionTimeoutMs: bad });
+      assert.strictEqual(problems.length, 1, String(bad));
+      assert.deepStrictEqual(problems[0].path, ['storages', 'engines', 'postgresql', 'idleInTransactionTimeoutMs']);
+    }
+  });
+});

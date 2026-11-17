@@ -51,7 +51,6 @@
     "multistream": "^4.1.0",
     "node-forge": "^1.4.3",
     "pg": "^8.18.0",
-    "pg-cursor": "^2.21.0",
     "proxy-addr": "^2.0.8",
     "pug": "^3.0.4",
     "pug-lexer": "^5.0.1",
