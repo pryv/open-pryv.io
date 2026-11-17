@@ -170,14 +170,41 @@
   clean; an account that was on the core before an `--overwrite` restore is left empty. The
   restore's error is reported; a failure of the cleanup is logged with what to do next.
 
+### Operators: `DATABASE_URL`, custom stores replacing a built-in one
+
+- **PostgreSQL from `DATABASE_URL`.** When the environment sets `DATABASE_URL` (as Dokku's
+  `postgres:link` or Heroku do), each of `storages.engines.postgresql` `host`, `port`, `database`,
+  `user` and `password` still at its `default-config.yml` value takes the value of the URL; a value
+  set in your configuration (override file, environment variables) wins. A field the URL leaves out
+  keeps its configured value; query parameters (`sslmode`, ...) are not read. Boot logs which
+  fields came from it (never the values). A `DATABASE_URL` that is not a `postgres://` /
+  `postgresql://` URL fails the boot.
+- **`custom.dataStores` entry `override: true`.** A custom store whose id is that of a built-in
+  store (`local`, `account`, `_audit`) replaces it when its entry sets `override: true`; like the
+  built-in, it is then not covered by a `*` permission. Without the flag the entry is not loaded
+  and boot logs a warning naming it (the built-in store kept the id before too, but the entry was
+  loaded). **Fix:** such an entry used to put its id on the list of stores a `*` permission covers,
+  so with a custom entry named `account` or `_audit` an access holding `*` reached the built-in
+  account or audit store; it no longer does.
+
+## 2.0.0-rc.85 - 2026-11-16
+
+> **Upgrade advice for operators.** Security release for platforms on the **SQLite** storage engine
+> (PostgreSQL platforms are not affected by the two fixes, only by the stream-id rule below). No
+> migration and no configuration change; the SQLite audit store rebuilds its list of access /
+> action children once per file at first open. **Breaking** only for a client creating stream ids
+> holding whitespace, control characters, or the id `..`. Before upgrading a SQLite core, check
+> for stored access permissions on lower-cased `:_audit:action-…` ids (they grant nothing after
+> the upgrade) and for stream ids holding a space (writing an event there is refused).
+
 ### SQLite storage engine: stream ids are matched exactly, case included
 
 - **Security fix.** With the SQLite engine, `events.get` and the stream scope of an access
   matched stream ids without regard to letter case, and matched an id that is part of a longer
   one: an access allowed on stream `diary` could read the events of a stream `Diary`, and `abc`
   matched an event of a stream `abc/def`. Stream ids are now compared whole and
-  case-sensitively, as the PostgreSQL engine always did; this also holds for the audit store and
-  `audit.getSummary`. Accounts holding two streams whose ids differ only by case are the ones
+  case-sensitively, as the PostgreSQL engine always did; this also holds for the audit store.
+  Accounts holding two streams whose ids differ only by case are the ones
   affected. The id `..` and the empty id match no event (`..` matched every event), and an id
   holding no letter, digit or `-_:.` (such as `/`) now finds its events (it found none).
 - With the SQLite engine, the children of `:_audit:actions` are listed with the method's own
@@ -199,23 +226,6 @@
   space or NUL is refused with an error naming the event, instead of being stored under other
   stream ids. A backup taken from a PostgreSQL platform (or a v1 export) that holds such an id
   does not restore onto SQLite until the stream is renamed.
-
-### Operators: `DATABASE_URL`, custom stores replacing a built-in one
-
-- **PostgreSQL from `DATABASE_URL`.** When the environment sets `DATABASE_URL` (as Dokku's
-  `postgres:link` or Heroku do), each of `storages.engines.postgresql` `host`, `port`, `database`,
-  `user` and `password` still at its `default-config.yml` value takes the value of the URL; a value
-  set in your configuration (override file, environment variables) wins. A field the URL leaves out
-  keeps its configured value; query parameters (`sslmode`, ...) are not read. Boot logs which
-  fields came from it (never the values). A `DATABASE_URL` that is not a `postgres://` /
-  `postgresql://` URL fails the boot.
-- **`custom.dataStores` entry `override: true`.** A custom store whose id is that of a built-in
-  store (`local`, `account`, `_audit`) replaces it when its entry sets `override: true`; like the
-  built-in, it is then not covered by a `*` permission. Without the flag the entry is not loaded
-  and boot logs a warning naming it (the built-in store kept the id before too, but the entry was
-  loaded). **Fix:** such an entry used to put its id on the list of stores a `*` permission covers,
-  so with a custom entry named `account` or `_audit` an access holding `*` reached the built-in
-  account or audit store; it no longer does.
 
 ## 2.0.0-rc.84 - 2026-11-13
 
