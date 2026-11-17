@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Bounded bcrypt concurrency
+
+- `utils/src/concurrencyLimit.ts`: a generic per-process limiter (slots, first-in-first-out queue
+  with a bound, wait limit checked when the turn comes; a refused call throws `CapacityRefusal`,
+  `code: 'capacity-refused'`, and its work never runs). `encryption.hash` / `compare` run in one
+  shared instance; `encryption.withBcryptSlot` lets `oauth2/clientSecret.ts` use the same slots
+  with its own cost factor. A slot is held for one bcrypt call: the password-history loop re-queues
+  between comparisons. Unconfigured it is a pass-through; `api-server/src/server.ts` configures it
+  when `utils.isRequestServingProcess()` (`PRYV_WORKER_TYPE` `api` / `hfs`).
+- The refusal is mapped once per surface: `errors.factory.unexpectedError` (and the API error
+  middleware, for routes outside the method chain) to 429 `too-many-requests`; the OAuth
+  `guardRoute` to 503 `temporarily_unavailable`. `verifySecret` rethrows it instead of answering
+  `false`.
+- `accountAttemptThrottle.reserveAndCheck`: the tally is reserved before the password check (as
+  before); a check refused for capacity takes the reservation back with a compare-and-set on
+  exactly what it wrote (a reservation made meanwhile keeps the count).
+- `business/src/auth/passwordCheckLimit.ts`: one reading of the two keys for the boot validation,
+  `bin/check-config.js` and the worker.
+
 ### SQLite events query: plan for a filter most rows meet; write-guard error
 
 - `UserDatabase` `prepareEventsGetQuery`: before reading a stream filter's full-text rowid set, a

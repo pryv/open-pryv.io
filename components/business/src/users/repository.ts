@@ -691,6 +691,10 @@ class UsersRepository {
 
   /** @private — local (single-core) part of insertOne */
   async createLocalUserData (user: UserData, withSession: boolean) {
+    // Hashed before the transaction opens: waiting for a password-check slot
+    // must not hold a database connection. Provided directly by
+    // system.createUser, else the regular registration.
+    const passwordHash = user.passwordHash ? user.passwordHash as string : await encryption.hash(user.password!);
     const mallTransaction = await this.mall.newTransaction();
     // Invariant: the local store always provides a transaction.
     const localTransaction = (await mallTransaction.getStoreTransaction('local'))!;
@@ -724,13 +728,7 @@ class UsersRepository {
         }
       }
       // set user password
-      if (user.passwordHash) {
-        // if passwordHash was provided directly (via system.createUser)
-        await this.userAccountStorage.addPasswordHash(user.id, user.passwordHash as string, user.accessId as string);
-      } else {
-        // regular user creation
-        await this.setUserPassword(user.id, user.password!, user.accessId as string);
-      }
+      await this.userAccountStorage.addPasswordHash(user.id, passwordHash, user.accessId as string);
     });
     // Populate the breach-scope reverse-index AFTER the local transaction
     // commits (so a rollback can't orphan an index row). Non-fatal.

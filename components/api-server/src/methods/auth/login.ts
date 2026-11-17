@@ -180,10 +180,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       const ipErr = await passwordIpRefusal(ip, attempts.perIp);
       if (ipErr) return next(ipErr);
       const user = { id: context.user.id as string, username: context.user.username };
-      const attemptErr = await passwordTally.reserve(user, attempts);
-      if (attemptErr) return next(attemptErr);
-      const isValid = await usersRepository.checkUserPassword(context.user.id, params.password);
-      if (!isValid) {
+      const outcome = await passwordTally.reserveAndCheck(user, attempts,
+        () => usersRepository.checkUserPassword(context.user.id, params.password));
+      if (outcome.error) return next(outcome.error);
+      if (!outcome.valid) {
         await countPasswordIpFailure(ip, attempts.perIp);
         return next(errors.invalidCredentials());
       }

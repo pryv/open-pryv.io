@@ -122,15 +122,17 @@ describe('[USRP] Users repository', () => {
         email: charlatan.Internet.email(),
         appId: 'urb2-app'
       });
-      const originalSetPassword = usersRepository.setUserPassword;
-      usersRepository.setUserPassword = async () => { throw new Error('simulated password failure'); };
+      // the password write is the last step inside the local transaction
+      const accountStorage = usersRepository.userAccountStorage;
+      const originalAddPasswordHash = accountStorage.addPasswordHash;
+      accountStorage.addPasswordHash = async () => { throw new Error('simulated password failure'); };
       try {
         await usersRepository.insertOne(failing, true);
         assert.fail('should have thrown');
       } catch (err) {
         assert.equal(err.message, 'simulated password failure');
       } finally {
-        usersRepository.setUserPassword = originalSetPassword;
+        accountStorage.addPasswordHash = originalAddPasswordHash;
       }
       // first: the lookups below open (and so create) the per-user SQLite files
       assert.equal(require('node:fs').existsSync(userLocalDirectory.getPathForUser(failing.id)), false, 'no user directory left');

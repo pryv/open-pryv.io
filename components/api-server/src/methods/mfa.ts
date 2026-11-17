@@ -284,9 +284,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     const attempts = passwordAttemptsCfg();
     const ipErr = await passwordIpRefusal(ip, attempts.perIp);
     if (ipErr) return ipErr;
-    const attemptErr = await passwordTally.reserve(user, attempts);
-    if (attemptErr) return attemptErr;
-    if (!await (await getUsersRepository()).checkUserPassword(user.id, value)) {
+    const usersRepository = await getUsersRepository();
+    const outcome = await passwordTally.reserveAndCheck(user, attempts, () => usersRepository.checkUserPassword(user.id, value));
+    if (outcome.error) return outcome.error;
+    if (!outcome.valid) {
       await countPasswordIpFailure(ip, attempts.perIp);
       return errors.invalidStepUp();
     }
@@ -664,10 +665,10 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const ip = context.source?.ip;
         const ipErr = await passwordIpRefusal(ip, attempts.perIp);
         if (ipErr) return next(ipErr);
-        const attemptErr = await passwordTally.reserve(user, attempts);
-        if (attemptErr) return next(attemptErr);
-        const isValid = await usersRepository.checkUserPassword(user.id, params.password);
-        if (!isValid) {
+        const outcome = await passwordTally.reserveAndCheck(user, attempts,
+          () => usersRepository.checkUserPassword(user.id, params.password));
+        if (outcome.error) return next(outcome.error);
+        if (!outcome.valid) {
           await countPasswordIpFailure(ip, attempts.perIp);
           return next(errors.invalidCredentials());
         }

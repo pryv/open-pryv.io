@@ -43,9 +43,10 @@ export function createPasswordStepUp (opts: {
     const attempts = normalizePasswordAttempts(opts.config.get('auth:passwordAttempts'));
     const ipErr = await passwordIpRefusal(ip, attempts.perIp);
     if (ipErr) return ipErr;
-    const attemptErr = await tally.reserve(user, attempts);
-    if (attemptErr) return attemptErr;
-    if (!await (await getUsersRepository()).checkUserPassword(user.id, password)) {
+    const usersRepository = await getUsersRepository();
+    const outcome = await tally.reserveAndCheck(user, attempts, () => usersRepository.checkUserPassword(user.id, password));
+    if (outcome.error) return outcome.error;
+    if (!outcome.valid) {
       await countPasswordIpFailure(ip, attempts.perIp);
       return mismatchError();
     }

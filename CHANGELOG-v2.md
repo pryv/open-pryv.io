@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Password checks: a bounded number at a time per API worker
+
+- **Password hashing and verification, and OAuth client-secret verification, run at most
+  `auth.passwordCheckConcurrency` at a time per API worker (default 2), with up to
+  `auth.passwordCheckQueue` calls waiting for a turn (default 50, at most 10 s).** Beyond that the
+  call is refused without checking anything: the API answers `429 too-many-requests` with
+  `Retry-After: 5`, the OAuth endpoints answer `503` with `error: temporarily_unavailable` and
+  `Retry-After: 5`. Previously a flood of password checks could occupy the worker's whole thread
+  pool and CPU, stalling attachments, DNS lookups for webhooks and compression for every account.
+- **A refused check is not a failed attempt:** it neither counts on the account's failed-password
+  tally nor delays the account, and it never answers `invalid-credentials` or `invalid_client`.
+- New answers on existing methods: `auth.login`, `account.changePassword` and the password reset,
+  `mfa.recover`, the MFA step-up by password, registration (`auth.register`), and the OAuth token
+  endpoint (client secret), introspection and revocation. At the token endpoint the refresh,
+  client-credentials and token-exchange grants check the client before using anything, so the
+  same request can be retried; an authorization code is single-use and spent by the refused
+  exchange (its access is revoked), so the client starts a new authorization.
+- Registration hashes the password before its storage transaction opens, so waiting for a turn
+  never holds a database connection.
+- The limit applies to the API workers of the clustered server (`bin/master.js`); command-line
+  tools (backup, restore, migrations, `bin/oauth-client.js`) are never limited.
+- Tuning: raising the concurrency only helps with spare CPU cores per worker; keep it below the
+  thread pool size (`UV_THREADPOOL_SIZE`, 16 in the Docker image, 4 otherwise): the boot and
+  `bin/check-config.js` warn otherwise. `auth.passwordCheckConcurrency: 0` disables the limit.
+  Both keys must be integers >= 0, else the boot refuses the config.
+
 ### Cache invalidation between the processes of a core
 
 - **A process keeps an access, a stream tree or a name only when it is sure to hear its

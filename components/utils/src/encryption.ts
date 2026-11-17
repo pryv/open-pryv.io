@@ -9,6 +9,7 @@
  * Encryption helper functions (wraps bcrypt functionality for hashing).
  */
 import { createRequire } from 'node:module';
+import { createLimiter } from './concurrencyLimit.ts';
 const require = createRequire(import.meta.url);
 
 const bcrypt = require('bcrypt');
@@ -21,10 +22,53 @@ const crypto = require('crypto');
 const COST = process.env.NODE_ENV === 'development' ? 4 : 10;
 
 /**
+ * Every bcrypt hash and compare of the process (account passwords, the
+ * password history, OAuth client secrets) takes one slot of this limiter for
+ * the duration of that one call: bcrypt work runs on the thread pool and
+ * costs CPU, and a flood of password checks must not starve the rest of the
+ * process (file I/O, DNS, compression). Configured by the API workers at
+ * start (`configureBcryptLimit`); unconfigured it is a pass-through. A call
+ * refused for capacity throws a `CapacityRefusal` and never hashes.
+ */
+const bcryptLimiter = createLimiter('password check');
+
+/** Longest a bcrypt call waits for a slot before it is refused. */
+const BCRYPT_MAX_WAIT_MS = 10 * 1000;
+/** What a refused call tells the client to wait. */
+const BCRYPT_RETRY_AFTER_SECONDS = 5;
+
+/**
+ * @param limits null (or concurrency 0) for no limit.
+ */
+function configureBcryptLimit (limits: { concurrency: number; queue: number; maxWaitMs?: number } | null): void {
+  bcryptLimiter.configure(limits == null
+    ? null
+    : {
+        concurrency: limits.concurrency,
+        queue: limits.queue,
+        maxWaitMs: limits.maxWaitMs ?? BCRYPT_MAX_WAIT_MS,
+        retryAfterSeconds: BCRYPT_RETRY_AFTER_SECONDS
+      });
+}
+
+/**
+ * Runs one bcrypt call in a slot of the shared limiter. For bcrypt callers
+ * outside this module (they keep their own cost factor).
+ */
+async function withBcryptSlot<T> (work: () => Promise<T>): Promise<T> {
+  return await bcryptLimiter.run(work);
+}
+
+/** Slots in use and calls waiting (tests and diagnostics). */
+function bcryptLimitStats (): { running: number; waiting: number } {
+  return bcryptLimiter.stats();
+}
+
+/**
  * @param value The value to be hashed.
  */
 async function hash (value: string): Promise<string> {
-  return await bcrypt.hash(value, COST);
+  return await bcryptLimiter.run(() => bcrypt.hash(value, COST));
 }
 
 /**
@@ -39,7 +83,7 @@ function hashSync (value: string): string {
  * @param hash The hash to check the value against
  */
 async function compare (value: string, hash: string): Promise<boolean> {
-  return await bcrypt.compare(value, hash);
+  return await bcryptLimiter.run(() => bcrypt.compare(value, hash));
 }
 
 /**
@@ -88,4 +132,7 @@ function getFileHMAC (fileId: string, token: string, secret: string): string {
     .replace(/=/g, '');
 }
 
-export { hash, hashSync, compare, fileReadToken, parseFileReadToken, isFileReadTokenHMACValid };
+export {
+  hash, hashSync, compare, fileReadToken, parseFileReadToken, isFileReadTokenHMACValid,
+  configureBcryptLimit, withBcryptSlot, bcryptLimitStats
+};

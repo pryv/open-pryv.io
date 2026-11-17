@@ -30,6 +30,8 @@ const { parseAdapterRoutes, checkAdapterRoutesAtBoot } = require('business/src/a
 const { buildAdapterIngress, attachAdapterContinueCheck, adapterAddressingFor } = require('./adapterIngress.ts');
 const { getPlatform } = require('platform');
 const { checkValidityWindow, clockSkewSecondsFromConfig } = require('business/src/acme/certUtils.ts');
+const { describePasswordCheckLimit } = require('business/src/auth/passwordCheckLimit.ts');
+const { encryption, isRequestServingProcess } = require('utils');
 type ApiSurface = { register: (...args: unknown[]) => void; getMethodKeys?: () => string[] };
 type AppInstance = {
   api: ApiSurface;
@@ -66,6 +68,14 @@ class Server {
     await app.initiate();
     const config = await getConfig();
     this.config = config;
+    // Password-check (bcrypt) slots of this worker. Only an API worker of the
+    // clustered server applies them: command-line tools, the master and the
+    // single-process entry points stay unlimited.
+    if (isRequestServingProcess()) {
+      const limit = describePasswordCheckLimit(config.get('auth')).settings;
+      encryption.configureBcryptLimit(limit);
+      this.logger.debug(`password checks: ${limit.concurrency} at a time, ${limit.queue} waiting`);
+    }
     // setup test notification bus (IPC-based)
     await this.setupTestsNotificationBus();
     // register API methods

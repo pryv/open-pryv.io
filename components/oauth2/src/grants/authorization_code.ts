@@ -44,6 +44,8 @@ import { logServerError, logServerWarning } from '../serverLog.ts';
 import { clientLifetimes, offlineAccessAllowed } from '../clientLifetimes.ts';
 import { checkTokenResource } from '../resourceIndicator.ts';
 import { reassertPermanentRow } from '../clientMetadata.ts';
+import { concurrencyLimit } from 'utils';
+const { isCapacityRefusal } = concurrencyLimit;
 
 /** RFC 7636 §4.1 code_verifier: 43 to 128 unreserved characters. */
 const PKCE_VERIFIER_RE = /^[A-Za-z0-9\-._~]{43,128}$/;
@@ -196,8 +198,18 @@ export async function handleAuthorizationCode (
     }
   }
 
-  const outcome = await completeExchange(row);
-  if (!outcome.ok && row.accessId != null) {
+  // A client check refused because the password-check slots are busy throws
+  // (answered 503 by the route guard). The code is spent by then, so its
+  // access is revoked as on any other failure before the refusal goes on.
+  let outcome: Awaited<ReturnType<typeof completeExchange>> | null = null;
+  let busy: unknown = null;
+  try {
+    outcome = await completeExchange(row);
+  } catch (err) {
+    if (!isCapacityRefusal(err)) throw err;
+    busy = err;
+  }
+  if ((outcome == null || !outcome.ok) && row.accessId != null) {
     if (isLegacy(row)) {
       if (row.accessToken != null && row.apiEndpoint != null) {
         await revokeOrphanAccess({ apiEndpoint: row.apiEndpoint, accessToken: row.accessToken, accessId: row.accessId });
@@ -211,6 +223,7 @@ export async function handleAuthorizationCode (
       }
     }
   }
+  if (outcome == null) throw busy;
   return outcome;
 
   async function completeExchange (row: OAuthCode | LegacyOAuthCode): Promise<

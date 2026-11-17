@@ -194,6 +194,17 @@ auth:
     perIp:
       maxFailures: 30
       windowSeconds: 900
+  # Password hashing and checks (account passwords, the password history,
+  # OAuth client secrets) run at most `passwordCheckConcurrency` at a time per
+  # API worker, with up to `passwordCheckQueue` waiting (at most 10 s) for a
+  # turn. Beyond that the API answers 429 too-many-requests and the OAuth
+  # endpoints 503 temporarily_unavailable, both with Retry-After; a refused
+  # check is not a failed attempt. This keeps a flood of password checks from
+  # starving the rest of the worker. Raise the concurrency only with spare CPU
+  # cores per worker, and keep it below UV_THREADPOOL_SIZE (16 in the Docker
+  # image, 4 otherwise). passwordCheckConcurrency: 0 disables the limit.
+  passwordCheckConcurrency: 2
+  passwordCheckQueue: 50
   # How many times an account may change its username (account.changeUsername,
   # personal token). Every former username stays held by the account as an
   # alias: accesses issued under it keep working, and nobody else can take it.

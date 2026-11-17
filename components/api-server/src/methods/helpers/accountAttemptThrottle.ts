@@ -4,7 +4,7 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { fromCallback } from 'utils';
+import { fromCallback, concurrencyLimit } from 'utils';
 import { factory as errors } from 'errors';
 import { delayForFailures } from 'business/src/mfa/index.ts';
 import type { BackoffCfg } from 'business/src/mfa/index.ts';
@@ -62,6 +62,7 @@ type ThrottleOptions = {
 };
 
 const PROFILE_ID = 'private';
+const { isCapacityRefusal } = concurrencyLimit;
 
 function createAccountAttemptThrottle (opts: ThrottleOptions) {
   const { profileStorage, field, label, attemptNoun, logger } = opts;
@@ -138,14 +139,40 @@ function createAccountAttemptThrottle (opts: ThrottleOptions) {
    * never let through uncounted. Returns the error to surface, or null.
    */
   async function reserve (user: UserRef, cfg: AccountThrottleCfg): Promise<Error | null> {
-    if (cfg.backoff.maxSeconds === 0) return null; // backoff disabled
+    return (await reserveTracked(user, cfg)).error;
+  }
+
+  /**
+   * `reserve`, then `check` the secret. A check the server refused to run
+   * for capacity (its password-check slots busy) is no attempt: the
+   * reservation is taken back, so a flood elsewhere on the server cannot
+   * delay this account, and the refusal is rethrown. Taken back only while
+   * the tally is still exactly what this reservation wrote; an attempt
+   * reserved meanwhile keeps the count (fail closed).
+   */
+  async function reserveAndCheck (user: UserRef, cfg: AccountThrottleCfg, check: () => Promise<boolean>): Promise<{ error: Error } | { error: null; valid: boolean }> {
+    const reservation = await reserveTracked(user, cfg);
+    if (reservation.error != null) return { error: reservation.error };
+    try {
+      return { error: null, valid: await check() };
+    } catch (err) {
+      if (isCapacityRefusal(err)) await reservation.undo();
+      throw err;
+    }
+  }
+
+  type Reservation = { error: Error; undo?: undefined } | { error: null; undo: () => Promise<void> };
+  const nothingToUndo = async (): Promise<void> => {};
+
+  async function reserveTracked (user: UserRef, cfg: AccountThrottleCfg): Promise<Reservation> {
+    if (cfg.backoff.maxSeconds === 0) return { error: null, undo: nothingToUndo }; // backoff disabled
     const T = ['data', field];
     for (let tries = 0; tries < 10; tries++) {
       const now = Date.now();
       const item = await readItem(user);
       const stored = storedOf(item);
       const previous = live(asState(stored), now, cfg);
-      if (previous != null && previous.notBefore > now) return backoffErrorFor(previous.notBefore, now);
+      if (previous != null && previous.notBefore > now) return { error: backoffErrorFor(previous.notBefore, now) };
       const failures = (previous?.failures ?? 0) + 1;
       const delaySeconds = delayForFailures(failures, cfg.backoff);
       const next: ThrottleState = { failures, lastFailureAt: now, notBefore: delaySeconds > 0 ? now + delaySeconds * 1000 : 0 };
@@ -182,10 +209,23 @@ function createAccountAttemptThrottle (opts: ThrottleOptions) {
           `${capitalized} failures for user "${user.username}" reached the maximum backoff: ${delaySeconds}s between ${attemptNoun} attempts until one succeeds or the window lapses.`
         );
       }
-      return null;
+      // Undo: put back what was stored before, guarded on exactly what was
+      // written here (count and time), so a later reservation is never erased.
+      const before = stored == null ? null : stored;
+      const undo = async (): Promise<void> => {
+        try {
+          await fromCallback((cb: Cb<boolean>) => profileStorage.compareAndSetJson(user, { id: PROFILE_ID },
+            [{ path: [...T, 'failures'], eq: next.failures }, { path: [...T, 'lastFailureAt'], eq: next.lastFailureAt }],
+            [{ path: T, value: before }], cb));
+        } catch (err) {
+          // The refusal is still answered; the attempt stays counted.
+          logger.warn(`${capitalized} attempt for user "${user.username}": could not take back the reservation of a check refused for capacity (${(err as Error).message}).`);
+        }
+      };
+      return { error: null, undo };
     }
     logger.warn(`${capitalized} attempt for user "${user.username}" refused: lost the race to concurrent attempts 10 times in a row.`);
-    return busyError();
+    return { error: busyError() };
   }
 
   /** Clear the tally, but only when there is one (avoids a write per success). */
@@ -196,7 +236,7 @@ function createAccountAttemptThrottle (opts: ThrottleOptions) {
       profileStorage.updateOne(user, { id: PROFILE_ID }, { data: { [field]: null } }, cb));
   }
 
-  return { backoffError, reserve, clearIfAny, busyError };
+  return { backoffError, reserve, reserveAndCheck, clearIfAny, busyError };
 }
 
 type AccountAttemptThrottle = ReturnType<typeof createAccountAttemptThrottle>;

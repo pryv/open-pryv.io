@@ -573,6 +573,18 @@ if (get('account.autoDeletion') != null) {
   }
 }
 
+// auth.passwordCheckConcurrency / passwordCheckQueue: the same check master.js
+// runs at boot (integers >= 0; a warning when the concurrency is not below the
+// thread pool size).
+try {
+  const { describePasswordCheckLimit } = require('../components/business/src/auth/passwordCheckLimit.ts');
+  const report = describePasswordCheckLimit(get('auth'));
+  for (const p of report.problems) problems.push(`${p.path.join('.')} ${p.message}.`);
+  for (const w of report.warnings) warnings.push(w);
+} catch (err) {
+  warnings.push(`auth.passwordCheckConcurrency could not be checked here (${err.message}); master.js still checks it at boot.`);
+}
+
 // http.trustedProxies: the same check master.js runs at boot (every entry an
 // IP, a CIDR or a proxy-addr name; loopback needed while HFS workers run).
 try {

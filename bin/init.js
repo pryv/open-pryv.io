@@ -957,6 +957,16 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # auth:
 # #   usernameChangeLimit: 2
 
+# # auth.passwordCheckConcurrency / auth.passwordCheckQueue — password hashes
+# # and checks (account passwords, OAuth client secrets) one API worker runs at
+# # once (default 2), and how many wait at most 10 s for a turn (default 50).
+# # Beyond that: 429 too-many-requests on the API, 503 temporarily_unavailable
+# # on the OAuth endpoints, both with Retry-After; not a failed attempt. Keep
+# # the concurrency below UV_THREADPOOL_SIZE; 0 disables the limit.
+# # auth:
+# #   passwordCheckConcurrency: 2
+# #   passwordCheckQueue: 50
+
 # # account.storageUsed.intervalHours: the core recomputes each account's
 # # storageUsed (account.get) every N hours (default 24, first pass ~15 min
 # # after boot); 0 turns it off (then run components/api-server/bin/nightly).

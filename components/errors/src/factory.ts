@@ -10,6 +10,7 @@ import type { APIError as APIErrorT } from './APIError.ts';
 import { APIError } from './APIError.ts';
 import { ErrorIds } from './ErrorIds.ts';
 import { ErrorMessages } from './ErrorMessages.ts';
+import { isCapacityRefusal } from 'utils/src/concurrencyLimit.ts';
 
 /**
  * The full factory contract — one entry per error producer below.
@@ -248,6 +249,14 @@ factory.payloadTooLarge = function (message: string, data?: unknown) {
 };
 
 factory.unexpectedError = function (sourceError: unknown, message?: string) {
+  // A work refused for a per-process capacity ceiling (the password-check
+  // slots) never ran: the caller retries later, guided by Retry-After.
+  if (isCapacityRefusal(sourceError)) {
+    const err = new APIError(ErrorIds.TooManyRequests, sourceError.message,
+      { httpStatus: 429, data: { retryAfterSeconds: sourceError.retryAfterSeconds } });
+    err.httpHeaders = { 'Retry-After': String(sourceError.retryAfterSeconds) };
+    return err;
+  }
   // If a message was given: display it.
   if (message != null) { return produceError(message); }
   // Sometimes people throw strings

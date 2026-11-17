@@ -737,3 +737,31 @@ describe('[CKSU] bin/check-config.js account.storageUsed.intervalHours', functio
     }
   });
 });
+
+describe('[CKPC] bin/check-config.js auth.passwordCheckConcurrency / passwordCheckQueue', function () {
+  this.timeout(60000);
+  const withAuth = (lines) => BASE.replace('\nauth:\n', '\nauth:\n' + lines);
+
+  it('[CKPC1] integers >= 0 pass; a negative, fractional or quoted value is a problem', () => {
+    for (const ok of ['  passwordCheckConcurrency: 0\n  passwordCheckQueue: 0\n', '  passwordCheckConcurrency: 2\n  passwordCheckQueue: 50\n']) {
+      const res = runCheck(withAuth(ok));
+      assert.strictEqual(res.status, 0, ok + res.stdout + res.stderr);
+    }
+    for (const bad of ['-1', '1.5', '"2"']) {
+      const res = runCheck(withAuth(`  passwordCheckConcurrency: ${bad}\n`));
+      assert.strictEqual(res.status, 1, bad + res.stdout + res.stderr);
+      assert.match(res.stderr, /auth\.passwordCheckConcurrency must be an integer >= 0/);
+      const resQ = runCheck(withAuth(`  passwordCheckQueue: ${bad}\n`));
+      assert.strictEqual(resQ.status, 1, bad + resQ.stdout + resQ.stderr);
+      assert.match(resQ.stderr, /auth\.passwordCheckQueue must be an integer >= 0/);
+    }
+  });
+
+  it('[CKPC2] warns when the concurrency is not below the thread pool size', () => {
+    const res = runCheck(withAuth('  passwordCheckConcurrency: 8\n'), null, { UV_THREADPOOL_SIZE: '8' });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout + res.stderr, /passwordCheckConcurrency \(8\) is not below the thread pool size \(8/);
+    const below = runCheck(withAuth('  passwordCheckConcurrency: 8\n'), null, { UV_THREADPOOL_SIZE: '16' });
+    assert.doesNotMatch(below.stdout + below.stderr, /thread pool size/);
+  });
+});

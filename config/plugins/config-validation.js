@@ -578,6 +578,15 @@ function checkStorageUsed (config, problems) {
   }
 }
 
+// auth.passwordCheckConcurrency / passwordCheckQueue: integers >= 0. A typo
+// must not silently drop the limit, nor make every password check refused.
+function checkPasswordCheckLimit (config, problems) {
+  const { describePasswordCheckLimit } = require('../../components/business/src/auth/passwordCheckLimit.ts');
+  for (const p of describePasswordCheckLimit(config.get('auth')).problems) {
+    problems.push({ message: p.path.join('.') + ' ' + p.message + '.', path: p.path, payload: { value: config.get(p.path.join(':')) } });
+  }
+}
+
 // core.id becomes a DNS label and the host of derived core URLs; on a
 // multi-core deployment core.url is where peers send the admin key.
 function checkCoreIdentity (config, problems) {
@@ -700,6 +709,7 @@ async function validate (config) {
   checkIntegrityAlgorithm(config, problems);
   checkAutoDeletion(config, problems);
   checkStorageUsed(config, problems);
+  checkPasswordCheckLimit(config, problems);
   checkUserDataRootPersistence(config, problems);
   checkCoreIdentity(config, problems);
   checkRaftTls(config, problems);
@@ -868,6 +878,8 @@ function collectWarnings (config) {
   const { describeClientMetadataConfig } = require('../../components/oauth2/src/clientMetadataConfig.ts');
   warnings.push(...describeClientMetadataConfig(config.get('oauth:clientMetadataDocuments')).warnings);
   warnings.push(...ssoWarnings(config));
+  const { describePasswordCheckLimit } = require('../../components/business/src/auth/passwordCheckLimit.ts');
+  warnings.push(...describePasswordCheckLimit(config.get('auth')).warnings);
   return warnings;
 }
 
@@ -999,6 +1011,7 @@ module.exports = {
   checkSsoConfig,
   checkEmailVerificationGate,
   checkMfaConfig,
+  checkPasswordCheckLimit,
   checkHostedSites,
   checkAdapterRoutes,
   checkClientMetadataDocuments,

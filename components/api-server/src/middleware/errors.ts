@@ -14,6 +14,7 @@ const APIError = errors.APIError;
 const errorHandling = errors.errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { getConfigSync } = require('@pryv/boiler');
+const { isCapacityRefusal } = require('utils').concurrencyLimit;
 
 export default produceHandleErrorMiddleware;
 export { produceHandleErrorMiddleware };
@@ -38,6 +39,9 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => L
     if (!(error instanceof APIError) && error.status) {
       // it should be coming from Express' bodyParser: just wrap the error
       error = errorsFactory.invalidRequestStructure(error.message);
+    } else if (!(error instanceof APIError) && isCapacityRefusal(error)) {
+      // A route outside the method chain hit the password-check ceiling.
+      error = errorsFactory.unexpectedError(error);
     }
     if (req.context != null) {
       // context is not initialized in case of malformed JSON

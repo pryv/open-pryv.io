@@ -23,6 +23,7 @@
 
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import { encryption, concurrencyLimit } from 'utils';
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import { verifyClientAssertion, ClientAssertionError, CLIENT_ASSERTION_TYPE } from './clientAssertion.ts';
 import { markClientAssertionJtiUsed } from './storage.ts';
@@ -46,21 +47,25 @@ const SECRET_BYTES = 32;
  */
 export async function mintSecret (): Promise<{ plaintext: string; hash: string }> {
   const plaintext = base64url(crypto.randomBytes(SECRET_BYTES));
-  const hash = await bcrypt.hash(plaintext, BCRYPT_COST);
+  // Same per-process bcrypt slots as the account passwords.
+  const hash = await encryption.withBcryptSlot((): Promise<string> => bcrypt.hash(plaintext, BCRYPT_COST));
   return { plaintext, hash };
 }
 
 /**
  * Constant-time verify a presented secret against a stored hash.
  * Returns false on any error (missing hash, malformed presentation,
- * bcrypt failure) — never throws to the caller.
+ * bcrypt failure). The one error it throws is a `CapacityRefusal`: the check
+ * was not run because the server's bcrypt slots are busy, which must answer
+ * "retry later", never "wrong secret".
  */
 export async function verifySecret (presented: string, hash: string): Promise<boolean> {
   if (typeof presented !== 'string' || presented.length === 0) return false;
   if (typeof hash !== 'string' || hash.length === 0) return false;
   try {
-    return await bcrypt.compare(presented, hash);
-  } catch {
+    return await encryption.withBcryptSlot((): Promise<boolean> => bcrypt.compare(presented, hash));
+  } catch (err: unknown) {
+    if (concurrencyLimit.isCapacityRefusal(err)) throw err;
     return false;
   }
 }

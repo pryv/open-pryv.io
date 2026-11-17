@@ -35,7 +35,9 @@ import { handleRevoke } from './revocation.ts';
 import { clientMetadataDocumentsOn } from './clientMetadataConfig.ts';
 import { checkClientMetadataTemplate } from './registryBootCheck.ts';
 import type { NextFunction, Request, Response } from 'express';
+import { concurrencyLimit } from 'utils';
 const require = createRequire(import.meta.url);
+const { isCapacityRefusal } = concurrencyLimit;
 
 const { buildDiscoveryDocument, buildOpenIdConfiguration, handleJsonDocument } = require('./wellKnown.ts');
 const { setExtension, getExtension, extensionGeneration } = require('./extension.ts');
@@ -60,13 +62,29 @@ type RouteHandler = (req: Request, res: Response, next: NextFunction) => Promise
  * an error handler and surfaces as an unhandled rejection, which ends the
  * worker process. The wrapped handler never rejects: the error is recorded on
  * the server trail and the client gets a generic `server_error` (500), or, if
- * the response was already started, the response is ended as it stands.
+ * the response was already started, the response is ended as it stands. A
+ * check refused because the server's password-check slots are busy answers
+ * 503 `temporarily_unavailable` with `Retry-After` instead.
  */
 export function guardRoute (handler: RouteHandler): (req: Request, res: Response, next: NextFunction) => Promise<void> {
   return async function guardedRoute (req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       await handler(req, res, next);
     } catch (err: unknown) {
+      if (isCapacityRefusal(err) && !res.headersSent) {
+        // The server's password-check slots are busy: the client's credentials
+        // were not checked, so the answer is "retry later", never invalid_client.
+        try {
+          res.statusCode = 503;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('Retry-After', String(err.retryAfterSeconds));
+          res.end(JSON.stringify({ error: 'temporarily_unavailable', error_description: 'the server is busy; retry later' }));
+        } catch (sendErr: unknown) {
+          logServerError('OAuth2 route: could not send the error response', sendErr);
+        }
+        return;
+      }
       logServerError('OAuth2 route failed: ' + (req?.method ?? '') + ' ' + (req?.path ?? ''), err);
       try {
         if (!res.headersSent) {
