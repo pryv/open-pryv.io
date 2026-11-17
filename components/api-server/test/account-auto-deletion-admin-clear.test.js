@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url);
  * (`POST /system/admin/auto-deletion/clear`, `system.autoDeletion.reset`): the
  * schedule restarts from now, or the holder's own setting is removed
  * (`removeSetting`), with a mail to the holder and a row in the account's own
- * trail. Open transfers, a started erasure, the account on another core.
+ * trail. A started erasure, the account on another core.
  * [ADCLR] the sweep reads the setting and the schedule again right before an
  * erasure: a change made meanwhile wins.
  *
@@ -25,15 +25,11 @@ const timestamp = require('unix-timestamp');
 const nock = require('nock');
 const { getConfig } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
-const { createAutoDeletionState, SETTING_FIELD, IDENTITY_FIELD } = require('business/src/autoDeletion/state.ts');
-const { deriveLinkToken } = require('business/src/autoDeletion/transfer.ts');
+const { createAutoDeletionState, SETTING_FIELD } = require('business/src/autoDeletion/state.ts');
 const { getActivity } = require('business/src/accesses/accountActivity.ts');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getErasuresLocal } = require('business/src/auth/erasures.ts');
-const { clearPasswordIpThrottle } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAutoDeletionSweep } = require('api-server/src/methods/helpers/autoDeletionSweep.ts');
-const { transferLinkKey, transferIdentityKey } = require('api-server/src/methods/helpers/autoDeletionPolicy.ts');
-const { getTransferDelegation } = require('api-server/src/methods/helpers/transferDelegation.ts');
 const { withInjectedConfig, injectTestConfigSnapshot, pollUntil } = require('test-helpers');
 const { useNock } = require('test-helpers/src/nockScope.ts');
 
@@ -41,28 +37,18 @@ const { useNock } = require('test-helpers/src/nockScope.ts');
 
 const DAY = 24 * 60 * 60;
 const PASSWORD = 'adcl-password-123';
-const APP_ID = 'pryv-test-no-cors';
-const ORIGIN = 'http://test.pryv.local';
 const ACCOUNT_APP = 'https://account.adcl.example.com/';
-const ADDRESS = '198.51.100.47';
-const DEFAULT_PER_IP = { maxFailures: 30, windowSeconds: 900 };
 const MAILS_OFF = {
   accountDeletionScheduled: false,
   accountDeletionReminder: false,
-  accountDeletionBlocked: false,
-  accountTransferNamed: true,
-  accountTransferClaim: true,
-  accountTransferStarted: false,
-  accountTransferCancelled: false,
-  accountTransferLapsed: false,
-  accountTransferCompleted: false
+  accountDeletionBlocked: false
 };
 const BASE_CONFIG = {
   'user-account': { delete: ['adminToken', 'personalToken'] },
   service: { account: ACCOUNT_APP },
   services: { email: { enabled: MAILS_OFF } }
 };
-const MAIL_ON = { services: { email: { enabled: { ...MAILS_OFF, accountDeletionScheduled: true, accountTransferCancelled: true } } } };
+const MAIL_ON = { services: { email: { enabled: { ...MAILS_OFF, accountDeletionScheduled: true } } } };
 const PRESET = { account: { autoDeletion: { inactivity: { defaultDays: 365 } } } };
 const MANDRILL = 'https://mandrillapp.local';
 const MANDRILL_PATH = '/api/1.0/messages/send-template.json';
@@ -77,7 +63,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
   before(async function () {
     await initTests();
     await initCore();
-    await require('api-server/src/methods/delegations.ts').default(global.app.api);
     if (!global.app.systemAPI.has('system.autoDeletion.reset')) {
       await require('api-server/src/methods/system.ts').default(global.app.systemAPI, global.app.api);
     }
@@ -92,7 +77,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
 
   after(async function () {
     restoreBase();
-    await clearPasswordIpThrottle([ADDRESS], DEFAULT_PER_IP);
   });
 
   beforeEach(function () {
@@ -127,8 +111,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
   const nowS = () => timestamp.now();
   const inactivity = (days, extra = {}) => ({ mode: 'inactivity', inactivityDays: days, action: 'delete', updatedAt: T0, ...extra });
   const onDate = (date, extra = {}) => ({ mode: 'date', date, action: 'delete', updatedAt: T0, ...extra });
-  const transferTo = (email, extra = {}) => ({ email, notifyBeneficiary: 'atTrigger', fallback: 'keep', ...extra });
-  const linkOf = (owner, kind, salt) => deriveLinkToken(transferLinkKey(config), kind, owner.id, salt);
   /** `t` is about `expected` (the real clock moved on during the call). */
   const near = (t, expected, label) => assert.ok(Math.abs(t - expected) < 120, `${label}: ${t} vs ${expected}`);
 
@@ -148,7 +130,7 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
   async function sweepFor (users, overrides = {}) {
     const clock = { t: T0 };
     const { lines, logger } = captureLogger();
-    const sent = { reminder: [], blocked: [], transfer: [] };
+    const sent = { reminder: [], blocked: [] };
     const sweep = await createAccountAutoDeletionSweep(config, {
       listAccounts: async () => users.map((u) => ({ id: u.id, username: u.username })),
       listPendingErasures: () => pendingOf(users),
@@ -156,7 +138,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
       logger,
       sendReminder: async (account, facts, notice) => { sent.reminder.push({ username: account.username, leadDays: notice.leadDays }); return 'sent'; },
       sendBlocked: async (account) => { sent.blocked.push({ username: account.username }); return 'sent'; },
-      sendTransferMail: async (account, facts, notice) => { sent.transfer.push({ username: account.username, kind: notice.kind, to: notice.to }); return 'sent'; },
       ...overrides
     });
     return { sweep, clock, lines, sent, run: async (t) => { if (t != null) clock.t = t; return await sweep.runPass(); } };
@@ -175,26 +156,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     return res.body.events ?? [];
   }
   const resetRows = async (u) => (await auditRows(u)).filter((e) => e.content?.action === 'account.autoDeletion.resetByAdmin');
-
-  /** An inactivity transfer of `days` whose claim window the sweep opened (fake clock). */
-  async function openWindow (u, transfer, days = 100) {
-    await state.setSetting(u.id, { mode: 'inactivity', inactivityDays: days, action: 'transfer', transfer, updatedAt: T0 }, 'test');
-    const s = await sweepFor([u]);
-    for (const d of [0, 40, 70, 93, 99]) await s.run(T0 + d * DAY);
-    assert.equal((await s.run(T0 + (days + 1) * DAY)).transfersOpened, 1);
-    return s;
-  }
-
-  function claim (owner, token, claimant) {
-    return coreRequest.post(`/${owner.username}/account/auto-deletion/transfer-claim`)
-      .set('Origin', ORIGIN).set('X-Forwarded-For', ADDRESS)
-      .send({ appId: APP_ID, token, claimant: claimant.username });
-  }
-
-  function accept (claimant, owner) {
-    return coreRequest.post(`/${claimant.username}/delegations/controlled/${owner.username}/accept`)
-      .set('Authorization', claimant.token).send({});
-  }
 
   it('[ADCL1] the admin key, a reason and only the known parameters are required', async function () {
     const u = await freshUser();
@@ -231,7 +192,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
       const body = res.body;
       assert.equal(body.cleared, true);
       assert.equal(body.removedSetting, false);
-      assert.equal(body.transferCancelled, false);
       assert.equal(body.notified, 'mail');
       assert.equal(body.was.source, 'operator');
       assert.equal(body.was.mode, 'inactivity');
@@ -374,121 +334,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     assert.equal((await state.getBookkeeping(u.id)).blocked, undefined);
   });
 
-  it('[ADCLB] a transfer only named: restarted, the record and the identity kept, the beneficiary not told', async function () {
-    await withInjectedConfig(MAIL_ON, async () => {
-      const u = await freshUser();
-      await state.setSetting(u.id, { mode: 'inactivity', inactivityDays: 100, action: 'transfer', transfer: transferTo('b@adcl.example.com', { identityGiven: true }), updatedAt: T0 }, 'test');
-      await state.setIdentity(u.id, { name: 'Bea' }, transferIdentityKey(config), 'test');
-      const named = { email: 'b@adcl.example.com', status: 'named', createdAt: T0, declineSalt: 'adcl-salt', namedAt: T0 };
-      await state.saveTransfer(u.id, named);
-      const s = await sweepFor([u]);
-      for (const d of [0, 40]) await s.run(T0 + d * DAY);
-      const captured = capture();
-      const res = await reset({ username: u.username, reason: REASON });
-      assert.equal(res.status, 200, JSON.stringify(res.body));
-      assert.equal(res.body.cleared, true);
-      assert.equal(res.body.transferCancelled, false);
-      assert.equal(res.body.autoDeletion.action, 'transfer');
-      assert.deepEqual(await state.getTransfer(u.id), named);
-      assert.deepEqual(await state.getIdentity(u.id, transferIdentityKey(config)), { name: 'Bea' });
-      await pollUntil(async () => captured.length, (n) => n >= 1, { timeoutMs: 3000 });
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      assert.deepEqual(captured.map((m) => m.template_name), ['account-deletion-scheduled'], 'the owner only');
-      assert.equal(varsOf(captured[0]).ACTION_TRANSFER, 'true');
-    });
-  });
-
-  it('[ADCLC] an open claim window (inactivity) is cancelled as a use would: the beneficiary told, the transfer armed again', async function () {
-    await withInjectedConfig(MAIL_ON, async () => {
-      const u = await freshUser();
-      await state.setIdentity(u.id, { name: 'Bea' }, transferIdentityKey(config), 'test');
-      await openWindow(u, transferTo('b@adcl.example.com', { identityGiven: true }));
-      const captured = capture();
-      const res = await reset({ username: u.username, reason: REASON });
-      assert.equal(res.status, 200, JSON.stringify(res.body));
-      assert.equal(res.body.cleared, true);
-      assert.equal(res.body.transferCancelled, true);
-      const record = await state.getTransfer(u.id);
-      assert.equal(record.status, 'cancelled');
-      assert.equal(record.closedReason, 'operator');
-      assert.equal((await state.getSetting(u.id)).action, 'transfer', 'armed again');
-      assert.ok(await state.getIdentity(u.id, transferIdentityKey(config)) != null, 'the identity stays with the setting');
-      near((await state.getBookkeeping(u.id)).deadline, nowS() + 100 * DAY, 'the clock restarts');
-      await pollUntil(async () => captured.length, (n) => n >= 2, { timeoutMs: 3000 });
-      const toBeneficiary = captured.find((m) => m.template_name === 'account-transfer-cancelled');
-      assert.equal(toBeneficiary.message.to[0].email, 'b@adcl.example.com');
-      assert.equal(varsOf(toBeneficiary).TO_BENEFICIARY, 'true');
-      assert.ok(!captured.some((m) => m.template_name === 'account-transfer-cancelled' && m.message.to[0].email === u.email), 'the owner gets the confirmation instead');
-      assert.equal(varsOf(captured.find((m) => m.template_name === 'account-deletion-scheduled')).BY_OPERATOR, 'true');
-    });
-  });
-
-  it('[ADCLD] a claim not accepted yet: the invite is withdrawn, the window cancelled', async function () {
-    const owner = await freshUser();
-    const claimant = await freshUser({ prefix: 'adcb' });
-    await openWindow(owner, transferTo('b@adcl.example.com'));
-    const record = await state.getTransfer(owner.id);
-    const claimed = await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant);
-    assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
-    assert.equal((await getTransferDelegation().stateOf(owner, claimant.username)).status, 'invite');
-    const res = await reset({ username: owner.username, reason: REASON });
-    assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.transferCancelled, true);
-    assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
-    assert.notEqual((await getTransferDelegation().stateOf(owner, claimant.username)).status, 'invite', 'withdrawn');
-    assert.notEqual((await accept(claimant, owner)).status, 200, 'the invite cannot be accepted any more');
-  });
-
-  it('[ADCLE] the claimant already controls the account: the transfer completes, 409', async function () {
-    const owner = await freshUser();
-    const claimant = await freshUser({ prefix: 'adcb' });
-    await openWindow(owner, transferTo('b@adcl.example.com'));
-    const record = await state.getTransfer(owner.id);
-    assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
-    assert.equal((await accept(claimant, owner)).status, 200);
-    const res = await reset({ username: owner.username, reason: REASON });
-    assert.equal(res.status, 409, JSON.stringify(res.body));
-    assert.equal(errorId(res), 'auto-deletion-transfer-claimed');
-    assert.equal((await state.getTransfer(owner.id)).status, 'completed');
-    assert.equal(await state.getSetting(owner.id), null);
-    assert.equal(await state.getBookkeeping(owner.id), null);
-  });
-
-  it('[ADCLF] an open window with removeSetting: the setting goes, the identity erased', async function () {
-    const u = await freshUser();
-    await state.setIdentity(u.id, { name: 'Bea' }, transferIdentityKey(config), 'test');
-    await openWindow(u, transferTo('b@adcl.example.com', { identityGiven: true }));
-    const res = await reset({ username: u.username, reason: REASON, removeSetting: true });
-    assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.removedSetting, true);
-    assert.equal(res.body.transferCancelled, true);
-    assert.equal(await state.getSetting(u.id), null);
-    assert.equal((await state.getTransfer(u.id)).status, 'cancelled');
-    assert.deepEqual(await accountStorage.getAccountFieldHistory(u.id, IDENTITY_FIELD), []);
-  });
-
-  it('[ADCLG] declined with fallback delete, erasure due: stopped, the schedule goes on as a deletion from now', async function () {
-    const u = await freshUser();
-    const s = await openWindow(u, transferTo('b@adcl.example.com', { fallback: 'delete' }));
-    const record = await state.getTransfer(u.id);
-    const declined = await coreRequest.post(`/${u.username}/account/auto-deletion/transfer-decline`)
-      .set('Origin', ORIGIN).set('X-Forwarded-For', ADDRESS)
-      .send({ appId: APP_ID, token: linkOf(u, 'decline', record.declineSalt) });
-    assert.equal(declined.status, 200, JSON.stringify(declined.body));
-    assert.equal((await state.getTransfer(u.id)).closedReason, 'declined');
-    const res = await reset({ username: u.username, reason: REASON });
-    assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.transferCancelled, true);
-    const setting = await state.getSetting(u.id);
-    assert.equal(setting.action, 'delete');
-    assert.equal(setting.transfer, undefined);
-    assert.equal((await state.getTransfer(u.id)).status, 'cancelled');
-    near((await state.getBookkeeping(u.id)).deadline, nowS() + 100 * DAY, 'from now');
-    const r = await s.run(Math.ceil(nowS()) + DAY);
-    assert.equal(r.erased, 0);
-    assert.ok(await exists(u));
-  });
-
   it('[ADCLH] an erasure already started: refused', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');
@@ -624,62 +469,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     assert.equal(await state.getBookkeeping(u.id), null);
   });
 
-  it('[ADCLU] removeSetting with a transfer only named: cancelled, the beneficiary told, the identity erased', async function () {
-    await withInjectedConfig(MAIL_ON, async () => {
-      const u = await freshUser();
-      await state.setSetting(u.id, { mode: 'inactivity', inactivityDays: 100, action: 'transfer', transfer: transferTo('b@adcl.example.com', { identityGiven: true }), updatedAt: T0 }, 'test');
-      await state.setIdentity(u.id, { name: 'Bea' }, transferIdentityKey(config), 'test');
-      await state.saveTransfer(u.id, { email: 'b@adcl.example.com', status: 'named', createdAt: T0, declineSalt: 'adcl-salt', namedAt: T0 });
-      await (await sweepFor([u])).run(T0);
-      const captured = capture();
-      const res = await reset({ username: u.username, reason: REASON, removeSetting: true });
-      assert.equal(res.status, 200, JSON.stringify(res.body));
-      assert.equal(res.body.transferCancelled, true);
-      const record = await state.getTransfer(u.id);
-      assert.equal(record.status, 'cancelled');
-      assert.equal(record.closedReason, 'operator');
-      assert.equal(await state.getSetting(u.id), null);
-      assert.deepEqual(await accountStorage.getAccountFieldHistory(u.id, IDENTITY_FIELD), []);
-      await pollUntil(async () => captured.length, (n) => n >= 2, { timeoutMs: 3000 });
-      const toBeneficiary = captured.find((m) => m.template_name === 'account-transfer-cancelled');
-      assert.equal(toBeneficiary.message.to[0].email, 'b@adcl.example.com');
-    });
-  });
-
-  it('[ADCLV] a date-mode claim window: refused without removeSetting, cancelled with it', async function () {
-    const u = await freshUser();
-    await state.setSetting(u.id, { mode: 'date', date: T0 + 20 * DAY, action: 'transfer', transfer: transferTo('b@adcl.example.com'), updatedAt: T0 }, 'test');
-    const s = await sweepFor([u]);
-    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
-    assert.equal((await s.run(T0 + 21 * DAY)).transfersOpened, 1);
-    const refused = await reset({ username: u.username, reason: REASON });
-    assert.equal(refused.status, 400, JSON.stringify(refused.body));
-    assert.equal(refused.body.error.data.reason, 'date-schedule');
-    assert.equal((await state.getTransfer(u.id)).status, 'open', 'nothing written');
-    const res = await reset({ username: u.username, reason: REASON, removeSetting: true });
-    assert.equal(res.status, 200, JSON.stringify(res.body));
-    assert.equal(res.body.transferCancelled, true);
-    assert.equal((await state.getTransfer(u.id)).status, 'cancelled');
-    assert.equal(await state.getSetting(u.id), null);
-  });
-
-  it('[ADCLW] the claimant controls the account: 409 with removeSetting too, the completion in the account\'s trail', async function () {
-    const owner = await freshUser();
-    const claimant = await freshUser({ prefix: 'adcb' });
-    await openWindow(owner, transferTo('b@adcl.example.com'));
-    const record = await state.getTransfer(owner.id);
-    assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
-    assert.equal((await accept(claimant, owner)).status, 200);
-    const res = await reset({ username: owner.username, reason: REASON, removeSetting: true });
-    assert.equal(res.status, 409, JSON.stringify(res.body));
-    assert.equal((await state.getTransfer(owner.id)).status, 'completed');
-    if (config.get('audit:active') === true) {
-      const rows = await resetRows(owner);
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0].content.record.completedTransfer, true);
-    }
-  });
-
   it('[ADCLX] an erasure recorded while the reset writes: answered erasure-in-progress', async function () {
     const u = await freshUser();
     await state.setSetting(u.id, inactivity(100), 'test');
@@ -733,175 +522,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     } finally {
       stub.restore();
     }
-  });
-
-  /**
-   * An open window claimed by `claimant` (invite out), then cancelled by the
-   * sweep on the owner's use while the invite withdraw fails. `beforeCancel`
-   * runs once the invite is out.
-   */
-  async function cancelledWithInviteOut (owner, claimant, beforeCancel) {
-    await openWindow(owner, transferTo('b@adcl.example.com'));
-    const record = await state.getTransfer(owner.id);
-    assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
-    if (beforeCancel != null) await beforeCancel();
-    await new Promise((resolve, reject) => storageLayer.accesses.updateOne({ id: owner.id, username: owner.username }, { id: owner.personalAccessId }, { lastUsed: T0 + 102 * DAY },
-      (err) => (err ? reject(err) : resolve())));
-    const delegation = getTransferDelegation();
-    const stub = sinon.stub(delegation, 'withdraw').rejects(new Error('withdraw made to fail'));
-    try {
-      const s = await sweepFor([owner]);
-      assert.equal((await s.run(T0 + 103 * DAY)).transfersCancelled, 1);
-    } finally {
-      stub.restore();
-    }
-    assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
-    assert.equal((await delegation.stateOf(owner, claimant.username)).status, 'invite', 'the invite is still out');
-  }
-
-  async function accessesOf (u) {
-    return await new Promise((resolve, reject) => storageLayer.accesses.find({ id: u.id, username: u.username }, {}, null, (err, rows) => (err ? reject(err) : resolve(rows))));
-  }
-
-  async function controlledBy (u) {
-    const res = await coreRequest.get(`/${u.username}/delegations/controlled`).set('Authorization', u.token);
-    assert.equal(res.status, 200, JSON.stringify(res.body));
-    return res.body.controlled;
-  }
-
-  it('[ADCLP] a transfer cancelled while its claim invite could not be withdrawn: the invite can no longer be accepted', async function () {
-    const owner = await freshUser();
-    const claimant = await freshUser({ prefix: 'adcb' });
-    await cancelledWithInviteOut(owner, claimant);
-    assert.equal((await controlledBy(claimant)).length, 1, 'the claimant sees the invite');
-    const accepted = await accept(claimant, owner);
-    assert.equal(accepted.status, 410, JSON.stringify(accepted.body));
-    const delegation = getTransferDelegation();
-    assert.equal((await delegation.stateOf(owner, claimant.username)).status, 'none', 'the invite is gone on the owner\'s side');
-    assert.deepEqual(await controlledBy(claimant), [], 'and on the claimant\'s side');
-    assert.ok(!(await accessesOf(owner)).some((a) => a.clientData?.delegation != null), 'no capability or control access left');
-    // What the sweep reads next: the transfer stays cancelled, nothing completes.
-    const r = await (await sweepFor([owner])).run(T0 + 104 * DAY);
-    assert.equal(r.transfersCompleted, 0);
-    assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
-  });
-
-  describe('[ADTI] delegation invites beside a transfer', function () {
-    it('[ADTI1] an invite sent before invites carried their purpose, named by the record: refused once the transfer ended', async function () {
-      const owner = await freshUser();
-      const claimant = await freshUser({ prefix: 'adcb' });
-      await cancelledWithInviteOut(owner, claimant, async () => {
-        const mall = await require('mall').getMall();
-        const anchor = await require('delegation/src/store.ts').findAnchorByDelegate(mall, owner.id, claimant.username);
-        assert.equal(anchor.content.purpose, 'account-transfer');
-        await mall.events.updateWithMerge(owner.id, anchor.id, (stored) => {
-          const { purpose: _p, ...content } = stored.content;
-          return { ...stored, content };
-        });
-        const stripped = await require('delegation/src/store.ts').findAnchorByDelegate(mall, owner.id, claimant.username);
-        assert.equal(stripped.content.purpose, undefined, 'stored without a purpose');
-      });
-      assert.equal((await state.getTransfer(owner.id)).claimedBy.relId != null, true, 'the record names the invite');
-      const accepted = await accept(claimant, owner);
-      assert.equal(accepted.status, 410, JSON.stringify(accepted.body));
-      assert.equal((await getTransferDelegation().stateOf(owner, claimant.username)).status, 'none');
-    });
-
-    it('[ADTI2] ordinary invites are accepted beside a transfer cancelled, or claimed by another account', async function () {
-      const attachRequest = (from, to) => coreRequest.post(`/${from.username}/delegations/attach-request`).set('Authorization', from.token).send({ delegateUsername: to.username });
-      // Cancelled: an ordinary invite to the same claimant afterwards.
-      const owner = await freshUser();
-      const claimant = await freshUser({ prefix: 'adcb' });
-      await openWindow(owner, transferTo('b@adcl.example.com'));
-      const record = await state.getTransfer(owner.id);
-      assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
-      assert.equal((await reset({ username: owner.username, reason: REASON })).status, 200);
-      assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
-      assert.equal((await attachRequest(owner, claimant)).status, 201);
-      const accepted = await accept(claimant, owner);
-      assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
-      // Claimed by another account (its invite out): an ordinary invite to a third one.
-      const owner2 = await freshUser();
-      const claimant2 = await freshUser({ prefix: 'adcb' });
-      const third = await freshUser({ prefix: 'adct' });
-      await openWindow(owner2, transferTo('b@adcl.example.com'));
-      const record2 = await state.getTransfer(owner2.id);
-      assert.equal((await claim(owner2, linkOf(owner2, 'claim', record2.claimSalt), claimant2)).status, 200);
-      assert.equal((await attachRequest(owner2, third)).status, 201);
-      const accepted2 = await accept(third, owner2);
-      assert.equal(accepted2.status, 200, JSON.stringify(accepted2.body));
-      assert.equal((await state.getTransfer(owner2.id)).status, 'claimed', 'the transfer is untouched');
-      assert.equal((await accept(claimant2, owner2)).status, 200, 'and its own invite still accepted');
-    });
-
-    it('[ADTI3] the controlled-side entry (the claimant on another core) refuses it too', async function () {
-      const owner = await freshUser();
-      const claimant = await freshUser({ prefix: 'adcb' });
-      await cancelledWithInviteOut(owner, claimant);
-      const record = await state.getTransfer(owner.id);
-      const capability = (await accessesOf(owner)).find((a) => a.clientData?.delegation?.kind === 'invite-capability');
-      assert.ok(capability?.token != null);
-      const res = await coreRequest.post(`/${owner.username}/delegations/controlled-side/accept-response`)
-        .set('Authorization', capability.token)
-        .send({ relId: record.claimedBy.relId, delegate: { username: claimant.username, hostSlug: record.claimedBy.hostSlug ?? 'self' } });
-      assert.equal(res.status, 410, JSON.stringify(res.body));
-      assert.equal((await getTransferDelegation().stateOf(owner, claimant.username)).status, 'none');
-      assert.ok(!(await accessesOf(owner)).some((a) => a.clientData?.delegation?.kind === 'control'), 'no control access minted');
-    });
-
-    it('[ADTI4] asked once the relationship is active, a transfer completed meanwhile still counts', async function () {
-      const { transferInviteRefusal } = require('api-server/src/methods/helpers/autoDeletion.ts');
-      const u = await freshUser();
-      const base = { email: 'b@adcl.example.com', createdAt: T0, declineSalt: 's', claimedBy: { username: 'adcbclaimant', relId: 'rel-1' } };
-      const ask = (extra = {}) => transferInviteRefusal({ bUserId: u.id, relId: 'rel-1', delegateUsername: 'adcbclaimant', purpose: 'account-transfer', ...extra });
-      await state.saveTransfer(u.id, { ...base, status: 'claimed' });
-      assert.equal(await ask(), null);
-      assert.equal(await ask({ activated: true }), null);
-      assert.notEqual(await ask({ delegateUsername: 'adcbsomeoneelse' }), null, 'another account');
-      await state.saveTransfer(u.id, { ...base, status: 'completed' });
-      assert.equal(await ask({ activated: true }), null, 'completed by the sweep on seeing it active');
-      assert.notEqual(await ask(), null, 'never before activation');
-      await state.saveTransfer(u.id, { ...base, status: 'cancelled' });
-      assert.notEqual(await ask({ activated: true }), null);
-      assert.equal(await ask({ purpose: undefined, relId: 'rel-other' }), null, 'an ordinary invite: no say');
-    });
-  });
-
-  it('[ADCLY] the sweep opens no claim window when the setting changed while the account was checked', async function () {
-    const u = await freshUser();
-    const armed = { mode: 'date', date: T0 + 20 * DAY, action: 'transfer', transfer: transferTo('b@adcl.example.com'), updatedAt: T0 };
-    await state.setSetting(u.id, armed, 'test');
-    let race = false;
-    const s = await sweepFor([u], {
-      readActivity: async (account) => {
-        if (race) await state.setSetting(u.id, { ...armed, date: T0 + 60 * DAY, updatedAt: T0 + DAY }, 'test');
-        return await getActivity(storageLayer.accesses, account, s.clock.t);
-      }
-    });
-    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
-    race = true;
-    const r = await s.run(T0 + 21 * DAY);
-    assert.equal(r.transfersOpened, 0);
-    assert.equal(await state.getTransfer(u.id), null);
-    assert.deepEqual(s.sent.transfer, []);
-  });
-
-  it('[ADCLZ] the fallback erasure at the end of a window waits when the schedule changed meanwhile', async function () {
-    const u = await freshUser();
-    await openWindow(u, transferTo('b@adcl.example.com', { fallback: 'delete' }));
-    const record = await state.getTransfer(u.id);
-    let race = false;
-    const s = await sweepFor([u], {
-      readActivity: async (account) => {
-        if (race) await state.saveBookkeeping(u.id, await state.getBookkeeping(u.id), null);
-        return await getActivity(storageLayer.accesses, account, s.clock.t);
-      }
-    });
-    race = true;
-    const r = await s.run(record.endsAt + DAY);
-    assert.equal(r.erased, 0, JSON.stringify(s.lines));
-    assert.ok(await exists(u));
-    assert.equal((await state.getTransfer(u.id)).status, 'open', 'not marked for erasure');
   });
 
   it('[ADCLQ] a change landing once the erasure is recorded as in progress: the record is withdrawn, nothing erased', async function () {
@@ -968,36 +588,6 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     });
     assert.ok(await exists(changed));
     assert.equal(await exists(other), false);
-  });
-
-  it('[ADCLL] a fallback erasure run without the last look writes nothing for the erased account', async function () {
-    const { Deletion } = require('business/src/auth/deletion.ts');
-    const deletion = new Deletion(null, storageLayer, config);
-    const u = await freshUser();
-    await openWindow(u, transferTo('b@adcl.example.com', { fallback: 'delete' }));
-    const record = await state.getTransfer(u.id);
-    const recorded = [];
-    // Without the last look (an erasure taken over completes whatever happened).
-    const s = await sweepFor([u], {
-      erase: async (account, options) => deletion.eraseAccount(account, { teardown: true, trigger: options.trigger }),
-      recordErasure: async (account) => { recorded.push(account.id); }
-    });
-    const r = await s.run(record.endsAt + DAY);
-    assert.equal(r.erased, 1, JSON.stringify(s.lines));
-    assert.equal(await exists(u), false);
-    // PostgreSQL reads no row; SQLite refuses to reopen an erased account's
-    // database (it would re-create it): either way nothing was written.
-    let after;
-    try {
-      after = await state.getTransfer(u.id);
-    } catch (err) {
-      assert.equal(err.name, 'ErasedUserError', String(err));
-      after = null;
-    }
-    assert.equal(after, null, 'no transfer record written after the erasure');
-    assert.deepEqual(recorded, [u.id], 'its start recorded');
-    assert.ok(s.lines.some((l) => l.level === 'warn' && l.msg.includes('erasing account') && l.msg.includes(u.username)), JSON.stringify(s.lines));
-    assert.ok(!s.lines.some((l) => l.level === 'error'), JSON.stringify(s.lines));
   });
 
   it('[ADCLR] a setting or a schedule changed between the pass\'s read and the erasure: not erased this pass', async function () {
