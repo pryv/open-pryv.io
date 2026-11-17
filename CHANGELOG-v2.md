@@ -1,6 +1,6 @@
 # Changelog - API Changes
 
-## Unreleased
+## 2.0.0-rc.86 - 2026-11-17
 
 ### Cache invalidation between the processes of a core
 
