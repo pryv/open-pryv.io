@@ -360,7 +360,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
       }, 'default-file');
       const warnings = collectWarnings(config);
       assert.strictEqual(warnings.length, 1, JSON.stringify(warnings));
-      assert.match(warnings[0], /mail is not configured, so the welcome, password-reset, MFA-change, external-id-release, auto-deletion confirmation, auto-deletion reminder, auto-deletion on-hold, transfer beneficiary named, transfer claim link, transfer started, transfer cancelled, transfer lapsed and transfer completed mails are not sent/);
+      assert.match(warnings[0], /mail is not configured, so the welcome, password-reset, MFA-change, external-id-release, auto-deletion confirmation, auto-deletion reminder and auto-deletion on-hold mails are not sent/);
       assert.ok(!/email-verification|cannot be proved/.test(warnings[0]), warnings[0]);
     });
 
@@ -384,7 +384,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
       const config = scopedConfig({ services: { email: defaults.services.email }, auth: defaults.auth }, 'default-file');
       const warnings = collectWarnings(config);
       assert.strictEqual(warnings.length, 2, JSON.stringify(warnings));
-      assert.match(warnings[0], /mail is not configured, so the welcome, password-reset, email-verification, MFA-change, external-id-release, auto-deletion confirmation, auto-deletion reminder, auto-deletion on-hold, transfer beneficiary named, transfer claim link, transfer started, transfer cancelled, transfer lapsed and transfer completed mails are not sent/);
+      assert.match(warnings[0], /mail is not configured, so the welcome, password-reset, email-verification, MFA-change, external-id-release, auto-deletion confirmation, auto-deletion reminder and auto-deletion on-hold mails are not sent/);
       assert.ok(!/: it is '/.test(warnings[0]), 'an empty host is not shown');
       assert.match(warnings[1], /email verification is on by default but 'auth\.emailVerificationPageURL' is not set/);
     });
@@ -418,7 +418,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
     it('[CV-GA6] no mail warning when mail is off or the SMTP host is set', () => {
       for (const email of [
         { enabled: false, method: 'in-process' },
-        { sendWelcome: false, sendResetPassword: false, sendVerifyEmail: false, sendMfaChange: false, sendExternalIdReleased: false, sendAccountDeletionScheduled: false, sendAccountDeletionReminder: false, sendAccountDeletionBlocked: false, sendAccountTransferNamed: false, sendAccountTransferClaim: false, sendAccountTransferStarted: false, sendAccountTransferCancelled: false, sendAccountTransferLapsed: false, sendAccountTransferCompleted: false, method: 'in-process' },
+        { sendWelcome: false, sendResetPassword: false, sendVerifyEmail: false, sendMfaChange: false, sendExternalIdReleased: false, sendAccountDeletionScheduled: false, sendAccountDeletionReminder: false, sendAccountDeletionBlocked: false, method: 'in-process' },
         { sendVerifyEmail: false, method: 'in-process', smtp: { host: 'smtp.example.com' } }
       ]) {
         const warnings = collectWarnings(scopedConfig({ services: { email }, auth: {} }, 'default-file'));

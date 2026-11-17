@@ -796,12 +796,8 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 #     # turned off or recovered.
 #     sendMfaChange: true
 #     # The account auto-deletion mails (sendAccountDeletionScheduled,
-#     # sendAccountDeletionReminder, sendAccountDeletionBlocked) and the
-#     # account transfer mails (sendAccountTransferNamed,
-#     # sendAccountTransferClaim, sendAccountTransferStarted,
-#     # sendAccountTransferCancelled, sendAccountTransferLapsed,
-#     # sendAccountTransferCompleted) are on by default; a transfer needs the
-#     # named and claim mails to reach its beneficiary.
+#     # sendAccountDeletionReminder, sendAccountDeletionBlocked) are on by
+#     # default.
 #     method: in-process
 #     from:
 #       name: 'My Pryv'

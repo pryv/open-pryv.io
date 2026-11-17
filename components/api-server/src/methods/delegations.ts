@@ -43,10 +43,6 @@ const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.t
 const { selfIdentityHost } = require('./helpers/selfIdentityHost.ts');
 const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery, setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
-const { setTransferDelegation, TRANSFER_INVITE_PURPOSE } = require('./helpers/transferDelegation.ts');
-// An account-transfer invite is accepted only while its transfer is claimed.
-const acceptCheck = async (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string; activated?: boolean }): Promise<string | null> =>
-  await require('./helpers/autoDeletion.ts').transferInviteRefusal(input);
 const cmc = require('cmc');
 const delegation = require('delegation');
 // Production id generator (the legacy `cuid` package is dev-only and is pruned
@@ -344,7 +340,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
     return async function callControlledSide (endpoint: string, action: 'accept-response' | 'refuse-response' | 'accept-complete', body: Record<string, unknown>) {
       const target = await resolveTarget(controlledUsername);
       if (target.isSelf && target.userId != null) {
-        const deps = { mall, now: nowSeconds, acceptCheck, logger };
+        const deps = { mall, now: nowSeconds, logger };
         try {
           if (action === 'accept-response') {
             const res = await delegation.handleAcceptResponse(deps, { bUserId: target.userId, ...(body as object) } as never);
@@ -596,41 +592,6 @@ export default async function produceDelegationsApiMethods (api: { register (...
       } catch (err) { next(toApiError(err)); }
     });
 
-  // Account transfer: the owner's side of the handshake, run on the owner's
-  // behalf once a beneficiary claimed the account with its mailed link.
-  setTransferDelegation({
-    async invite (owner: { id: string; username: string }, delegateUsername: string, ttlSeconds: number) {
-      try {
-        const self = await selfIdentity(owner.username);
-        const deps = { mall, now: nowSeconds, idGen: newRelId, self, inviteTtlSeconds: ttlSeconds, resolveTarget, deliverInvite: makeDeliverInvite() };
-        const res = await delegation.requestAttach(deps, { bUserId: owner.id, bUsername: owner.username, delegateUsername, purpose: TRANSFER_INVITE_PURPOSE });
-        const anchor = await delegation.store.findAnchorByDelegate(mall, owner.id, delegateUsername);
-        return { relId: res.relId, hostSlug: anchor?.content?.delegate?.hostSlug };
-      } catch (err) { throw toApiError(err); }
-    },
-    async stateOf (owner: { id: string; username: string }, delegateUsername: string) {
-      const anchor = await delegation.store.findAnchorByDelegate(mall, owner.id, delegateUsername);
-      if (anchor == null) return { status: 'none' as const };
-      const content = anchor.content as { relId: string; status: string; delegate?: { hostSlug?: string } };
-      const status = (['active', 'invite', 'stale'].includes(content.status) ? content.status : 'none') as 'active' | 'invite' | 'stale' | 'none';
-      const out: { status: typeof status; relId: string; hostSlug?: string; expired?: boolean } = { status, relId: content.relId, hostSlug: content.delegate?.hostSlug };
-      if (status === 'invite') {
-        const capability = await delegation.store.findMarkerAccess(mall, owner.id, content.relId, delegation.CLIENTDATA_KIND.INVITE_CAPABILITY);
-        out.expired = capability == null || (typeof capability.expires === 'number' && capability.expires <= nowSeconds());
-      }
-      return out;
-    },
-    async withdraw (owner: { id: string; username: string }, delegateUsername: string) {
-      try {
-        const anchor = await delegation.store.findAnchorByDelegate(mall, owner.id, delegateUsername);
-        if (anchor == null || (anchor.content as { status?: string }).status !== delegation.STATUS.INVITE) return;
-        const self = await selfIdentity(owner.username);
-        const deps = { mall, now: nowSeconds, self, resolveTarget, deliverInvite: makeDeliverInvite() };
-        await delegation.cancelInvite(deps, { bUserId: owner.id, bUsername: owner.username, delegateUsername });
-      } catch (err) { throw toApiError(err); }
-    }
-  });
-
   // listDelegates (B)
   api.register('delegations.listDelegates',
     commonFns.requirePersonalAccess,
@@ -790,7 +751,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
     async function (context: MethodContext, params: { relId?: string; delegate?: { username: string; hostSlug: string }; notifyApiEndpoint?: string }, result: Record<string, unknown>, next: MethodNext) {
       try {
         const relId = context.access?.clientData?.delegation?.relId ?? params.relId;
-        const res = await delegation.handleAcceptResponse({ mall, now: nowSeconds, acceptCheck, logger }, {
+        const res = await delegation.handleAcceptResponse({ mall, now: nowSeconds, logger }, {
           bUserId: context.user.id,
           relId: String(relId),
           delegate: params.delegate!,
