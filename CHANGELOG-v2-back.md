@@ -21,6 +21,24 @@
 - `business/src/auth/passwordCheckLimit.ts`: one reading of the two keys for the boot validation,
   `bin/check-config.js` and the worker.
 
+### Cache invalidation: acknowledged subscriptions, broker heartbeat, publish outbox
+
+- `messages/src/tcp_pubsub.ts`: the broker answers each subscription with `subok`, echoing the
+  subscription's sequence number. Clients ping the broker every second; an answer missing for 5 s
+  suspends the caches as a lost connection does, and the next answer flushes them (a late tick, the
+  process itself blocked, re-measures instead). Publications made while disconnected are queued (up
+  to 10000, oldest dropped with a warning) and sent after re-subscription. The broker drops empty
+  scopes; debug logs carry no payload.
+- `messages/src/pubsub.ts`: keyed subscriptions are recorded before the transport answers, so a
+  removal arriving first no longer leaks one.
+- `cache/src/index.ts`, `cache/src/synchro.ts`: a cache fill is kept only when its user's
+  subscription was confirmed before the storage read began (the epoch getters return a sentinel until
+  then). Cache hits refresh the user's listener; a listener leaving the LRU drops the user's cached
+  accesses and streams.
+- The name map takes the same set-after-unset epoch (`storage/src/usersLocalIndex.ts`); account
+  deletion (`business/src/auth/deletion.ts`) clears the account's cache entries again after every
+  removal settled.
+
 ### SQLite events query: plan for a filter most rows meet; write-guard error
 
 - `UserDatabase` `prepareEventsGetQuery`: before reading a stream filter's full-text rowid set, a
