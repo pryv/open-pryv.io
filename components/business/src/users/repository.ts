@@ -580,11 +580,11 @@ class UsersRepository {
     return userAccountEvents[0].content;
   }
 
-  async createSessionForUser (username: string, appId: string, transactionSession: unknown, userId?: string) {
-    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.sessionsStorage.generate({ username, appId, userId }, { transactionSession }, cb));
+  async createSessionForUser (username: string, appId: string, userId?: string) {
+    return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.sessionsStorage.generate({ username, appId, userId }, {}, cb));
   }
 
-  async createPersonalAccessForUser (userId: string, token: string, appId: string, transactionSession: unknown) {
+  async createPersonalAccessForUser (userId: string, token: string, appId: string) {
     const accessData = {
       token,
       name: appId,
@@ -594,8 +594,6 @@ class UsersRepository {
       modified: timestamp.now(),
       modifiedBy: UserRepositoryOptions.SYSTEM_USER_ACCESS_ID
     };
-    // NOTE: the former 4th `{ transactionSession }` argument was a mongo-era
-    // vestige — no baseStorage engine ever read it after the mongo removal.
     return await fromCallback((cb: (err: Error | null, value?: unknown) => void) => this.accessStorage.insertOne({ id: userId }, accessData, cb));
   }
 
@@ -695,43 +693,44 @@ class UsersRepository {
     // must not hold a database connection. Provided directly by
     // system.createUser, else the regular registration.
     const passwordHash = user.passwordHash ? user.passwordHash as string : await encryption.hash(user.password!);
-    const mallTransaction = await this.mall.newTransaction();
-    // Invariant: the local store always provides a transaction.
-    const localTransaction = (await mallTransaction.getStoreTransaction('local'))!;
+    // No database transaction: these writes go to several stores (sessions,
+    // accesses, users index, account storage), none of which could join one,
+    // and on SQLite to several files. A failure is undone by insertOne's
+    // compensation. Holding a transaction client here would only take a pool
+    // connection while each write needs another.
     let createdAccess: { id?: unknown; type?: unknown; created?: unknown; modified?: unknown } | null = null;
-    await localTransaction.exec(async () => {
-      let accessId = UserRepositoryOptions.SYSTEM_USER_ACCESS_ID;
-      if (withSession &&
-                this.validateAllStorageObjectsInitialized() &&
-                user.appId != null) {
-        const token = await this.createSessionForUser(user.username, user.appId as string, localTransaction.transactionSession, user.id) as string;
-        const access = await this.createPersonalAccessForUser(user.id, token, user.appId as string, localTransaction.transactionSession) as { id: string; token: string };
-        accessId = access?.id;
-        user.token = access.token;
-        createdAccess = access;
+    let accessId = UserRepositoryOptions.SYSTEM_USER_ACCESS_ID;
+    if (withSession &&
+              this.validateAllStorageObjectsInitialized() &&
+              user.appId != null) {
+      const token = await this.createSessionForUser(user.username, user.appId as string, user.id) as string;
+      const access = await this.createPersonalAccessForUser(user.id, token, user.appId as string) as { id: string; token: string };
+      accessId = access?.id;
+      user.token = access.token;
+      createdAccess = access;
+    }
+    user.accessId = accessId;
+    // The local index first: it refuses a name or id another account holds,
+    // before anything is written under that id.
+    await this.usersIndex.addUser(user.username, user.id);
+    // Store account fields directly in userAccountStorage (Platform already called above)
+    const accountData = (user.getFullAccount as () => Record<string, unknown>)();
+    const accountLeavesMap = accountStreams.accountLeavesMap;
+    const now = timestamp.now();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- system-streams map entries; typed in the interface-IO follow-up
+    for (const [streamId, stream] of Object.entries(accountLeavesMap) as Array<[string, any]>) {
+      const fieldName = accountStreams.toFieldName(streamId);
+      const value = accountData[fieldName] != null
+        ? accountData[fieldName]
+        : stream.default;
+      if (value != null) {
+        await this.userAccountStorage.setAccountField(user.id, fieldName, value, accessId, now);
       }
-      user.accessId = accessId;
-      // add the user to local index
-      await this.usersIndex.addUser(user.username, user.id);
-      // Store account fields directly in userAccountStorage (Platform already called above)
-      const accountData = (user.getFullAccount as () => Record<string, unknown>)();
-      const accountLeavesMap = accountStreams.accountLeavesMap;
-      const now = timestamp.now();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- system-streams map entries; typed in the interface-IO follow-up
-      for (const [streamId, stream] of Object.entries(accountLeavesMap) as Array<[string, any]>) {
-        const fieldName = accountStreams.toFieldName(streamId);
-        const value = accountData[fieldName] != null
-          ? accountData[fieldName]
-          : stream.default;
-        if (value != null) {
-          await this.userAccountStorage.setAccountField(user.id, fieldName, value, accessId, now);
-        }
-      }
-      // set user password
-      await this.userAccountStorage.addPasswordHash(user.id, passwordHash, user.accessId as string);
-    });
-    // Populate the breach-scope reverse-index AFTER the local transaction
-    // commits (so a rollback can't orphan an index row). Non-fatal.
+    }
+    // set user password
+    await this.userAccountStorage.addPasswordHash(user.id, passwordHash, user.accessId as string);
+    // Populate the breach-scope reverse-index AFTER the local writes
+    // succeed (so a failed registration can't orphan an index row). Non-fatal.
     if (createdAccess != null) {
       await reindexAccessNonFatal(user.username, createdAccess);
     }
@@ -804,8 +803,7 @@ class UsersRepository {
         }
       }],
       ['mall', async () => { if (ownsId) await this.mall.deleteUser(user.id); }],
-      // The login session and personal access of a registration with a session
-      // (created in the local transaction, which does not cover them).
+      // The login session and personal access of a registration with a session.
       ['sessions', async () => {
         if (ownsId) await fromCallback((cb: (err: Error | null) => void) => this.sessionsStorage.remove({ userId: user.id }, cb));
       }],
@@ -832,37 +830,33 @@ class UsersRepository {
       await this.setUserPassword(user.id, update.password, accessId);
     }
     delete update.password;
-    // Start a transaction session
-    const mallTransaction = await this.mall.newTransaction();
-    // Invariant: the local store always provides a transaction.
-    const localTransaction = (await mallTransaction.getStoreTransaction('local'))!;
+    // One write per field, no database transaction: the account fields live
+    // in the account store, which has none.
     const modifiedTime = timestamp.now();
-    await localTransaction.exec(async () => {
-      // update all account streams and don't allow additional properties
-      for (const [streamIdWithoutPrefix, content] of Object.entries(update)) {
-        const query = {
-          streams: [
-            {
-              any: [
-                accountStreams.toStreamId(streamIdWithoutPrefix)
-              ]
-            }
-          ]
-        };
-        const updateFields = {
-          content,
-          modified: modifiedTime,
-          modifiedBy: accessId
-        };
-        const updated = await this.mall.events.updateMany(user.id, query, { fieldsToSet: updateFields }, null, mallTransaction);
-        // A field the account never had (created without it, e.g. no email):
-        // nothing to update, so write it.
-        if ((updated == null || updated.length === 0) && content != null &&
-            accountStreams.accountLeavesMap[accountStreams.toStreamId(streamIdWithoutPrefix)] != null) {
-          await this.userAccountStorage.setAccountField(user.id, streamIdWithoutPrefix, content, accessId, modifiedTime);
-        }
+    // update all account streams and don't allow additional properties
+    for (const [streamIdWithoutPrefix, content] of Object.entries(update)) {
+      const query = {
+        streams: [
+          {
+            any: [
+              accountStreams.toStreamId(streamIdWithoutPrefix)
+            ]
+          }
+        ]
+      };
+      const updateFields = {
+        content,
+        modified: modifiedTime,
+        modifiedBy: accessId
+      };
+      const updated = await this.mall.events.updateMany(user.id, query, { fieldsToSet: updateFields }, null);
+      // A field the account never had (created without it, e.g. no email):
+      // nothing to update, so write it.
+      if ((updated == null || updated.length === 0) && content != null &&
+          accountStreams.accountLeavesMap[accountStreams.toStreamId(streamIdWithoutPrefix)] != null) {
+        await this.userAccountStorage.setAccountField(user.id, streamIdWithoutPrefix, content, accessId, modifiedTime);
       }
-    });
+    }
   }
 
   /**

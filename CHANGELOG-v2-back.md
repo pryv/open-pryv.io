@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Registration and account update: no idle transaction client
+
+- `usersRepository.createLocalUserData` and `updateOne` no longer open the local store's transaction.
+  On PostgreSQL it covered none of their writes (sessions, accesses, users index and account storage
+  all write through the pool, and the account fields live in the account store, which has no
+  transaction), while its client sat idle in `BEGIN`: with as many registrations or account updates in
+  flight as the pool has connections, every one waited for a second connection until
+  `connectionTimeoutMillis`. A failed registration is undone by `insertOne`'s compensation, as before;
+  an account update writes field by field, as it in fact did. Write order is unchanged (the users
+  index first). SQLite behaviour is unchanged (its transaction was a pass-through).
+  `createSessionForUser` / `createPersonalAccessForUser` lose their unused `transactionSession`
+  argument.
+
 ### PostgreSQL time limits: per-batch cursor, maintenance pool, guarded clients
 
 - `DatabasePG`: the pools of a request-serving process (`utils.isRequestServingProcess()`, now
