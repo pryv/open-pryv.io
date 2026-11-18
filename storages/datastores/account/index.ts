@@ -54,6 +54,15 @@ let fieldStreamMap: Map<string, SystemStream> | null = null;
 // after init works.
 const derivedFields: Map<string, DerivedField> = new Map();
 
+// Lazy accessor for userAccountStorage (avoids circular deps)
+async function getStorage (): Promise<UserAccountStorageLike> {
+  if (!userAccountStorage) {
+    const { getUserAccountStorage } = require('storage');
+    userAccountStorage = await getUserAccountStorage();
+  }
+  return userAccountStorage!;
+}
+
 /**
  * Register a derived account event `fieldName`: computed at read time from the
  * base field's event, returned in the base field's stream (see
@@ -76,15 +85,6 @@ const accountStore = (ds.createDataStore as (impl: unknown) => unknown)({
     // Build the field → stream config map from the original (pre-clean) tree
     fieldStreamMap = buildFieldStreamMap(streamTree);
 
-    // Lazy accessor for userAccountStorage (avoids circular deps)
-    const getStorage = async () => {
-      if (!userAccountStorage) {
-        const { getUserAccountStorage } = require('storage');
-        userAccountStorage = await getUserAccountStorage();
-      }
-      return userAccountStorage;
-    };
-
     // AccountUserStreams gets its own copy (it mutates via cleanStreamTree)
     this.streams = AccountUserStreams.create(structuredClone(streamTree));
     this.events = AccountUserEvents.create(fieldStreamMap, getStorage, derivedFields);
@@ -98,9 +98,9 @@ const accountStore = (ds.createDataStore as (impl: unknown) => unknown)({
   supports () { return CONTENT_QUERY_SUPPORT; },
 
   async deleteUser (userId: string) {
-    if (userAccountStorage) {
-      await userAccountStorage._clearAll(userId);
-    }
+    // Through the accessor: a process that has not read any account field yet
+    // (a failed first registration) still clears them.
+    await (await getStorage())._clearAll(userId);
   },
 
   async getUserStorageInfos (_userId: string) {

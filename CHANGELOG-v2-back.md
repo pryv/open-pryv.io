@@ -14,6 +14,9 @@
   index first). SQLite behaviour is unchanged (its transaction was a pass-through).
   `createSessionForUser` / `createPersonalAccessForUser` lose their unused `transactionSession`
   argument.
+- Account store `deleteUser` clears the account fields and password history through its lazy storage
+  accessor: it did nothing in a process that had not read an account field yet, so a failed first
+  registration in a fresh worker left its account fields (email included) behind.
 
 ### PostgreSQL time limits: per-batch cursor, maintenance pool, guarded clients
 
