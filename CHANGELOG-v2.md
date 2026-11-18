@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### OAuth2 registry clients: a re-consent for a stream below a held one no longer lowers the grant there (fix)
+
+- **A request asking a stream at a level the grant already gives it through the stream tree (a held
+  ancestor, or `*`) no longer narrows the grant there.** Example: a grant holding `P` at
+  `contribute`, then a composed re-consent asking `C` (below `P`) at `read`: the grant used to
+  become `[P: contribute, C: read]`, so the app lost `contribute` on `C` for the grant and every
+  earlier session. The composed screen now shows `C` held, at `contribute` (`currentlyGranted`,
+  `currentLevel`, never `optIn`), the grant keeps `contribute` on `C`, and the new session is still
+  cut to the request (`C: read`). A consent without `shownDigest` is joined the same way (it never
+  narrows, through the tree included).
+- A stream under an exclusion mask of the grant, asked wider than what the grant gives it, or not
+  created yet, is a new entry as before.
+- **New refusal case:** a level the grant gives through the tree and a requested level that no
+  level covers (`read` and `create-only`, either way) answer `400 invalid_scope` with
+  `reason: "permission-level-conflict"` at `/offer` and `/accept`, as for a stream held by its own
+  entry.
+- The `shownDigest` of such screens changes: a consent screen loaded before the upgrade and
+  accepted after it answers `consent-out-of-date`; restart the flow.
+
 ### OAuth2 registry clients: the session of a composed re-consent holds the request only (behaviour change)
 
 - **A consent posted with `shownDigest` mints a session cut to the request.** The session (and its

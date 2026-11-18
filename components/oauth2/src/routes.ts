@@ -204,8 +204,9 @@ export type Deps = {
    * Registry clients: the user's current grant for the client, read with the
    * signed-in user's context (composed consent at /offer and /accept).
    */
-  readRegistryGrant?: (params: { session: { userId: string; username: string; [key: string]: unknown }; clientId: string })
-  => Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean } | null>;
+  readRegistryGrant?: (params: {
+    session: { userId: string; username: string; [key: string]: unknown }; clientId: string; streamIds?: string[];
+  }) => Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean; heldAt?: Record<string, string | null | undefined> } | null>;
   /** Token exchange (RFC 8693): the subject session re-read on its home core. */
   readSubjectSession?: ReadSubjectSession;
   /** Token exchange: find or mint the derived session on this core. */

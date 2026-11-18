@@ -680,9 +680,18 @@ after every consent. Beside it: `shownDigest` (opaque: never parse it, only
 post it back), `currentGrant: { "subjectMode": "account" | "pseudonym" } |
 null`, `subjectChange` and `authenticated: true`. A token that is not the
 owner's personal token gets the request alone plus `authenticated: false`
-(`authenticated` is absent when no sign-in was attempted). A stream held at
-`read` and requested at `create-only` cannot be covered by one level and
-answers `invalid_scope` with `reason: "permission-level-conflict"`.
+(`authenticated` is absent when no sign-in was attempted). "Held" counts the
+stream tree: a requested stream the grant reaches through a held ancestor
+(or `*`) at a level covering the request is shown at that level, flagged
+`currentlyGranted` with `currentLevel`, so a request for less below a held
+stream never lowers what the grant gives it (the session is still cut to the
+requested level). Once accepted, that row is an entry of the grant like any
+other: it counts against the client's entry ceiling and keeps its level if
+the owner later lowers the ancestor. Under an exclusion mask of the grant,
+wider than what the grant gives it, or not created yet, it is a new entry. A stream held at `read` (by its own
+entry or through the tree) and requested at `create-only`, or the reverse,
+cannot be covered by one level and answers `invalid_scope` with
+`reason: "permission-level-conflict"`.
 
 On `POST /oauth2/authorize/accept` the consent UI then sends `shownDigest`
 with the user's choice (`grantedPermissions`):
@@ -706,7 +715,9 @@ with the user's choice (`grantedPermissions`):
   client or the grammar changed meanwhile) answers `400 invalid_request` with
   `reason: "consent-out-of-date"`: restart the flow.
 - **Without `shownDigest`** (a consent UI older than this mechanism): the
-  consent is **joined** into the grant per stream and never narrows it.
+  consent is **joined** into the grant per stream and never narrows it (a
+  stream the grant reaches through the tree is written at the level covering
+  both).
   Per-stream narrowing on re-consent needs a consent UI that posts
   `shownDigest`.
 

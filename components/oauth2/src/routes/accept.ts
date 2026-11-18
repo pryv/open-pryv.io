@@ -80,7 +80,7 @@ import { requestIssuer, stateIssuerRefusal } from '../perUserIssuer.ts';
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
-const { composeShownOffer, nextGrantPermissions, grantEntryCount, REQUEST_NO_REACH } = require('../consentComposition.ts');
+const { composeShownOffer, nextGrantPermissions, grantEntryCount, REQUEST_NO_REACH, streamIdsOf } = require('../consentComposition.ts');
 const { getClient, clientUnavailable } = require('../clientRegistry.ts');
 const { clientLifetimes } = require('../clientLifetimes.ts');
 
@@ -216,7 +216,7 @@ export type CreateAccess = (params: {
  * Registry clients: the user's current grant for the client (read only), or
  * null when there is none.
  */
-export type ReadRegistryGrant = (params: { session: UserSession; clientId: string }) => Promise<CurrentGrant | null>;
+export type ReadRegistryGrant = (params: { session: UserSession; clientId: string; streamIds?: string[] }) => Promise<CurrentGrant | null>;
 
 /** Shape of the inputs the host app injects. */
 export type AcceptDeps = {
@@ -469,7 +469,11 @@ export function handleAccept (deps: AcceptDeps) {
       if (isRefusal(s)) return sendJson(res, s.status, s.body);
       session = s;
       const current: CurrentGrant | null = deps.readRegistryGrant != null
-        ? await deps.readRegistryGrant({ session, clientId: payload.clientId })
+        ? await deps.readRegistryGrant({
+          session,
+          clientId: payload.clientId,
+          streamIds: streamIdsOf(synthesised.offer.permissions),
+        })
         : null;
       adopt = addressAliasOfAudience(payload.audience, stateClient, session, deps.isPlatformRoutedLabel);
       atUsername = audienceNamesUsername(payload.audience, stateClient, session, deps.isPlatformRoutedLabel);

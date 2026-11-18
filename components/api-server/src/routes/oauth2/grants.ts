@@ -41,6 +41,8 @@ import { getRevokedAt, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
 import { AUDIENCE_ACCOUNT_MISMATCH } from 'oauth2/src/audienceAccount.ts';
 import { ADDRESS_ALIAS_UNAVAILABLE, addressAliasesOfAccount } from '../../methods/helpers/addressAliases.ts';
 import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
+import { canonicalStreamId, parseStoreIdAndStoreItemId } from 'mall/src/helpers/storeDataUtils.ts';
+import { getMall } from 'mall';
 
 /** Trigger-scope parent for OAuth-driven CMC accepts on the user's account. */
 const OAUTH_CMC_PARENT = ':_cmc:apps:oauth';
@@ -232,19 +234,49 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   }
 
   // The user's current grant for a registry client, read only (no repair
-  // write): what the consent screen composes with the request.
-  async function readRegistryGrant ({ session, clientId }: {
-    session: { _context?: unknown; [key: string]: unknown }; clientId: string;
-  }): Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean; alias: string | null } | null> {
+  // write): what the consent screen composes with the request. `streamIds`:
+  // the streams the request names; for each existing one the grant does not
+  // hold by id, `heldAt` gives the level the grant reaches it at through the
+  // stream tree.
+  async function readRegistryGrant ({ session, clientId, streamIds }: {
+    session: { _context?: unknown; [key: string]: unknown }; clientId: string; streamIds?: string[];
+  }): Promise<{
+    permissions: Array<Record<string, unknown>>;
+    aliased: boolean;
+    alias: string | null;
+    heldAt?: Record<string, string | null | undefined>;
+  } | null> {
     const context = session._context as Ctx | undefined;
     if (context == null) throw new Error('oauth2.readRegistryGrant: session missing _context');
     const grant = await findRegistryGrant(context, clientId, { repair: false });
     if (grant == null) return null;
     const aliased = typeof grant.alias === 'string' && grant.alias.length > 0;
+    const permissions = grant.permissions ?? [];
+    const heldById = new Set<string>(permissions
+      .filter((p) => typeof p.streamId === 'string')
+      .map((p) => canonicalStreamId(p.streamId as string)));
+    const toResolve = [...new Set((streamIds ?? []).map((id) => canonicalStreamId(id)))]
+      .filter((id) => !heldById.has(id));
+    let heldAt: Record<string, string | null | undefined> | undefined;
+    if (toResolve.length > 0) {
+      const grantStreams = permissions.filter((p) => typeof p.streamId === 'string') as unknown as Permission[];
+      const levelAt = await accessLogicResolver(context.user.id, grantStreams);
+      const mall = await getMall();
+      heldAt = {};
+      for (const id of toResolve) {
+        // A stream that does not exist yet is not lifted: an entry at the
+        // `*` level would follow it wherever it is created later.
+        const [storeId, storeStreamId] = parseStoreIdAndStoreItemId(id);
+        const stream = await mall.streams.getOneWithNoChildren(context.user.id, storeStreamId, storeId);
+        if (stream == null) continue;
+        heldAt[id] = await levelAt(id);
+      }
+    }
     return {
-      permissions: grant.permissions ?? [],
+      permissions,
       aliased,
       alias: aliased ? grant.alias as string : null,
+      ...(heldAt != null ? { heldAt } : {}),
     };
   }
 
