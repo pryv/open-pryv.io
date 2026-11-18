@@ -31,13 +31,10 @@ type StorageInfos = { streams: { count: number }, events: { count: number }, fil
  * Pass-through transaction. SQLite per-user files serialize their own writes
  * via concurrentSafeWrite; the per-call transaction primitive PG uses
  * (LocalTransactionPG) doesn't translate cleanly to per-user-file SQLite.
- * Callers in this codebase use `localTransaction.exec(callback)` to chain a
- * few writes within a single dataStore call; per-call SQLite
- * concurrent-safety subsumes that. We still need to actually run the
- * caller's callback, otherwise the side-effects (e.g.
- * `usersIndex.addUser` inside `usersRepository.insertOne`) never fire and
- * platform DB drifts from the local index. If true ACID-multi-statement is
- * needed later, LocalTransactionSQLite can be hooked in here.
+ * A caller of `exec(callback)` chains a few writes within a single dataStore
+ * call; per-call SQLite concurrent-safety subsumes that. The callback must
+ * still run, or its side-effects never happen. If true ACID-multi-statement
+ * is needed later, LocalTransactionSQLite can be hooked in here.
  */
 class NoopTransactionSQLite {
   transactionSession: unknown = null;

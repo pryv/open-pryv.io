@@ -115,14 +115,15 @@ describe('[USRP] Users repository', () => {
       const usersRepository = await getUsersRepository();
       const { userLocalDirectory } = require('storage');
       const uname = charlatan.Lorem.characters(10).toLowerCase();
+      const mail = charlatan.Internet.email();
       const failing = new User({
         id: charlatan.Lorem.characters(25),
         username: uname,
         password: charlatan.Lorem.characters(10),
-        email: charlatan.Internet.email(),
+        email: mail,
         appId: 'urb2-app'
       });
-      // the password write is the last step inside the local transaction
+      // the password write is the last local write of a registration
       const accountStorage = usersRepository.userAccountStorage;
       const originalAddPasswordHash = accountStorage.addPasswordHash;
       accountStorage.addPasswordHash = async () => { throw new Error('simulated password failure'); };
@@ -142,6 +143,61 @@ describe('[USRP] Users repository', () => {
       const accesses = await new Promise((resolve, reject) => usersRepository.accessStorage.find(
         { id: failing.id }, {}, null, (err, res) => err ? reject(err) : resolve(res)));
       assert.deepEqual(accesses, [], 'no access left');
+      assert.ok(await usersRepository.usersIndex.getUserId(uname) == null, 'no index row for the name');
+      assert.ok(await usersRepository.usersIndex.getUsername(failing.id) == null, 'no index row for the id');
+      assert.deepEqual(await accountStorage.getAccountFields(failing.id), {}, 'no account field left');
+      assert.ok(await accountStorage.getPasswordHash(failing.id) == null, 'no password left');
+      // On SQLite the two reads above recreated the account file of the discarded id.
+      accountStorage.closeUser?.(failing.id);
+      await userLocalDirectory.deleteUserDirectory(failing.id);
+      // The same name and email register again.
+      const retry = new User({
+        id: charlatan.Lorem.characters(25),
+        username: uname,
+        password: charlatan.Lorem.characters(10),
+        email: mail,
+        appId: 'urb2-app'
+      });
+      await usersRepository.insertOne(retry, true);
+      try {
+        assert.equal(await usersRepository.usersIndex.getUserId(uname), retry.id);
+      } finally {
+        await usersRepository.deleteOne(retry.id, uname);
+      }
+    });
+  });
+
+  describe('[UR04] PostgreSQL: registration and account update take no transaction client', () => {
+    // A transaction client held while each write runs on another pool
+    // connection: concurrent calls up to the pool size would each hold one
+    // and wait for a second, stalling the pool.
+    it('[URT1] insertOne with a session and updateOne never check out a dedicated client', async function () {
+      const db = require('storages').databasePG;
+      if (db == null) return this.skip();
+      const usersRepository = await getUsersRepository();
+      const uname = charlatan.Lorem.characters(10).toLowerCase();
+      const user = new User({
+        id: charlatan.Lorem.characters(25),
+        username: uname,
+        password: charlatan.Lorem.characters(10),
+        email: charlatan.Internet.email(),
+        appId: 'urt1-app'
+      });
+      const originalGetClient = db.getClient;
+      let clients = 0;
+      // Counts every getClient of the process in the window: nothing else runs in this test process.
+      db.getClient = async function (...args) { clients++; return originalGetClient.apply(this, args); };
+      try {
+        await usersRepository.insertOne(user, true);
+        assert.equal(clients, 0, 'registration');
+        await usersRepository.updateOne(user, { language: 'fr' }, 'system');
+        assert.equal(clients, 0, 'account update');
+        db.getClient = originalGetClient;
+        assert.equal(await usersRepository.getOnePropertyValue(user.id, 'language'), 'fr');
+      } finally {
+        db.getClient = originalGetClient;
+        await usersRepository.deleteOne(user.id, uname);
+      }
     });
   });
 
