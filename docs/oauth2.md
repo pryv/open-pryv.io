@@ -670,7 +670,9 @@ POST /oauth2/authorize/offer
 and receives the **composed** screen (never cached): one entry per stream at
 the level covering both the grant and the request; entries already granted
 flagged `currentlyGranted: true` (a stream entry also with `currentLevel`, the
-level held now); a new `optIn` entry left unticked; the grant's forbidden
+level held now); on a re-authorization, a stream entry the request names
+flagged `requested: true` (display only: a consent UI can show the streams the grant holds outside the
+request apart from the ones asked now); a new `optIn` entry left unticked; the grant's forbidden
 features shown, locked; a feature the request asks to allow but the client's
 grants forbid by default (see "Registry grants" below) shown as the locked
 forbid it becomes. The core's other default forbids are not listed: they are applied
@@ -687,7 +689,20 @@ with the user's choice (`grantedPermissions`):
 
 - **With `shownDigest`**: the grant becomes **exactly** what the user ticked
   (unticking narrows it), keeping the grant's forbidden features and
-  exclusion masks. A `shownDigest` that no longer matches (the grant, the
+  exclusion masks. The session minted (and its refresh chain) is cut to the
+  request: the ticked streams the request names, through the stream tree (a
+  ticked stream below a requested one counts), each at the lower of its
+  ticked level and the requested one; the ticked features are kept. The
+  other ticked streams stay on the grant for later requests, and the token's
+  `scope` names only what this session holds. A requested stream below a
+  ticked held one is in the session only when its own entry is ticked (the
+  held parent alone does not bring it in). A consent that keeps none of the
+  requested streams answers `400 invalid_scope` with
+  `reason: "request-no-reach"`, before anything is written. Sessions minted
+  earlier keep their own chain. `requested: true` names entries by stream id
+  while the session is resolved through the stream tree: a consent UI must
+  not tell the user that an unflagged held stream stays out of the session
+  (one below a requested stream is in it). A `shownDigest` that no longer matches (the grant, the
   client or the grammar changed meanwhile) answers `400 invalid_request` with
   `reason: "consent-out-of-date"`: restart the flow.
 - **Without `shownDigest`** (a consent UI older than this mechanism): the
@@ -723,6 +738,7 @@ never on the wording; render errors without one generically.
 | `keep-one-stream` | a registry consent kept no stream |
 | `consent-widens-offer` | the kept subset would widen the offer through the stream hierarchy |
 | `grant-too-large` | the grant the consent would leave is above the client's `--max-entries` ceiling (`/offer` and `/accept`) |
+| `request-no-reach` | a composed consent (with `shownDigest`) kept none of the streams the request asks for: the session would hold only streams the app did not ask for |
 | `audience-account-mismatch` | 403 `access_denied`: the requested resource is a per-user address that does not name the signed-in account (§ 1c); the signed-in `/offer` and `/accept` |
 | `address-alias-held` | 403 `access_denied`: the requested resource is one of the signed-in account's own address aliases, which another access (another app's grant) holds (§ 1c); the signed-in `/offer` and `/accept` |
 | `audience-not-listed` | 400 `invalid_target`: the client's list no longer holds the resource the authorization named, or the client is gone: restart the flow (§ 1c); the signed-in `/offer` and `/accept` |

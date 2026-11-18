@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
  */
 
 const assert = require('node:assert/strict');
-const { composeShownOffer, nextGrantPermissions, shownDigestOf } = require('../src/consentComposition.ts');
+const { composeShownOffer, nextGrantPermissions, shownDigestOf, sessionChainOf } = require('../src/consentComposition.ts');
 const { normalizePermissions, checkConsentGrant } = require('business/src/accesses/permissionSet.ts');
 const scopeGrammar = require('../src/scopeGrammar.ts');
 const extension = require('../src/extension.ts');
@@ -53,14 +53,15 @@ describe('[OCMPU] composed consent of registry clients', () => {
     const c = composeShownOffer(req, current, CLIENT);
     assert.equal(c.ok, true);
     // A held entry says the level held now (c is widened by the request), and
-    // is never opt-in (it opens ticked), stream or feature.
+    // is never opt-in (it opens ticked), stream or feature. A stream the
+    // request names says so (`requested`); d is held outside the request.
     assert.deepEqual(c.shown.permissions, [
-      { streamId: 'a', level: 'contribute', mandatory: true, currentlyGranted: true, currentLevel: 'contribute' },
-      { streamId: 'c', level: 'contribute', currentlyGranted: true, currentLevel: 'read' },
+      { streamId: 'a', level: 'contribute', requested: true, mandatory: true, currentlyGranted: true, currentLevel: 'contribute' },
+      { streamId: 'c', level: 'contribute', requested: true, currentlyGranted: true, currentLevel: 'read' },
       { streamId: 'd', level: 'read', currentlyGranted: true, currentLevel: 'read' },
-      { streamId: 'b', level: 'read', optIn: true },
+      { streamId: 'b', level: 'read', requested: true, optIn: true },
       // Not held, not marked: opt-in all the same (the user has a choice).
-      { streamId: 'f', level: 'read', optIn: true },
+      { streamId: 'f', level: 'read', requested: true, optIn: true },
       { feature: 'selfAudit', setting: 'allowed', currentlyGranted: true },
     ]);
     assert.equal(c.shown.allowUserChoice, true);
@@ -77,11 +78,11 @@ describe('[OCMPU] composed consent of registry clients', () => {
     const withChoice = composeShownOffer(requested(entries, { allowUserChoice: true }), current, CLIENT);
     const byId = (c, key) => c.shown.permissions.find((p) => p.streamId === key || p.feature === key);
     // Mandatory: ticked and locked, never opt-in.
-    assert.deepEqual(byId(withChoice, 'n'), { streamId: 'n', level: 'read', mandatory: true });
-    assert.deepEqual(byId(withChoice, 'p'), { streamId: 'p', level: 'read', optIn: true });
+    assert.deepEqual(byId(withChoice, 'n'), { streamId: 'n', level: 'read', requested: true, mandatory: true });
+    assert.deepEqual(byId(withChoice, 'p'), { streamId: 'p', level: 'read', requested: true, optIn: true });
     assert.deepEqual(byId(withChoice, 'selfAudit'), { feature: 'selfAudit', setting: 'allowed', optIn: true });
     // Held, though requested opt-in: opens ticked.
-    assert.deepEqual(byId(withChoice, 'a'), { streamId: 'a', level: 'read', currentlyGranted: true, currentLevel: 'read' });
+    assert.deepEqual(byId(withChoice, 'a'), { streamId: 'a', level: 'read', requested: true, currentlyGranted: true, currentLevel: 'read' });
 
     // All or nothing: no box to leave unticked.
     const noChoice = composeShownOffer(requested(entries), current, CLIENT);
@@ -269,5 +270,35 @@ describe('[OFBD] forbidden features in consent context', () => {
     // The client row allows it: shown as asked.
     const open = composeShownOffer(req, null, { ...CLIENT, allowFeatures: ['webhooks'] });
     assert.deepEqual(open.shown.permissions.find((p) => p.feature === 'webhooks'), { feature: 'webhooks', setting: 'allowed' });
+  });
+
+  it('[OCMPU13] the session of a composed consent: the granted entries the request names, at the lower level, through the stream tree', async () => {
+    // Stream tree: p > p1; the request names p (read), c (contribute) and k (create-only).
+    const parentOf = { p1: 'p' };
+    const requestedLevels = { p: 'read', c: 'contribute', k: 'create-only' };
+    const requestedLevelAt = async (id) => {
+      for (let s = id; s != null; s = parentOf[s]) if (requestedLevels[s] != null) return requestedLevels[s];
+      return null;
+    };
+    const granted = [
+      { streamId: 'p', level: 'manage' },
+      { streamId: 'p1', level: 'contribute' },
+      { streamId: 'c', level: 'read' },
+      { streamId: 'k', level: 'read' },
+      { streamId: 'x', level: 'manage' },
+      { feature: 'secretSharing', setting: 'forbidden' },
+    ];
+    assert.deepEqual(await sessionChainOf(granted, requestedLevelAt), [
+      // Held at manage, asked at read: read.
+      { streamId: 'p', level: 'read' },
+      // Below a requested stream: named by it, at the lower level.
+      { streamId: 'p1', level: 'read' },
+      // Asked wider than ticked: the ticked level.
+      { streamId: 'c', level: 'read' },
+      // k: read and create-only share no level, so it stays on the grant only; x is not asked.
+      { feature: 'secretSharing', setting: 'forbidden' },
+    ]);
+    // Nothing the request names: no stream at all (the mount refuses the consent).
+    assert.deepEqual(await sessionChainOf([{ streamId: 'x', level: 'read' }], requestedLevelAt), []);
   });
 });

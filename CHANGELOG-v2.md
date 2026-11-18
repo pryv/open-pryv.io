@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### OAuth2 registry clients: the session of a composed re-consent holds the request only (behaviour change)
+
+- **A consent posted with `shownDigest` mints a session cut to the request.** The session (and its
+  refresh chain) holds the ticked streams the request names, through the stream tree (a ticked
+  stream below a requested one counts), each at the lower of the ticked and the requested level;
+  the ticked features are kept. Previously the session held everything ticked on the composed
+  screen, so an app asking one stream over a grant of 142 got a session (and a refresh chain) on
+  all 142, and a token `scope` naming them. The grant itself is unchanged: it still becomes
+  exactly what was ticked, so the streams held outside the request stay granted for later
+  requests. Sessions minted earlier keep their own chain (no narrowing at refresh). A consent
+  without `shownDigest` is unchanged (its session was already the request's subset). A requested
+  stream below a held one is in the session only when its own entry is ticked.
+- **Scope grammar extensions:** a session is now often narrower than its grant. An `echo` must name
+  tokens from the session's `permissions` only (as the extension contract already says), not from
+  the grant state alone, or the consent's scope cannot be computed.
+- **New refusal:** a composed consent that keeps none of the requested streams answers
+  `400 invalid_scope` with `reason: "request-no-reach"`, before anything is written (it used to
+  mint a session holding only streams the app did not ask for). Audited as
+  `oauth.consent.refused`.
+- **Composed offer:** on a re-authorization, each stream entry the request names carries
+  `requested: true` (display only, bound by `shownDigest`), so a consent screen can show the streams
+  already held outside the request in a section of their own. The flag is by stream id, the session
+  through the stream tree: a held stream below a requested one has no flag but is in the session.
+  The extension contract is unchanged (`apiVersion` 1).
+
 ### PostgreSQL: time limits on the database work of API requests (behaviour change, on by default)
 
 - **A database statement issued while serving an API request is stopped after

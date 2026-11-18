@@ -45,10 +45,15 @@
  * `invalid_request` with a machine-readable `reason`
  * (`consent-out-of-date`, `subject-change-unacknowledged`). Other refusals
  * the consent UI tells apart carry one too: `permission-level-conflict`,
- * `keep-one-stream`, `consent-widens-offer`, and `grant-too-large` (the
+ * `keep-one-stream`, `consent-widens-offer`, `grant-too-large` (the
  * grant the consent would leave is above the client's entry ceiling, with
- * or without `shownDigest`). Both fields are ignored for app-account
- * clients.
+ * or without `shownDigest`) and `request-no-reach`. Both fields are ignored
+ * for app-account clients.
+ *
+ * With `shownDigest`, the session minted is cut to the request: the granted
+ * entries the request names, at the lower of the two levels (the grant
+ * keeps everything ticked). A consent that keeps none of the request's
+ * streams is refused with `request-no-reach` before anything is written.
  *
  * An account the platform places on another core answers 421 `wrong_core`
  * with that core's URL instead of the uniform 401 (see wrongCore.ts).
@@ -75,7 +80,7 @@ import { requestIssuer, stateIssuerRefusal } from '../perUserIssuer.ts';
 const require = createRequire(import.meta.url);
 
 const { resolveStateOffer } = require('./offer.ts');
-const { composeShownOffer, nextGrantPermissions, grantEntryCount } = require('../consentComposition.ts');
+const { composeShownOffer, nextGrantPermissions, grantEntryCount, REQUEST_NO_REACH } = require('../consentComposition.ts');
 const { getClient, clientUnavailable } = require('../clientRegistry.ts');
 const { clientLifetimes } = require('../clientLifetimes.ts');
 
@@ -168,6 +173,14 @@ export type CreateAccess = (params: {
      * subject), never joined.
      */
     atUsername?: boolean;
+    /**
+     * A consent made on the composed screen (`shownDigest`): the request's
+     * permissions. The session's chain is cut to the granted entries they
+     * name (see consentComposition.ts `sessionChainOf`), the grant is not;
+     * when that leaves nothing, the mount refuses the consent with code
+     * `request-no-reach` before writing anything.
+     */
+    requestedPermissions?: Array<Record<string, unknown>>;
   };
   grantedPermissions?: Array<Record<string, unknown>>;
   /** Registry client: the grant's permissions after this consent (final set). */
@@ -542,6 +555,7 @@ export function handleAccept (deps: AcceptDeps) {
               randomAlias: adopt != null || synthesised.offer.randomAlias === true,
               ...(adopt != null ? { adoptAlias: adopt } : {}),
               ...(atUsername ? { atUsername: true } : {}),
+              ...(shownDigest != null ? { requestedPermissions: normalizePermissions(synthesised.offer.permissions) } : {}),
             }
           : payload.offer!,
         grantedPermissions,
@@ -565,6 +579,16 @@ export function handleAccept (deps: AcceptDeps) {
       if ((err as { code?: string } | null)?.code === 'permission-level-conflict') {
         const r = await levelConflictRefusal(err, payload);
         return sendJson(res, r.status, r.body);
+      }
+      // Everything ticked is outside what the app asks now: a session of it
+      // would hold only streams the app did not ask for.
+      if ((err as { code?: string } | null)?.code === REQUEST_NO_REACH) {
+        await audit('oauth.consent.refused', { clientId: payload.clientId, requestedScope: payload.scope, reason: REQUEST_NO_REACH });
+        return sendJson(res, 400, {
+          error: 'invalid_scope',
+          error_description: 'the consent keeps none of the streams this request asks for (refuse instead)',
+          reason: REQUEST_NO_REACH,
+        });
       }
       // The address alias to adopt was taken meanwhile (another grant
       // adopted it, or the owner deleted it): refused like any address that

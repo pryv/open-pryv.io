@@ -14,6 +14,8 @@
  * `read` and requested at `create-only` has none: the consent is refused).
  * Entries the grant already holds are flagged `currentlyGranted` (shown
  * ticked; a stream entry also carries `currentLevel`, the level held now);
+ * a stream entry the request names is flagged `requested` (display only:
+ * the screen can show the held streams outside the request apart);
  * a new entry is shown unticked when the user has a choice (`optIn`),
  * unless the request marks it mandatory. The grant's forbidden features
  * stay on the screen, locked. The core's own default forbids are never
@@ -34,7 +36,7 @@ import type { Permission } from 'business/src/types/public.ts';
 import { canonicalJson } from './scopeGrammar.ts';
 import { defaultForbiddenFeatures } from './clientRegistry.ts';
 import {
-  mergeStreamPermissions, isStreamPermission, isFeaturePermission, normalizePermissions,
+  mergeStreamPermissions, isStreamPermission, isFeaturePermission, normalizePermissions, meetLevel,
   PermissionMergeConflictError,
 } from 'business/src/accesses/permissionSet.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
@@ -129,6 +131,9 @@ export function composeShownOffer (
       const id: string = canonicalStreamId(p.streamId);
       const r = requestedById.get(id);
       const out: ExtPermission = { streamId: p.streamId, level: p.level };
+      // Display only: the request names this stream (asked now), as opposed
+      // to a stream the grant holds outside the request.
+      if (r != null) out.requested = true;
       if (r?.mandatory === true) out.mandatory = true;
       const held = heldLevels.get(id);
       if (held != null) {
@@ -228,6 +233,39 @@ export function nextGrantPermissions ({ granted, current, client, replace }: {
   }
   const defaults = defaultForbiddenFeatures(client).map((feature) => ({ feature, setting: 'forbidden' }));
   return mergeStreamPermissions(base, defaults, 'join').permissions;
+}
+
+/** Error code (and refusal `reason`): the consent leaves the request no reach. */
+export const REQUEST_NO_REACH = 'request-no-reach';
+
+/** The level a permission set gives a stream through the stream tree, or none. */
+export type LevelAt = (streamId: string) => Promise<string | null | undefined>;
+
+/**
+ * The permissions of the session a composed consent mints (its chain): the
+ * granted entries the request names, each at the lower of its granted level
+ * and the level the request gives its stream (`requestedLevelAt`, resolved
+ * through the stream tree: a held stream below a requested one is named by
+ * it). A granted stream the request does not reach stays on the grant only;
+ * so does one whose two levels share no level (`read` and `create-only`).
+ * The granted features are kept: the screen shows the requested ones and
+ * the grant's forbids only. Never wider than `granted`, entry by entry, so
+ * the session is within the grant the same consent writes.
+ */
+export async function sessionChainOf (granted: ExtPermission[], requestedLevelAt: LevelAt): Promise<ExtPermission[]> {
+  const chain: ExtPermission[] = [];
+  for (const p of granted) {
+    if (!isStreamPermission(p)) {
+      chain.push(p);
+      continue;
+    }
+    const requestedLevel = await requestedLevelAt(canonicalStreamId(p.streamId));
+    if (typeof requestedLevel !== 'string' || requestedLevel === 'none') continue;
+    const level = meetLevel(p.level, requestedLevel as Parameters<typeof meetLevel>[1]);
+    if (level == null || level === 'none') continue;
+    chain.push({ ...p, level });
+  }
+  return chain;
 }
 
 /**

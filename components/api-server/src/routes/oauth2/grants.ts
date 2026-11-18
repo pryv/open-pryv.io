@@ -24,7 +24,8 @@ import type { Permission } from 'business/src/types/public.ts';
 import { mergeStreamPermissions, PermissionMergeConflictError } from 'business/src/accesses/permissionSet.ts';
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
-import { assertGrantedWithinOffer } from 'business/src/accesses/consentEffectiveGuard.ts';
+import { assertGrantedWithinOffer, accessLogicResolver } from 'business/src/accesses/consentEffectiveGuard.ts';
+import { sessionChainOf, REQUEST_NO_REACH } from 'oauth2/src/consentComposition.ts';
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
 import { deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
 // Wire ids carry a version serial; storage reads by the base id.
@@ -386,7 +387,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     clientId: string;
     scope: string[];
     expiresAt: number;
-    offer?: CmcOffer | { kind: 'synthesised'; permissions: Array<Record<string, unknown>> };
+    offer?: CmcOffer | { kind: 'synthesised'; permissions: Array<Record<string, unknown>>; requestedPermissions?: Array<Record<string, unknown>> };
     grantedPermissions?: Array<Record<string, unknown>>;
     grantPermissions?: Array<Record<string, unknown>>;
     subjectChange?: unknown;
@@ -430,6 +431,21 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     }
 
     const registry = (offer as { kind?: string }).kind === 'synthesised';
+    // The chain of the session: the granted subset, or, for a registry consent
+    // made on the composed screen, the part of it this request names (the
+    // grant keeps the rest of what was ticked). A consent leaving the request
+    // no reach is refused here, before anything is written.
+    let permissions: Array<Record<string, unknown>> = grantedPermissions;
+    const requested = registry ? (offer as { requestedPermissions?: unknown }).requestedPermissions : undefined;
+    if (Array.isArray(requested)) {
+      const requestedLevelAt = await accessLogicResolver(context.user.id, requested as Permission[]);
+      permissions = await sessionChainOf(grantedPermissions, requestedLevelAt);
+      if (!permissions.some((p) => typeof p.streamId === 'string')) {
+        const e = new Error('oauth2.createAccess: the consent leaves the request no reach') as Error & { code: string };
+        e.code = REQUEST_NO_REACH;
+        throw e;
+      }
+    }
     const adoptAlias = (offer as { adoptAlias?: unknown }).adoptAlias;
     const dataGrant = registry
       ? await registryGrantFor(context, clientId, (offer as { randomAlias?: boolean }).randomAlias === true, grantPermissions, subjectChange,
@@ -451,10 +467,9 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     if (registry) await sessions.setGrantClient(context.user.id, context.user.username, dataGrant.id, clientId);
 
     // The minted row additionally carries the session selfRevoke override
-    // (see withSessionSelfRevoke); the CHAIN keeps the granted subset
-    // verbatim (returned `permissions` below), so the refresh-time
-    // intersection with the data-grant stays exact.
-    const permissions: Array<Record<string, unknown>> = grantedPermissions;
+    // (see withSessionSelfRevoke); the CHAIN keeps `permissions` verbatim
+    // (returned below), so the refresh-time intersection with the data-grant
+    // stays exact.
     // A session starts as its refreshes will continue: the granted subset
     // under the grant as it now stands (its forbidden features, a registry
     // client's default ones included, and the owner's narrower entries in the
