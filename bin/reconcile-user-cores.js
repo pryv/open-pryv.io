@@ -112,6 +112,10 @@ require('@pryv/boiler').init({
   }, {
     pluginAsync: require('../config/plugins/systemStreams')
   }, {
+    // The registrations pass inits the audit (syslog socket path).
+    scope: 'default-audit-path',
+    file: path.resolve(__dirname, '../config/plugins/default-path.js')
+  }, {
     plugin: require('../config/plugins/core-identity')
   }, ...(configFileArg != null
     ? [{ scope: 'host-config', file: path.resolve(process.cwd(), configFileArg) }]

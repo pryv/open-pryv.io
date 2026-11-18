@@ -122,6 +122,8 @@ describe('[RCRG] unfinished registrations sweep', function () {
 
   it('[RCRG2] PostgreSQL: --apply leaves an orphan with a recent field, a password, an erasure record or an access', async function () {
     if (!isPG()) return this.skip();
+    // An indexed account, so the pass does not take the empty-index refusal.
+    const kept = await freshUser('rckc');
     const old = timestamp.now() - 2 * DAY;
     const ids = { recent: cuid(), password: cuid(), erasure: cuid(), access: cuid() };
     await accountStorage.setAccountField(ids.recent, 'language', 'en', 'system', timestamp.now());
@@ -147,6 +149,7 @@ describe('[RCRG] unfinished registrations sweep', function () {
       for (const id of Object.values(ids)) await accountStorage._clearAll(id);
       await erasures.delete(ids.erasure);
       await new Promise((resolve, reject) => usersRepository.accessStorage.removeAll({ id: ids.access }, (err) => err ? reject(err) : resolve()));
+      await removeAccount(kept);
     }
   });
 

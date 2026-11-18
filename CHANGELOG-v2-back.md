@@ -21,6 +21,11 @@
   `platformRowsReleased`, dry run included.
 - Test harness: the root integrity hook's watchdog is armed at hook entry (side `init`, then `platform`,
   then `users index`), and a hook that took longer than 5 s writes `[integrity hook] <title>: took N ms`.
+  The per-test integrity hooks run under their own 60 s limit instead of the suite's: on SQLite the
+  platform side reads every user's files, so its cost grows through a long suite, and under machine load
+  it crossed the 20 s api-server limit, which stops the whole run.
+- `bin/reconcile-user-cores.js` loads the default audit path config (syslog socket), as `bin/backup.js`
+  does, so the registrations pass can init the audit.
 
 ### Registration and account update: no idle transaction client
 

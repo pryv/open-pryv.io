@@ -264,6 +264,12 @@ function init (opts: any = {}) {
 }
 
 const SLOW_CHECK_MS = 5000;
+// The per-test integrity hooks get their own limit instead of the suite's
+// (20 s for api-server). On SQLite the platform side reads every user's
+// files (`usersRepository.getAll()`), so its cost grows with the users a
+// long suite leaves behind; under machine load it crossed 20 s and a hook
+// timeout stops the whole run. The watchdog lines above still report it.
+const INTEGRITY_HOOK_TIMEOUT_MS = 60000;
 
 /**
  * Get mocha hooks for integrity checks
@@ -429,12 +435,14 @@ function getMochaHooks (isParallelMode = false) {
             // so skipping the check pre-initCore is safe.
             const storages = require('storages');
             if (!storages.storageLayer) return;
+            this.timeout(INTEGRITY_HOOK_TIMEOUT_MS);
             await checkIndexAndPlatformIntegrity('BEFORE ' + this.currentTest.title);
           },
           async afterEach (this: any) {
             if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
             const storages = require('storages');
             if (!storages.storageLayer) return;
+            this.timeout(INTEGRITY_HOOK_TIMEOUT_MS);
             await checkIndexAndPlatformIntegrity('AFTER ' + this.currentTest.title);
           }
         })
