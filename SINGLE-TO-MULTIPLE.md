@@ -83,6 +83,8 @@ dns:
 
 With `dns.active: true`, the embedded DNS server answers on `dns.port` over UDP and TCP (open both inbound) and returns RFC 2308 negative answers (NXDOMAIN / NODATA with the apex SOA from `dns.records.root.soa`), which validating resolvers and Let's Encrypt's CAA check require.
 
+When the cores' embedded DNS servers serve the zone, delegate it to at least two of them (each in `dns.records.root.ns` and in the parent delegation, with glue), so a rolling deploy never leaves the zone without an authoritative server; see INSTALL.md, "First-boot DNS chain".
+
 With `core.ip` set, the Raft port listens on all interfaces (the HTTP API stays on loopback), so the core refuses to start until `storages.engines.rqlite.tls` is set. Before restarting, generate the cluster CA and this core's own node certificate; this also writes `storages.engines.rqlite.tls` into its `override-config.yml`:
 
 ```bash

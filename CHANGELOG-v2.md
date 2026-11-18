@@ -126,6 +126,14 @@
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
 
+### Docs: a zone served by the embedded DNS needs two nameservers
+
+- `INSTALL.md` ("First-boot DNS chain") and `SINGLE-TO-MULTIPLE.md` now say to delegate a zone
+  served by the cores' embedded DNS servers to at least two of them: with one nameserver, every
+  restart of its core leaves the whole zone unresolvable (`SERVFAIL`) until the core answers again.
+  The embedded server does not do zone transfers, so the second nameserver is a second core with
+  `dns.active: true`, not a secondary at a DNS provider.
+
 ## 2.0.0-rc.86 - 2026-11-17
 
 ### Cache invalidation between the processes of a core
