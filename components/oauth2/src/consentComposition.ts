@@ -14,6 +14,8 @@
  * `read` and requested at `create-only` has none: the consent is refused).
  * Entries the grant already holds are flagged `currentlyGranted` (shown
  * ticked; a stream entry also carries `currentLevel`, the level held now);
+ * a requested stream the grant reaches through the stream tree at a level
+ * covering the request counts as held, at that level (see `heldAt`);
  * a stream entry the request names is flagged `requested` (display only:
  * the screen can show the held streams outside the request apart);
  * a new entry is shown unticked when the user has a choice (`optIn`),
@@ -36,7 +38,7 @@ import type { Permission } from 'business/src/types/public.ts';
 import { canonicalJson } from './scopeGrammar.ts';
 import { defaultForbiddenFeatures } from './clientRegistry.ts';
 import {
-  mergeStreamPermissions, isStreamPermission, isFeaturePermission, normalizePermissions, meetLevel,
+  mergeStreamPermissions, isStreamPermission, isFeaturePermission, normalizePermissions, meetLevel, joinLevel,
   PermissionMergeConflictError,
 } from 'business/src/accesses/permissionSet.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
@@ -55,7 +57,30 @@ export type CurrentGrant = {
   aliased: boolean;
   /** That alias, when known (an address alias a consent may name again). */
   alias?: string | null;
+  /**
+   * The level the grant gives a stream through the stream tree (its own
+   * entry, an ancestor's, `*`; `none` under an exclusion mask), by canonical
+   * stream id, for the streams the request or the consent names. A stream
+   * the grant does not hold by id but reaches through the tree is composed
+   * at that level: a request for less never lowers what the grant gives it.
+   * Absent: by-id composition only.
+   */
+  heldAt?: Record<string, string | null | undefined>;
 };
+
+/**
+ * The level a requested stream the grant does not hold by id is composed at:
+ * `held` (the level the grant gives it through the tree) when that covers the
+ * requested level, `null` when it does not (a new entry at the requested
+ * level), or a conflict when no level covers both (`read` and `create-only`).
+ */
+function liftThroughTree (held: string | null | undefined, requestedLevel: string):
+{ level: string | null } | { conflict: true } {
+  if (typeof held !== 'string' || held === 'none') return { level: null };
+  const joined = joinLevel(held as Parameters<typeof joinLevel>[0], requestedLevel as Parameters<typeof joinLevel>[1]);
+  if (joined == null) return { conflict: true };
+  return { level: joined === held ? held : null };
+}
 
 /** The offer shown on the consent screen; entries may carry `currentlyGranted`. */
 export type ShownOffer = SynthOffer & { allowUserChoice: boolean };
@@ -125,6 +150,7 @@ export function composeShownOffer (
     // With a choice, anything the grant does not hold needs a positive tick:
     // a stream declined at an earlier consent is not pre-ticked again.
     const allowUserChoice = requested.offer.allowUserChoice === true;
+    const treeConflicts: Array<{ streamId: string; current: string; incoming: string }> = [];
     permissions = [];
     for (const p of joined.permissions) {
       if (!isStreamPermission(p)) continue;
@@ -135,7 +161,21 @@ export function composeShownOffer (
       // to a stream the grant holds outside the request.
       if (r != null) out.requested = true;
       if (r?.mandatory === true) out.mandatory = true;
-      const held = heldLevels.get(id);
+      let held = heldLevels.get(id);
+      if (held == null && r != null) {
+        // Held through the tree (below a held stream): composed at the held
+        // level when it covers the request, so the grant keeps it there.
+        const through = current.heldAt?.[id];
+        const lift = liftThroughTree(through, p.level);
+        if ('conflict' in lift) {
+          treeConflicts.push({ streamId: id, current: String(through), incoming: p.level });
+          continue;
+        }
+        if (lift.level != null) {
+          out.level = lift.level as typeof p.level;
+          held = lift.level;
+        }
+      }
       if (held != null) {
         out.currentlyGranted = true;
         out.currentLevel = held;
@@ -143,6 +183,9 @@ export function composeShownOffer (
         out.optIn = true;
       }
       permissions.push(out);
+    }
+    if (treeConflicts.length > 0) {
+      return { ok: false, error: new PermissionMergeConflictError(treeConflicts as PermissionMergeConflictError['conflicts']) };
     }
 
     const currentFeatures = (current.permissions ?? []).filter(isFeaturePermission);
@@ -171,6 +214,11 @@ export function composeShownOffer (
   }
   const shown: ShownOffer = { ...requested.offer, permissions, allowUserChoice: requested.offer.allowUserChoice === true };
   return { ok: true, shown, subjectChange, shownDigest: shownDigestOf(requested.digest, shown, subjectChange) };
+}
+
+/** The stream ids a permission list names (for `CurrentGrant.heldAt`). */
+export function streamIdsOf (permissions: readonly unknown[]): string[] {
+  return permissions.filter(isStreamPermission).map((p) => String(p.streamId));
 }
 
 /** Whether the grant carries an address alias (adopted at an earlier consent). */
@@ -208,7 +256,8 @@ function sortKey (p: ExtPermission): string {
  *   (its forbidden features, and its exclusion masks on streams the consent
  *   does not name).
  * - otherwise: what the user ticked joined into the current grant (never
- *   narrows). A level conflict throws `PermissionMergeConflictError`.
+ *   narrows, through the stream tree included: see `CurrentGrant.heldAt`).
+ *   A level conflict throws `PermissionMergeConflictError`.
  *
  * Then the client's default forbids; a forbid always wins over an allow.
  */
@@ -227,7 +276,27 @@ export function nextGrantPermissions ({ granted, current, client, replace }: {
       (isFeaturePermission(p) && p.setting === 'forbidden') || (isStreamPermission(p) && p.level === 'none'));
     base = mergeStreamPermissions(plain, kept, 'join').permissions;
   } else {
-    const merged = mergeStreamPermissions(current.permissions ?? [], plain, 'join');
+    // A granted stream the grant reaches through the tree (not by id) is
+    // written at the level covering both, so the join never lowers it.
+    const heldById = new Set<string>((current.permissions ?? []).filter(isStreamPermission)
+      .map((p) => canonicalStreamId(String(p.streamId))));
+    const treeConflicts: Array<{ streamId: string; current: string; incoming: string }> = [];
+    const lifted = plain.map((p) => {
+      if (!isStreamPermission(p)) return p;
+      const id = canonicalStreamId(p.streamId);
+      if (heldById.has(id)) return p;
+      const through = current.heldAt?.[id];
+      const lift = liftThroughTree(through, p.level);
+      if ('conflict' in lift) {
+        treeConflicts.push({ streamId: id, current: String(through), incoming: p.level });
+        return p;
+      }
+      return lift.level != null ? { ...p, level: lift.level as typeof p.level } : p;
+    });
+    if (treeConflicts.length > 0) {
+      throw new PermissionMergeConflictError(treeConflicts as PermissionMergeConflictError['conflicts']);
+    }
+    const merged = mergeStreamPermissions(current.permissions ?? [], lifted, 'join');
     if (merged.conflicts.length > 0) throw new PermissionMergeConflictError(merged.conflicts);
     base = merged.permissions;
   }

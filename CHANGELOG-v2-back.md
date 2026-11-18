@@ -33,6 +33,17 @@
   `services.register.url` (and the next one) instead of a fixed 5123, so checkouts running their suites
   side by side can each set their own in their test config.
 
+### OAuth2 composed consent: levels held through the stream tree
+
+- `CurrentGrant.heldAt` (oauth2 `consentComposition.ts`): the level the grant gives each stream the
+  request or the consent names but the grant does not hold by id, resolved through the stream tree
+  by the api-server's `readRegistryGrant` (new `streamIds` parameter, `accessLogicResolver` over the
+  grant's stream entries; `/offer` and `/accept` pass the requested streams; a stream that does not
+  exist yet is left out, so an entry at the `*` level never follows it to where it is created).
+  `composeShownOffer` and the join branch of `nextGrantPermissions` lift such a stream to the held
+  level when it covers the request (`liftThroughTree`); absent `heldAt`, the composition is by id as
+  before.
+
 ### Registration and account update: no idle transaction client
 
 - `usersRepository.createLocalUserData` and `updateOne` no longer open the local store's transaction.

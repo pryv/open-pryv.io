@@ -44,7 +44,7 @@ import { getClient, isRegistryClient, clientUnavailable, servedLogoUri } from '.
 import { resolveRequestedScope, entryCeiling, grantTooLarge } from '../scopeGrammar.ts';
 import { extensionGeneration } from '../extension.ts';
 import type { CurrentGrant } from '../consentComposition.ts';
-import { composeShownOffer, subjectModeOf } from '../consentComposition.ts';
+import { composeShownOffer, subjectModeOf, streamIdsOf } from '../consentComposition.ts';
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import { metadataHostOf } from '../clientMetadata.ts';
@@ -74,7 +74,7 @@ export type OfferDeps = {
   resolveUser?: (params: { username: string; userToken: string; clientId?: string }) =>
   Promise<OfferSession | { refused: true; description: string } | WrongCoreSession | null>;
   /** The user's current grant for the client, or null. */
-  readRegistryGrant?: (params: { session: OfferSession; clientId: string }) => Promise<CurrentGrant | null>;
+  readRegistryGrant?: (params: { session: OfferSession; clientId: string; streamIds?: string[] }) => Promise<CurrentGrant | null>;
   /** The host labels the platform answers itself (never an account's address). */
   isPlatformRoutedLabel?: PlatformRoutedLabel;
   /** The per-user issuer of a request on an account's host (`oauth:perUserIssuer`). */
@@ -257,7 +257,7 @@ export function handleOffer (deps: OfferDeps) {
       return sendJson(res, refusal.status, refusal.body);
     }
     const currentGrant = deps.readRegistryGrant != null
-      ? await deps.readRegistryGrant({ session, clientId: c.clientId })
+      ? await deps.readRegistryGrant({ session, clientId: c.clientId, streamIds: streamIdsOf(r.resolved.offer.permissions) })
       : null;
     const atUsername = audienceNamesUsername(verified.payload.audience, c, session, deps.isPlatformRoutedLabel);
     const composition = composeShownOffer(r.resolved, currentGrant, c, adopt, atUsername);

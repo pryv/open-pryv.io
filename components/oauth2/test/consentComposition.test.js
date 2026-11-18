@@ -301,4 +301,59 @@ describe('[OFBD] forbidden features in consent context', () => {
     // Nothing the request names: no stream at all (the mount refuses the consent).
     assert.deepEqual(await sessionChainOf([{ streamId: 'x', level: 'read' }], requestedLevelAt), []);
   });
+
+  it('[OCMPU14] a requested stream held through the tree: covered, it is shown held at the held level; wider, new; no covering level, a conflict; masked or not reached, new', () => {
+    const current = {
+      aliased: false,
+      permissions: [{ streamId: 'p', level: 'contribute' }, { streamId: 'q', level: 'read' }, { streamId: 'k', level: 'create-only' }],
+      // p > p1, q > q1, k > k1, p > m1 (masked), z not reached.
+      heldAt: { p1: 'contribute', q1: 'read', k1: 'create-only', m1: 'none', z: null },
+    };
+    const req = requested([
+      { streamId: 'p1', level: 'read', mandatory: true },
+      { streamId: 'q1', level: 'contribute' },
+      { streamId: 'm1', level: 'read' },
+      { streamId: 'z', level: 'read' },
+    ], { allowUserChoice: true });
+    const c = composeShownOffer(req, current, CLIENT);
+    assert.equal(c.ok, true);
+    assert.deepEqual(c.shown.permissions.filter((p) => p.requested === true), [
+      // Covered by p: held, at p's level, never opt-in.
+      { streamId: 'p1', level: 'contribute', requested: true, mandatory: true, currentlyGranted: true, currentLevel: 'contribute' },
+      // Wider than q gives it: a new entry, opt-in with a choice.
+      { streamId: 'q1', level: 'contribute', requested: true, optIn: true },
+      // Under a mask, or not reached: new.
+      { streamId: 'm1', level: 'read', requested: true, optIn: true },
+      { streamId: 'z', level: 'read', requested: true, optIn: true },
+    ]);
+    // Without heldAt: by id only, as before (and the same digest as before).
+    const byId = composeShownOffer(req, { ...current, heldAt: undefined }, CLIENT);
+    assert.deepEqual(byId.shown.permissions.find((p) => p.streamId === 'p1'),
+      { streamId: 'p1', level: 'read', requested: true, mandatory: true });
+    assert.notEqual(byId.shownDigest, c.shownDigest);
+    // read asked below a create-only stream: no level covers both.
+    const conflict = composeShownOffer(requested([{ streamId: 'k1', level: 'read' }]), current, CLIENT);
+    assert.equal(conflict.ok, false);
+    assert.equal(conflict.error.code, 'permission-level-conflict');
+  });
+
+  it('[OCMPU15] the join without shownDigest writes a stream held through the tree at the level covering both; no covering level throws', () => {
+    const current = {
+      aliased: false,
+      permissions: [{ streamId: 'p', level: 'contribute' }, { streamId: 'k', level: 'create-only' }],
+      heldAt: { p1: 'contribute', k1: 'create-only', z: null },
+    };
+    const next = nextGrantPermissions({
+      granted: [{ streamId: 'p1', level: 'read' }, { streamId: 'z', level: 'read' }], current, client: CLIENT, replace: false,
+    });
+    assert.deepEqual(next.filter((p) => p.streamId != null), [
+      { streamId: 'p', level: 'contribute' }, { streamId: 'k', level: 'create-only' },
+      { streamId: 'p1', level: 'contribute' }, { streamId: 'z', level: 'read' },
+    ]);
+    assert.throws(() => nextGrantPermissions({ granted: [{ streamId: 'k1', level: 'read' }], current, client: CLIENT, replace: false }),
+      (err) => err.code === 'permission-level-conflict');
+    // Replace mode writes what was ticked (the rows are already lifted).
+    const replaced = nextGrantPermissions({ granted: [{ streamId: 'p1', level: 'read' }], current, client: CLIENT, replace: true });
+    assert.deepEqual(replaced.filter((p) => p.streamId != null), [{ streamId: 'p1', level: 'read' }]);
+  });
 });
