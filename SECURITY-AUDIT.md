@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 25 (2026-11-17), covering releases 2.0.0-rc.40 to 2.0.0-rc.86.
+**Report revision:** 26 (2026-11-18), covering releases 2.0.0-rc.40 to 2.0.0-rc.87.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -141,6 +141,7 @@ its applicability is stated with it.
 | 2.0.0-rc.84 | 2026-11-13 | none (not an audit release); lower-severity fixes: the `integrity` of an updated access verifies on the form the API returns (stored hashes recomputed once at upgrade, no operator action beyond the migration run at boot), history snapshots of an access no longer carry its internal call counters | yes (2026-11-13) |
 | 2.0.0-rc.85 | 2026-11-17 | 1 High, 2 Medium (SQLite storage engine), lower-severity fixes; operator action: none beyond the upgrade for the fixes; before upgrading a SQLite core, look for access permissions on lower-cased `:_audit:action-` ids and for stream ids holding whitespace or equal to `..` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-17) |
 | 2.0.0-rc.86 | 2026-11-17 | no new finding; completion steps of earlier findings (every file of a backup run authenticated and runs signed, planned in section 5 since the first revision; cache invalidation between the processes of a core), lower-severity fixes (among them a `custom.dataStores` entry named after a built-in store, which came within reach of `*` permissions); operator action: a backup written by this release restores with this release or later, keep the backup directory for the backup only, sign backups taken with a recipient public key (`--signing-key`, `--signing-pubkey`); on a multi-core platform a new core joins with a bootstrap bundle only on this release or later; a `custom.dataStores` entry named `local`, `account` or `_audit` is no longer loaded without `override: true` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-17) |
+| 2.0.0-rc.87 | 2026-11-18 | no new finding; two items of the limits work planned in section 5 since the first revision (a time limit on the PostgreSQL work of API requests, on by default; a bound on the password checks running at once in each API worker), lower-severity fix reported through the public issue tracker (the session of a composed OAuth2 re-consent holds the request only); operator action: behind a PostgreSQL connection pooler, let it pass the two new connection parameters or set both keys to `0` and the limits on the database role, leave 2 more connections per pool in `max_connections`; clients handle the new `429` and `503` answers of password checks (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-18) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -2383,6 +2384,78 @@ lower-severity items listed last.
 - **Operator action:** check the boot log for a warning naming a `custom.dataStores` entry; set
   `override: true` on it if it is meant to replace the built-in store, otherwise rename it.
 
+### Fixed in 2.0.0-rc.87 (deployed)
+
+2.0.0-rc.87 carries no new counted finding. It ships two items of the limits work planned in
+section 5 since the first revision, and cuts the session of a composed OAuth2 re-consent to the
+request; each was reviewed independently before merge.
+
+#### Time limits on the PostgreSQL work of API requests
+
+- **Planned in section 5** since the first revision ("database statements have no default
+  timeout"); not a counted finding.
+- **What could happen:** a statement issued while serving an API request ran for as long as it
+  took, holding its database connection even after the client had gone away, so a few expensive
+  reads made with a valid credential could occupy a worker's connections (availability).
+- **What changed:** with the PostgreSQL engine, such a statement is stopped after
+  `storages.engines.postgresql.statementTimeoutMs` (30000 ms by default) and a transaction left idle
+  is closed after `idleInTransactionTimeoutMs` (60000 ms by default); the request answers
+  `503 api-unavailable` and one warning line names the request and the statement (truncated, never
+  its parameters). A streamed response is limited per batch of rows, so a long download is not
+  stopped by the time its client takes to read it. Schema migrations, the command-line tools,
+  account deletion, the background jobs and `system.checkPlatformIntegrity` are not limited; the
+  limits apply to the API, HFS and previews workers of the clustered server.
+- **Residual:** the limit bounds how long one request occupies a connection, not how many slow
+  requests one account sends in a row (a per-account cap on requests in flight stays planned,
+  section 5). The single-process entry points and the SQLite engine have no statement time limit.
+- **Operator action:** behind a connection pooler (for example PgBouncer), check before upgrading
+  that it passes both connection parameters, or set both keys to `0` and set the limits on the
+  database role instead. Leave room for 2 more connections per pool of each worker in
+  `max_connections`. `0` switches either limit off.
+
+#### Password checks: a bounded number at a time per API worker
+
+- **Planned in section 5** since the first revision (resource quotas); not a counted finding.
+- **What could happen:** password hashing and verification, and OAuth client-secret verification,
+  ran on the worker's small thread pool with no bound on how many ran at once. The attempt limits of
+  earlier releases count wrong guesses per account and per address; they did not bound the work of
+  the checks themselves, so a flood of password checks on unauthenticated routes (sign-in, MFA
+  recovery, the OAuth token endpoint) could occupy the whole pool and the CPU, stalling attachments,
+  DNS lookups for webhooks and compression for every account served by that worker.
+- **What changed:** at most `auth.passwordCheckConcurrency` checks (2 by default) run at once per
+  API worker, with up to `auth.passwordCheckQueue` (50) waiting at most 10 s for a turn. Beyond that
+  the call is refused without checking anything: `429 too-many-requests` on the API,
+  `503 temporarily_unavailable` on the OAuth endpoints, each with `Retry-After: 5`. A refused check
+  is not a failed attempt: it neither counts on the account's tally nor answers
+  `invalid-credentials` or `invalid_client`. Registration hashes the password before its storage
+  transaction opens, so a wait never holds a database connection.
+- **Residual:** a flood of password checks from many addresses can still make other accounts'
+  checks wait or be refused on that worker; it no longer stalls the worker's other work. Rate
+  limiting at a reverse proxy (section 5) remains the answer to such a flood.
+- **Operator action:** none beyond the upgrade. Clients of `auth.login`, `account.changePassword`,
+  the password reset, `mfa.recover`, the MFA step-up, `auth.register` and the OAuth token,
+  introspection and revocation endpoints must handle the new answers; an authorization code refused
+  this way is spent, and the client starts a new authorization. Keep `passwordCheckConcurrency` below
+  the thread pool size (`UV_THREADPOOL_SIZE`); the boot and `bin/check-config.js` warn otherwise.
+
+#### Lower-severity fixes in 2.0.0-rc.87
+
+- Reported through the public issue tracker, not counted: on a re-authorization of a registered
+  OAuth2 client through the composed consent screen, the session (and its refresh chain, and the
+  token `scope`) held every stream ticked on the screen, not only those the app requested, so an app
+  asking for one stream over a grant of many received a session reaching all of them
+  (open-pryv.io#170). The reach stayed within what the user had granted that client. The session
+  now holds the requested streams only (through the stream tree, each at the lower of the ticked and
+  the requested level); the grant itself is unchanged. A composed consent that keeps none of the
+  requested streams is refused (`400 invalid_scope`, `request-no-reach`) before anything is written.
+  Sessions minted earlier keep their reach until they end.
+- Not a security fix, listed for operators: a zone served by the cores' embedded DNS servers must be
+  delegated to at least two of them; with one nameserver, every restart of its core leaves the whole
+  zone unresolvable until the core answers again (`INSTALL.md`, `SINGLE-TO-MULTIPLE.md`).
+- **Operator action:** none beyond the upgrade. A consent page that shows the composed offer can
+  list the streams already held outside the request apart (they carry no `requested` flag); a scope
+  grammar extension's `echo` must name tokens of the session's permissions only.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2393,9 +2466,11 @@ reverse proxy in front of every core. Deploy one, follow the operator rate-limit
 it in `http.trustedProxies`.
 
 **Resource quotas.** Some resources have no per-account or per-connection bound yet (connections,
-streams, webhooks, storage), and database statements have no default timeout. These are planned as
-a limits-hardening batch; a reverse proxy and the operator's own database settings mitigate most of
-them meanwhile.
+requests in flight, streams, webhooks, storage). These are planned as a limits-hardening batch; a
+reverse proxy mitigates most of them meanwhile. Since 2.0.0-rc.87 a PostgreSQL statement issued
+while serving an API request has a time limit and password checks run a bounded number at a time
+per API worker (section 4); the time limit bounds how long one request occupies a connection, not
+how many slow requests an account sends. With the SQLite engine, statements have no time limit.
 
 **Container image.** Since 2.0.0-rc.55 the image is based on Debian 13 and bundles rqlite 10.6.0,
 and every release image is scanned in CI before it is published: a critical advisory that has a
@@ -2496,3 +2571,4 @@ This report is updated with every release that carries a security fix:
 | 23 | 2026-11-13 | 2.0.0-rc.40 to 2.0.0-rc.84 | Release table adds 2.0.0-rc.84 (not an audit release; lower-severity fixes: access integrity verifiable after an update, history snapshots without internal call counters); counts unchanged. Deployed on the maintainers' platforms (2026-11-13). |
 | 24 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.85 | Adds 2.0.0-rc.85 (review of how the SQLite storage engine builds its queries and matches stream ids): 1 High and 2 Medium findings, all on the SQLite engine, and lower-severity fixes; the planned move of the SQLite engine to bound values ships (removed from section 5, section 4.1 updated). Deployed on the maintainers' platforms (2026-11-17). |
 | 25 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.86 | Adds 2.0.0-rc.86: no new finding, counts unchanged; the second step of the 2.0.0-rc.51 backup finding ships (every file of a backup run authenticated, signed runs; removed from section 5, which gains the backup residual risks; six findings keep a planned second step), the 2.0.0-rc.43 cache item is completed (cache invalidation between the processes of a core), and lower-severity fixes, among them a custom data store named after a built-in store that came within reach of `*` permissions (section 4.1 qualified). Deployed on the maintainers' platforms (2026-11-17). |
+| 26 | 2026-11-18 | 2.0.0-rc.40 to 2.0.0-rc.87 | Adds 2.0.0-rc.87: no new finding, counts unchanged; two items of the limits work planned in section 5 ship (a time limit on the PostgreSQL work of API requests, a bound on the password checks running at once), and the resource-quotas paragraph of section 5 is updated (the per-account cap on requests in flight stays planned); one lower-severity fix reported through the public issue tracker (the session of a composed OAuth2 re-consent holds the request only). Deployed on the maintainers' platforms (2026-11-18). |
