@@ -79,7 +79,7 @@ const toyExtension = {
   tokenResponse: (ctx) => (tokenHookOverride != null ? tokenHookOverride(ctx) : {}),
 };
 
-const SCOPE = ['read/a', 'read/b', 'read/c', 'write/a', 'write/b', 'add/a', 'must/a', 'read/zz', 'ctx/choice', 'ctx/locked'];
+const SCOPE = ['read/a', 'read/a1', 'read/b', 'read/c', 'write/a', 'write/b', 'add/a', 'must/a', 'read/zz', 'ctx/choice', 'ctx/locked'];
 
 function baseOf (accessId) {
   return String(accessId).split(':')[0];
@@ -251,8 +251,8 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.equal(composed.body.authenticated, true);
     assert.deepEqual(composed.body.offer.permissions, [
       { streamId: 'a', level: 'read', currentlyGranted: true, currentLevel: 'read' },
-      { streamId: 'b', level: 'contribute', currentlyGranted: true, currentLevel: 'contribute' },
-      { streamId: 'c', level: 'read' },
+      { streamId: 'b', level: 'contribute', requested: true, currentlyGranted: true, currentLevel: 'contribute' },
+      { streamId: 'c', level: 'read', requested: true },
     ]);
     assert.deepEqual(composed.body.currentGrant, { subjectMode: 'account' });
     assert.equal(composed.body.subjectChange, null);
@@ -488,12 +488,112 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
       [{ streamId: 'a', level: 'read' }, { streamId: 'b', level: 'read' }]);
   });
 
-  it('[OCMP20] a composed re-consent keeping streams the request did not name: the session holds them, the scope lists the requested tokens only', async () => {
+  /** The live sessions of the client on the account. */
+  async function sessionsOf (who, cid = clientId) {
+    return (await accesses(who)).filter((a) => a.name === 'oauth:' + cid);
+  }
+
+  it('[OCMP20] a composed re-consent keeping streams the request did not name: the grant keeps them, the session holds the request only; an earlier session keeps its own chain', async () => {
     const who = await newUser();
-    await consentAndToken(who, 'offline_access read/a read/b');
-    const t = await consentAndToken(who, 'offline_access read/c');
+    const first = await consentAndToken(who, 'offline_access read/a read/b');
+    const c = await consent(who, 'offline_access read/c');
+    // The screen tells the streams asked now from the ones held outside the request.
+    assert.deepEqual(c.offer.offer.permissions.map((p) => p.streamId + ':' + (p.requested === true)), ['a:false', 'b:false', 'c:true']);
+    assert.equal(c.accept.status, 200, JSON.stringify(c.accept.body));
+    const t = (await exchange(c.flow, c.accept)).body;
     assert.deepEqual(t.scope.split(' ').sort(), ['offline_access', 'read/c']);
-    for (const s of ['a', 'b', 'c']) assert.equal((await readStream(who, t.access_token, s)).status, 200, s);
+    assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:read', 'b:read', 'c:read']);
+    assert.deepEqual(userStreamsOf((await holds(who, t.access_token)).permissions), ['c:read']);
+    assert.equal((await readStream(who, t.access_token, 'c')).status, 200);
+    for (const s of ['a', 'b']) assert.equal((await readStream(who, t.access_token, s)).status, 403, s);
+    // Its refresh continues the cut chain.
+    const r = await refresh(t.refresh_token);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(userStreamsOf((await holds(who, r.body.access_token)).permissions), ['c:read']);
+    // The first chain is left as it was.
+    for (const s of ['a', 'b']) assert.equal((await readStream(who, first.access_token, s)).status, 200, s);
+    const r1 = await refresh(first.refresh_token);
+    assert.equal(r1.status, 200, JSON.stringify(r1.body));
+    assert.deepEqual(r1.body.scope.split(' ').sort(), ['offline_access', 'read/a', 'read/b']);
+    assert.deepEqual(userStreamsOf((await holds(who, r1.body.access_token)).permissions), ['a:read', 'b:read']);
+  });
+
+  it('[OCMP23] a composed re-consent below the level held: the session is at the requested level, the grant keeps the held one', async () => {
+    const who = await newUser();
+    await consentAndToken(who, 'offline_access write/a');
+    const c = await consent(who, 'offline_access read/a');
+    assert.deepEqual(c.offer.offer.permissions,
+      [{ streamId: 'a', level: 'contribute', requested: true, currentlyGranted: true, currentLevel: 'contribute' }]);
+    assert.equal(c.accept.status, 200, JSON.stringify(c.accept.body));
+    const t = (await exchange(c.flow, c.accept)).body;
+    assert.deepEqual(t.scope.split(' ').sort(), ['offline_access', 'read/a']);
+    assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:contribute']);
+    assert.deepEqual(userStreamsOf((await holds(who, t.access_token)).permissions), ['a:read']);
+    assert.equal((await writeStream(who, t.access_token, 'a')).status, 403);
+    assert.equal((await readStream(who, t.access_token, 'a')).status, 200);
+    // The refresh continues at the cut level, and says so.
+    const r = await refresh(t.refresh_token);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.scope.split(' ').sort(), ['offline_access', 'read/a']);
+    assert.deepEqual(userStreamsOf((await holds(who, r.body.access_token)).permissions), ['a:read']);
+  });
+
+  it('[OCMP24] through the stream tree: a held child of a requested stream is in the session; a held parent of a requested stream is not', async () => {
+    const who = await newUser();
+    const child = await coreRequest.post('/' + who.username + '/streams').set('Authorization', who.token).send({ id: 'a1', name: 'a1', parentId: 'a' });
+    assert.equal(child.status, 201, JSON.stringify(child.body));
+    // Held a1, requested its parent a; the user keeps a1 only (a cut by id
+    // alone would leave the request no reach here).
+    await consentAndToken(who, 'read/a1');
+    const below = await consent(who, 'read/a ctx/choice', { keep: (p) => p.streamId === 'a1' });
+    assert.equal(below.accept.status, 200, JSON.stringify(below.accept.body));
+    const t1 = (await exchange(below.flow, below.accept)).body;
+    assert.deepEqual(userStreamsOf((await holds(who, t1.access_token)).permissions), ['a1:read']);
+
+    // Held a, requested its child a1: the session reaches a1 only.
+    const other = await newUser();
+    const child2 = await coreRequest.post('/' + other.username + '/streams').set('Authorization', other.token).send({ id: 'a1', name: 'a1', parentId: 'a' });
+    assert.equal(child2.status, 201, JSON.stringify(child2.body));
+    await consentAndToken(other, 'read/a');
+    const above = await consent(other, 'read/a1');
+    assert.deepEqual(above.offer.offer.permissions.map((p) => p.streamId + ':' + (p.requested === true)), ['a:false', 'a1:true']);
+    assert.equal(above.accept.status, 200, JSON.stringify(above.accept.body));
+    const t2 = (await exchange(above.flow, above.accept)).body;
+    assert.deepEqual(streamsOf((await grantOf(other)).permissions), ['a1:read', 'a:read']);
+    assert.deepEqual(userStreamsOf((await holds(other, t2.access_token)).permissions), ['a1:read']);
+
+    // Held a, requested a1, its row left unticked: the held parent alone does
+    // not put a1 in the session (the session meets the grant entry by entry),
+    // so the request has no reach and the consent is refused, nothing written.
+    const third = await newUser();
+    const child3 = await coreRequest.post('/' + third.username + '/streams').set('Authorization', third.token).send({ id: 'a1', name: 'a1', parentId: 'a' });
+    assert.equal(child3.status, 201, JSON.stringify(child3.body));
+    await consentAndToken(third, 'read/a');
+    const before = await grantOf(third);
+    const unticked = await consent(third, 'read/a1 ctx/choice', { keep: (p) => p.streamId === 'a' });
+    assert.equal(unticked.accept.status, 400, JSON.stringify(unticked.accept.body));
+    assert.equal(unticked.accept.body.reason, 'request-no-reach');
+    assert.deepEqual((await grantOf(third)).permissions, before.permissions);
+  });
+
+  it('[OCMP25] a composed consent keeping none of the requested streams is refused before anything is written; without shownDigest the path is unchanged', async () => {
+    const who = await newUser();
+    await consentAndToken(who, 'read/a read/b ctx/choice');
+    const grantBefore = await grantOf(who);
+    const sessionsBefore = (await sessionsOf(who)).length;
+    const c = await consent(who, 'read/c ctx/choice', { keep: (p) => p.streamId === 'a' });
+    assert.equal(c.accept.status, 400, JSON.stringify(c.accept.body));
+    assert.equal(c.accept.body.error, 'invalid_scope');
+    assert.equal(c.accept.body.reason, 'request-no-reach');
+    const grantAfter = await grantOf(who);
+    assert.equal(grantAfter.id, grantBefore.id);
+    assert.deepEqual(grantAfter.permissions, grantBefore.permissions);
+    assert.equal((await sessionsOf(who)).length, sessionsBefore);
+
+    // A consent UI that does not compose: joined into the grant, the session is what was posted.
+    const t = await consentAndToken(who, 'read/c', { composed: false });
+    assert.deepEqual(streamsOf((await grantOf(who)).permissions), ['a:read', 'b:read', 'c:read']);
+    assert.deepEqual(userStreamsOf((await holds(who, t.access_token)).permissions), ['c:read']);
   });
 
   it('[OCMP21] a stream unticked at the first consent opens unticked on the next one; a quick accept keeps it out', async () => {
@@ -506,7 +606,7 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const o = await offer(flow.state, who);
     assert.equal(o.status, 200, JSON.stringify(o.body));
     const b = o.body.offer.permissions.find((p) => p.streamId === 'b');
-    assert.deepEqual(b, { streamId: 'b', level: 'read', optIn: true });
+    assert.deepEqual(b, { streamId: 'b', level: 'read', requested: true, optIn: true });
     // What a consent UI honouring `optIn` posts on a plain Accept.
     const ticked = o.body.offer.permissions.filter((p) => p.optIn !== true);
     assert.deepEqual(ticked.map((p) => p.streamId), ['a']);

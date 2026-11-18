@@ -134,4 +134,4 @@ async function assertGrantedWithinOffer (params: {
   return violations.length === 0 ? { ok: true } : { ok: false, violations };
 }
 
-export { assertGrantedWithinOffer, evaluateExcess };
+export { assertGrantedWithinOffer, evaluateExcess, accessLogicResolver };
