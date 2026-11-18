@@ -24,7 +24,6 @@ const username = cuid();
 let fixtures;
 let infoHttpServer;
 let mockInfo;
-const infoHttpServerPort = 5123;
 describe('[SINF] Service', () => {
   before(async () => {
     await initTests();
@@ -32,6 +31,9 @@ describe('[SINF] Service', () => {
     const config = await getConfig();
     mockInfo = config.get('service');
 
+    // The register URL's port, so checkouts running their suites side by
+    // side can each set their own in their test config.
+    const infoHttpServerPort = Number(new URL(config.get('services:register:url')).port);
     infoHttpServer = new HttpServer('/service/info', 200, mockInfo);
     await infoHttpServer.listen(infoHttpServerPort);
     fixtures = getNewFixture();

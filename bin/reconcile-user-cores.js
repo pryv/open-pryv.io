@@ -278,11 +278,14 @@ const NO_PASSWORD_STATUS = {
   repaired: 'erased',
   'not-named': 'erased only when named: --apply --user-id <id>, once checked by hand',
   'holds-data': 'holds data (a restore in flight or an account in use): restore it again with --overwrite, set a password, or delete it',
-  'erasure-record': 'an erasure of this account is unfinished: its resume completes it',
+  'erasure-record': 'an erasure of this account is unfinished: a running core completes it (its account auto-deletion ' +
+    'sweep, active even with auto-deletion off, resumes unfinished erasures 15 min after they stop)',
   recent: 'newest account field younger than the grace: run again later',
   'no-age-signal': 'no account field, so no age: needs --settle 60 or more',
   'in-flight': 'got a password while the run settled (a registration or restore in flight): kept',
-  failed: 'erasure failed (see the log): run again to complete it'
+  gone: 'no longer indexed under this name (deleted or renamed meanwhile): left alone',
+  failed: 'erasure failed midway (see the log): its record stays in the erasure ledger and a running core completes ' +
+    'it (its account auto-deletion sweep, 15 min after the erasure stopped)'
 };
 
 function formatAge (seconds) {

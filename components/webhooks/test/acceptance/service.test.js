@@ -42,12 +42,17 @@ describe('[WSV01] webhooks', function () {
     repository = new Repository(webhooksStorage);
   });
 
-  const port = 5123;
-  const port2 = 5124;
+  // The mock notification servers take the register URL's port and the next
+  // one, so checkouts running their suites side by side can each set their
+  // own in their test config.
+  let port, port2;
   const postPath = '/notifications';
   const mockServerHostname = 'http://127.0.0.1:';
 
-  before(function () {
+  before(async function () {
+    const config = await require('@pryv/boiler').getConfig();
+    port = Number(new URL(config.get('services:register:url')).port);
+    port2 = port + 1;
     url = mockServerHostname + port + postPath;
     url2 = mockServerHostname + port2 + postPath;
   });

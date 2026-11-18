@@ -110,7 +110,7 @@ export type AccountStoreOrphanReport = AccountStoreOrphanCounts & {
   cleared?: boolean;
 };
 /** State of an indexed account with no password. */
-export type NoPasswordStatus = 'repairable' | 'repaired' | 'not-named' | 'holds-data' | 'erasure-record' | 'recent' | 'no-age-signal' | 'in-flight' | 'failed';
+export type NoPasswordStatus = 'repairable' | 'repaired' | 'not-named' | 'holds-data' | 'erasure-record' | 'recent' | 'no-age-signal' | 'in-flight' | 'gone' | 'failed';
 export type NoPasswordAccountReport = {
   userId: string;
   username: string;
@@ -1389,7 +1389,8 @@ class UsersRepository {
             `(${c.accountFields} account fields, trigger ${UNFINISHED_REGISTRATION_TRIGGER})`);
         } catch (err) {
           c.status = 'failed';
-          logger.error(`unfinished registration: the erasure of account ${c.userId} failed (run again to complete it): ` +
+          logger.error(`unfinished registration: the erasure of account ${c.userId} failed; its record stays in the erasure ledger ` +
+            'and a running core completes it (the account auto-deletion sweep resumes unfinished erasures): ' +
             ((err as Error)?.message ?? String(err)));
         }
       }
@@ -1419,6 +1420,13 @@ class UsersRepository {
    * `repairable` when every check passes (being named is checked by the caller).
    */
   async #checkNoPasswordAccount (c: NoPasswordAccountReport, erasures: { get (userId: string): Promise<unknown> }, graceSeconds: number, settleMs: number): Promise<void> {
+    // Still this id under this name: deleted meanwhile (the name possibly
+    // registered again by another account), the erasure would reach the
+    // platform rows and sessions of whoever holds the name now.
+    if (await this.usersIndex.getUsername(c.userId) !== c.username) {
+      c.status = 'gone';
+      return;
+    }
     const fields = await this.userAccountStorage.getAccountFieldsWithMeta(c.userId);
     const times = Object.values(fields).map((f) => f.time);
     const newest = times.length > 0 ? Math.max(...times) : null;
@@ -1443,14 +1451,16 @@ class UsersRepository {
 
   /**
    * True when the id holds a row in streams, profile, webhooks or events, or
-   * more than `maxAccesses` accesses.
+   * more than `maxAccesses` accesses. A collection that cannot be probed
+   * counts as holding data: this is the guard that tells a restore in flight
+   * from residue.
    */
   async #holdsUserData (userId: string, maxAccesses: number): Promise<boolean> {
     type CountableLike = { countAll?: (user: { id: string }, cb: (err: Error | null, count?: number) => void) => void };
     for (const name of ['streams', 'profile', 'webhooks', 'accesses']) {
       const coll = this.storageLayer[name] as CountableLike | undefined;
       const countAll = coll?.countAll;
-      if (countAll == null) continue;
+      if (countAll == null) return true;
       const count = await fromCallback((cb: (err: Error | null, count?: number) => void) => countAll.call(coll, { id: userId }, cb)) as number;
       if (count > (name === 'accesses' ? maxAccesses : 0)) return true;
     }
@@ -1470,7 +1480,7 @@ class UsersRepository {
       const items = await fromCallback((cb: (err: Error | null, items?: unknown[]) => void) => exportAll.call(events, { id: userId }, cb)) as unknown[];
       return items.length > 0;
     }
-    return false;
+    return true;
   }
 
   /**

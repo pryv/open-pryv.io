@@ -221,11 +221,23 @@ describe('[RCRG] unfinished registrations sweep', function () {
     const mall = await require('mall').getMall();
     await mall.streams.create(withStream.userId, { id: 'rcrgrestored', name: 'Restored', parentId: null });
     await erasures.insertIfAbsent(erasureRow(withRecord.userId, withRecord.uname));
+    // The password of `inFlight` is written right after the run first reads
+    // its account fields, i.e. while the run is under way (no timer: the
+    // listing walks every indexed user, which takes long in a full suite).
+    const passwordHash = await require('utils').encryption.hash(PASSWORD);
+    const originalMeta = accountStorage.getAccountFieldsWithMeta;
+    let written = false;
+    accountStorage.getAccountFieldsWithMeta = async function (userId, ...rest) {
+      const fields = await originalMeta.call(this, userId, ...rest);
+      if (userId === inFlight.userId && !written) {
+        written = true;
+        await accountStorage.addPasswordHash(inFlight.userId, passwordHash, 'system');
+      }
+      return fields;
+    };
     try {
-      const run = sweep({ apply: true, userIds: [withStream.userId, withRecord.userId, inFlight.userId], graceSeconds: 0, settleMs: 400 });
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      await accountStorage.addPasswordHash(inFlight.userId, await require('utils').encryption.hash(PASSWORD), 'system');
-      const s = await run;
+      const s = await sweep({ apply: true, userIds: [withStream.userId, withRecord.userId, inFlight.userId], graceSeconds: 0, settleMs: 400 });
+      assert.ok(written, 'the password was written during the run');
       const status = (c) => s.noPassword.find((r) => r.userId === c.userId)?.status;
       assert.strictEqual(status(withStream), 'holds-data', JSON.stringify(s.noPassword));
       assert.strictEqual(status(withRecord), 'erasure-record');
@@ -234,8 +246,42 @@ describe('[RCRG] unfinished registrations sweep', function () {
         assert.strictEqual(await usersRepository.usersIndex.getUsername(c.userId), c.uname, c.uname + ' kept');
       }
     } finally {
+      accountStorage.getAccountFieldsWithMeta = originalMeta;
       await erasures.delete(withRecord.userId);
       for (const c of [withStream, withRecord, inFlight]) await removeAccount(c);
+    }
+  });
+
+  it('[RCRG10] a named account deleted while the run settles is left alone, and the account now holding its name keeps its rows', async function () {
+    const crashed = await crashedRegistration('rcgn');
+    const { User } = require('business/src/users/index.ts');
+    const successor = new User({ username: crashed.uname, email: freshName('m') + '@example.com', password: PASSWORD, appId: APP_ID });
+    // Once the run has listed it: the crashed account is deleted and its
+    // name registered again by another account.
+    const originalMeta = accountStorage.getAccountFieldsWithMeta;
+    let replaced = false;
+    accountStorage.getAccountFieldsWithMeta = async function (userId, ...rest) {
+      const fields = await originalMeta.call(this, userId, ...rest);
+      if (userId === crashed.userId && !replaced) {
+        replaced = true;
+        await usersRepository.deleteOne(crashed.userId, crashed.uname);
+        await platform.setUserCore(crashed.uname, platform.coreId);
+        await usersRepository.insertOne(successor, true);
+      }
+      return fields;
+    };
+    try {
+      const s = await sweep({ apply: true, userIds: [crashed.userId], graceSeconds: 0, settleMs: 100 });
+      assert.ok(replaced, 'replaced during the run');
+      assert.strictEqual(s.noPassword.find((c) => c.userId === crashed.userId)?.status, 'gone', JSON.stringify(s.noPassword));
+      assert.strictEqual(await usersRepository.usersIndex.getUserId(crashed.uname), successor.id, 'the successor keeps the name');
+      assert.strictEqual(await platform.getUserCore(crashed.uname), platform.coreId, 'and its routing row');
+      assert.ok(await platform.getUniqueValueOwner('email', successor.email) != null, 'and its email');
+      assert.ok(await accountStorage.getPasswordHash(successor.id) != null, 'and its password');
+    } finally {
+      accountStorage.getAccountFieldsWithMeta = originalMeta;
+      await removeAccount({ userId: successor.id, uname: crashed.uname });
+      await removeAccount(crashed);
     }
   });
 
@@ -314,7 +360,10 @@ describe('[RCRG] unfinished registrations sweep', function () {
     }
   });
 
-  it('[RCRG9] bin/reconcile-user-cores.js --registrations: a separate pass, --user-id only with --apply, reports by default', async function () {
+  it('[RCRG9] bin/reconcile-user-cores.js --registrations: a separate pass, --user-id only with --apply, reports by default, erases a named account from its own process', async function () {
+    // Several CLI processes, each starting the storages (and a dry run that
+    // walks every indexed user).
+    this.timeout(180000);
     const { spawnSync } = require('node:child_process');
     const path = require('node:path');
     const { childStorageEngineEnv } = require('test-helpers');
@@ -339,6 +388,15 @@ describe('[RCRG] unfinished registrations sweep', function () {
       assert.match(run.stdout, /--registrations: DRY-RUN \(no writes\)/);
       assert.ok(run.stdout.includes(crashed.userId), run.stdout);
       assert.strictEqual(await usersRepository.usersIndex.getUsername(crashed.userId), crashed.uname, 'a report writes nothing');
+
+      // The erasure, run by the tool's own process (not this API test process).
+      const erase = cli(['--registrations', '--apply', '--user-id', crashed.userId, '--grace', '0', '--settle', '0']);
+      assert.strictEqual(erase.status, 0, erase.stdout + erase.stderr);
+      assert.match(erase.stdout, /--registrations: applied/);
+      assert.ok(await usersRepository.usersIndex.getUsername(crashed.userId) == null, 'no index row: ' + erase.stdout);
+      assert.strictEqual(await platform.getUserCore(crashed.uname), null, 'routing row released');
+      assert.strictEqual(await platform.getUniqueValueOwner('email', crashed.email), null, 'email released');
+      assert.strictEqual(await erasures.get(crashed.userId), null, 'no erasure record left');
     } finally {
       await removeAccount(crashed);
     }

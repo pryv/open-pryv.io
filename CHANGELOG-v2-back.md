@@ -15,6 +15,9 @@
   erased with a settle below 60 s. Everything else is listed. Logger lines carry ids, class, counts and
   the trigger only. `--user-id` without `--apply`, and `--registrations` with another pass, are refused.
   An empty users index facing account-store rows is refused (exit 3) unless `--force-empty-local`.
+  Every check of an indexed account first re-reads the index under its name (deleted or renamed meanwhile:
+  `gone`, left alone), and a collection the pass cannot probe counts as holding data. An erasure that
+  stops midway keeps its ledger record, which the running core's auto-deletion sweep completes.
 - `reconcileUserCoreMap`: before deleting a stale self-row, deletes the unique and indexed platform rows
   its name owns (new `Platform.deleteUserRowsByPreHashedUsername`, which `deleteUser` now calls), so the
   email of a registration that died before indexing its user is free again; counted in
@@ -26,6 +29,9 @@
   it crossed the 20 s api-server limit, which stops the whole run.
 - `bin/reconcile-user-cores.js` loads the default audit path config (syslog socket), as `bin/backup.js`
   does, so the registrations pass can init the audit.
+- Test harness: `[SINF]` and the webhooks acceptance mock servers take their port from
+  `services.register.url` (and the next one) instead of a fixed 5123, so checkouts running their suites
+  side by side can each set their own in their test config.
 
 ### Registration and account update: no idle transaction client
 
