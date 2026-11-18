@@ -9,6 +9,6 @@ import { APIError } from './APIError.ts';
 import { errorHandling } from './errorHandling.ts';
 import { ErrorIds } from './ErrorIds.ts';
 import { ErrorMessages } from './ErrorMessages.ts';
-import { factory } from './factory.ts';
+import { factory, isStatementCancelled } from './factory.ts';
 
-export { APIError, errorHandling, ErrorIds, ErrorMessages, factory };
+export { APIError, errorHandling, ErrorIds, ErrorMessages, factory, isStatementCancelled };

@@ -24,7 +24,10 @@
   statement text (truncated, never its parameters). Tune with the two keys; `0` switches either
   off. Both must be integers >= 0 (the boot refuses the config otherwise; a non-zero value below
   1000 warns, as seconds typed for milliseconds). Both are sent to PostgreSQL as connection
-  parameters.
+  parameters. **Behind a connection pooler** (e.g. PgBouncer, which by default refuses a
+  connection carrying a startup parameter it does not track), check before upgrading: either let
+  the pooler pass both parameters through, or set both keys to `0` and set the limits on the
+  database role instead (a pooler told to ignore them drops them, leaving the core unlimited).
 - Connections: the unlimited work above runs on a separate small pool, so each of a worker's
   PostgreSQL pools may open up to 2 more connections (at boot for the schema check, and while such
   work runs; idle ones close after 30 s). Leave that headroom in `max_connections`.

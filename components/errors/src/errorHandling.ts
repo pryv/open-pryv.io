@@ -11,6 +11,7 @@
 import type { APIError as APIErrorType } from './APIError.ts';
 import { APIError } from './APIError.ts';
 import { ErrorIds } from './ErrorIds.ts';
+import { isStatementCancelled } from './factory.ts';
 // Logged URLs never carry the access token (`?auth=`).
 import { redactUrl } from 'utils/src/redactUrl.ts';
 
@@ -104,10 +105,10 @@ errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLik
                   ? apiError.innerError.stack || apiError.innerError.message
                   : apiError.innerError.message;
     }
-    const inner = apiError.innerError as (Error & { code?: unknown; statementText?: unknown }) | undefined;
+    const inner = apiError.innerError;
     if (apiError.id === ErrorIds.UnexpectedError) {
       logger.error(logMsg, metadata);
-    } else if (inner?.code === '57014') {
+    } else if (isStatementCancelled(inner)) {
       // A statement stopped by the database time limit: the operator's signal
       // for tuning it. Its text (truncated), never its parameters.
       logger.warn(logMsg, { ...metadata, statement: typeof inner.statementText === 'string' ? inner.statementText : undefined });

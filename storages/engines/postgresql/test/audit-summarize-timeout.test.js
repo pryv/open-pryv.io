@@ -99,11 +99,12 @@ describe('[PGSB] PostgreSQL audit summarize: statement timeout', function () {
   });
 
   it('[PGSB2] the timeout does not outlive the summary on the pooled connections', async () => {
+    const before = (await userDb.readDb.query('SHOW statement_timeout')).rows[0].statement_timeout;
     const groups = await userDb.summarize({ fromTime: 0, toTime: 100000, slotSeconds: 3600, deadline: Date.now() + 300 });
     assert.deepStrictEqual(groups, [{ slot: 10, action: 'events.get', error: false, count: 1 }]);
     for (let i = 0; i < 10; i++) {
       const res = await userDb.readDb.query('SHOW statement_timeout');
-      assert.strictEqual(res.rows[0].statement_timeout, '0');
+      assert.strictEqual(res.rows[0].statement_timeout, before);
     }
   });
 

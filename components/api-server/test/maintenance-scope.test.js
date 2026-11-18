@@ -34,6 +34,7 @@ describe('[MNSC] maintenance scope on long legitimate work', function () {
   before(async function () {
     await initTests();
     await initCore();
+    await require('api-server/src/methods/auth/delete.ts').default(global.app.api);
     config = await getConfig();
     storageLayer = await getStorageLayer();
     fixture = getNewFixture();
@@ -78,6 +79,47 @@ describe('[MNSC] maintenance scope on long legitimate work', function () {
     });
     assert.strictEqual(inStep, true, 'the step runs in the scope');
     assert.strictEqual(afterNext, false, 'the rest of the chain does not');
+  });
+
+  // The steps' own statements, however deep (callback-style storage calls,
+  // parallel deletes, the heartbeat): each pool choice is made in the scope,
+  // which is what sends it to the unlimited pool of a limited process.
+  it('[MNSC4] every statement of a real erasure is issued in the maintenance scope, through eraseAccount and auth.delete', async function () {
+    const { DatabasePG } = require('storages/engines/postgresql/src/DatabasePG.ts');
+    const { databasePG } = require('storages');
+    if (databasePG == null) return this.skip(); // PostgreSQL only
+    const adminKey = config.get('auth:adminAccessKey');
+    const choices = [];
+    const writes = [];
+    const originalChoice = DatabasePG.prototype._poolForCall;
+    sinon.stub(DatabasePG.prototype, '_poolForCall').callsFake(function () {
+      choices.push(isInMaintenance());
+      return originalChoice.call(this);
+    });
+    const originalQuery = DatabasePG.prototype.query;
+    sinon.stub(DatabasePG.prototype, 'query').callsFake(function (text, params) {
+      if (/^\s*(DELETE|DROP)\b/i.test(text)) writes.push(isInMaintenance());
+      return originalQuery.call(this, text, params);
+    });
+    const makeUser = async (prefix) => {
+      const username = (prefix + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
+      const user = await fixture.user(username);
+      const stream = await user.stream({ id: prefix + '-' + cuid().slice(-10), name: prefix });
+      await stream.event({ type: 'note/txt', content: 'to erase' });
+      return { user, username };
+    };
+    const direct = await makeUser('mnsd');
+    const viaRoute = await makeUser('mnsr');
+    choices.length = 0;
+    await new Deletion(null, storageLayer, config).eraseAccount({ id: direct.user.attrs.id, username: direct.username }, { teardown: false });
+    assert.ok(choices.length > 0, 'the erasure issued statements');
+    assert.ok(choices.every((v) => v === true), choices.filter((v) => !v).length + ' of ' + choices.length + ' pool choices made outside the scope');
+
+    writes.length = 0;
+    const res = await coreRequest.delete('/users/' + viaRoute.username).set('Authorization', adminKey);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.ok(writes.length > 0, 'the route erased through DatabasePG.query');
+    assert.ok(writes.every((v) => v === true), writes.filter((v) => !v).length + ' of ' + writes.length + ' deletes issued outside the scope');
   });
 
   it('[MNSC2] a storage-size pass runs in the maintenance scope', async () => {

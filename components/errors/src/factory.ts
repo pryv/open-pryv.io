@@ -17,9 +17,11 @@ const STATEMENT_CANCELLED_CODE = '57014';
 const STATEMENT_CANCELLED_MESSAGE = 'The operation ran longer than this server allows and was stopped. ' +
   'Narrow the request (time range, streams, limit) or retry later.';
 
+/** A database statement stopped by the server's time limit. */
 function isStatementCancelled (err: unknown): err is Error & { code: string; statementText?: string } {
   return err instanceof Error && (err as { code?: unknown }).code === STATEMENT_CANCELLED_CODE;
 }
+export { isStatementCancelled };
 
 /**
  * The full factory contract — one entry per error producer below.
