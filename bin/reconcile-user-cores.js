@@ -67,6 +67,18 @@
 // digits). Run it before upgrading to the release that mints address aliases:
 // an alias of that shape is then a former username, which that release reads
 // as an address alias of its account. Zero is the expected result.
+//
+// With --registrations it looks for what a registration that died midway
+// left: account-store rows under an id the users index does not hold (on
+// PostgreSQL), and indexed accounts with no password. It REPORTS by default
+// (--dry-run is accepted and changes nothing). --apply clears the
+// account-store rows that hold nothing else and are older than the grace
+// (--grace <hours>, default 24), and erases an indexed account with no
+// password only when named with --user-id <id> (repeatable) and still
+// passing every check after the settle delay (--settle, default 60 s here).
+// Anything else is listed, to resolve by hand. The stale routing rows of
+// such a registration are the username pass's (above), which also releases
+// the unique and indexed values their names held.
 
 const path = require('path');
 
@@ -112,11 +124,29 @@ require('@pryv/boiler').init({
     const { getConfig } = require('@pryv/boiler');
     const config = await getConfig();
 
+    // The registrations pass can erase an account: the same initialisation
+    // as bin/backup.js (the user directories, then the storages, then the
+    // audit when active).
+    if (args.registrations) await require('storage').userLocalDirectory.init();
     await require('storages').init(config);
+    if (args.registrations && config.get('audit:active')) await require('audit').default.init();
     const { getPlatform } = require('platform');
     const platform = await getPlatform();
     const { getUsersRepository } = require('business/src/users/index.ts');
     const usersRepository = await getUsersRepository();
+
+    if (args.registrations) {
+      const s = await usersRepository.reconcileUnfinishedRegistrations({
+        apply: args.apply,
+        userIds: args.userIds,
+        graceSeconds: args.graceHours == null ? undefined : args.graceHours * 3600,
+        settleMs: args.settleSeconds == null ? undefined : args.settleSeconds * 1000,
+        forceEmptyLocal: args.forceEmptyLocal
+      });
+      printRegistrationsSummary(s, platform.coreId);
+      if (s.refusedEmptyLocal === true) process.exit(3);
+      process.exit(s.noPassword.some((c) => c.status === 'failed') ? 1 : 0);
+    }
 
     if (args.extIds) {
       const { getExternalIdsService } = require('business/src/external-ids/service.ts');
@@ -209,6 +239,7 @@ require('@pryv/boiler').init({
     console.log('  stale rows deleted      ' + summary.deleted.length);
     console.log('  kept (registered while  ' + summary.inFlight.length);
     console.log('        the run settled)');
+    console.log('  platform rows released  ' + summary.platformRowsReleased + ' (unique and indexed values the stale names held)');
     console.log('  missing rows healed     ' + summary.healed.length);
     console.log('  conflicts (unhealable)  ' + summary.conflicts.length);
     for (const c of summary.conflicts) {
@@ -230,12 +261,93 @@ require('@pryv/boiler').init({
   }
 })();
 
+const ORPHAN_REASONS = {
+  'has-password': 'has a password: a completed account whose index row is missing, resolve by hand',
+  'has-store-key-values': 'has store key-values: resolve by hand',
+  'holds-data': 'holds events, streams, accesses, profile or webhooks: resolve by hand',
+  'erasure-record': 'an erasure of this id is unfinished: its resume completes it',
+  recent: 'newest account field younger than the grace: run again later',
+  indexed: 'indexed, or its rows gone, meanwhile: left alone'
+};
+const NO_PASSWORD_STATUS = {
+  repairable: 'erased with --apply',
+  repaired: 'erased',
+  'not-named': 'erased only when named: --apply --user-id <id>, once checked by hand',
+  'holds-data': 'holds data (a restore in flight or an account in use): restore it again with --overwrite, set a password, or delete it',
+  'erasure-record': 'an erasure of this account is unfinished: its resume completes it',
+  recent: 'newest account field younger than the grace: run again later',
+  'no-age-signal': 'no account field, so no age: needs --settle 60 or more',
+  'in-flight': 'got a password while the run settled (a registration or restore in flight): kept',
+  failed: 'erasure failed (see the log): run again to complete it'
+};
+
+function formatAge (seconds) {
+  if (seconds == null) return 'none';
+  if (seconds < 3600) return Math.round(seconds / 60) + ' min';
+  if (seconds < 2 * 86400) return (seconds / 3600).toFixed(1) + ' h';
+  return Math.round(seconds / 86400) + ' d';
+}
+
+function printRegistrationsSummary (s, coreId) {
+  console.log('reconcile-user-cores --registrations: ' + (s.applied ? 'applied' : 'DRY-RUN (no writes)') +
+    ' on core "' + coreId + '"');
+  console.log('  grace                   ' + (s.graceSeconds / 3600) + ' h (newest account field)');
+  console.log('  settle                  ' + (s.settleMs / 1000) + ' s' +
+    (s.settleMs < 60000 ? ' (below 60 s: an account with no account field is not erased, the settle is its only guard)' : ''));
+  if (s.accountStoreChecked) {
+    console.log('  account-store rows with no index row: ' + s.accountStoreOrphans.length + ' id(s)');
+    for (const o of s.accountStoreOrphans) {
+      const what = o.cleared === true
+        ? 'cleared'
+        : (o.repairable ? 'cleared with --apply' : (ORPHAN_REASONS[o.reason] ?? o.reason));
+      console.log('    - ' + o.userId + ': ' + o.accountFields + ' account fields, ' + o.passwords + ' passwords, ' +
+        o.storeKeyValues + ' store key-values, newest field ' + formatAge(o.newestFieldAgeSeconds) + ': ' + what);
+    }
+  } else {
+    console.log('  account-store rows with no index row: not listed on this engine (its account files go with the user directory)');
+  }
+  if (s.refusedEmptyLocal === true) {
+    console.log('    ! REFUSED: this core\'s users index is empty while the account store holds rows. That is more ' +
+      'likely a lost index (a partial restore, a wrong --config) than rows nobody holds. Nothing was deleted. Check ' +
+      'the core\'s storage; if the index is really meant to be empty, run again with --force-empty-local.');
+    return;
+  }
+  console.log('  indexed accounts with no password: ' + s.noPassword.length);
+  for (const c of s.noPassword) {
+    console.log('    - ' + c.userId + ' "' + c.username + '": ' + c.accountFields + ' account fields, newest field ' +
+      formatAge(c.newestFieldAgeSeconds) + ': ' + (NO_PASSWORD_STATUS[c.status] ?? c.status));
+  }
+  if (s.namedNotCandidates.length > 0) {
+    console.log('  named, not an indexed account with no password (left alone): ' + s.namedNotCandidates.join(', '));
+  }
+  if (s.noPassword.some((c) => c.status === 'repaired')) {
+    console.log('    ! if this core\'s API is running, restart it: its workers may keep the erased names cached as taken ' +
+      'until the entries age out (this tool\'s cache invalidation may not reach them)');
+  }
+}
+
 function parseArgs (argv) {
-  const args = { dryRun: false, extIds: false, emails: false, addressAliasShape: false, oldPepper: null, forceEmptyLocal: false, settleSeconds: null };
+  const args = { dryRun: false, extIds: false, emails: false, addressAliasShape: false, oldPepper: null, forceEmptyLocal: false, settleSeconds: null, registrations: false, apply: false, userIds: [], graceHours: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
-    else if (a === '--ext-ids') args.extIds = true;
+    else if (a === '--registrations') args.registrations = true;
+    else if (a === '--apply') args.apply = true;
+    else if (a === '--user-id') {
+      const value = argv[++i];
+      if (value == null || value.startsWith('-') || value === '') {
+        console.error('--user-id: missing <id>');
+        process.exit(1);
+      }
+      args.userIds.push(value);
+    } else if (a === '--grace') {
+      const value = argv[++i];
+      if (value == null || !/^\d+(\.\d+)?$/.test(value)) {
+        console.error('--grace: expects a number of hours');
+        process.exit(1);
+      }
+      args.graceHours = Number(value);
+    } else if (a === '--ext-ids') args.extIds = true;
     else if (a === '--emails') args.emails = true;
     else if (a === '--address-alias-shape') args.addressAliasShape = true;
     else if (a === '--force-empty-local') args.forceEmptyLocal = true;
@@ -263,6 +375,22 @@ function parseArgs (argv) {
   }
   if (args.addressAliasShape && (args.emails || args.extIds)) {
     console.error('--address-alias-shape is a separate, read-only pass: run it alone');
+    process.exit(1);
+  }
+  if (args.registrations && (args.emails || args.extIds || args.addressAliasShape)) {
+    console.error('--registrations is a separate pass: run it alone');
+    process.exit(1);
+  }
+  if (!args.registrations && (args.apply || args.userIds.length > 0 || args.graceHours != null)) {
+    console.error('--apply, --user-id and --grace belong to the --registrations pass');
+    process.exit(1);
+  }
+  if (args.apply && args.dryRun) {
+    console.error('--apply and --dry-run contradict each other');
+    process.exit(1);
+  }
+  if (args.userIds.length > 0 && !args.apply) {
+    console.error('--user-id names the accounts --apply may erase: without --apply nothing is erased, the report lists every account');
     process.exit(1);
   }
   return args;
@@ -298,6 +426,19 @@ function printUsage (stream) {
     '                                              # read only, safe with the API running; run it',
     '                                              # before upgrading to the release that mints',
     '                                              # address aliases',
+    '  node bin/reconcile-user-cores.js --registrations [--grace <hours>] [--settle <seconds>]',
+    '                                              # report what unfinished registrations left:',
+    '                                              # account-store rows with no index row',
+    '                                              # (PostgreSQL) and indexed accounts with no',
+    '                                              # password; writes nothing (--dry-run is a',
+    '                                              # no-op here); --grace default 24, --settle',
+    '                                              # default 60',
+    '  node bin/reconcile-user-cores.js --registrations --apply [--user-id <id>]...',
+    '                                              # clear the account-store rows that hold',
+    '                                              # nothing else and are older than the grace;',
+    '                                              # erase the indexed accounts with no password',
+    '                                              # named with --user-id (repeatable) that still',
+    '                                              # pass every check; list the others',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

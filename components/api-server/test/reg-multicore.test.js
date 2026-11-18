@@ -591,6 +591,79 @@ describe('[RGMC] register: multi-core', function () {
       assert.strictEqual(await platform.getUserCore(stale), null, 'the abandoned row is gone');
     });
 
+    it('[MCUR1] reconcileUserCoreMap releases the email row a stale self-name owns before its routing row, never another core\'s or another name\'s', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      // A registration that died before indexing its user: claim and email row only.
+      const stale = 'mcurstale' + cuid.slug().toLowerCase();
+      const staleEmail = stale + '@example.com';
+      await platform.setUserCore(stale, CORE_A);
+      assert.ok(await platform.setUserUniqueFieldIfNotExists(stale, 'email', staleEmail));
+      // The same shape on another core: its rows are that core's.
+      const foreign = 'mcurforeign' + cuid.slug().toLowerCase();
+      const foreignEmail = foreign + '@example.com';
+      await platform.setUserCore(foreign, CORE_B);
+      assert.ok(await platform.setUserUniqueFieldIfNotExists(foreign, 'email', foreignEmail));
+      // A live account of this core.
+      const live = new User({ username: 'mcurlive' + cuid.slug().toLowerCase(), email: charlatan.Internet.email(), password: 'testpassword' });
+      await usersRepository.insertOne(live);
+      createdUsers.push({ id: live.id, username: live.username });
+      await platform.setUserCore(live.username, CORE_A);
+
+      const dry = await usersRepository.reconcileUserCoreMap(true, { settleMs: 0 });
+      assert.ok(dry.platformRowsReleased >= 1, JSON.stringify(dry));
+      assert.notStrictEqual(await platform.getUniqueValueOwner('email', staleEmail), null, 'the dry run writes nothing');
+      assert.strictEqual(await platform.getUserCore(stale), CORE_A);
+
+      const token = platform.hashFor('username', stale);
+      const order = [];
+      const originalRows = platform.deleteUserRowsByPreHashedUsername;
+      const originalCore = platform.deleteUserCoreByPreHashedUsername;
+      platform.deleteUserRowsByPreHashedUsername = async function (t, ...rest) { if (t === token) order.push('rows'); return await originalRows.call(this, t, ...rest); };
+      platform.deleteUserCoreByPreHashedUsername = async function (t, ...rest) { if (t === token) order.push('routing'); return await originalCore.call(this, t, ...rest); };
+      try {
+        await usersRepository.reconcileUserCoreMap(false, { settleMs: 0 });
+      } finally {
+        delete platform.deleteUserRowsByPreHashedUsername;
+        delete platform.deleteUserCoreByPreHashedUsername;
+      }
+      assert.deepStrictEqual(order, ['rows', 'routing'], 'the rows go while the claim still holds the name');
+      assert.strictEqual(await platform.getUniqueValueOwner('email', staleEmail), null, 'the stale name\'s email is free');
+      assert.strictEqual(await platform.getUserCore(stale), null);
+      assert.strictEqual(await platform.getUniqueValueOwner('email', foreignEmail), platform.hashFor('username', foreign), 'another core\'s rows untouched');
+      assert.strictEqual(await platform.getUserCore(foreign), CORE_B);
+      assert.strictEqual(await platform.getUniqueValueOwner('email', live.email), platform.hashFor('username', live.username), 'another name\'s rows untouched');
+    });
+
+    it('[MCUR2] an unfinished registration whose name another core holds now: its local data is erased, the platform rows are kept', async function () {
+      const { getUsersRepository, User } = require('business/src/users/index.ts');
+      const usersRepository = await getUsersRepository();
+      const accountStorage = usersRepository.userAccountStorage;
+      const uname = 'mcurcrash' + cuid.slug().toLowerCase();
+      const email = uname + '@example.com';
+      await platform.setUserCore(uname, CORE_A);
+      // The process dies right before the password write: nothing is undone.
+      const user = new User({ username: uname, email, password: 'testpassword', appId: 'test-app' });
+      const originalAdd = accountStorage.addPasswordHash;
+      accountStorage.addPasswordHash = async () => { throw new Error('simulated process death'); };
+      usersRepository.compensateFailedInsert = async () => {};
+      try {
+        await assert.rejects(usersRepository.insertOne(user, true), /simulated process death/);
+      } finally {
+        accountStorage.addPasswordHash = originalAdd;
+        delete usersRepository.compensateFailedInsert;
+      }
+      createdUsers.push({ id: user.id, username: uname });
+      // The name is another core's since.
+      await platform.setUserCore(uname, CORE_B);
+
+      const s = await usersRepository.reconcileUnfinishedRegistrations({ apply: true, userIds: [user.id], graceSeconds: 0, settleMs: 0 });
+      assert.strictEqual(s.noPassword.find((c) => c.userId === user.id)?.status, 'repaired', JSON.stringify(s.noPassword));
+      assert.ok(await usersRepository.usersIndex.getUsername(user.id) == null, 'the local account is gone');
+      assert.strictEqual(await platform.getUserCore(uname), CORE_B, 'the other core keeps the name');
+      assert.strictEqual(await platform.getUniqueValueOwner('email', email), platform.hashFor('username', uname), 'and its platform rows');
+    });
+
     it('[MCUC8] a registration whose user insert fails after validation leaves no name claim behind', async function () {
       const { getUsersRepository } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();

@@ -37,7 +37,17 @@ type StorageLayer = {
   events?: { exportAll: (u: UserOrId, cb: (err: Error | null, items?: EventRow[]) => void) => unknown; exportAllStreamed?: (u: UserOrId) => AsyncGenerator<unknown>; importAll: (u: UserOrId, items: EventRow[], cb: (err: Error | null) => void) => unknown; clearAll: (u: UserOrId, cb: (err: Error | null) => void) => unknown };
   iterateAllEvents?: () => AsyncIterableIterator<unknown>;
   getAllUserIdsFromCollections?: (cols: string[]) => Promise<Record<string, string[]>>;
+  listAccountStoreOrphans?: (userIds?: string[]) => Promise<AccountStoreOrphanCounts[]>;
   clearCollection?: (col: string) => Promise<void>;
+};
+/** Rows of the account store (`account_fields`, `passwords`, `store_key_values`) under an id the users index lacks. */
+type AccountStoreOrphanCounts = {
+  userId: string;
+  accountFields: number;
+  passwords: number;
+  storeKeyValues: number;
+  /** Newest `account_fields.time` (seconds), null when the id holds none. */
+  newestFieldTime: number | null;
 };
 type InitOptions = {
   passwordResetRequestMaxAge?: number;
@@ -188,6 +198,37 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
       res[collectionName] = rows.rows.map((r: Record<string, unknown>) => r.user_id as string);
     }
     return res;
+  };
+
+  /**
+   * The ids holding rows in the account store (account fields, passwords,
+   * store key-values) with no users index row: a registration that failed
+   * after its local writes on a release whose compensation missed them, or
+   * an account deletion in progress. Counts and the newest account-field
+   * time only: no value is read. Optional engine capability (the per-user
+   * SQLite files go with their user directory). `userIds` restricts the
+   * answer to these ids.
+   */
+  storageLayer.listAccountStoreOrphans = async function (userIds?: string[]): Promise<AccountStoreOrphanCounts[]> {
+    const filter = userIds != null ? ' AND i.user_id = ANY($1::text[])' : '';
+    const res = await connection.query(
+      'WITH ids AS (' +
+      'SELECT user_id FROM account_fields UNION SELECT user_id FROM passwords UNION SELECT user_id FROM store_key_values) ' +
+      'SELECT i.user_id, ' +
+      '(SELECT COUNT(*)::int FROM account_fields a WHERE a.user_id = i.user_id) AS account_fields, ' +
+      '(SELECT COUNT(*)::int FROM passwords p WHERE p.user_id = i.user_id) AS passwords, ' +
+      '(SELECT COUNT(*)::int FROM store_key_values s WHERE s.user_id = i.user_id) AS store_key_values, ' +
+      '(SELECT MAX(a.time) FROM account_fields a WHERE a.user_id = i.user_id) AS newest_field_time ' +
+      'FROM ids i WHERE NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = i.user_id)' + filter +
+      ' ORDER BY i.user_id',
+      userIds != null ? [userIds] : []);
+    return res.rows.map((r: Record<string, unknown>) => ({
+      userId: r.user_id as string,
+      accountFields: Number(r.account_fields),
+      passwords: Number(r.passwords),
+      storeKeyValues: Number(r.store_key_values),
+      newestFieldTime: r.newest_field_time == null ? null : Number(r.newest_field_time)
+    }));
   };
 
   storageLayer.clearCollection = async function (collectionName: string): Promise<void> {

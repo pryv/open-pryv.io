@@ -283,23 +283,30 @@ function getMochaHooks (isParallelMode = false) {
   }
 
   async function checkIndexAndPlatformIntegrity (title: any) {
-    await initIndexPlatform();
     // A check still running after SLOW_CHECK_MS is reported with the side it
     // is on: a rare hang of this hook (mocha timeout) stops the whole run, and
-    // the report tells the platform side from the users index side.
+    // the report tells the init from the platform side from the users index
+    // side. Armed at entry, so the whole hook is covered. A hook that took
+    // longer than SLOW_CHECK_MS is reported once more at its end: a stall
+    // outside the awaits (a blocked event loop delays the watchdog too) is
+    // still visible after the fact.
     const started = Date.now();
-    let side = 'platform';
+    let side = 'init';
     const watch = setTimeout(() => {
       process.stderr.write(`[integrity hook] ${title}: ${side} check still running after ${Date.now() - started} ms\n`);
     }, SLOW_CHECK_MS);
     watch.unref();
     const checks: any[] = [];
     try {
+      await initIndexPlatform();
+      side = 'platform';
       checks.push(await platform.checkIntegrity());
       side = 'users index';
       checks.push(await usersIndex.checkIntegrity());
     } finally {
       clearTimeout(watch);
+      const took = Date.now() - started;
+      if (took > SLOW_CHECK_MS) process.stderr.write(`[integrity hook] ${title}: took ${took} ms\n`);
     }
     for (const check of checks) {
       if (check.errors.length > 0) {

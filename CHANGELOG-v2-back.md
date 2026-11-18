@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Operator sweep for unfinished registrations
+
+- `bin/reconcile-user-cores.js --registrations` (logic in `usersRepository.reconcileUnfinishedRegistrations`):
+  reports by default, deletes only with `--apply`. Account-store rows under an id the users index lacks
+  (PostgreSQL, new optional storage-layer listing `listAccountStoreOrphans`: counts and newest field time,
+  no value) are cleared with `_clearAll` only when they hold account fields alone, no erasure record, and
+  are older than `--grace` (hours, default 24), read again just before the delete. Indexed accounts with
+  no password (both engines) are erased with `Deletion.eraseAccount` (`teardown: false`, trigger
+  `unfinished-registration`) only when named with `--user-id` and still passing every check at start,
+  after `--settle` (default 60 s) and just before the erasure; an account with no account field is never
+  erased with a settle below 60 s. Everything else is listed. Logger lines carry ids, class, counts and
+  the trigger only. `--user-id` without `--apply`, and `--registrations` with another pass, are refused.
+  An empty users index facing account-store rows is refused (exit 3) unless `--force-empty-local`.
+- `reconcileUserCoreMap`: before deleting a stale self-row, deletes the unique and indexed platform rows
+  its name owns (new `Platform.deleteUserRowsByPreHashedUsername`, which `deleteUser` now calls), so the
+  email of a registration that died before indexing its user is free again; counted in
+  `platformRowsReleased`, dry run included.
+- Test harness: the root integrity hook's watchdog is armed at hook entry (side `init`, then `platform`,
+  then `users index`), and a hook that took longer than 5 s writes `[integrity hook] <title>: took N ms`.
+
 ### Registration and account update: no idle transaction client
 
 - `usersRepository.createLocalUserData` and `updateOne` no longer open the local store's transaction.

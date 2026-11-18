@@ -74,6 +74,71 @@ type UserCoreReconcileSummary = {
   conflicts: Array<{ username: string; coreId: string }>;
   scanned: number;
   skippedOtherCore: number;
+  /** Unique and indexed platform rows owned by the stale names, deleted (or, dry run, to delete). */
+  platformRowsReleased: number;
+  refusedEmptyLocal?: boolean;
+};
+
+// Unfinished registrations (reconcileUnfinishedRegistrations).
+const UNFINISHED_REGISTRATION_TRIGGER = 'unfinished-registration';
+const UNFINISHED_GRACE_SECONDS = 24 * 3600;
+const UNFINISHED_SETTLE_MS = 60000;
+// Below this settle delay an indexed account with no account field (no age
+// signal) is not repaired.
+const UNFINISHED_MIN_SETTLE_NO_FIELD_MS = 60000;
+
+/** Whole seconds since `time` (seconds, as the account store keeps it); null for none. */
+function ageInSeconds (time: number | null): number | null {
+  return time == null ? null : Math.max(0, Math.round(timestamp.now() - time));
+}
+
+/** Account-store rows under an id the users index lacks (engine capability, PostgreSQL). */
+type AccountStoreOrphanCounts = {
+  userId: string;
+  accountFields: number;
+  passwords: number;
+  storeKeyValues: number;
+  newestFieldTime: number | null;
+};
+/** Why an account-store orphan is not repaired ("resolve by hand"). */
+export type AccountStoreOrphanReason = 'has-password' | 'has-store-key-values' | 'holds-data' | 'erasure-record' | 'recent' | 'indexed';
+export type AccountStoreOrphanReport = AccountStoreOrphanCounts & {
+  /** Age of the newest account field in seconds, null when none. */
+  newestFieldAgeSeconds: number | null;
+  repairable: boolean;
+  reason?: AccountStoreOrphanReason;
+  cleared?: boolean;
+};
+/** State of an indexed account with no password. */
+export type NoPasswordStatus = 'repairable' | 'repaired' | 'not-named' | 'holds-data' | 'erasure-record' | 'recent' | 'no-age-signal' | 'in-flight' | 'failed';
+export type NoPasswordAccountReport = {
+  userId: string;
+  username: string;
+  accountFields: number;
+  newestFieldAgeSeconds: number | null;
+  status: NoPasswordStatus;
+};
+export type UnfinishedRegistrationsOptions = {
+  /** Delete; otherwise report only. */
+  apply?: boolean;
+  /** The indexed accounts with no password that may be erased (only these). */
+  userIds?: string[];
+  /** Minimum age of the newest account field (seconds, default 24 h). */
+  graceSeconds?: number;
+  /** Delay between the first look and the second (default 60 s). */
+  settleMs?: number;
+  forceEmptyLocal?: boolean;
+};
+export type UnfinishedRegistrationsSummary = {
+  applied: boolean;
+  graceSeconds: number;
+  settleMs: number;
+  /** False when the engine has no account-store listing (SQLite: the files go with the user directory). */
+  accountStoreChecked: boolean;
+  accountStoreOrphans: AccountStoreOrphanReport[];
+  noPassword: NoPasswordAccountReport[];
+  /** Ids given in `userIds` that are not an indexed account with no password. */
+  namedNotCandidates: string[];
   refusedEmptyLocal?: boolean;
 };
 
@@ -1049,7 +1114,11 @@ class UsersRepository {
    *
    * @param dryRun when true, computes the summary without writing (it settles
    *   too, so the two agree).
-   * @returns { deleted, healed, inFlight, conflicts, scanned, skippedOtherCore, refusedEmptyLocal? } —
+   * Before a stale row is deleted, the unique and indexed platform rows its
+   * name owns are deleted (`platformRowsReleased` counts them, dry run
+   * included): what a registration that died before indexing its user left.
+   *
+   * @returns { deleted, healed, inFlight, conflicts, scanned, skippedOtherCore, platformRowsReleased, refusedEmptyLocal? } —
    *   `deleted`/`healed`/`inFlight` are the affected name TOKENS (storage form;
    *   opaque HMAC in hashed mode). `conflicts` names each local user/alias whose routing row
    *   points at ANOTHER core (owned locally but claimed elsewhere): the tool will
@@ -1058,7 +1127,7 @@ class UsersRepository {
    */
   async reconcileUserCoreMap (dryRun = false, options: { forceEmptyLocal?: boolean; settleMs?: number } = {}): Promise<UserCoreReconcileSummary> {
     const summary: UserCoreReconcileSummary =
-      { deleted: [], healed: [], inFlight: [], conflicts: [], scanned: 0, skippedOtherCore: 0 };
+      { deleted: [], healed: [], inFlight: [], conflicts: [], scanned: 0, skippedOtherCore: 0, platformRowsReleased: 0 };
     const selfCoreId = this.platform.coreId;
     const settleMs = options.settleMs ?? RECONCILE_SETTLE_MS;
 
@@ -1100,6 +1169,11 @@ class UsersRepository {
       }
     }
     for (const token of stale) {
+      // The unique and indexed rows the name still owns (a registration that
+      // died before indexing its user) go first, while the routing row keeps
+      // other cores off the name: a unique value is answered free only to its
+      // owner, so they would stay taken for every other name.
+      summary.platformRowsReleased += await this.platform.deleteUserRowsByPreHashedUsername(token, { dryRun });
       if (!dryRun) await this.platform.deleteUserCoreByPreHashedUsername(token);
       summary.deleted.push(token);
     }
@@ -1198,6 +1272,205 @@ class UsersRepository {
       }
     }
     return summary;
+  }
+
+  /**
+   * What a registration that did not finish left on this core
+   * (`bin/reconcile-user-cores.js --registrations`). Reports by default;
+   * `apply` deletes only what passes every check, read again just before the
+   * deletion:
+   *  - account-store rows under an id the users index lacks (engines that
+   *    list them: PostgreSQL). Cleared only when the id holds account fields
+   *    and nothing else (no password, no store key-value, no row in events,
+   *    streams, accesses, profile or webhooks, no erasure record) and its
+   *    newest account field is older than the grace. Any other is reported,
+   *    to resolve by hand.
+   *  - indexed accounts with no password (a death between indexing the user
+   *    and writing its password). Erased only when named in `userIds`, still
+   *    without a password after the settle delay, holding nothing but
+   *    account fields and at most one access (the personal access of a
+   *    registration with a session), with no erasure record, and with its
+   *    newest account field older than the grace (no account field at all:
+   *    only with a settle delay of 60 s or more, the only guard left). Erased
+   *    like any account (`Deletion.eraseAccount`: recorded, resumable), which
+   *    keeps the platform rows of a name routed to another core.
+   * A restore in flight looks like the second case until it writes the
+   * password; it holds streams or events, which refuses it. Personal data is
+   * never deleted without `apply`, and an indexed account never without its
+   * id named. An empty users index facing account-store rows is refused
+   * (`refusedEmptyLocal`, nothing written) unless `forceEmptyLocal`.
+   */
+  async reconcileUnfinishedRegistrations (options: UnfinishedRegistrationsOptions = {}): Promise<UnfinishedRegistrationsSummary> {
+    const apply = options.apply === true;
+    const graceSeconds = options.graceSeconds ?? UNFINISHED_GRACE_SECONDS;
+    const settleMs = options.settleMs ?? UNFINISHED_SETTLE_MS;
+    const named = new Set(options.userIds ?? []);
+    const listOrphans = this.storageLayer.listAccountStoreOrphans as ((userIds?: string[]) => Promise<AccountStoreOrphanCounts[]>) | undefined;
+    const summary: UnfinishedRegistrationsSummary = {
+      applied: apply,
+      graceSeconds,
+      settleMs,
+      accountStoreChecked: typeof listOrphans === 'function',
+      accountStoreOrphans: [],
+      noPassword: [],
+      namedNotCandidates: []
+    };
+    const erasures = await (await import('../auth/erasures.ts')).getErasuresLocal();
+    const byUsername = await this.usersIndex.getAllByUsername(); // { username: userId }
+
+    // Account-store rows under an id the index lacks.
+    const orphans = typeof listOrphans === 'function' ? await listOrphans.call(this.storageLayer) : [];
+    if (Object.keys(byUsername).length === 0 && orphans.length > 0 && options.forceEmptyLocal !== true) {
+      // More likely a lost index or a wrong --config than accounts nobody holds.
+      summary.refusedEmptyLocal = true;
+      summary.accountStoreOrphans = orphans.map((o) => ({ ...o, newestFieldAgeSeconds: ageInSeconds(o.newestFieldTime), repairable: false }));
+      return summary;
+    }
+    for (const orphan of orphans) {
+      const reason = await this.#accountStoreOrphanReason(orphan, erasures, graceSeconds);
+      summary.accountStoreOrphans.push({
+        ...orphan,
+        newestFieldAgeSeconds: ageInSeconds(orphan.newestFieldTime),
+        repairable: reason == null,
+        ...(reason != null ? { reason } : {})
+      });
+    }
+    if (apply && typeof listOrphans === 'function') {
+      for (const report of summary.accountStoreOrphans) {
+        if (!report.repairable) continue;
+        // Read again just before the deletion.
+        const fresh = (await listOrphans.call(this.storageLayer, [report.userId]))[0];
+        if (fresh == null) {
+          // Indexed meanwhile, or its rows gone.
+          report.repairable = false;
+          report.reason = 'indexed';
+          continue;
+        }
+        const reason = await this.#accountStoreOrphanReason(fresh, erasures, graceSeconds);
+        if (reason != null) {
+          report.repairable = false;
+          report.reason = reason;
+          continue;
+        }
+        await this.userAccountStorage._clearAll(report.userId);
+        report.cleared = true;
+        logger.info(`unfinished registration: account-store rows of unindexed id ${report.userId} cleared ` +
+          `(${fresh.accountFields} account fields, trigger ${UNFINISHED_REGISTRATION_TRIGGER})`);
+      }
+    }
+
+    // Indexed accounts with no password.
+    const candidates: NoPasswordAccountReport[] = [];
+    for (const [username, userId] of Object.entries(byUsername)) {
+      if (await this.userAccountStorage.getPasswordHash(userId) != null) continue;
+      candidates.push({ userId, username, accountFields: 0, newestFieldAgeSeconds: null, status: 'repairable' });
+    }
+    for (const id of named) {
+      if (!candidates.some((c) => c.userId === id)) summary.namedNotCandidates.push(id);
+    }
+    for (const c of candidates) await this.#checkNoPasswordAccount(c, erasures, graceSeconds, settleMs);
+    if (settleMs > 0 && candidates.some((c) => c.status === 'repairable')) {
+      await setTimeout(settleMs);
+      for (const c of candidates) {
+        if (c.status === 'repairable') await this.#checkNoPasswordAccount(c, erasures, graceSeconds, settleMs);
+      }
+    }
+    if (apply) {
+      const { Deletion } = await import('../auth/deletion.ts');
+      const deletion = new Deletion(null, this.storageLayer as unknown as ConstructorParameters<typeof Deletion>[1], await getConfig());
+      for (const c of candidates) {
+        if (c.status !== 'repairable' || !named.has(c.userId)) continue;
+        await this.#checkNoPasswordAccount(c, erasures, graceSeconds, settleMs);
+        if (c.status !== 'repairable') continue;
+        try {
+          await deletion.eraseAccount({ id: c.userId, username: c.username }, { teardown: false, trigger: UNFINISHED_REGISTRATION_TRIGGER });
+          c.status = 'repaired';
+          logger.info(`unfinished registration: indexed account ${c.userId} with no password erased ` +
+            `(${c.accountFields} account fields, trigger ${UNFINISHED_REGISTRATION_TRIGGER})`);
+        } catch (err) {
+          c.status = 'failed';
+          logger.error(`unfinished registration: the erasure of account ${c.userId} failed (run again to complete it): ` +
+            ((err as Error)?.message ?? String(err)));
+        }
+      }
+    }
+    for (const c of candidates) {
+      if (c.status === 'repairable' && !named.has(c.userId)) c.status = 'not-named';
+    }
+    summary.noPassword = candidates;
+    return summary;
+  }
+
+  /** Why an account-store orphan may not be cleared; null when it may. */
+  async #accountStoreOrphanReason (orphan: AccountStoreOrphanCounts, erasures: { get (userId: string): Promise<unknown> }, graceSeconds: number): Promise<AccountStoreOrphanReason | null> {
+    // A completed account whose index row vanished: never cleared here.
+    if (orphan.passwords > 0) return 'has-password';
+    // A failed registration writes none.
+    if (orphan.storeKeyValues > 0) return 'has-store-key-values';
+    if (await this.#holdsUserData(orphan.userId, 0)) return 'holds-data';
+    // An erasure in progress or stopped owns its rows (its resume completes it).
+    if (await erasures.get(orphan.userId) != null) return 'erasure-record';
+    if (orphan.newestFieldTime == null || orphan.newestFieldTime > timestamp.now() - graceSeconds) return 'recent';
+    return null;
+  }
+
+  /**
+   * Sets `c.status` (and its account-field count and age) from a fresh read:
+   * `repairable` when every check passes (being named is checked by the caller).
+   */
+  async #checkNoPasswordAccount (c: NoPasswordAccountReport, erasures: { get (userId: string): Promise<unknown> }, graceSeconds: number, settleMs: number): Promise<void> {
+    const fields = await this.userAccountStorage.getAccountFieldsWithMeta(c.userId);
+    const times = Object.values(fields).map((f) => f.time);
+    const newest = times.length > 0 ? Math.max(...times) : null;
+    c.accountFields = times.length;
+    c.newestFieldAgeSeconds = ageInSeconds(newest);
+    if (await this.userAccountStorage.getPasswordHash(c.userId) != null) {
+      c.status = 'in-flight';
+    } else if (await this.#holdsUserData(c.userId, 1)) {
+      // A registration dies with at most its personal access: anything else
+      // is a restore in flight or an account in use.
+      c.status = 'holds-data';
+    } else if (await erasures.get(c.userId) != null) {
+      c.status = 'erasure-record';
+    } else if (newest == null) {
+      // No age signal on either engine (the index row has no time): the
+      // settle delay is the only guard.
+      c.status = settleMs >= UNFINISHED_MIN_SETTLE_NO_FIELD_MS ? 'repairable' : 'no-age-signal';
+    } else {
+      c.status = newest > timestamp.now() - graceSeconds ? 'recent' : 'repairable';
+    }
+  }
+
+  /**
+   * True when the id holds a row in streams, profile, webhooks or events, or
+   * more than `maxAccesses` accesses.
+   */
+  async #holdsUserData (userId: string, maxAccesses: number): Promise<boolean> {
+    type CountableLike = { countAll?: (user: { id: string }, cb: (err: Error | null, count?: number) => void) => void };
+    for (const name of ['streams', 'profile', 'webhooks', 'accesses']) {
+      const coll = this.storageLayer[name] as CountableLike | undefined;
+      const countAll = coll?.countAll;
+      if (countAll == null) continue;
+      const count = await fromCallback((cb: (err: Error | null, count?: number) => void) => countAll.call(coll, { id: userId }, cb)) as number;
+      if (count > (name === 'accesses' ? maxAccesses : 0)) return true;
+    }
+    type EventsExportLike = {
+      exportAllStreamed?: (user: { id: string }) => AsyncIterable<unknown>;
+      exportAll?: (user: { id: string }, cb: (err: Error | null, items?: unknown[]) => void) => void;
+    };
+    const events = this.storageLayer.events as EventsExportLike | undefined;
+    if (typeof events?.exportAllStreamed === 'function') {
+      const iterator = events.exportAllStreamed({ id: userId })[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      await iterator.return?.();
+      return first.done !== true;
+    }
+    if (typeof events?.exportAll === 'function') {
+      const exportAll = events.exportAll;
+      const items = await fromCallback((cb: (err: Error | null, items?: unknown[]) => void) => exportAll.call(events, { id: userId }, cb)) as unknown[];
+      return items.length > 0;
+    }
+    return false;
   }
 
   /**

@@ -537,18 +537,32 @@ class Platform {
    * backwards compatibility with existing callers.
    */
   async deleteUser (username: string, _user: unknown) {
-    // `getAllForUser` returns entries whose `username` and (for
-    // unique fields) `value` are stored in PlatformDB exactly as written.
-    // In hashed mode those are HMAC tokens — comparing or deleting them
-    // through `#applyOperations` (which assumes plaintext inputs and would
-    // hash again) would double-hash and silently miss every row. Match +
-    // delete directly against the engine here, using the token form of
-    // `username` for the row-match.
-    const usernameToken = this.hashFor(USERNAME_FIELD, username);
+    await this.deleteUserRowsByPreHashedUsername(this.hashFor(USERNAME_FIELD, username));
+    // The invitations it consumed stay consumed, without its name.
+    await this.#db.reassignInvitationConsumer(username, INVITATION_CONSUMER_DELETED);
+  }
+
+  /**
+   * The unique and indexed rows owned by a name, given in storage form (e.g.
+   * a `getAllUserCores()` mapping key): deleted, or with `dryRun` only
+   * counted. The name→core row and the invitations are left alone. Returns
+   * the number of rows.
+   *
+   * `getAllForUser` returns entries whose `username` and (for unique fields)
+   * `value` are stored exactly as written. In hashed mode those are HMAC
+   * tokens: comparing or deleting them through `#applyOperations` (which
+   * assumes plaintext inputs and would hash again) would double-hash and
+   * silently miss every row, so they are matched and deleted directly
+   * against the engine.
+   */
+  async deleteUserRowsByPreHashedUsername (usernameToken: string, options: { dryRun?: boolean } = {}): Promise<number> {
     const entries = await this.#db.getAllForUser(usernameToken);
+    let count = 0;
     for (const entry of entries) {
       if (entry.username !== usernameToken) continue;
       if (entry.field == null || entry.field.startsWith('_')) continue;
+      count++;
+      if (options.dryRun === true) continue;
       if (entry.isUnique === true) {
         // `entry.value` is already in storage form (cleartext or HMAC).
         await this.#db.deleteUserUniqueField(entry.field, entry.value);
@@ -556,8 +570,7 @@ class Platform {
         await this.#db.deleteUserIndexedField(usernameToken, entry.field);
       }
     }
-    // The invitations it consumed stay consumed, without its name.
-    await this.#db.reassignInvitationConsumer(username, INVITATION_CONSUMER_DELETED);
+    return count;
   }
 
   /**
