@@ -147,6 +147,9 @@ describe('[USRP] Users repository', () => {
       assert.ok(await usersRepository.usersIndex.getUsername(failing.id) == null, 'no index row for the id');
       assert.deepEqual(await accountStorage.getAccountFields(failing.id), {}, 'no account field left');
       assert.ok(await accountStorage.getPasswordHash(failing.id) == null, 'no password left');
+      // On SQLite the two reads above recreated the account file of the discarded id.
+      accountStorage.closeUser?.(failing.id);
+      await userLocalDirectory.deleteUserDirectory(failing.id);
       // The same name and email register again.
       const retry = new User({
         id: charlatan.Lorem.characters(25),
@@ -156,7 +159,11 @@ describe('[USRP] Users repository', () => {
         appId: 'urb2-app'
       });
       await usersRepository.insertOne(retry, true);
-      await usersRepository.deleteOne(retry.id, uname);
+      try {
+        assert.equal(await usersRepository.usersIndex.getUserId(uname), retry.id);
+      } finally {
+        await usersRepository.deleteOne(retry.id, uname);
+      }
     });
   });
 
@@ -178,17 +185,19 @@ describe('[USRP] Users repository', () => {
       });
       const originalGetClient = db.getClient;
       let clients = 0;
+      // Counts every getClient of the process in the window: nothing else runs in this test process.
       db.getClient = async function (...args) { clients++; return originalGetClient.apply(this, args); };
       try {
         await usersRepository.insertOne(user, true);
         assert.equal(clients, 0, 'registration');
         await usersRepository.updateOne(user, { language: 'fr' }, 'system');
         assert.equal(clients, 0, 'account update');
+        db.getClient = originalGetClient;
+        assert.equal(await usersRepository.getOnePropertyValue(user.id, 'language'), 'fr');
       } finally {
         db.getClient = originalGetClient;
+        await usersRepository.deleteOne(user.id, uname);
       }
-      assert.equal(await usersRepository.getOnePropertyValue(user.id, 'language'), 'fr');
-      await usersRepository.deleteOne(user.id, uname);
     });
   });
 

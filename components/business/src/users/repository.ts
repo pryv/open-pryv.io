@@ -689,7 +689,7 @@ class UsersRepository {
 
   /** @private — local (single-core) part of insertOne */
   async createLocalUserData (user: UserData, withSession: boolean) {
-    // Hashed before the transaction opens: waiting for a password-check slot
+    // Hashed before any database work: waiting for a password-check slot
     // must not hold a database connection. Provided directly by
     // system.createUser, else the regular registration.
     const passwordHash = user.passwordHash ? user.passwordHash as string : await encryption.hash(user.password!);
@@ -812,7 +812,10 @@ class UsersRepository {
       }],
       // Last: the cleanups above may open the per-user SQLite files.
       ['userDirectory', async () => {
-        if (ownsId) await require('storage').userLocalDirectory.deleteUserDirectory(user.id);
+        if (!ownsId) return;
+        // Release the cached SQLite handle on the account file before unlinking it.
+        this.userAccountStorage.closeUser?.(user.id);
+        await require('storage').userLocalDirectory.deleteUserDirectory(user.id);
       }]
     ];
     for (const [what, cleanup] of cleanups) {
