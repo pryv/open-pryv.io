@@ -1073,6 +1073,9 @@ describe('[BKSG] signed runs', function () {
   }
 
   it('[BKSM4] a signed run carries manifest.sig and pins the chain; the restore given the public key verifies every run, refuses another key, a changed manifest, a run without signature', async function () {
+    // Several passphrase-encrypted runs written and restored (key derivation
+    // each time): 7-8 s alone, over the 10 s default under machine load.
+    this.timeout(30000);
     const keys = ed25519();
     const protectedKey = crypto.createPrivateKey(keys.privateKey).export({ type: 'pkcs8', format: 'pem', cipher: 'aes-256-cbc', passphrase: 'kp' });
     const dir = path.join(tmp, 'signed');

@@ -92,6 +92,8 @@ class RestoreOrchestrator {
 
   /** How long a restore waits for an attachment it does not restore to close (default 10 s; tests). */
   discardTimeoutMs: number | null = null;
+  /** The account-transfer identity key (not set: resolved from the config; tests). */
+  transferIdentityKey: Buffer | null | undefined = undefined;
   /** The core's record of account erasures in progress (not set: not consulted). */
   erasures: ErasureRecordsLike | null = null;
   /** How long an erasure record stays untouched before its erasure counts as stopped (set with `erasures`). */
@@ -419,7 +421,7 @@ class RestoreOrchestrator {
     }
 
     try {
-      return await this._writeUserData(userReader, username, opts, targetUserId);
+      return await this._writeUserData(userReader, username, opts, targetUserId, userId);
     } catch (err) {
       await this._clearFailedAccount(targetUserId, username, indexedHere, err);
       throw err;
@@ -447,8 +449,47 @@ class RestoreOrchestrator {
     }
   }
 
+  /**
+   * Account fields restored under another user id: the account-transfer
+   * identity is bound to its account id (at-rest envelope version 2), so it
+   * is re-bound to the new id. One that cannot be read (no identity key, or
+   * another platform's key) is kept as it is, then reads as no identity,
+   * and is logged.
+   */
+  async _rebindIdentityFields (fields: unknown[], sourceUserId: string, targetUserId: string): Promise<unknown[]> {
+    const { IDENTITY_FIELD, rebindIdentityEnvelope } = require('../autoDeletion/state.ts') as typeof import('../autoDeletion/state.ts');
+    type FieldRow = { field: string; value: string };
+    const isIdentity = (f: unknown): f is FieldRow =>
+      f != null && typeof f === 'object' && (f as FieldRow).field === IDENTITY_FIELD && typeof (f as FieldRow).value === 'string';
+    if (!fields.some(isIdentity)) return fields;
+    const key = await this._transferIdentityKey();
+    return fields.map((f) => {
+      if (!isIdentity(f)) return f;
+      if (key == null) {
+        this.logger.warn(`the transfer identity of user ${sourceUserId} restored as ${targetUserId} is kept as it is: no identity key is configured, it reads as no identity`);
+        return f;
+      }
+      try {
+        return { ...f, value: rebindIdentityEnvelope(f.value, key, sourceUserId, targetUserId) };
+      } catch (err: unknown) {
+        this.logger.warn(`the transfer identity of user ${sourceUserId} restored as ${targetUserId} could not be re-bound to the new id ` +
+          `(${(err as Error).message}); kept as it is, it reads as no identity`);
+        return f;
+      }
+    });
+  }
+
+  /** The account-transfer identity key of this platform (`transferIdentityKey` set: tests). */
+  async _transferIdentityKey (): Promise<Buffer | null> {
+    if (this.transferIdentityKey !== undefined) return this.transferIdentityKey;
+    const { getConfig } = require('@pryv/boiler');
+    const config = await getConfig();
+    const { resolveIdentityKey } = require('../autoDeletion/state.ts') as typeof import('../autoDeletion/state.ts');
+    return resolveIdentityKey(config.get('account:autoDeletion:transfer:identitySecretsKey'), config.get('auth:adminAccessKey'));
+  }
+
   /** Write the data of one account, opened in the backup and indexed. */
-  async _writeUserData (userReader: UserReader, username: string, opts: RestoreOptions, targetUserId: string): Promise<ImportedAccount> {
+  async _writeUserData (userReader: UserReader, username: string, opts: RestoreOptions, targetUserId: string, sourceUserId: string = targetUserId): Promise<ImportedAccount> {
     const user = { id: targetUserId };
 
     // Clear existing data if overwrite requested
@@ -536,6 +577,9 @@ class RestoreOrchestrator {
     // Account data
     const accountData = await userReader.readAccountData();
     if (accountData) {
+      if (sourceUserId !== targetUserId && Array.isArray(accountData.accountFields)) {
+        accountData.accountFields = await this._rebindIdentityFields(accountData.accountFields, sourceUserId, targetUserId);
+      }
       await this.userAccountStorage._importAll(targetUserId, accountData);
     }
 

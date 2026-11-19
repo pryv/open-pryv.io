@@ -34,10 +34,22 @@ describe('[ATRENC] AtRestEncryption', () => {
       assert.equal(AtRestEncryption.envelopeVersion(V1_ENVELOPE.encoded), 1);
     });
 
-    it('[AREV1] by default the first version is written: readable without authenticated data, as by a core of the previous release', () => {
-      assert.equal(AtRestEncryption.WRITE_VERSION, 1);
+    it('[AREV1] by default version 2 is written, bound to its context', () => {
+      assert.equal(AtRestEncryption.WRITE_VERSION, 2);
       const key = crypto.randomBytes(32);
       const encoded = AtRestEncryption.encrypt('secret', key, 'tls-cert:a.example');
+      assert.equal(Buffer.from(encoded, 'base64')[0], 2);
+      assert.equal(AtRestEncryption.decrypt(encoded, key, 'tls-cert:a.example').toString('utf8'), 'secret');
+      assert.throws(() => AtRestEncryption.decrypt(encoded, key, 'tls-cert:other'), /authentication failed/);
+      const json = AtRestEncryption.encryptJson({ a: 1 }, key, 'transfer-identity:u1');
+      assert.equal(AtRestEncryption.envelopeVersion(json), 2);
+      assert.deepEqual(AtRestEncryption.decryptJson(json, key, 'transfer-identity:u1'), { a: 1 });
+      assert.throws(() => AtRestEncryption.decryptJson(json, key, 'transfer-identity:u2'), /authentication failed/);
+    });
+
+    it('[AREV1] the first version is still written on request: readable without authenticated data, as by a core before 2.0.0-rc.86', () => {
+      const key = crypto.randomBytes(32);
+      const encoded = AtRestEncryption.encrypt('secret', key, 'tls-cert:a.example', 1);
       const raw = Buffer.from(encoded, 'base64');
       assert.equal(raw[0], 1);
       // the algorithm of the previous release: AES-256-GCM, no AAD
@@ -45,7 +57,7 @@ describe('[ATRENC] AtRestEncryption', () => {
       decipher.setAuthTag(raw.subarray(13, 29));
       assert.equal(Buffer.concat([decipher.update(raw.subarray(29)), decipher.final()]).toString('utf8'), 'secret');
       assert.equal(AtRestEncryption.decrypt(encoded, key, 'tls-cert:other').toString('utf8'), 'secret');
-      const json = AtRestEncryption.encryptJson({ a: 1 }, key, 'transfer-identity:u1');
+      const json = AtRestEncryption.encryptJson({ a: 1 }, key, 'transfer-identity:u1', 1);
       assert.equal(AtRestEncryption.envelopeVersion(json), 1);
       assert.deepEqual(AtRestEncryption.decryptJson(json, key), { a: 1 });
       assert.throws(() => AtRestEncryption.encrypt('secret', key, '', 3), /unsupported envelope version 3/);

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Test harness: the root integrity check once per test file
+
+- The platform / users-index integrity check of the root mocha hooks runs once per test file (at its
+  first test once the storages are up, naming the previous file) and once at the end of the run,
+  instead of before and after every test: on SQLite its platform side reads every user's files, so
+  a long suite paid a growing cost twice per test (api-server runs stopped on 20 s hook timeouts
+  under machine load). `INTEGRITY_CHECK_EACH_TEST=1` restores the per-test check to find the test
+  that left a problem.
+
+### At-rest envelopes: version 2 written by default
+
+- `AtRestEncryption.WRITE_VERSION` is 2 (`CertRenewer`'s default follows): every encrypted-at-rest
+  row is written bound to its context. Version 1 stays readable and can still be written on
+  request (`encrypt(..., 1)`, `new CertRenewer({ envelopeVersion: 1 })`).
+- A restore under another user id (`remapUserId`) re-binds the account-transfer identity envelope to the
+  new id (`rebindIdentityEnvelope`); one that cannot be read is kept as it is and logged (by user ids).
+
 ### Operator sweep for unfinished registrations
 
 - `bin/reconcile-user-cores.js --registrations` (logic in `usersRepository.reconcileUnfinishedRegistrations`):

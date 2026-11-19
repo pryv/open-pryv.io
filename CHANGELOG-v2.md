@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Keys stored encrypted at rest: the new envelope is written
+
+- **Upgrade note, multi-core: every core of a platform must run 2.0.0-rc.86 or later before this
+  release is deployed on any of them.** Keys stored encrypted at rest (TLS and ACME account keys,
+  authenticator secrets, observability credentials, transfer identities) are now WRITTEN in the
+  envelope that 2.0.0-rc.86 started reading: bound to the row that holds it, tag length pinned, the
+  TLS and ACME keys under a key derived for that purpose from `letsEncrypt.atRestKey` (the
+  configured value is unchanged). A core before 2.0.0-rc.86 cannot read these rows, and going back
+  to such a release after this one has run is not possible without restoring them; going back to
+  2.0.0-rc.86 or 2.0.0-rc.87 stays possible (they read the new envelope). Rows already
+  stored stay readable and are rewritten in the new envelope when written again (the ACME account
+  key once, at the next account check).
+
 ### OAuth2 registry clients: a re-consent for a stream below a held one no longer lowers the grant there (fix)
 
 - **A request asking a stream at a level the grant already gives it through the stream tree (a held

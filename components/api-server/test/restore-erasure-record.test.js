@@ -536,6 +536,33 @@ describe('[RSER] restore of an account with an erasure record', function () {
     }
   });
 
+  it('[RSER16] a restore under another user id re-binds the account-transfer identity to the new id', async function () {
+    const { createAutoDeletionState, resolveIdentityKey } = require('business/src/autoDeletion/state.ts');
+    const state = createAutoDeletionState(require('storages').userAccountStorage);
+    const key = resolveIdentityKey(config.get('account:autoDeletion:transfer:identitySecretsKey'), config.get('auth:adminAccessKey'));
+    const fx = getNewFixture();
+    fixtures.push(fx);
+    const username = ('rser' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
+    const fu = await fx.user(username);
+    const u = { id: fu.attrs.id, username, dir: path.join(tmpDir, username) };
+    await state.setIdentity(u.id, { name: 'Ada Lovelace' }, key, 'test');
+    assertOk(runCli(['--output', u.dir, '--user', username]), 'backup');
+    const target = { id: 'rsertgt' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-12), username };
+    try {
+      // the name is free again: the backed-up account was erased
+      await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username }, { trigger: 'admin' });
+      const { o, lines } = await orchestrator();
+      const reader = createFilesystemBackupReader(u.dir);
+      await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id });
+      await reader.close();
+      assert.deepEqual(await state.getIdentity(target.id, key), { name: 'Ada Lovelace' }, JSON.stringify(lines));
+      assert.ok(!lines.some((l) => l.msg.includes('transfer identity')), JSON.stringify(lines));
+    } finally {
+      await cleanUp(target);
+      await cleanUp(u);
+    }
+  });
+
   it('[RSER13] a completion that finds the record taken over since it was listed (a restore claimed it first) erases nothing and counts no failure', async function () {
     const u = await backedUpAccount();
     try {
