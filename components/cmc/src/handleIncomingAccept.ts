@@ -119,7 +119,9 @@ async function handleIncomingAccept (params: {
   if (cp == null || typeof cp.username !== 'string' || typeof cp.host !== 'string') {
     return { ok: false, reason: 'cmc-incoming-accept-from-missing' };
   }
-  const counterparty: Counterparty = { username: cp.username, host: cp.host };
+  // Usernames are lowercase: a case variant would miss the relationship it
+  // names in the lookup below while still landing on its streams and name.
+  const counterparty: Counterparty = { username: cp.username.toLowerCase(), host: cp.host };
 
   // The capability this accept came through, taken from the responses stream
   // it was written to (the only stream the capability token can write, so
@@ -228,6 +230,12 @@ async function handleIncomingAccept (params: {
         error: String((err as Error)?.message || err),
       });
     }
+  }
+  // `content.from` is declared by the accepter: the relationship it names is
+  // only healed by an accept from the account it was made with. Checked
+  // before anything is written.
+  if (existingForScope != null && !mayHealRelationship(existingForScope, grantedApiEndpoint, capabilityIdToConsume)) {
+    return refuseForeignHeal(existingForScope, deps.logger);
   }
 
   // The relationship's features, resolved against OUR copy of the offer: the
@@ -496,6 +504,9 @@ async function handleIncomingAccept (params: {
         detail: { name: accessName },
       };
     }
+    if (!mayHealRelationship(existing, grantedApiEndpoint, capabilityIdToConsume)) {
+      return refuseForeignHeal(existing, deps.logger);
+    }
     if (typeof mall.accesses.update === 'function') {
       try {
         const updated = await mall.accesses.update(userId, {
@@ -697,6 +708,41 @@ async function handleIncomingAccept (params: {
     appCode: appCode as string,
     counterparty,
   };
+}
+
+/**
+ * Whether an accept may heal `existing`, the relationship access its declared
+ * counterparty and scope resolved to. Only when it comes from the same
+ * account: the granted apiEndpoint is the one recorded on the relationship
+ * (scheme, host and path; the token may change). A relationship recorded
+ * without an endpoint is healed only through the capability it was made with.
+ */
+function mayHealRelationship (existing: AccessLike, grantedApiEndpoint: string, capabilityId: string | null): boolean {
+  const cmc = existing.clientData?.cmc as { counterparty?: { apiEndpoint?: unknown }; capabilityId?: unknown } | undefined;
+  const recorded = cmc?.counterparty?.apiEndpoint;
+  if (typeof recorded === 'string' && recorded.length > 0) {
+    const a = endpointIdentity(recorded);
+    return a != null && a === endpointIdentity(grantedApiEndpoint);
+  }
+  return capabilityId != null && cmc?.capabilityId === capabilityId;
+}
+
+/** `protocol//host/path` of an apiEndpoint, credentials and trailing slash dropped; null if not a URL. */
+function endpointIdentity (apiEndpoint: string): string | null {
+  const outbound = require('./outbound.ts');
+  try {
+    const u = new URL(outbound.stripCredentials(apiEndpoint));
+    return u.protocol + '//' + u.host + u.pathname.replace(/\/+$/, '');
+  } catch (_e) {
+    return null;
+  }
+}
+
+function refuseForeignHeal (existing: AccessLike, logger?: CmcLogger): IncomingAcceptResult {
+  logger?.warn?.('cmc/handleIncomingAccept: accept names a counterparty whose relationship belongs to another endpoint, refused', {
+    accessId: existing.id ?? null,
+  });
+  return { ok: false, reason: 'cmc-incoming-accept-counterparty-endpoint-mismatch' };
 }
 
 /** The capability id of the first responses stream among `streamIds`, or null. */

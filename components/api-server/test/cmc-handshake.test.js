@@ -4037,4 +4037,77 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
       assert.strictEqual(deletion.token, undefined, 'a deletion record carries no token');
     });
   });
+
+  describe('[CMCHS-FROM] an accept naming another counterparty of the scope', function () {
+    this.timeout(120_000);
+
+    function relationshipWith (accesses, username, scope) {
+      return accesses.find((a) => a?.clientData?.cmc?.role === 'counterparty' &&
+        a.clientData.cmc.counterparty?.username === username &&
+        a.clientData.cmc.scopeStreamId === scope);
+    }
+
+    it('[CN95] a holder of another invite of the scope cannot take over the relationship of the counterparty it names', async function () {
+      const h = await runFreshHandshake('from-' + cuid().slice(-6));
+      const before = relationshipWith(
+        (await coreRequest.get(alice.accessesPath).set('Authorization', alice.token)).body.accesses, bob.username, h.triggerStreamId);
+      assert.ok(before != null, 'alice holds the relationship with bob');
+
+      // A second single-use invite on the same stream, held by someone else.
+      const reqRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', alice.token)
+        .send({
+          streamIds: [h.triggerStreamId],
+          type: 'consent/request-cmc',
+          content: {
+            to: null,
+            capabilityRequested: true,
+            request: {
+              title: { en: 'second invite' },
+              description: { en: 'second invite' },
+              consent: { en: 'I consent.' },
+              permissions: [{ streamId: 'fertility', level: 'read' }],
+            },
+            requesterMeta: { username: alice.username, appId: 'my-app' },
+          },
+        });
+      assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
+      const capabilityId = reqRes.body.event.content.capabilityId;
+      const capabilityToken = decodeURIComponent(new URL(reqRes.body.event.content.capabilityUrl).username);
+      const mallory = await makeActor('mallory-' + cuid().slice(-8));
+
+      // The accept written straight to the responses stream, naming bob.
+      const accRes = await coreRequest.post(alice.eventsPath)
+        .set('Authorization', capabilityToken)
+        .send({
+          streamIds: [C.responsesStreamIdFor(capabilityId)],
+          type: 'consent/accept-cmc',
+          content: {
+            from: { ...before.clientData.cmc.counterparty, apiEndpoint: undefined },
+            capabilityId,
+            grantedAccess: { apiEndpoint: 'https://' + mallory.token + '@' + mallory.username + '.pryv.me/' },
+          },
+        });
+      assert.strictEqual(accRes.status, 201, JSON.stringify(accRes.body));
+
+      // The accept is processed and fails; bob's relationship is not rewritten.
+      // Read through the mall: the responses stream is internal to the API.
+      const { getMall } = require('mall');
+      const mall = await getMall();
+      const t0 = Date.now();
+      let content;
+      while (Date.now() - t0 < POLL_TIMEOUT_MS * 4) {
+        content = (await mall.events.getOne(alice.username, accRes.body.event.id))?.content;
+        if (content?.status === 'failed' || content?.status === 'completed') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.strictEqual(content?.status, 'failed', JSON.stringify(content));
+      assert.strictEqual(content.failure?.reason, 'cmc-incoming-accept-counterparty-endpoint-mismatch');
+      assert.strictEqual(typeof before.clientData.cmc.counterparty.apiEndpoint, 'string');
+      const after = (await coreRequest.get(alice.accessesPath).set('Authorization', alice.token)).body.accesses
+        .find((a) => a.id === before.id);
+      assert.ok(after != null, 'the relationship still exists');
+      assert.strictEqual(after.clientData.cmc.counterparty.apiEndpoint, before.clientData.cmc.counterparty.apiEndpoint);
+    });
+  });
 });
