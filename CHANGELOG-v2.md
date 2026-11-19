@@ -15,6 +15,26 @@
   stored stay readable and are rewritten in the new envelope when written again (the ACME account
   key once, at the next account check).
 
+### CMC: an accept through a capability link takes the capability from its stream, not its content (fix)
+
+- **An accept written to a capability's responses stream is now tied to that capability whatever
+  its content says.** The capability used to be read from `content.capabilityId`, which the
+  accepter writes: an accept leaving it out skipped the capability lookup, so a `single-use` link
+  stayed `open` (it could be used again), the invite was not stamped `accepted`, and a
+  `content.inviteEventId` chosen by the accepter (possibly another invite of the requester) was kept
+  on the `:_cmc:inbox` mirror. The capability is now taken from the responses stream the accept was
+  written to (the only one its token can write).
+- **New failure case:** an accept whose `content.capabilityId` names another capability than its
+  responses stream is not processed: the stored accept is marked failed with
+  `cmc-incoming-accept-capability-mismatch`, no relationship is created and the link is not
+  consumed.
+- The inbox mirror only carries an `inviteEventId` the server resolved from the capability; one
+  supplied in the accept content is dropped.
+- **The relationship scope of such an accept comes from this side's own copy of the offer.** The
+  accept's `requesterOriginStreamId` / `requesterAppCode` used to win over it, so an accept could
+  have its anchor streams and back-channel permissions placed under another app scope of the
+  account. They are now only used when the offer copy carries no scope.
+
 ### OAuth2 registry clients: a re-consent for a stream below a held one no longer lowers the grant there (fix)
 
 - **A request asking a stream at a level the grant already gives it through the stream tree (a held

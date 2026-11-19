@@ -419,14 +419,9 @@ async function deliverAcceptViaCapability (params: {
       type: C.ET_ACCEPT,
       content: {
         from: params.counterparty,
-        // Stamp capabilityId so handleIncomingAccept can locate the
-        // capability access on the requester side and transition its
-        // single-use lifecycle state from 'open' to 'consumed' (and, in
-        // open-link mode, stamp it on the back-channel as the join
-        // record). Without this,
-        // the state-flip block in handleIncomingAccept silently no-ops
-        // and a second accept on the same URL succeeds instead of
-        // being rejected with `cmc-capability-consumed`.
+        // Informative: the requester takes the capability from the
+        // responses stream this accept is written to, and fails an accept
+        // whose capabilityId names another one.
         capabilityId: params.capabilityId,
         grantedAccess: { apiEndpoint: params.dataGrantApiEndpoint },
         features: params.features ?? null,
