@@ -82,6 +82,11 @@
 
 const path = require('path');
 
+// The settle delay an erasure of a named account (--apply --user-id) needs
+// at least: below it the second look comes too soon to see a registration or
+// restore in flight.
+const MIN_ERASE_SETTLE_SECONDS = 10;
+
 if (process.argv.slice(2).some((a) => a === '--help' || a === '-h')) {
   printUsage(process.stdout);
   process.exit(0);
@@ -240,10 +245,11 @@ require('@pryv/boiler').init({
     console.log('  map rows scanned        ' + summary.scanned);
     console.log('  other-core rows skipped ' + summary.skippedOtherCore);
     console.log('  self-rows (this core)   ' + (summary.scanned - summary.skippedOtherCore));
-    console.log('  stale rows deleted      ' + summary.deleted.length);
+    console.log((args.dryRun ? '  stale rows to delete    ' : '  stale rows deleted      ') + summary.deleted.length);
     console.log('  kept (registered while  ' + summary.inFlight.length);
     console.log('        the run settled)');
-    console.log('  platform rows released  ' + summary.platformRowsReleased + ' (unique and indexed values the stale names held)');
+    console.log((args.dryRun ? '  platform rows to release ' : '  platform rows released  ') + summary.platformRowsReleased +
+      ' (unique and indexed values the stale names held)');
     console.log('  missing rows healed     ' + summary.healed.length);
     console.log('  conflicts (unhealable)  ' + summary.conflicts.length);
     for (const c of summary.conflicts) {
@@ -319,7 +325,12 @@ function printRegistrationsSummary (s, coreId) {
       'the core\'s storage; if the index is really meant to be empty, run again with --force-empty-local.');
     return;
   }
-  console.log('  indexed accounts with no password: ' + s.noPassword.length);
+  console.log('  indexed accounts with no password: ' + s.noPassword.length + ' of ' + s.indexedAccounts);
+  if (s.mostIndexWithoutPassword) {
+    console.log('    ! MOST OF THE INDEX HAS NO PASSWORD: that is more likely account storage this run cannot read ' +
+      '(a wrong storage path, an unmounted user directory, a wrong --config) than failed registrations. Check the ' +
+      'core\'s storage before naming any of these accounts with --user-id: an erasure would delete real accounts.');
+  }
   for (const c of s.noPassword) {
     console.log('    - ' + c.userId + ' "' + c.username + '": ' + c.accountFields + ' account fields, newest field ' +
       formatAge(c.newestFieldAgeSeconds) + ': ' + (NO_PASSWORD_STATUS[c.status] ?? c.status));
@@ -400,6 +411,11 @@ function parseArgs (argv) {
     console.error('--user-id names the accounts --apply may erase: without --apply nothing is erased, the report lists every account');
     process.exit(1);
   }
+  if (args.userIds.length > 0 && args.settleSeconds != null && args.settleSeconds < MIN_ERASE_SETTLE_SECONDS) {
+    console.error('--settle: erasing a named account (--apply --user-id) needs ' + MIN_ERASE_SETTLE_SECONDS +
+      ' s or more, so that a registration or restore in flight is seen before the erasure');
+    process.exit(1);
+  }
   return args;
 }
 
@@ -445,7 +461,8 @@ function printUsage (stream) {
     '                                              # nothing else and are older than the grace;',
     '                                              # erase the indexed accounts with no password',
     '                                              # named with --user-id (repeatable) that still',
-    '                                              # pass every check; list the others',
+    '                                              # pass every check; list the others (with',
+    '                                              # --user-id, --settle must be 10 or more)',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

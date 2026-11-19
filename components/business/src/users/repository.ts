@@ -86,6 +86,9 @@ const UNFINISHED_SETTLE_MS = 60000;
 // Below this settle delay an indexed account with no account field (no age
 // signal) is not repaired.
 const UNFINISHED_MIN_SETTLE_NO_FIELD_MS = 60000;
+// From this many indexed accounts with no password, when they are more than
+// half of the index, the summary flags the storage as suspect.
+const UNFINISHED_SUSPECT_MIN = 3;
 
 /** Whole seconds since `time` (seconds, as the account store keeps it); null for none. */
 function ageInSeconds (time: number | null): number | null {
@@ -139,6 +142,14 @@ export type UnfinishedRegistrationsSummary = {
   noPassword: NoPasswordAccountReport[];
   /** Ids given in `userIds` that are not an indexed account with no password. */
   namedNotCandidates: string[];
+  /** Accounts in the users index. */
+  indexedAccounts: number;
+  /**
+   * Most of the index has no password (at least `UNFINISHED_SUSPECT_MIN`):
+   * more likely unreadable account storage (a wrong storage path or
+   * --config) than failed registrations.
+   */
+  mostIndexWithoutPassword: boolean;
   refusedEmptyLocal?: boolean;
 };
 
@@ -1313,10 +1324,13 @@ class UsersRepository {
       accountStoreChecked: typeof listOrphans === 'function',
       accountStoreOrphans: [],
       noPassword: [],
-      namedNotCandidates: []
+      namedNotCandidates: [],
+      indexedAccounts: 0,
+      mostIndexWithoutPassword: false
     };
     const erasures = await (await import('../auth/erasures.ts')).getErasuresLocal();
     const byUsername = await this.usersIndex.getAllByUsername(); // { username: userId }
+    summary.indexedAccounts = Object.keys(byUsername).length;
 
     // Account-store rows under an id the index lacks.
     const orphans = typeof listOrphans === 'function' ? await listOrphans.call(this.storageLayer) : [];
@@ -1365,6 +1379,8 @@ class UsersRepository {
       if (await this.userAccountStorage.getPasswordHash(userId) != null) continue;
       candidates.push({ userId, username, accountFields: 0, newestFieldAgeSeconds: null, status: 'repairable' });
     }
+    summary.mostIndexWithoutPassword = candidates.length >= UNFINISHED_SUSPECT_MIN &&
+      candidates.length * 2 > summary.indexedAccounts;
     for (const id of named) {
       if (!candidates.some((c) => c.userId === id)) summary.namedNotCandidates.push(id);
     }
@@ -1456,10 +1472,13 @@ class UsersRepository {
    * from residue.
    */
   async #holdsUserData (userId: string, maxAccesses: number): Promise<boolean> {
-    type CountableLike = { countAll?: (user: { id: string }, cb: (err: Error | null, count?: number) => void) => void };
+    type CountFn = (user: { id: string }, cb: (err: Error | null, count?: number) => void) => void;
+    type CountableLike = { countAll?: CountFn; countAllIncludingDeletions?: CountFn };
     for (const name of ['streams', 'profile', 'webhooks', 'accesses']) {
       const coll = this.storageLayer[name] as CountableLike | undefined;
-      const countAll = coll?.countAll;
+      // Any row counts, a deletion record included (streams' `countAll`
+      // counts live streams only).
+      const countAll = coll?.countAllIncludingDeletions ?? coll?.countAll;
       if (countAll == null) return true;
       const count = await fromCallback((cb: (err: Error | null, count?: number) => void) => countAll.call(coll, { id: userId }, cb)) as number;
       if (count > (name === 'accesses' ? maxAccesses : 0)) return true;

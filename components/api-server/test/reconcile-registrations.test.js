@@ -252,6 +252,45 @@ describe('[RCRG] unfinished registrations sweep', function () {
     }
   });
 
+  it('[RCRG11] an account with no password whose only stream is a deletion record holds data', async function () {
+    const crashed = await crashedRegistration('rcds');
+    const { promisify } = require('node:util');
+    const streams = usersRepository.storageLayer.streams;
+    const mall = await require('mall').getMall();
+    await mall.streams.create(crashed.userId, { id: 'rcrgdeleted', name: 'Deleted', parentId: null });
+    await promisify(streams.delete).call(streams, { id: crashed.userId }, { id: 'rcrgdeleted' });
+    try {
+      assert.strictEqual(await promisify(streams.countAll).call(streams, { id: crashed.userId }), 0, 'no live stream');
+      const s = await sweep({ graceSeconds: 0 });
+      assert.strictEqual(s.noPassword.find((c) => c.userId === crashed.userId)?.status, 'holds-data', JSON.stringify(s.noPassword));
+    } finally {
+      await removeAccount(crashed);
+    }
+  });
+
+  it('[RCRG12] the summary flags the storage as suspect when most of the index has no password', async function () {
+    this.timeout(120000); // every indexed account becomes a candidate
+    const users = [await freshUser('rcsa'), await freshUser('rcsb'), await freshUser('rcsc')];
+    try {
+      const normal = await sweep();
+      assert.strictEqual(normal.mostIndexWithoutPassword, false, JSON.stringify({ n: normal.noPassword.length, of: normal.indexedAccounts }));
+      // Account storage this run cannot read: every password reads as absent.
+      const original = accountStorage.getPasswordHash;
+      accountStorage.getPasswordHash = async () => null;
+      let suspect;
+      try {
+        suspect = await sweep();
+      } finally {
+        accountStorage.getPasswordHash = original;
+      }
+      assert.strictEqual(suspect.mostIndexWithoutPassword, true);
+      assert.strictEqual(suspect.noPassword.length, suspect.indexedAccounts);
+      for (const u of users) assert.strictEqual(await usersRepository.usersIndex.getUsername(u.userId), u.uname, 'a report erases nothing');
+    } finally {
+      for (const u of users) await removeAccount(u);
+    }
+  });
+
   it('[RCRG10] a named account deleted while the run settles is left alone, and the account now holding its name keeps its rows', async function () {
     const crashed = await crashedRegistration('rcgn');
     const { User } = require('business/src/users/index.ts');
@@ -375,7 +414,8 @@ describe('[RCRG] unfinished registrations sweep', function () {
       [['--registrations', '--user-id', 'someid'], /--user-id/],
       [['--apply'], /--registrations pass/],
       [['--registrations', '--apply', '--dry-run'], /contradict/],
-      [['--registrations', '--grace', 'soon'], /--grace/]
+      [['--registrations', '--grace', 'soon'], /--grace/],
+      [['--registrations', '--apply', '--user-id', 'someid', '--settle', '9'], /--settle: erasing a named account/]
     ]) {
       const run = cli(args);
       assert.strictEqual(run.status, 1, args.join(' ') + ': ' + run.stdout + run.stderr);
@@ -386,11 +426,12 @@ describe('[RCRG] unfinished registrations sweep', function () {
       const run = cli(['--registrations', '--settle', '0']);
       assert.strictEqual(run.status, 0, run.stdout + run.stderr);
       assert.match(run.stdout, /--registrations: DRY-RUN \(no writes\)/);
+      assert.match(run.stdout, /indexed accounts with no password: \d+ of \d+/);
       assert.ok(run.stdout.includes(crashed.userId), run.stdout);
       assert.strictEqual(await usersRepository.usersIndex.getUsername(crashed.userId), crashed.uname, 'a report writes nothing');
 
       // The erasure, run by the tool's own process (not this API test process).
-      const erase = cli(['--registrations', '--apply', '--user-id', crashed.userId, '--grace', '0', '--settle', '0']);
+      const erase = cli(['--registrations', '--apply', '--user-id', crashed.userId, '--grace', '0', '--settle', '10']);
       assert.strictEqual(erase.status, 0, erase.stdout + erase.stderr);
       assert.match(erase.stdout, /--registrations: applied/);
       assert.ok(await usersRepository.usersIndex.getUsername(crashed.userId) == null, 'no index row: ' + erase.stdout);

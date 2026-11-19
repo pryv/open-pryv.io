@@ -69,6 +69,11 @@ class StreamsPG extends BaseStoragePG<StreamLike> {
     this.count(userOrUserId, {}, callback);
   }
 
+  /** Every stream row of the user, deletion records included (`countAll` counts live streams). */
+  countAllIncludingDeletions (userOrUserId: UserOrId, callback: Callback<number>): void {
+    super.countAll(userOrUserId, callback);
+  }
+
   insertOne (userOrUserId: UserOrId, stream: StreamLike, callback: Callback<StreamLike | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     // Bust AFTER the write completes (unconditionally, including ambiguous
