@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### Per-account and per-connection limits (on by default)
+
+New ceilings protect a core from one token or one account taking all of a worker's capacity. Each
+is set in the configuration, applies per API worker process, and `0` turns it off. The defaults sit
+far above normal use: a client that reaches one gets a clear error to retry later.
+
+- **Calls in progress per account and per access: `limits.requests.maxInflightPerUser` (default 64)
+  and `limits.requests.maxInflightPerAccess` (default 32).** Authenticated HTTP, batch (counted
+  once) and socket.io calls running at the same time on a worker; one access gets half its
+  account's budget, so one shared token cannot keep the owner out. Calls without an access
+  (`auth.login`, password reset, …) are not counted. Past either a call answers **429
+  `too-many-requests`** with `Retry-After: 1` without running. A streamed read counts until it has
+  been sent (a result never read is let go after 10 minutes, with a warning in the log). A client
+  firing more calls at once than these budgets gets 429 for the extra ones and should retry them.
+- **Shape of the parameters: `limits.json.maxDepth` (default 64) and `limits.json.maxObjectKeys`
+  (default 10000).** The nesting depth of a call's parameters and the key count of any one object
+  in them. The parameters object itself is level 1, so the depth left for event `content` or
+  `clientData` is a little lower and depends on the call (63 in `events.create`, 62 in
+  `events.update`, 61 inside a batch). Past either the call answers **400 `invalid-parameters-format`**. Deeply nested content
+  used to reach recursive code (cloning, comparison, the database's JSON input) and could fail
+  there with an unexpected error.
+- **socket.io connections: `socketIO.maxConnectionsPerAccess` (default 20) and
+  `socketIO.maxConnectionsPerUser` (default 100).** Past either a new connection is refused at the
+  handshake: the client's `connect_error` carries `data: { id: 'too-many-requests', message }`.
+  A slot is freed when its socket disconnects.
+- **socket.io calls in progress per connection: `socketIO.maxInflightCallsPerConnection` (default
+  16).** A call (subscription messages included) arriving past it is answered with a
+  `too-many-requests` error without running: a client that sends many calls at once on one socket
+  without waiting for their answers must queue them or retry the refused ones.
+- **socket.io scoped subscriptions: `socketIO.maxScopesPerConnection` (default 100).** A `subscribe`
+  that would hold more scopes on the connection is refused with `invalid-operation` and adds none of
+  its scopes; a scope key longer than 256 characters is refused with `invalid-parameters-format`.
+  A `subscribe` is now all or nothing: when one of its scopes fails, none of them is kept (a scope
+  prepared before the failing one used to stay held without delivering notifications).
+- Access changes now re-check an account's open socket.io connections at most once per second (a
+  burst of changes costs one more pass at the end of that second, not one per change).
+
+### socket.io: calls running at the same time on one connection are audited under their own method (fix)
+
+- Every call on a socket.io connection used to share one context, so two calls running at once
+  could swap their method id: the audit row (and the access usage count) of one call could name the
+  other call's method. Each call now runs with its own context over the connection's.
+
 ### Keys stored encrypted at rest: the new envelope is written
 
 - **Upgrade note, multi-core: every core of a platform must run 2.0.0-rc.86 or later before this

@@ -12,11 +12,12 @@ const errors = require('errors').factory;
 const Result = require('./Result.ts').default;
 const { getConfigSync, getLogger } = require('@pryv/boiler');
 const observability = require('business/src/observability/index.ts');
+const { readCallLimits, acquireCallSlot, jsonShapeProblem } = require('./callLimits.ts');
 
 const logger = getLogger('api');
 
 type AuditModule = { default?: { validApiCall (ctx: unknown, result: unknown): Promise<void> }; validApiCall? (ctx: unknown, result: unknown): Promise<void> } & { validApiCall (ctx: unknown, result: unknown): Promise<void>; errorApiCall (ctx: unknown, error: unknown): Promise<void> };
-type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; resultArrayLimit?: number; [k: string]: unknown };
+type MethodContext = { methodId: string; tracing: { startSpan (n: string, tags?: Record<string, unknown>, parent?: string): void; finishSpan (n: string): void; setError (n: string, err: unknown): void }; username?: string; user?: { id?: string | null }; access?: { id?: string | null } | null; genericDispatch?: string; resultArrayLimit?: number; [k: string]: unknown };
 
 let audit: AuditModule, throwIfMethodIsNotDeclared: (id: string) => void, isAuditActive: boolean;
 
@@ -193,6 +194,31 @@ class API {
 
     if (methodList == null) { return callback(errors.invalidMethod(methodId), null); }
 
+    // Per-call ceilings. The calls of a batch run inside the batch's own call,
+    // which already holds a slot and whose parameters (theirs included) were
+    // already checked.
+    let releaseSlot: () => void = () => {};
+    if (context.genericDispatch !== 'batch') {
+      const limits = readCallLimits(configValue);
+      const shapeProblem = jsonShapeProblem(params, limits);
+      if (shapeProblem != null) { return callback(errors.invalidParametersFormat(`Invalid parameters: ${shapeProblem}.`), null); }
+      // Only authenticated calls count: the account of a call without an
+      // access comes from the URL, so counting it would let anyone who knows a
+      // username use up that account's budget. One access gets a smaller
+      // budget than its account, so a shared token cannot lock the owner out.
+      const userId = context.user?.id;
+      const accessId = context.access?.id;
+      if (userId != null && accessId != null) {
+        const userSlot = acquireCallSlot('user:' + userId, limits.maxInflightPerUser);
+        const accessSlot = userSlot == null ? null : acquireCallSlot('access:' + accessId, limits.maxInflightPerAccess);
+        if (userSlot == null || accessSlot == null) {
+          userSlot?.();
+          return callback(errors.tooManyRequests('Too many calls of this account or access are in progress on this server. Please retry shortly.'), null);
+        }
+        releaseSlot = () => { userSlot(); accessSlot(); };
+      }
+    }
+
     // Telemetry choke point for the whole API: every call, from HTTP or
     // from a socket, passes here with its method id known and its outcome
     // decided in `finalize`. `methodId` is safe to emit because it is a
@@ -266,6 +292,7 @@ class API {
     }
     function finalize (err: unknown) {
       if (err != null) {
+        releaseSlot();
         // The method failed. Anything it already registered on the Result is
         // flowing and holding its resource, and no response will ever consume
         // it, so release it here rather than leave it suspended for good.
@@ -279,10 +306,14 @@ class API {
       if (result.isStreamResult()) {
         // Nothing has been read yet: the store can still fail on its first
         // row, and the client can still leave. Count the call once it ends.
+        // The call holds its database work until the stream is read: its slot
+        // is given back then.
         result.onSettled(function (outcome: ResultOutcome) {
+          releaseSlot();
           observability.recordApiCall(methodId, Date.now() - startedAtMs, outcomeError(outcome));
         });
       } else {
+        releaseSlot();
         observability.recordApiCall(methodId, Date.now() - startedAtMs);
       }
       if (isAuditActive) {
@@ -315,6 +346,10 @@ class API {
 
 export default API;
 export { API, RESULT_TO_OBJECT_MAX_ARRAY_SIZE };
+/** A config value, or undefined while the config is not loaded (the defaults then apply). */
+function configValue (key: string): unknown {
+  try { return getConfigSync().get(key); } catch { return undefined; }
+}
 function matches (idFilter: string, id: string): boolean {
   // i.e. check whether the given id starts with the given filter without the
   // wildcard

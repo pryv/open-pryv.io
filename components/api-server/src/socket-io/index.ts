@@ -21,6 +21,7 @@ const Paths = require('../routes/Paths.ts');
 const { getLogger, getConfigSync } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
 const { USERNAME_REGEXP_STR } = require('../schema/helpers.ts');
+const errors = require('errors').factory;
 
 /** Longest namespace name considered: `/<username>/<username>` fits. */
 const MAX_NAMESPACE_LENGTH = 128;
@@ -63,6 +64,9 @@ type SocketLike = {
   };
   methodContext?: unknown;
   disconnect?: (close?: boolean) => unknown;
+  once (event: string, listener: () => void): unknown;
+  // The engine.io connection carrying the socket.
+  conn: { readyState: string };
 };
 // Initializes the SocketIO subsystem.
 //
@@ -161,6 +165,25 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
       await context.init();
       // Load access
       await context.retrieveExpandedAccess(storageLayer);
+      const release = manager.reserveConnectionSlot(context.access.id, context.user.id);
+      if (release == null) {
+        const refused = errors.tooManyRequests('Too many connections are open with this access or account on this server. Close one and retry.');
+        // A refused socket.io client receives the error's `message` and
+        // `data` only: carry the error id in `data`.
+        refused.data = { id: refused.id, message: refused.message };
+        return next(refused, false);
+      }
+      // The slot is given back on the socket's disconnect (also when the
+      // connection setup fails, as that disconnects it). A socket that never
+      // connects emits no disconnect: socket.io drops it when its transport
+      // closed during the steps above, so give the slot back here in that
+      // case. From here on nothing yields to I/O before socket.io connects
+      // the socket, so the transport cannot close in between.
+      if (socket.conn.readyState !== 'open') {
+        release();
+        throw new Error('The connection closed during the handshake.');
+      }
+      socket.once('disconnect', release);
       // attach context to socket for further usage.
       socket.methodContext = context;
       next(null, true);

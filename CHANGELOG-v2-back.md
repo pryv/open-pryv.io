@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Docs: the nginx sample says which nginx releases to run
+
+- `docs/nginx-ingress-sample.conf` now asks operators who front a core with nginx to keep it
+  patched against the flaws disclosed on 2026-11-18 (nginx 1.9.5 to 1.31.8 affected, fixed in
+  1.30.7 and 1.31.9): the sample enables HTTP/2, and turning it off blocks only part of them.
+  A core serving TLS itself (the default) runs no nginx.
+
+### Test harness: a stopped run does not go on with the next component
+
+- `scripts/components-run` (behind `just test all`) now stops when a component's tests are stopped
+  by any stop signal (SIGKILL, SIGHUP and SIGQUIT as well as SIGINT and SIGTERM), and when the
+  process that started it is gone. It used to go on with the next component: a run killed by PID
+  kept writing into the test databases, where a new run's integrity check then found the half-built
+  fixtures of the old one (an hfs-server fixture event read by the api-server suite). A component
+  that crashes still counts as a failure and the run goes on.
+
 ### Test harness: the root integrity check once per test file
 
 - The platform / users-index integrity check of the root mocha hooks runs once per test file (at its

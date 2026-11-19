@@ -787,12 +787,36 @@ limits:
     # batch answers 413 too-many-results. A batch holds at most 1000 calls
     # (fixed); one call may return at most 100000 items.
     maxTotalItems: 100000
+  requests:
+    # Most authenticated API calls of one account, and of one access, this
+    # worker runs at once (HTTP, batch and socket.io together; a batch counts
+    # once; calls without an access, such as auth.login, are not counted).
+    # Past either the call answers 429 too-many-requests with Retry-After. A
+    # streamed read counts until it has been sent. 0 disables each.
+    maxInflightPerUser: 64
+    maxInflightPerAccess: 32
+  json:
+    # Deepest nesting of a call's parameters (event content, clientData,
+    # queries included), and most keys in any one object of them. Past either
+    # the call answers 400 invalid-parameters-format. 0 disables each.
+    maxDepth: 64
+    maxObjectKeys: 10000
 
 # === PER-CORE: socket.io ===
 socketIO:
   # Largest socket.io message (and polling payload) accepted, in bytes; past
   # it the connection is closed.
   maxMessageBytes: 1000000
+  # Ceilings per server process; 0 turns one off. Most sockets open with one
+  # access, and with one account; past either a new connection is refused
+  # with too-many-requests.
+  maxConnectionsPerAccess: 20
+  maxConnectionsPerUser: 100
+  # Calls running at once on one socket; past it a call is answered with
+  # too-many-requests without running.
+  maxInflightCallsPerConnection: 16
+  # Notification scopes one socket may subscribe to.
+  maxScopesPerConnection: 100
 
 # === PER-CORE: access requests (POST /reg/access) ===
 # Other keys (defaultAuthUrl, trustedAuthUrls, terminalRetentionMs,

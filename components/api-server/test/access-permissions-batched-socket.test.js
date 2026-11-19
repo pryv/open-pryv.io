@@ -24,6 +24,7 @@ const require = createRequire(import.meta.url);
 
 const http = require('node:http');
 const setupSocketIO = require('../src/socket-io/index.ts').default;
+const { injectTestConfigSnapshot } = require('test-helpers');
 
 const FILLER_PERMISSIONS = 60; // permissions listed before the restrictions
 const ROUNDS = 24; // batched payloads sent
@@ -38,10 +39,14 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
   const aliases = [];
   const plainStreams = [];
   const readOnlyStreams = [];
+  let restoreConfig;
 
   before(async function () {
     await initTests();
     await initCore();
+    // Each round opens one more namespace with the same token, past the
+    // default ceiling of connections per access.
+    restoreConfig = injectTestConfigSnapshot({ socketIO: { maxConnectionsPerAccess: 0 } });
     fixtures = getNewFixture();
     username = cuid();
     personalToken = cuid();
@@ -97,6 +102,7 @@ describe('[APBS] access restrictions with batched socket.io packets', function (
   });
 
   after(async function () {
+    restoreConfig?.();
     if (server != null) {
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

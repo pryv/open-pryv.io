@@ -30,8 +30,45 @@ const SUBSCRIPTION_OPS = new Set(['subscribe', 'unsubscribe', 'getSubscriptions'
 })();
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 const { initRootSpan } = require('tracing');
-const { getConfig } = require('@pryv/boiler');
+const { getConfig, getConfigSync } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
+
+/**
+ * Per-worker socket.io ceilings and their defaults (`socketIO.<name>`; 0 in
+ * the config turns one off). Without them, one token could hold any number of
+ * sockets, run any number of calls at once on each, and register any number
+ * of notification scopes.
+ */
+const SOCKET_IO_LIMIT_DEFAULTS = Object.freeze({
+  maxConnectionsPerAccess: 20,
+  maxConnectionsPerUser: 100,
+  maxInflightCallsPerConnection: 16,
+  maxScopesPerConnection: 100
+});
+type SocketIOLimitName = keyof typeof SOCKET_IO_LIMIT_DEFAULTS;
+/** Longest scope key accepted: keys are echoed in every notification. */
+const MAX_SCOPE_KEY_LENGTH = 256;
+/**
+ * Access changes revalidate every connection of a namespace with a storage
+ * read; within this window, further changes cost one more pass at its end.
+ */
+const REVALIDATION_WINDOW_MS = 1000;
+
+/**
+ * A ceiling's current value, read at each use so a configuration change
+ * applies to the next connection or call.
+ */
+function socketIOLimit (name: SocketIOLimitName): number {
+  try {
+    const value = getConfigSync().get('socketIO:' + name);
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  } catch { /* config not ready: keep the default */ }
+  return SOCKET_IO_LIMIT_DEFAULTS[name];
+}
+
+function tooManyRequestsData (message: string) {
+  return commonMeta.setCommonMeta({ error: errorHandling.getPublicErrorData(errors.tooManyRequests(message)) });
+}
 
 // Socket.io calls were historically NOT audited (only the HTTP result.onEnd
 // path fires audit). That leaves a compromised access's websocket activity out
@@ -71,6 +108,13 @@ class Manager {
   apiVersion: string | null;
 
   hostname: string;
+
+  // Connections held (or being set up) in this worker, per access (by the
+  // base of its id, so every serial of one access counts together) and per
+  // account (by user id).
+  connectionsPerAccess: Map<string, number>;
+
+  connectionsPerUser: Map<string, number>;
   constructor (logger: Logger, io: SocketServer, api: Api, storageLayer: unknown, customAuthStepFn: CustomAuthFunction | null) {
     this.logger = logger;
     this.io = io;
@@ -80,6 +124,31 @@ class Manager {
     this.customAuthStepFn = customAuthStepFn;
     this.apiVersion = null;
     this.hostname = require('os').hostname();
+    this.connectionsPerAccess = new Map();
+    this.connectionsPerUser = new Map();
+  }
+
+  // Take a connection slot for an authenticated handshake. Taken during the
+  // handshake, before the socket connects, so concurrent handshakes cannot
+  // all pass the check. Returns the function giving the slot back (acting
+  // once however often it is called), or null when the access or the account
+  // is at its ceiling.
+  reserveConnectionSlot (accessId: string, userId: string): (() => void) | null {
+    const accessKey = parseAccessRef(accessId).base;
+    const maxPerAccess = socketIOLimit('maxConnectionsPerAccess');
+    const maxPerUser = socketIOLimit('maxConnectionsPerUser');
+    if (maxPerAccess > 0 && (this.connectionsPerAccess.get(accessKey) ?? 0) >= maxPerAccess) return null;
+    if (maxPerUser > 0 && (this.connectionsPerUser.get(userId) ?? 0) >= maxPerUser) return null;
+    // Counted even while a ceiling is off, so turning it on counts right.
+    addToCount(this.connectionsPerAccess, accessKey, 1);
+    addToCount(this.connectionsPerUser, userId, 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      addToCount(this.connectionsPerAccess, accessKey, -1);
+      addToCount(this.connectionsPerUser, userId, -1);
+    };
   }
 
   // Returns true if the `candidate` could be a username on a lexical level.
@@ -215,10 +284,36 @@ class NamespaceContext {
     this.manager = manager;
   }
 
+  // When the last revalidation pass started (performance.now() ms), and the
+  // pass scheduled at the end of the current window, if any.
+  lastRevalidationAt: number = -Infinity;
+
+  revalidationTimer: ReturnType<typeof setTimeout> | null = null;
+
   // D10: an access change (narrow / revoke / delete) may invalidate live
   // connections. Re-validate each: a revoked/deleted token drops the socket; a
   // narrowed token has its now-forbidden scopes pruned.
+  //
+  // Each pass reads every connection's access from storage, so a burst of
+  // access changes must not trigger one pass each: a pass runs at once when
+  // none ran in the last REVALIDATION_WINDOW_MS, otherwise a single pass is
+  // scheduled at the end of that window (covering every change until then).
   revalidateConnections (): void {
+    if (this.revalidationTimer != null) return;
+    const wait = this.lastRevalidationAt + REVALIDATION_WINDOW_MS - performance.now();
+    if (wait <= 0) {
+      this.runRevalidation();
+      return;
+    }
+    this.revalidationTimer = setTimeout(() => {
+      this.revalidationTimer = null;
+      this.runRevalidation();
+    }, wait);
+    this.revalidationTimer.unref(); // must not keep the worker alive
+  }
+
+  private runRevalidation (): void {
+    this.lastRevalidationAt = performance.now();
     for (const conn of this.connections.values()) {
       conn.revalidate(this.storageLayer).catch((err: unknown) => this.logger.warn('scoped-notification revalidate failed', err));
     }
@@ -358,6 +453,10 @@ class NamespaceContext {
   // Closes down resources associated with this namespace context.
   //
   async close () {
+    if (this.revalidationTimer != null) {
+      clearTimeout(this.revalidationTimer);
+      this.revalidationTimer = null;
+    }
     if (this.pubsubRemover == null) { return; }
     this.pubsubRemover();
     this.pubsubRemover = null;
@@ -422,6 +521,9 @@ class Connection {
   subscriber: Subscriber | null;
 
   storageLayer: unknown;
+
+  // Calls running on this connection (see onMethodCall).
+  inflightCalls = 0;
   constructor (logger: Logger, socket: SocketLike, namespaceContext: NamespaceContext, methodContext: MethodContext, api: Api, apiVersion: string | null, hostname: string, storageLayer: unknown) {
     this.socket = socket;
     this.methodContext = methodContext;
@@ -538,19 +640,47 @@ class Connection {
     this.syncSubscriber();
   }
 
+  // All or nothing: the scopes of one `subscribe` are added together once
+  // every one of them is prepared.
   private async addScopes (payload: unknown): Promise<void> {
-    for (const { key, kind, query } of normalizeScopePayload(payload)) {
-      let prepared;
+    const specs = normalizeScopePayload(payload);
+    for (const { key } of specs) {
+      if (String(key).length > MAX_SCOPE_KEY_LENGTH) {
+        throw errors.invalidParametersFormat(`A scope key is limited to ${MAX_SCOPE_KEY_LENGTH} characters.`);
+      }
+    }
+    // Checked before preparing anything (each scope costs permission and
+    // stream-tree work), and again before adding, as another `subscribe` of
+    // this connection may have added scopes meanwhile.
+    this.checkRoomForScopes(specs);
+    const prepared: Array<{ key: string; kind: string; rawQuery: RawScopeQuery; prepared: EventMatchQuery }> = [];
+    for (const { key, kind, query } of specs) {
+      let preparedQuery;
       if (kind === 'events' || kind === 'streams') {
-        prepared = await prepareScopeQuery(this.methodContext, query);
+        preparedQuery = await prepareScopeQuery(this.methodContext, query);
       } else if (kind === 'accesses') {
-        prepared = await prepareAccessScopeQuery(this.methodContext, query);
+        preparedQuery = await prepareAccessScopeQuery(this.methodContext, query);
       } else {
         throw errors.invalidRequestStructure(`scope kind '${kind}' is not yet supported`);
       }
-      this.scopes.set(key, { kind, rawQuery: query, prepared });
+      prepared.push({ key, kind, rawQuery: query, prepared: preparedQuery });
     }
+    this.checkRoomForScopes(specs);
+    for (const s of prepared) this.scopes.set(s.key, { kind: s.kind, rawQuery: s.rawQuery, prepared: s.prepared });
     this.syncSubscriber();
+  }
+
+  // Refuse a `subscribe` that would take this connection past
+  // `socketIO.maxScopesPerConnection` (replacing a key it holds adds none).
+  // invalid-operation rather than too-many-requests: retrying cannot help,
+  // only unsubscribing first.
+  private checkRoomForScopes (specs: Array<{ key: string }>): void {
+    const max = socketIOLimit('maxScopesPerConnection');
+    if (max === 0) return;
+    const added = new Set(specs.map((s) => s.key).filter((key) => !this.scopes.has(key))).size;
+    if (this.scopes.size + added > max) {
+      throw errors.invalidOperation(`A connection holds at most ${max} subscription scopes; unsubscribe some first.`);
+    }
   }
 
   // This should be used as a key when storing the connection inside a Map.
@@ -583,12 +713,35 @@ class Connection {
     // client requested an acknowledgement; any other value gets no reply.
     const ack: unknown = callData.data[2];
     const callback: SocketCallback = typeof ack === 'function' ? ack as SocketCallback : noReply;
-    // Scoped-subscription protocol messages are handled inline, not dispatched
-    // to the API (the wildcard '*' handler catches every emitted event).
-    if (SUBSCRIPTION_OPS.has(apiMethod)) {
-      return this.onSubscriptionOp(apiMethod, params, callback);
+    // Messages are dispatched as they arrive, without waiting for earlier
+    // ones: past `socketIO.maxInflightCallsPerConnection` running calls, a new
+    // one is answered at once without running. Counted before anything
+    // awaits, so messages arriving back to back see each other's count.
+    const maxInflight = socketIOLimit('maxInflightCallsPerConnection');
+    if (maxInflight > 0 && this.inflightCalls >= maxInflight) {
+      return callback(tooManyRequestsData(`At most ${maxInflight} calls run at once on one connection; wait for an answer before sending more.`));
     }
-    const methodContext = this.methodContext;
+    this.inflightCalls++;
+    try {
+      // Scoped-subscription protocol messages are handled inline, not
+      // dispatched to the API (the wildcard '*' handler catches every
+      // emitted event).
+      if (SUBSCRIPTION_OPS.has(apiMethod)) {
+        return await this.onSubscriptionOp(apiMethod, params, callback);
+      }
+      return await this.runMethodCall(apiMethod, params, callback);
+    } finally {
+      this.inflightCalls--;
+    }
+  }
+
+  async runMethodCall (apiMethod: string, params: unknown, callback: SocketCallback) {
+    // Calls on one connection can run at the same time. Each gets its own
+    // context layered over the connection's (which keeps the account, the
+    // access and their refreshes): what a call writes (method id, tracing,
+    // audit enrichment) stays its own, so one call's audit row or usage count
+    // never carries another call's method.
+    const methodContext = Object.create(this.methodContext) as MethodContext;
     const tracing = initRootSpan('socket.io', {
       apiVersion: this.apiVersion,
       hostname: this.hostname
@@ -604,9 +757,8 @@ class Connection {
     const userName = methodContext.user.username;
     // Accept streamQueries in JSON format for socket.io
     methodContext.acceptStreamsQueryNonStringified = true;
-    // The connection's methodContext is REUSED across calls — clear the
-    // breach-scope audit enrichment so a read's counts don't leak onto the next
-    // call's audit row (only a read re-sets them).
+    // Shadow the breach-scope audit enrichment: only a read sets it, and a
+    // value left on the connection's context must not show on this call's row.
     methodContext.auditRecordCount = undefined;
     methodContext.auditRecordCountIncomplete = undefined;
     methodContext.auditScopedStreamIds = undefined;
@@ -675,8 +827,14 @@ function normalizeScopePayload (payload: unknown): Array<{ key: string; kind: st
   }
   throw errors.invalidRequestStructure('subscribe requires { key, query } or { scopes: { key: { query } } }');
 }
+/** `delta` added to the count of `key`; a count back to 0 is forgotten. */
+function addToCount (counts: Map<string, number>, key: string, delta: number): void {
+  const next = (counts.get(key) ?? 0) + delta;
+  if (next > 0) counts.set(key, next);
+  else counts.delete(key);
+}
 export default Manager;
-export { Manager };
+export { Manager, NamespaceContext };
 
 // Local types for the socket-io plumbing this module wraps. Kept minimal —
 // only the surface area Manager / NamespaceContext / Connection actually use.

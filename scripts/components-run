@@ -53,6 +53,8 @@ process.on('SIGINT', () => {
 
 let status = 0;
 
+const STOP_SIGNALS = new Set(['SIGINT', 'SIGTERM', 'SIGKILL', 'SIGHUP', 'SIGQUIT']);
+
 // Build list of runnable entries: components/* + storages/ + storages/engines/*
 const entries = [];
 for (const name of fs.readdirSync(componentsPath)) {
@@ -85,8 +87,17 @@ if (fs.existsSync(enginesDir)) {
   }
 }
 
+// The process that started this run (a shell, `just`). If it goes away, the
+// run was stopped: do not go on with the next component on our own, writing
+// into test databases a new run may already be using.
+const startingParentPid = process.ppid;
+
 for (const { name, dir: subPath } of entries) {
   if (interrupted) break;
+  if (process.ppid !== startingParentPid) {
+    logError('the process that started this run is gone: stopping');
+    process.exit(130);
+  }
 
   if (singleComponent && singleComponent != name) {
     continue;
@@ -116,11 +127,13 @@ for (const { name, dir: subPath } of entries) {
     }
   }
 
-  // Child killed by signal (e.g. SIGINT/SIGTERM) — exit immediately.
+  // Child stopped by a signal (SIGINT, SIGTERM, SIGKILL, SIGHUP, SIGQUIT): the
+  // run was stopped, exit immediately rather than start the next component.
+  // A crash (e.g. SIGSEGV) counts as a failure and the run goes on.
   // Also check for status 130 (128+SIGINT): mocha catches SIGINT internally
   // and exits with code 130 rather than being killed by the signal directly,
   // so res.signal is null but res.status is 130.
-  if (res.signal === 'SIGINT' || res.signal === 'SIGTERM' || res.status === 130) {
+  if (STOP_SIGNALS.has(res.signal) || res.status === 130) {
     process.exit(130);
   }
 

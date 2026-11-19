@@ -46,6 +46,7 @@ interface ErrorFactory {
   staleResource: (resourceType: string, data?: Record<string, unknown>) => APIErrorT;
   missingHeader: (headerName: string, status?: number) => APIErrorT;
   tooManyResults: (limit: number) => APIErrorT;
+  tooManyRequests: (message: string, retryAfterSeconds?: number) => APIErrorT;
   tooManyAttempts: (retryAfterSeconds?: number, options?: { message?: string; data?: unknown }) => APIErrorT;
   invalidStepUp: (message?: string) => APIErrorT;
   mfaMethodInactive: (method: string) => APIErrorT;
@@ -212,6 +213,17 @@ factory.tooManyResults = function (limit: number) {
         limit +
         '. Directly calling ' +
         'the API method (i.e. not batching calls), narrowing request scope or paging can help.', { data: { limit }, httpStatus: 413 });
+};
+
+/**
+ * A per-account or per-connection capacity ceiling refused the call before it
+ * ran (too many calls in progress, too many connections): retry later.
+ */
+factory.tooManyRequests = function (message: string, retryAfterSeconds = 1) {
+  const err = new APIError(ErrorIds.TooManyRequests, message,
+    { httpStatus: 429, data: { retryAfterSeconds } });
+  err.httpHeaders = { 'Retry-After': String(retryAfterSeconds) };
+  return err;
 };
 
 /**

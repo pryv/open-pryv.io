@@ -272,6 +272,34 @@ describe('[SK01] Socket.IO', function () {
       assert.deepStrictEqual(row.content.source, { name: 'socket.io', ip: '203.0.113.5' });
     });
 
+    it('[SKMC] calls running at the same time on one connection are each audited under their own method', async function () {
+      const { getConfig } = require('@pryv/boiler');
+      if ((await getConfig()).get('audit:active') !== true) { this.skip(); }
+      const { pollUntil } = require('test-helpers');
+      const created = await superagent.post(server.url + namespace + '/accesses')
+        .set('Authorization', token)
+        .send({ name: 'skmc-' + Date.now(), permissions: [{ streamId: '*', level: 'read' }] });
+      const appToken = created.body.access.token;
+      const appAccessId = created.body.access.id;
+      const conn = io.connect(server.url + namespace + '?' + queryString.stringify({ auth: appToken }), { forceNew: true });
+      cleanupConnections.push(conn);
+      await new Promise((resolve, reject) => { conn.once('connect', resolve); conn.once('connect_error', reject); });
+      // Interleaved, none awaited before the next is sent.
+      const methods = [];
+      for (let i = 0; i < 5; i++) methods.push('events.get', 'streams.get');
+      await Promise.all(methods.map((m) => new Promise((resolve, reject) =>
+        conn.emit(m, m === 'events.get' ? { limit: 1 } : {}, (err) => err ? reject(err) : resolve()))));
+      const isSocket = (e) => e.content?.source?.name === 'socket.io';
+      const rows = await pollUntil(async () => {
+        const res = await superagent.get(server.url + namespace + '/events')
+          .set('Authorization', token)
+          .query({ streams: JSON.stringify([':_audit:access-' + appAccessId]), limit: 50 });
+        return (res.body.events ?? []).filter(isSocket);
+      }, (rows) => rows.length >= methods.length);
+      const actions = rows.map((e) => e.content?.action).sort();
+      assert.deepStrictEqual(actions, [...methods].sort(), 'one audit row per call, under its own method');
+    });
+
     it('[O3SW] must properly route method call messages for streams and return the results', function (done) {
       ioCons.con = connect(namespace, { auth: token });
       const expected = structuredClone(testData.streams);
