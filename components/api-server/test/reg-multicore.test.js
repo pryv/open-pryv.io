@@ -563,7 +563,9 @@ describe('[RGMC] register: multi-core', function () {
       await platform.setUserCore(stale, CORE_A);
 
       for (const dryRun of [true, false]) {
-        const run = usersRepository.reconcileUserCoreMap(dryRun, { settleMs: 400 });
+        // The apply run settles long enough for the registration below (password hash included)
+        // to land inside the window on a loaded machine.
+        const run = usersRepository.reconcileUserCoreMap(dryRun, { settleMs: dryRun ? 400 : 3000 });
         if (!dryRun) {
           // The registration indexes its user while the run settles.
           await new Promise((resolve) => setTimeout(resolve, 100));
