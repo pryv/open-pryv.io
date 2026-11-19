@@ -204,4 +204,30 @@ describe('[SQSR] SQLite series', function () {
       await conn.dropDatabase(ns);
     }
   });
+
+  // Another process dropping a namespace (the cleanup after a username change)
+  // removes its directory while it is still empty, which can fall between the
+  // directory's creation and the opening of the file.
+  it('[SQOR] opening survives the namespace directory removed between its creation and the open', async function () {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const racing = new SeriesConnectionSQLite();
+    const ns = 'user.sqsropen' + cuid.slug();
+    const realPathForUser = racing.pathForUser.bind(racing);
+    let calls = 0;
+    racing.pathForUser = async (name) => {
+      const dbPath = await realPathForUser(name);
+      if (calls++ === 0) fs.rmdirSync(path.dirname(dbPath)); // the other process's drop
+      return dbPath;
+    };
+    try {
+      await racing.writeMeasurement('event.a', [{ fields: { value: 1 }, timestamp: 1e9 }], { database: ns });
+      assert.strictEqual(calls, 2, 'the directory is created again once');
+      const rows = await conn.query('SELECT * FROM "event.a"', { database: ns });
+      assert.deepStrictEqual(rows, [{ time: 1000, value: 1 }], 'the point is in the file on disk');
+    } finally {
+      await racing.dropDatabase(ns);
+      await conn.dropDatabase(ns);
+    }
+  });
 });

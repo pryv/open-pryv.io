@@ -25,6 +25,9 @@ describe('[CACH] Cache', function () {
 
   const streamId = 'yo';
   before(async function () {
+    // Starting the core and filling the fixture can outlast mocha's default
+    // 2 s in a loaded full-matrix run.
+    this.timeout(20000);
     await initTests();
     await initCore();
     password = cuid();
