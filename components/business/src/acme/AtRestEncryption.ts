@@ -43,16 +43,18 @@ import crypto from 'node:crypto';
  * authenticated data) decrypts with any context. The tag length is pinned
  * to 16 bytes on both sides.
  *
- * Several rows are shared by every core of a platform, and a core of an
- * earlier release reads version 1 only. So this release reads both and
- * keeps writing version 1 (the context is then ignored); a later release
- * sets WRITE_VERSION to 2, once every core can read it.
+ * Several rows are shared by every core of a platform, and a core before
+ * 2.0.0-rc.86 reads version 1 only. 2.0.0-rc.86 reads both and still wrote
+ * version 1; from the release after 2.0.0-rc.87 version 2 is written, so
+ * every core of a platform must run 2.0.0-rc.86 or later first. Version 1
+ * envelopes already stored stay readable, and are rewritten in version 2
+ * when their row is written again.
  */
 
 const ENVELOPE_VERSION = 2;
 const LEGACY_ENVELOPE_VERSION = 1;
 /** The version `encrypt` writes when none is given. */
-const WRITE_VERSION = LEGACY_ENVELOPE_VERSION;
+const WRITE_VERSION = ENVELOPE_VERSION;
 const AAD_LABEL = 'pryv-at-rest-v2';
 const KEY_BYTES = 32;
 const IV_BYTES = 12;

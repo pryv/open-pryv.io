@@ -140,21 +140,23 @@ describe('[ADKS] account auto-deletion state', function () {
     assert.equal(await state.getIdentity('u1', key), null);
   });
 
-  it('[AREV3] the identity is written in the first envelope version (readable by the previous release); a version-2 envelope is bound to its account', async function () {
+  it('[AREV3] the identity is written in envelope version 2, bound to its account; a first-version envelope is still read', async function () {
     const storage = fakeStorage();
     const state = createAutoDeletionState(storage);
     const key = crypto.randomBytes(32);
     await state.setIdentity('u1', { name: 'Ada Lovelace' }, key, 'acc1');
     const written = storage.fields.get('u1/' + IDENTITY_FIELD)[0];
-    assert.equal(Buffer.from(written, 'base64')[0], 1, 'first envelope version');
-    assert.deepEqual(AtRestEncryption.decryptJson(written, key), { name: 'Ada Lovelace' }, 'no authenticated data');
-
-    // version 2, as a later release writes it: bound to the account
-    const envelope = AtRestEncryption.encryptJson({ name: 'Ada Lovelace' }, key, 'transfer-identity:u1', 2);
-    await storage.setAccountField('u1', IDENTITY_FIELD, envelope, 'acc1');
-    await storage.setAccountField('u2', IDENTITY_FIELD, envelope, 'acc2');
+    assert.equal(Buffer.from(written, 'base64')[0], 2, 'envelope version 2');
+    assert.deepEqual(AtRestEncryption.decryptJson(written, key, 'transfer-identity:u1'), { name: 'Ada Lovelace' });
+    // moved to another account: refused
+    await storage.setAccountField('u2', IDENTITY_FIELD, written, 'acc2');
     await assert.rejects(state.getIdentity('u2', key), /authentication failed/);
     assert.deepEqual(await state.getIdentity('u1', key), { name: 'Ada Lovelace' });
+
+    // a first-version envelope, as releases up to 2.0.0-rc.87 wrote it: no authenticated data
+    const v1 = AtRestEncryption.encryptJson({ name: 'Grace Hopper' }, key, '', 1);
+    await storage.setAccountField('u3', IDENTITY_FIELD, v1, 'acc3');
+    assert.deepEqual(await state.getIdentity('u3', key), { name: 'Grace Hopper' });
   });
 
   it('[ADKS6] the identity key is the configured one, else derived from the admin key', function () {

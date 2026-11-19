@@ -270,6 +270,14 @@ const SLOW_CHECK_MS = 5000;
 // long suite leaves behind; under machine load it crossed 20 s and a hook
 // timeout stops the whole run. The watchdog lines above still report it.
 const INTEGRITY_HOOK_TIMEOUT_MS = 60000;
+// The full check runs once per test file (at its first test, once the
+// storages are up) and once at the end of the run, not before and after
+// every test: its cost grows with the users a suite holds, and twice per
+// test made a long SQLite suite pay it thousands of times. A problem left
+// by a file is reported at the next file's first test, naming that file.
+// INTEGRITY_CHECK_EACH_TEST=1 checks before and after every test again, to
+// find the test that left it.
+const INTEGRITY_CHECK_EACH_TEST = process.env.INTEGRITY_CHECK_EACH_TEST === '1';
 
 /**
  * Get mocha hooks for integrity checks
@@ -277,8 +285,18 @@ const INTEGRITY_HOOK_TIMEOUT_MS = 60000;
 function getMochaHooks (isParallelMode = false) {
   const fs = require('fs');
   const util = require('util');
+  const path = require('path');
 
   let usersIndex: any, platform: any;
+  const integrityHooksOn = !(isParallelMode || process.env.MOCHA_PARALLEL === '1');
+  // The test file whose start was checked last (per-file mode).
+  let checkedFile: string | null = null;
+
+  /** False when the check is switched off or the storages are not up yet (see beforeEach). */
+  function integrityCheckReady (): boolean {
+    if (process.env.DISABLE_INTEGRITY_CHECK === '1') return false;
+    return require('storages').storageLayer != null;
+  }
 
   async function initIndexPlatform () {
     if (usersIndex != null) return;
@@ -406,6 +424,11 @@ function getMochaHooks (isParallelMode = false) {
       // Match beforeAll's generous timeout — teardown can need to wait
       // for SIGTERM + rqlited fsync (up to 5s SIGKILL fallback).
       this.timeout(30000);
+      // Per-file mode: the state the last file left.
+      if (integrityHooksOn && !INTEGRITY_CHECK_EACH_TEST && checkedFile != null && integrityCheckReady()) {
+        this.timeout(30000 + INTEGRITY_HOOK_TIMEOUT_MS);
+        await checkIndexAndPlatformIntegrity('END of run, after ' + path.basename(checkedFile));
+      }
       const { teardownParallelWorker } = require('./parallelWorkerSetup.ts');
       await teardownParallelWorker();
     },
@@ -418,11 +441,10 @@ function getMochaHooks (isParallelMode = false) {
     //     drift between platform DB and users repository per test under
     //     parallel-worker setup. The clean()-time integrityFinalCheck on
     //     events + accesses still runs in both modes.
-    ...((isParallelMode || process.env.MOCHA_PARALLEL === '1')
+    ...(!integrityHooksOn
       ? {}
       : {
           async beforeEach (this: any) {
-            if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
             // Skip the integrity check if the storages barrel hasn't
             // been initialised yet. The check's
             // `initIndexPlatform()` → `getUsersLocalIndex()` → `ensureBarrel()`
@@ -433,15 +455,19 @@ function getMochaHooks (isParallelMode = false) {
             // suite. Pure-unit Pattern C tests that run
             // before any `initCore()` don't manipulate storage state anyway,
             // so skipping the check pre-initCore is safe.
-            const storages = require('storages');
-            if (!storages.storageLayer) return;
+            if (!integrityCheckReady()) return;
+            const file: string = this.currentTest.file ?? '(no file)';
+            if (!INTEGRITY_CHECK_EACH_TEST && file === checkedFile) return;
+            const previous = checkedFile;
+            checkedFile = file;
             this.timeout(INTEGRITY_HOOK_TIMEOUT_MS);
-            await checkIndexAndPlatformIntegrity('BEFORE ' + this.currentTest.title);
+            await checkIndexAndPlatformIntegrity(INTEGRITY_CHECK_EACH_TEST
+              ? 'BEFORE ' + this.currentTest.title
+              : 'BEFORE ' + this.currentTest.title + ' (first test of ' + path.basename(file) +
+                (previous != null ? ', after ' + path.basename(previous) : '') + ')');
           },
           async afterEach (this: any) {
-            if (process.env.DISABLE_INTEGRITY_CHECK === '1') return;
-            const storages = require('storages');
-            if (!storages.storageLayer) return;
+            if (!INTEGRITY_CHECK_EACH_TEST || !integrityCheckReady()) return;
             this.timeout(INTEGRITY_HOOK_TIMEOUT_MS);
             await checkIndexAndPlatformIntegrity('AFTER ' + this.currentTest.title);
           }
