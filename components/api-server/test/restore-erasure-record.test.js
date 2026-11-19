@@ -536,7 +536,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
     }
   });
 
-  it('[RSER14] a restore under another user id re-binds the account-transfer identity to the new id', async function () {
+  it('[RSER16] a restore under another user id re-binds the account-transfer identity to the new id', async function () {
     const { createAutoDeletionState, resolveIdentityKey } = require('business/src/autoDeletion/state.ts');
     const state = createAutoDeletionState(require('storages').userAccountStorage);
     const key = resolveIdentityKey(config.get('account:autoDeletion:transfer:identitySecretsKey'), config.get('auth:adminAccessKey'));
