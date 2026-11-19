@@ -450,12 +450,20 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
     };
     const ACCEPT_WITH_CAP = {
       ...ACCEPT_FROM_INBOX,
+      streamIds: [':_cmc:_internal:responses:cap-xyz'],
       content: { ...ACCEPT_FROM_INBOX.content, capabilityId: 'cap-xyz' },
+    };
+    // This side's copy of the offer, on the capability's offer stream (the only
+    // place an accept on a responses stream is resolved from).
+    const OFFER_COPY_CAP = {
+      ...ORIGINAL_REQUEST_EVENT,
+      streamIds: [':_cmc:_internal:offer:cap-xyz'],
+      content: { ...ORIGINAL_REQUEST_EVENT.content, originStreamId: ':_cmc:apps:my-app:campaign-2026' },
     };
 
     it('[IA11] a new back-channel access carries offerEventId + inviteEventId', async () => {
       const mall = fakeMall({
-        requestEvent: ORIGINAL_REQUEST_EVENT,
+        requestEvent: OFFER_COPY_CAP,
         capabilityAccess: CAP_ACCESS,
       });
       const r = await handleIncomingAccept({
@@ -490,7 +498,7 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         permissions: [{ streamId: ':_cmc:apps:my-app:campaign-2026:chats:alice--pryv-me', level: 'contribute' }],
       };
       const mall = fakeMall({
-        requestEvent: ORIGINAL_REQUEST_EVENT,
+        requestEvent: OFFER_COPY_CAP,
         capabilityAccess: CAP_ACCESS,
       });
       const updated = [];
@@ -688,6 +696,53 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.ok(warns.some((m) => String(m).includes('re-read before the mint failed')), JSON.stringify(warns));
     });
 
+    it('[IA26] an accept leaving capabilityId out still takes its capability from the responses stream: link consumed, invite stamped, the peer\'s inviteEventId replaced on the mirror', async () => {
+      const mall = inviteMall('single-use');
+      const mirrors = [];
+      mall.events.create = async (_userId, params) => { mirrors.push(params); return { id: 'mirror-1', ...params }; };
+      const forged = structuredClone(acceptThroughCapability);
+      delete forged.content.capabilityId;
+      forged.content.inviteEventId = 'invite-B';
+      const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: forged, selfIdentity: SELF, deps: { mall } });
+      assert.equal(r.ok, true);
+      assert.equal(mall.capability.clientData.cmc.capability.state, 'consumed');
+      assert.equal(mall.invite.content.status, 'accepted');
+      assert.equal(mirrors.length, 1);
+      assert.equal(mirrors[0].content.inviteEventId, 'invite-1');
+    });
+
+    it('[IA27] an accept whose capabilityId names another capability than its responses stream is refused: nothing is minted', async () => {
+      const mall = inviteMall('single-use');
+      const created = [];
+      const mirrors = [];
+      mall.accesses.create = async (_userId, params) => { created.push(params); return { id: 'acc-back-1', ...params }; };
+      mall.events.create = async (_userId, params) => { mirrors.push(params); return { id: 'mirror-1', ...params }; };
+      const forged = structuredClone(acceptThroughCapability);
+      forged.content.capabilityId = 'cap-other';
+      const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: forged, selfIdentity: SELF, deps: { mall } });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-incoming-accept-capability-mismatch');
+      assert.deepEqual(created, []);
+      assert.deepEqual(mirrors, []);
+      assert.equal(mall.capability.clientData.cmc.capability.state, 'open');
+      assert.equal(mall.invite.content.status, 'delivered');
+    });
+
+    it('[IA28] off a responses stream the content capabilityId is ignored and a peer-supplied inviteEventId never reaches the mirror', async () => {
+      const mall = inviteMall('single-use');
+      const mirrors = [];
+      mall.events.create = async (_userId, params) => { mirrors.push(params); return { id: 'mirror-1', ...params }; };
+      const offStream = structuredClone(acceptThroughCapability);
+      offStream.streamIds = [':_cmc:apps:my-app'];
+      offStream.content.inviteEventId = 'invite-B';
+      const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: offStream, selfIdentity: SELF, deps: { mall } });
+      assert.equal(r.ok, true);
+      assert.deepEqual(mall.calls.getOne, []);
+      assert.equal(mall.capability.clientData.cmc.capability.state, 'open');
+      assert.equal(mirrors.length, 1);
+      assert.equal('inviteEventId' in mirrors[0].content, false);
+    });
+
     it('[IA17] a failing invite write is logged and the accept still succeeds', async () => {
       const mall = inviteMall('single-use');
       mall.events.update = async () => { throw new Error('storage down'); };
@@ -802,6 +857,22 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         const backChannel = posted.find((b) => b.type === 'consent/back-channel-cmc');
         assert.ok(!('remoteChatStreamId' in backChannel.content), originalEventId);
       }
+    });
+
+    it('[IA29] on a responses stream the offer copy decides the scope: an accept naming another scope of this account anchors nothing there', async () => {
+      const OTHER = ':_cmc:apps:other-app:study-9';
+      const { r, mall } = await incoming({
+        requestEvent: offerCopy({ chat: true }),
+        features: { chat: true, systemMessaging: true },
+        extraContent: { requesterOriginStreamId: OTHER, requesterAppCode: 'other-app' },
+      });
+      assert.equal(r.ok, true);
+      assert.equal(r.appCode, 'my-app');
+      const acc = mall.calls.accessesCreated[0];
+      assert.equal(acc.clientData.cmc.scopeStreamId, SCOPE);
+      assert.ok(acc.permissions.every((p) => !p.streamId.startsWith(':_cmc:apps:other-app')), JSON.stringify(acc.permissions));
+      assert.ok(mall.calls.streamsCreated.every((s) => !s.id.startsWith(':_cmc:apps:other-app')),
+        JSON.stringify(mall.calls.streamsCreated.map((s) => s.id)));
     });
 
     it('[IA22] an accept posted on the inbox can only narrow the relationship this side holds, never widen it', async () => {

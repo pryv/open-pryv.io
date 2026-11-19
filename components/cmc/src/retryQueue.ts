@@ -1100,6 +1100,9 @@ const NON_RETRYABLE_REASONS = new Set([
   // peer probing this path six attempts instead of one.
   'cmc-back-channel-wrong-stream',
   'cmc-back-channel-wrong-type',
+  // An accept whose content names another capability than its responses
+  // stream: a property of the stored event.
+  'cmc-incoming-accept-capability-mismatch',
   // Scope-update verdicts are properties of the stored request and grant;
   // re-running reaches the same answer.
   'cmc-scope-request-not-found',
