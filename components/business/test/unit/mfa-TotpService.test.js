@@ -86,6 +86,8 @@ describe('[MTOTP] TotpService', function () {
     const key = await resolveTotpKey({ secretsKey });
     const { encrypt, decrypt } = require('../../src/acme/AtRestEncryption.ts');
     assert.strictEqual(decrypt(profile.totp.secret, key).toString('utf8'), extra.secret);
+    // bound to its purpose context: refused under another one
+    assert.throws(() => decrypt(profile.totp.secret, key, 'tls-cert:a.example'), /authentication failed/);
 
     // the same secret in an envelope of the first version, as releases up to 2.0.0-rc.87 wrote it
     profile.totp.secret = encrypt(extra.secret, key, '', 1);

@@ -289,8 +289,12 @@ function getMochaHooks (isParallelMode = false) {
 
   let usersIndex: any, platform: any;
   const integrityHooksOn = !(isParallelMode || process.env.MOCHA_PARALLEL === '1');
-  // The test file whose start was checked last (per-file mode).
+  // The test file whose start was checked last (per-file mode), the file of
+  // the last test seen (checked or not: some files switch the check off),
+  // and the file seen before that one.
   let checkedFile: string | null = null;
+  let seenFile: string | null = null;
+  let previousFile: string | null = null;
 
   /** False when the check is switched off or the storages are not up yet (see beforeEach). */
   function integrityCheckReady (): boolean {
@@ -424,13 +428,16 @@ function getMochaHooks (isParallelMode = false) {
       // Match beforeAll's generous timeout — teardown can need to wait
       // for SIGTERM + rqlited fsync (up to 5s SIGKILL fallback).
       this.timeout(30000);
-      // Per-file mode: the state the last file left.
-      if (integrityHooksOn && !INTEGRITY_CHECK_EACH_TEST && checkedFile != null && integrityCheckReady()) {
-        this.timeout(30000 + INTEGRITY_HOOK_TIMEOUT_MS);
-        await checkIndexAndPlatformIntegrity('END of run, after ' + path.basename(checkedFile));
-      }
       const { teardownParallelWorker } = require('./parallelWorkerSetup.ts');
-      await teardownParallelWorker();
+      try {
+        // Per-file mode: the state the last file left.
+        if (integrityHooksOn && !INTEGRITY_CHECK_EACH_TEST && checkedFile != null && integrityCheckReady()) {
+          this.timeout(30000 + INTEGRITY_HOOK_TIMEOUT_MS);
+          await checkIndexAndPlatformIntegrity('END of run, after ' + path.basename(seenFile ?? checkedFile));
+        }
+      } finally {
+        await teardownParallelWorker();
+      }
     },
     // Per-test platform/usersIndex integrity hooks. Two skip gates apply
     // before the hook body even runs:
@@ -455,10 +462,14 @@ function getMochaHooks (isParallelMode = false) {
             // suite. Pure-unit Pattern C tests that run
             // before any `initCore()` don't manipulate storage state anyway,
             // so skipping the check pre-initCore is safe.
-            if (!integrityCheckReady()) return;
             const file: string = this.currentTest.file ?? '(no file)';
+            if (file !== seenFile) {
+              previousFile = seenFile;
+              seenFile = file;
+            }
+            if (!integrityCheckReady()) return;
             if (!INTEGRITY_CHECK_EACH_TEST && file === checkedFile) return;
-            const previous = checkedFile;
+            const previous = previousFile;
             checkedFile = file;
             this.timeout(INTEGRITY_HOOK_TIMEOUT_MS);
             await checkIndexAndPlatformIntegrity(INTEGRITY_CHECK_EACH_TEST

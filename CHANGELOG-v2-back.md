@@ -16,6 +16,8 @@
 - `AtRestEncryption.WRITE_VERSION` is 2 (`CertRenewer`'s default follows): every encrypted-at-rest
   row is written bound to its context. Version 1 stays readable and can still be written on
   request (`encrypt(..., 1)`, `new CertRenewer({ envelopeVersion: 1 })`).
+- A restore under another user id (`remapUserId`) re-binds the account-transfer identity envelope to the
+  new id (`rebindIdentityEnvelope`); one that cannot be read is kept as it is and logged (by user ids).
 
 ### Operator sweep for unfinished registrations
 

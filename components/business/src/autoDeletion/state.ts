@@ -137,6 +137,15 @@ export type AccountStorage = {
  * when set (base64, 32 bytes), else derived from the admin key. Null when
  * neither is available: transfers with an identity are then refused.
  */
+/**
+ * The identity envelope of `fromUserId` re-bound to `toUserId`, for a
+ * restore under another user id: the envelope is bound to its account id.
+ * Throws when it does not decrypt under `fromUserId`.
+ */
+export function rebindIdentityEnvelope (envelope: string, key: Buffer, fromUserId: string, toUserId: string): string {
+  return encryptJson(decryptJson(envelope, key, identityContext(fromUserId)), key, identityContext(toUserId));
+}
+
 export function resolveIdentityKey (secretsKey: string | null | undefined, adminAccessKey: unknown): Buffer | null {
   if (typeof secretsKey === 'string' && secretsKey.length > 0) {
     const buf = Buffer.from(secretsKey, 'base64');
