@@ -246,6 +246,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       }
     }
     const showCredentials = mayShowCredentials(context, head);
+    // A non-personal caller reading its own access gets its own token, not the
+    // credentials another account stamped in its clientData (a consent peer's
+    // back-channel endpoint): the same removal access-info applies.
+    const ownClientDataRedacted = context.access.type !== 'personal' && head.id === context.access.id;
+    const forCaller = <T extends { clientData?: unknown }>(wire: T): T => {
+      if (ownClientDataRedacted && wire.clientData != null) wire.clientData = withoutCredentialUrls(wire.clientData);
+      return wire;
+    };
     const currentSerial = head.serial == null ? null : head.serial;
     const wantsSpecific = ref.serial != null;
     const specificMatchesHead = wantsSpecific && currentSerial != null && ref.serial === currentSerial;
@@ -254,7 +262,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       // never on a snapshot).
       const wire = attachUsage(withUsage, composeWireAccess(head));
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
-      result.access = showCredentials ? wire : withoutCredentials(wire);
+      result.access = forCaller(showCredentials ? wire : withoutCredentials(wire));
     } else if (currentSerial != null && ref.serial < currentSerial) {
       // Obsolete composite — historical row, with a `current` hint pointing
       // at the live head's composite id (Q-pivot=a, GitHub-commit-by-sha-style).
@@ -269,7 +277,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       const wire = composeWireAccess(snapshot, ref.base);
       delete wire.calls; // a snapshot's counters are internal, never reported
       wire.apiEndpoint = ApiEndpoint.buildForAccess(wire, context.user.username);
-      result.access = showCredentials ? wire : withoutCredentials(wire);
+      result.access = forCaller(showCredentials ? wire : withoutCredentials(wire));
       result.current = serializeAccessRef({ base: ref.base, serial: currentSerial });
     } else {
       // Requested a serial > head's current (never existed) or the head
