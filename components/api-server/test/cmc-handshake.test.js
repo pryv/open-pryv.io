@@ -111,6 +111,7 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
     await u.access({ token, type: 'personal' });
     await u.session(token);
     const actor = {
+      id: u.attrs.id,
       username,
       token,
       streamsPath: '/' + username + '/streams',
@@ -4041,6 +4042,13 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
   describe('[CMCHS-FROM] an accept naming another counterparty of the scope', function () {
     this.timeout(120_000);
 
+    // Stored rows (tokens and clientData as kept), not the API's redacted view.
+    async function rawAccesses (actor) {
+      const storageLayer = await require('storage').getStorageLayer();
+      return await new Promise((resolve, reject) => storageLayer.accesses.find({ id: actor.id, username: actor.username }, {}, null,
+        (err, rows) => (err ? reject(err) : resolve(rows))));
+    }
+
     function relationshipWith (accesses, username, scope) {
       return accesses.find((a) => a?.clientData?.cmc?.role === 'counterparty' &&
         a.clientData.cmc.counterparty?.username === username &&
@@ -4108,6 +4116,99 @@ describe('[CMCHI] cmc two-user handshake (in-process integration)', function () 
         .find((a) => a.id === before.id);
       assert.ok(after != null, 'the relationship still exists');
       assert.strictEqual(after.clientData.cmc.counterparty.apiEndpoint, before.clientData.cmc.counterparty.apiEndpoint);
+    });
+
+    // mallory holds a grant on bob's account (her own relationship with bob,
+    // of `accessType`) and names it as bob's endpoint in an accept on alice's
+    // link: alice's back-channel is then delivered through mallory's grant and
+    // stamped on it. Returns mallory's token on bob and alice's token.
+    async function crossWire (accessType) {
+      const h = await runFreshHandshake('ai-' + cuid().slice(-6));
+      const aliceRel = relationshipWith(await rawAccesses(alice), bob.username, h.triggerStreamId);
+      assert.ok(typeof aliceRel?.token === 'string', 'alice\'s back-channel access for bob');
+
+      // mallory <-> bob: mallory asks, bob accepts.
+      const mallory = await makeActor('mallory-' + cuid().slice(-8));
+      const mScope = ':_cmc:apps:my-app:ai-m-' + cuid().slice(-6);
+      await ensureStream(mallory.streamsPath, mallory.token, { id: mScope, parentId: ':_cmc:apps:my-app', name: 'm' });
+      const ask = (title, by, type) => ({
+        to: null,
+        capabilityRequested: true,
+        request: {
+          title: { en: title },
+          description: { en: title },
+          consent: { en: title },
+          permissions: [{ streamId: 'fertility', level: 'read' }],
+          ...(type != null ? { accessType: type } : {}),
+        },
+        requesterMeta: { username: by, appId: 'my-app' },
+      });
+      const mReq = await coreRequest.post(mallory.eventsPath).set('Authorization', mallory.token)
+        .send({ streamIds: [mScope], type: 'consent/request-cmc', content: ask('m', mallory.username, accessType) });
+      assert.strictEqual(mReq.status, 201, JSON.stringify(mReq.body));
+      const bAcc = await coreRequest.post(bob.eventsPath).set('Authorization', bob.token).send({
+        streamIds: [':_cmc:apps:my-app'],
+        type: 'consent/accept-cmc',
+        content: { capabilityUrl: mReq.body.event.content.capabilityUrl, accessName: 'cmc-grant-ai-' + Date.now() },
+      });
+      assert.strictEqual(bAcc.status, 201, JSON.stringify(bAcc.body));
+      // bob's grant for mallory, as mallory's side recorded it
+      let grantForMallory;
+      const t0 = Date.now();
+      while (Date.now() - t0 < POLL_TIMEOUT_MS * 4) {
+        grantForMallory = relationshipWith(await rawAccesses(mallory), bob.username, mScope)?.clientData?.cmc?.counterparty?.apiEndpoint;
+        if (typeof grantForMallory === 'string') break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.ok(typeof grantForMallory === 'string', 'mallory holds bob\'s grant');
+      const malloryTokenOnBob = decodeURIComponent(new URL(grantForMallory).username);
+      assert.ok(malloryTokenOnBob.length > 0);
+
+      // Another invite of alice's scope, accepted as bob through mallory's grant.
+      const reqRes = await coreRequest.post(alice.eventsPath).set('Authorization', alice.token)
+        .send({ streamIds: [h.triggerStreamId], type: 'consent/request-cmc', content: ask('i2', alice.username) });
+      assert.strictEqual(reqRes.status, 201, JSON.stringify(reqRes.body));
+      const capabilityId = reqRes.body.event.content.capabilityId;
+      const capabilityToken = decodeURIComponent(new URL(reqRes.body.event.content.capabilityUrl).username);
+      const forged = await coreRequest.post(alice.eventsPath).set('Authorization', capabilityToken).send({
+        streamIds: [C.responsesStreamIdFor(capabilityId)],
+        type: 'consent/accept-cmc',
+        content: {
+          from: { username: bob.username, host: aliceRel.clientData.cmc.counterparty.host },
+          capabilityId,
+          grantedAccess: { apiEndpoint: grantForMallory },
+        },
+      });
+      assert.strictEqual(forged.status, 201, JSON.stringify(forged.body));
+      // the back-channel lands on the writer (mallory's grant on bob's account)
+      const t1 = Date.now();
+      let stamped = false;
+      while (Date.now() - t1 < POLL_TIMEOUT_MS * 4) {
+        const grant = (await rawAccesses(bob)).find((a) => a.token === malloryTokenOnBob);
+        stamped = JSON.stringify(grant?.clientData ?? {}).includes(aliceRel.token);
+        if (stamped) break;
+        await sleep(POLL_INTERVAL_MS);
+      }
+      assert.ok(stamped, 'the delivery reached mallory\'s grant (the precondition of these tests)');
+      return { malloryTokenOnBob, aliceToken: aliceRel.token };
+    }
+
+    it('[CN96] access-info does not hand the holder a credential another account stamped on its access', async function () {
+      const { malloryTokenOnBob, aliceToken } = await crossWire();
+      const info = await coreRequest.get('/' + bob.username + '/access-info').set('Authorization', malloryTokenOnBob);
+      assert.strictEqual(info.status, 200, JSON.stringify(info.body));
+      assert.strictEqual(info.body.token, malloryTokenOnBob, 'its own token is still returned');
+      assert.ok(!JSON.stringify(info.body).includes(aliceToken), 'access-info returned another account\'s token');
+    });
+
+    it('[CN97] an app-type grant reading its own access by id does not get that credential either', async function () {
+      const { malloryTokenOnBob, aliceToken } = await crossWire('app');
+      const info = await coreRequest.get('/' + bob.username + '/access-info').set('Authorization', malloryTokenOnBob);
+      assert.strictEqual(info.body.type, 'app', JSON.stringify(info.body));
+      const own = await coreRequest.get(bob.accessesPath + '/' + info.body.id).set('Authorization', malloryTokenOnBob);
+      assert.strictEqual(own.status, 200, JSON.stringify(own.body));
+      assert.strictEqual(own.body.access.token, malloryTokenOnBob, 'its own token is still returned');
+      assert.ok(!JSON.stringify(own.body).includes(aliceToken), 'accesses.getOne returned another account\'s token');
     });
   });
 });
