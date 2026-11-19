@@ -121,30 +121,59 @@ async function handleIncomingAccept (params: {
   }
   const counterparty: Counterparty = { username: cp.username, host: cp.host };
 
-  // The accepter's accept references the original request via either
-  // content.capabilityId or content.requestEventId. We use the request
-  // event to recover the appCode + the scope stream-id under which to
-  // anchor the chat/collectors streams.
-  let scopeStreamId: string | null = null;
-  let appCode: string | null = null;
-  // Priority order (most authoritative first):
-  //   1. acceptEvent.content.requesterAppCode — set by the accepter's
-  //      handleAccept from offer.requesterMeta.appId. Reliable because
-  //      the accepter read the offer and stamped this on the delivery.
-  //   2. resolveRequestScope — looks up the original request event by
-  //      id in the requester's own store. May fail if the original
-  //      event was pruned or never had an id we can match.
-  //   3. Fall back to 'unknown' — back-channel access still gets
+  // The capability this accept came through, taken from the responses stream
+  // it was written to (the only stream the capability token can write, so
+  // server-controlled), never from the content, which the accepter writes: an
+  // accept leaving `capabilityId` out would otherwise skip the capability
+  // lookup, keep its own `inviteEventId` on the inbox mirror and leave a
+  // single-use link open. A content value naming another capability fails
+  // the accept before any relationship is created; off a responses stream
+  // (no server-controlled key) the content value is ignored.
+  const capabilityIdToConsume = capabilityIdOfResponsesStream(acceptEvent.streamIds);
+  const claimedCapabilityId = acceptEvent.content?.capabilityId;
+  if (capabilityIdToConsume != null && claimedCapabilityId != null && claimedCapabilityId !== capabilityIdToConsume) {
+    return {
+      ok: false,
+      reason: 'cmc-incoming-accept-capability-mismatch',
+      detail: {
+        capabilityId: typeof claimedCapabilityId === 'string' ? claimedCapabilityId : null,
+        responsesStreamCapabilityId: capabilityIdToConsume,
+      },
+    };
+  }
+
+  // The scope stream-id under which to anchor the chat/collectors streams,
+  // and its appCode. Priority order (most authoritative first):
+  //   1. On a responses stream, this side's offer copy for that capability
+  //      (its `originStreamId`, stamped at mint): server-controlled.
+  //   2. acceptEvent.content.requesterOriginStreamId, then requesterAppCode:
+  //      set by the accepter's handleAccept from the offer it read.
+  //   3. resolveRequestScope: the request event the accept names by id,
+  //      in this side's own store.
+  //   4. Fall back to 'unknown': the back-channel access still gets
   //      created; chat/system handlers won't match it but the
   //      handshake itself is recorded.
+  let scopeStreamId: string | null = null;
+  let appCode: string | null = null;
   // This side's copy of the offer, read once: it serves the scope fallback
   // below and the features resolution.
   const offerCopy = await findOfferCopy({ userId, acceptEvent, mall });
+  // An accept on a responses stream answers the offer this side minted for
+  // that capability: its copy decides the scope, and the accepter's content
+  // (which could name any other scope of this account) is only a fallback
+  // when the copy carries none. An honest accepter echoes the same value.
+  if (offerCopy.via === 'responses-stream') {
+    const fromCopy = await resolveRequestScope({ userId, acceptEvent, mall, requestEvent: offerCopy.event });
+    if (fromCopy.scopeStreamId != null && fromCopy.appCode != null) {
+      scopeStreamId = fromCopy.scopeStreamId;
+      appCode = fromCopy.appCode;
+    }
+  }
   const fromAcceptContent = acceptEvent.content?.requesterAppCode;
   const originStreamFromAccept = acceptEvent.content?.requesterOriginStreamId;
-  if (typeof originStreamFromAccept === 'string' && originStreamFromAccept.length > 0 &&
+  if (scopeStreamId == null && typeof originStreamFromAccept === 'string' && originStreamFromAccept.length > 0 &&
       originStreamFromAccept.startsWith(C.NS_APPS + ':')) {
-    // Most authoritative: the accepter passed back the requester's
+    // Without a scope from the offer copy: the accepter passed back the requester's
     // per-request streamId (e.g. :_cmc:apps:my-app:study-1). Anchors
     // land exactly here, so chat/system triggers in the same scope
     // resolve cleanly.
@@ -295,8 +324,7 @@ async function handleIncomingAccept (params: {
   // The capability this accept came through. Stamped on the back-channel
   // access: for an open-link invite, the relationship accesses carrying it ARE
   // the list of who joined. Also used below to consume the link and enrich the
-  // mirror.
-  const capabilityIdToConsume = acceptEvent?.content?.capabilityId;
+  // mirror. `capabilityIdToConsume` is resolved at the top, from the stream.
   // An accept on a responses stream is written with the capability token, so
   // its `createdBy` names the capability access: read it by id rather than
   // scanning every access. `<accessId> <callerId>` when a callerId was given.
@@ -583,7 +611,10 @@ async function handleIncomingAccept (params: {
         features: negotiatedFeatures,
         backChannelAccessId: access.id,
       };
+      // Only the id resolved from the capability access: one the accepter put
+      // in the content could point the requester's app at another invite.
       if (inviteEventId != null) mirrorContent.inviteEventId = inviteEventId;
+      else delete mirrorContent.inviteEventId;
       // A membership accept (this account asked to join a group): marked so a
       // member app matches it; from our own copy of the offer when there is
       // one, else from the delivered accept.
@@ -668,6 +699,15 @@ async function handleIncomingAccept (params: {
   };
 }
 
+/** The capability id of the first responses stream among `streamIds`, or null. */
+function capabilityIdOfResponsesStream (streamIds: string[] | undefined): string | null {
+  for (const sid of streamIds ?? []) {
+    const capabilityId = C.capabilityIdFromResponsesStreamId(sid);
+    if (capabilityId != null) return capabilityId;
+  }
+  return null;
+}
+
 type OfferCopyEvent = { type?: string; streamIds?: string[]; content?: Record<string, unknown> };
 type OfferCopy = { event: OfferCopyEvent | null; via: 'responses-stream' | 'delivered-id' | null };
 
@@ -738,9 +778,9 @@ function offerFeatures (
 }
 
 /**
- * Best-effort lookup of the original request event's scope. The accept
- * event carries either `originalEventId` or `capabilityId`; we use it
- * to find the request event in our streams and return the streamId
+ * Best-effort lookup of the original request event's scope. The offer copy
+ * is found by the accept's responses stream, else by the `originalEventId`
+ * it names; we return the streamId
  * + appCode it was written under. Returns nulls if we can't resolve
  * (caller falls back to a synthetic scope). `requestEvent`, when given
  * (null included), is the request already looked up by the caller.
