@@ -17,6 +17,7 @@ const { fromCallback } = require('utils');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getPasswordRules } = require('business/src/users/index.ts');
 const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').default;
+const { withoutCredentialUrls } = require('business/src/accesses/credentialUrls.ts');
 
 type AuditModule = {
   validApiCall: (ctx: unknown, result: unknown) => Promise<void>;
@@ -79,6 +80,9 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
       const accessProp = context.access[prop];
       if (accessProp != null) { result[prop] = accessProp; }
     }
+    // As accesses.get: clientData can hold endpoints another account stamped
+    // there (a peer's back-channel), whose tokens are not the holder's to read.
+    if (result.clientData != null) result.clientData = withoutCredentialUrls(result.clientData);
     result.user = {};
     // Report the access alias instead of the real username when this access
     // carries one (de-identification); otherwise the canonical primary

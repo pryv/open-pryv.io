@@ -58,6 +58,18 @@ far above normal use: a client that reaches one gets a clear error to retry late
   stored stay readable and are rewritten in the new envelope when written again (the ACME account
   key once, at the next account check).
 
+### An access reading itself gets its `clientData` without the credentials of the URLs in it (fix)
+
+- **`GET /access-info`, and `GET /accesses/{id}` by a non-personal access on its own id, now return
+  `clientData` with the user part (the token) of every URL in it removed** (scheme, host, path and
+  query kept), the same removal `accesses.get` applies where it withholds an access's credentials.
+  An access's `clientData` can hold endpoints written there by another account (a CMC
+  counterparty's back-channel, for one), whose tokens are not the holder's to read. The access's own
+  `token` and `apiEndpoint` are still returned.
+- **Behaviour change:** an app that stored a URL with credentials in its own access's `clientData`
+  and read it back through these calls now gets it without them; keep credentials out of
+  `clientData`.
+
 ### CMC: an accept only updates a relationship made with the same account (fix)
 
 - **An incoming accept that resolves to a relationship this account already holds (same

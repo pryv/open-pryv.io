@@ -35,6 +35,15 @@ const { _internals } = require('../_internals.ts');
 const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 const FILE_PREFIX = 'series';
+const OPEN_ATTEMPTS = 3;
+
+async function directoryExists (dirPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(dirPath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 type FieldsObj = Record<string, unknown>;
 type SeriesPoint = Record<string, unknown> & { time?: number };
@@ -291,12 +300,29 @@ class SeriesConnectionSQLite {
       this.cache.delete(userId); // dispose closes the stale handle
     }
 
-    const dbPath = await this.pathForUser(userId);
-    const db = new SeriesDatabase(this.logger, { dbPath });
+    const { db, dbPath } = await this.openForUser(userId);
     await db.init();
     db.fileId = await fileIdentity(dbPath);
     this.cache.set(userId, db);
     return db;
+  }
+
+  /**
+   * Create the namespace directory, then open its file. Another process
+   * dropping the namespace (the cleanup after a username change) removes the
+   * directory while it is still empty, which can fall between the two steps:
+   * create it again and retry.
+   */
+  async openForUser (userId: string): Promise<{ db: SeriesDb, dbPath: string }> {
+    for (let attempt = 1; ; attempt++) {
+      const dbPath = await this.pathForUser(userId);
+      try {
+        return { db: new SeriesDatabase(this.logger, { dbPath }), dbPath };
+      } catch (err: unknown) {
+        if (attempt >= OPEN_ATTEMPTS || await directoryExists(path.dirname(dbPath))) throw err;
+        this.logger.debug(`forUser: directory of ${userId} removed while opening, retrying`);
+      }
+    }
   }
 
   /** The series file path, without creating its directory. */

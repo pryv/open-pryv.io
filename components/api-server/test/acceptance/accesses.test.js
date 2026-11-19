@@ -932,5 +932,27 @@ describe('[AC01] accesses', () => {
       assert.ok(body.user.username);
       assert.strictEqual(body.user.username, userId);
     });
+
+    it('[AC39] returns clientData without the credentials of the URLs in it, as accesses.get does', async () => {
+      const token = cuid();
+      await user.access({
+        type: 'app',
+        token,
+        name: 'ac39-' + cuid().slice(-6),
+        permissions: [{ streamId: charlatan.Lorem.word(), level: 'read' }],
+        clientData: {
+          note: 'kept',
+          peer: { apiEndpoint: 'https://secret-tok@peer.example.com/u/' },
+          list: ['https://list-tok@peer.example.com/'],
+          encoded: 'next=https%3A%2F%2Fenc-tok%40peer.example.com%2F',
+        },
+      });
+      const res = await coreRequest.get(path()).set('Authorization', token);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.token, token, 'the caller\'s own token is still returned');
+      assert.strictEqual(res.body.clientData.note, 'kept');
+      assert.strictEqual(res.body.clientData.peer.apiEndpoint, 'https://peer.example.com/u/');
+      for (const secret of ['secret-tok', 'list-tok', 'enc-tok']) assert.ok(!JSON.stringify(res.body).includes(secret), secret);
+    });
   });
 });

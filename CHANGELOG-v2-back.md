@@ -18,6 +18,16 @@
   fixtures of the old one (an hfs-server fixture event read by the api-server suite). A component
   that crashes still counts as a failure and the run goes on.
 
+### SQLite series: opening a namespace survives its directory removed by another process
+
+- `SeriesConnectionSQLite` creates the namespace directory, then opens the file. Another process
+  dropping the namespace (the cleanup after a username change) removes the directory while it is
+  empty, which could fall between the two steps and fail the open ("unable to open database file").
+  The open now creates the directory again and retries (at most 3 attempts) when the directory is
+  missing.
+- Test harness: the cache acceptance suite's setup hook gets 20 s (it timed out at mocha's default
+  2 s in a loaded full PostgreSQL run).
+
 ### Test harness: the root integrity check once per test file
 
 - The platform / users-index integrity check of the root mocha hooks runs once per test file (at its
