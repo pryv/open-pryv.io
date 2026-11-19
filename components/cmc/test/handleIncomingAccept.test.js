@@ -490,9 +490,10 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
           cmc: {
             role: 'counterparty',
             appCode: 'my-app',
-            // The peer identity the selector keys on; no offerEventId /
-            // inviteEventId / capabilityId, as a pre-stamp relationship.
-            counterparty: { username: 'alice', host: 'pryv.me' },
+            // The peer identity the selector keys on (and the endpoint it was
+            // made with); no offerEventId / inviteEventId / capabilityId, as a
+            // pre-stamp relationship.
+            counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old@accepter.pryv.me/' },
           },
         },
         permissions: [{ streamId: ':_cmc:apps:my-app:campaign-2026:chats:alice--pryv-me', level: 'contribute' }],
@@ -886,7 +887,8 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
             appCode: 'my-app',
             scopeStreamId: SCOPE,
             features,
-            counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old@alice.pryv.me/' },
+            // the accepter's account (ACCEPT_FROM_INBOX), an older token
+            counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old@accepter.pryv.me/' },
           },
         },
       }];
@@ -934,7 +936,7 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
               appCode: 'my-app',
               scopeStreamId: SCOPE,
               inviteEventId: 'invite-legacy',
-              counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old@alice.pryv.me/' },
+              counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: 'https://old@accepter.pryv.me/' },
             },
           },
         }],
@@ -944,6 +946,109 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       const update = mall.calls.accessesUpdated[0];
       assert.deepEqual(update.update.clientData.cmc.features, { chat: false, systemMessaging: true });
       assert.equal(chatPermissions(update.update).length, 0);
+    });
+  });
+
+  describe('[CMCIA-HEAL] an existing relationship is only healed by the account it was made with', () => {
+    const SCOPE = ':_cmc:apps:my-app:campaign-2026';
+    const OFFER = {
+      id: 'orig-req-1',
+      type: 'consent/request-cmc',
+      streamIds: [':_cmc:_internal:offer:cap-xyz'],
+      content: { originStreamId: SCOPE, request: { features: { chat: true } } },
+    };
+    // alice's relationship in the scope; the accept below comes from accepter.pryv.me
+    function relationship (cmcExtra = {}, counterpartyExtra = { apiEndpoint: 'https://victim-tok@alice.pryv.me/' }) {
+      return {
+        id: 'acc-victim',
+        apiEndpoint: 'https://victim-back@requester.example.com/',
+        permissions: [{ streamId: SCOPE + ':collectors:alice--pryv-me', level: 'contribute' }],
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            appCode: 'my-app',
+            scopeStreamId: SCOPE,
+            counterparty: { username: 'alice', host: 'pryv.me', ...counterpartyExtra },
+            ...cmcExtra,
+          },
+        },
+      };
+    }
+    const ACCEPT = {
+      ...ACCEPT_FROM_INBOX,
+      streamIds: [':_cmc:_internal:responses:cap-xyz'],
+      content: { ...ACCEPT_FROM_INBOX.content, capabilityId: 'cap-xyz' },
+    };
+    async function run (mall) {
+      const posted = [];
+      const fetch = async (_url, init) => {
+        posted.push(JSON.parse(init.body));
+        return { status: 201, ok: true, async json () { return {}; }, async text () { return '{}'; } };
+      };
+      const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: ACCEPT, selfIdentity: SELF, deps: { mall, fetch } });
+      return { r, posted };
+    }
+
+    it('[IA30] an accept naming a counterparty whose relationship has another endpoint is refused before anything is written', async () => {
+      const mall = fakeMall({ requestEvent: OFFER, existingAccesses: [relationship()] });
+      const { r, posted } = await run(mall);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-incoming-accept-counterparty-endpoint-mismatch');
+      assert.equal(mall.calls.accessesUpdated, undefined);
+      assert.deepEqual(mall.calls.accessesCreated, []);
+      assert.deepEqual(mall.calls.streamsCreated, []);
+      assert.deepEqual(mall.calls.eventsCreated, []);
+      assert.deepEqual(posted, []);
+    });
+
+    it('[IA31] a relationship recorded without an endpoint is healed only through the capability it was made with', async () => {
+      const same = fakeMall({ requestEvent: OFFER, existingAccesses: [relationship({ capabilityId: 'cap-xyz' }, {})] });
+      const ok = await run(same);
+      assert.equal(ok.r.ok, true);
+      assert.equal(same.calls.accessesUpdated[0].id, 'acc-victim');
+      const other = fakeMall({ requestEvent: OFFER, existingAccesses: [relationship({ capabilityId: 'cap-other' }, {})] });
+      const refused = await run(other);
+      assert.equal(refused.r.reason, 'cmc-incoming-accept-counterparty-endpoint-mismatch');
+      assert.equal(other.calls.accessesUpdated, undefined);
+    });
+
+    it('[IA33] a case variant of the counterparty username resolves to the same relationship and is refused', async () => {
+      const mall = fakeMall({ requestEvent: OFFER, existingAccesses: [relationship()] });
+      const posted = [];
+      const fetch = async (_url, init) => { posted.push(JSON.parse(init.body)); return { status: 201, ok: true, async json () { return {}; }, async text () { return '{}'; } }; };
+      const acceptEvent = { ...ACCEPT, content: { ...ACCEPT.content, from: { username: 'Alice', host: 'pryv.me' } } };
+      const r = await handleIncomingAccept({ userId: 'u1', acceptEvent, selfIdentity: SELF, deps: { mall, fetch } });
+      assert.equal(r.reason, 'cmc-incoming-accept-counterparty-endpoint-mismatch');
+      assert.deepEqual(mall.calls.accessesCreated, []);
+      assert.deepEqual(posted, []);
+    });
+
+    it('[IA34] the same account with a new token heals in place', async () => {
+      const mall = fakeMall({ requestEvent: OFFER, existingAccesses: [relationship({}, { apiEndpoint: 'https://old-tok@Accepter.pryv.me:443' })] });
+      const { r } = await run(mall);
+      assert.equal(r.ok, true);
+      assert.equal(mall.calls.accessesUpdated[0].id, 'acc-victim');
+      assert.deepEqual(mall.calls.accessesCreated, []);
+    });
+
+    it('[IA32] the duplicate-name heal path applies the same check', async () => {
+      const victim = relationship();
+      const mall = fakeMall({ requestEvent: OFFER, existingAccesses: [] });
+      let gets = 0;
+      // the reuse lookup fails, so the mint runs into the existing name
+      mall.accesses.get = async () => { if (++gets === 1) throw new Error('storage down'); return [victim]; };
+      mall.accesses.create = async (_userId, params) => {
+        victim.name = params.name;
+        const e = new Error('item-already-exists');
+        e.id = 'item-already-exists';
+        throw e;
+      };
+      const { r, posted } = await run(mall);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-incoming-accept-counterparty-endpoint-mismatch');
+      assert.equal(mall.calls.accessesUpdated, undefined);
+      assert.deepEqual(mall.calls.eventsCreated, []);
+      assert.deepEqual(posted, []);
     });
   });
 });

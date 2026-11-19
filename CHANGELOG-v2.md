@@ -58,6 +58,18 @@ far above normal use: a client that reaches one gets a clear error to retry late
   stored stay readable and are rewritten in the new envelope when written again (the ACME account
   key once, at the next account check).
 
+### CMC: an accept only updates a relationship made with the same account (fix)
+
+- **An incoming accept that resolves to a relationship this account already holds (same
+  counterparty, same scope) now updates it only when it comes from the account the relationship
+  was made with:** its `grantedAccess.apiEndpoint` must be the one recorded on the relationship
+  (scheme, host and path; the token may differ). A relationship recorded without an endpoint is
+  only updated through the capability it was made with. Otherwise the accept fails with
+  `cmc-incoming-accept-counterparty-endpoint-mismatch` (not retried) and the existing relationship
+  is left as it was. The counterparty username of an accept is compared in lowercase.
+- **Behaviour change:** a counterparty whose account moved to another host or path can no longer
+  re-accept onto the existing relationship; the relationship is revoked and made again.
+
 ### CMC: an accept through a capability link takes the capability from its stream, not its content (fix)
 
 - **An accept written to a capability's responses stream is now tied to that capability whatever
