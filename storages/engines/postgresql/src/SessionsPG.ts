@@ -10,7 +10,8 @@ import { createRequire } from 'node:module';
 import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
-const { createId: cuid } = require('@paralleldrive/cuid2');
+// A bearer secret: from node:crypto, not an id library.
+const { secureToken } = require('../../../interfaces/_shared/secureToken.ts');
 type SessionPgRow = { id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown };
 type PgQueryResult = { rows: SessionPgRow[]; rowCount?: number };
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<PgQueryResult> };
@@ -62,7 +63,7 @@ class SessionsPG {
       callback = options as (err: Error | null, id?: string) => void;
       options = {};
     }
-    const id = cuid();
+    const id = secureToken();
     const sessionData = (data && typeof data === 'object') ? data : {};
     const expires = this.getNewExpirationDate();
     this.db.query(

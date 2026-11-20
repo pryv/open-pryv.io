@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Bearer secrets from node:crypto, cluster cert extensions
+
+- `storages/interfaces/_shared/secureToken.ts`: `secureToken()` (a letter + 23 base36 symbols, the
+  24-character shape of cuid2 3.x ids, from
+  `randomBytes`, rejection sampling, no modulo bias); used by `AccessesPG/SQLite` (`applyDefaults`
+  token, `generateToken`), `SessionsPG/SQLite.generate`, `PasswordResetRequestsPG/SQLite.generate` and
+  CMC `mallAccessesAdapter`'s default token generator. cuid2 kept for ids. The stale
+  `@paralleldrive/cuid2` `^2.2.2` declarations of the postgresql and s3 engines aligned on the root's
+  `^3.3.0` (the engines are not npm workspaces: no lockfile change). Tests `[SCTK1-3]`.
+- `ClusterCA`: the CA is created from an explicit `req` config (`basicConstraints critical CA:TRUE
+  pathlen:0`, `keyUsage keyCertSign cRLSign`), node certs get `basicConstraints critical CA:FALSE`,
+  `keyUsage digitalSignature`, `extendedKeyUsage serverAuth clientAuth`, SKI / AKI; `[dn]` carries a
+  CN so LibreSSL accepts the config; `issueNodeCert` refuses a coreId / hostname that is not DNS labels
+  and an ip that `net.isIP` rejects (they reach `-subj` and the extfile). Tests `[CLCX1-4]`.
+
 ### Keyed store-key hashes, chosen-token floor, CMC retry-row sweep
 
 - `business/src/auth/storeKeyHash.ts`: one helper, HMAC-SHA256 under an HKDF key (purpose
