@@ -15,11 +15,12 @@
  * - distinct addresses one account gets verification mails sent to per day
  *   (`account.emailVerification.addressesPerAccountPerDay`): `maxEmails` caps
  *   the addresses held at once, not an add / remove cycle through new ones;
- * - mails per hour from this core on the caller-triggered paths (registration
- *   code, welcome, verification, password reset) (`services.email.maxPerHour`):
- *   a circuit breaker for sender reputation and provider cost, logged once per
- *   window when it trips. Notices the platform sends on its own (deletion
- *   reminders, MFA changes, ...) are not counted nor stopped.
+ * - mails per hour from this core on the caller-triggered paths
+ *   (`services.email.maxPerHour`, counted per class: registration codes +
+ *   welcome, and verification + password reset): a circuit breaker for sender
+ *   reputation and provider cost, logged once per window and worker when it
+ *   trips. Notices the platform sends on its own (deletion reminders, MFA
+ *   changes, ...) are not counted nor stopped.
  *
  * Counters live in cluster_kv (per core, shared by its API workers). 0 turns
  * a budget off. A store that cannot answer lets the mail go.
@@ -56,21 +57,24 @@ const challengeIpBudget = createAddressBudget({
 });
 
 const ADDRESS_MARKER_NS = 'email-verify-address-day/';
+const addressesPerAccountPerDay = configured('account:emailVerification:addressesPerAccountPerDay', MAIL_BUDGET_DEFAULTS.addressesPerAccountPerDay);
 const accountAddressBudget = createAddressBudget({
   namespace: 'email-verify-addresses/',
-  perWindow: configured('account:emailVerification:addressesPerAccountPerDay', MAIL_BUDGET_DEFAULTS.addressesPerAccountPerDay),
+  perWindow: addressesPerAccountPerDay,
   windowMs: DAY_MS,
   keyIsAddress: false
 });
 
-const BREAKER_KEY = 'core';
+// One breaker per class, each `services.email.maxPerHour`: a flood of
+// unauthenticated registration codes cannot stop password resets.
+type MailClass = 'registration' | 'account';
 const coreMailBreaker = createAddressBudget({
   namespace: 'mail-breaker/',
   perWindow: configured('services:email:maxPerHour', MAIL_BUDGET_DEFAULTS.maxPerHour),
   windowMs: HOUR_MS,
   keyIsAddress: false
 });
-let breakerWarnedUntil = 0;
+const breakerWarnedUntil: Record<MailClass, number> = { registration: 0, account: 0 };
 
 /** Counts one registration code for client address `ip`: null, or the 429 to answer. */
 async function reserveChallengeFromIp (ip: string | null | undefined): Promise<Error | null> {
@@ -85,9 +89,12 @@ async function reserveChallengeFromIp (ip: string | null | undefined): Promise<E
 /**
  * Counts `email` among the addresses `userId` got a verification mail for
  * today (an address already counted today is free): null, or the seconds
- * until the account may mail a new address.
+ * until the account may mail a new address. The address marker lasts 24 h from
+ * its first mail and the account's window 24 h from its first count, so over a
+ * rolling day an account may reach up to about twice the configured addresses.
  */
 async function reserveVerificationAddress (userId: string, email: string): Promise<number | null> {
+  if (addressesPerAccountPerDay() <= 0) return null;
   const markerKey = userId + '/' + email.toLowerCase();
   if (!(await markIfAbsent(ADDRESS_MARKER_NS, markerKey, DAY_MS))) return null;
   const retryAfterSeconds = await accountAddressBudget.reserve(userId);
@@ -95,13 +102,17 @@ async function reserveVerificationAddress (userId: string, email: string): Promi
   return retryAfterSeconds;
 }
 
-/** Counts one caller-triggered mail from this core: null, or the 429 to answer. */
-async function meterCallerMail (): Promise<Error | null> {
-  const retryAfterSeconds = await coreMailBreaker.reserve(BREAKER_KEY);
+/**
+ * Counts one caller-triggered mail of `mailClass` from this core: null, or the
+ * 429 to answer. `registration`: registration codes and welcome mails;
+ * `account`: verification and password-reset mails.
+ */
+async function meterCallerMail (mailClass: MailClass): Promise<Error | null> {
+  const retryAfterSeconds = await coreMailBreaker.reserve(mailClass);
   if (retryAfterSeconds == null) return null;
-  if (Date.now() > breakerWarnedUntil) {
-    breakerWarnedUntil = Date.now() + retryAfterSeconds * 1000;
-    logger.warn(`outbound mail breaker: services.email.maxPerHour reached on this core; caller-triggered mails are refused for ${retryAfterSeconds} s`);
+  if (Date.now() > breakerWarnedUntil[mailClass]) {
+    breakerWarnedUntil[mailClass] = Date.now() + retryAfterSeconds * 1000;
+    logger.warn(`outbound mail breaker: services.email.maxPerHour reached for ${mailClass} mails on this core (this worker); they are refused for ${retryAfterSeconds} s`);
   }
   return errors.tooManyRequests('The platform is sending too many emails right now. Please retry later.', retryAfterSeconds);
 }
@@ -112,7 +123,9 @@ async function clear (): Promise<void> {
   await accountAddressBudget.clear();
   await coreMailBreaker.clear();
   await clearMarkers();
-  breakerWarnedUntil = 0;
+  breakerWarnedUntil.registration = 0;
+  breakerWarnedUntil.account = 0;
 }
 
 export { MAIL_BUDGET_DEFAULTS, reserveChallengeFromIp, reserveVerificationAddress, meterCallerMail, clear };
+export type { MailClass };

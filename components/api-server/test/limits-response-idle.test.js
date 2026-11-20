@@ -55,9 +55,9 @@ describe('[RIDL] stalled readers', function () {
     }
   });
 
-  it('[RIDL2] defaults: 60 s idle timeout, 1 streamed audit read per access; 0 turns either off', function () {
+  it('[RIDL2] defaults: 120 s idle timeout, 1 streamed audit read per access; 0 turns either off', function () {
     assert.strictEqual(readResponseIdleTimeoutMs(() => undefined), RESPONSE_IDLE_TIMEOUT_DEFAULT_MS);
-    assert.strictEqual(RESPONSE_IDLE_TIMEOUT_DEFAULT_MS, 60000);
+    assert.strictEqual(RESPONSE_IDLE_TIMEOUT_DEFAULT_MS, 120000);
     assert.strictEqual(readAuditReadLimit(() => undefined), AUDIT_READS_PER_ACCESS_DEFAULT);
     assert.strictEqual(AUDIT_READS_PER_ACCESS_DEFAULT, 1);
     let set = null;

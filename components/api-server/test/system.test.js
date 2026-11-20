@@ -212,6 +212,10 @@ describe('[SYER] system (ex-register)', function () {
         settings.services.email.enabled = {
           welcome: true
         };
+        // This child server's IPC channel leads to the test runner, not to a
+        // cluster master: the mail breaker's counter would wait for its 5 s
+        // store timeout (then let the mail go) before sending.
+        settings.services.email.maxPerHour = 0;
 
         let mailSent = false;
 

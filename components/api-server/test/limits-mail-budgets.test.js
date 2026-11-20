@@ -61,23 +61,52 @@ describe('[MLBG] mail budgets', function () {
     });
   });
 
-  it('[MLBG3] past services.email.maxPerHour the caller-triggered sends of the core are refused with 429, already logged, before any delivery', async function () {
+  it('[MLBG3] past services.email.maxPerHour the caller-triggered sends of that class are refused with 429, already logged, before any delivery; the other class still goes', async function () {
     await withInjectedConfig({ services: { email: { maxPerHour: 2 } } }, async () => {
-      assert.strictEqual(await mailBudgets.meterCallerMail(), null);
-      assert.strictEqual(await mailBudgets.meterCallerMail(), null);
-      const refused = await mailBudgets.meterCallerMail();
+      assert.strictEqual(await mailBudgets.meterCallerMail('registration'), null);
+      assert.strictEqual(await mailBudgets.meterCallerMail('registration'), null);
+      const refused = await mailBudgets.meterCallerMail('registration');
       assert.strictEqual(refused?.id, ErrorIds.TooManyRequests);
       const err = await new Promise((resolve) => {
         // An invalid method would fail delivery with an unexpected error: the
         // breaker answers first.
-        mailing.sendmailMetered({ method: 'none' }, 'tpl', { email: 'x@example.com', type: 'to' }, {}, 'en', resolve);
+        mailing.sendmailMetered('registration', { method: 'none' }, 'tpl', { email: 'x@example.com', type: 'to' }, {}, 'en', resolve);
       });
       assert.strictEqual(err?.id, ErrorIds.TooManyRequests, String(err));
       assert.strictEqual(mailing.isLoggedMailFailure(err), true);
+      // A registration-code flood leaves password resets and verification mails alone.
+      assert.strictEqual(await mailBudgets.meterCallerMail('account'), null);
     });
     await withInjectedConfig({ services: { email: { maxPerHour: 0 } } }, async () => {
-      assert.strictEqual(await mailBudgets.meterCallerMail(), null);
+      assert.strictEqual(await mailBudgets.meterCallerMail('registration'), null);
     });
+  });
+
+  it('[MLBG5] a callback that throws is caught and logged, never an unhandled rejection', async function () {
+    const unhandled = [];
+    const onUnhandled = (reason) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      for (const maxPerHour of [0, 1]) {
+        await mailBudgets.clear();
+        await withInjectedConfig({ services: { email: { maxPerHour } } }, async () => {
+          // maxPerHour 0: the breaker is off and the invalid method fails
+          // delivery at once; 1 after one count: the breaker refuses.
+          if (maxPerHour === 1) await mailBudgets.meterCallerMail('account');
+          let calls = 0;
+          mailing.sendmailMetered('account', { method: 'none' }, 'tpl', { email: 'x@example.com', type: 'to' }, {}, 'en', () => {
+            calls++;
+            throw new Error('downstream failure');
+          });
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          assert.strictEqual(calls, 1, 'the callback is called once');
+        });
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepStrictEqual(unhandled, []);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 
   it('[MLBG4] defaults', function () {

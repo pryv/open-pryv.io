@@ -22,6 +22,7 @@ const ErrorIds = require('errors').ErrorIds;
 const { ApiEndpoint } = require('utils');
 
 const commonFns = require('./helpers/commonFunctions.ts');
+const { streamTreeLimitError } = require('./helpers/streamLimits.ts');
 const methodsSchema = require('../schema/accessesMethods.ts');
 const accessSchema = require('../schema/access.ts').default;
 const string = require('./helpers/string.ts');
@@ -589,6 +590,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     } else {
       newStream.parentId = ':' + storeId + ':';
     }
+    const limitError = await streamTreeLimitError(mall, (key: string) => config.get(key), context.user.id, storeId, null, 1, 1);
+    if (limitError != null) throw limitError;
 
     context.initTrackingProperties(newStream);
     try {

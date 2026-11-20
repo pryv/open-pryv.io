@@ -47,21 +47,28 @@ call that would pass it; what an account already holds stays readable.
 - **Stream tree: `limits.streams.maxDepth` (default 32) and `limits.streams.maxPerAccount`
   (default 10000).** A stream may sit at most 32 levels deep (a root stream is level 1), on
   creation and on a move (`streams.update` with `parentId`: the moved stream's whole subtree
-  counts). An account holds at most 10000 streams in its own store, trashed ones included. Past
-  either `streams.create` / `streams.update` answer **400 `invalid-operation`**, naming the limit.
-  Every call of an account works on its whole tree, and a chain a few hundred levels deep made
-  stream creation fail with an unexpected error. Streams of other stores are not counted.
+  counts). An account holds at most 10000 streams in its own store, trashed ones and its built-in
+  account streams included. Past either `streams.create` / `streams.update` (and `accesses.create`
+  / `accesses.update` creating a stream from a permission's `defaultName`) answer **400
+  `invalid-operation`**, naming the limit. Every call of an account works on its whole tree, and a
+  chain a few hundred levels deep made stream creation fail with an unexpected error. Streams of
+  other data stores are not counted. Soft limits: creates running at once can pass a cap by a few
+  streams.
 - **Stream ids per event: `limits.events.maxStreamIds` (default 100).** Distinct `streamIds` of one
   event (duplicates count once); past it `events.create` / `events.update` answer **400
   `invalid-parameters-format`**.
-- **Idle connections: `http.responseIdleTimeoutMs` (default 60000).** A connection with no traffic
-  either way for 60 s is closed. A client that stopped reading a response used to hold its database
-  cursor (and the call's slots) for as long as it kept the connection open. socket.io connections
-  are not affected; a client receiving a long response keeps it open by reading it.
+- **Idle connections: `http.responseIdleTimeoutMs` (default 120000).** A connection with no traffic
+  either way for 120 s is closed. A client that stopped reading a response used to hold its
+  database cursor (and the call's slots) for as long as it kept the connection open. socket.io
+  websocket connections are not affected; a client receiving a long response keeps it open by
+  reading it. The timer runs on traffic, so a call whose server-side work is silent for longer
+  (no response byte yet) is cut as well while the work carries on: keep the value above your
+  slowest call (and above the worker ingress's 60 s upstream timer, which answers 504 first).
 - **Streamed audit reads per access: `limits.audit.maxConcurrentReadsPerAccess` (default 1).** One
   access reads its audit (`events.get` on `:_audit:` streams) once at a time on a worker; a second
-  read while the first is still being sent answers **429 `too-many-requests`**. Each such read holds
-  a connection of the small audit read pool until it has been read.
+  read while the first is still being sent answers **429 `too-many-requests`** (a client paging its
+  audit view with parallel requests now gets it on all but one). Each such read holds a connection
+  of the small audit read pool until it has been read.
 - **Mail a caller can trigger:**
   - registration codes (`auth.emailChallenge`) per client address:
     `account.emailVerification.registrationCodesPerIpPerHour` (default 10). Past it the request
@@ -72,11 +79,17 @@ call that would pass it; what an account already holds stays readable.
     that day is free). Past it an address added with `account.update` (`emails.add`) gets no mail
     (the address is still added, as when the resend cooldown applies), and an `emails.resend`
     answers **429 `too-many-attempts`** with `data.reason: 'account-address-limit'`.
-  - a breaker on this core's caller-triggered mails (registration code, welcome, verification,
-    password reset): `services.email.maxPerHour` (default 500). Past it those mails are refused for
-    the rest of the hour (**429 `too-many-requests`** where the request waits for the mail; the
-    welcome mail is skipped) and the core logs one warning. Notices the platform sends on its own
-    (deletion reminders, MFA changes, transfers, ...) are not counted nor stopped.
+  - a breaker on this core's caller-triggered mails: `services.email.maxPerHour` (default 500),
+    counted separately for registration mails (codes and welcome) and account mails (verification
+    and password reset), so a flood of registration codes cannot stop password resets. Past it the
+    mails of that class are refused for the rest of the hour (**429 `too-many-requests`** where the
+    request waits for the mail; the welcome mail is skipped) and each API worker logs one warning.
+    Notices the platform sends on its own (deletion reminders, MFA changes, transfers, ...) are not
+    counted nor stopped. Size it above your busiest legitimate hour: each gated registration costs
+    two registration mails.
+  - behind a shared address (clinic or campus NAT), or with `http.trustedProxies` not set behind a
+    proxy (every client then shares the proxy's address), the per-address code budget is shared:
+    raise `registrationCodesPerIpPerHour` accordingly.
 
 ### socket.io: calls running at the same time on one connection are audited under their own method (fix)
 

@@ -138,8 +138,12 @@ function jsonShapeProblem (value: unknown, limits: { maxDepth: number; maxObject
  * otherwise hold the response's database cursor (and its pooled connection)
  * and the call's slots for as long as it keeps the connection open. Upgraded
  * connections (socket.io) are not affected. 0 = no timeout.
+ * The timer runs on socket traffic, so a call whose work is silent for longer
+ * (no response byte yet) is cut too while the work carries on: the default
+ * stays well above the slowest calls and above the worker ingress's own 60 s
+ * upstream timer, so that one still answers its 504.
  */
-const RESPONSE_IDLE_TIMEOUT_DEFAULT_MS = 60000;
+const RESPONSE_IDLE_TIMEOUT_DEFAULT_MS = 120000;
 
 function readResponseIdleTimeoutMs (get: (key: string) => unknown): number {
   return countOr(get('http:responseIdleTimeoutMs'), RESPONSE_IDLE_TIMEOUT_DEFAULT_MS);

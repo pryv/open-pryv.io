@@ -126,6 +126,30 @@ describe('[STLM] stream tree and stream list limits', function () {
     });
   });
 
+  it('[STLM6] accesses.create with defaultName is held to limits.streams.maxPerAccount too', async function () {
+    let existing;
+    await withInjectedConfig({ limits: { streams: { maxPerAccount: 1 } } }, async () => {
+      const probe = await createStream('q0-' + username, null);
+      existing = Number(/already holds (\d+) streams/.exec(probe.body.error.message)?.[1]);
+    });
+    assert.ok(existing >= 1, 'count read from the refusal');
+    function createAccess (streamId) {
+      return coreRequest.post('/' + username + '/accesses').set('Authorization', token)
+        .send({ name: 'stlm-' + cuid(), permissions: [{ streamId, defaultName: 'stlm ' + streamId, level: 'read' }] });
+    }
+    await withInjectedConfig({ limits: { streams: { maxPerAccount: existing + 1 } } }, async () => {
+      const fits = await createAccess('q1-' + username);
+      assert.strictEqual(fits.status, 201, JSON.stringify(fits.body));
+      const refused = await createAccess('q2-' + username);
+      assert.strictEqual(refused.status, 400, JSON.stringify(refused.body));
+      assert.strictEqual(refused.body.error.id, ErrorIds.InvalidOperation);
+      assert.match(refused.body.error.message, /limits\.streams\.maxPerAccount/);
+      // A permission on a stream that already exists creates nothing.
+      const existingStream = await createAccess('q1-' + username);
+      assert.strictEqual(existingStream.status, 201, JSON.stringify(existingStream.body));
+    });
+  });
+
   it('[STLM5] defaults apply when the config is absent or invalid; the tree walk does not recurse', function () {
     assert.deepStrictEqual(readStreamLimits(() => undefined), { ...STREAM_LIMIT_DEFAULTS });
     assert.deepStrictEqual(readStreamLimits(() => -1), { ...STREAM_LIMIT_DEFAULTS });

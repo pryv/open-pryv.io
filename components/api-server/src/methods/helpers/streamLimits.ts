@@ -20,7 +20,16 @@
  * an unbounded tree or stream list makes every call of the account slower
  * and a deep enough chain makes them fail. A cap refuses the write that would
  * pass it; streams already stored stay readable. 0 turns a cap off.
+ *
+ * Soft limits: two creates of the same account running at once can each pass
+ * the check and together go a few streams past a cap.
  */
+
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const errors = require('errors').factory;
+const { storeDataUtils } = require('mall');
+const { getLogger } = require('@pryv/boiler');
 
 const STREAM_LIMIT_DEFAULTS = Object.freeze({
   maxDepth: 32,
@@ -80,5 +89,34 @@ function streamTreeLimitProblem (limits: StreamLimits, current: { count: number 
   return null;
 }
 
-export { STREAM_LIMIT_DEFAULTS, readStreamLimits, measureTree, streamTreeLimitProblem };
+type StreamsReader = { streams: { get: (userId: string, params: object) => Promise<TreeNode[]> } };
+
+/**
+ * The error to answer when adding `addedCount` streams, with a subtree
+ * `addedHeight` levels deep, under `parentStreamId` (null = the root) of
+ * `storeId` would pass a cap; null when it would not. Local store only: other
+ * stores bound their own trees. Every creator of user streams calls it
+ * (streams.create, a stream move, accesses.create / update with
+ * `defaultName`); plugin-provisioned streams (CMC, delegation, the emails
+ * container) are bounded by their own logic and stay exempt.
+ */
+async function streamTreeLimitError (mall: StreamsReader, get: (key: string) => unknown, userId: string, storeId: string, parentStreamId: string | null, addedHeight: number, addedCount: number): Promise<Error | null> {
+  if (storeId !== storeDataUtils.LocalStoreId) return null;
+  const limits = readStreamLimits(get);
+  if (limits.maxDepth <= 0 && limits.maxPerAccount <= 0) return null;
+  const tree = await mall.streams.get(userId, { id: '*', storeId, childrenDepth: -1, includeTrashed: true, hideStoreRoots: true });
+  const measured = measureTree(tree, parentStreamId);
+  let parentLevel = 0;
+  if (parentStreamId != null) {
+    if (measured.levelOf == null) {
+      getLogger('stream-limits').warn(`stream tree limit: parent ${parentStreamId} not found in the tree read, depth checked as if it were a root`);
+    } else {
+      parentLevel = measured.levelOf;
+    }
+  }
+  const problem = streamTreeLimitProblem(limits, measured, parentLevel, addedHeight, addedCount);
+  return problem == null ? null : errors.invalidOperation('Stream tree limit: ' + problem + '.', { parentId: parentStreamId });
+}
+
+export { STREAM_LIMIT_DEFAULTS, readStreamLimits, measureTree, streamTreeLimitProblem, streamTreeLimitError };
 export type { StreamLimits };

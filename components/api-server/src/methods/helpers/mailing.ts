@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import { isInProcessSmtpMissing } from 'business/src/emails/mailCapability.ts';
 import { meterCallerMail } from './mailBudgets.ts';
+import type { MailClass } from './mailBudgets.ts';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const { getLogger } = require('@pryv/boiler');
@@ -101,14 +102,30 @@ export function recipientRefusal (err: unknown): 'rejected' | 'deferred' | null 
 /**
  * `sendmail` for the mails a caller makes the platform send (registration
  * code, welcome, verification, password reset): counted in this core's hourly
- * mail breaker first (`services.email.maxPerHour`, see mailBudgets.ts). Past it
+ * mail breaker of `mailClass` first (`services.email.maxPerHour`, see
+ * mailBudgets.ts). Past it
  * the callback gets a 429 too-many-requests, already logged.
+ * A throw from `sendmail` or from the callback is caught and logged here (it
+ * would otherwise be an unhandled rejection, which ends the worker); the
+ * callback still gets an error if it was not called yet.
  */
-export const sendmailMetered = function (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: MailCallback): void {
-  meterCallerMail().then((refusal: Error | null) => {
-    if (refusal != null) return callback(markLogged(refusal));
-    sendmail(emailSettings, template, recipient, subs, lang, callback);
-  }, () => sendmail(emailSettings, template, recipient, subs, lang, callback));
+export const sendmailMetered = function (mailClass: MailClass, emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: MailCallback): void {
+  let called = false;
+  const once: MailCallback = (err, res) => {
+    if (called) return;
+    called = true;
+    return callback(err, res);
+  };
+  meterCallerMail(mailClass)
+    .catch(() => null)
+    .then((refusal: Error | null) => {
+      if (refusal != null) return once(markLogged(refusal));
+      sendmail(emailSettings, template, recipient, subs, lang, once);
+    })
+    .catch((err: unknown) => {
+      logger.error('Sending email failed: ' + (err instanceof Error ? (err.stack ?? err.message) : String(err)));
+      if (!called) once(markLogged(errors.unexpectedError(err)));
+    });
 };
 
 /**

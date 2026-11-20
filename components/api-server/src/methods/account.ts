@@ -490,7 +490,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       RESET_URL: passwordResetPageURL,
       RESET_LINK: resetLink
     };
-    mailing.sendmailMetered(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, account.language, next);
+    mailing.sendmailMetered('account', emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, account.language, next);
   }
 
   // EMAIL VERIFICATION
@@ -520,7 +520,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         EMAIL: recipientEmail,
         USERNAME: username
       };
-      mailing.sendmailMetered(emailSettings, emailSettings.verifyEmailTemplate, recipient, substitutions, lang,
+      mailing.sendmailMetered('account', emailSettings, emailSettings.verifyEmailTemplate, recipient, substitutions, lang,
         (err?: Error | null) => (err != null ? reject(err) : resolve()));
     });
   }

@@ -244,7 +244,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         EMAIL: email,
         CODE_MAX_AGE_MINUTES: String(Math.max(1, Math.round((expiresAt - Date.now()) / 60000)))
       };
-      mailing.sendmailMetered(emailSettings, emailSettings.emailChallengeTemplate || 'email-challenge', recipient, substitutions,
+      mailing.sendmailMetered('registration', emailSettings, emailSettings.emailChallengeTemplate || 'email-challenge', recipient, substitutions,
         lang || emailSettings.defaultLang || 'en',
         (err?: Error | null) => (err != null ? reject(err) : resolve()));
     });

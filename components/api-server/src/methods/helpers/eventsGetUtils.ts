@@ -622,79 +622,9 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
     if (onDone != null) finished(counted, () => onDone());
     result.addToConcatArrayStream('events', counted);
   }
-  // When account store is included (from * queries), fetch its events non-streaming
-  // and merge with local store results to respect global skip/limit.
-  const accountStoreId = storeDataUtils.AccountStoreId;
-  if (paramsByStoreId[accountStoreId]) {
-    // Fetch account events non-streaming (always a small set: < 10 account fields).
-    // Remove skip/limit — account events are few and we apply global skip/limit after merge.
-    const accountParams = paramsByStoreId[accountStoreId];
-    const accountSkip = accountParams.skip || 0;
-    const accountLimit = accountParams.limit;
-    delete accountParams.skip;
-    delete accountParams.limit;
-    // API reads also get the derived account events (e.g. `verification/email`
-    // next to the primary email); internal readers never ask for them.
-    accountParams.includeDerived = true;
-    const accountEvents = await mall.events.getWithParamsByStore(
-      context.user.id, { [accountStoreId]: accountParams }
-    );
-    if (integrity.events.isActive) {
-      for (const event of accountEvents) {
-        integrity.events.set(event);
-      }
-    }
-    delete paramsByStoreId[accountStoreId];
-
-    // Fetch local store events non-streaming. Adjust limit to fetch enough for
-    // merged sort/skip (skip + limit pool), then apply global skip/limit after merge.
-    const localStoreId = storeDataUtils.LocalStoreId;
-    if (paramsByStoreId[localStoreId]) {
-      const localParams = paramsByStoreId[localStoreId];
-      const origSkip = localParams.skip || 0;
-      const origLimit = localParams.limit;
-      // Fetch skip+limit events with no skip (we apply skip globally after merge)
-      localParams.skip = 0;
-      if (origLimit != null) {
-        localParams.limit = origSkip + origLimit;
-      }
-      const localEvents = await mall.events.getWithParamsByStore(
-        context.user.id, { [localStoreId]: localParams }
-      );
-      // Apply file read tokens to local events with attachments
-      for (const event of localEvents) {
-        if (event.attachments) {
-          for (const att of event.attachments) {
-            att.readToken = utils.encryption.fileReadToken(
-              att.id, context.access.id, context.access.token, filesReadTokenSecret
-            );
-          }
-        }
-      }
-      // Merge, sort, apply global skip/limit
-      let merged = accountEvents.concat(localEvents);
-      const sortDir = params.sortAscending ? 1 : -1;
-      merged.sort((a: { time: number }, b: { time: number }) => sortDir * (a.time - b.time));
-      if (origSkip) merged = merged.slice(origSkip);
-      if (origLimit != null) merged = merged.slice(0, origLimit);
-      // Materialised set — count directly (always complete, no stream to abort).
-      context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + merged.length;
-      result.addToConcatArrayStream('events', Readable.from(merged));
-      delete paramsByStoreId[localStoreId];
-    } else {
-      // Only account store, no local store: skip/limit were removed from the
-      // store query above, apply them here
-      let selected = accountEvents;
-      if (accountSkip) selected = selected.slice(accountSkip);
-      if (accountLimit != null) selected = selected.slice(0, accountLimit);
-      context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + selected.length;
-      result.addToConcatArrayStream('events', Readable.from(selected));
-    }
-  }
-  // Stream remaining stores (audit, etc.), one store at a time in order. A
-  // streamed audit read holds a client of the small audit read pool until it
+  // A streamed audit read holds a client of the small audit read pool until it
   // has been read: one access runs at most limits.audit.maxConcurrentReadsPerAccess
-  // of them at once.
+  // of them at once. Taken before any read, so a refused call costs nothing.
   let releaseAuditSlot: (() => void) | null = null;
   if (paramsByStoreId[AUDIT_STORE_ID] != null && context.access?.id != null) {
     releaseAuditSlot = acquireCallSlot('audit-read:' + context.access.id, readAuditReadLimit(configGet));
@@ -702,6 +632,13 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
       return next(errors.tooManyRequests('Too many audit reads of this access are in progress on this server. Please retry shortly.'));
     }
   }
+  try {
+    await readAccountAndLocalStores();
+  } catch (err) {
+    releaseAuditSlot?.();
+    throw err;
+  }
+  // Stream remaining stores (audit, etc.), one store at a time in order.
   try {
     for (const storeId of Object.keys(paramsByStoreId)) {
       const onDone = storeId === AUDIT_STORE_ID ? releaseAuditSlot ?? undefined : undefined;
@@ -714,6 +651,78 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
   }
   result.closeConcatArrayStream('events');
   return next();
+
+  // When account store is included (from * queries), fetch its events non-streaming
+  // and merge with local store results to respect global skip/limit.
+  async function readAccountAndLocalStores () {
+    const accountStoreId = storeDataUtils.AccountStoreId;
+    if (paramsByStoreId[accountStoreId]) {
+    // Fetch account events non-streaming (always a small set: < 10 account fields).
+    // Remove skip/limit — account events are few and we apply global skip/limit after merge.
+      const accountParams = paramsByStoreId[accountStoreId];
+      const accountSkip = accountParams.skip || 0;
+      const accountLimit = accountParams.limit;
+      delete accountParams.skip;
+      delete accountParams.limit;
+      // API reads also get the derived account events (e.g. `verification/email`
+      // next to the primary email); internal readers never ask for them.
+      accountParams.includeDerived = true;
+      const accountEvents = await mall.events.getWithParamsByStore(
+        context.user.id, { [accountStoreId]: accountParams }
+      );
+      if (integrity.events.isActive) {
+        for (const event of accountEvents) {
+          integrity.events.set(event);
+        }
+      }
+      delete paramsByStoreId[accountStoreId];
+
+      // Fetch local store events non-streaming. Adjust limit to fetch enough for
+      // merged sort/skip (skip + limit pool), then apply global skip/limit after merge.
+      const localStoreId = storeDataUtils.LocalStoreId;
+      if (paramsByStoreId[localStoreId]) {
+        const localParams = paramsByStoreId[localStoreId];
+        const origSkip = localParams.skip || 0;
+        const origLimit = localParams.limit;
+        // Fetch skip+limit events with no skip (we apply skip globally after merge)
+        localParams.skip = 0;
+        if (origLimit != null) {
+          localParams.limit = origSkip + origLimit;
+        }
+        const localEvents = await mall.events.getWithParamsByStore(
+          context.user.id, { [localStoreId]: localParams }
+        );
+        // Apply file read tokens to local events with attachments
+        for (const event of localEvents) {
+          if (event.attachments) {
+            for (const att of event.attachments) {
+              att.readToken = utils.encryption.fileReadToken(
+                att.id, context.access.id, context.access.token, filesReadTokenSecret
+              );
+            }
+          }
+        }
+        // Merge, sort, apply global skip/limit
+        let merged = accountEvents.concat(localEvents);
+        const sortDir = params.sortAscending ? 1 : -1;
+        merged.sort((a: { time: number }, b: { time: number }) => sortDir * (a.time - b.time));
+        if (origSkip) merged = merged.slice(origSkip);
+        if (origLimit != null) merged = merged.slice(0, origLimit);
+        // Materialised set — count directly (always complete, no stream to abort).
+        context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + merged.length;
+        result.addToConcatArrayStream('events', Readable.from(merged));
+        delete paramsByStoreId[localStoreId];
+      } else {
+      // Only account store, no local store: skip/limit were removed from the
+      // store query above, apply them here
+        let selected = accountEvents;
+        if (accountSkip) selected = selected.slice(accountSkip);
+        if (accountLimit != null) selected = selected.slice(0, accountLimit);
+        context.auditRecordCount = (typeof context.auditRecordCount === 'number' ? context.auditRecordCount : 0) + selected.length;
+        result.addToConcatArrayStream('events', Readable.from(selected));
+      }
+    }
+  }
 }
 async function init () {
   mall = await getMall();

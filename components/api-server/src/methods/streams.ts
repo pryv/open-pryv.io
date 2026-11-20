@@ -32,7 +32,7 @@ const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { rescopeUserWebhooks } = require('./helpers/webhookScopes.ts');
-const { readStreamLimits, measureTree, streamTreeLimitProblem } = require('./helpers/streamLimits.ts');
+const { measureTree, streamTreeLimitError: sharedStreamTreeLimitError } = require('./helpers/streamLimits.ts');
 const Readable = require('stream').Readable;
 
 // Scoped notifications: structured stream-change signal carrying the changed
@@ -90,15 +90,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // Stream tree bounds (limits.streams), for the local store only: other
   // stores keep their own trees. Adding `addedCount` streams with a subtree
   // `addedHeight` levels deep under `parentStreamId` (null = the root).
-  async function streamTreeLimitError (userId: string, storeId: string, parentStreamId: string | null, addedHeight: number, addedCount: number) {
-    if (storeId !== storeDataUtils.LocalStoreId) return null;
-    const limits = readStreamLimits((key: string) => config.get(key));
-    if (limits.maxDepth <= 0 && limits.maxPerAccount <= 0) return null;
-    const tree = await mall.streams.get(userId, { id: '*', storeId, childrenDepth: -1, includeTrashed: true });
-    const measured = measureTree(tree, parentStreamId);
-    const parentLevel = parentStreamId == null ? 0 : (measured.levelOf ?? 0);
-    const problem = streamTreeLimitProblem(limits, measured, parentLevel, addedHeight, addedCount);
-    return problem == null ? null : errors.invalidOperation('Stream tree limit: ' + problem + '.', { parentId: parentStreamId });
+  function streamTreeLimitError (userId: string, storeId: string, parentStreamId: string | null, addedHeight: number, addedCount: number) {
+    return sharedStreamTreeLimitError(mall, (key: string) => config.get(key), userId, storeId, parentStreamId, addedHeight, addedCount);
   }
   // RETRIEVAL
   // Defense-in-depth: prune `:_cmc:_internal` subtree

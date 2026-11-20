@@ -34,8 +34,10 @@ http:
   # A connection with no traffic either way for this many milliseconds is
   # closed: a client that stops reading a response would otherwise hold its
   # database cursor and call slots. socket.io connections are not affected.
-  # 0 = no timeout.
-  responseIdleTimeoutMs: 60000
+  # The timer runs on traffic, so a call silent for longer (server still
+  # working, no response byte yet) is cut too: keep it above your slowest call
+  # and above the worker ingress's 60 s upstream timer. 0 = no timeout.
+  responseIdleTimeoutMs: 120000
 
 # === PER-CORE / BOOTSTRAP: storage engines ===
 # Engine choice is per-core (flexibility for staging/migration).
@@ -470,6 +472,14 @@ services:
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.
     method: in-process
+    # Breaker on the mails a caller makes this core send, per hour and per
+    # class: registration mails (codes + welcome; a gated registration costs
+    # two) and account mails (verification + password reset), so a flood of
+    # registration codes cannot stop password resets. Past it the mails of
+    # that class are refused (429) until the hour rolls. Size it above your
+    # busiest legitimate hour. Notices the platform sends on its own are not
+    # counted. 0 = off.
+    maxPerHour: 500
     # --- microservice mode (legacy) ---
     url: http://127.0.0.1:9000/sendmail/     # external service-mail endpoint
     key: ''                                  # shared Authorization header
@@ -642,6 +652,16 @@ account:
     registrationCodeDailyLimit: 10
     registrationCodeFailuresPerDay: 20
     registrationProofMaxAgeMs: 1800000
+    # Registration codes one client address may request per hour (an IPv6
+    # client counts by its /64). Behind a shared address (clinic or campus
+    # NAT), or with http.trustedProxies not set behind a proxy (every client
+    # then shares the proxy's address), raise it. 0 = off.
+    registrationCodesPerIpPerHour: 10
+    # Distinct addresses one account may get verification mails sent to per
+    # day (an address already mailed that day is free; over a rolling day up
+    # to about twice this). maxEmails bounds the addresses held at once, not an
+    # add / remove cycle through new ones. 0 = off.
+    addressesPerAccountPerDay: 10
   # Storage used by each account (`account.get` `storageUsed`: dbDocuments,
   # attachedFiles in bytes), recomputed by the core for its own accounts: a
   # first pass about 15 minutes after boot, then every `intervalHours`. 0 turns
