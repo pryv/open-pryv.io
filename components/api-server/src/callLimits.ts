@@ -78,6 +78,7 @@ function acquireCallSlot (key: string, max: number): (() => void) | null {
     const left = (inflight.get(key) ?? 1) - 1;
     if (left > 0) inflight.set(key, left);
     else inflight.delete(key);
+    wakeOneWaiter(key);
   };
   const timer = setTimeout(() => {
     // A call whose result was never consumed: say so, it is a leak to find.
@@ -86,6 +87,53 @@ function acquireCallSlot (key: string, max: number): (() => void) | null {
   }, SLOT_MAX_HOLD_MS);
   timer.unref();
   return release;
+}
+
+/** Callers of acquireCallSlotWaiting waiting for a slot of `key`, oldest first. */
+const waiters: Map<string, Array<() => void>> = new Map();
+
+function wakeOneWaiter (key: string): void {
+  const queue = waiters.get(key);
+  if (queue == null) return;
+  const wake = queue.shift();
+  if (queue.length === 0) waiters.delete(key);
+  wake?.();
+}
+
+/**
+ * Like acquireCallSlot, but when `key` is at `max` waits up to `waitMs` for a
+ * slot to be given back (callers woken oldest first) before answering null.
+ */
+async function acquireCallSlotWaiting (key: string, max: number, waitMs: number): Promise<(() => void) | null> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const release = acquireCallSlot(key, max);
+    if (release != null) return release;
+    const left = deadline - Date.now();
+    if (left <= 0) return null;
+    const woken = await new Promise<boolean>((resolve) => {
+      let queue = waiters.get(key);
+      if (queue == null) {
+        queue = [];
+        waiters.set(key, queue);
+      }
+      const wake = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      const timer = setTimeout(() => {
+        const q = waiters.get(key);
+        const at = q?.indexOf(wake) ?? -1;
+        if (q != null && at >= 0) {
+          q.splice(at, 1);
+          if (q.length === 0) waiters.delete(key);
+        }
+        resolve(false);
+      }, left);
+      queue.push(wake);
+    });
+    if (!woken) return acquireCallSlot(key, max);
+  }
 }
 
 /** Calls in progress for `key` in this worker (for tests and diagnostics). */
@@ -153,11 +201,18 @@ function readResponseIdleTimeoutMs (get: (key: string) => unknown): number {
  * `limits.audit.maxConcurrentReadsPerAccess`: streamed audit reads one access
  * runs at once on this worker. Each holds a client of the audit read pool
  * (a few connections, shared with the backup export) until it has been read.
+ * A read past it waits up to `limits.audit.maxReadWaitMs` for one to finish
+ * (parallel reads of one client are run one after the other), then is refused.
  */
 const AUDIT_READS_PER_ACCESS_DEFAULT = 1;
+const AUDIT_READ_WAIT_DEFAULT_MS = 30000;
 
 function readAuditReadLimit (get: (key: string) => unknown): number {
   return countOr(get('limits:audit:maxConcurrentReadsPerAccess'), AUDIT_READS_PER_ACCESS_DEFAULT);
+}
+
+function readAuditReadWaitMs (get: (key: string) => unknown): number {
+  return countOr(get('limits:audit:maxReadWaitMs'), AUDIT_READ_WAIT_DEFAULT_MS);
 }
 
 /** Sets the idle timeout on a Node http(s) server; with no 'timeout' listener Node destroys the socket. */
@@ -165,5 +220,5 @@ function applyResponseIdleTimeout (server: { setTimeout: (ms: number) => unknown
   if (ms > 0) server.setTimeout(ms);
 }
 
-export { CALL_LIMIT_DEFAULTS, readCallLimits, acquireCallSlot, inflightCount, jsonShapeProblem, RESPONSE_IDLE_TIMEOUT_DEFAULT_MS, readResponseIdleTimeoutMs, applyResponseIdleTimeout, AUDIT_READS_PER_ACCESS_DEFAULT, readAuditReadLimit };
+export { CALL_LIMIT_DEFAULTS, readCallLimits, acquireCallSlot, acquireCallSlotWaiting, inflightCount, jsonShapeProblem, RESPONSE_IDLE_TIMEOUT_DEFAULT_MS, readResponseIdleTimeoutMs, applyResponseIdleTimeout, AUDIT_READS_PER_ACCESS_DEFAULT, AUDIT_READ_WAIT_DEFAULT_MS, readAuditReadLimit, readAuditReadWaitMs };
 export type { CallLimits };

@@ -66,9 +66,10 @@ call that would pass it; what an account already holds stays readable.
   slowest call (and above the worker ingress's 60 s upstream timer, which answers 504 first).
 - **Streamed audit reads per access: `limits.audit.maxConcurrentReadsPerAccess` (default 1).** One
   access reads its audit (`events.get` on `:_audit:` streams) once at a time on a worker; a second
-  read while the first is still being sent answers **429 `too-many-requests`** (a client paging its
-  audit view with parallel requests now gets it on all but one). Each such read holds a connection
-  of the small audit read pool until it has been read.
+  read while the first is still being sent waits for it (a client sending several at once gets them
+  one after the other), up to `limits.audit.maxReadWaitMs` (default 30000), then answers **429
+  `too-many-requests`**. Each such read holds a connection of the small audit read pool until it
+  has been read.
 - **Mail a caller can trigger:**
   - registration codes (`auth.emailChallenge`) per client address:
     `account.emailVerification.registrationCodesPerIpPerHour` (default 10). Past it the request

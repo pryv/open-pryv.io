@@ -837,9 +837,12 @@ limits:
   audit:
     # Streamed audit reads (events.get on :_audit: streams) one access runs at
     # once on a worker; each holds a connection of the small audit read pool
-    # until it has been read. Past it the read answers 429 too-many-requests.
-    # 0 disables it.
+    # until it has been read. A read past it waits for one to finish (a client
+    # sending several at once gets them one after the other), up to
+    # maxReadWaitMs, then answers 429 too-many-requests. 0 disables the cap;
+    # maxReadWaitMs 0 refuses at once.
     maxConcurrentReadsPerAccess: 1
+    maxReadWaitMs: 30000
   events:
     # Most distinct streamIds one event may carry; past it events.create /
     # events.update answer 400 invalid-parameters-format. 0 disables it.

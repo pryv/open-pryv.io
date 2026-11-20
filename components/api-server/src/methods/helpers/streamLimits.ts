@@ -25,11 +25,9 @@
  * the check and together go a few streams past a cap.
  */
 
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const errors = require('errors').factory;
-const { storeDataUtils } = require('mall');
-const { getLogger } = require('@pryv/boiler');
+import { getLogger } from '@pryv/boiler';
+import { factory as errors } from 'errors';
+import { storeDataUtils } from 'mall';
 
 const STREAM_LIMIT_DEFAULTS = Object.freeze({
   maxDepth: 32,

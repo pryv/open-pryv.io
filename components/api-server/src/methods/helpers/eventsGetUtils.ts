@@ -66,7 +66,7 @@ let mall: MallLike;
 let configGet: (key: string) => unknown = () => undefined;
 
 const { finished } = require('node:stream');
-const { acquireCallSlot, readAuditReadLimit } = require('../../callLimits.ts');
+const { acquireCallSlotWaiting, readAuditReadLimit, readAuditReadWaitMs } = require('../../callLimits.ts');
 const AUDIT_STORE_ID = '_audit';
 
 const { validateAndNormalizeConditions } = require('storages/shared/contentQueryConditions.ts');
@@ -624,10 +624,11 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
   }
   // A streamed audit read holds a client of the small audit read pool until it
   // has been read: one access runs at most limits.audit.maxConcurrentReadsPerAccess
-  // of them at once. Taken before any read, so a refused call costs nothing.
+  // of them at once; a read past it waits (limits.audit.maxReadWaitMs) for one
+  // to finish. Taken before any read, so a refused call costs nothing.
   let releaseAuditSlot: (() => void) | null = null;
   if (paramsByStoreId[AUDIT_STORE_ID] != null && context.access?.id != null) {
-    releaseAuditSlot = acquireCallSlot('audit-read:' + context.access.id, readAuditReadLimit(configGet));
+    releaseAuditSlot = await acquireCallSlotWaiting('audit-read:' + context.access.id, readAuditReadLimit(configGet), readAuditReadWaitMs(configGet));
     if (releaseAuditSlot == null) {
       return next(errors.tooManyRequests('Too many audit reads of this access are in progress on this server. Please retry shortly.'));
     }

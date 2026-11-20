@@ -22,7 +22,8 @@ const { withInjectedConfig } = require('test-helpers');
 const { ErrorIds } = require('errors/src/index.ts');
 const {
   applyResponseIdleTimeout, readResponseIdleTimeoutMs, RESPONSE_IDLE_TIMEOUT_DEFAULT_MS,
-  readAuditReadLimit, AUDIT_READS_PER_ACCESS_DEFAULT, acquireCallSlot, inflightCount
+  readAuditReadLimit, AUDIT_READS_PER_ACCESS_DEFAULT, acquireCallSlot, acquireCallSlotWaiting, inflightCount,
+  readAuditReadWaitMs, AUDIT_READ_WAIT_DEFAULT_MS
 } = require('../src/callLimits.ts');
 
 describe('[RIDL] stalled readers', function () {
@@ -60,6 +61,8 @@ describe('[RIDL] stalled readers', function () {
     assert.strictEqual(RESPONSE_IDLE_TIMEOUT_DEFAULT_MS, 120000);
     assert.strictEqual(readAuditReadLimit(() => undefined), AUDIT_READS_PER_ACCESS_DEFAULT);
     assert.strictEqual(AUDIT_READS_PER_ACCESS_DEFAULT, 1);
+    assert.strictEqual(readAuditReadWaitMs(() => undefined), AUDIT_READ_WAIT_DEFAULT_MS);
+    assert.strictEqual(AUDIT_READ_WAIT_DEFAULT_MS, 30000);
     let set = null;
     applyResponseIdleTimeout({ setTimeout (ms) { set = ms; } }, 0);
     assert.strictEqual(set, null, '0 leaves Node\'s default (no timeout)');
@@ -95,15 +98,17 @@ describe('[RIDL] stalled readers', function () {
         .query({ streams: JSON.stringify([':_audit:access-' + appAccessId]), limit: 20 });
     }
 
-    it('[RIDL3] a second streamed audit read of the same access is refused while one is in progress, and the slot is given back once read', async function () {
+    it('[RIDL3] a second streamed audit read of the same access waits while one is in progress, is refused past the wait, and the slot is given back once read', async function () {
       // Some calls of the access, so its audit stream has rows.
       for (let i = 0; i < 3; i++) await coreRequest.get('/' + username + '/events').set('Authorization', appToken);
       const held = acquireCallSlot('audit-read:' + appAccessId, AUDIT_READS_PER_ACCESS_DEFAULT);
       assert.ok(held != null, 'the test holds the access\'s only audit-read slot');
       try {
-        const refused = await readOwnAudit();
-        assert.strictEqual(refused.status, 429, JSON.stringify(refused.body));
-        assert.strictEqual(refused.body.error.id, ErrorIds.TooManyRequests);
+        await withInjectedConfig({ limits: { audit: { maxReadWaitMs: 200 } } }, async () => {
+          const refused = await readOwnAudit();
+          assert.strictEqual(refused.status, 429, JSON.stringify(refused.body));
+          assert.strictEqual(refused.body.error.id, ErrorIds.TooManyRequests);
+        });
         await withInjectedConfig({ limits: { audit: { maxConcurrentReadsPerAccess: 0 } } }, async () => {
           const unbounded = await readOwnAudit();
           assert.strictEqual(unbounded.status, 200, '0 disables the cap: ' + JSON.stringify(unbounded.body));
@@ -119,6 +124,29 @@ describe('[RIDL] stalled readers', function () {
       assert.strictEqual(inflightCount('audit-read:' + appAccessId), 0);
       const again = await readOwnAudit();
       assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+    });
+
+    it('[RIDL4] parallel streamed audit reads of one access (one per Activity card) all succeed, run one after the other', async function () {
+      for (let i = 0; i < 3; i++) await coreRequest.get('/' + username + '/events').set('Authorization', appToken);
+      const results = await Promise.all(Array.from({ length: 6 }, () => readOwnAudit()));
+      for (const res of results) assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.strictEqual(inflightCount('audit-read:' + appAccessId), 0);
+    });
+
+    it('[RIDL5] a waiting slot is handed over when one is given back, and waiting is bounded', async function () {
+      const key = 'ridl5:' + cuid();
+      const first = acquireCallSlot(key, 1);
+      const waiting = acquireCallSlotWaiting(key, 1, 5000);
+      setTimeout(first, 50);
+      const second = await waiting;
+      assert.ok(second != null, 'the waiter got the slot given back');
+      assert.strictEqual(inflightCount(key), 1);
+      const t0 = Date.now();
+      assert.strictEqual(await acquireCallSlotWaiting(key, 1, 100), null, 'refused once the wait is over');
+      assert.ok(Date.now() - t0 >= 90);
+      second();
+      assert.strictEqual(inflightCount(key), 0);
     });
   });
 });
