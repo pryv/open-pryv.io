@@ -66,6 +66,13 @@ const CORE_URL_REFRESH_INTERVAL_MS = 30_000;
  * skips (the embedded DNS re-reads its runtime records at the same pace).
  */
 const PLATFORM_NAMES_REFRESH_INTERVAL_MS = 30_000;
+/** Routing cache of name→core lookups (`cluster.userCoreCache`), see getUserCoreForRouting. */
+const USER_CORE_CACHE_DEFAULTS = Object.freeze({ positiveTtlMs: 30_000, negativeTtlMs: 5_000 });
+const USER_CORE_CACHE_MAX_ENTRIES = 50_000;
+
+function ttlOr (value: unknown, fallback: number): number {
+  return (typeof value === 'number' && Number.isInteger(value) && value >= 0) ? value : fallback;
+}
 
 /**
  * @class Platform
@@ -122,6 +129,10 @@ class Platform {
   // recovery flows; never replicated. Null until first built; rebuilt on
   // a miss. See resolveLocalUsernameFromToken.
   #reverseUsernameMap: Map<string, string> | null = null;
+
+  // Routing cache: username token → { coreId (null = no mapping), expiresAt }.
+  // Insertion-ordered, so the oldest entry is evicted first when full.
+  #userCoreCache: Map<string, { coreId: string | null; expiresAt: number }> = new Map();
 
   constructor () {
     this.#initialized = false;
@@ -921,6 +932,43 @@ class Platform {
   }
 
   /**
+   * `getUserCore` for routing only (the wrong-core check of every
+   * `/{username}/*` request, the embedded DNS answer for `<username>.<domain>`),
+   * cached in this process: a found mapping for `cluster.userCoreCache.positiveTtlMs`
+   * (default 30 s), no mapping for `negativeTtlMs` (default 5 s). Requests for
+   * random names then cost one PlatformDB read per name and window instead of
+   * one per request. A mapping this process writes or removes clears its entry;
+   * one changed by another core or worker is seen once the entry expires (an
+   * account moved to another core is routed to its former core for up to
+   * positiveTtlMs). 0 turns either cache off. Never use it to decide whether a
+   * name is free: uniqueness checks read through `getUserCore`.
+   */
+  async getUserCoreForRouting (username: string): Promise<string | null> {
+    const token = this.hashFor(USERNAME_FIELD, username);
+    const now = Date.now();
+    const cached = this.#userCoreCache.get(token);
+    if (cached != null && cached.expiresAt > now) return cached.coreId;
+    const coreId = await this.#db.getUserCore(token);
+    const key = coreId != null ? 'cluster:userCoreCache:positiveTtlMs' : 'cluster:userCoreCache:negativeTtlMs';
+    const ttl = ttlOr(this.#config?.get(key), coreId != null ? USER_CORE_CACHE_DEFAULTS.positiveTtlMs : USER_CORE_CACHE_DEFAULTS.negativeTtlMs);
+    this.#userCoreCache.delete(token);
+    if (ttl > 0) {
+      if (this.#userCoreCache.size >= USER_CORE_CACHE_MAX_ENTRIES) {
+        const oldest = this.#userCoreCache.keys().next().value;
+        if (oldest !== undefined) this.#userCoreCache.delete(oldest);
+      }
+      this.#userCoreCache.set(token, { coreId, expiresAt: now + ttl });
+    }
+    return coreId;
+  }
+
+  /** Drop the routing cache: every entry, or the one of `usernameToken`. */
+  forgetUserCoreForRouting (usernameToken?: string): void {
+    if (usernameToken == null) this.#userCoreCache.clear();
+    else this.#userCoreCache.delete(usernameToken);
+  }
+
+  /**
    * Resolve an HMAC username token back to its cleartext username — but
    * ONLY for users hosted on THIS core. The reverse map is derived from
    * this core's local user index (`usersLocalIndex.getAllByUsername()`),
@@ -967,7 +1015,9 @@ class Platform {
    */
   async setUserCore (username: string, coreId: string) {
     assertCoreId(coreId);
-    await this.#db.setUserCore(this.hashFor(USERNAME_FIELD, username), coreId);
+    const token = this.hashFor(USERNAME_FIELD, username);
+    this.forgetUserCoreForRouting(token);
+    await this.#db.setUserCore(token, coreId);
   }
 
   /**
@@ -981,7 +1031,9 @@ class Platform {
    */
   async setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean> {
     assertCoreId(coreId);
-    return await this.#db.setUserCoreIfNotExists(this.hashFor(USERNAME_FIELD, username), coreId);
+    const token = this.hashFor(USERNAME_FIELD, username);
+    this.forgetUserCoreForRouting(token);
+    return await this.#db.setUserCoreIfNotExists(token, coreId);
   }
 
   /**
@@ -991,6 +1043,7 @@ class Platform {
    */
   async setUserCoreByPreHashedUsername (usernameToken: string, coreId: string) {
     assertCoreId(coreId);
+    this.forgetUserCoreForRouting(usernameToken);
     await this.#db.setUserCore(usernameToken, coreId);
   }
 
@@ -999,7 +1052,9 @@ class Platform {
    * input; hashed internally. No-op if no mapping exists.
    */
   async deleteUserCore (username: string) {
-    await this.#db.deleteUserCore(this.hashFor(USERNAME_FIELD, username));
+    const token = this.hashFor(USERNAME_FIELD, username);
+    this.forgetUserCoreForRouting(token);
+    await this.#db.deleteUserCore(token);
   }
 
   /**
@@ -1008,7 +1063,9 @@ class Platform {
    * Plaintext input; hashed internally. True when a row was removed.
    */
   async deleteUserCoreIfValue (username: string, coreId: string): Promise<boolean> {
-    return await this.#db.deleteCoreRowIfValue(USER_CORE_ROW_PREFIX, this.hashFor(USERNAME_FIELD, username), coreId);
+    const token = this.hashFor(USERNAME_FIELD, username);
+    this.forgetUserCoreForRouting(token);
+    return await this.#db.deleteCoreRowIfValue(USER_CORE_ROW_PREFIX, token, coreId);
   }
 
   /**
@@ -1018,6 +1075,7 @@ class Platform {
    * pass, which deletes stale rows matched by token without a plaintext.
    */
   async deleteUserCoreByPreHashedUsername (usernameToken: string) {
+    this.forgetUserCoreForRouting(usernameToken);
     await this.#db.deleteUserCore(usernameToken);
   }
 
@@ -1196,6 +1254,7 @@ class Platform {
   }
 
   async moveCoreRows (prefix: string, fromCoreId: string, toCoreId: string): Promise<number> {
+    if (prefix === USER_CORE_ROW_PREFIX) this.forgetUserCoreForRouting();
     return await this.#db.moveCoreRows(prefix, fromCoreId, toCoreId);
   }
 
@@ -1399,6 +1458,7 @@ class Platform {
     //    round). Multi-core uses the atomic claim so a concurrent registration
     //    of the same name on another core loses; single-core keeps the plain
     //    overwrite so recycling a previously-deleted name stays byte-identical.
+    this.forgetUserCoreForRouting(usernameToken);
     if (this.isSingleCore) {
       await this.#db.setUserCore(usernameToken, this.coreId);
     } else {
@@ -1441,6 +1501,7 @@ class Platform {
       // the just-made claim is freed (matching the pre-reorder behaviour, where
       // a field conflict threw before any user-core write).
       if (!(await usersRepository.usernameExists(username))) {
+        this.forgetUserCoreForRouting(usernameToken);
         await this.#db.deleteUserCore(usernameToken);
       }
       throw errors.itemAlreadyExists('user', conflicts);

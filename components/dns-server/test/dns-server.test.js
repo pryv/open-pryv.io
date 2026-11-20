@@ -191,7 +191,8 @@ describe('[DNS] DNS Server', function () {
     const config = createMockConfig();
     const logger = createMockLogger();
 
-    server = createDnsServer({ config, platform, logger });
+    // Queried in bursts from one address: not about the response rate limit.
+    server = createDnsServer({ config, platform, logger, responseRateLimit: { perSecond: 0, slip: 0 } });
 
     // Use port 0 to get an ephemeral port
     await server.start({ port: 0, ip: '127.0.0.1', ip6: null });

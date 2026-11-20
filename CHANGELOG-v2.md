@@ -39,6 +39,26 @@ far above normal use: a client that reaches one gets a clear error to retry late
 - Access changes now re-check an account's open socket.io connections at most once per second (a
   burst of changes costs one more pass at the end of that second, not one per change).
 
+### Multi-core: cached routing lookups and a DNS response rate limit (on by default)
+
+Which core hosts a username used to be read from the platform database, at its most expensive
+consistency level, for every `/{username}/*` request and every embedded-DNS query: a stream of
+requests or forged UDP queries for random names became a stream of cluster-wide reads.
+
+- **Routing cache: `cluster.userCoreCache.positiveTtlMs` (default 30000) and `negativeTtlMs`
+  (default 5000).** Each process keeps the answer for the wrong-core check (421 `wrong-core`) and
+  the DNS answer for `<username>.<domain>`: a found mapping for 30 s, an unknown name for 5 s.
+  Consequences: an account moved to another core can still be routed to its former core for up to
+  30 s, and a name just registered on another core can be unknown to this core for up to 5 s.
+  Uniqueness checks (registration, renames) never use the cache. `0` turns either off.
+- The routing read itself is now `linearizable` instead of `strong` on rqlite: just as up to date,
+  without a Raft log entry per read.
+- **DNS response rate limit: `dns.responseRateLimit.perSecond` (default 20) and `slip` (default
+  2).** At most 20 UDP answers a second per client network (/24 IPv4, /56 IPv6); past it answers
+  are dropped, except every second one, sent truncated (TC=1) so a real resolver retries over TCP.
+  A refused query costs no lookup. Resolvers sharing one network that send more than 20 queries a
+  second to this server (a large ISP resolver farm) should raise it. TCP is not limited by it.
+
 ### Stream tree, stalled readers and mail budgets (on by default)
 
 More ceilings of the same kind, each configurable, `0` turning it off. A cap refuses the write or

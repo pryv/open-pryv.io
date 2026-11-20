@@ -24,7 +24,9 @@ type RqliteCell = string | number | boolean | null;
 type RqliteResult = { columns?: string[]; values?: RqliteCell[][]; rows_affected?: number; error?: string };
 // rqlite read-consistency levels (see rqlite docs). Omitted → `weak`
 // (node-local, can be stale during an election); `strong` is confirmed
-// through Raft and used for routing-/uniqueness-critical reads.
+// through Raft and used for uniqueness-critical reads; `linearizable` gives
+// the same up-to-date guarantee without a Raft log entry (rqlite 8.x and later)
+// and serves the name→core routing read.
 type ReadLevel = 'none' | 'weak' | 'linearizable' | 'strong';
 
 /**
@@ -270,7 +272,11 @@ class DBrqlite {
 
   async getUserCore (username: string) {
     const key = getUserCoreKey(username);
-    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'strong');
+    // `linearizable`: the leader confirms it still leads with a heartbeat
+    // round, so the read sees every committed write, as `strong` does, but it
+    // adds no entry to the Raft log. This read runs for routing (every
+    // `/{username}/*` request, the embedded DNS), reachable unauthenticated.
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'linearizable');
     return rows.length === 0 ? null : rows[0].value;
   }
 

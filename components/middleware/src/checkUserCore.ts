@@ -12,6 +12,7 @@ type PlatformLike = {
   isSingleCore: boolean;
   coreId: string;
   getUserCore: (username: string) => Promise<string | null>;
+  getUserCoreForRouting?: (username: string) => Promise<string | null>;
   coreIdToUrl: (coreId: string) => string;
 };
 
@@ -79,7 +80,10 @@ async function checkUserCore (req: Request, res: Response, next: NextFunction) {
     const platform = await getPlatformLazy();
     if (platform.isSingleCore) return next();
 
-    const userCoreId = await platform.getUserCore(username);
+    // Cached per process (any name in any URL reaches this point unauthenticated).
+    const userCoreId = platform.getUserCoreForRouting != null
+      ? await platform.getUserCoreForRouting(username)
+      : await platform.getUserCore(username);
     if (userCoreId == null) {
       // Unknown user in PlatformDB — let the existing 401/404 path answer.
       return next();

@@ -953,6 +953,14 @@ dns:
                          # (avoids burning the LE rate limit on a guaranteed fail).
   defaultTTL: 300        # TTL in seconds
   tcpMaxConnections: 64  # cap on simultaneous TCP (RFC 7766) connections the embedded DNS accepts
+  # UDP answers per client network (/24 IPv4, /56 IPv6) and second. Past it the
+  # answers are dropped, except every `slip`-th, sent truncated (TC=1) so a real
+  # resolver retries over TCP, which a forged source address cannot. Bounds the
+  # traffic reflected at one network and the lookups forged queries cost.
+  # perSecond 0 = no limit; slip 0 = drop every refused answer.
+  responseRateLimit:
+    perSecond: 20
+    slip: 2
   staticEntries: {}      # subdomain → { cname: "..." } or { a: [...] } or { txt: [...] }
   # Notes on staticEntries:
   #  - `reg`, `access`, `mfa` are reserved by the distribution — every core
@@ -1050,6 +1058,14 @@ cluster:
   # admin key on core-to-core calls, so they must be https origins. true also
   # accepts http: for local development and test clusters only.
   allowInsecurePeerUrl: false
+  # Multi-core routing cache, per process: which core hosts a username, for the
+  # wrong-core check of every /{username}/* request and the embedded DNS. A found
+  # mapping is kept positiveTtlMs, no mapping negativeTtlMs, so requests for
+  # random names do not each cost a PlatformDB read. An account moved to another
+  # core is routed to its former core until the entry expires. 0 = no cache.
+  userCoreCache:
+    positiveTtlMs: 30000
+    negativeTtlMs: 5000
 
 # === PLATFORM-WIDE ===
 # `piiMode` decides whether PlatformDB stores PII as HMAC-SHA-256 tokens

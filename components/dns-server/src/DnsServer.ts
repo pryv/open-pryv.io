@@ -27,6 +27,7 @@ import { validateRequest, isIgnorableUdpSource } from './wire.ts';
 import type { WireResult, WireHeader } from './wire.ts';
 import { validateDnsRecord, isEncodableAnswer, normalizeStoredRecord } from './recordValidation.ts';
 import type { EncodableAnswer } from './recordValidation.ts';
+import { ResponseRateLimiter, readRrlConfig, networkOf } from './responseRateLimit.ts';
 const require = createRequire(import.meta.url);
 
 const dns2 = require('dns2');
@@ -108,6 +109,7 @@ type PlatformLike = {
   getAllCoreInfos: () => Promise<CoreInfo[]>;
   getCoreInfo: (coreId: string) => Promise<CoreInfo | null>;
   getUserCore: (username: string) => Promise<string | null>;
+  getUserCoreForRouting?: (username: string) => Promise<string | null>;
 };
 
 class DnsServer {
@@ -137,6 +139,8 @@ class DnsServer {
   // Stored rows refused at the last refresh (JSON name -> JSON reason), so each
   // is warned about once rather than at every refresh.
   #refusedRows: Map<string, string> = new Map();
+  // UDP answers per client network and second (dns.responseRateLimit).
+  #rateLimiter: ResponseRateLimiter;
 
   /**
    * @param opts.config - @pryv/boiler config
@@ -145,8 +149,9 @@ class DnsServer {
    * @param [opts.platformRefreshIntervalMs] - override refresh interval (tests)
    * @param [opts.tcpIdleTimeoutMs] - override the TCP idle timeout (tests)
    * @param [opts.tcpMaxConnections] - override the TCP connection cap (tests)
+   * @param [opts.responseRateLimit] - override `dns.responseRateLimit` (tests)
    */
-  constructor ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number }) {
+  constructor ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number; responseRateLimit?: { perSecond: number; slip: number } }) {
     this.#config = config;
     this.#platform = platform;
     this.#logger = logger;
@@ -163,6 +168,7 @@ class DnsServer {
     this.#localSites = new Set(hostedSiteNames(config));
     this.#coreId = (config.get('core:id') as string) || 'single';
     this.#coreIds = new Set([this.#coreId]);
+    this.#rateLimiter = new ResponseRateLimiter(responseRateLimit ?? readRrlConfig((key: string) => config.get(key)));
   }
 
   /**
@@ -405,6 +411,19 @@ class DnsServer {
       const send: SendFn = (buf) => {
         socket.send(buf, rinfo.port, rinfo.address, (err) => { if (err) this.#warnAgg('udp-send', err.message); });
       };
+      if (result.kind !== 'ignore') {
+        // Before any lookup: a refused datagram costs no PlatformDB read.
+        const decision = this.#rateLimiter.decide(rinfo.address);
+        if (decision !== 'answer') {
+          this.#warnAgg('rate-limited', networkOf(rinfo.address));
+          if (decision === 'slip' && (result.kind === 'ok' || result.kind === 'refused')) {
+            // Truncated, no records: a real resolver retries over TCP.
+            const header = { ...this.#responseHeader(result.header, { aa: 0, rcode: RCODE_NOERROR }), tc: 1 };
+            this.#safeSend(() => send(this.#encodeResponse(header, result.rawQuestion, [], [])));
+          }
+          return;
+        }
+      }
       this.#dispatchResult(result, send, 'udp')
         .catch((err: Error) => this.#warnAgg('udp-handler', err.message));
     } catch (err) {
@@ -880,7 +899,11 @@ class DnsServer {
    * Answer {username}.{domain} — look up user's core, return its IP or CNAME.
    */
   async #answerUsername (response: BuiltResponse, qname: string, qtype: number, username: string) {
-    const coreId = await this.#platform.getUserCore(username);
+    // Cached per process: a query for a random name costs one PlatformDB read
+    // per name and cache window, not one per datagram.
+    const coreId = this.#platform.getUserCoreForRouting != null
+      ? await this.#platform.getUserCoreForRouting(username)
+      : await this.#platform.getUserCore(username);
     if (coreId == null) {
       this.#setNxdomain(response);
       return;
@@ -967,8 +990,8 @@ class DnsServer {
 /**
  * Factory function.
  */
-function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number }) {
-  return new DnsServer({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections });
+function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number; responseRateLimit?: { perSecond: number; slip: number } }) {
+  return new DnsServer({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit });
 }
 
 export { DnsServer, createDnsServer };
