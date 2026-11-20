@@ -979,6 +979,21 @@ class Platform {
     }
   }
 
+  /**
+   * The routing answer for `username` if this process holds it (no read):
+   * the core id, null for a cached miss, undefined when not cached.
+   */
+  peekUserCoreForRouting (username: string): string | null | undefined {
+    if (username.length > USER_CORE_CACHE_MAX_NAME_LENGTH) return undefined;
+    const token = this.hashFor(USERNAME_FIELD, username);
+    const now = Date.now();
+    for (const map of [this.#userCoreHits, this.#userCoreMisses]) {
+      const cached = map.get(token);
+      if (cached != null && cached.expiresAt > now) return cached.coreId;
+    }
+    return undefined;
+  }
+
   #cacheUserCore (token: string, coreId: string | null): void {
     const found = coreId != null;
     const key = found ? 'cluster:userCoreCache:positiveTtlMs' : 'cluster:userCoreCache:negativeTtlMs';

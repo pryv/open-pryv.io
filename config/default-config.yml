@@ -847,6 +847,14 @@ limits:
     # Most distinct streamIds one event may carry; past it events.create /
     # events.update answer 400 invalid-parameters-format. 0 disables it.
     maxStreamIds: 100
+  routing:
+    # Multi-core: lookups of a /{username}/* name that found no account, per
+    # client (IPv4 address or IPv6 /64) and minute, per API worker. Past it the
+    # client's requests for names not already in the routing cache answer 429
+    # too-many-requests until the minute ends; names of existing accounts it
+    # already looked up keep working. Each such lookup is a cluster-wide read.
+    # 0 disables it.
+    unknownNamesPerClientPerMinute: 60
 
 # === PER-CORE: socket.io ===
 socketIO:

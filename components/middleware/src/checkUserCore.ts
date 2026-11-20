@@ -6,15 +6,31 @@
  */
 import { createRequire } from 'node:module';
 import type { Request, Response, NextFunction } from 'express';
+import { clientIp, addressBucket } from './clientIp.ts';
+import { RoutingMissBudget, readUnknownNamesPerMinute } from './routingMissBudget.ts';
 const require = createRequire(import.meta.url);
+const errors = require('errors').factory;
+const { getConfigUnsafe } = require('@pryv/boiler');
 
 type PlatformLike = {
   isSingleCore: boolean;
   coreId: string;
   getUserCore: (username: string) => Promise<string | null>;
   getUserCoreForRouting?: (username: string) => Promise<string | null>;
+  peekUserCoreForRouting?: (username: string) => string | null | undefined;
   coreIdToUrl: (coreId: string) => string;
 };
+
+// Lookups that found no account, per client (see routingMissBudget.ts).
+const missBudget = new RoutingMissBudget();
+
+function unknownNamesPerMinute (): number {
+  try {
+    return readUnknownNamesPerMinute((key: string) => getConfigUnsafe().get(key));
+  } catch {
+    return readUnknownNamesPerMinute(() => undefined);
+  }
+}
 
 /**
  * Wrong-core middleware (DNSless multi-core).
@@ -67,6 +83,15 @@ async function getPlatformLazy (): Promise<PlatformLike> {
  */
 function _resetPlatformCache () {
   _platformPromise = null;
+  missBudget.clear();
+}
+
+/**
+ * For tests — use `platform` instead of the Platform singleton.
+ */
+function _setPlatformForTests (platform: PlatformLike) {
+  _platformPromise = Promise.resolve(platform);
+  missBudget.clear();
 }
 
 /**
@@ -80,10 +105,23 @@ async function checkUserCore (req: Request, res: Response, next: NextFunction) {
     const platform = await getPlatformLazy();
     if (platform.isSingleCore) return next();
 
-    // Cached per process (any name in any URL reaches this point unauthenticated).
-    const userCoreId = platform.getUserCoreForRouting != null
-      ? await platform.getUserCoreForRouting(username)
-      : await platform.getUserCore(username);
+    // Cached per process (any name in any URL reaches this point
+    // unauthenticated). A name not cached costs a platform read: a client
+    // whose lookups keep finding no account is refused those reads for a while.
+    let userCoreId = platform.peekUserCoreForRouting?.(username);
+    if (userCoreId === undefined) {
+      const ip = clientIp(req);
+      const client = ip == null ? null : addressBucket(ip);
+      const perMinute = unknownNamesPerMinute();
+      const retryAfter = client == null ? null : missBudget.retryAfter(client, perMinute);
+      if (retryAfter != null) {
+        return next(errors.tooManyRequests('Too many requests for unknown usernames from this address. Please retry later.', retryAfter));
+      }
+      userCoreId = platform.getUserCoreForRouting != null
+        ? await platform.getUserCoreForRouting(username)
+        : await platform.getUserCore(username);
+      if (userCoreId == null && client != null && perMinute > 0) missBudget.countMiss(client);
+    }
     if (userCoreId == null) {
       // Unknown user in PlatformDB — let the existing 401/404 path answer.
       return next();
@@ -108,8 +146,8 @@ async function checkUserCore (req: Request, res: Response, next: NextFunction) {
 }
 
 // Test-only handle exposed on the middleware fn.
-type CheckUserCoreFn = typeof checkUserCore & { _resetPlatformCache: typeof _resetPlatformCache };
-const checkUserCoreWithReset: CheckUserCoreFn = Object.assign(checkUserCore, { _resetPlatformCache });
+type CheckUserCoreFn = typeof checkUserCore & { _resetPlatformCache: typeof _resetPlatformCache; _setPlatformForTests: typeof _setPlatformForTests };
+const checkUserCoreWithReset: CheckUserCoreFn = Object.assign(checkUserCore, { _resetPlatformCache, _setPlatformForTests });
 
 export default checkUserCoreWithReset;
-export { _resetPlatformCache };
+export { _resetPlatformCache, _setPlatformForTests };

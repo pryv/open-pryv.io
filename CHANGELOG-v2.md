@@ -66,6 +66,12 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   resolver retries over TCP; a refused query costs no lookup and is logged as "UDP lookup
   answer(s) refused by dns.responseRateLimit". Other names (apex, static, service, hosted sites)
   and TCP are not limited by it.
+- **Unknown names per client: `limits.routing.unknownNamesPerClientPerMinute` (default 60).** A
+  name not in the routing cache still costs one platform read. A client (IPv4 address or IPv6
+  /64, as seen through `http.trustedProxies`) whose `/{username}/*` lookups found no account more
+  than 60 times in a minute gets **429 `too-many-requests`** for names not already cached until the
+  minute ends; names it already looked up (existing accounts or not) keep their answer, and other
+  clients are not affected. Counted per API worker. `0` turns it off.
 
 ### Stream tree, stalled readers and mail budgets (on by default)
 
