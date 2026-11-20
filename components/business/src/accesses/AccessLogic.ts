@@ -33,7 +33,7 @@ function addAuditStreams () {
 const { PermissionLevels, INHERITED_RESTRICTION_FEATURES } = require('./permissionSet.ts');
 
 /**
- * Refusal message of webhooks.create / update / test for an access carrying
+ * Refusal message of webhooks.create / update / test / rotateSecret for an access carrying
  * `{ feature: 'webhooks', setting: 'forbidden' }`.
  */
 const WEBHOOKS_FORBIDDEN_MESSAGE = 'Webhooks are not allowed with this access: it carries the feature permission "webhooks: forbidden".';
@@ -373,6 +373,7 @@ class AccessLogic {
         return this.canUseWebhooks() || WEBHOOKS_FORBIDDEN_MESSAGE;
       case 'webhooks.update':
       case 'webhooks.test':
+      case 'webhooks.rotateSecret':
         return this.canUseWebhooks() || WEBHOOKS_FORBIDDEN_MESSAGE;
 
       default:

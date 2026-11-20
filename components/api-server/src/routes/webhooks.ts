@@ -44,4 +44,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     const params = Object.assign({}, req.query, { id: req.params.id });
     api.call(req.context, params, methodCallback(res, next, 200));
   });
+  expressApp.post(Paths.Webhooks + '/:id/rotate-secret', loadAccessMiddleware, setMethodId('webhooks.rotateSecret'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    const params = Object.assign({}, req.query, { id: req.params.id });
+    api.call(req.context, params, methodCallback(res, next, 200));
+  });
 }

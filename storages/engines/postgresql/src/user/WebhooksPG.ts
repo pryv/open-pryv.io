@@ -52,7 +52,8 @@ class WebhooksPG extends BaseStoragePG<StoredWebhook> {
         createdBy: 1,
         modified: 1,
         modifiedBy: 1,
-        scopes: 1
+        scopes: 1,
+        secret: 1
       }
     }, callback);
   }

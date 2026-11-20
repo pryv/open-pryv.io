@@ -927,6 +927,9 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # http.trustedProxies only: behind a proxy, list the proxy there.
 # # access.unopenedRequestTtl: seconds a request lives until a poll first reads
 # # it (default 600; the first read gives it the full hour).
+# # access.openedOnlyByAuthPage: only the auth page's read (?authPage=1, sent
+# # by app-web-user-account) opens a request, not the app's polls (default
+# # false; turn on once your auth page sends the flag).
 # # access:
 # #   trustedAuthUrls:
 # #     - https://auth.example.com/my-auth/
@@ -936,6 +939,7 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   maxRequestBytes: 16384
 # #   maxLiveRequestsPerIp: 50
 # #   unopenedRequestTtl: 600
+# #   openedOnlyByAuthPage: false
 
 # # accesses.deletionRecords.retentionDays — days a deleted access is kept as a
 # # deletion record (with its earlier versions and its access-index row) before
