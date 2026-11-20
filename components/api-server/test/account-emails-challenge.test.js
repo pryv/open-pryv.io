@@ -25,6 +25,7 @@ const require = createRequire(import.meta.url);
 
 const challenge = require('business/src/emails/challenge.ts');
 const { hashToken } = require('business/src/emails/tokens.ts');
+const { storeKeyHash } = require('business/src/auth/storeKeyHash.ts');
 const { injectTestConfigSnapshot } = require('test-helpers');
 
 const CFG = {
@@ -232,9 +233,10 @@ describe('[EMCH] registration email challenge', function () {
     assert.strictEqual(await challenge.checkProof(email, verified.proof), false);
   });
 
-  it('[EMCH12] the row key is a hash of the normalised address, never the address', async function () {
+  it('[EMCH12] the row key is a keyed hash of the normalised address, never the address', async function () {
     const key = challenge.challengeKey('Alice@Example.com');
-    assert.strictEqual(key, 'email-challenge/' + hashToken('alice@example.com'));
+    assert.strictEqual(key, 'email-challenge/' + storeKeyHash('alice@example.com'));
+    assert.notStrictEqual(key, 'email-challenge/' + hashToken('alice@example.com'), 'not a plain, dictionary-reversible sha256');
     assert.match(key, /^email-challenge\/[0-9a-f]{64}$/);
     assert.ok(!key.includes('Alice'), 'no cleartext address in a cluster-wide key');
   });

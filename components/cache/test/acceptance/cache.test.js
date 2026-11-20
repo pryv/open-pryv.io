@@ -60,7 +60,7 @@ describe('[CACH] Cache', function () {
 
     const res = await coreRequest.post(accessesPath)
       .set('Authorization', personalToken)
-      .send({ type: 'app', name: 'app access', token: 'app-token', permissions: [{ streamId: 'A', level: 'manage' }] });
+      .send({ type: 'app', name: 'app access', token: 'app-access-token', permissions: [{ streamId: 'A', level: 'manage' }] });
     appAccess = res.body.access;
     assert.ok(appAccess);
   });

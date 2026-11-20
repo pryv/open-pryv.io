@@ -32,6 +32,8 @@ const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
 const { getLogger } = require('@pryv/boiler');
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { APIError } = require('errors');
+const slugify = require('utils').slugify;
+const { MIN_CHOSEN_TOKEN_LENGTH } = require('business/src/accesses/chosenToken.ts');
 
 const logger = getLogger('routes:reg:access');
 
@@ -387,6 +389,18 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           if (!(err instanceof APIError)) throw err;
           const apiErr = err as { id: string, message: string, httpStatus?: number, data?: unknown };
           return res.status(apiErr.httpStatus ?? 400).json({ error: { id: apiErr.id, message: apiErr.message, data: apiErr.data } });
+        }
+      }
+
+      // A token the app chooses is applied by the auth page through
+      // accesses.create, which refuses one under its floor: refuse it here,
+      // before the user signs in and consents for nothing.
+      if (req.body.token != null) {
+        const chosen = typeof req.body.token === 'string' ? slugify(req.body.token) as string : '';
+        if (chosen.length < MIN_CHOSEN_TOKEN_LENGTH) {
+          return res.status(400).json({
+            error: { id: 'invalid-parameters', message: `token must be a string of at least ${MIN_CHOSEN_TOKEN_LENGTH} characters (after slugification); omit it to get a generated one` }
+          });
         }
       }
 

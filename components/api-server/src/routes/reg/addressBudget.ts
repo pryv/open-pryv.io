@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createHash } from 'node:crypto';
 import { addressBucket } from 'middleware/src/clientIp.ts';
+import { storeKeyHash } from 'business/src/auth/storeKeyHash.ts';
 import { clientFor } from 'messages/src/cluster_kv.ts';
 
 /**
@@ -16,8 +16,8 @@ import { clientFor } from 'messages/src/cluster_kv.ts';
  * Each address bucket (an IPv4 address, or the /64 of an IPv6 one) may count
  * `perWindow` times in a window opened by its first count; past it the caller
  * is refused until the window ends. The counters live in `cluster_kv`, shared
- * by the API workers of this core (a budget per core), under a hash of the
- * bucket so no address lands in a key. Counting is compare-and-set, so
+ * by the API workers of this core (a budget per core), under a keyed hash of
+ * the bucket (see storeKeyHash) so no address can be read back from a key. Counting is compare-and-set, so
  * concurrent requests each take their own slot. When the store cannot answer
  * the request proceeds: losing the budget must not take the route down.
  */
@@ -67,7 +67,7 @@ export function createAddressBudget (options: { namespace: string, perWindow: nu
   const knownKeys = new Set<string>();
 
   function keyFor (ip: string): string {
-    return namespace + createHash('sha256').update(keyIsAddress ? addressBucket(ip) : ip).digest('hex').slice(0, 32);
+    return namespace + storeKeyHash(keyIsAddress ? addressBucket(ip) : ip).slice(0, 32);
   }
 
   function retryAfter (live: Counter, now: number): number {
@@ -127,7 +127,7 @@ export function createAddressBudget (options: { namespace: string, perWindow: nu
 const knownMarkers = new Set<string>();
 
 function markerKey (namespace: string, key: string): string {
-  return namespace + createHash('sha256').update(key).digest('hex').slice(0, 32);
+  return namespace + storeKeyHash(key).slice(0, 32);
 }
 
 /**

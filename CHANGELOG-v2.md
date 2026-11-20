@@ -120,6 +120,49 @@ call that would pass it; what an account already holds stays readable.
     proxy (every client then shares the proxy's address), the per-address code budget is shared:
     raise `registrationCodesPerIpPerHour` accordingly.
 
+### A token chosen for a new access must be at least 16 characters
+
+- **`accesses.create` with an explicit `token` now refuses one shorter than 16 characters**, measured
+  after slugification (what is stored), with `400 invalid-parameters-format`. A token is a bearer
+  credential: a short one can be guessed. Omit `token` to get a generated one (25 characters).
+- **`POST /reg/access` refuses such a `token` up front** (`400 invalid-parameters`): the auth page
+  applies the token an app asks for through `accesses.create`, so a short one would otherwise fail
+  only after the user signed in and consented.
+- **Behaviour change** for an integration that chooses short tokens. Existing accesses keep their
+  tokens, whatever their length; only new ones are checked. A reserved name (`null`, `__proto__`, ...)
+  is still refused with `invalid-item-id`.
+
+### Store keys built from client addresses and emails are keyed hashes
+
+- **Every store key built from a client address or an email** was a plain sha256 of it, which a
+  listing of the store reverses by enumerating addresses or running a mailing list through it. In
+  the platform database: the failed-password and password-reset budgets per address, the
+  `/reg/access` creation budget, the registration email challenges and the verification-mail send
+  slots. In the core's cluster store: the per-address budgets of the email lookup, external-id
+  probe, invitation check and email challenge routes, and the per-account mail budgets. They are now
+  an HMAC-SHA256 under a key derived from `auth.adminAccessKey` (identical on every core already),
+  so nothing is to configure. A process that cannot read that setting falls back to the plain hash
+  and logs a warning once.
+- **Upgrade note:** what is in flight when a core is upgraded is not found under the new keys: the
+  budgets start again (at most one window of extra attempts), a pending registration code must be
+  requested again, and a registration whose address was already verified but not yet used must
+  verify it again. During a multi-core rolling upgrade, cores on different versions count the same
+  address separately, and a code requested on a core not yet upgraded is not found by an upgraded
+  one until it is requested again.
+
+### Operator sweep for CMC retry rows left by erasures
+
+- **`node bin/reconcile-user-cores.js --cmc-retries` lists the CMC retry rows (`cmc-internal/retry-cmc`
+  events) left under ids the users index does not hold**, the leftovers that earlier releases could
+  write after an account's erasure (each holds a counterparty's invite URL with its token), and
+  replaces the query given in 2.0.0-rc.72. It reports by default; `--apply` deletes the rows of an
+  id that holds nothing else (no account field, password, other event, stream, access, profile or
+  webhook) and has no erasure record, re-checking the index, the erasure record and the account
+  store in the delete itself.
+  PostgreSQL only (on SQLite those rows stay in the erased account's directory). Never run as part
+  of an upgrade: an empty users index facing such rows is refused (exit 3) unless
+  `--force-empty-local`.
+
 ### socket.io: calls running at the same time on one connection are audited under their own method (fix)
 
 - Every call on a socket.io connection used to share one context, so two calls running at once

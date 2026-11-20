@@ -36,7 +36,7 @@ import { factory as errors } from 'errors';
 import * as storages from 'storages';
 import { getLogger } from '@pryv/boiler';
 import { addressBucket } from 'middleware/src/clientIp.ts';
-import { hashToken } from '../emails/tokens.ts';
+import { storeKeyHash } from './storeKeyHash.ts';
 import type { PasswordIpCfg } from './passwordAttempts.ts';
 
 const NAMESPACE = 'password-fail-ip/';
@@ -73,9 +73,9 @@ function getStore (): ThrottleStore {
   return db;
 }
 
-/** Hashed so no client address lands in a cluster-wide key. */
+/** Keyed hash, so no client address can be read back from a cluster-wide key. */
 function bucketKey (ip: string): string {
-  return NAMESPACE + hashToken(addressBucket(ip));
+  return NAMESPACE + storeKeyHash(addressBucket(ip));
 }
 
 function windowAt (now: number, cfg: PasswordIpCfg): { index: number; endsAt: number } {

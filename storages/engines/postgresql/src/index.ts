@@ -38,7 +38,19 @@ type StorageLayer = {
   iterateAllEvents?: () => AsyncIterableIterator<unknown>;
   getAllUserIdsFromCollections?: (cols: string[]) => Promise<Record<string, string[]>>;
   listAccountStoreOrphans?: (userIds?: string[]) => Promise<AccountStoreOrphanCounts[]>;
+  listEventTypeOrphans?: (type: string, userIds?: string[]) => Promise<EventTypeOrphanCounts[]>;
+  deleteEventTypeOrphanRows?: (type: string, userId: string) => Promise<number>;
   clearCollection?: (col: string) => Promise<void>;
+};
+/** Events of one type under an id the users index lacks (an erased account's leftovers). */
+type EventTypeOrphanCounts = {
+  userId: string;
+  /** Rows of the asked type. */
+  events: number;
+  /** Rows of any other type under the same id. */
+  otherEvents: number;
+  /** Account fields and passwords under the same id (an erasure leaves none). */
+  accountStoreRows: number;
 };
 /** Rows of the account store (`account_fields`, `passwords`, `store_key_values`) under an id the users index lacks. */
 type AccountStoreOrphanCounts = {
@@ -229,6 +241,54 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
       storeKeyValues: Number(r.store_key_values),
       newestFieldTime: r.newest_field_time == null ? null : Number(r.newest_field_time)
     }));
+  };
+
+  /**
+   * The ids holding events of `type` with no users index row, with how many
+   * events of that type and of any other type each holds: what an erasure
+   * left in the shared events table (CMC retry rows written after it).
+   * Counts only, no content read. Optional engine capability (on SQLite the
+   * events go with the user directory). `userIds` restricts the answer.
+   */
+  storageLayer.listEventTypeOrphans = async function (type: string, userIds?: string[]): Promise<EventTypeOrphanCounts[]> {
+    const filter = userIds != null ? ' AND e.user_id = ANY($2::text[])' : '';
+    const res = await connection.query(
+      'SELECT e.user_id, COUNT(*)::int AS events, ' +
+      '(SELECT COUNT(*)::int FROM events o WHERE o.user_id = e.user_id AND o.type IS DISTINCT FROM $1) AS other_events, ' +
+      '((SELECT COUNT(*)::int FROM account_fields a WHERE a.user_id = e.user_id) + ' +
+      '(SELECT COUNT(*)::int FROM passwords p WHERE p.user_id = e.user_id)) AS account_store_rows ' +
+      'FROM events e WHERE e.type = $1 ' +
+      'AND NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = e.user_id)' + filter +
+      ' GROUP BY e.user_id ORDER BY e.user_id',
+      userIds != null ? [type, userIds] : [type]);
+    return res.rows.map((r: Record<string, unknown>) => ({
+      userId: r.user_id as string,
+      events: Number(r.events),
+      otherEvents: Number(r.other_events),
+      accountStoreRows: Number(r.account_store_rows)
+    }));
+  };
+
+  /**
+   * Deletes the events of `type` (and their stream links) under `userId`, in
+   * one statement that re-checks there is still no users index row, no erasure
+   * record and no account field or password for the id: an account indexed,
+   * an erasure started or an account store found since the caller's checks
+   * keeps its rows. Returns the number of events deleted.
+   */
+  storageLayer.deleteEventTypeOrphanRows = async function (type: string, userId: string): Promise<number> {
+    const res = await connection.query(
+      'WITH gone AS (' +
+      'DELETE FROM events e WHERE e.user_id = $1 AND e.type = $2 ' +
+      'AND NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = $1) ' +
+      'AND NOT EXISTS (SELECT 1 FROM account_erasures a WHERE a.user_id = $1) ' +
+      'AND NOT EXISTS (SELECT 1 FROM account_fields f WHERE f.user_id = $1) ' +
+      'AND NOT EXISTS (SELECT 1 FROM passwords p WHERE p.user_id = $1) ' +
+      'RETURNING e.id), ' +
+      'links AS (DELETE FROM event_streams s WHERE s.user_id = $1 AND s.event_id IN (SELECT id FROM gone)) ' +
+      'SELECT COUNT(*)::int AS n FROM gone',
+      [userId, type]);
+    return Number(res.rows[0]?.n ?? 0);
   };
 
   storageLayer.clearCollection = async function (collectionName: string): Promise<void> {

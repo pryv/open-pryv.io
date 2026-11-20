@@ -40,7 +40,7 @@ describe('[ASTE] Audit Streams and Events', function () {
     accessesPath = '/' + username + '/accesses/';
     eventsPath = '/' + username + '/events/';
     streamsPath = '/' + username + '/streams/';
-    appAccess = await createAppAccess(personalToken, 'app-access');
+    appAccess = await createAppAccess(personalToken, 'app-access-token');
     anotherAppAccess = await createAppAccess(personalToken, 'another-app-access');
   });
 

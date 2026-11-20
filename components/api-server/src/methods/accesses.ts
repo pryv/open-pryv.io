@@ -33,6 +33,7 @@ const { withoutInjectedPermissions } = require('business/src/accesses/injectedPe
 const { usageFromCalls } = require('business/src/accesses/methodClasses.ts') as typeof import('business/src/accesses/methodClasses.ts');
 
 const cache = require('cache').default;
+const { MIN_CHOSEN_TOKEN_LENGTH } = require('business/src/accesses/chosenToken.ts');
 
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
@@ -462,6 +463,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       params.token = slugify(params.token);
       if (string.isReservedToken(params.token)) {
         return next(errors.invalidItemId('The specified token is not allowed.'));
+      }
+      // A chosen token is a bearer credential: a short one can be guessed.
+      // Measured after slugify, on what is stored. Existing tokens are not checked.
+      const chosenLength = (params.token as string).length;
+      if (chosenLength < MIN_CHOSEN_TOKEN_LENGTH) {
+        return next(errors.invalidParametersFormat(
+          `The specified token must be at least ${MIN_CHOSEN_TOKEN_LENGTH} characters long (after slugification); omit it to get a generated one.`,
+          { tokenLength: chosenLength }));
       }
     } else {
       const accessesRepository = storageLayer.accesses;

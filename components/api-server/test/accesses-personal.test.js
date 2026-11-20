@@ -284,6 +284,25 @@ describe('[ACSF] accesses (personal)', function () {
       assert.strictEqual(res.body.access.token, 'pas-encode-de-bleu');
     });
 
+    it('[TKMN1] must refuse a chosen token shorter than 16 characters, measured after slugification', async function () {
+      // The last one is 19 characters as sent, 3 once slugified.
+      for (const token of ['abc', 'fifteen-chars-x', 'é é é é é é é é', '!!!!!!!!!!!!!!!!abc']) {
+        const res = await coreRequest
+          .post(basePath)
+          .set('Authorization', personalToken)
+          .send({ token, name: 'tkmn-' + cuid(), permissions: [] });
+        validation.checkError(res, { status: 400, id: ErrorIds.InvalidParametersFormat });
+        assert.match(res.body.error.message, /at least 16 characters/, token);
+      }
+      // 16 characters is enough.
+      const ok = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send({ token: 'sixteen-chars-ok', name: 'tkmn-' + cuid(), permissions: [] });
+      validation.check(ok, { status: 201, schema: methodsSchema.create.result });
+      assert.strictEqual(ok.body.access.token, 'sixteen-chars-ok');
+    });
+
     it("[00Y3] must return an error if a permission's streamId has an invalid format", async function () {
       const data = {
         name: 'Access with slugified streamId permission',

@@ -79,6 +79,15 @@
 // Anything else is listed, to resolve by hand. The stale routing rows of
 // such a registration are the username pass's (above), which also releases
 // the unique and indexed values their names held.
+//
+// With --cmc-retries it lists the CMC retry rows (`cmc-internal/retry-cmc`
+// events) left under ids the users index does not hold: written after an
+// account's erasure by releases that did not refuse such writes yet, each
+// holds a counterparty's invite URL with its token. PostgreSQL only (on SQLite
+// they stay in the erased account's directory). It REPORTS by default; --apply
+// deletes the rows of an id that holds nothing else and has no erasure record,
+// re-checking both in the delete itself. Never part of an upgrade: an empty
+// users index facing such rows is refused (exit 3) unless --force-empty-local.
 
 const path = require('path');
 
@@ -155,6 +164,12 @@ require('@pryv/boiler').init({
       printRegistrationsSummary(s, platform.coreId);
       if (s.refusedEmptyLocal === true) process.exit(3);
       process.exit(s.noPassword.some((c) => c.status === 'failed') ? 1 : 0);
+    }
+
+    if (args.cmcRetries) {
+      const s = await usersRepository.reconcileCmcRetryOrphans({ apply: args.apply, forceEmptyLocal: args.forceEmptyLocal });
+      printCmcRetriesSummary(s, platform.coreId);
+      process.exit(s.refusedEmptyLocal === true ? 3 : 0);
     }
 
     if (args.extIds) {
@@ -344,12 +359,40 @@ function printRegistrationsSummary (s, coreId) {
   }
 }
 
+const CMC_RETRY_REASONS = {
+  'has-account-store': 'has account fields or a password: an account whose index row is missing, resolve by hand',
+  'holds-data': 'holds other data (events, streams, accesses, profile or webhooks): not an erased account, resolve by hand',
+  'erasure-record': 'an erasure of this id is unfinished: its resume completes it',
+  indexed: 'indexed, or its rows gone, meanwhile: left alone'
+};
+
+function printCmcRetriesSummary (s, coreId) {
+  console.log('reconcile-user-cores --cmc-retries: ' + (s.applied ? 'applied' : 'DRY-RUN (no writes)') + ' on core "' + coreId + '"');
+  if (!s.checked) {
+    console.log('  not listed on this engine (on SQLite the rows stay in the erased account\'s directory)');
+    return;
+  }
+  console.log('  ids with CMC retry rows and no index row: ' + s.orphans.length);
+  for (const o of s.orphans) {
+    const what = o.deleted != null
+      ? o.deleted + ' deleted'
+      : (o.repairable ? 'deleted with --apply' : (CMC_RETRY_REASONS[o.reason] ?? o.reason ?? 'left alone'));
+    console.log('    - ' + o.userId + ': ' + o.events + ' retry rows, ' + o.otherEvents + ' other events: ' + what);
+  }
+  if (s.refusedEmptyLocal === true) {
+    console.log('    ! REFUSED: this core\'s users index is empty while the events table holds CMC retry rows. That is more ' +
+      'likely a lost index (a partial restore, a wrong --config) than erased accounts. Nothing was deleted. Check the ' +
+      'core\'s storage; if the index is really meant to be empty, run again with --force-empty-local.');
+  }
+}
+
 function parseArgs (argv) {
-  const args = { dryRun: false, extIds: false, emails: false, addressAliasShape: false, oldPepper: null, forceEmptyLocal: false, settleSeconds: null, registrations: false, apply: false, userIds: [], graceHours: null };
+  const args = { dryRun: false, extIds: false, emails: false, addressAliasShape: false, oldPepper: null, forceEmptyLocal: false, settleSeconds: null, registrations: false, cmcRetries: false, apply: false, userIds: [], graceHours: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
     else if (a === '--registrations') args.registrations = true;
+    else if (a === '--cmc-retries') args.cmcRetries = true;
     else if (a === '--apply') args.apply = true;
     else if (a === '--user-id') {
       const value = argv[++i];
@@ -399,8 +442,20 @@ function parseArgs (argv) {
     console.error('--registrations is a separate pass: run it alone');
     process.exit(1);
   }
-  if (!args.registrations && (args.apply || args.userIds.length > 0 || args.graceHours != null)) {
-    console.error('--apply, --user-id and --grace belong to the --registrations pass');
+  if (args.cmcRetries && (args.registrations || args.emails || args.extIds || args.addressAliasShape)) {
+    console.error('--cmc-retries is a separate pass: run it alone');
+    process.exit(1);
+  }
+  if (args.cmcRetries && (args.userIds.length > 0 || args.graceHours != null || args.settleSeconds != null || args.oldPepper != null)) {
+    console.error('--user-id, --grace, --settle and --old-pepper belong to other passes, not to --cmc-retries');
+    process.exit(1);
+  }
+  if (!args.registrations && !args.cmcRetries && args.apply) {
+    console.error('--apply belongs to the --registrations and --cmc-retries passes');
+    process.exit(1);
+  }
+  if (!args.registrations && (args.userIds.length > 0 || args.graceHours != null)) {
+    console.error('--user-id and --grace belong to the --registrations pass');
     process.exit(1);
   }
   if (args.apply && args.dryRun) {
@@ -463,6 +518,12 @@ function printUsage (stream) {
     '                                              # named with --user-id (repeatable) that still',
     '                                              # pass every check; list the others (with',
     '                                              # --user-id, --settle must be 10 or more)',
+    '  node bin/reconcile-user-cores.js --cmc-retries [--apply]',
+    '                                              # list the CMC retry rows left under ids the',
+    '                                              # users index lacks (erased accounts; each',
+    '                                              # holds a counterparty\'s invite URL); --apply',
+    '                                              # deletes those of ids holding nothing else and',
+    '                                              # with no erasure record (PostgreSQL only)',
     '',
     'On a multi-core joiner that layers a host-config file (PG host, storage',
     'paths) on top, pass it through so the tool reads the same storage:',

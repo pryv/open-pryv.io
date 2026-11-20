@@ -46,7 +46,7 @@ describe('[AINT] Audit events integrity', function () {
 
     const res = await coreRequest.post(accessesPath)
       .set('Authorization', personalToken)
-      .send({ type: 'app', name: 'app access', token: 'app-token', permissions: [{ streamId, level: 'manage' }] });
+      .send({ type: 'app', name: 'app access', token: 'app-access-token', permissions: [{ streamId, level: 'manage' }] });
     appAccess = res.body.access;
   });
 
