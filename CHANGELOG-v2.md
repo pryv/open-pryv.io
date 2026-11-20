@@ -39,6 +39,45 @@ far above normal use: a client that reaches one gets a clear error to retry late
 - Access changes now re-check an account's open socket.io connections at most once per second (a
   burst of changes costs one more pass at the end of that second, not one per change).
 
+### Stream tree, stalled readers and mail budgets (on by default)
+
+More ceilings of the same kind, each configurable, `0` turning it off. A cap refuses the write or
+call that would pass it; what an account already holds stays readable.
+
+- **Stream tree: `limits.streams.maxDepth` (default 32) and `limits.streams.maxPerAccount`
+  (default 10000).** A stream may sit at most 32 levels deep (a root stream is level 1), on
+  creation and on a move (`streams.update` with `parentId`: the moved stream's whole subtree
+  counts). An account holds at most 10000 streams in its own store, trashed ones included. Past
+  either `streams.create` / `streams.update` answer **400 `invalid-operation`**, naming the limit.
+  Every call of an account works on its whole tree, and a chain a few hundred levels deep made
+  stream creation fail with an unexpected error. Streams of other stores are not counted.
+- **Stream ids per event: `limits.events.maxStreamIds` (default 100).** Distinct `streamIds` of one
+  event (duplicates count once); past it `events.create` / `events.update` answer **400
+  `invalid-parameters-format`**.
+- **Idle connections: `http.responseIdleTimeoutMs` (default 60000).** A connection with no traffic
+  either way for 60 s is closed. A client that stopped reading a response used to hold its database
+  cursor (and the call's slots) for as long as it kept the connection open. socket.io connections
+  are not affected; a client receiving a long response keeps it open by reading it.
+- **Streamed audit reads per access: `limits.audit.maxConcurrentReadsPerAccess` (default 1).** One
+  access reads its audit (`events.get` on `:_audit:` streams) once at a time on a worker; a second
+  read while the first is still being sent answers **429 `too-many-requests`**. Each such read holds
+  a connection of the small audit read pool until it has been read.
+- **Mail a caller can trigger:**
+  - registration codes (`auth.emailChallenge`) per client address:
+    `account.emailVerification.registrationCodesPerIpPerHour` (default 10). Past it the request
+    answers **429 `too-many-attempts`** with `data.reason: 'ip-limit'`. The per-address budgets
+    stay as they were.
+  - verification mails per account to distinct addresses:
+    `account.emailVerification.addressesPerAccountPerDay` (default 10; an address already mailed
+    that day is free). Past it an address added with `account.update` (`emails.add`) gets no mail
+    (the address is still added, as when the resend cooldown applies), and an `emails.resend`
+    answers **429 `too-many-attempts`** with `data.reason: 'account-address-limit'`.
+  - a breaker on this core's caller-triggered mails (registration code, welcome, verification,
+    password reset): `services.email.maxPerHour` (default 500). Past it those mails are refused for
+    the rest of the hour (**429 `too-many-requests`** where the request waits for the mail; the
+    welcome mail is skipped) and the core logs one warning. Notices the platform sends on its own
+    (deletion reminders, MFA changes, transfers, ...) are not counted nor stopped.
+
 ### socket.io: calls running at the same time on one connection are audited under their own method (fix)
 
 - Every call on a socket.io connection used to share one context, so two calls running at once

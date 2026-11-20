@@ -26,6 +26,7 @@ const emailsStatus = require('business/src/emails/status.ts');
 const { canReadEvent } = require('business/src/accesses/canReadEvent.ts');
 const { isDeepStrictEqual } = require('node:util');
 const commonFns = require('./helpers/commonFunctions.ts');
+const { readStreamLimits } = require('./helpers/streamLimits.ts');
 const methodsSchema = require('../schema/eventsMethods.ts');
 const eventSchema = require('../schema/event.ts').default;
 const timestamp = require('unix-timestamp');
@@ -1272,6 +1273,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     // remove double entries from streamIds
     if (event.streamIds != null && event.streamIds.length > 1) {
       event.streamIds = [...new Set(event.streamIds)];
+    }
+    // Each stream id is resolved against the whole tree below: bound them.
+    const { maxStreamIds } = readStreamLimits((key: string) => config.get(key));
+    if (maxStreamIds > 0 && event.streamIds != null && event.streamIds.length > maxStreamIds) {
+      return next(errors.invalidParametersFormat(
+        `Invalid parameters: an event may have at most ${maxStreamIds} distinct streamIds (limits.events.maxStreamIds).`,
+        { streamIds: event.streamIds.length }));
     }
     // Canonicalise store-prefixed ids (`:local:<id>`, `:account::system:<f>`,
     // ...) so every guard downstream judges the stream the event actually lands

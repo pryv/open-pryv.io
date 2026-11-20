@@ -46,6 +46,7 @@ const errors = require('errors').factory;
 const { isAccessAlias } = require('business/src/accesses/aliasAddressing.ts') as typeof import('business/src/accesses/aliasAddressing.ts');
 const commonFns = require('./helpers/commonFunctions.ts');
 const mailing = require('./helpers/mailing.ts');
+const mailBudgets = require('./helpers/mailBudgets.ts');
 const methodsSchema = require('../schema/accountMethods.ts');
 
 const { ready, getLogger } = require('@pryv/boiler');
@@ -489,7 +490,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       RESET_URL: passwordResetPageURL,
       RESET_LINK: resetLink
     };
-    mailing.sendmail(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, account.language, next);
+    mailing.sendmailMetered(emailSettings, emailSettings.resetPasswordTemplate, recipient, substitutions, account.language, next);
   }
 
   // EMAIL VERIFICATION
@@ -519,7 +520,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         EMAIL: recipientEmail,
         USERNAME: username
       };
-      mailing.sendmail(emailSettings, emailSettings.verifyEmailTemplate, recipient, substitutions, lang,
+      mailing.sendmailMetered(emailSettings, emailSettings.verifyEmailTemplate, recipient, substitutions, lang,
         (err?: Error | null) => (err != null ? reject(err) : resolve()));
     });
   }
@@ -760,6 +761,21 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
             'Please wait before requesting another verification email.', { email: value });
         }
         logger.info(`verification mail to ${value} throttled (recent send to this address)`);
+        continue;
+      }
+      // One account may send verification mails to only so many different
+      // addresses a day (maxEmails bounds the addresses held at once, not an
+      // add / remove cycle through new ones).
+      const addressRetry = await mailBudgets.reserveVerificationAddress(context.user.id, value);
+      if (addressRetry != null) {
+        await emailsOperations.releaseSendSlot(context.user.id, value);
+        if (fatal) {
+          throw errors.tooManyAttempts(addressRetry, {
+            message: 'Verification emails were sent to too many different addresses of this account today. Please retry later.',
+            data: { email: value, reason: 'account-address-limit', retryAfterSeconds: addressRetry }
+          });
+        }
+        logger.info(`verification mail to ${value} not sent: account.emailVerification.addressesPerAccountPerDay reached`);
         continue;
       }
       try {

@@ -75,9 +75,11 @@ describe('[EMCR] registration email gate', function () {
     if (fixtures != null) await fixtures.context.cleanEverything();
   });
 
-  beforeEach(function () {
+  beforeEach(async function () {
     captured = [];
     nock.cleanAll();
+    // Every test asks for codes from the same client address.
+    await require('api-server/src/methods/helpers/mailBudgets.ts').clear();
   });
 
   /** Intercept one Mandrill send and record the posted body. */

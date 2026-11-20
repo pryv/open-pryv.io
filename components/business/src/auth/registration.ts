@@ -461,7 +461,7 @@ class Registration {
           });
         }
       }
-      mailing.sendmail(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: Error | null) => {
+      mailing.sendmailMetered(emailSettings, emailSettings.welcomeTemplate, recipient, substitutions, context.newUser.language, (err: Error | null) => {
         // The account exists and the 201 is on its way: a failed welcome mail
         // is logged once, by sendmail itself (warn for a refused recipient,
         // error otherwise), never as an unexpected error of this request.

@@ -132,5 +132,34 @@ function jsonShapeProblem (value: unknown, limits: { maxDepth: number; maxObject
   return null;
 }
 
-export { CALL_LIMIT_DEFAULTS, readCallLimits, acquireCallSlot, inflightCount, jsonShapeProblem };
+/**
+ * `http.responseIdleTimeoutMs`: a connection with no traffic either way for
+ * this long is closed. A client that stops reading a streamed response would
+ * otherwise hold the response's database cursor (and its pooled connection)
+ * and the call's slots for as long as it keeps the connection open. Upgraded
+ * connections (socket.io) are not affected. 0 = no timeout.
+ */
+const RESPONSE_IDLE_TIMEOUT_DEFAULT_MS = 60000;
+
+function readResponseIdleTimeoutMs (get: (key: string) => unknown): number {
+  return countOr(get('http:responseIdleTimeoutMs'), RESPONSE_IDLE_TIMEOUT_DEFAULT_MS);
+}
+
+/**
+ * `limits.audit.maxConcurrentReadsPerAccess`: streamed audit reads one access
+ * runs at once on this worker. Each holds a client of the audit read pool
+ * (a few connections, shared with the backup export) until it has been read.
+ */
+const AUDIT_READS_PER_ACCESS_DEFAULT = 1;
+
+function readAuditReadLimit (get: (key: string) => unknown): number {
+  return countOr(get('limits:audit:maxConcurrentReadsPerAccess'), AUDIT_READS_PER_ACCESS_DEFAULT);
+}
+
+/** Sets the idle timeout on a Node http(s) server; with no 'timeout' listener Node destroys the socket. */
+function applyResponseIdleTimeout (server: { setTimeout: (ms: number) => unknown }, ms: number): void {
+  if (ms > 0) server.setTimeout(ms);
+}
+
+export { CALL_LIMIT_DEFAULTS, readCallLimits, acquireCallSlot, inflightCount, jsonShapeProblem, RESPONSE_IDLE_TIMEOUT_DEFAULT_MS, readResponseIdleTimeoutMs, applyResponseIdleTimeout, AUDIT_READS_PER_ACCESS_DEFAULT, readAuditReadLimit };
 export type { CallLimits };

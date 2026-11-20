@@ -32,7 +32,7 @@ const EMAILS_NS_ROOT = ':_emails:';
 const DELEGATION_INTERNAL_NS_ROOT = require('delegation').NS_INTERNAL;
 const CMC_INTERNAL_NS_ROOT = require('cmc').NS_INTERNAL;
 const integrity = require('business/src/integrity/index.ts').default;
-const { getLogger } = require('@pryv/boiler');
+const { getLogger, ready } = require('@pryv/boiler');
 
 type AccessLike = {
   canGetEventsOnStream: (streamId: string, storeId: string | undefined) => Promise<boolean> | boolean;
@@ -63,6 +63,11 @@ type MallLike = {
 };
 
 let mall: MallLike;
+let configGet: (key: string) => unknown = () => undefined;
+
+const { finished } = require('node:stream');
+const { acquireCallSlot, readAuditReadLimit } = require('../../callLimits.ts');
+const AUDIT_STORE_ID = '_audit';
 
 const { validateAndNormalizeConditions } = require('storages/shared/contentQueryConditions.ts');
 
@@ -603,7 +608,7 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
    * Will be called by "mall" for each store of events that need to be streamed to result
    * @param eventsStream of "Events"
    */
-  function addEventsStreamFromStore (storeSettings: unknown, eventsStream: ReadableStream) {
+  function addEventsStreamFromStore (storeSettings: unknown, eventsStream: ReadableStream, onDone?: () => void) {
     const ss = storeSettings as { attachments?: { setFileReadToken?: boolean } } | null;
     let stream = eventsStream;
     if (ss?.attachments?.setFileReadToken) {
@@ -612,7 +617,10 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
         filesReadTokenSecret
       }));
     }
-    result.addToConcatArrayStream('events', countingStream(stream));
+    const counted = countingStream(stream);
+    // Read to its end, failed, or destroyed with the response.
+    if (onDone != null) finished(counted, () => onDone());
+    result.addToConcatArrayStream('events', counted);
   }
   // When account store is included (from * queries), fetch its events non-streaming
   // and merge with local store results to respect global skip/limit.
@@ -683,15 +691,34 @@ async function findEventsFromStore (secretOrGetter: string | (() => string), con
       result.addToConcatArrayStream('events', Readable.from(selected));
     }
   }
-  // Stream remaining stores (audit, etc.) as before
-  if (Object.keys(paramsByStoreId).length > 0) {
-    await mall.events.generateStreamsWithParamsByStore(context.user.id, paramsByStoreId, addEventsStreamFromStore);
+  // Stream remaining stores (audit, etc.), one store at a time in order. A
+  // streamed audit read holds a client of the small audit read pool until it
+  // has been read: one access runs at most limits.audit.maxConcurrentReadsPerAccess
+  // of them at once.
+  let releaseAuditSlot: (() => void) | null = null;
+  if (paramsByStoreId[AUDIT_STORE_ID] != null && context.access?.id != null) {
+    releaseAuditSlot = acquireCallSlot('audit-read:' + context.access.id, readAuditReadLimit(configGet));
+    if (releaseAuditSlot == null) {
+      return next(errors.tooManyRequests('Too many audit reads of this access are in progress on this server. Please retry shortly.'));
+    }
+  }
+  try {
+    for (const storeId of Object.keys(paramsByStoreId)) {
+      const onDone = storeId === AUDIT_STORE_ID ? releaseAuditSlot ?? undefined : undefined;
+      await mall.events.generateStreamsWithParamsByStore(context.user.id, { [storeId]: paramsByStoreId[storeId] },
+        (storeSettings: unknown, stream: ReadableStream) => addEventsStreamFromStore(storeSettings, stream, onDone));
+    }
+  } catch (err) {
+    releaseAuditSlot?.();
+    throw err;
   }
   result.closeConcatArrayStream('events');
   return next();
 }
 async function init () {
   mall = await getMall();
+  const config = await ready();
+  configGet = (key: string) => config.get(key);
 }
 
 // StreamQuery + StreamQueryWithStoreId were JSDoc-only types

@@ -25,6 +25,7 @@ const { buildPreviewsIngress } = require('./previewsIngress.ts');
 const { usernameInHost } = require('business/src/usernameSubdomains.ts');
 const { buildHostedSitesIngress, checkHostedSitesAtBoot } = require('./hostedSitesIngress.ts');
 const { guardIngress } = require('./ingressGuard.ts');
+const { applyResponseIdleTimeout, readResponseIdleTimeoutMs } = require('./callLimits.ts');
 const { parseHostedSites } = require('business/src/hostedSites.ts');
 const { parseAdapterRoutes, checkAdapterRoutesAtBoot } = require('business/src/adapterRoutes.ts');
 const { buildAdapterIngress, attachAdapterContinueCheck, adapterAddressingFor } = require('./adapterIngress.ts');
@@ -194,6 +195,8 @@ class Server {
     } else { // http
       server = http.createServer(requestHandler);
     }
+    // A client that stops reading a response must not hold its cursor forever.
+    applyResponseIdleTimeout(server as unknown as { setTimeout: (ms: number) => unknown }, readResponseIdleTimeoutMs((key: string) => config.get(key)));
     // An oversize upload to an adapter route is refused before `100 Continue`.
     if (adaptersDispatch != null) attachAdapterContinueCheck(server, adaptersDispatch, this.logger);
     await this.setupSocketIO(server);

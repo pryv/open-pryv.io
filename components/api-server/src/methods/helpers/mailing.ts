@@ -6,6 +6,7 @@
  */
 import { createRequire } from 'node:module';
 import { isInProcessSmtpMissing } from 'business/src/emails/mailCapability.ts';
+import { meterCallerMail } from './mailBudgets.ts';
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
 const { getLogger } = require('@pryv/boiler');
@@ -96,6 +97,19 @@ export function recipientRefusal (err: unknown): 'rejected' | 'deferred' | null 
   const replyCode = typeof e.responseCode === 'number' ? e.responseCode : NaN;
   return replyCode >= 400 && replyCode < 500 ? 'deferred' : 'rejected';
 }
+
+/**
+ * `sendmail` for the mails a caller makes the platform send (registration
+ * code, welcome, verification, password reset): counted in this core's hourly
+ * mail breaker first (`services.email.maxPerHour`, see mailBudgets.ts). Past it
+ * the callback gets a 429 too-many-requests, already logged.
+ */
+export const sendmailMetered = function (emailSettings: EmailSettings, template: string, recipient: Recipient, subs: Substitutions, lang: string, callback: MailCallback): void {
+  meterCallerMail().then((refusal: Error | null) => {
+    if (refusal != null) return callback(markLogged(refusal));
+    sendmail(emailSettings, template, recipient, subs, lang, callback);
+  }, () => sendmail(emailSettings, template, recipient, subs, lang, callback));
+};
 
 /**
  * Helper function that modularizes the sending of an email,

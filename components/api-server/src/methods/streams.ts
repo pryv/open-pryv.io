@@ -32,6 +32,7 @@ const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
 const WebhooksRepository = require('business').webhooks.Repository;
 const { rescopeUserWebhooks } = require('./helpers/webhookScopes.ts');
+const { readStreamLimits, measureTree, streamTreeLimitProblem } = require('./helpers/streamLimits.ts');
 const Readable = require('stream').Readable;
 
 // Scoped notifications: structured stream-change signal carrying the changed
@@ -85,6 +86,19 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     } catch (err) {
       logger.warn('webhook scopes not resolved again after a stream change: ' + (err as Error).message);
     }
+  }
+  // Stream tree bounds (limits.streams), for the local store only: other
+  // stores keep their own trees. Adding `addedCount` streams with a subtree
+  // `addedHeight` levels deep under `parentStreamId` (null = the root).
+  async function streamTreeLimitError (userId: string, storeId: string, parentStreamId: string | null, addedHeight: number, addedCount: number) {
+    if (storeId !== storeDataUtils.LocalStoreId) return null;
+    const limits = readStreamLimits((key: string) => config.get(key));
+    if (limits.maxDepth <= 0 && limits.maxPerAccount <= 0) return null;
+    const tree = await mall.streams.get(userId, { id: '*', storeId, childrenDepth: -1, includeTrashed: true });
+    const measured = measureTree(tree, parentStreamId);
+    const parentLevel = parentStreamId == null ? 0 : (measured.levelOf ?? 0);
+    const problem = streamTreeLimitProblem(limits, measured, parentLevel, addedHeight, addedCount);
+    return problem == null ? null : errors.invalidOperation('Stream tree limit: ' + problem + '.', { parentId: parentStreamId });
   }
   // RETRIEVAL
   // Defense-in-depth: prune `:_cmc:_internal` subtree
@@ -292,6 +306,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
         return next(errors.invalidOperation('parent stream is trashed', 'parentId', params.parentId));
       }
     }
+    {
+      const ref = params.parentId ?? params.id ?? null;
+      const [storeId] = ref == null ? [storeDataUtils.LocalStoreId] : storeDataUtils.parseStoreIdAndStoreItemId(ref);
+      const parentStreamId = params.parentId == null ? null : storeDataUtils.parseStoreIdAndStoreItemId(params.parentId)[1];
+      const limitError = await streamTreeLimitError(context.user.id!, storeId, parentStreamId, 1, 1);
+      if (limitError != null) return next(limitError);
+    }
     // strip ignored properties
     if (Object.hasOwnProperty.call(params, 'children')) {
       delete params.children;
@@ -396,6 +417,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
       if (params.update!.parentId != null && streamAndDescendantIds.includes(params.update!.parentId)) {
         return next(errors.invalidOperation('The provided "parentId" is the stream itself or one of its descendants.', { id: params.id, parentId: params.update!.parentId }));
       }
+      const newParentStreamId = params.update!.parentId == null ? null : storeDataUtils.parseStoreIdAndStoreItemId(params.update!.parentId)[1];
+      const limitError = await streamTreeLimitError(context.user.id!, storeId, newParentStreamId, measureTree(subtree, null).height, 0);
+      if (limitError != null) return next(limitError);
       if (!context.access.isPersonal()) {
         for (const descendantId of streamAndDescendantIds) {
           if (!(await context.access.canUpdateStream(descendantId))) {

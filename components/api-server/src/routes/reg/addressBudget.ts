@@ -54,12 +54,20 @@ export interface AddressBudget {
   clear (): Promise<void>;
 }
 
-export function createAddressBudget (options: { namespace: string, perWindow: number, windowMs: number }): AddressBudget {
-  const { namespace, perWindow, windowMs } = options;
+/**
+ * `perWindow` may be a function, read at each count (a configured value); 0 or
+ * less turns the budget off. With `keyIsAddress: false` the key is any string
+ * (an account id, a fixed name), hashed as given instead of bucketed as an
+ * address.
+ */
+export function createAddressBudget (options: { namespace: string, perWindow: number | (() => number), windowMs: number, keyIsAddress?: boolean }): AddressBudget {
+  const { namespace, windowMs } = options;
+  const perWindowOf = typeof options.perWindow === 'function' ? options.perWindow : () => options.perWindow as number;
+  const keyIsAddress = options.keyIsAddress !== false;
   const knownKeys = new Set<string>();
 
   function keyFor (ip: string): string {
-    return namespace + createHash('sha256').update(addressBucket(ip)).digest('hex').slice(0, 32);
+    return namespace + createHash('sha256').update(keyIsAddress ? addressBucket(ip) : ip).digest('hex').slice(0, 32);
   }
 
   function retryAfter (live: Counter, now: number): number {
@@ -70,6 +78,8 @@ export function createAddressBudget (options: { namespace: string, perWindow: nu
     // An empty `ip` (no address known) is not counted.
     async reserve (ip) {
       if (ip == null || ip === '') return null;
+      const perWindow = perWindowOf();
+      if (perWindow <= 0) return null;
       const key = keyFor(ip);
       try {
         for (let tries = 0; tries < CAS_TRIES; tries++) {
@@ -92,6 +102,8 @@ export function createAddressBudget (options: { namespace: string, perWindow: nu
 
     async check (ip) {
       if (ip == null || ip === '') return null;
+      const perWindow = perWindowOf();
+      if (perWindow <= 0) return null;
       try {
         const now = Date.now();
         const row = await getKv().get(keyFor(ip));
@@ -109,4 +121,40 @@ export function createAddressBudget (options: { namespace: string, perWindow: nu
       }
     }
   };
+}
+
+/** Markers written in this process, tracked in test runs only (see `clearMarkers`). */
+const knownMarkers = new Set<string>();
+
+function markerKey (namespace: string, key: string): string {
+  return namespace + createHash('sha256').update(key).digest('hex').slice(0, 32);
+}
+
+/**
+ * Sets the marker `key` (hashed under `namespace`) for `ttlMs` unless it is
+ * already set: true when this call set it. A store that cannot answer reads
+ * as true (the caller then counts once more rather than not at all).
+ */
+export async function markIfAbsent (namespace: string, key: string, ttlMs: number): Promise<boolean> {
+  const full = markerKey(namespace, key);
+  try {
+    const set = await getKv().set(full, 1, { ttlMs, ifEquals: null }) === true;
+    if (set && TRACK_KEYS) knownMarkers.add(full);
+    return set;
+  } catch {
+    return true;
+  }
+}
+
+/** Removes a marker set by `markIfAbsent`. */
+export async function unmark (namespace: string, key: string): Promise<void> {
+  try { await getKv().delete(markerKey(namespace, key)); } catch { /* expires anyway */ }
+}
+
+/** Drop the markers written by this process (tests). */
+export async function clearMarkers (): Promise<void> {
+  for (const key of [...knownMarkers]) {
+    await getKv().delete(key);
+    knownMarkers.delete(key);
+  }
 }

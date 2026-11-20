@@ -22,6 +22,7 @@ const challenge = require('business/src/emails/challenge.ts');
 const policy = require('business/src/emails/registrationPolicy.ts');
 const mailing = require('./../helpers/mailing.ts');
 const { reserveEmailLookup } = require('../../routes/reg/emailLookupBudget.ts');
+const mailBudgets = require('../helpers/mailBudgets.ts');
 
 type RegisterParams = { username?: string; password?: string; email?: string; [k: string]: unknown };
 type EmailChallengeParams = { email: string; language?: string };
@@ -203,8 +204,12 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     }
   }
 
-  async function createAndMailChallenge (_context: MethodContext, params: EmailChallengeParams, result: ResultBag, next: MethodNext) {
+  async function createAndMailChallenge (context: MethodContext, params: EmailChallengeParams, result: ResultBag, next: MethodNext) {
     try {
+      // Per client address too: the per-address budgets alone let one caller
+      // mail a code to every address of a list.
+      const ipRefusal = await mailBudgets.reserveChallengeFromIp((context as { source?: { ip?: string } }).source?.ip);
+      if (ipRefusal != null) return next(ipRefusal);
       const outcome = await challenge.createChallenge(params.email);
       if (!outcome.ok) {
         return next(errors.tooManyAttempts(outcome.retryAfterSeconds, {
@@ -239,7 +244,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         EMAIL: email,
         CODE_MAX_AGE_MINUTES: String(Math.max(1, Math.round((expiresAt - Date.now()) / 60000)))
       };
-      mailing.sendmail(emailSettings, emailSettings.emailChallengeTemplate || 'email-challenge', recipient, substitutions,
+      mailing.sendmailMetered(emailSettings, emailSettings.emailChallengeTemplate || 'email-challenge', recipient, substitutions,
         lang || emailSettings.defaultLang || 'en',
         (err?: Error | null) => (err != null ? reject(err) : resolve()));
     });

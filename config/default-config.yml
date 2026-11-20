@@ -31,6 +31,11 @@ http:
   # (e.g. Dokku), list it: ['172.17.0.1'], ['loopback', '10.0.0.0/8'].
   # [] = never read the header.
   trustedProxies: ['loopback']
+  # A connection with no traffic either way for this many milliseconds is
+  # closed: a client that stops reading a response would otherwise hold its
+  # database cursor and call slots. socket.io connections are not affected.
+  # 0 = no timeout.
+  responseIdleTimeoutMs: 60000
 
 # === PER-CORE / BOOTSTRAP: storage engines ===
 # Engine choice is per-core (flexibility for staging/migration).
@@ -801,6 +806,24 @@ limits:
     # the call answers 400 invalid-parameters-format. 0 disables each.
     maxDepth: 64
     maxObjectKeys: 10000
+  streams:
+    # Deepest level a stream may sit at in an account's stream tree (a root
+    # stream is level 1), on creation and on a move (the moved subtree
+    # counts); most streams one account may hold, trashed ones included.
+    # Past either streams.create / streams.update answer 400
+    # invalid-operation; streams already stored stay readable. 0 disables each.
+    maxDepth: 32
+    maxPerAccount: 10000
+  audit:
+    # Streamed audit reads (events.get on :_audit: streams) one access runs at
+    # once on a worker; each holds a connection of the small audit read pool
+    # until it has been read. Past it the read answers 429 too-many-requests.
+    # 0 disables it.
+    maxConcurrentReadsPerAccess: 1
+  events:
+    # Most distinct streamIds one event may carry; past it events.create /
+    # events.update answer 400 invalid-parameters-format. 0 disables it.
+    maxStreamIds: 100
 
 # === PER-CORE: socket.io ===
 socketIO:
