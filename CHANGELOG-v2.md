@@ -92,6 +92,38 @@ call that would pass it; what an account already holds stays readable.
     proxy (every client then shares the proxy's address), the per-address code budget is shared:
     raise `registrationCodesPerIpPerHour` accordingly.
 
+### A token chosen for a new access must be at least 16 characters
+
+- **`accesses.create` with an explicit `token` now refuses one shorter than 16 characters**, measured
+  after slugification (what is stored), with `400 invalid-parameters-format`. A token is a bearer
+  credential: a short one can be guessed. Omit `token` to get a generated one (25 characters).
+- **Behaviour change** for an integration that chooses short tokens. Existing accesses keep their
+  tokens, whatever their length; only new ones are checked. A reserved name (`null`, `__proto__`, ...)
+  is still refused with `invalid-item-id`.
+
+### Platform database keys built from client addresses and emails are keyed hashes
+
+- **The keys of the failed-password budget per address, the password-reset budget per address, the
+  `/reg/access` creation budget and the registration email challenges** were a plain sha256 of the
+  address or email, which a listing of the platform database reverses by enumerating addresses or
+  running a mailing list through it. They are now an HMAC-SHA256 under a key derived from
+  `auth.adminAccessKey` (identical on every core already), so nothing is to configure.
+- **Upgrade note:** the budgets and pending email codes in flight when a core is upgraded are not
+  found under the new keys: the budgets start again (at most one window of extra attempts) and a
+  pending registration code must be requested again. In a multi-core rolling upgrade, a code
+  requested on a core not yet upgraded is not found by an upgraded one until it is requested again.
+
+### Operator sweep for CMC retry rows left by erasures
+
+- **`node bin/reconcile-user-cores.js --cmc-retries` lists the CMC retry rows (`cmc-internal/retry-cmc`
+  events) left under ids the users index does not hold**, the leftovers that earlier releases could
+  write after an account's erasure (each holds a counterparty's invite URL with its token), and
+  replaces the query given in 2.0.0-rc.72. It reports by default; `--apply` deletes the rows of an
+  id that holds nothing else and has no erasure record, re-checking both in the delete itself.
+  PostgreSQL only (on SQLite those rows stay in the erased account's directory). Never run as part
+  of an upgrade: an empty users index facing such rows is refused (exit 3) unless
+  `--force-empty-local`.
+
 ### socket.io: calls running at the same time on one connection are audited under their own method (fix)
 
 - Every call on a socket.io connection used to share one context, so two calls running at once

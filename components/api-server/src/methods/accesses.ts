@@ -34,6 +34,9 @@ const { usageFromCalls } = require('business/src/accesses/methodClasses.ts') as 
 
 const cache = require('cache').default;
 
+/** Shortest token a caller may choose for a new access (a generated one is 25 characters). */
+const MIN_CHOSEN_TOKEN_LENGTH = 16;
+
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
 const { getStorageLayer } = require('storage');
@@ -462,6 +465,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       params.token = slugify(params.token);
       if (string.isReservedToken(params.token)) {
         return next(errors.invalidItemId('The specified token is not allowed.'));
+      }
+      // A chosen token is a bearer credential: a short one can be guessed.
+      // Measured after slugify, on what is stored. Existing tokens are not checked.
+      const chosenLength = (params.token as string).length;
+      if (chosenLength < MIN_CHOSEN_TOKEN_LENGTH) {
+        return next(errors.invalidParametersFormat(
+          `The specified token must be at least ${MIN_CHOSEN_TOKEN_LENGTH} characters long (after slugification); omit it to get a generated one.`,
+          { tokenLength: chosenLength }));
       }
     } else {
       const accessesRepository = storageLayer.accesses;

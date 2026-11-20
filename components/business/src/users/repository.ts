@@ -153,6 +153,26 @@ export type UnfinishedRegistrationsSummary = {
   refusedEmptyLocal?: boolean;
 };
 
+// CMC retry rows left by an erasure (reconcileCmcRetryOrphans).
+const CMC_RETRY_EVENT_TYPE = 'cmc-internal/retry-cmc';
+/** CMC retry rows under an id the users index lacks (engine capability, PostgreSQL). */
+type EventTypeOrphanCounts = { userId: string; events: number; otherEvents: number };
+/** Why an id's CMC retry rows are not deleted ("resolve by hand"). */
+export type CmcRetryOrphanReason = 'holds-data' | 'erasure-record' | 'indexed';
+export type CmcRetryOrphanReport = EventTypeOrphanCounts & {
+  repairable: boolean;
+  reason?: CmcRetryOrphanReason;
+  /** Rows deleted by `apply`. */
+  deleted?: number;
+};
+export type CmcRetryOrphansSummary = {
+  applied: boolean;
+  /** False when the engine has no such listing (SQLite: the events go with the user directory). */
+  checked: boolean;
+  orphans: CmcRetryOrphanReport[];
+  refusedEmptyLocal?: boolean;
+};
+
 /**
  * Repository of the users
  */
@@ -1418,6 +1438,68 @@ class UsersRepository {
     return summary;
   }
 
+  /**
+   * CMC retry rows (`cmc-internal/retry-cmc`) left under an id the users index
+   * lacks: written for an account after its erasure by a release that did not
+   * yet refuse such writes. Each holds a counterparty's invite URL with its
+   * token. Lists them; with `apply`, deletes the rows of an id that holds
+   * nothing else (no other event, stream, access, profile or webhook) and has
+   * no erasure record (an erasure under way or stopped owns its rows). The
+   * delete re-checks the index and the erasure record in the same statement.
+   * Never run automatically: a damaged or partially restored users index makes
+   * live accounts look erased, hence the empty-index refusal
+   * (`refusedEmptyLocal`, nothing written) unless `forceEmptyLocal`, and the
+   * "holds nothing else" condition. PostgreSQL only (`checked: false`
+   * elsewhere).
+   */
+  async reconcileCmcRetryOrphans (options: { apply?: boolean, forceEmptyLocal?: boolean } = {}): Promise<CmcRetryOrphansSummary> {
+    const apply = options.apply === true;
+    const sl = this.storageLayer as unknown as {
+      listEventTypeOrphans?: (type: string, userIds?: string[]) => Promise<EventTypeOrphanCounts[]>;
+      deleteEventTypeOrphanRows?: (type: string, userId: string) => Promise<number>;
+    };
+    const summary: CmcRetryOrphansSummary = { applied: apply, checked: typeof sl.listEventTypeOrphans === 'function', orphans: [] };
+    if (typeof sl.listEventTypeOrphans !== 'function' || typeof sl.deleteEventTypeOrphanRows !== 'function') {
+      summary.checked = false;
+      return summary;
+    }
+    const erasures = await (await import('../auth/erasures.ts')).getErasuresLocal();
+    const listOrphans = sl.listEventTypeOrphans;
+    const deleteRows = sl.deleteEventTypeOrphanRows;
+    const orphans = await listOrphans(CMC_RETRY_EVENT_TYPE);
+    if (orphans.length > 0 && Object.keys(await this.usersIndex.getAllByUsername()).length === 0 &&
+        options.forceEmptyLocal !== true) {
+      // More likely a lost index or a wrong --config than erased accounts.
+      summary.refusedEmptyLocal = true;
+      summary.orphans = orphans.map((o) => ({ ...o, repairable: false }));
+      return summary;
+    }
+    const reasonOf = async (o: EventTypeOrphanCounts): Promise<CmcRetryOrphanReason | null> => {
+      if (o.otherEvents > 0 || await this.#holdsUserData(o.userId, 0, { skipEvents: true })) return 'holds-data';
+      if (await erasures.get(o.userId) != null) return 'erasure-record';
+      return null;
+    };
+    for (const o of orphans) {
+      const reason = await reasonOf(o);
+      summary.orphans.push({ ...o, repairable: reason == null, ...(reason != null ? { reason } : {}) });
+    }
+    if (!apply) return summary;
+    for (const report of summary.orphans) {
+      if (!report.repairable) continue;
+      // Read again just before the deletion.
+      const fresh = (await listOrphans(CMC_RETRY_EVENT_TYPE, [report.userId]))[0];
+      const reason = fresh == null ? 'indexed' : await reasonOf(fresh);
+      if (reason != null) {
+        report.repairable = false;
+        report.reason = reason;
+        continue;
+      }
+      report.deleted = await deleteRows(CMC_RETRY_EVENT_TYPE, report.userId);
+      logger.info(`CMC retry rows of unindexed id ${report.userId} deleted: ${report.deleted}`);
+    }
+    return summary;
+  }
+
   /** Why an account-store orphan may not be cleared; null when it may. */
   async #accountStoreOrphanReason (orphan: AccountStoreOrphanCounts, erasures: { get (userId: string): Promise<unknown> }, graceSeconds: number): Promise<AccountStoreOrphanReason | null> {
     // A completed account whose index row vanished: never cleared here.
@@ -1471,7 +1553,7 @@ class UsersRepository {
    * counts as holding data: this is the guard that tells a restore in flight
    * from residue.
    */
-  async #holdsUserData (userId: string, maxAccesses: number): Promise<boolean> {
+  async #holdsUserData (userId: string, maxAccesses: number, opts: { skipEvents?: boolean } = {}): Promise<boolean> {
     type CountFn = (user: { id: string }, cb: (err: Error | null, count?: number) => void) => void;
     type CountableLike = { countAll?: CountFn; countAllIncludingDeletions?: CountFn };
     for (const name of ['streams', 'profile', 'webhooks', 'accesses']) {
@@ -1483,6 +1565,8 @@ class UsersRepository {
       const count = await fromCallback((cb: (err: Error | null, count?: number) => void) => countAll.call(coll, { id: userId }, cb)) as number;
       if (count > (name === 'accesses' ? maxAccesses : 0)) return true;
     }
+    // The caller counted the events itself (by type).
+    if (opts.skipEvents === true) return false;
     type EventsExportLike = {
       exportAllStreamed?: (user: { id: string }) => AsyncIterable<unknown>;
       exportAll?: (user: { id: string }, cb: (err: Error | null, items?: unknown[]) => void) => void;

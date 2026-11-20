@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Keyed store-key hashes, chosen-token floor, CMC retry-row sweep
+
+- `business/src/auth/storeKeyHash.ts`: one helper, HMAC-SHA256 under an HKDF key (purpose
+  `store-key-hash-v1`) derived from `auth.adminAccessKey`, plain sha256 only when that setting is
+  absent; used by `passwordIpThrottle`, `passwordResetThrottle`, `reg/accessState` (`ipRefOf`) and
+  `emails/challenge` (challenge, sent, daily, fails keys). Same derivation pattern as the TOTP
+  `secretsKey` fallback. Tests `[SKHA1-4]`, `[EMCH12]` updated.
+- `accesses.create`: `MIN_CHOSEN_TOKEN_LENGTH` (16) checked in the method after slugify and after the
+  reserved-name check (so reserved names keep `invalid-item-id`), not in the schema. Test `[TKMN1]`.
+- PostgreSQL engine capabilities `listEventTypeOrphans(type, userIds?)` and
+  `deleteEventTypeOrphanRows(type, userId)` (one statement: deletes the events and their
+  `event_streams` links, re-checking `users_index` and `account_erasures`);
+  `usersRepository.reconcileCmcRetryOrphans({ apply, forceEmptyLocal })`;
+  `bin/reconcile-user-cores.js --cmc-retries [--apply]`. `#holdsUserData` takes `skipEvents`. Tests
+  `[RCCR1-4]`, `[RCRG9]` message updated.
+
 ### Docs: the nginx sample says which nginx releases to run
 
 - `docs/nginx-ingress-sample.conf` now asks operators who front a core with nginx to keep it

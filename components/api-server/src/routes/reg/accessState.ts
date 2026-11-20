@@ -34,6 +34,7 @@ const require = createRequire(import.meta.url);
 
 const crypto = require('node:crypto');
 const { addressBucket } = require('middleware/src/clientIp.ts');
+const { storeKeyHash } = require('business/src/auth/storeKeyHash.ts');
 
 /** Random bytes of a request key: 192 bits, 32 base64url characters. */
 const KEY_BYTES = 24;
@@ -349,11 +350,12 @@ async function markOpened (key: string, state: AccessState): Promise<void> {
 /**
  * The hashed address bucket a request counts toward, or null when the
  * transport carries no address. IPv6 addresses are grouped by /64 (one
- * subscriber's allocation); hashed so no client address lands in the store.
+ * subscriber's allocation); keyed hash (see storeKeyHash), so no client
+ * address can be read back from the store.
  */
 function ipRefOf (ip: string | null | undefined): string | null {
   if (ip == null || ip === '') return null;
-  return crypto.createHash('sha256').update(addressBucket(ip)).digest('hex').slice(0, 32);
+  return storeKeyHash(addressBucket(ip)).slice(0, 32);
 }
 
 function asIpPlaces (value: unknown): IpPlace[] {

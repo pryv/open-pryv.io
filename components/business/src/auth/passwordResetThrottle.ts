@@ -19,7 +19,7 @@
 import { factory as errors } from 'errors';
 import * as storages from 'storages';
 import { addressBucket } from 'middleware/src/clientIp.ts';
-import { hashToken } from '../emails/tokens.ts';
+import { storeKeyHash } from './storeKeyHash.ts';
 
 export const ACCOUNT_COOLDOWN_MS = 60 * 1000;
 export const ACCOUNT_DAILY_LIMIT = 5;
@@ -57,12 +57,12 @@ export function dailyKey (userId: string): string {
 }
 
 /**
- * Hashed so no client address lands in a cluster-wide key. An IPv6 address
- * counts toward its /64 (see addressBucket): rotating addresses inside one
- * allocation buys no fresh budget.
+ * Keyed hash, so no client address can be read back from a cluster-wide key.
+ * An IPv6 address counts toward its /64 (see addressBucket): rotating
+ * addresses inside one allocation buys no fresh budget.
  */
 export function ipKey (ip: string): string {
-  return 'password-reset-ip/' + hashToken(addressBucket(ip));
+  return 'password-reset-ip/' + storeKeyHash(addressBucket(ip));
 }
 
 function counterOf (row: StateRow | null): number {

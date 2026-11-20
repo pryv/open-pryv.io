@@ -35,6 +35,7 @@ import { factory as errors } from 'errors';
 import * as storages from 'storages';
 import { randomInt } from 'node:crypto';
 import { mintToken, hashToken, hashEquals } from './tokens.ts';
+import { storeKeyHash } from '../auth/storeKeyHash.ts';
 import * as policy from './registrationPolicy.ts';
 
 /** 32 symbols, no 0/O/1/I: the holder retypes this from another device. */
@@ -103,25 +104,24 @@ export function formatCode (code: string): string {
 }
 
 /**
- * Hashed so no cleartext address lands in a cluster-wide key. This is a
- * pseudonym, not a secret: an email hash is reversible by dictionary. What it
- * buys is that a key listing does not hand over an address book; the rows are
- * short-lived, which is what keeps the exposure small.
+ * Keyed hash (see storeKeyHash), so a listing of the cluster-wide keys does
+ * not hand over an address book: a plain email hash is reversed by running a
+ * mailing list through it, an HMAC under the platform secret is not.
  */
 export function challengeKey (email: string): string {
-  return 'email-challenge/' + hashToken(normalizeEmail(email));
+  return 'email-challenge/' + storeKeyHash(normalizeEmail(email));
 }
 
 function sentKey (email: string): string {
-  return 'email-challenge-sent/' + hashToken(normalizeEmail(email));
+  return 'email-challenge-sent/' + storeKeyHash(normalizeEmail(email));
 }
 
 function dailyKey (email: string): string {
-  return 'email-challenge-daily/' + hashToken(normalizeEmail(email));
+  return 'email-challenge-daily/' + storeKeyHash(normalizeEmail(email));
 }
 
 function failsKey (email: string): string {
-  return 'email-challenge-fails/' + hashToken(normalizeEmail(email));
+  return 'email-challenge-fails/' + storeKeyHash(normalizeEmail(email));
 }
 
 function counterOf (row: StateRow | null): number {

@@ -412,7 +412,7 @@ describe('[RCRG] unfinished registrations sweep', function () {
     for (const [args, message] of [
       [['--registrations', '--emails'], /separate pass/],
       [['--registrations', '--user-id', 'someid'], /--user-id/],
-      [['--apply'], /--registrations pass/],
+      [['--apply'], /--apply belongs to the --registrations and --cmc-retries passes/],
       [['--registrations', '--apply', '--dry-run'], /contradict/],
       [['--registrations', '--grace', 'soon'], /--grace/],
       [['--registrations', '--apply', '--user-id', 'someid', '--settle', '9'], /--settle: erasing a named account/]
