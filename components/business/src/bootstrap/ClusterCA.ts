@@ -24,6 +24,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
+const net = require('node:net');
+
+/** A core id or hostname: DNS labels (letters, digits, hyphens) separated by dots. */
+const HOST_LABELS = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 
 const DEFAULT_CA_VALIDITY_DAYS = 3650; // 10 years
 const DEFAULT_NODE_VALIDITY_DAYS = 365; // 1 year
@@ -116,6 +120,11 @@ class ClusterCA {
    */
   issueNodeCert ({ coreId, ip = null, hostname = null }: { coreId: string; ip?: string | null; hostname?: string | null }): { certPem: string; keyPem: string } {
     if (!coreId) throw new Error('issueNodeCert: coreId is required');
+    // They go into the certificate's subject and the openssl extfile: a
+    // newline or a separator there would add lines or names of its own.
+    if (!HOST_LABELS.test(coreId)) throw new Error(`issueNodeCert: invalid coreId ${JSON.stringify(coreId)}`);
+    if (hostname != null && !HOST_LABELS.test(hostname)) throw new Error(`issueNodeCert: invalid hostname ${JSON.stringify(hostname)}`);
+    if (ip != null && net.isIP(ip) === 0) throw new Error(`issueNodeCert: invalid ip ${JSON.stringify(ip)}`);
     this.ensure();
 
     // All cert work happens in a temp dir so the CA directory only holds
@@ -166,6 +175,8 @@ const CA_CONFIG = [
   'distinguished_name = dn',
   'prompt = no',
   '[dn]',
+  // LibreSSL refuses an empty section; `-subj` sets the same name anyway.
+  'CN = pryv-cluster-ca',
   '[pryv_ca]',
   'basicConstraints = critical, CA:TRUE, pathlen:0',
   'keyUsage = critical, keyCertSign, cRLSign',

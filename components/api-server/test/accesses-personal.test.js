@@ -284,7 +284,7 @@ describe('[ACSF] accesses (personal)', function () {
       assert.strictEqual(res.body.access.token, 'pas-encode-de-bleu');
     });
 
-    it('[SCTK3] a generated access token and a session id are 25-character secrets from node:crypto', async function () {
+    it('[SCTK3] a generated access token and a session id are 24-character secrets from node:crypto', async function () {
       const { SECURE_TOKEN_PATTERN } = require('storages/interfaces/_shared/secureToken.ts');
       const res = await coreRequest
         .post(basePath)

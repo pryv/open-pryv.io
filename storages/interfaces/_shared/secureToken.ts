@@ -8,16 +8,16 @@
 /**
  * Bearer secrets minted by the server (access tokens, session ids, password
  * reset tokens): drawn from `node:crypto` directly, so their strength never
- * depends on what an id library falls back to. Same shape as the ids clients
- * already see: a lowercase letter, then 24 lowercase letters or digits
- * (25 characters, about 124 bits). Ids that are not secrets keep cuid2.
+ * depends on what an id library falls back to. Exactly the shape of the cuid2
+ * ids clients already see: a lowercase letter, then 23 lowercase letters or
+ * digits (24 characters, about 123.6 bits). Ids that are not secrets keep cuid2.
  */
 
 import { randomBytes } from 'node:crypto';
 
 const LETTERS = 'abcdefghijklmnopqrstuvwxyz';
 const ALPHANUMS = 'abcdefghijklmnopqrstuvwxyz0123456789';
-const BODY_LENGTH = 24;
+const BODY_LENGTH = 23;
 
 /** Uniform draw from `alphabet`: bytes at or above the largest multiple of its length are dropped (no modulo bias). */
 function draw (alphabet: string, count: number): string {
@@ -33,9 +33,9 @@ function draw (alphabet: string, count: number): string {
   return out;
 }
 
-/** A new bearer secret: 25 characters, `[a-z][a-z0-9]{24}`. */
+/** A new bearer secret: 24 characters, `[a-z][a-z0-9]{23}`. */
 export function secureToken (): string {
   return draw(LETTERS, 1) + draw(ALPHANUMS, BODY_LENGTH);
 }
 
-export const SECURE_TOKEN_PATTERN = /^[a-z][a-z0-9]{24}$/;
+export const SECURE_TOKEN_PATTERN = /^[a-z][a-z0-9]{23}$/;

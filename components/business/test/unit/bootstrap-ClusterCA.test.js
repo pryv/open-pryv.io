@@ -188,6 +188,15 @@ describe('[CLUSTERCA] ClusterCA', function () {
       assert.match(x509.subjectAltName, /DNS:core-b, DNS:core-b\.mc\.example\.com, IP Address:10\.0\.0\.5/);
     });
 
+    it('[CLCX4] refuses a coreId, hostname or ip that is not a plain name or address', () => {
+      const ca = new ClusterCA({ dir: tmpDir });
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b\nbasicConstraints = CA:TRUE' }), /invalid coreId/);
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b, DNS:evil.example' }), /invalid coreId/);
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b', hostname: 'x/CN=evil' }), /invalid hostname/);
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b', ip: '10.0.0.5, DNS:evil' }), /invalid ip/);
+      assert.ok(ca.issueNodeCert({ coreId: 'core-b', hostname: 'core-b.mc.example.com', ip: '2001:db8::1' }).certPem);
+    });
+
     it('[CLCX3] a node cert cannot sign another cert that a TLS peer would accept', () => {
       const ca = new ClusterCA({ dir: tmpDir });
       const node = ca.issueNodeCert({ coreId: 'core-b' });
