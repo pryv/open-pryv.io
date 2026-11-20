@@ -55,7 +55,7 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
 - The cached routing read is `linearizable` instead of `strong` on rqlite: just as up to date,
   without a Raft log entry per read (other reads of the name-to-core mapping stay `strong`). It
   fails, as before, while the cluster has no leader (rqlite's linearizable wait is 1 s by
-  default). An external rqlited (`storages.platform.rqlite.external`) must support the
+  default). An external rqlited (`storages.engines.rqlite.external`) must support the
   `linearizable` read level; the bundled version is 10.6.0. A read at `strong` or `linearizable`
   that rqlite answers with no result (no leader yet) is now an error instead of "no such row".
 - **DNS response rate limit: `dns.responseRateLimit.perSecond` (default 20) and `slip` (default
