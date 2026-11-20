@@ -15,7 +15,7 @@ const { secureToken, SECURE_TOKEN_PATTERN } = require('storages/interfaces/_shar
  * [SCTK] bearer secrets minted from node:crypto, in the shape clients know.
  */
 describe('[SCTK] storages secureToken', () => {
-  it('[SCTK1] a letter then 24 letters or digits, all distinct, every symbol drawn', () => {
+  it('[SCTK1] a letter then 23 letters or digits, all distinct, every symbol drawn evenly', () => {
     const seen = new Set();
     const counts = {};
     for (let i = 0; i < 4000; i++) {
