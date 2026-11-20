@@ -7,9 +7,10 @@
 
 /**
  * Keyed hash for the store keys built from a client address or an email: the
- * failed-password and password-reset budgets, the /reg/access creation budget
- * and the email challenges. Those keys live in the platform database, which
- * every core can list, so a plain sha256 there is reversed by enumerating
+ * failed-password and password-reset budgets, the /reg/access creation budget,
+ * the email challenges and verification-mail slots (platform database), and the
+ * per-address budgets and markers of the unauthenticated routes (cluster store).
+ * A listing of those keys under a plain sha256 is reversed by enumerating
  * addresses or running a mailing list through it. An HMAC under a platform-wide
  * secret is not.
  *
@@ -23,12 +24,25 @@
  */
 
 import { createHash, createHmac } from 'node:crypto';
-import { getConfigSync } from '@pryv/boiler';
+import { getConfigSync, getLogger } from '@pryv/boiler';
 import { deriveKey } from '../acme/AtRestEncryption.ts';
 
 export const STORE_KEY_HASH_PURPOSE = 'store-key-hash-v1';
 
 let cached: { secret: string, key: Buffer } | null = null;
+let fallbackWarned = false;
+
+// A server does not boot without the setting, so only a process whose config
+// is not loaded reaches the fallback; it would compute other keys than its
+// siblings (a budget or a code not found), hence the warning.
+function warnFallbackOnce (): void {
+  if (fallbackWarned) return;
+  fallbackWarned = true;
+  try {
+    getLogger('store-key-hash').warn('auth.adminAccessKey is not readable in this process: store keys built from ' +
+      'client addresses and emails use an unkeyed sha256 here, unlike the other processes of the platform.');
+  } catch { /* no logger yet either */ }
+}
 
 function currentKey (): Buffer | null {
   let secret: unknown = null;
@@ -42,6 +56,9 @@ function currentKey (): Buffer | null {
 /** Hex HMAC-SHA256 of `value` under the platform's store-key secret (see above). */
 export function storeKeyHash (value: string): string {
   const key = currentKey();
-  if (key == null) return createHash('sha256').update(value).digest('hex');
+  if (key == null) {
+    warnFallbackOnce();
+    return createHash('sha256').update(value).digest('hex');
+  }
   return createHmac('sha256', key).update(value).digest('hex');
 }

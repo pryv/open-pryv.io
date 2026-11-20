@@ -49,6 +49,8 @@ type EventTypeOrphanCounts = {
   events: number;
   /** Rows of any other type under the same id. */
   otherEvents: number;
+  /** Account fields and passwords under the same id (an erasure leaves none). */
+  accountStoreRows: number;
 };
 /** Rows of the account store (`account_fields`, `passwords`, `store_key_values`) under an id the users index lacks. */
 type AccountStoreOrphanCounts = {
@@ -252,7 +254,9 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
     const filter = userIds != null ? ' AND e.user_id = ANY($2::text[])' : '';
     const res = await connection.query(
       'SELECT e.user_id, COUNT(*)::int AS events, ' +
-      '(SELECT COUNT(*)::int FROM events o WHERE o.user_id = e.user_id AND o.type IS DISTINCT FROM $1) AS other_events ' +
+      '(SELECT COUNT(*)::int FROM events o WHERE o.user_id = e.user_id AND o.type IS DISTINCT FROM $1) AS other_events, ' +
+      '((SELECT COUNT(*)::int FROM account_fields a WHERE a.user_id = e.user_id) + ' +
+      '(SELECT COUNT(*)::int FROM passwords p WHERE p.user_id = e.user_id)) AS account_store_rows ' +
       'FROM events e WHERE e.type = $1 ' +
       'AND NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = e.user_id)' + filter +
       ' GROUP BY e.user_id ORDER BY e.user_id',
@@ -260,15 +264,17 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
     return res.rows.map((r: Record<string, unknown>) => ({
       userId: r.user_id as string,
       events: Number(r.events),
-      otherEvents: Number(r.other_events)
+      otherEvents: Number(r.other_events),
+      accountStoreRows: Number(r.account_store_rows)
     }));
   };
 
   /**
    * Deletes the events of `type` (and their stream links) under `userId`, in
-   * one statement that re-checks there is still no users index row and no
-   * erasure record for the id: an account indexed or an erasure started since
-   * the caller's checks keeps its rows. Returns the number of events deleted.
+   * one statement that re-checks there is still no users index row, no erasure
+   * record and no account field or password for the id: an account indexed,
+   * an erasure started or an account store found since the caller's checks
+   * keeps its rows. Returns the number of events deleted.
    */
   storageLayer.deleteEventTypeOrphanRows = async function (type: string, userId: string): Promise<number> {
     const res = await connection.query(
@@ -276,6 +282,8 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
       'DELETE FROM events e WHERE e.user_id = $1 AND e.type = $2 ' +
       'AND NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = $1) ' +
       'AND NOT EXISTS (SELECT 1 FROM account_erasures a WHERE a.user_id = $1) ' +
+      'AND NOT EXISTS (SELECT 1 FROM account_fields f WHERE f.user_id = $1) ' +
+      'AND NOT EXISTS (SELECT 1 FROM passwords p WHERE p.user_id = $1) ' +
       'RETURNING e.id), ' +
       'links AS (DELETE FROM event_streams s WHERE s.user_id = $1 AND s.event_id IN (SELECT id FROM gone)) ' +
       'SELECT COUNT(*)::int AS n FROM gone',

@@ -24,6 +24,7 @@ import { getPlatform } from 'platform';
 import { getLogger } from '@pryv/boiler';
 import timestamp from 'unix-timestamp';
 import { mintToken, hashToken, hashEquals } from './tokens.ts';
+import { storeKeyHash } from '../auth/storeKeyHash.ts';
 
 /**
  * Re-reserve a platform row released by the legacy swap, warning if it fails.
@@ -51,10 +52,10 @@ function getPlatformDB (): ThrottleStore | null {
   const db = storages.platformDB as ThrottleStore | undefined;
   return (db != null && typeof db.setAccessStateIfAbsent === 'function') ? db : null;
 }
-/** Per-(account, address) send-throttle key. Hashed so no cleartext address
- *  lands in a cluster-wide key. */
+/** Per-(account, address) send-throttle key. Keyed hash (see storeKeyHash),
+ *  so no address can be read back from a cluster-wide key. */
 function sendSlotKey (userId: string, email: string): string {
-  return 'email-verify-sent/' + userId + '/' + hashToken(email.toLowerCase());
+  return 'email-verify-sent/' + userId + '/' + storeKeyHash(email.toLowerCase());
 }
 
 /**

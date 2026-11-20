@@ -156,9 +156,9 @@ export type UnfinishedRegistrationsSummary = {
 // CMC retry rows left by an erasure (reconcileCmcRetryOrphans).
 const CMC_RETRY_EVENT_TYPE = 'cmc-internal/retry-cmc';
 /** CMC retry rows under an id the users index lacks (engine capability, PostgreSQL). */
-type EventTypeOrphanCounts = { userId: string; events: number; otherEvents: number };
+type EventTypeOrphanCounts = { userId: string; events: number; otherEvents: number; accountStoreRows: number };
 /** Why an id's CMC retry rows are not deleted ("resolve by hand"). */
-export type CmcRetryOrphanReason = 'holds-data' | 'erasure-record' | 'indexed';
+export type CmcRetryOrphanReason = 'has-account-store' | 'holds-data' | 'erasure-record' | 'indexed';
 export type CmcRetryOrphanReport = EventTypeOrphanCounts & {
   repairable: boolean;
   reason?: CmcRetryOrphanReason;
@@ -1443,9 +1443,10 @@ class UsersRepository {
    * lacks: written for an account after its erasure by a release that did not
    * yet refuse such writes. Each holds a counterparty's invite URL with its
    * token. Lists them; with `apply`, deletes the rows of an id that holds
-   * nothing else (no other event, stream, access, profile or webhook) and has
-   * no erasure record (an erasure under way or stopped owns its rows). The
-   * delete re-checks the index and the erasure record in the same statement.
+   * nothing else (no account field, password, other event, stream, access,
+   * profile or webhook) and has no erasure record (an erasure under way or
+   * stopped owns its rows). The delete re-checks the index, the erasure record
+   * and the account store in the same statement.
    * Never run automatically: a damaged or partially restored users index makes
    * live accounts look erased, hence the empty-index refusal
    * (`refusedEmptyLocal`, nothing written) unless `forceEmptyLocal`, and the
@@ -1475,6 +1476,8 @@ class UsersRepository {
       return summary;
     }
     const reasonOf = async (o: EventTypeOrphanCounts): Promise<CmcRetryOrphanReason | null> => {
+      // Account fields or a password: an account whose index row is missing, not an erased one.
+      if (o.accountStoreRows > 0) return 'has-account-store';
       if (o.otherEvents > 0 || await this.#holdsUserData(o.userId, 0, { skipEvents: true })) return 'holds-data';
       if (await erasures.get(o.userId) != null) return 'erasure-record';
       return null;

@@ -360,6 +360,7 @@ function printRegistrationsSummary (s, coreId) {
 }
 
 const CMC_RETRY_REASONS = {
+  'has-account-store': 'has account fields or a password: an account whose index row is missing, resolve by hand',
   'holds-data': 'holds other data (events, streams, accesses, profile or webhooks): not an erased account, resolve by hand',
   'erasure-record': 'an erasure of this id is unfinished: its resume completes it',
   indexed: 'indexed, or its rows gone, meanwhile: left alone'
@@ -445,8 +446,8 @@ function parseArgs (argv) {
     console.error('--cmc-retries is a separate pass: run it alone');
     process.exit(1);
   }
-  if (args.cmcRetries && (args.userIds.length > 0 || args.graceHours != null || args.settleSeconds != null)) {
-    console.error('--user-id, --grace and --settle belong to other passes, not to --cmc-retries');
+  if (args.cmcRetries && (args.userIds.length > 0 || args.graceHours != null || args.settleSeconds != null || args.oldPepper != null)) {
+    console.error('--user-id, --grace, --settle and --old-pepper belong to other passes, not to --cmc-retries');
     process.exit(1);
   }
   if (!args.registrations && !args.cmcRetries && args.apply) {

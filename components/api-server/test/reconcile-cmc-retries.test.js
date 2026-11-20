@@ -94,7 +94,7 @@ describe('[RCCR] CMC retry rows of erased accounts', function () {
       const dry = await usersRepository.reconcileCmcRetryOrphans();
       assert.strictEqual(dry.checked, true);
       const listed = dry.orphans.find((o) => o.userId === orphanId);
-      assertHas(listed, { events: 2, otherEvents: 0, repairable: true }, JSON.stringify(dry.orphans));
+      assertHas(listed, { events: 2, otherEvents: 0, accountStoreRows: 0, repairable: true }, JSON.stringify(dry.orphans));
       assert.ok(!dry.orphans.some((o) => o.userId === keptId), 'an indexed account is not listed');
       assert.deepStrictEqual(await countRows(orphanId), { events: 2, links: 2 }, 'a report deletes nothing');
 
@@ -113,29 +113,47 @@ describe('[RCCR] CMC retry rows of erased accounts', function () {
     }
   });
 
-  it('[RCCR2] apply leaves an id that holds other events, or whose erasure is unfinished', async function () {
+  it('[RCCR2] apply leaves an id that holds other events, account fields, or whose erasure is unfinished; the delete re-checks', async function () {
     if (!isPG()) return this.skip();
-    await getNewFixture().user('rccs' + cuid().slice(-8).toLowerCase()); // not the empty-index refusal
+    const kept = await getNewFixture().user('rccs' + cuid().slice(-8).toLowerCase()); // not the empty-index refusal
+    const keptId = kept.attrs.id;
+    const accountStorage = usersRepository.userAccountStorage;
     const withData = cuid();
     const inErasure = cuid();
+    const withAccount = cuid();
     await addEvent(withData);
     await addEvent(withData, 'note/txt', 'diary');
     await addEvent(inErasure);
     await erasures.insertIfAbsent(erasureRow(inErasure));
+    await addEvent(withAccount);
+    await accountStorage.setAccountField(withAccount, 'language', 'en', 'system', Date.now() / 1000);
+    const keptEventId = await addEvent(keptId);
     try {
       const applied = await usersRepository.reconcileCmcRetryOrphans({ apply: true });
       assertHas(applied.orphans.find((o) => o.userId === withData), { repairable: false, reason: 'holds-data', otherEvents: 1 }, 'withData');
       assertHas(applied.orphans.find((o) => o.userId === inErasure), { repairable: false, reason: 'erasure-record' }, 'inErasure');
+      assertHas(applied.orphans.find((o) => o.userId === withAccount), { repairable: false, reason: 'has-account-store', accountStoreRows: 1 }, 'withAccount');
       assert.deepStrictEqual(await countRows(withData), { events: 2, links: 2 });
       assert.deepStrictEqual(await countRows(inErasure), { events: 1, links: 1 });
+      assert.deepStrictEqual(await countRows(withAccount), { events: 1, links: 1 });
 
-      // The delete itself re-checks the erasure record: a direct call deletes nothing.
-      assert.strictEqual(await usersRepository.storageLayer.deleteEventTypeOrphanRows(RETRY_TYPE, inErasure), 0);
+      // The delete itself re-checks the erasure record, the account store and the index: direct calls delete nothing.
+      const deleteRows = usersRepository.storageLayer.deleteEventTypeOrphanRows;
+      assert.strictEqual(await deleteRows(RETRY_TYPE, inErasure), 0);
+      assert.strictEqual(await deleteRows(RETRY_TYPE, withAccount), 0);
+      assert.strictEqual(await deleteRows(RETRY_TYPE, keptId), 0, 'an indexed account');
       assert.deepStrictEqual(await countRows(inErasure), { events: 1, links: 1 });
+      assert.deepStrictEqual(await countRows(withAccount), { events: 1, links: 1 });
+      const keptRetries = await connection.query('SELECT COUNT(*)::int AS n FROM events WHERE user_id = $1 AND id = $2', [keptId, keptEventId]);
+      assert.strictEqual(keptRetries.rows[0].n, 1);
     } finally {
       await erasures.delete(inErasure).catch(() => {});
+      await accountStorage._clearAll(withAccount).catch(() => {});
       await dropRows(withData);
       await dropRows(inErasure);
+      await dropRows(withAccount);
+      await connection.query('DELETE FROM event_streams WHERE user_id = $1 AND event_id = $2', [keptId, keptEventId]);
+      await connection.query('DELETE FROM events WHERE user_id = $1 AND id = $2', [keptId, keptEventId]);
     }
   });
 

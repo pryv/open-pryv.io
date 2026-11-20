@@ -285,7 +285,8 @@ describe('[ACSF] accesses (personal)', function () {
     });
 
     it('[TKMN1] must refuse a chosen token shorter than 16 characters, measured after slugification', async function () {
-      for (const token of ['abc', 'fifteen-chars-x', 'é é é é é é é é']) {
+      // The last one is 19 characters as sent, 3 once slugified.
+      for (const token of ['abc', 'fifteen-chars-x', 'é é é é é é é é', '!!!!!!!!!!!!!!!!abc']) {
         const res = await coreRequest
           .post(basePath)
           .set('Authorization', personalToken)

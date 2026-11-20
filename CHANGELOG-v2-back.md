@@ -6,14 +6,18 @@
 
 - `business/src/auth/storeKeyHash.ts`: one helper, HMAC-SHA256 under an HKDF key (purpose
   `store-key-hash-v1`) derived from `auth.adminAccessKey`, plain sha256 only when that setting is
-  absent; used by `passwordIpThrottle`, `passwordResetThrottle`, `reg/accessState` (`ipRefOf`) and
-  `emails/challenge` (challenge, sent, daily, fails keys). Same derivation pattern as the TOTP
-  `secretsKey` fallback. Tests `[SKHA1-4]`, `[EMCH12]` updated.
+  absent (warned once); used by `passwordIpThrottle`, `passwordResetThrottle`, `reg/accessState`
+  (`ipRefOf`), `emails/challenge` (challenge, sent, daily, fails keys), `emails/operations`
+  (`sendSlotKey`) and `reg/addressBudget` (`keyFor`, `markerKey`: every `createAddressBudget` and
+  marker user). Same derivation pattern as the TOTP `secretsKey` fallback. Tests `[SKHA1-4]`,
+  `[EMCH12]` updated.
 - `accesses.create`: `MIN_CHOSEN_TOKEN_LENGTH` (16) checked in the method after slugify and after the
   reserved-name check (so reserved names keep `invalid-item-id`), not in the schema. Test `[TKMN1]`.
 - PostgreSQL engine capabilities `listEventTypeOrphans(type, userIds?)` and
   `deleteEventTypeOrphanRows(type, userId)` (one statement: deletes the events and their
-  `event_streams` links, re-checking `users_index` and `account_erasures`);
+  `event_streams` links, re-checking `users_index`, `account_erasures`, `account_fields` and
+  `passwords`; the listing scans `events` by type, there is no index on type alone, acceptable for
+  an operator run);
   `usersRepository.reconcileCmcRetryOrphans({ apply, forceEmptyLocal })`;
   `bin/reconcile-user-cores.js --cmc-retries [--apply]`. `#holdsUserData` takes `skipEvents`. Tests
   `[RCCR1-4]`, `[RCRG9]` message updated.
