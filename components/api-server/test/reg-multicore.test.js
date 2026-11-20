@@ -555,6 +555,17 @@ describe('[RGMC] register: multi-core', function () {
     it('[MCUC9] reconcileUserCoreMap keeps the row of a registration that completes while it settles', async function () {
       const { getUsersRepository, User } = require('business/src/users/index.ts');
       const usersRepository = await getUsersRepository();
+      // One local user of its own: with an empty users index the pass refuses
+      // to delete anything (its empty-index guard), whatever ran before.
+      const keeper = 'mcuckeep' + cuid.slug().toLowerCase();
+      const keeperUser = new User({
+        username: keeper,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        appId: 'test-app'
+      });
+      await usersRepository.insertOne(keeperUser, true);
+      createdUsers.push({ id: keeperUser.id, username: keeper });
       // In flight: the routing row is claimed, the user is not indexed yet.
       const inFlight = 'mcucflight' + cuid.slug().toLowerCase();
       await platform.setUserCore(inFlight, CORE_A);
