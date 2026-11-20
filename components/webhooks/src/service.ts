@@ -10,7 +10,6 @@ import type { Logger } from '@pryv/boiler';
 const require = createRequire(import.meta.url);
 
 const { pubsub } = require('messages');
-const Webhook = require('business/src/webhooks/Webhook.ts').default;
 const WebhooksRepository = require('business/src/webhooks/repository.ts').default;
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getAPIVersion } = require('middleware/src/project_version.ts');
@@ -107,21 +106,15 @@ class WebhooksService {
     // Reload from storage rather than rebuilding from the (API-shaped) pubsub
     // payload, so the webhook carries the stored `scopes` incl. their prepared
     // (access-bound, expanded) query for engine matching.
+    // The message carries the id only: the stored webhook holds the signing
+    // secret, never put in a pubsub message. A webhook not in storage (deleted
+    // since) is not run.
     const stored = await this.repository.getById(user, usernameWebhook.webhook.id);
-    if (stored != null) {
-      this.addWebhook(username, stored);
-      return;
-    }
-    // The API methods send the id only (the stored webhook holds the signing
-    // secret, never put in a pubsub payload): nothing to run without storage.
-    if ((usernameWebhook.webhook as { url?: unknown }).url == null) {
+    if (stored == null) {
       this.logger.warn(`Webhook ${usernameWebhook.webhook.id} for ${username} not found in storage, not loaded.`);
       return;
     }
-    this.addWebhook(username, new Webhook(Object.assign({}, usernameWebhook.webhook, {
-      webhooksRepository: this.repository,
-      user
-    })));
+    this.addWebhook(username, stored);
   }
 
   onActivate (usernameWebhook: UsernameWebhook) {
@@ -138,12 +131,24 @@ class WebhooksService {
       userWebhooks = [];
       this.webhooks.set(username, userWebhooks);
     }
+    // One running copy per webhook: two reloads close together (two
+    // rotations, a rotation and a rescope) may both load it.
+    for (let i = userWebhooks.length - 1; i >= 0; i--) {
+      if (userWebhooks[i].id === webhook.id && userWebhooks[i] !== webhook) {
+        userWebhooks[i].stop();
+        userWebhooks.splice(i, 1);
+      }
+    }
+    // Loaded after boot: the meta setMeta() gives the webhooks loaded at start.
+    webhook.setApiVersion(this.apiVersion);
+    webhook.setSerial(this.serial);
+    webhook.setLogger(this.logger);
     userWebhooks.push(webhook);
     webhook.startListenting(username);
     this.logger.info(`Loaded webhook ${webhook.id} for ${username}`);
   }
 
-  async activateWebhook (username: string, webhook: WebhookInstance) {
+  async activateWebhook (username: string, webhook: { id: string }) {
     const userWebhooks = this.webhooks.get(username);
     if (userWebhooks == null) {
       this.logger.warn(`Could not retrieve webhooks for ${username} to activate ${webhook.id}.`);
@@ -199,9 +204,8 @@ class WebhooksService {
 }
 export { WebhooksService };
 
+// The pubsub messages name the webhook by its id only.
 type UsernameWebhook = {
   username: string;
-  // Webhook is imported as a value via require(); typing it
-  // would require also importing the class as a type, which isn't exposed.
-  webhook: WebhookInstance;
+  webhook: { id: string };
 };

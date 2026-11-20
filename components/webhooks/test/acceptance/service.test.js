@@ -495,7 +495,33 @@ describe('[WSV01] webhooks', function () {
       for (const d of deliveries.slice(from)) {
         assert.ok(verifies(d.header, secondSecret, d.raw), 'verifies with the new secret: ' + d.header);
         assert.ok(!verifies(d.header, firstSecret, d.raw), 'not with the old one');
+        // a webhook loaded after boot carries the service's meta too
+        const { meta } = JSON.parse(d.raw.toString());
+        assert.strictEqual(meta.apiVersion, signedApp.webhooksService.apiVersion);
+        assert.strictEqual(meta.serial, signedApp.webhooksService.serial);
       }
+      assert.ok(runningCopy().logger != null, 'the reloaded copy logs');
+    });
+
+    it('[WHSP1] two reloads close together leave one running copy', async function () {
+      const service = signedApp.webhooksService;
+      const previous = runningCopy();
+      await Promise.all([
+        service.onCreate({ username: sUsername, webhook: { id: hookId } }),
+        service.onCreate({ username: sUsername, webhook: { id: hookId } })
+      ]);
+      const copies = service.webhooks.get(sUsername).filter((w) => w.id === hookId);
+      assert.strictEqual(copies.length, 1);
+      assert.strictEqual(previous.stopped, true, 'the replaced copy is stopped');
+      assert.strictEqual(copies[0].stopped, false);
+    });
+
+    it('[WHSM1] a load message for a webhook not in storage runs nothing, whatever the message carries', async function () {
+      const service = signedApp.webhooksService;
+      const ghostId = cuid();
+      await service.onCreate({ username: sUsername, webhook: { id: ghostId, url: `http://127.0.0.1:${receiver.address().port}/ghost` } });
+      const [, ghost] = service.getWebhook(sUsername, ghostId);
+      assert.strictEqual(ghost, null);
     });
   });
 });

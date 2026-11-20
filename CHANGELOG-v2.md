@@ -19,10 +19,29 @@ webhook URL.
   secret at once and returns the new one in `webhook.secret`. Same access rules as
   `webhooks.update`; refused (`forbidden`) to an account delegate for a webhook whose URL it may not
   read in full.
+- The account owner (a personal access) may rotate the secret of an app's webhook: the app then no
+  longer knows the secret, and calls `webhooks.rotateSecret` itself to learn a new one.
+- A call already under way when the secret is rotated may still carry the previous signature.
 - Webhooks have a read-only `signed` property (`true` when calls carry the signature).
 - Webhooks created before this release have no secret and send unsigned calls (`signed: false`)
   until `webhooks.rotateSecret` gives them one. Not a breaking change: a receiver that ignores the
   header works as before.
+
+### Access requests: opened only by the auth page (`access.openedOnlyByAuthPage`, off by default)
+
+A pending access request (`POST /reg/access`) lives `access.unopenedRequestTtl` seconds (default
+600) until it is first read, then the full hour. By default any read opens it, the app's own polls
+included, so an app that polls right away keeps every request alive for the hour even when nobody
+looks at the auth page.
+
+- New setting `access.openedOnlyByAuthPage` (default `false`: unchanged behaviour). When `true`,
+  only a read carrying `?authPage=1` (`GET /reg/access/{key}?authPage=1`) opens the request; the
+  app's polls still read it but no longer stretch its unopened life.
+- The app-web-user-account auth page sends `?authPage=1` from its next release. Turn the setting on
+  only once your auth page sends it: otherwise requests stay at their unopened life while the user
+  is still deciding.
+- A courtesy flag, not a control: anyone can add `?authPage=1` to a read; it only restores the
+  current behaviour for that request, and the per-IP request budget is unchanged.
 
 ### Per-account and per-connection limits (on by default)
 

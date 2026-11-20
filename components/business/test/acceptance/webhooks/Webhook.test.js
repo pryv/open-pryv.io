@@ -597,6 +597,57 @@ describe('[WHBK] Webhook', () => {
     });
   });
 
+  describe('[WHST] stop() during a call', () => {
+    const user = { id: 'whsg-user', username: 'whsg-user' };
+    const http = require('node:http');
+    let receiver;
+    const counter = { received: 0 };
+    before(async () => {
+      // answers late, with an error: the copy is stopped while it waits
+      receiver = http.createServer((req, res) => {
+        counter.received++;
+        req.resume();
+        setTimeout(() => { res.statusCode = 500; res.end(); }, 300);
+      });
+      await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    });
+    after(async () => {
+      receiver.closeAllConnections();
+      await new Promise((resolve) => receiver.close(resolve));
+    });
+
+    it('[WHST1] a copy stopped while its call is under way neither retries nor writes its run', async function () {
+      this.timeout(10000);
+      const repo = new WebhooksRepository(storage, userStorage);
+      const webhook = new Webhook({
+        accessId: cuid(),
+        url: 'http://127.0.0.1:' + receiver.address().port + '/whst1',
+        minIntervalMs: 50,
+        maxRetries: 1,
+        webhooksRepository: repo,
+        user
+      });
+      await webhook.save();
+      const sending = webhook.send('hello');
+      const deadline = Date.now() + 3000;
+      while (counter.received < 1 && Date.now() < deadline) await awaiting.delay(10);
+      assert.strictEqual(counter.received, 1);
+      webhook.stop();
+      await sending;
+      // well past the retry delays: nothing more is sent
+      await awaiting.delay(500);
+      assert.strictEqual(counter.received, 1, 'no retry after stop');
+      assert.strictEqual(webhook.timeout, null);
+      const stored = await repo.getById(user, webhook.id);
+      assert.strictEqual(stored.state, 'active', 'the stopped copy did not deactivate the webhook');
+      assert.strictEqual(stored.runCount, 0, 'the run of the stopped copy is not written');
+      await webhook.send('later');
+      await awaiting.delay(100);
+      assert.strictEqual(counter.received, 1, 'a stopped copy does not send');
+      await repo.deleteOne(user, webhook.id);
+    });
+  });
+
   describe('[WCAD-FIRE] fire-time access-validity check', () => {
     const postPath = '/should-not-fire';
     const url = 'http://127.0.0.1:' + PORT + postPath;

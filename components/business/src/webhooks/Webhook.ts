@@ -86,6 +86,10 @@ class Webhook {
 
   // A refused destination is logged once, not on every retry.
   destinationRefusalLogged: boolean;
+
+  // Set by stop(): this copy sends, retries and writes nothing more (the
+  // service runs a fresh copy loaded from storage, see stop()).
+  stopped: boolean;
   constructor (params: WebhookCtorParams) {
     this.id = params.id || cuid();
     this.accessId = params.accessId;
@@ -112,6 +116,7 @@ class Webhook {
     this.secret = params.secret || null;
     this.engineSubscriber = null;
     this.destinationRefusalLogged = false;
+    this.stopped = false;
   }
 
   startListenting (username: string) {
@@ -144,12 +149,13 @@ class Webhook {
    * Send the message with the throttling and retry mechanics - to use in webhooks service
    */
   async send (message: WebhookMessage, isRescheduled?: boolean) {
-    if (this.state === 'inactive') { return; }
+    if (this.stopped || this.state === 'inactive') { return; }
     // Fire-time access-validity check: self-heal orphan webhooks whose
     // access was revoked (including those created before the cascade delete
     // logic shipped) or has expired.
     if (this.repository != null && typeof this.repository.accessIsUsable === 'function') {
       if (!(await this.repository.accessIsUsable(this.user, this.accessId))) {
+        if (this.stopped) return;
         this.state = 'inactive';
         await makeUpdate(['state'], this);
         return;
@@ -158,6 +164,7 @@ class Webhook {
     if (isRescheduled != null && isRescheduled === true) {
       this.timeout = null;
     }
+    if (this.stopped) return;
     this.messageBuffer.add(message);
     if (tooSoon.call(this) || this.isSending) { return reschedule.call(this, message); }
     this.isSending = true;
@@ -181,6 +188,10 @@ class Webhook {
     }
     log(this, 'Webhook ' + this.id + ' run with status ' + status);
     this.isSending = false;
+    // Stopped while the call was under way (deleted, or reloaded after a
+    // rotation or a scope change): its outcome is not recorded and it is not
+    // retried; the running copy now is the one loaded from storage.
+    if (this.stopped) return;
     if (hasError(status)) {
       this.failCount++;
       this.currentRetries++;
@@ -211,7 +222,7 @@ class Webhook {
       reschedule.call(this, message);
     }
     function reschedule (this: Webhook, message: WebhookMessage) {
-      if (this.timeout != null) { return; }
+      if (this.stopped || this.timeout != null) { return; }
       const delay = this.minIntervalMs * (this.currentRetries || 1);
       this.timeout = setTimeout(() => {
         return this.send(message, true);
@@ -244,9 +255,20 @@ class Webhook {
     }, undefined, this.secret);
   }
 
+  /**
+   * Stop this copy for good: no more sends, retries or writes, also for a
+   * call under way when it is stopped. The service stops a copy when its
+   * webhook is deleted or reloaded from storage (rotated secret, changed
+   * scopes, renamed account). The messages this copy still holds (buffered
+   * for a retry or a throttled send, or in the call under way) are dropped,
+   * not handed to the reloaded copy: they are change signals, and the next
+   * change notifies the receiver again.
+   */
   stop () {
+    this.stopped = true;
     if (this.timeout != null) {
       clearTimeout(this.timeout);
+      this.timeout = null;
     }
     if (this.pubsubTurnOffListener != null) {
       this.pubsubTurnOffListener();

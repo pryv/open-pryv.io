@@ -297,7 +297,7 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
       await webhook.update(update);
       result.webhook = await forApi(context, webhook);
       // The running copy was built from the previous scopes.
-      if (scopesChanged) reloadRunningWebhook(user.username, result.webhook);
+      if (scopesChanged) reloadRunningWebhook(user.username, { id: webhook.id });
     } catch (e) {
       return next(errors.unexpectedError(e));
     }
@@ -305,7 +305,8 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
   }
 
   async function reactivateWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
-    pubsub.webhooks.emit(pubsub.WEBHOOKS_ACTIVATE, Object.assign({ username: context.user.username }, { webhook: result.webhook }));
+    // The id only, like the other webhook messages (no URL on pubsub).
+    pubsub.webhooks.emit(pubsub.WEBHOOKS_ACTIVATE, { username: context.user.username, webhook: { id: (result.webhook as { id: string }).id } });
     return next();
   }
 

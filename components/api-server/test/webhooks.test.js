@@ -1460,7 +1460,8 @@ describe('[WH01] webhooks', () => {
       await fixtures.user(sUsername, {}, async (user) => {
         user.access({ type: 'personal', token: personalToken });
         user.session(personalToken);
-        user.access({ id: appId, type: 'app', token: appToken });
+        user.stream({ id: 'whsi-stream', name: 'WHSI' });
+        user.access({ id: appId, type: 'app', token: appToken, permissions: [{ streamId: 'whsi-stream', level: 'read' }] });
         user.access({ id: cuid(), type: 'app', token: otherAppToken });
         // a webhook stored before calls were signed: no secret
         user.webhook({ id: legacyId, url: receiverUrl('legacy'), minIntervalMs: 1 }, appId);
@@ -1597,9 +1598,15 @@ describe('[WH01] webhooks', () => {
       validation.checkErrorUnknown(unknown);
     });
 
-    it('[WHSR4] a deleted webhook row holds no secret', async () => {
-      const created = await create(receiverUrl('whsr4'));
+    it('[WHSR4] a deleted webhook row holds no secret and no scopes', async () => {
+      // with scopes: the tombstone must drop them too (on SQLite as on PostgreSQL)
+      const created = await coreRequest
+        .post(`/${sUsername}/webhooks`)
+        .set('Authorization', appToken)
+        .send({ url: receiverUrl('whsr4'), scopes: { s: { kind: 'events', query: { streams: ['whsi-stream'] } } } });
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
       const { id } = created.body.webhook;
+      assert.ok((await findOneAsync({ id: sUsername }, { id: { $eq: id } }, {})).scopes != null, 'stored with its scopes');
       const del = await coreRequest.delete(`/${sUsername}/webhooks/${id}`).set('Authorization', appToken);
       assert.strictEqual(del.status, 200, JSON.stringify(del.body));
       const findDeletionsAsync = promisify((u, s, o, cb) => getWebhooksStorage().findDeletions(u, s, o, cb));
@@ -1607,6 +1614,11 @@ describe('[WH01] webhooks', () => {
       assert.ok(tombstone != null, 'the tombstone is kept');
       assert.ok(tombstone.secret == null, JSON.stringify(tombstone));
       assert.ok(tombstone.url == null && tombstone.scopes == null, JSON.stringify(tombstone));
+      // a rotation racing the delete writes nothing on the tombstone
+      const repository = new (require('business').webhooks.Repository)(getWebhooksStorage());
+      await repository.updateOne({ id: sUsername, username: sUsername }, { secret: 'whsec_late' }, id);
+      const after = (await findDeletionsAsync({ id: sUsername }, 0, {})).find((w) => w?.id === id);
+      assert.ok(after.secret == null, JSON.stringify(after));
     });
 
     it('[WHSR5] a backup export and restore keeps the secret', async () => {

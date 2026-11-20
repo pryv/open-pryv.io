@@ -147,7 +147,7 @@ async function rescopeUserWebhooksOnce (source: MethodContext['source'], user: {
     if (Object.keys(scopes).length === 0) update.state = 'inactive';
     hook.scopes = scopes;
     await hook.update(update);
-    reloadRunningWebhook(user.username, hook.forApi());
+    reloadRunningWebhook(user.username, { id: hook.id });
   }
 }
 
@@ -187,14 +187,17 @@ async function rescopeWebhooksOfAccess (source: MethodContext['source'], user: {
     if (Object.keys(scopes).length === 0) update.state = 'inactive';
     hook.scopes = scopes;
     await hook.update(update);
-    reloadRunningWebhook(user.username, { ...hook.forApi(), id: hook.id });
+    reloadRunningWebhook(user.username, { id: hook.id });
   }
 }
 
-/** Have the webhooks service drop its running copy of a webhook and load the stored one. */
+/**
+ * Have the webhooks service drop its running copy of a webhook and load the
+ * stored one. The messages carry the id only: never the secret, nor a URL.
+ */
 function reloadRunningWebhook (username: string, webhook: { id: string }): void {
   pubsub.webhooks.emit(WEBHOOKS_DELETE, { username, webhook: { id: webhook.id } });
-  pubsub.webhooks.emit(WEBHOOKS_CREATE, { username, webhook });
+  pubsub.webhooks.emit(WEBHOOKS_CREATE, { username, webhook: { id: webhook.id } });
 }
 
 export { prepareWebhookScopes, reprepareWebhookScopes, contextForAccess, reloadRunningWebhook, rescopeUserWebhooks, rescopeWebhooksOfAccess };
