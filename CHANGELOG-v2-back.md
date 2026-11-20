@@ -11,8 +11,10 @@
   (`sendSlotKey`) and `reg/addressBudget` (`keyFor`, `markerKey`: every `createAddressBudget` and
   marker user). Same derivation pattern as the TOTP `secretsKey` fallback. Tests `[SKHA1-4]`,
   `[EMCH12]` updated.
-- `accesses.create`: `MIN_CHOSEN_TOKEN_LENGTH` (16) checked in the method after slugify and after the
-  reserved-name check (so reserved names keep `invalid-item-id`), not in the schema. Test `[TKMN1]`.
+- `MIN_CHOSEN_TOKEN_LENGTH` (16, `business/src/accesses/chosenToken.ts`): checked by `accesses.create`
+  after slugify and after the reserved-name check (so reserved names keep `invalid-item-id`), not in
+  the schema, and by `POST /reg/access` for the app's requested `token`. Tests `[TKMN1]`, `[TKMN2]`;
+  audit / cache / mall acceptance tests moved off 9- and 10-character chosen tokens.
 - PostgreSQL engine capabilities `listEventTypeOrphans(type, userIds?)` and
   `deleteEventTypeOrphanRows(type, userId)` (one statement: deletes the events and their
   `event_streams` links, re-checking `users_index`, `account_erasures`, `account_fields` and

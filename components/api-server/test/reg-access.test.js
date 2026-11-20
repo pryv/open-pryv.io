@@ -991,6 +991,15 @@ describe('[RGAC] Register access authorization', () => {
       assert.strictEqual(poll.body.token, 'app-chosen-token');
     });
 
+    it('[TKMN2] a token the app chooses under 16 characters (after slugification) is refused when the request is created', async () => {
+      for (const token of ['short', '!!!!!!!!!!!!!!!!abc', 42]) {
+        const res = await coreRequest.post('/reg/access').send({ ...BODY, token });
+        assert.strictEqual(res.status, 400, JSON.stringify(token) + ': ' + JSON.stringify(res.body));
+        assert.strictEqual(res.body.error.id, 'invalid-parameters');
+        assert.match(res.body.error.message, /at least 16 characters/);
+      }
+    });
+
     it('[RA87] without those parameters the NEED_SIGNIN poll carries no deviceName, expireAfter or token key', async () => {
       const res = await coreRequest.post('/reg/access').send(BODY);
       const poll = await coreRequest.get('/reg/access/' + res.body.key);

@@ -97,6 +97,9 @@ call that would pass it; what an account already holds stays readable.
 - **`accesses.create` with an explicit `token` now refuses one shorter than 16 characters**, measured
   after slugification (what is stored), with `400 invalid-parameters-format`. A token is a bearer
   credential: a short one can be guessed. Omit `token` to get a generated one (25 characters).
+- **`POST /reg/access` refuses such a `token` up front** (`400 invalid-parameters`): the auth page
+  applies the token an app asks for through `accesses.create`, so a short one would otherwise fail
+  only after the user signed in and consented.
 - **Behaviour change** for an integration that chooses short tokens. Existing accesses keep their
   tokens, whatever their length; only new ones are checked. A reserved name (`null`, `__proto__`, ...)
   is still refused with `invalid-item-id`.

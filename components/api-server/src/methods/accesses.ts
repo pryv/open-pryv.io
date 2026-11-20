@@ -33,9 +33,7 @@ const { withoutInjectedPermissions } = require('business/src/accesses/injectedPe
 const { usageFromCalls } = require('business/src/accesses/methodClasses.ts') as typeof import('business/src/accesses/methodClasses.ts');
 
 const cache = require('cache').default;
-
-/** Shortest token a caller may choose for a new access (a generated one is 25 characters). */
-const MIN_CHOSEN_TOKEN_LENGTH = 16;
+const { MIN_CHOSEN_TOKEN_LENGTH } = require('business/src/accesses/chosenToken.ts');
 
 const { getMall, storeDataUtils } = require('mall');
 const { pubsub } = require('messages');
