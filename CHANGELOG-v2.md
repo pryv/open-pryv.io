@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Webhook calls are signed
+
+A receiver can now check that a webhook call comes from the platform, without a secret in the
+webhook URL.
+
+- `webhooks.create` returns a `secret` (`whsec_` followed by 43 characters) in its result, once:
+  no other method returns it, so store it when the webhook is created.
+- Each call of a webhook with a secret carries a `Pryv-Signature: t=<unix seconds>,v1=<hex>` header.
+  `v1` is the HMAC-SHA256, keyed with the secret (the whole string, as UTF-8), of `t`, a `.` and the
+  exact bytes of the request body. Verify it on the raw body, before parsing the JSON, with a
+  constant-time comparison, and refuse a call whose `t` is more than 300 seconds away from your
+  clock. Every call is signed afresh (retries and `webhooks.test` included); split the header on
+  `,` and ignore keys you do not know.
+- New method `webhooks.rotateSecret` (`POST /{username}/webhooks/{id}/rotate-secret`): replaces the
+  secret at once and returns the new one in `webhook.secret`. Same access rules as
+  `webhooks.update`; refused (`forbidden`) to an account delegate for a webhook whose URL it may not
+  read in full.
+- Webhooks have a read-only `signed` property (`true` when calls carry the signature).
+- Webhooks created before this release have no secret and send unsigned calls (`signed: false`)
+  until `webhooks.rotateSecret` gives them one. Not a breaking change: a receiver that ignores the
+  header works as before.
+
 ### Per-account and per-connection limits (on by default)
 
 New ceilings protect a core from one token or one account taking all of a worker's capacity. Each

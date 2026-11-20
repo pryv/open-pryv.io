@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Signed webhook calls: storage and wiring
+
+- PostgreSQL: `webhooks.secret TEXT` in the table DDL, and migration
+  `20261120_120000_webhooks_secret.js` (`ADD COLUMN IF NOT EXISTS`) for existing databases. SQLite
+  keeps the webhook in its JSON `data` column: no schema change. The secret is stored in clear in
+  the webhook row (the server reads it on every call), travels in server backups (`sanitize` keeps
+  it) and is restored with the webhook.
+- `business/src/webhooks/destination.ts`: `signatureHeader(secret, body, nowSeconds)`,
+  `generateWebhookSecret()`; `postWebhook` takes the secret as 4th argument and signs the buffer it
+  sends. `Webhook`: `secret` (in `forStorage()` only when set), `forApi()` adds `signed`,
+  `forApiWithSecret()` for the create and rotate results.
+- The `webhooks.create` pubsub message now carries `{ id }` only (the result holds the secret); the
+  webhooks service loads the webhook from storage, and no longer loads a webhook it cannot find
+  there. `webhooks.rotateSecret` reloads the running webhook the same way.
+- `webhooks.rotateSecret` added to the audit method list (class `write` in the breach-scope report)
+  and to the access rules (same as `webhooks.update`). The audit records the call, not its result.
+- SQLite (fix): deleting a webhook now clears its `scopes` from the tombstone row, as PostgreSQL
+  already did; both engines clear `secret`. `StoredWebhook` gains `scopes` and `secret`.
+- Tests `[WHSG1-9]`, `[WHSR1-7]`; `[Z1XD]`, `[XKLU]`, `[YTLW]`, `[UC6J]`, `[JSOH]` updated for the
+  new fields.
+
 ### Keyed store-key hashes, chosen-token floor, CMC retry-row sweep
 
 - `business/src/auth/storeKeyHash.ts`: one helper, HMAC-SHA256 under an HKDF key (purpose

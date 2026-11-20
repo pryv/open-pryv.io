@@ -31,7 +31,7 @@ describe('[WHBK] Webhook', () => {
   // accounts these tests make up, which the users index does not know (the
   // integrity check of the next suites reports such rows).
   after(async () => {
-    for (const id of ['doesnotmatter', 'wxb-user', 'wcad-fire-user']) {
+    for (const id of ['doesnotmatter', 'wxb-user', 'wcad-fire-user', 'whsg-user']) {
       await new Promise((resolve, reject) => storage.removeAll({ id, username: id }, (err) => err ? reject(err) : resolve()));
     }
   });
@@ -536,6 +536,62 @@ describe('[WHBK] Webhook', () => {
       assert.strictEqual(mockServer.getMessageCount(), 0);
       assert.strictEqual(warnings.length, 1, JSON.stringify(warnings));
       assert.ok(warnings[0].includes("'localhost'") && !warnings[0].includes(postPath), warnings[0]);
+      webhook.stop();
+      await repo.deleteOne(user, webhook.id);
+    });
+  });
+
+  describe('[WHSGR] signed retries', () => {
+    const user = { id: 'whsg-user', username: 'whsg-user' };
+    const http = require('node:http');
+    const { createHmac } = require('node:crypto');
+    const { generateWebhookSecret } = require('../../../src/webhooks/destination.ts');
+    let receiver, webhook;
+    const requests = [];
+    before(async () => {
+      receiver = http.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', (c) => chunks.push(c));
+        req.on('end', () => {
+          requests.push({ header: req.headers['pryv-signature'], raw: Buffer.concat(chunks) });
+          // the first call fails, the retry succeeds
+          res.statusCode = requests.length === 1 ? 500 : 200;
+          res.end();
+        });
+      });
+      await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+    });
+    after(async () => {
+      if (webhook != null) webhook.stop();
+      receiver.closeAllConnections();
+      await new Promise((resolve) => receiver.close(resolve));
+    });
+
+    it('[WHSG3] a retry is signed afresh, with a new time', async function () {
+      this.timeout(10000);
+      const secret = generateWebhookSecret();
+      const repo = new WebhooksRepository(storage, userStorage);
+      webhook = new Webhook({
+        accessId: cuid(),
+        url: 'http://127.0.0.1:' + receiver.address().port + '/whsg3',
+        // over a second: the retry falls in another second
+        minIntervalMs: 1100,
+        webhooksRepository: repo,
+        user,
+        secret
+      });
+      await webhook.save();
+      await webhook.send('hello');
+      const deadline = Date.now() + 6000;
+      while (requests.length < 2 && Date.now() < deadline) await awaiting.delay(50);
+      assert.strictEqual(requests.length, 2, 'the call and its retry');
+      const ts = [];
+      for (const { header, raw } of requests) {
+        const [, t, v1] = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header);
+        assert.strictEqual(v1, createHmac('sha256', secret).update(t + '.').update(raw).digest('hex'));
+        ts.push(Number(t));
+      }
+      assert.ok(ts[1] > ts[0], 'the retry carries a later time: ' + ts.join(', '));
       webhook.stop();
       await repo.deleteOne(user, webhook.id);
     });

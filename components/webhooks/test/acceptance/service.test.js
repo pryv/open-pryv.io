@@ -407,4 +407,95 @@ describe('[WSV01] webhooks', function () {
       });
     });
   });
+
+  describe('[WHSV] signed deliveries', function () {
+    const http = require('node:http');
+    const { createHmac } = require('node:crypto');
+    let signedApp, sUsername, sAppToken, sStreamId, receiver, hookId, firstSecret, secondSecret;
+    const deliveries = [];
+
+    function verifies (header, secret, raw) {
+      const m = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header ?? '');
+      return m != null && m[2] === createHmac('sha256', secret).update(m[1] + '.').update(raw).digest('hex');
+    }
+    async function until (check, label) {
+      const deadline = Date.now() + 5000;
+      while (!check()) {
+        if (Date.now() > deadline) throw new Error('timed out: ' + label);
+        await awaiting.delay(20);
+      }
+    }
+    function runningCopy () {
+      const [, webhook] = signedApp.webhooksService.getWebhook(sUsername, hookId);
+      return webhook;
+    }
+    async function createEvent () {
+      const res = await apiServer.request()
+        .post(`/${sUsername}/events`)
+        .set('Authorization', sAppToken)
+        .send({ streamIds: [sStreamId], type: 'note/txt', content: 'signed' });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    }
+
+    before(async function () {
+      receiver = http.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', (c) => chunks.push(c));
+        req.on('end', () => {
+          deliveries.push({ header: req.headers['pryv-signature'], raw: Buffer.concat(chunks) });
+          res.end();
+        });
+      });
+      await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+      signedApp = new WebhooksApp();
+      await signedApp.setup();
+      await signedApp.run();
+      sUsername = cuid();
+      sAppToken = cuid();
+      sStreamId = cuid();
+      const sUser = await fixtures.user(sUsername, {});
+      await sUser.stream({ id: sStreamId });
+      await sUser.access({ id: cuid(), type: 'app', token: sAppToken, permissions: [{ streamId: '*', level: 'manage' }] });
+      const res = await apiServer.request()
+        .post(`/${sUsername}/webhooks`)
+        .set('Authorization', sAppToken)
+        .send({ url: `http://127.0.0.1:${receiver.address().port}/signed` });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      hookId = res.body.webhook.id;
+      firstSecret = res.body.webhook.secret;
+    });
+    after(async function () {
+      signedApp.stop();
+      receiver.closeAllConnections();
+      await new Promise((resolve) => receiver.close(resolve));
+    });
+
+    it('[WHSG2] a delivery carries a signature that verifies on the raw bytes received', async function () {
+      // loaded from storage on the pubsub message, which carries the id only
+      await until(() => runningCopy() != null, 'webhook loaded');
+      assert.strictEqual(runningCopy().secret, firstSecret);
+      await createEvent();
+      await until(() => deliveries.length > 0, 'a delivery');
+      for (const d of deliveries) assert.ok(verifies(d.header, firstSecret, d.raw), 'verifies: ' + d.header);
+    });
+
+    it('[WHSR7] after rotateSecret the running webhook is reloaded and signs with the new secret only', async function () {
+      const res = await apiServer.request()
+        .post(`/${sUsername}/webhooks/${hookId}/rotate-secret`)
+        .set('Authorization', sAppToken);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      secondSecret = res.body.webhook.secret;
+      assert.notStrictEqual(secondSecret, firstSecret);
+      await until(() => runningCopy()?.secret === secondSecret, 'running copy reloaded');
+      // let the deliveries already under way land
+      await awaiting.delay(300);
+      const from = deliveries.length;
+      await createEvent();
+      await until(() => deliveries.length > from, 'a delivery after the rotation');
+      for (const d of deliveries.slice(from)) {
+        assert.ok(verifies(d.header, secondSecret, d.raw), 'verifies with the new secret: ' + d.header);
+        assert.ok(!verifies(d.header, firstSecret, d.raw), 'not with the old one');
+      }
+    });
+  });
 });

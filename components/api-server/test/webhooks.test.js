@@ -24,6 +24,13 @@ const { withInjectedConfig, injectTestConfigSnapshot } = require('test-helpers')
 const getWebhooksStorage = () => dependencies.storage.user.webhooks;
 const { Webhook } = require('business').webhooks;
 
+// The stored form of an API webhook: `signed` is derived, not stored.
+function asStored (apiWebhook) {
+  const copy = Object.assign({}, apiWebhook);
+  delete copy.signed;
+  return validation.removeTrackingPropertiesForOne(copy);
+}
+
 describe('[WH01] webhooks', () => {
   let fixtures;
   before(async function () {
@@ -376,8 +383,9 @@ describe('[WH01] webhooks', () => {
           webhook = new Webhook({
             accessId: appAccessId1,
             url,
-            id: res.body.webhook.id
-          }).forApi();
+            id: res.body.webhook.id,
+            secret: res.body.webhook.secret
+          }).forApiWithSecret();
         });
 
         it('[Z1XD] should return a status 201 with the created webhook', () => {
@@ -392,8 +400,7 @@ describe('[WH01] webhooks', () => {
         it('[XKLU] should save it to the storage', async () => {
           const findOneAsync = promisify((u, q, o, cb) => getWebhooksStorage().findOne(u, q, o, cb));
           const storedWebhook = await findOneAsync({ id: username }, { id: { $eq: webhook.id } }, {});
-          assert.deepEqual(validation.removeTrackingPropertiesForOne(storedWebhook),
-            validation.removeTrackingPropertiesForOne(webhook));
+          assert.deepEqual(validation.removeTrackingPropertiesForOne(storedWebhook), asStored(webhook));
         });
       });
 
@@ -447,8 +454,9 @@ describe('[WH01] webhooks', () => {
           webhook = new Webhook({
             accessId: sharedAccessId,
             url,
-            id: response.body.webhook.id
-          }).forApi();
+            id: response.body.webhook.id,
+            secret: response.body.webhook.secret
+          }).forApiWithSecret();
         });
 
         it('[YTLW] should return a status 201 with the created webhook', () => {
@@ -463,8 +471,7 @@ describe('[WH01] webhooks', () => {
         it('[UC6J] should save it to the storage', async () => {
           const findOneAsync = promisify((u, q, o, cb) => getWebhooksStorage().findOne(u, q, o, cb));
           const storedWebhook = await findOneAsync({ id: username }, { id: { $eq: webhook.id } }, {});
-          assert.deepEqual(validation.removeTrackingPropertiesForOne(storedWebhook),
-            validation.removeTrackingPropertiesForOne(webhook));
+          assert.deepEqual(validation.removeTrackingPropertiesForOne(storedWebhook), asStored(webhook));
         });
       });
     });
@@ -583,8 +590,7 @@ describe('[WH01] webhooks', () => {
           it('[JSOH] should apply the changes to the storage', async () => {
             const findOneAsync = promisify((u, q, o, cb) => getWebhooksStorage().findOne(u, q, o, cb));
             const storedWebhook = await findOneAsync({ id: username }, { id: { $eq: webhookId1 } }, {});
-            assert.deepEqual(validation.removeTrackingPropertiesForOne(storedWebhook),
-              validation.removeTrackingPropertiesForOne(webhook));
+            assert.deepEqual(validation.removeTrackingPropertiesForOne(storedWebhook), asStored(webhook));
           });
         });
 
@@ -1399,6 +1405,226 @@ describe('[WH01] webhooks', () => {
         assert.strictEqual(after.body.webhook.accessId, vAppId);
         assert.strictEqual(after.body.webhook.state, 'active');
       });
+    });
+  });
+
+  describe('[WHSI] signed webhook calls', () => {
+    const http = require('node:http');
+    const { createHmac } = require('node:crypto');
+    const { pubsub } = require('messages');
+    const { sanitize } = require('storages/interfaces/backup/sanitize.ts');
+    const SECRET_RE = /^whsec_[A-Za-z0-9_-]{43}$/;
+    let sUsername, appToken, appId, otherAppToken, personalToken, legacyId;
+    let receiver, receiverUrl;
+    const requests = [];
+
+    function create (url) {
+      // tested several times in a row: test calls follow the webhook's interval
+      return withInjectedConfig({ webhooks: { minIntervalMs: 1 } }, () => coreRequest
+        .post(`/${sUsername}/webhooks`)
+        .set('Authorization', appToken)
+        .send({ url }));
+    }
+    function call (id, token = appToken) {
+      return coreRequest.post(`/${sUsername}/webhooks/${id}/test`).set('Authorization', token);
+    }
+    function rotate (id, token = appToken) {
+      return coreRequest.post(`/${sUsername}/webhooks/${id}/rotate-secret`).set('Authorization', token);
+    }
+    // What a receiver does: recompute the HMAC over "<t>." and the raw body.
+    function verifies (header, secret, raw) {
+      const m = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header ?? '');
+      if (m == null) return false;
+      return m[2] === createHmac('sha256', secret).update(m[1] + '.').update(raw).digest('hex');
+    }
+    const findOneAsync = promisify((u, q, o, cb) => getWebhooksStorage().findOne(u, q, o, cb));
+
+    before(async () => {
+      await fixtures.clean();
+      receiver = http.createServer((req, res) => {
+        const chunks = [];
+        req.on('data', (c) => chunks.push(c));
+        req.on('end', () => {
+          requests.push({ url: req.url, header: req.headers['pryv-signature'], raw: Buffer.concat(chunks) });
+          res.end();
+        });
+      });
+      await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve));
+      receiverUrl = (path) => `http://127.0.0.1:${receiver.address().port}/${path}`;
+      sUsername = cuid();
+      appToken = cuid();
+      appId = cuid();
+      otherAppToken = cuid();
+      personalToken = cuid();
+      legacyId = cuid();
+      await fixtures.user(sUsername, {}, async (user) => {
+        user.access({ type: 'personal', token: personalToken });
+        user.session(personalToken);
+        user.access({ id: appId, type: 'app', token: appToken });
+        user.access({ id: cuid(), type: 'app', token: otherAppToken });
+        // a webhook stored before calls were signed: no secret
+        user.webhook({ id: legacyId, url: receiverUrl('legacy'), minIntervalMs: 1 }, appId);
+      });
+    });
+    after(async () => {
+      receiver.closeAllConnections();
+      await new Promise((resolve) => receiver.close(resolve));
+      await fixtures.clean();
+    });
+
+    it('[WHSG5] create returns the secret once; get, getOne, update and test show signed only', async () => {
+      const created = await create(receiverUrl('whsg5'));
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      validation.check(created, { status: 201, schema: methodsSchema.create.result });
+      const { id, secret } = created.body.webhook;
+      assert.match(secret, SECRET_RE);
+      assert.strictEqual(created.body.webhook.signed, true);
+
+      const one = await coreRequest.get(`/${sUsername}/webhooks/${id}`).set('Authorization', appToken);
+      validation.check(one, { status: 200, schema: methodsSchema.getOne.result });
+      const list = await coreRequest.get(`/${sUsername}/webhooks`).set('Authorization', personalToken);
+      validation.check(list, { status: 200, schema: methodsSchema.get.result });
+      const updated = await coreRequest.put(`/${sUsername}/webhooks/${id}`).set('Authorization', appToken).send({ state: 'active' });
+      validation.check(updated, { status: 200, schema: methodsSchema.update.result });
+      const tested = await call(id);
+      validation.check(tested, { status: 200, schema: methodsSchema.test.result });
+      for (const [name, webhook] of [['getOne', one.body.webhook], ['get', list.body.webhooks.find((w) => w.id === id)],
+        ['update', updated.body.webhook], ['test', tested.body.webhook]]) {
+        assert.strictEqual(webhook.secret, undefined, name);
+        assert.strictEqual(webhook.signed, true, name);
+      }
+      for (const [name, res] of [['getOne', one], ['get', list], ['update', updated], ['test', tested]]) {
+        assert.ok(!JSON.stringify(res.body).includes(secret), 'no secret in the ' + name + ' result');
+      }
+      // stored as minted
+      assert.strictEqual((await findOneAsync({ id: sUsername }, { id: { $eq: id } }, {})).secret, secret);
+    });
+
+    it('[WHSG4] webhooks.test calls are signed with the secret, over the exact bytes received', async () => {
+      const created = await create(receiverUrl('whsg4'));
+      const { id, secret } = created.body.webhook;
+      const res = await call(id);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const received = requests.at(-1);
+      assert.strictEqual(received.url, '/whsg4');
+      assert.ok(verifies(received.header, secret, received.raw), 'signature verifies: ' + received.header);
+      const t = Number(/^t=(\d+),/.exec(received.header)[1]);
+      assert.ok(Math.abs(t - Date.now() / 1000) < 60, 't is the time of the call');
+      assert.deepStrictEqual(JSON.parse(received.raw.toString()).messages, ['test']);
+    });
+
+    it('[WHSG6] a webhook stored without a secret sends no signature and reads signed: false', async () => {
+      const one = await coreRequest.get(`/${sUsername}/webhooks/${legacyId}`).set('Authorization', appToken);
+      assert.strictEqual(one.status, 200, JSON.stringify(one.body));
+      assert.strictEqual(one.body.webhook.signed, false);
+      assert.strictEqual(one.body.webhook.secret, undefined);
+      const res = await call(legacyId);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.webhook.signed, false);
+      const received = requests.at(-1);
+      assert.strictEqual(received.url, '/legacy');
+      assert.strictEqual(received.header, undefined);
+    });
+
+    it('[WHSG7] the pubsub messages of create and rotateSecret carry the webhook id only', async () => {
+      const messages = [];
+      const onCreate = (msg) => messages.push(msg);
+      const onDelete = (msg) => messages.push(msg);
+      pubsub.webhooks.on(pubsub.WEBHOOKS_CREATE, onCreate);
+      pubsub.webhooks.on(pubsub.WEBHOOKS_DELETE, onDelete);
+      let created, rotated;
+      try {
+        created = await create(receiverUrl('whsg7'));
+        rotated = await rotate(created.body.webhook.id);
+      } finally {
+        pubsub.webhooks.off(pubsub.WEBHOOKS_CREATE, onCreate);
+        pubsub.webhooks.off(pubsub.WEBHOOKS_DELETE, onDelete);
+      }
+      assert.strictEqual(created.status, 201, JSON.stringify(created.body));
+      assert.strictEqual(rotated.status, 200, JSON.stringify(rotated.body));
+      const own = messages.filter((m) => m.username === sUsername);
+      // create: load; rotate: stop + load
+      assert.strictEqual(own.length, 3, JSON.stringify(own));
+      for (const m of own) {
+        assert.deepStrictEqual(Object.keys(m.webhook), ['id']);
+        assert.strictEqual(m.webhook.id, created.body.webhook.id);
+        const text = JSON.stringify(m);
+        assert.ok(!text.includes(created.body.webhook.secret) && !text.includes(rotated.body.webhook.secret) && !text.includes('whsec_'), text);
+      }
+    });
+
+    it('[WHSR1] rotateSecret returns a new secret; the next call verifies with it, not with the old one', async () => {
+      const created = await create(receiverUrl('whsr1'));
+      const { id, secret: oldSecret } = created.body.webhook;
+      const rotated = await rotate(id);
+      validation.check(rotated, { status: 200, schema: methodsSchema.rotateSecret.result });
+      const newSecret = rotated.body.webhook.secret;
+      assert.match(newSecret, SECRET_RE);
+      assert.notStrictEqual(newSecret, oldSecret);
+      assert.strictEqual(rotated.body.webhook.signed, true);
+      assert.strictEqual(rotated.body.webhook.id, id);
+      assert.ok(rotated.body.webhook.modified >= created.body.webhook.modified);
+      const one = await coreRequest.get(`/${sUsername}/webhooks/${id}`).set('Authorization', appToken);
+      assert.strictEqual(one.body.webhook.secret, undefined);
+      const res = await call(id);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const received = requests.at(-1);
+      assert.strictEqual(received.url, '/whsr1');
+      assert.ok(verifies(received.header, newSecret, received.raw), 'verifies with the new secret');
+      assert.ok(!verifies(received.header, oldSecret, received.raw), 'not with the old one');
+    });
+
+    it('[WHSR6] rotateSecret gives a webhook stored without a secret its first one', async () => {
+      const rotated = await rotate(legacyId, personalToken);
+      assert.strictEqual(rotated.status, 200, JSON.stringify(rotated.body));
+      assert.match(rotated.body.webhook.secret, SECRET_RE);
+      assert.strictEqual(rotated.body.webhook.signed, true);
+      const res = await call(legacyId);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      const received = requests.at(-1);
+      assert.strictEqual(received.url, '/legacy');
+      assert.ok(verifies(received.header, rotated.body.webhook.secret, received.raw));
+    });
+
+    it('[WHSR2] rotateSecret by another app access is forbidden and leaves the secret unchanged', async () => {
+      const created = await create(receiverUrl('whsr2'));
+      const { id, secret } = created.body.webhook;
+      const res = await rotate(id, otherAppToken);
+      validation.checkErrorForbidden(res);
+      assert.ok(!JSON.stringify(res.body).includes('whsec_'));
+      assert.strictEqual((await findOneAsync({ id: sUsername }, { id: { $eq: id } }, {})).secret, secret);
+      const unknown = await rotate('doesnotexist');
+      validation.checkErrorUnknown(unknown);
+    });
+
+    it('[WHSR4] a deleted webhook row holds no secret', async () => {
+      const created = await create(receiverUrl('whsr4'));
+      const { id } = created.body.webhook;
+      const del = await coreRequest.delete(`/${sUsername}/webhooks/${id}`).set('Authorization', appToken);
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+      const findDeletionsAsync = promisify((u, s, o, cb) => getWebhooksStorage().findDeletions(u, s, o, cb));
+      const tombstone = (await findDeletionsAsync({ id: sUsername }, 0, {})).find((w) => w?.id === id);
+      assert.ok(tombstone != null, 'the tombstone is kept');
+      assert.ok(tombstone.secret == null, JSON.stringify(tombstone));
+      assert.ok(tombstone.url == null && tombstone.scopes == null, JSON.stringify(tombstone));
+    });
+
+    it('[WHSR5] a backup export and restore keeps the secret', async () => {
+      const created = await create(receiverUrl('whsr5'));
+      const { id, secret } = created.body.webhook;
+      const user = { id: sUsername, username: sUsername };
+      const storage = getWebhooksStorage();
+      const exported = await promisify((u, cb) => storage.exportAll(u, cb))(user);
+      // as the backup writes and reads it: sanitized, one JSON line per item
+      const lines = exported.filter((w) => w != null).map((w) => JSON.stringify(sanitize(w)));
+      const item = JSON.parse(lines.find((l) => JSON.parse(l).id === id));
+      assert.strictEqual(item.secret, secret, 'the export carries the secret');
+      await promisify((u, cb) => storage.removeAll(u, cb))(user);
+      await promisify((u, d, cb) => storage.importAll(u, d, cb))(user, lines.map((l) => JSON.parse(l)));
+      assert.strictEqual((await findOneAsync(user, { id: { $eq: id } }, {})).secret, secret);
+      const res = await call(id);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(verifies(requests.at(-1).header, secret, requests.at(-1).raw), 'the restored webhook signs with the same secret');
     });
   });
 });

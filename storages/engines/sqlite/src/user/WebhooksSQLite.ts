@@ -70,7 +70,9 @@ class WebhooksSQLite extends BaseStorageSQLite<StoredWebhook> {
         created: 1,
         createdBy: 1,
         modified: 1,
-        modifiedBy: 1
+        modifiedBy: 1,
+        scopes: 1,
+        secret: 1
       }
     }, callback);
   }

@@ -145,6 +145,10 @@ export type StoredWebhook = {
   createdBy?: string;
   modified?: number;
   modifiedBy?: string;
+  /** Named-scope map { key -> { kind, query, prepared } }; absent when unfiltered. */
+  scopes?: Record<string, unknown> | null;
+  /** Signing secret of the calls; absent (or null) for an unsigned webhook. */
+  secret?: string | null;
 };
 
 // ───────────────────────────── Sessions ─────────────────────────────

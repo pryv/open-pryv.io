@@ -42,10 +42,16 @@ const __ex_getOne = {
   }, { required: ['webhook'] })
 };
 export { __ex_getOne as getOne };
+// The read model plus the signing secret, returned only when it is minted.
+function webhookWithSecret () {
+  const schema = webhook(Action.READ);
+  schema.properties.secret = string();
+  return schema;
+}
 const __ex_create = {
   params: webhook(Action.CREATE),
   result: object({
-    webhook: webhook(Action.READ)
+    webhook: webhookWithSecret()
   }, { required: ['webhook'] })
 };
 export { __ex_create as create };
@@ -93,3 +99,16 @@ const __ex_test = {
   }, { required: ['webhook'] })
 };
 export { __ex_test as test };
+const __ex_rotateSecret = {
+  params: object({
+    // in path for HTTP requests
+    id: string()
+  }, {
+    id: 'webhooks.rotateSecret',
+    required: ['id']
+  }),
+  result: object({
+    webhook: webhookWithSecret()
+  }, { required: ['webhook'] })
+};
+export { __ex_rotateSecret as rotateSecret };

@@ -77,6 +77,11 @@ class Webhook {
   // plus the `prepared` (access-bound, expanded) query the engine matches.
   scopes: WebhookScopes | null;
 
+  // Signing secret of the calls (see ./destination.ts signatureHeader). Null
+  // for a webhook created before signing existed and never rotated since.
+  // Never exposed by forApi(), never put in a pubsub payload or a log line.
+  secret: string | null;
+
   engineSubscriber!: Subscriber | null;
 
   // A refused destination is logged once, not on every retry.
@@ -104,6 +109,7 @@ class Webhook {
     this.isSending = false;
     this.runsSize = params.runsSize || 50;
     this.scopes = params.scopes || null;
+    this.secret = params.secret || null;
     this.engineSubscriber = null;
     this.destinationRefusalLogged = false;
   }
@@ -235,7 +241,7 @@ class Webhook {
         serverTime: timestamp.now(),
         serial: this.serial
       }
-    });
+    }, undefined, this.secret);
   }
 
   stop () {
@@ -312,6 +318,7 @@ class Webhook {
       'modifiedBy'
     ];
     if (this.scopes != null) fields.push('scopes'); // stored with the `prepared` query for matching
+    if (this.secret != null) fields.push('secret'); // same reason: no `secret: null` on unsigned records
     return pick(this, fields);
   }
 
@@ -340,6 +347,18 @@ class Webhook {
       for (const [key, s] of Object.entries(this.scopes)) publicScopes[key] = { kind: s.kind, query: s.query };
       out.scopes = publicScopes;
     }
+    // Whether the calls are signed; the secret itself is never in this view.
+    out.signed = this.secret != null;
+    return out;
+  }
+
+  /**
+   * The API view plus the signing secret: only for the results of the methods
+   * that mint it (webhooks.create, webhooks.rotateSecret).
+   */
+  forApiWithSecret () {
+    const out = this.forApi();
+    if (this.secret != null) out.secret = this.secret;
     return out;
   }
 
@@ -413,6 +432,7 @@ type WebhookCtorParams = {
   webhooksRepository: WebhooksRepository | null;
   messageBuffer?: Set<WebhookMessage>;
   scopes?: WebhookScopes | null;
+  secret?: string | null;
 };
 type WebhookScope = { kind: string; query: unknown; prepared: EventMatchQuery };
 type WebhookScopes = Record<string, WebhookScope>;

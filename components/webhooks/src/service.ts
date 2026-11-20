@@ -112,6 +112,12 @@ class WebhooksService {
       this.addWebhook(username, stored);
       return;
     }
+    // The API methods send the id only (the stored webhook holds the signing
+    // secret, never put in a pubsub payload): nothing to run without storage.
+    if ((usernameWebhook.webhook as { url?: unknown }).url == null) {
+      this.logger.warn(`Webhook ${usernameWebhook.webhook.id} for ${username} not found in storage, not loaded.`);
+      return;
+    }
     this.addWebhook(username, new Webhook(Object.assign({}, usernameWebhook.webhook, {
       webhooksRepository: this.repository,
       user

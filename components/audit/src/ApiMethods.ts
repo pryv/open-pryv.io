@@ -41,6 +41,7 @@ const ALL_METHODS = [
   'webhooks.update',
   'webhooks.delete',
   'webhooks.test',
+  'webhooks.rotateSecret',
   'account.get',
   'account.update',
   'account.changePassword',
