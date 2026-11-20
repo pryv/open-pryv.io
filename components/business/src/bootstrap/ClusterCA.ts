@@ -68,13 +68,24 @@ class ClusterCA {
     openssl(['ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', this.caKeyPath]);
     fs.chmodSync(this.caKeyPath, 0o600);
 
-    openssl([
-      'req', '-x509', '-new',
-      '-key', this.caKeyPath,
-      '-days', String(this.caValidityDays),
-      '-out', this.caCertPath,
-      '-subj', CA_SUBJECT
-    ]);
+    // An explicit config, so the CA's extensions do not depend on the host's
+    // openssl.cnf: a CA that may sign end-entity certs only (pathlen 0).
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-clusterca-'));
+    try {
+      const cnfPath = path.join(tmp, 'ca.cnf');
+      fs.writeFileSync(cnfPath, CA_CONFIG);
+      openssl([
+        'req', '-x509', '-new',
+        '-config', cnfPath,
+        '-extensions', 'pryv_ca',
+        '-key', this.caKeyPath,
+        '-days', String(this.caValidityDays),
+        '-out', this.caCertPath,
+        '-subj', CA_SUBJECT
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
 
     return { created: true, caCertPath: this.caCertPath };
   }
@@ -149,11 +160,37 @@ class ClusterCA {
   }
 }
 
+/** `req` config of the cluster CA: its subject comes from `-subj`. */
+const CA_CONFIG = [
+  '[req]',
+  'distinguished_name = dn',
+  'prompt = no',
+  '[dn]',
+  '[pryv_ca]',
+  'basicConstraints = critical, CA:TRUE, pathlen:0',
+  'keyUsage = critical, keyCertSign, cRLSign',
+  'subjectKeyIdentifier = hash',
+  ''
+].join('\n');
+
+/**
+ * Extensions of a node cert: an end entity (never a CA), for TLS on both
+ * sides of an inter-core connection (a core is server and client), with
+ * its names in the SAN. ECDSA keys sign, so digitalSignature only.
+ */
 function buildSanExtfile ({ coreId, ip, hostname }: { coreId: string; ip?: string | null; hostname?: string | null }): string {
   const sans = [`DNS:${coreId}`];
   if (hostname != null && hostname !== coreId) sans.push(`DNS:${hostname}`);
   if (ip != null) sans.push(`IP:${ip}`);
-  return `subjectAltName = ${sans.join(', ')}\n`;
+  return [
+    `subjectAltName = ${sans.join(', ')}`,
+    'basicConstraints = critical, CA:FALSE',
+    'keyUsage = critical, digitalSignature',
+    'extendedKeyUsage = serverAuth, clientAuth',
+    'subjectKeyIdentifier = hash',
+    'authorityKeyIdentifier = keyid, issuer',
+    ''
+  ].join('\n');
 }
 
 /**

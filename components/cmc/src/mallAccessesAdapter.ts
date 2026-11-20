@@ -97,10 +97,8 @@ const { managedAccessesOf } = require('business/src/accesses/refs.ts');
  */
 function createMallAccessesAdapter (deps: AdapterDeps) {
   const { storageAccesses, apiEndpointBuild, resolveUsername } = deps;
-  const tokenGen = deps.tokenGen ?? (() => {
-    const { createId } = require('@paralleldrive/cuid2');
-    return createId();
-  });
+  // A bearer secret: from node:crypto, not an id library.
+  const tokenGen = deps.tokenGen ?? (() => require('storages/interfaces/_shared/secureToken.ts').secureToken());
 
   return {
     /**

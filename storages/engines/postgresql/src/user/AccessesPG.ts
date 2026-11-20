@@ -14,6 +14,8 @@ const require = createRequire(import.meta.url);
 
 const { BaseStoragePG } = require('./BaseStoragePG.ts') as typeof import('./BaseStoragePG.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
+// Bearer secrets from node:crypto (ids keep cuid2).
+const { secureToken } = require('../../../../interfaces/_shared/secureToken.ts');
 const { _internals } = require('../_internals.ts');
 const timestamp = require('unix-timestamp');
 
@@ -94,7 +96,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
   applyDefaults (item: Partial<AccessItem>): AccessItem {
     const copy = Object.assign({}, item) as AccessItem;
     copy.id = copy.id || generateId();
-    copy.token = copy.token || generateId();
+    copy.token = copy.token || secureToken();
     if (copy.deleted === undefined) copy.deleted = null;
     delete copy.apiEndpoint;
     if (this.integrityAccesses.isActive) {
@@ -105,7 +107,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
   }
 
   generateToken (): string {
-    return generateId();
+    return secureToken();
   }
 
   /** Query-shaped deletion lookup (accesses-specific; the base

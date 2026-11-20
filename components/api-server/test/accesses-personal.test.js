@@ -284,6 +284,21 @@ describe('[ACSF] accesses (personal)', function () {
       assert.strictEqual(res.body.access.token, 'pas-encode-de-bleu');
     });
 
+    it('[SCTK3] a generated access token and a session id are 25-character secrets from node:crypto', async function () {
+      const { SECURE_TOKEN_PATTERN } = require('storages/interfaces/_shared/secureToken.ts');
+      const res = await coreRequest
+        .post(basePath)
+        .set('Authorization', personalToken)
+        .send({ name: 'sctk-' + cuid(), permissions: [] });
+      validation.check(res, { status: 201, schema: methodsSchema.create.result });
+      assert.match(res.body.access.token, SECURE_TOKEN_PATTERN);
+      assert.match(accessStorage.generateToken(), SECURE_TOKEN_PATTERN);
+      const sessionId = await new Promise((resolve, reject) =>
+        sessionStorage.generate({ username, appId: 'sctk' }, (err, id) => err ? reject(err) : resolve(id)));
+      assert.match(sessionId, SECURE_TOKEN_PATTERN);
+      await new Promise((resolve) => sessionStorage.destroy(sessionId, () => resolve()));
+    });
+
     it('[TKMN1] must refuse a chosen token shorter than 16 characters, measured after slugification', async function () {
       // The last one is 19 characters as sent, 3 once slugified.
       for (const token of ['abc', 'fifteen-chars-x', 'é é é é é é é é', '!!!!!!!!!!!!!!!!abc']) {
