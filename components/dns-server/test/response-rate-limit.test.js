@@ -58,40 +58,60 @@ describe('[DRRL] DNS response rate limit', function () {
     assert.deepStrictEqual({ ...RRL_DEFAULTS }, { perSecond: 20, slip: 2 });
   });
 
-  it('[DRRL5] the server answers a burst from one address up to the limit, then truncated or nothing, and looks no name up for a refused one', async function () {
-    let lookups = 0;
+  async function burst (names, perSecond) {
+    const lookups = { user: 0, core: 0 };
     const platform = {
-      async getUserCore () { lookups++; return null; },
-      async getCoreInfo () { return null; },
+      async getUserCore () { lookups.user++; return null; },
+      async getCoreInfo () { lookups.core++; return null; },
       async getAllCoreInfos () { return []; }
     };
-    const store = { 'dns:domain': 'rrl.test', 'dns:defaultTTL': 60, 'dns:staticEntries': {}, 'dns:records:root': {} };
-    const logger = { info () {}, warn () {}, error () {}, debug () {} };
-    const server = createDnsServer({ config: { get: (k) => store[k] }, platform, logger, platformRefreshIntervalMs: 0, responseRateLimit: { perSecond: 4, slip: 2 } });
+    const store = { 'dns:domain': 'rrl.test', 'dns:defaultTTL': 60, 'dns:staticEntries': { www: { a: ['192.0.2.10'] } }, 'dns:records:root': { a: ['192.0.2.1'] } };
+    const warnings = [];
+    const logger = { info () {}, warn (m) { warnings.push(m); }, error () {}, debug () {} };
+    const server = createDnsServer({ config: { get: (k) => store[k] }, platform, logger, platformRefreshIntervalMs: 0, responseRateLimit: { perSecond, slip: 2 } });
     await server.start({ port: 0, ip: '127.0.0.1' });
     const { port } = server._getAddresses().udp;
     const client = dgram.createSocket('udp4');
     const replies = [];
     client.on('message', (msg) => replies.push(Packet.parse(msg)));
     try {
-      for (let i = 0; i < 12; i++) {
+      names.forEach((name, i) => {
         const q = new Packet();
         q.header.id = 100 + i;
-        q.questions.push({ name: `random${i}.rrl.test`, type: Packet.TYPE.A, class: Packet.CLASS.IN });
+        q.questions.push({ name, type: Packet.TYPE.A, class: Packet.CLASS.IN });
         client.send(q.toBuffer(), port, '127.0.0.1');
-      }
+      });
       await new Promise((resolve) => setTimeout(resolve, 300));
     } finally {
       client.close();
       await server.stop();
     }
+    return { replies, lookups, warnings };
+  }
+
+  it('[DRRL5] lookup answers to one network: up to the limit, then truncated or nothing; a refused query costs no lookup and is logged as rate-limited', async function () {
+    const { replies, lookups, warnings } = await burst(Array.from({ length: 12 }, (_, i) => `random${i}.rrl.test`), 4);
     const full = replies.filter((r) => r.header.tc === 0);
     const truncated = replies.filter((r) => r.header.tc === 1);
-    // All 12 can only fit in one second if the run did not cross a second
-    // boundary; either way at most 4 full answers per second were sent.
+    // At most 4 full answers per second (8 if the burst crossed a second boundary).
     assert.ok(full.length >= 4 && full.length <= 8, 'full answers: ' + full.length);
     assert.ok(truncated.length >= 1, 'some refused answers slip through truncated');
     assert.ok(replies.length < 12, 'some are dropped: ' + replies.length);
-    assert.strictEqual(lookups, full.length, 'a refused query costs no lookup');
+    for (const t of truncated) {
+      assert.strictEqual(t.header.rcode, 0);
+      assert.strictEqual(t.answers.length, 0);
+      assert.match(t.questions[0].name, /^random\d+\.rrl\.test$/, 'the question is echoed');
+    }
+    assert.strictEqual(lookups.user, full.length, 'a refused query costs no username lookup');
+    assert.strictEqual(lookups.core, full.length, 'nor a core-info lookup');
+    assert.ok(warnings.some((w) => /refused by dns\.responseRateLimit.*sample network: 4:127\.0\.0/.test(w)), warnings.join(' | '));
+  });
+
+  it('[DRRL6] answers that need no lookup (apex, static names) are not limited', async function () {
+    const names = Array.from({ length: 12 }, (_, i) => (i % 2 === 0 ? 'rrl.test' : 'www.rrl.test'));
+    const { replies, lookups } = await burst(names, 2);
+    assert.strictEqual(replies.length, 12);
+    assert.ok(replies.every((r) => r.header.tc === 0 && r.answers.length === 1));
+    assert.deepStrictEqual(lookups, { user: 0, core: 0 });
   });
 });

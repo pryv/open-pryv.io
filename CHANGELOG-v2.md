@@ -49,15 +49,23 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   (default 5000).** Each process keeps the answer for the wrong-core check (421 `wrong-core`) and
   the DNS answer for `<username>.<domain>`: a found mapping for 30 s, an unknown name for 5 s.
   Consequences: an account moved to another core can still be routed to its former core for up to
-  30 s, and a name just registered on another core can be unknown to this core for up to 5 s.
-  Uniqueness checks (registration, renames) never use the cache. `0` turns either off.
-- The routing read itself is now `linearizable` instead of `strong` on rqlite: just as up to date,
-  without a Raft log entry per read.
+  30 s, and a name just registered can be unknown for up to 5 s, on another core and on another
+  process of the same core (the embedded DNS runs in the master process, registrations in the API
+  workers). Uniqueness checks (registration, renames) never use the cache. `0` turns either off.
+- The cached routing read is `linearizable` instead of `strong` on rqlite: just as up to date,
+  without a Raft log entry per read (other reads of the name-to-core mapping stay `strong`). It
+  fails, as before, while the cluster has no leader (rqlite's linearizable wait is 1 s by
+  default). An external rqlited (`storages.platform.rqlite.external`) must support the
+  `linearizable` read level; the bundled version is 10.6.0. A read at `strong` or `linearizable`
+  that rqlite answers with no result (no leader yet) is now an error instead of "no such row".
 - **DNS response rate limit: `dns.responseRateLimit.perSecond` (default 20) and `slip` (default
-  2).** At most 20 UDP answers a second per client network (/24 IPv4, /56 IPv6); past it answers
-  are dropped, except every second one, sent truncated (TC=1) so a real resolver retries over TCP.
-  A refused query costs no lookup. Resolvers sharing one network that send more than 20 queries a
-  second to this server (a large ISP resolver farm) should raise it. TCP is not limited by it.
+  2).** Answers that need a platform lookup (a `<core>.<domain>` or `<username>.<domain>` name,
+  found or not) are limited to 20 UDP answers a second per client network (/24 IPv4, /56 IPv6),
+  counted together whatever the name (not per identical answer, as BIND's response rate limiting
+  does). Past it the answers are dropped, except every second one, sent truncated (TC=1) so a real
+  resolver retries over TCP; a refused query costs no lookup and is logged as "UDP lookup
+  answer(s) refused by dns.responseRateLimit". Other names (apex, static, service, hosted sites)
+  and TCP are not limited by it.
 
 ### Stream tree, stalled readers and mail budgets (on by default)
 

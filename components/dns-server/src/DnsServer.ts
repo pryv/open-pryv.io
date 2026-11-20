@@ -88,7 +88,8 @@ const RCODE_SERVFAIL = 2;
 
 type DnsAnswer = EncodableAnswer & { name: string };
 type ResponseHeader = { id: number; qr: number; opcode: number; aa: number; tc: number; rd: number; ra: number; z: number; rcode: number };
-type BuiltResponse = { header: ResponseHeader; answers: DnsAnswer[]; authorities: DnsAnswer[] };
+// `limited`: refused by the response rate limit (dropped, or sent truncated).
+type BuiltResponse = { header: ResponseHeader; answers: DnsAnswer[]; authorities: DnsAnswer[]; limited?: 'slip' | 'drop' };
 type SendFn = (buf: Buffer) => void;
 type Transport = 'udp' | 'tcp';
 type ListenerKind = 'udp' | 'tcp' | 'udp6' | 'tcp6';
@@ -139,8 +140,12 @@ class DnsServer {
   // Stored rows refused at the last refresh (JSON name -> JSON reason), so each
   // is warned about once rather than at every refresh.
   #refusedRows: Map<string, string> = new Map();
-  // UDP answers per client network and second (dns.responseRateLimit).
+  // UDP lookup answers per client network and second (dns.responseRateLimit),
+  // and its own aggregated warning.
   #rateLimiter: ResponseRateLimiter;
+  #rrlPending = 0;
+  #rrlSample: string | null = null;
+  #rrlTimer: NodeJS.Timeout | null = null;
 
   /**
    * @param opts.config - @pryv/boiler config
@@ -307,6 +312,11 @@ class DnsServer {
       this.#warnTimer = null;
       this.#flushWarn();
     }
+    if (this.#rrlTimer) {
+      clearTimeout(this.#rrlTimer);
+      this.#rrlTimer = null;
+      this.#flushRateLimited();
+    }
     if (this.#udpSockets.size > 0 || this.#tcpServers.size > 0) {
       await this.#closeListeners();
       this.#logger.info('DNS server stopped');
@@ -411,20 +421,7 @@ class DnsServer {
       const send: SendFn = (buf) => {
         socket.send(buf, rinfo.port, rinfo.address, (err) => { if (err) this.#warnAgg('udp-send', err.message); });
       };
-      if (result.kind !== 'ignore') {
-        // Before any lookup: a refused datagram costs no PlatformDB read.
-        const decision = this.#rateLimiter.decide(rinfo.address);
-        if (decision !== 'answer') {
-          this.#warnAgg('rate-limited', networkOf(rinfo.address));
-          if (decision === 'slip' && (result.kind === 'ok' || result.kind === 'refused')) {
-            // Truncated, no records: a real resolver retries over TCP.
-            const header = { ...this.#responseHeader(result.header, { aa: 0, rcode: RCODE_NOERROR }), tc: 1 };
-            this.#safeSend(() => send(this.#encodeResponse(header, result.rawQuestion, [], [])));
-          }
-          return;
-        }
-      }
-      this.#dispatchResult(result, send, 'udp')
+      this.#dispatchResult(result, send, 'udp', rinfo.address)
         .catch((err: Error) => this.#warnAgg('udp-handler', err.message));
     } catch (err) {
       this.#warnAgg('udp', (err as Error).message);
@@ -483,7 +480,7 @@ class DnsServer {
   /**
    * Map a wire classification to a reply (or no reply) and send it.
    */
-  async #dispatchResult (result: WireResult, send: SendFn, transport: Transport): Promise<void> {
+  async #dispatchResult (result: WireResult, send: SendFn, transport: Transport, udpClientAddress: string | null = null): Promise<void> {
     switch (result.kind) {
       case 'ignore':
         this.#warnAgg('ignored', result.reason);
@@ -497,7 +494,7 @@ class DnsServer {
         return;
       }
       case 'ok':
-        await this.#answerOk(result, send, transport);
+        await this.#answerOk(result, send, transport, udpClientAddress);
     }
   }
 
@@ -506,10 +503,16 @@ class DnsServer {
    * try with a SERVFAIL fallback; an over-size UDP answer is truncated (TC=1,
    * no records) and an over-cap TCP answer falls back to SERVFAIL.
    */
-  async #answerOk (result: Extract<WireResult, { kind: 'ok' }>, send: SendFn, transport: Transport) {
+  async #answerOk (result: Extract<WireResult, { kind: 'ok' }>, send: SendFn, transport: Transport, udpClientAddress: string | null) {
     const base = this.#responseHeader(result.header, { aa: 1, rcode: RCODE_NOERROR });
     try {
-      const built = await this.#buildAnswer(result.name, result.type, base);
+      const built = await this.#buildAnswer(result.name, result.type, base, udpClientAddress);
+      if (built.limited === 'drop') return;
+      if (built.limited === 'slip') {
+        // Truncated, no records: a real resolver retries over TCP.
+        send(this.#encodeResponse({ ...base, aa: 0, tc: 1 }, result.rawQuestion, [], []));
+        return;
+      }
       let buf = this.#encodeResponse(built.header, result.rawQuestion, built.answers, built.authorities);
       if (transport === 'udp' && buf.length > UDP_MAX_RESPONSE) {
         buf = this.#encodeResponse({ ...built.header, tc: 1 }, result.rawQuestion, [], []);
@@ -636,7 +639,7 @@ class DnsServer {
    * response header plus answer / authority records (each validated so a stray
    * record is skipped rather than throwing at encode time).
    */
-  async #buildAnswer (qnameRaw: string, qtype: number, base: ResponseHeader): Promise<BuiltResponse> {
+  async #buildAnswer (qnameRaw: string, qtype: number, base: ResponseHeader, udpClientAddress: string | null = null): Promise<BuiltResponse> {
     const response: BuiltResponse = { header: { ...base }, answers: [], authorities: [] };
     const qname = qnameRaw.toLowerCase();
     const domain = (this.#domain || '').toLowerCase();
@@ -673,6 +676,10 @@ class DnsServer {
         // Static subdomain (www, sw, reg, _acme-challenge, etc.). Operator
         // overrides win over PlatformDB-derived core entries below.
         this.#answerStatic(response, qname, qtype, this.#staticEntries.get(prefix)!);
+      } else if (udpClientAddress != null && this.#rateLimited(response, udpClientAddress)) {
+        // A name answered by PlatformDB lookups (core info, then username)
+        // over UDP: past dns.responseRateLimit for its network, no lookup.
+        return response;
       } else if (await this.#tryAnswerCoreInfo(response, qname, qtype, prefix)) {
         // Was a `<coreId>.<domain>` query — answered from PlatformDB.
       } else {
@@ -966,6 +973,34 @@ class DnsServer {
    * window so a flood of bad requests cannot flood the log; the qname in a
    * sample is JSON-escaped by the caller.
    */
+  /**
+   * Response rate limit of a lookup answer over UDP: true (with
+   * `response.limited` set) when the client's network is past it.
+   */
+  #rateLimited (response: BuiltResponse, address: string): boolean {
+    const decision = this.#rateLimiter.decide(address);
+    if (decision === 'answer') return false;
+    response.limited = decision;
+    this.#rrlPending++;
+    if (this.#rrlSample == null) this.#rrlSample = networkOf(address);
+    if (this.#rrlTimer == null) {
+      this.#rrlTimer = setTimeout(() => this.#flushRateLimited(), WARN_WINDOW_MS);
+      if (typeof this.#rrlTimer.unref === 'function') this.#rrlTimer.unref();
+    }
+    return true;
+  }
+
+  #flushRateLimited () {
+    const n = this.#rrlPending;
+    const sample = this.#rrlSample;
+    this.#rrlPending = 0;
+    this.#rrlSample = null;
+    this.#rrlTimer = null;
+    if (n > 0) {
+      this.#logger.warn(`DNS: ${n} UDP lookup answer(s) refused by dns.responseRateLimit in the last ${WARN_WINDOW_MS / 1000}s (sample network: ${sample})`);
+    }
+  }
+
   #warnAgg (category: string, detail?: string) {
     this.#warnPending++;
     if (this.#warnSample == null) this.#warnSample = detail ? `${category}: ${detail}` : category;

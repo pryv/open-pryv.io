@@ -173,7 +173,12 @@ export interface PlatformDB {
    * setUserCore.
    */
   setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean>;
-  getUserCore (username: string): Promise<string | null>;
+  /**
+   * `purpose: 'routing'`: the read only routes a request (the cached routing
+   * lookup), so an engine may use a cheaper read that is still up to date
+   * (rqlite: `linearizable` instead of `strong`).
+   */
+  getUserCore (username: string, purpose?: 'routing'): Promise<string | null>;
   deleteUserCore (username: string): Promise<void>;
   getAllUserCores (): Promise<UserCoreMapping[]>;
 
@@ -359,7 +364,7 @@ const PlatformDB: PlatformDB = {
 
   async setUserCoreIfNotExists (username: string, coreId: string): Promise<boolean> { throw new Error('Not implemented'); },
 
-  async getUserCore (username: string): Promise<string | null> { throw new Error('Not implemented'); },
+  async getUserCore (username: string, purpose?: 'routing'): Promise<string | null> { throw new Error('Not implemented'); },
 
   async deleteUserCore (username: string): Promise<void> { throw new Error('Not implemented'); },
 

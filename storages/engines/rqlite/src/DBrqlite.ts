@@ -24,9 +24,9 @@ type RqliteCell = string | number | boolean | null;
 type RqliteResult = { columns?: string[]; values?: RqliteCell[][]; rows_affected?: number; error?: string };
 // rqlite read-consistency levels (see rqlite docs). Omitted → `weak`
 // (node-local, can be stale during an election); `strong` is confirmed
-// through Raft and used for uniqueness-critical reads; `linearizable` gives
-// the same up-to-date guarantee without a Raft log entry (rqlite 8.x and later)
-// and serves the name→core routing read.
+// through Raft and used for routing-/uniqueness-critical reads; `linearizable`
+// gives the same up-to-date guarantee without a Raft log entry and serves the
+// cached name→core routing read (getUserCore with purpose 'routing').
 type ReadLevel = 'none' | 'weak' | 'linearizable' | 'strong';
 
 /**
@@ -102,8 +102,15 @@ class DBrqlite {
     // rqlite returns an empty `results` array during cluster election
     // (before a leader is established) — guard so we don't crash with
     // "Cannot read properties of undefined (reading 'columns')" on
-    // api-server worker boot when the cluster is still warming up.
-    if (!result) return [];
+    // api-server worker boot when the cluster is still warming up. A read
+    // that must be up to date (`strong`, `linearizable`) fails instead: "no
+    // answer" is not "no row" (a taken name would read as free).
+    if (!result) {
+      if (level === 'strong' || level === 'linearizable') {
+        throw new Error(`rqlite query returned no result at level ${level} (no leader yet?)`);
+      }
+      return [];
+    }
     if (!result.columns || !result.values) return [];
     // Convert columnar format to row objects
     return result.values.map((row: RqliteCell[]) => {
@@ -270,13 +277,15 @@ class DBrqlite {
     return rows[0].value === coreId;
   }
 
-  async getUserCore (username: string) {
+  async getUserCore (username: string, purpose?: 'routing') {
     const key = getUserCoreKey(username);
-    // `linearizable`: the leader confirms it still leads with a heartbeat
-    // round, so the read sees every committed write, as `strong` does, but it
-    // adds no entry to the Raft log. This read runs for routing (every
-    // `/{username}/*` request, the embedded DNS), reachable unauthenticated.
-    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], 'linearizable');
+    // Routing reads (every `/{username}/*` request, the embedded DNS, both
+    // reachable unauthenticated; cached by the caller) use `linearizable`: the
+    // leader confirms it still leads with a heartbeat round, so the read sees
+    // every committed write without adding an entry to the Raft log. Other
+    // callers (uniqueness pre-checks, restore) keep `strong`.
+    const level: ReadLevel = purpose === 'routing' ? 'linearizable' : 'strong';
+    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key], level);
     return rows.length === 0 ? null : rows[0].value;
   }
 

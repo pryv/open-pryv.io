@@ -67,4 +67,18 @@ describe('[RQRC] rqlite read consistency', () => {
     await db.getCoreInfo('core-a');
     assert.doesNotMatch(urls[0], /[?&]level=/);
   });
+
+  it('[RQRC5] the cached routing read of getUserCore uses level=linearizable', async () => {
+    stubFetch('core-a');
+    assert.equal(await db.getUserCore('alice', 'routing'), 'core-a');
+    assert.match(urls[0], /[?&]level=linearizable(&|$)/);
+  });
+
+  it('[RQRC6] an empty results array (no leader yet) fails a strong or linearizable read instead of reading as no row', async () => {
+    originalFetch = global.fetch;
+    global.fetch = async () => ({ ok: true, async json () { return { results: [] }; }, async text () { return ''; } });
+    await assert.rejects(db.getUserCore('alice'), /no result at level strong/);
+    await assert.rejects(db.getUserCore('alice', 'routing'), /no result at level linearizable/);
+    assert.deepEqual(await db.query('SELECT 1'), [], 'a default-level read keeps the boot-time tolerance');
+  });
 });

@@ -8,14 +8,15 @@
 /**
  * Response rate limit of the embedded DNS over UDP (`dns.responseRateLimit`).
  *
- * A UDP source address can be forged: without a bound, any host can make the
- * server reflect answers at a victim network, and every query for a random
- * `<name>.<domain>` costs a PlatformDB read. Each client network (/24 for
- * IPv4, /56 for IPv6) gets at most `perSecond` answers a second. Past it the
- * answers are dropped, except every `slip`-th one, sent truncated (TC=1, no
- * records) so a real resolver behind that network retries over TCP, which a
- * forged source cannot complete. TCP is not limited here. `perSecond` 0 turns
- * the limit off; `slip` 0 drops every refused answer.
+ * A UDP source address can be forged, and every query for a random
+ * `<name>.<domain>` costs PlatformDB reads (core info, then username). Each
+ * client network (/24 for IPv4, /56 for IPv6) gets at most `perSecond` such
+ * lookup answers a second, counted together whatever the name; answers that
+ * need no lookup (apex, static names, service names, hosted sites) are not
+ * counted. Past it the answers are dropped, except every `slip`-th one, sent
+ * truncated (TC=1, no records) so a real resolver behind that network retries
+ * over TCP, which a forged source cannot complete. TCP is not limited here.
+ * `perSecond` 0 turns the limit off; `slip` 0 drops every refused answer.
  */
 
 import { isIPv4, isIPv6 } from 'node:net';

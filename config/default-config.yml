@@ -953,10 +953,11 @@ dns:
                          # (avoids burning the LE rate limit on a guaranteed fail).
   defaultTTL: 300        # TTL in seconds
   tcpMaxConnections: 64  # cap on simultaneous TCP (RFC 7766) connections the embedded DNS accepts
-  # UDP answers per client network (/24 IPv4, /56 IPv6) and second. Past it the
-  # answers are dropped, except every `slip`-th, sent truncated (TC=1) so a real
-  # resolver retries over TCP, which a forged source address cannot. Bounds the
-  # traffic reflected at one network and the lookups forged queries cost.
+  # UDP answers that need a platform lookup (<core>.<domain>, <username>.<domain>)
+  # per client network (/24 IPv4, /56 IPv6) and second. Past it the answers are
+  # dropped, except every `slip`-th, sent truncated (TC=1) so a real resolver
+  # retries over TCP, which a forged source address cannot. Bounds the lookups
+  # forged queries cost. Other names and TCP are not limited by it.
   # perSecond 0 = no limit; slip 0 = drop every refused answer.
   responseRateLimit:
     perSecond: 20
