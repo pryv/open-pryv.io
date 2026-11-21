@@ -30,6 +30,11 @@ const encryption = require('utils').encryption;
 const crypto = require('node:crypto');
 const resetThrottle = require('business/src/auth/passwordResetThrottle.ts');
 
+// Steps that (re)start the server child process: in a full run on a loaded
+// machine a restart overran the default 20 s, and the late callback of the
+// timed-out test then failed the next test's hook.
+const SERVER_RESTART_TEST_TIMEOUT_MS = 60000;
+
 describe('[ACCO] account', function () {
   useNock();
 
@@ -55,7 +60,7 @@ describe('[ACCO] account', function () {
   before(function (done) {
     // Resets four fixture sets, then starts the server child process: in a
     // full run on a loaded machine this overran the default 20 s.
-    this.timeout(60000);
+    this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
     async.series([
       testData.resetUsers,
       testData.resetEvents,
@@ -491,6 +496,7 @@ describe('[ACCO] account', function () {
 
     it('[G1VN] "request" must trigger an email with a reset token, store that token, ' +
        'then "reset" must reset the password to the given value', function (done) {
+      this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
       const settings = structuredClone(helpers.dependencies.settings);
       let resetToken;
       const newPassword = 'Dr0ws$4p';
@@ -564,12 +570,14 @@ describe('[ACCO] account', function () {
     });
 
     it('[HV0V] must not trigger a reset email if mailing is deactivated', function (done) {
+      this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
       const settings = structuredClone(helpers.dependencies.settings);
       settings.services.email.enabled = false;
       testResetMailNotSent(settings, done);
     });
 
     it('[VZ1W] must not trigger a reset email if reset mail is deactivated', function (done) {
+      this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
       const settings = structuredClone(helpers.dependencies.settings);
       settings.services.email.enabled = {
         resetPassword: false
@@ -704,6 +712,7 @@ describe('[ACCO] account', function () {
 
     describe('[RPWD] When password rules are enabled', function () {
       it('[HZCU] must fail if the new password does not comply (smoke test; see "/change-password" tests)', function (done) {
+        this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
         const settings = _.merge(structuredClone(helpers.dependencies.settings), helpers.passwordRules.settingsOverride);
         settings.services.email.enabled = true;
 
