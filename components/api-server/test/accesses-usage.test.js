@@ -50,6 +50,7 @@ const SHARED_FIXTURE = {
   'webhooks.test': 'write',
   'account.requestPasswordReset': 'write',
   'account.transferClaim': 'write',
+  'webhooks.rotateSecret': 'write',
   'auth.login': 'session',
   'auth.logout': 'session',
   'mfa.verify': 'session',
