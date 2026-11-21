@@ -93,8 +93,10 @@ describe('[RSER] restore of an account with an erasure record', function () {
     return { id: fu.attrs.id, username, streamId, dir };
   }
 
+  // An erasure that started after the backup refuses a plain restore
+  // ([ERLR] covers that): these restores override it, as an operator would.
   function restore (u) {
-    return runCli(['--restore', u.dir, '--user', u.username, '--overwrite']);
+    return runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--restore-erased']);
   }
 
   async function streamIdsOf (u) {
@@ -415,7 +417,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
         return JSON.stringify({ ...event, content: 'tampered' });
       }).join('\n'));
 
-      const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--verify-integrity']);
+      const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--verify-integrity', '--restore-erased']);
       assert.strictEqual(res.status, 1, res.stdout + res.stderr);
       // The account was still indexed (its erasure stopped before removing
       // it): the rollback empties it, the put-back erasure completes it.
@@ -438,7 +440,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
       await stoppedErasure(a);
       const { o, lines } = await orchestrator();
       const reader = await combinedReader([a, b]);
-      const report = await o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true });
+      const report = await o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true, restoreErased: true });
       await reader.close();
       assert.deepEqual(report.restored.map((r) => r.userId).sort(), [a.id, b.id].sort());
       assert.deepEqual(report.erasuresWithdrawn.map((r) => r.userId), [a.id]);
@@ -490,7 +492,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
       const { o, lines } = await orchestrator();
       const reader = await combinedReader([a, b], b);
       try {
-        await assert.rejects(o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true }), /injected backup read error/);
+        await assert.rejects(o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true, restoreErased: true }), /injected backup read error/);
       } finally {
         await reader.close();
       }

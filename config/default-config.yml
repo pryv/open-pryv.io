@@ -761,13 +761,16 @@ accountErasure:
     enabled: true
     # Days a record is kept after the erasure, then removed by the sweep;
     # 0 keeps them forever. Keep them at least as long as your longest backup
-    # retention, or a restore of an older backup is not checked.
+    # retention, or a restore of an older backup is not checked. Every core
+    # purges the shared ledger with its own value: the shortest one set on any
+    # core applies to all, so set the same value everywhere.
     retentionDays: 1825
     # Key of the hashes (base64 of 32 bytes, YAML only like other secrets),
     # the same on every core. Empty: derived from auth.adminAccessKey. Set it
     # before rotating the admin key: records written under another key stay
-    # listed but can no longer be looked up by id or name. Destroying the key
-    # makes the records anonymous.
+    # listed but are no longer matched by an id or a name, so the lookup, the
+    # restore check and the replay all miss them (they warn with the count).
+    # Destroying the key makes the records anonymous.
     hmacKey: ''
 
 # === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===

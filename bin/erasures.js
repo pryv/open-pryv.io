@@ -100,22 +100,26 @@ function describe (entry) {
 }
 
 async function runList (platform, ledger) {
-  let after = null;
+  // One read of the whole ledger, already ordered by erasure date.
   let count = 0;
-  do {
-    const page = await ledger.listErasureRecords(platform, { since: args.since, limit: ledger.MAX_LIST_LIMIT, after });
-    for (const entry of page.erasures) {
-      if (args.limit != null && count >= args.limit) return 0;
-      console.log(describe(entry));
-      count++;
-    }
-    after = page.next != null ? ledger.parseCursor(page.next) : null;
-  } while (after != null);
+  for (const entry of await ledger.allErasureRecords(platform)) {
+    if (entry.deletedAt < args.since) continue;
+    if (args.limit != null && count >= args.limit) break;
+    console.log(describe(entry));
+    count++;
+  }
   console.log(`${count} erasure record(s)` + (args.since > 0 ? ` since ${new Date(args.since).toISOString()}` : ''));
   return 0;
 }
 
+/** Records written under another key are not matched by an id or a name: said before any answer that relies on matching. */
+async function warnOtherKeys (platform, ledger, key) {
+  const warning = ledger.otherKeyWarning(await ledger.otherKeyRecordCount(platform, key));
+  if (warning != null) console.warn('WARNING: ' + warning);
+}
+
 async function runCheck (platform, ledger, key) {
+  await warnOtherKeys(platform, ledger, key);
   const byId = await ledger.lookupErasureRecords(platform, key, { userId: args.check });
   const byName = await ledger.lookupErasureRecords(platform, key, { username: args.check });
   const seen = new Set();
@@ -133,13 +137,19 @@ async function runCheck (platform, ledger, key) {
 async function runReplay (config, platform, ledger, key) {
   const { getUsersLocalIndex, getStorageLayer } = require('storage');
   const usersIndex = await getUsersLocalIndex();
+  await warnOtherKeys(platform, ledger, key);
   const accounts = Object.entries(await usersIndex.getAllByUsername());
   const toErase = [];
   for (const [username, userId] of accounts) {
     const entry = await ledger.readErasureRecord(platform, key, userId);
-    if (entry != null && ledger.erasedAfter(entry, null)) toErase.push({ id: userId, username });
+    if (entry != null && ledger.erasedAfter(entry, null)) toErase.push({ id: userId, username, entry });
   }
   console.log(`${accounts.length} account(s) on this core, ${toErase.length} recorded as erased in the ledger and not restored since.`);
+  // Live accounts of this core: listed by id (never by name) with their
+  // record, so a restored account whose record was not marked can be told apart.
+  for (const { id, entry } of toErase) {
+    console.log(`  ${args.apply ? 'erasing' : 'would erase'} ${id}: erased on ${new Date(entry.deletedAt).toISOString()}, trigger ${entry.trigger}`);
+  }
   if (!args.apply) {
     if (toErase.length > 0) console.log('Dry run: nothing erased. Run again with --apply to erase them.');
     return 0;
@@ -150,8 +160,9 @@ async function runReplay (config, platform, ledger, key) {
   let failed = 0;
   for (const account of toErase) {
     try {
-      await deletion.eraseAccount(account, { teardown: true, trigger: 'ledger-replay' });
+      await deletion.eraseAccount({ id: account.id, username: account.username }, { teardown: true, trigger: 'ledger-replay' });
       erased++;
+      console.log(`  erased ${account.id}`);
     } catch (err) {
       failed++;
       // The id only: the name of an erased account is not printed.
@@ -212,12 +223,19 @@ Modes (exactly one):
     --since <ms | ISO date> Only the erasures from then on
     --limit <n>             At most n records
   --check <userId|username> Whether an account of this id, or of this name
-                            (any case), was erased, and when
+                            (any case), was erased, and when (the name it held
+                            when erased; its aliases are not matched)
   --replay                  Look up every account of this core in the ledger:
-                            count those recorded as erased and not restored
-                            since (after a restore of the storage itself from
-                            a snapshot or a dump). Dry run: erases nothing
-    --apply                 Erase them again (trigger ledger-replay)
+                            list by id those recorded as erased and not
+                            restored since (after a restore of the storage
+                            itself from a snapshot or a dump). Dry run:
+                            erases nothing; check the list before --apply
+    --apply                 Erase them again (trigger ledger-replay; the
+                            record keeps the first erasure's date and trigger)
+
+Records written under another key (a key change, or cores with different
+keys) are not matched by an id or a name: --check and --replay warn with
+their count.
 
 Options:
   --config <file>           Host config layered on top (as bin/master.js)

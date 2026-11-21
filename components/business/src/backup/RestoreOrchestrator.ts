@@ -11,7 +11,7 @@ import type { ExternalIdsService, ExternalIdRestoreSummary } from '../external-i
 import type { ErasuresLocalDB, AccountErasureRow } from '../../../../storages/interfaces/baseStorage/ErasuresLocalDB.ts';
 import type { LedgerKv, LedgerKey } from '../erasureLedger/index.ts';
 import { erasureLedgerConfig } from '../erasureLedger/config.ts';
-import { ledgerKey, readErasureRecord, erasedAfter, markRestored, mergeErasureLedgerRows, isErasureLedgerEntry } from '../erasureLedger/index.ts';
+import { ledgerKey, readErasureRecord, writeErasureRecord, erasedAfter, markRestored, mergeErasureLedgerRows, isErasureLedgerEntry, otherKeyRecordCount, otherKeyWarning } from '../erasureLedger/index.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
@@ -180,8 +180,8 @@ class RestoreOrchestrator {
     const localConflicts = await this._detectConflicts(users);
     const locallyConflicting = new Set(localConflicts.map((c) => c.userId));
     const conflicts = [...localConflicts, ...await this._detectOtherCoreAccounts(users.filter((u: UserManifest) => !locallyConflicting.has(u.userId)))];
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number, emailsHeldElsewhere: AccountRef[], externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[], erasedSince: ErasedSinceRef[], erasedRestored: ErasedSinceRef[] } =
-      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0, emailsHeldElsewhere: [], externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [], erasedSince: erased.refused, erasedRestored: [] };
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number, emailsHeldElsewhere: AccountRef[], externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[], erasedSince: ErasedSinceRef[], erasedRestored: ErasedSinceRef[], restoredStampFailed: ErasedSinceRef[] } =
+      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0, emailsHeldElsewhere: [], externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [], erasedSince: erased.refused, erasedRestored: [], restoredStampFailed: [] };
     const imported: ImportedAccount[] = [];
     const pendingAliases: PendingAliases[] = [];
 
@@ -222,7 +222,8 @@ class RestoreOrchestrator {
       report.aliases = await this._restoreAliases(pendingAliases);
       const restoredIds = new Set(report.restored.map((u) => u.userId));
       report.erasedRestored = erased.override.filter((r) => restoredIds.has(r.userId));
-      await this._stampRestored(report.erasedRestored);
+      // Deferred: the caller marks them once its own checks passed (bin/backup.js after --verify-integrity).
+      if (opts.deferRestoredStamp !== true) report.restoredStampFailed = await this.stampRestored(report.erasedRestored);
     } catch (err) {
       if (report.restored.length > 0) {
         this.logger.error(`Restore stopped by a failure: the ${report.restored.length} account(s) restored before it are kept (their withdrawn erasures, if any, stay withdrawn): ` +
@@ -288,10 +289,11 @@ class RestoreOrchestrator {
     // An account erased after the backup was taken is not brought back
     // without --restore-erased (checked on the backed-up id).
     await this._mergeErasureLedger(platformRead);
-    const erased = await this._erasedSinceBackup(manifest, [userManifest], opts.restoreErased === true);
+    const erased = await this._erasedSinceBackup(manifest, [{ userId, username, targetUserId }], opts.restoreErased === true);
     if (erased.refused.length > 0) {
       throw new Error(`User ${username} (${userId}) was ${erasedText(erased.refused[0])}: not restored. ` +
-        'Pass --restore-erased to restore it anyway (its erasure record is kept, marked restored). Nothing was restored.');
+        'Pass --restore-erased to restore it anyway (its erasure record is kept, marked restored). No account data was restored ' +
+        '(the backup\'s erasure records, if any, were merged into the ledger).');
     }
 
     const erasuresWithdrawn: AccountErasureRow[] = [];
@@ -307,10 +309,10 @@ class RestoreOrchestrator {
     const emailsHeldElsewhere = await this._emailsHeldElsewhere(restored);
     const externalIds = await this._restoreExternalIds([imported]);
     const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
-    await this._stampRestored(erased.override);
+    const restoredStampFailed = opts.deferRestoredStamp === true ? [] : await this.stampRestored(erased.override);
 
     this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
-    return { restored, skipped: [], conflicts, extIdNamespaceSaltMismatch, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn, erasedSince: [], erasedRestored: erased.override };
+    return { restored, skipped: [], conflicts, extIdNamespaceSaltMismatch, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn, erasedSince: [], erasedRestored: erased.override, restoredStampFailed };
   }
 
   /**
@@ -708,15 +710,18 @@ class RestoreOrchestrator {
     }
   }
 
-  /** The erasure ledger and its key (null: not consulted, e.g. no key configured). */
-  _erasureLedger (): { kv: LedgerKv, key: LedgerKey } | null {
+  /**
+   * The erasure ledger and its key; `{ error }` when the key cannot be built
+   * (the restore then fails closed, see `_erasedSinceBackup`); null when the
+   * ledger is not consulted (turned off, or no platform database here).
+   */
+  _erasureLedger (): { kv: LedgerKv, key: LedgerKey } | { error: string } | null {
     if (this.platformDB == null || this.ledgerConfig == null) return null;
     if (!erasureLedgerConfig(this.ledgerConfig).enabled) return null;
     try {
       return { kv: this.platformDB as unknown as LedgerKv, key: ledgerKey(this.ledgerConfig) };
     } catch (err: unknown) {
-      this.logger.warn(`The erasure ledger is not consulted (${errorMessage(err)}): an account erased after the backup is restored without notice`);
-      return null;
+      return { error: errorMessage(err) };
     }
   }
 
@@ -735,24 +740,47 @@ class RestoreOrchestrator {
   }
 
   /**
-   * The accounts of `users` the erasure ledger says were erased after the
-   * backup's data of them was taken (and not restored since). They are not
-   * restored, unless `restoreErased`: then they are listed in `override`, and
-   * their record is stamped `restoredAt` once restored (`_stampRestored`).
+   * The accounts of `users` erased after the backup's data of them was taken:
+   * the erasure ledger records it (and no restore since), or an erasure of the
+   * account on this core started after the backup and stopped unfinished (the
+   * data may be gone already, the ledger not written yet; a running one
+   * refuses the restore in `_assertNoRunningErasure`). They are not restored,
+   * unless `restoreErased`: then they are listed in `override`, and their
+   * record is marked restored once the restore holds (`stampRestored`).
+   * `targetUserId`: the id the account is restored under (its record of an
+   * erasure in progress is that id's). When the ledger key cannot be built,
+   * the restore is refused (fails closed) unless `restoreErased`.
    */
-  async _erasedSinceBackup (manifest: Manifest, users: UserManifest[], restoreErased: boolean): Promise<{ refused: ErasedSinceRef[], override: ErasedSinceRef[] }> {
+  async _erasedSinceBackup (manifest: Manifest, users: Array<{ userId: string, username: string, targetUserId?: string }>, restoreErased: boolean): Promise<{ refused: ErasedSinceRef[], override: ErasedSinceRef[] }> {
     const out = { refused: [] as ErasedSinceRef[], override: [] as ErasedSinceRef[] };
     const ledger = this._erasureLedger();
     if (ledger == null) return out;
-    for (const { userId, username } of users) {
-      const entry = await readErasureRecord(ledger.kv, ledger.key, userId);
-      if (entry == null) continue;
+    if ('error' in ledger) {
+      if (!restoreErased) {
+        throw new Error(`Restore aborted: the erasure ledger cannot be consulted (${ledger.error}), so an account erased after this backup cannot be told apart. ` +
+          'Fix the key (accountErasure.ledger.hmacKey, or auth.adminAccessKey it is derived from), or pass --restore-erased to restore without the check. Nothing was restored.');
+      }
+      this.logger.warn(`The erasure ledger cannot be consulted (${ledger.error}): restoring without the check (--restore-erased)`);
+      return out;
+    }
+    const otherKeys = otherKeyWarning(await otherKeyRecordCount(ledger.kv, ledger.key));
+    if (otherKeys != null) this.logger.warn('Restore: ' + otherKeys);
+    for (const { userId, username, targetUserId } of users) {
       const snapshotMs = snapshotMsOf(manifest, userId);
-      if (!erasedAfter(entry, snapshotMs)) continue;
-      const ref: ErasedSinceRef = { userId, username, deletedAt: entry.deletedAt, trigger: entry.trigger, snapshotBefore: snapshotMs };
+      let ref: ErasedSinceRef | null = null;
+      const entry = await readErasureRecord(ledger.kv, ledger.key, userId);
+      if (entry != null && erasedAfter(entry, snapshotMs)) {
+        ref = { userId, username, deletedAt: entry.deletedAt, trigger: entry.trigger, snapshotBefore: snapshotMs };
+      } else if (this.erasures != null) {
+        const local = await this.erasures.get(targetUserId ?? userId);
+        if (local != null && Date.now() - local.updatedAt >= this.staleErasureMs && (snapshotMs == null || local.startedAt > snapshotMs)) {
+          ref = { userId, username, deletedAt: local.updatedAt, trigger: local.trigger ?? 'unknown', snapshotBefore: snapshotMs, unfinished: { ...local, doneSteps: [...local.doneSteps] } };
+        }
+      }
+      if (ref == null) continue;
       if (restoreErased) {
         out.override.push(ref);
-        this.logger.warn(`Restoring user ${username} (${userId}) although it was ${erasedText(ref)} (--restore-erased): its erasure record is kept, marked restored`);
+        this.logger.warn(`Restoring user ${username} (${userId}) although ${erasedText(ref)} (--restore-erased): its erasure record is kept, marked restored`);
       } else {
         out.refused.push(ref);
         this.logger.warn(`Not restoring user ${username} (${userId}): ${erasedText(ref)}. Pass --restore-erased to restore it anyway`);
@@ -761,19 +789,47 @@ class RestoreOrchestrator {
     return out;
   }
 
-  /** Stamp `restoredAt` on the erasure record of each account restored with --restore-erased. */
-  async _stampRestored (restored: ErasedSinceRef[]): Promise<void> {
+  /**
+   * Mark restored the erasure record of each account restored with
+   * --restore-erased; for an erasure that never completed, its record is
+   * written, already marked restored, so the trail exists. Returns the
+   * accounts whose record could not be marked: a later `bin/erasures.js
+   * --replay` would erase them again, so the caller must say so.
+   */
+  async stampRestored (restored: ErasedSinceRef[]): Promise<ErasedSinceRef[]> {
+    const failed: ErasedSinceRef[] = [];
+    if (restored.length === 0) return failed;
     const ledger = this._erasureLedger();
-    if (ledger == null) return;
+    if (ledger == null) return failed;
     const now = Date.now();
     for (const ref of restored) {
       try {
-        await markRestored(ledger.kv, ledger.key, ref.userId, now);
+        if ('error' in ledger) throw new Error(ledger.error);
+        const u = ref.unfinished;
+        if (u != null) {
+          await writeErasureRecord(ledger.kv, ledger.key, {
+            userId: u.userId,
+            username: u.username,
+            startedAt: u.startedAt,
+            deletedAt: u.updatedAt,
+            trigger: u.trigger ?? 'unknown',
+            coreId: this.coreRouting?.coreId ?? null,
+            stepsCompleted: u.doneSteps,
+            auditMode: this.ledgerConfig?.get('audit:onUserDelete') === 'keep' ? 'keep' : 'erase',
+            attempts: u.attempts,
+            serverVersion: null,
+            restoredAt: now
+          });
+        } else if (!(await markRestored(ledger.kv, ledger.key, ref.userId, now))) {
+          throw new Error('its record is no longer in the ledger');
+        }
       } catch (err: unknown) {
+        failed.push(ref);
         this.logger.error(`The erasure record of the restored user ${ref.username} (${ref.userId}) could not be marked restored (${errorMessage(err)}): ` +
-          'a later restore of this backup is refused again without --restore-erased');
+          'a later restore of this backup is refused again without --restore-erased, and bin/erasures.js --replay would erase the account');
       }
     }
+    return failed;
   }
 
   /**
@@ -1436,8 +1492,10 @@ function snapshotMsOf (manifest: Manifest, userId: string): number | null {
 
 /** An erasure after the backup, for a log line or an error. */
 function erasedText (ref: ErasedSinceRef): string {
-  return `erased on ${new Date(ref.deletedAt).toISOString()} (trigger ${ref.trigger}), ` +
-    (ref.snapshotBefore != null ? `after this backup (taken ${new Date(ref.snapshotBefore).toISOString()})` : 'after this backup');
+  const what = ref.unfinished != null
+    ? `erased since: an erasure (trigger ${ref.trigger}) started ${new Date(ref.unfinished.startedAt).toISOString()} and stopped unfinished on this core, `
+    : `erased on ${new Date(ref.deletedAt).toISOString()} (trigger ${ref.trigger}), `;
+  return what + (ref.snapshotBefore != null ? `after this backup (taken ${new Date(ref.snapshotBefore).toISOString()})` : 'after this backup');
 }
 
 /** The aliases a backup manifest entry lists (an entry written before aliases were backed up has none). */
@@ -1578,7 +1636,15 @@ type Manifest = {
   backupTimestamp?: number;
 };
 /** An account the erasure ledger says was erased after the backup (`snapshotBefore` in ms). */
-type ErasedSinceRef = { userId: string; username: string; deletedAt: number; trigger: string; snapshotBefore: number | null };
+type ErasedSinceRef = {
+  userId: string;
+  username: string;
+  deletedAt: number;
+  trigger: string;
+  snapshotBefore: number | null;
+  /** Set for an erasure that stopped unfinished on this core (no ledger record yet): its record as it was. */
+  unfinished?: AccountErasureRow;
+};
 type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed' | 'other-core'; reason: string };
 /** The platform's name -> core rows and this core's identity (the Platform's methods the restore calls). */
 type CoreRoutingLike = {
@@ -1641,5 +1707,11 @@ type RestoreOptions = {
   remapUserId?: string;
   /** Restore the accounts the erasure ledger says were erased after the backup (refused by default). */
   restoreErased?: boolean;
+  /**
+   * Leave the erasure records of the accounts restored with `restoreErased`
+   * unmarked: the caller marks them (`stampRestored`) once its own checks
+   * passed (bin/backup.js, after --verify-integrity).
+   */
+  deferRestoredStamp?: boolean;
 };
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;

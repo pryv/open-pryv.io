@@ -62,6 +62,29 @@ function assertOk (res, what) {
   assert.strictEqual(res.status, 0, what + '\n' + res.stdout + res.stderr);
 }
 
+/** Tamper every event of a plaintext backup, listing the files again in their run's table: a backup whose content fails --verify-integrity. */
+function tamperBackupEvents (backupDir) {
+  const zlib = require('node:zlib');
+  const crypto = require('node:crypto');
+  const files = fs.readdirSync(backupDir, { recursive: true }).map(String).filter((f) => /(^|\/)events-[0-9]+\.jsonl(\.gz)?$/.test(f));
+  assert.ok(files.length > 0, 'events file of the backup');
+  for (const f of files) {
+    const file = path.join(backupDir, f);
+    const gz = f.endsWith('.gz');
+    const text = gz ? zlib.gunzipSync(fs.readFileSync(file)).toString('utf8') : fs.readFileSync(file, 'utf8');
+    const changed = text.split('\n').map((line) => line.trim() === '' ? line : JSON.stringify({ ...JSON.parse(line), content: 'tampered' })).join('\n');
+    const out = Buffer.from(changed, 'utf8');
+    fs.writeFileSync(file, gz ? zlib.gzipSync(out) : out);
+    const manifestPath = path.join(backupDir, 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const bytes = fs.readFileSync(file);
+    const entry = manifest.integrity.files.find((e) => e.path === f.split(path.sep).join('/'));
+    entry.size = bytes.length;
+    entry.sha256 = crypto.createHash('sha256').update(bytes).digest('hex');
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  }
+}
+
 describe('[ERLG] erasure ledger', function () {
   this.timeout(300000);
 
@@ -323,6 +346,29 @@ describe('[ERLG] erasure ledger', function () {
     }
   });
 
+  it('[ERLG9] an unfinished erasure recorded without a trigger (an earlier version) gets a record with trigger unknown when the sweep completes it', async function () {
+    const u = await account();
+    const fault = sinon.stub(Deletion.prototype, 'deleteAuditDataStorage').callsFake(function (context, params, result, next) { next(new Error('injected fault')); });
+    try {
+      try {
+        await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'date' });
+      } catch (e) { /* stops at the injected fault */ } finally {
+        fault.restore();
+      }
+      const store = await getErasuresLocal();
+      const record = await store.get(u.id);
+      assert.ok(record != null);
+      await store.put({ ...record, trigger: null, updatedAt: record.updatedAt - STALE_MS });
+      const { result, lines } = await completionPass([u]);
+      assert.equal(result.completed, 1, JSON.stringify(lines));
+      const row = await rowOf(u);
+      assert.ok(row != null, 'a record, not taken for a creation rollback');
+      assert.equal(row.trigger, 'unknown');
+    } finally {
+      await cleanUp(u);
+    }
+  });
+
   // ------------------------------------------------------------ [ERLA] admin routes
 
   describe('[ERLA] admin routes', function () {
@@ -364,7 +410,7 @@ describe('[ERLG] erasure ledger', function () {
         if (after == null) break;
       }
       assert.deepEqual(seen, rows.map((r) => r.entry.userIdHash));
-      for (const query of [{ limit: 0 }, { limit: 1001 }, { limit: 'x' }, { since: -1 }, { after: 'nope' }]) {
+      for (const query of [{ limit: 0 }, { limit: 1001 }, { limit: 'x' }, { since: -1 }, { since: '' }, { after: 'nope' }]) {
         const res = await coreRequest.get('/system/admin/erasures').set('Authorization', adminKey).query(query);
         assert.equal(res.status, 400, JSON.stringify(query) + ' ' + JSON.stringify(res.body));
       }
@@ -383,6 +429,23 @@ describe('[ERLG] erasure ledger', function () {
       assert.equal(unknown.status, 200);
       assert.equal(unknown.body.erased, false);
       assert.deepEqual(unknown.body.erasures, []);
+      assert.equal(unknown.body.keyId, key.keyId, 'the key the lookup matched with');
+      assert.equal(typeof unknown.body.otherKeyRecords, 'number');
+    });
+
+    it('[ERLA6] a record written under another key is counted in the lookup answer, never matched', async function () {
+      const otherKey = ledger.ledgerKey({ get: (k) => k === 'accountErasure:ledger:hmacKey' ? require('node:crypto').randomBytes(32).toString('base64') : undefined });
+      const userId = 'erlother' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-12);
+      const before = (await coreRequest.post('/system/admin/erasures/lookup').set('Authorization', adminKey).send({ userId })).body.otherKeyRecords;
+      const entry = await ledger.writeErasureRecord(platform, otherKey, {
+        userId, username: userId, startedAt: FUTURE + 500, deletedAt: FUTURE + 600, trigger: 'date', coreId: 'erl-core', stepsCompleted: [], auditMode: 'erase', attempts: 1, serverVersion: 'test'
+      });
+      syntheticKeys.push(ledger.LEDGER_PREFIX + entry.userIdHash);
+      ledger.ledgerKey(config); // the cached key back to this platform's
+      const res = await coreRequest.post('/system/admin/erasures/lookup').set('Authorization', adminKey).send({ userId });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.erased, false);
+      assert.equal(res.body.otherKeyRecords, before + 1);
     });
 
     it('[ERLA5] the lookup needs exactly one of userId or username', async function () {
@@ -437,6 +500,83 @@ describe('[ERLG] erasure ledger', function () {
       } finally {
         await cleanUp(u);
       }
+    });
+
+    it('[ERLR6] --restore-erased with --verify-integrity: an account rolled back stays recorded as erased (no restoredAt)', async function () {
+      const u = await backedUpAccount();
+      try {
+        await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'date' });
+        tamperBackupEvents(u.dir);
+        const res = runCli(BACKUP_CLI, ['--restore', u.dir, '--user', u.username, '--restore-erased', '--verify-integrity']);
+        assert.equal(res.status, 1, res.stdout + res.stderr);
+        assert.match(res.stdout, /Rolled back: /);
+        require('cache').default.unsetUserById(u.id);
+        assert.ok(await (await require('storage').getUsersLocalIndex()).getUsername(u.id) == null, 'rolled back');
+        const row = await rowOf(u);
+        assert.equal(row.restoredAt, undefined, 'not marked restored');
+        const again = runCli(BACKUP_CLI, ['--restore', u.dir, '--user', u.username, '--overwrite']);
+        assert.equal(again.status, 1, 'a later plain restore is still refused\n' + again.stdout + again.stderr);
+        assert.match(again.stderr, /--restore-erased/);
+      } finally {
+        await cleanUp(u);
+      }
+    });
+
+    it('[ERLR7] a restore that cannot build the ledger key fails closed, unless --restore-erased', async function () {
+      const u = await backedUpAccount();
+      try {
+        const o = await new RestoreOrchestrator().init();
+        o.ledgerConfig = { get: (k) => k === 'accountErasure:ledger:hmacKey' ? 'not-a-key' : config.get(k) };
+        const reader = createFilesystemBackupReader(u.dir);
+        await assert.rejects(o.restoreUser(u.id, reader, { overwrite: true }), /the erasure ledger cannot be consulted .*--restore-erased/);
+        const report = await o.restoreUser(u.id, reader, { overwrite: true, restoreErased: true });
+        await reader.close();
+        assert.deepEqual(report.restored.map((r) => r.userId), [u.id]);
+        assert.ok(await exists(u));
+      } finally {
+        await cleanUp(u);
+      }
+    });
+
+    it('[ERLR8] an erasure started after the backup and stopped unfinished refuses a plain restore; --restore-erased writes its record, marked restored', async function () {
+      const u = await backedUpAccount();
+      const fault = sinon.stub(Deletion.prototype, 'deleteAuditDataStorage').callsFake(function (context, params, result, next) { next(new Error('injected fault')); });
+      try {
+        try {
+          await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'inactivity' });
+        } catch (e) { /* stops at the injected fault */ } finally {
+          fault.restore();
+        }
+        const store = await getErasuresLocal();
+        const record = await store.get(u.id);
+        assert.ok(record != null && !record.doneSteps.includes('writeErasureLedger'));
+        await store.put({ ...record, updatedAt: record.updatedAt - STALE_MS });
+        assert.equal(await rowOf(u), null, 'no ledger record yet');
+
+        const plain = runCli(BACKUP_CLI, ['--restore', u.dir, '--user', u.username, '--overwrite']);
+        assert.equal(plain.status, 1, plain.stdout + plain.stderr);
+        assert.match(plain.stderr, /stopped unfinished on this core, after this backup.*--restore-erased/);
+        assert.ok(await store.get(u.id) != null, 'the erasure is not withdrawn');
+
+        const override = runCli(BACKUP_CLI, ['--restore', u.dir, '--user', u.username, '--overwrite', '--restore-erased']);
+        assertOk(override, 'restore with --restore-erased');
+        assert.equal(await store.get(u.id), null, 'withdrawn by the restore');
+        const row = await rowOf(u);
+        assert.ok(row != null, 'its record is written');
+        assert.equal(row.trigger, 'inactivity');
+        assert.ok(row.restoredAt >= row.deletedAt, 'already marked restored');
+      } finally {
+        await cleanUp(u);
+      }
+    });
+
+    it('[ERLR9] a record that cannot be marked restored is returned by stampRestored (the CLI lists it and exits 4)', async function () {
+      const o = await new RestoreOrchestrator().init();
+      const userId = 'erlnorow' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-12);
+      const ref = { userId, username: userId, deletedAt: 1, trigger: 'date', snapshotBefore: 0 };
+      assert.deepEqual(await o.stampRestored([ref]), [ref], 'no record to mark: failed');
+      o.ledgerConfig = { get: (k) => k === 'accountErasure:ledger:hmacKey' ? 'not-a-key' : config.get(k) };
+      assert.deepEqual(await o.stampRestored([ref]), [ref], 'no key: failed');
     });
 
     it('[ERLR3] a whole-backup restore skips the erased account, lists it and restores the others', async function () {
@@ -555,12 +695,15 @@ describe('[ERLG] erasure ledger', function () {
       try {
         // as if the storage were restored from before the erasure: the
         // account is here, the ledger says it was erased
+        const firstDeletedAt = Date.now() - 1000;
         await ledger.writeErasureRecord(platform, key, {
-          userId: u.id, username: u.username, startedAt: Date.now() - 2000, deletedAt: Date.now() - 1000, trigger: 'holder', coreId: platform.coreId, stepsCompleted: STEPS_BEFORE_LEDGER, auditMode: 'erase', attempts: 1, serverVersion: 'test'
+          userId: u.id, username: u.username, startedAt: Date.now() - 2000, deletedAt: firstDeletedAt, trigger: 'holder', coreId: platform.coreId, stepsCompleted: STEPS_BEFORE_LEDGER, auditMode: 'erase', attempts: 1, serverVersion: 'test'
         });
         const dry = runCli(ERASURES_CLI, ['--replay']);
         assertOk(dry, 'dry run');
         assert.match(dry.stdout, /[1-9][0-9]* recorded as erased in the ledger and not restored since/);
+        assert.match(dry.stdout, new RegExp(`would erase ${u.id}: erased on \\S+, trigger holder`), 'the dry run lists the ids');
+        assert.ok(!dry.stdout.includes(u.username + ':'), 'by id, never by name');
         assert.match(dry.stdout, /Dry run: nothing erased/);
         assert.ok(await exists(u), 'the dry run erases nothing');
         const applied = runCli(ERASURES_CLI, ['--replay', '--apply']);
@@ -569,7 +712,10 @@ describe('[ERLG] erasure ledger', function () {
         // erased by another process: read the users index, not this process's cache
         assert.ok(await (await require('storage').getUsersLocalIndex()).getUsername(u.id) == null, 'erased again');
         require('cache').default.unsetUserById(u.id);
-        assert.equal((await rowOf(u)).trigger, 'ledger-replay');
+        const row = await rowOf(u);
+        assert.equal(row.trigger, 'ledger-replay');
+        assert.equal(row.firstTrigger, 'holder', 'the first erasure is kept');
+        assert.equal(row.firstDeletedAt, firstDeletedAt);
       } finally {
         await cleanUp(u);
       }

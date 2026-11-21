@@ -286,7 +286,9 @@ async function runRestore (args) {
     skipConflicts: args.skipConflicts,
     deleteOnSuccess: args.deleteOnSuccess,
     moveOnSuccess: args.moveOnSuccess,
-    restoreErased: args.restoreErased
+    restoreErased: args.restoreErased,
+    // Marked restored below, once --verify-integrity (if asked) kept the account.
+    deferRestoredStamp: true
   };
 
   let report;
@@ -399,6 +401,14 @@ async function runRestore (args) {
     else if (unverifiedUsers.length > 0) verifyExitCode = 2;
   }
 
+  // The erasure records of the accounts restored with --restore-erased are
+  // marked restored only for the accounts the restore kept: a rolled-back
+  // account stays recorded as erased (a later restore is refused again, a
+  // replay erases what is left of it).
+  const keptIds = new Set(report.restored.map((u) => u.userId));
+  report.erasedRestored = (report.erasedRestored ?? []).filter((u) => keptIds.has(u.userId));
+  report.restoredStampFailed = await orchestrator.stampRestored(report.erasedRestored);
+
   // Post-restore cleanup — when integrity verification was requested, only clean up
   // the backup source on a fully green result (nothing failed AND nothing unverified);
   // otherwise keep it, since for rolled-back or unverified users the backup may be the
@@ -439,6 +449,13 @@ async function runRestore (args) {
     console.log(`  Restored although erased after this backup (--restore-erased; their erasure records are marked restored): ${report.erasedRestored.length} users`);
     for (const u of report.erasedRestored) {
       console.log(`    - ${u.username} (${u.userId}): erased on ${new Date(u.deletedAt).toISOString()}, trigger ${u.trigger}`);
+    }
+  }
+  if (report.restoredStampFailed && report.restoredStampFailed.length > 0) {
+    console.error(`  ERROR: restored, but their erasure records could NOT be marked restored: ${report.restoredStampFailed.length} users. ` +
+      'bin/erasures.js --replay would erase them again: run this restore again with --restore-erased once the ledger is reachable.');
+    for (const u of report.restoredStampFailed) {
+      console.error(`    - ${u.username} (${u.userId})`);
     }
   }
   if (report.skipped.length > 0) {
@@ -496,9 +513,12 @@ async function runRestore (args) {
     }
   }
 
+  if (verifyExitCode !== 0) return verifyExitCode;
+  // Restored, but a record not marked restored: a replay would erase it.
+  if (report.restoredStampFailed.length > 0) return 4;
   // Nothing restored because every account was erased after the backup.
-  if (verifyExitCode === 0 && report.restored.length === 0 && report.erasedSince && report.erasedSince.length > 0) return 3;
-  return verifyExitCode;
+  if (report.restored.length === 0 && report.erasedSince && report.erasedSince.length > 0) return 3;
+  return 0;
 }
 
 /**
@@ -871,13 +891,17 @@ Restore:
   --require-encrypted       Refuse a backup that is not encrypted
   --allow-plaintext         Restore a plaintext backup even though a decryption
                             secret was supplied (refused by default)
-  --restore-erased          Restore an account the erasure ledger says was
-                            erased after this backup was taken. Without it such
-                            an account is not restored (listed in the report; a
-                            restore that restores nothing else exits 3, and a
-                            --user restore of it fails). With it, the account is
+  --restore-erased          Restore an account erased after this backup was
+                            taken: the erasure ledger records it, or an erasure
+                            of it started on this core since and stopped
+                            unfinished. Without it such an account is not
+                            restored (listed in the report; a restore that
+                            restores nothing else exits 3, and a --user restore
+                            of it fails); a restore that cannot read the ledger
+                            (no key) is refused. With it, the account is
                             restored and its erasure record is kept, marked
-                            restored (with --user: that account only)
+                            restored once --verify-integrity (if given) kept the
+                            account (with --user: that account only)
 
 Inspect (reads the directory only; no storage access):
   --inspect <path>          List the runs of a backup directory (id, type, scope,
@@ -906,6 +930,9 @@ Restore exit codes (with --verify-integrity):
   2   restored, but one or more users could not be verified
   3   nothing restored: every account of the backup was erased after it
       (see --restore-erased)
+  4   restored with --restore-erased, but an erasure record could not be
+      marked restored (listed): bin/erasures.js --replay would erase the
+      account; run the restore again once the ledger is reachable
 
 Inspect exit codes:
   0   OK
