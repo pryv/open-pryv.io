@@ -130,6 +130,15 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   minute ends; names it already looked up (existing accounts or not) keep their answer, and other
   clients are not affected. Counted per API worker. `0` turns it off.
 
+### Webhooks per access, per account and scopes per webhook (on by default)
+
+- **`webhooks.maxPerAccess` (default 10), `webhooks.maxPerUser` (default 100) and
+  `webhooks.maxScopes` (default 20).** Each webhook is an outbound call per change of the account
+  (at most once per `minIntervalMs`) and each scope is prepared with its stream subtree. Past a count
+  `webhooks.create` answers **400 `invalid-operation`** naming the limit; more scopes than allowed
+  on `webhooks.create` or `webhooks.update` answers **400 `invalid-parameters-format`**. Webhooks
+  already stored keep working. `0` turns each off.
+
 ### Stream tree, stalled readers and mail budgets (on by default)
 
 More ceilings of the same kind, each configurable, `0` turning it off. A cap refuses the write or

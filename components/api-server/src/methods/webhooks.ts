@@ -40,6 +40,7 @@ const WebhooksRepository = require('business').webhooks.Repository;
 const { webhookUrlProblem, describeCallFailure, generateWebhookSecret } = require('business').webhooks.destination;
 const { prepareWebhookScopes, contextForAccess, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
 const { reserveWebhookTestCall } = require('business/src/webhooks/testThrottle.ts') as typeof import('../../../business/src/webhooks/testThrottle.ts');
+const { readWebhookLimits, webhookCountProblem, webhookScopesProblem } = require('./helpers/webhookLimits.ts') as typeof import('./helpers/webhookLimits.ts');
 
 const { pubsub } = require('messages');
 const { getLogger, ready } = require('@pryv/boiler');
@@ -160,6 +161,20 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
     if (urlProblem != null) {
       return next(errors.invalidParametersFormat(urlProblem, [{ param: 'url', message: urlProblem }]));
     }
+    const limits = readWebhookLimits((key: string) => config.get(key));
+    const scopesProblem = webhookScopesProblem(limits, params.scopes);
+    if (scopesProblem != null) {
+      return next(errors.invalidParametersFormat('Invalid parameters: ' + scopesProblem + '.', [{ param: 'scopes', message: scopesProblem }]));
+    }
+    if (limits.maxPerAccess > 0 || limits.maxPerUser > 0) {
+      try {
+        const existing = await webhooksRepository.get(context.user, { id: context.access.id, isPersonal: () => true });
+        const countProblem = webhookCountProblem(limits, existing, context.access.id);
+        if (countProblem != null) return next(errors.invalidOperation('Webhook limit: ' + countProblem + '.'));
+      } catch (e) {
+        return next(errors.unexpectedError(e));
+      }
+    }
     let scopes;
     try {
       if (params.scopes != null) scopes = await prepareWebhookScopes(context, params.scopes);
@@ -271,6 +286,10 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
     const webhookId = params.id;
     if (update.state === 'active') {
       update.currentRetries = 0;
+    }
+    const scopesProblem = webhookScopesProblem(readWebhookLimits((key: string) => config.get(key)), update.scopes);
+    if (scopesProblem != null) {
+      return next(errors.invalidParametersFormat('Invalid parameters: ' + scopesProblem + '.', [{ param: 'update.scopes', message: scopesProblem }]));
     }
     try {
       const webhook = await webhooksRepository.getById(user, webhookId);
