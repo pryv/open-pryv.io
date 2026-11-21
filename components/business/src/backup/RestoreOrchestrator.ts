@@ -168,7 +168,7 @@ class RestoreOrchestrator {
     // Accounts erased after the backup was taken are not brought back
     // (--restore-erased overrides it): the backup's ledger rows first.
     await this._mergeErasureLedger(platformRead);
-    const erased = await this._erasedSinceBackup(manifest, manifest.users, opts.restoreErased === true);
+    const erased = await this._erasedSinceBackup(manifest, manifest.users, opts.restoreErased === true, opts.overwrite !== false);
     const refusedIds = new Set(erased.refused.map((r) => r.userId));
     const users = manifest.users.filter((u: UserManifest) => !refusedIds.has(u.userId));
 
@@ -287,7 +287,7 @@ class RestoreOrchestrator {
     // An account erased after the backup was taken is not brought back
     // without --restore-erased (checked on the backed-up id).
     await this._mergeErasureLedger(platformRead);
-    const erased = await this._erasedSinceBackup(manifest, [{ userId, username, targetUserId }], opts.restoreErased === true);
+    const erased = await this._erasedSinceBackup(manifest, [{ userId, username, targetUserId }], opts.restoreErased === true, opts.overwrite === true);
     if (erased.refused.length > 0) {
       throw new Error(`User ${username} (${userId}) was ${erasedText(erased.refused[0])}: not restored. ` +
         'Pass --restore-erased to restore it anyway (its erasure record is kept, marked restored). No account data was restored ' +
@@ -695,7 +695,7 @@ class RestoreOrchestrator {
    * erasure in progress is that id's). When the ledger key cannot be built,
    * the restore is refused (fails closed) unless `restoreErased`.
    */
-  async _erasedSinceBackup (manifest: Manifest, users: Array<{ userId: string, username: string, targetUserId?: string }>, restoreErased: boolean): Promise<{ refused: ErasedSinceRef[], override: ErasedSinceRef[] }> {
+  async _erasedSinceBackup (manifest: Manifest, users: Array<{ userId: string, username: string, targetUserId?: string }>, restoreErased: boolean, overwrite = true): Promise<{ refused: ErasedSinceRef[], override: ErasedSinceRef[] }> {
     const out = { refused: [] as ErasedSinceRef[], override: [] as ErasedSinceRef[] };
     const ledger = this._erasureLedger();
     if (ledger == null) return out;
@@ -710,6 +710,9 @@ class RestoreOrchestrator {
     const otherKeys = otherKeyWarning(await otherKeyRecordCount(ledger.kv, ledger.key));
     if (otherKeys != null) this.logger.warn('Restore: ' + otherKeys);
     for (const { userId, username, targetUserId } of users) {
+      // Without overwrite, an account this core still indexes is not an erased
+      // one: the restore refuses it as existing (`_restoreSingleUser`), first.
+      if (!overwrite && await this._isIndexed(targetUserId ?? userId)) continue;
       const snapshotMs = snapshotMsOf(manifest, userId);
       let ref: ErasedSinceRef | null = null;
       const entry = await readErasureRecord(ledger.kv, ledger.key, userId);
