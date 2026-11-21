@@ -24,6 +24,27 @@ function isStatementCancelled (err: unknown): err is Error & { code: string; sta
 export { isStatementCancelled };
 
 /**
+ * A storage refusal of a write or open for an account this core no longer
+ * holds (erased while the request ran): PostgreSQL's refusal of a row for a
+ * user id the users index lacks (SQLSTATE PU001), or the per-user files'
+ * refusal of an erased account (USER_ERASED). Possibly wrapped.
+ */
+function isAccountGoneRefusal (err: unknown): boolean {
+  return accountGoneRefusalOf(err) != null;
+}
+
+/** The refusal itself (see `isAccountGoneRefusal`) in `err`'s chain, if any. */
+function accountGoneRefusalOf (err: unknown): { code: string; message?: string; table?: unknown } | null {
+  for (let e = err, depth = 0; e != null && depth < 5; depth++) {
+    const x = e as { code?: unknown; message?: string; table?: unknown; innerError?: unknown; cause?: unknown };
+    if (x.code === 'PU001' || x.code === 'USER_ERASED') return x as { code: string; message?: string; table?: unknown };
+    e = x.innerError ?? x.cause;
+  }
+  return null;
+}
+export { isAccountGoneRefusal, accountGoneRefusalOf };
+
+/**
  * The full factory contract — one entry per error producer below.
  * Keeping the interface next to the assignments means a signature change
  * in either place is a compile error.
@@ -283,6 +304,12 @@ factory.unexpectedError = function (sourceError: unknown, message?: string) {
   // method, which may wrap again): keep the answer as it is.
   if (sourceError instanceof APIError && isStatementCancelled(sourceError.innerError)) {
     return sourceError;
+  }
+  // The account was erased while the request ran: the storage refused to
+  // write (or open) for it. As for any request naming an unknown account.
+  if (isAccountGoneRefusal(sourceError)) {
+    if (sourceError instanceof APIError && sourceError.id === ErrorIds.UnknownResource) return sourceError;
+    return new APIError(ErrorIds.UnknownResource, 'Unknown user', { httpStatus: 404, innerError: sourceError as Error });
   }
   // A work refused for a per-process capacity ceiling (the password-check
   // slots) never ran: the caller retries later, guided by Retry-After.

@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 
 import type { Logger } from '@pryv/boiler';
+import { installUnindexedWritesGuard } from './unindexedWritesGuard.ts';
 const require = createRequire(import.meta.url);
 
 const { AsyncLocalStorage } = require('node:async_hooks');
@@ -475,6 +476,9 @@ class DatabasePG {
       await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_KEY]);
       try {
         await client.query(SCHEMA_SQL);
+        // Rows of a user id the users index does not hold are refused (see
+        // unindexedWritesGuard.ts): after the tables, one table at a time.
+        await installUnindexedWritesGuard(client, this.logger);
       } finally {
         await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_KEY]);
       }
@@ -483,6 +487,27 @@ class DatabasePG {
     }
     this._schemaReady = true;
     this.logger.info('PostgreSQL schema initialized');
+  }
+
+  /**
+   * Install or repair the unindexed-user guard (function, triggers, enabled
+   * state) under the schema advisory lock, as the boot does; for the
+   * migration and for tests.
+   * @returns per guarded table: 'present', 'created', 're-enabled' or 'failed'
+   */
+  async ensureUnindexedWritesGuard (options: { lockTimeoutMs?: number; attempts?: number } = {}): Promise<Record<string, string>> {
+    await this.ensureConnect();
+    const client = this._guardClient(await this._maintenance().connect());
+    try {
+      await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_KEY]);
+      try {
+        return await installUnindexedWritesGuard(client, this.logger, options);
+      } finally {
+        await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_KEY]);
+      }
+    } finally {
+      client.release();
+    }
   }
 
   /**

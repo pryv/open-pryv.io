@@ -75,7 +75,11 @@ function errorText (err: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** The refusal of per-user file storage to reopen an erased account's files, possibly wrapped. */
+/**
+ * The refusal of per-user file storage to reopen an erased account's files,
+ * possibly wrapped. (PostgreSQL's refusal of rows of an unindexed id, PU001,
+ * is not one: no erasure step inserts a row, so it would only hide a fault.)
+ */
 function isErasedUserError (err: unknown): boolean {
   for (let e = err, depth = 0; e != null && depth < 5; depth++) {
     const x = e as { name?: unknown; message?: unknown; innerError?: unknown; cause?: unknown };

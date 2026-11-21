@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
  */
 
 import type { UsersLocalIndexDB } from 'storages/interfaces/baseStorage/UsersLocalIndexDB.ts';
+import * as userLocalDirectory from './userLocalDirectory.ts';
 const require = createRequire(import.meta.url);
 
 const { getLogger } = require('@pryv/boiler');
@@ -75,6 +76,11 @@ class UsersLocalIndex {
 
   async addUser (username: string, userId: string): Promise<void> {
     await this.db.addUser(username, userId);
+    // The id is an account again (a restore of an erased one): its kept local
+    // directory may hold new files again. Once the entry is written (a refused
+    // entry leaves the marker), and before the account's data, which every
+    // path making an id live writes after its entry.
+    await userLocalDirectory.unmarkErased(userId);
     logger.debug('addUser', username, userId);
   }
 

@@ -58,8 +58,18 @@ class AccountGoneError extends Error {
   }
 }
 
+/**
+ * A write dropped by this guard, or refused by the storage itself for an
+ * account it no longer holds (PostgreSQL's refusal of a row for an unindexed
+ * user id, SQLSTATE PU001; the per-user files' USER_ERASED), possibly wrapped.
+ */
 function isAccountGoneError (err: unknown): boolean {
-  return (err as { code?: unknown } | null | undefined)?.code === ACCOUNT_GONE;
+  for (let e = err, depth = 0; e != null && depth < 5; depth++) {
+    const x = e as { code?: unknown; innerError?: unknown; cause?: unknown };
+    if (x.code === ACCOUNT_GONE || x.code === 'PU001' || x.code === 'USER_ERASED') return true;
+    e = x.innerError ?? x.cause;
+  }
+  return false;
 }
 
 type AccountStatus = 'active' | 'gone' | 'erasing';

@@ -315,4 +315,85 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     const usersRepository = await require('business/src/users/repository.ts').getUsersRepository();
     await usersRepository.deleteOne(userB, userB);
   });
+
+  it('[ERMK5] an account erased with the audit kept, then restored by bin/backup.js, opens its files again in this process', async function () {
+    const { userLocalDirectory } = require('storage');
+    const { withInjectedConfig } = require('test-helpers');
+    const { Deletion } = require('business/src/auth/deletion.ts');
+    const config = await require('@pryv/boiler').getConfig();
+    const dir = path.join(tmpDir, 'ermk5');
+    const userC = 'ermkc' + cuid.slug().toLowerCase();
+    const streamC = 'ermk-c-' + cuid.slug();
+    const c = await fixtures.user(userC);
+    await c.stream({ id: streamC, name: 'ERMK C stream' });
+    const streamsOfC = async () => {
+      try {
+        return (await fromCallback((cb) => storageLayer.streams.exportAll({ id: userC }, cb))).map((s) => s.id);
+      } catch (err) {
+        if (err?.code === 'USER_ERASED' || /erased/.test(err?.message)) return [];
+        throw err;
+      }
+    };
+    assertOk(runCli(['--output', dir, '--user', userC]), 'backup of C');
+
+    await withInjectedConfig({ audit: { onUserDelete: 'keep' } }, async () => {
+      await new Deletion(null, storageLayer, config).eraseAccount({ id: userC, username: userC }, { teardown: false });
+    });
+    const userDir = userLocalDirectory.getPathForUser(userC);
+    const marker = path.join(userDir, userLocalDirectory.ERASED_MARKER);
+    // With a per-user audit file (SQLite audit) the directory is kept, marked.
+    const kept = fs.existsSync(userDir);
+    if (kept) {
+      assert.ok(fs.existsSync(marker), 'erased marker in the kept directory');
+      assert.deepStrictEqual(fs.readdirSync(userDir).filter((n) => !n.startsWith('audit') && n !== userLocalDirectory.ERASED_MARKER), []);
+    }
+    assert.deepStrictEqual(await streamsOfC(), [], 'nothing of C after its erasure');
+    if (kept) {
+      assert.deepStrictEqual(fs.readdirSync(userDir).filter((n) => !n.startsWith('audit') && n !== userLocalDirectory.ERASED_MARKER), [], 'a read opened no new file');
+    }
+
+    const restored = runCli(['--restore', dir, '--user', userC]);
+    assertOk(restored, 'restore of C');
+    assert.match(restored.stdout, /Restored: 1 users/);
+    assert.strictEqual(fs.existsSync(marker), false, 'the restore removed the erased marker');
+    assert.ok((await streamsOfC()).includes(streamC), 'C is back with its stream, read by this process');
+    const usersRepository = await require('business/src/users/repository.ts').getUsersRepository();
+    const user = await usersRepository.getUserById(userC);
+    assert.strictEqual(user?.username, userC, 'account read by this process');
+    await usersRepository.deleteOne(userC, userC);
+  });
+
+  it('[PGUG6] PostgreSQL refuses rows of an erased account until bin/backup.js restores it', async function () {
+    if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
+    const { Deletion } = require('business/src/auth/deletion.ts');
+    const { getMall } = require('mall');
+    const { isAccountGoneRefusal } = require('errors');
+    const config = await require('@pryv/boiler').getConfig();
+    const mall = await getMall();
+    const dir = path.join(tmpDir, 'pgug6');
+    const userD = 'pgugd' + cuid.slug().toLowerCase();
+    const streamD = 'pgug-d-' + cuid.slug();
+    const d = await fixtures.user(userD);
+    await d.stream({ id: streamD, name: 'PGUG D stream' });
+    const lateEvent = () => ({ id: cuid(), streamIds: [streamD], type: 'note/txt', content: 'late', time: Date.now() / 1000, created: Date.now() / 1000, createdBy: 'test', modified: Date.now() / 1000, modifiedBy: 'test' });
+    assertOk(runCli(['--output', dir, '--user', userD]), 'backup of D');
+
+    await new Deletion(null, storageLayer, config).eraseAccount({ id: userD, username: userD }, { teardown: false });
+    // A write that missed every check (no account check above the storage): refused.
+    await assert.rejects(mall.events.create(userD, lateEvent()), (err) => {
+      assert.ok(isAccountGoneRefusal(err), String(err?.stack ?? err));
+      return true;
+    });
+    const db = require('storages').databasePG;
+    const rows = await db.query('SELECT count(*)::int AS c FROM events WHERE user_id = $1', [userD]);
+    assert.strictEqual(rows.rows[0].c, 0, 'rows of the erased account');
+
+    const restored = runCli(['--restore', dir, '--user', userD]);
+    assertOk(restored, 'restore of D');
+    assert.match(restored.stdout, /Restored: 1 users/);
+    const created = await mall.events.create(userD, lateEvent());
+    assert.ok(created?.id != null, 'the restored account takes rows again');
+    const usersRepository = await require('business/src/users/repository.ts').getUsersRepository();
+    await usersRepository.deleteOne(userD, userD);
+  });
 });

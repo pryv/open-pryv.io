@@ -11,7 +11,7 @@
 import type { APIError as APIErrorType } from './APIError.ts';
 import { APIError } from './APIError.ts';
 import { ErrorIds } from './ErrorIds.ts';
-import { isStatementCancelled } from './factory.ts';
+import { isStatementCancelled, isAccountGoneRefusal, accountGoneRefusalOf } from './factory.ts';
 // Logged URLs never carry the access token (`?auth=`).
 import { redactUrl } from 'utils/src/redactUrl.ts';
 
@@ -112,6 +112,12 @@ errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLik
       // A statement stopped by the database time limit: the operator's signal
       // for tuning it. Its text (truncated), never its parameters.
       logger.warn(logMsg, { ...metadata, statement: typeof inner.statementText === 'string' ? inner.statementText : undefined });
+    } else if (isAccountGoneRefusal(inner)) {
+      // The storage refused a write (or file) for an account it does not hold:
+      // an account erased while the request ran, or a write under a wrong id
+      // (a bug the 404 alone would hide). The refusal's own text and table.
+      const refusal = accountGoneRefusalOf(inner);
+      logger.warn(logMsg, { ...metadata, refusal: refusal?.message, table: typeof refusal?.table === 'string' ? refusal.table : undefined });
     } else {
       logger.info(logMsg, metadata);
     }

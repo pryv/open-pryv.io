@@ -19,7 +19,7 @@ const fsSync = require('fs');
 
 const { getConfig } = require('@pryv/boiler');
 
-export { init, ensureUserDirectory, getPathForUser, listUserIds, deleteUserDirectory, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED };
+export { init, ensureUserDirectory, ensureUserFile, getPathForUser, listUserIds, deleteUserDirectory, unmarkErased, hasErasedMarker, remarkErased, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED, ERASED_MARKER };
 
 let config: ConfigLike;
 let basePath: string | undefined;
@@ -34,8 +34,16 @@ let basePath: string | undefined;
 // marks the id here and tells the other workers of the core over the
 // `cache` pub/sub scope. The set is per process and bounded: after a restart
 // nothing holds an erased id any more.
+//
+// A directory the erasure keeps (audit `keep` mode: the per-user audit
+// database stays) holds a marker file instead, `ERASED_MARKER`: on disk, so
+// every process of the core and every restart reads it. While it is there,
+// no NEW file is created in that directory (`ensureUserFile`); the files
+// kept stay usable. Indexing the id again (a restore) removes it
+// (`unmarkErased`).
 
 const USER_ERASED = 'user-erased';
+const ERASED_MARKER = 'erased.json';
 const ERASED_MAX = 10000;
 const erased = new Set<string>();
 let listening = false;
@@ -79,6 +87,23 @@ function isErased (userId: string): boolean {
   return erased.has(userId);
 }
 
+/**
+ * The id is an account again (indexed by a restore or a registration): its
+ * directory may hold files again. Removes the erased marker and this
+ * process's mark. Called once the id is indexed, before the account's data
+ * is written.
+ */
+async function unmarkErased (userId: string): Promise<void> {
+  erased.delete(userId);
+  const markerPath = await markerPathIfAny(userId);
+  if (markerPath == null) return;
+  try {
+    await fs.unlink(markerPath);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}
+
 function clearErasedTestOnly (): void {
   erased.clear();
 }
@@ -87,6 +112,7 @@ function clearErasedTestOnly (): void {
 // API never lets a caller choose an id, so production never needs this.
 function forgetErasedTestOnly (userId: string): void {
   erased.delete(userId);
+  if (basePath != null) fsSync.rmSync(getPathForUser(userId, ERASED_MARKER), { force: true });
 }
 
 // temporarly set baseBath for tests;
@@ -137,6 +163,34 @@ async function ensureUserDirectory (userId: string, extraPath = '') {
   }
   await fs.mkdir(resultPath, { recursive: true });
   return resultPath;
+}
+
+/**
+ * The path of `fileName` (a file or a directory) directly in the user's
+ * directory, which is created. Refused (`ErasedUserError`) when the entry
+ * does not exist yet and the directory carries the erased marker: an
+ * erased account's kept directory never gets a new file, while the files it
+ * kept still open.
+ */
+async function ensureUserFile (userId: string, fileName: string): Promise<string> {
+  const userPath = await ensureUserDirectory(userId);
+  const filePath = getPathForUser(userId, fileName);
+  if (path.dirname(path.resolve(filePath)) !== path.resolve(userPath)) {
+    throw new Error('Invalid user file name: ' + JSON.stringify(fileName));
+  }
+  if (await exists(filePath)) return filePath;
+  if (await exists(path.join(userPath, ERASED_MARKER))) throw new ErasedUserError(userId);
+  return filePath;
+}
+
+async function exists (target: string): Promise<boolean> {
+  try {
+    await fs.stat(target);
+    return true;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
 }
 
 /**
@@ -217,7 +271,9 @@ function isInside (base: string, target: string): boolean {
  * @param [options.erased] -- the account is erased: its directory is never
  *   created again by this core (see `ensureUserDirectory`). Marked before the
  *   removal, so a request landing in between is refused once its handle is
- *   found stale.
+ *   found stale. A directory kept for some of its entries gets the erased
+ *   marker file (see `ensureUserFile`), written before the removal and never
+ *   removed by it (a resumed erasure keeps the first one).
  */
 async function deleteUserDirectory (userId: string, keep: string[] = [], options: { erased?: boolean } = {}): Promise<void> {
   const userFolder = getPathForUser(userId);
@@ -231,14 +287,57 @@ async function deleteUserDirectory (userId: string, keep: string[] = [], options
       throw err;
     }
     if (entries.some((name) => keep.includes(name))) {
+      if (options.erased) await writeErasedMarker(userFolder);
       for (const name of entries) {
-        if (keep.includes(name)) continue;
+        if (keep.includes(name) || name === ERASED_MARKER) continue;
         await fs.rm(path.join(userFolder, name), { recursive: true, force: true });
       }
       return;
     }
   }
   await fs.rm(userFolder, { recursive: true, force: true });
+}
+
+/** Whether the user's directory carries the erased marker. */
+async function hasErasedMarker (userId: string): Promise<boolean> {
+  const markerPath = await markerPathIfAny(userId);
+  return markerPath != null && await exists(markerPath);
+}
+
+/** The marker's path, or null where no marker can exist (no local directory configured, an id no directory can hold). */
+async function markerPathIfAny (userId: string): Promise<string | null> {
+  if (basePath == null) {
+    try {
+      await init();
+    } catch (err: unknown) {
+      return null; // no per-user local directory in this setup
+    }
+  }
+  try {
+    return getPathForUser(userId, ERASED_MARKER);
+  } catch (err: unknown) {
+    return null; // not an id a local directory can hold
+  }
+}
+
+/**
+ * Put the erased marker back in the user's directory, if the directory is
+ * there: a restore of an erased account that failed after `unmarkErased`
+ * leaves the account erased again.
+ */
+async function remarkErased (userId: string): Promise<void> {
+  const userFolder = getPathForUser(userId);
+  if (!(await exists(userFolder))) return;
+  await writeErasedMarker(userFolder);
+}
+
+/** The erased marker in `userFolder`; one already there (a resumed erasure) is kept as it is. */
+async function writeErasedMarker (userFolder: string): Promise<void> {
+  try {
+    await fs.writeFile(path.join(userFolder, ERASED_MARKER), JSON.stringify({ v: 1, erasedAt: Date.now() }), { flag: 'wx' });
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  }
 }
 
 function getBasePath () {

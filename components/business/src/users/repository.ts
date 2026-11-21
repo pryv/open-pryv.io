@@ -796,6 +796,10 @@ class UsersRepository {
     // connection while each write needs another.
     let createdAccess: { id?: unknown; type?: unknown; created?: unknown; modified?: unknown } | null = null;
     let accessId = UserRepositoryOptions.SYSTEM_USER_ACCESS_ID;
+    // The local index first: it refuses a name or id another account holds,
+    // before anything is written under that id; and the database refuses rows
+    // of an id it does not index (the personal access below included).
+    await this.usersIndex.addUser(user.username, user.id);
     if (withSession &&
               this.validateAllStorageObjectsInitialized() &&
               user.appId != null) {
@@ -806,9 +810,6 @@ class UsersRepository {
       createdAccess = access;
     }
     user.accessId = accessId;
-    // The local index first: it refuses a name or id another account holds,
-    // before anything is written under that id.
-    await this.usersIndex.addUser(user.username, user.id);
     // Store account fields directly in userAccountStorage (Platform already called above)
     const accountData = (user.getFullAccount as () => Record<string, unknown>)();
     const accountLeavesMap = accountStreams.accountLeavesMap;

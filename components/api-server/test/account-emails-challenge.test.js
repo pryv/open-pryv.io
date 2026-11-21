@@ -86,7 +86,8 @@ describe('[EMCH] registration email challenge', function () {
     const before = Date.now();
     const out = await challenge.createChallenge(email);
     assert.strictEqual(out.ok, true);
-    assert.match(out.code, /^[A-Z2-9]{8}$/);
+    assert.match(out.code, /^[A-Z2-9]{10}$/);
+    assert.match(challenge.formatCode(out.code), /^[A-Z2-9]{5}-[A-Z2-9]{5}$/, 'shown as two groups of five');
     for (const c of out.code) {
       assert.ok(challenge.CODE_ALPHABET.includes(c), `${c} is not in the alphabet`);
     }
@@ -170,6 +171,17 @@ describe('[EMCH] registration email challenge', function () {
     const pasted = challenge.formatCode(created.code).toLowerCase();
     const out = await challenge.verifyChallenge(email, pasted);
     assert.strictEqual(out.ok, true);
+  });
+
+  it('[EMCH20] a shorter code mailed before the upgrade still verifies (its hash is stored as is)', async function () {
+    const email = anEmail();
+    await challenge.createChallenge(email);
+    // The row a release with 8-symbol codes wrote: the hash of the normalised code.
+    const legacy = 'ABCD2345';
+    await platformDB.setAccessState(challenge.challengeKey(email),
+      { kind: 'challenge', codeHash: hashToken(legacy), attempts: 0, createdAt: Date.now() }, Date.now() + 60000);
+    const out = await challenge.verifyChallenge(email, 'abcd-2345');
+    assert.strictEqual(out.ok, true, JSON.stringify(out));
   });
 
   it('[EMCH6] an expired code is gone', async function () {

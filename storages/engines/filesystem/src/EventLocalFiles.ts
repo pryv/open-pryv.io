@@ -92,6 +92,10 @@ EventFiles.prototype.saveAttachmentFromStream = async function (readableStream: 
   fileId = fileId || cuid();
   const filePath = getAttachmentPath(userId, eventId, fileId as string);
   const dirPath = path.dirname(filePath);
+  // Through the user directory helper: refused for an erased account (no
+  // attachments directory is created in its kept directory, nor the
+  // directory itself again).
+  await _internals.userLocalDirectory.ensureUserFile(userId, ATTACHMENT_DIRNAME);
   await fs.promises.mkdir(dirPath, { recursive: true });
   const writeStream = fs.createWriteStream(filePath);
   await pipeline(readableStream, writeStream);

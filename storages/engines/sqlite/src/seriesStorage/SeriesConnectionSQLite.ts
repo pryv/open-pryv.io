@@ -331,8 +331,8 @@ class SeriesConnectionSQLite {
   }
 
   async pathForUser (userId: string): Promise<string> {
-    const userPath = await _internals.userLocalDirectory.ensureUserDirectory(userId);
-    return path.join(userPath, `${FILE_PREFIX}-${VERSION}.sqlite`);
+    // Refused for a file not there yet in an erased account's kept directory.
+    return await _internals.userLocalDirectory.ensureUserFile(userId, `${FILE_PREFIX}-${VERSION}.sqlite`);
   }
 }
 

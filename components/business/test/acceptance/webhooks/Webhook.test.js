@@ -27,13 +27,25 @@ const userStorage = require('test-helpers').dependencies.storage.user.events;
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 
 describe('[WHBK] Webhook', () => {
+  const MADE_UP_IDS = ['doesnotmatter', 'wxb-user', 'wcad-fire-user', 'whsg-user'];
+  // The accounts these tests make up are indexed while they run: the
+  // database refuses rows of an id its users index lacks.
+  before(async () => {
+    const index = await require('storage').getUsersLocalIndex();
+    for (const id of MADE_UP_IDS) {
+      if (await index.getUsername(id) == null) await index.addUser(id, id);
+    }
+  });
+
   // Deleting a webhook leaves a tombstone row: remove every row of the
-  // accounts these tests make up, which the users index does not know (the
-  // integrity check of the next suites reports such rows).
+  // accounts these tests make up, then their index entries (the integrity
+  // check of the next suites reports rows of an id the index does not know).
   after(async () => {
-    for (const id of ['doesnotmatter', 'wxb-user', 'wcad-fire-user', 'whsg-user']) {
+    for (const id of MADE_UP_IDS) {
       await new Promise((resolve, reject) => storage.removeAll({ id, username: id }, (err) => err ? reject(err) : resolve()));
     }
+    const index = await require('storage').getUsersLocalIndex();
+    for (const id of MADE_UP_IDS) await index.deleteById(id);
   });
 
   describe('[WB01] send()', () => {

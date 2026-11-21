@@ -167,6 +167,41 @@ describe('[USRP] Users repository', () => {
     });
   });
 
+  describe('[PGUG] registration writes the index entry before any row of the account', () => {
+    it('[PGUG5] a registration with a session indexes the id before its personal access, which is stored', async () => {
+      const usersRepository = await getUsersRepository();
+      const uname = charlatan.Lorem.characters(10).toLowerCase();
+      const user = new User({
+        id: charlatan.Lorem.characters(25),
+        username: uname,
+        password: charlatan.Lorem.characters(10),
+        email: charlatan.Internet.email(),
+        appId: 'pgug5-app'
+      });
+      const order = [];
+      const index = usersRepository.usersIndex;
+      const originalAddUser = index.addUser;
+      const originalCreateAccess = usersRepository.createPersonalAccessForUser;
+      index.addUser = async function (...args) { order.push('index'); return await originalAddUser.apply(this, args); };
+      usersRepository.createPersonalAccessForUser = async function (...args) { order.push('access'); return await originalCreateAccess.apply(this, args); };
+      try {
+        await usersRepository.insertOne(user, true);
+      } finally {
+        index.addUser = originalAddUser;
+        usersRepository.createPersonalAccessForUser = originalCreateAccess;
+      }
+      try {
+        assert.deepStrictEqual(order, ['index', 'access']);
+        const accesses = await new Promise((resolve, reject) => usersRepository.accessStorage.find(
+          { id: user.id }, {}, null, (err, res) => err ? reject(err) : resolve(res)));
+        assert.deepStrictEqual(accesses.map((a) => a.type), ['personal'], 'the personal access is stored');
+        assert.ok(user.token != null);
+      } finally {
+        await usersRepository.deleteOne(user.id, uname);
+      }
+    });
+  });
+
   describe('[UR04] PostgreSQL: registration and account update take no transaction client', () => {
     // A transaction client held while each write runs on another pool
     // connection: concurrent calls up to the pool size would each hold one
