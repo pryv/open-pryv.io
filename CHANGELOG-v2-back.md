@@ -38,9 +38,29 @@
   `erasedRestored`. The account is dated by `snapshotBeforeByUser[userId]`, a new field of the merged
   chain manifest (`FilesystemBackupReader.readManifest`: the `snapshotBefore` of the newest run listing
   the account), else the manifest's `snapshotBefore`, else `backupTimestamp`; unknown: refused.
+- Review follow-ups: `writeErasureLedger` takes the trigger from the record of the erasure in
+  progress whenever there is one (`null` -> `unknown`), so a resumed legacy erasure is not read as a
+  creation rollback. `writeErasureRecord` keeps an existing row of the same erasure (same `startedAt`,
+  same key, not restored: the step ran twice) and carries `firstDeletedAt` / `firstTrigger` when it
+  replaces a row no restore marked. `_erasedSinceBackup` fails closed (`_erasureLedger()` returns
+  `{ error }` when the key cannot be built: the restore throws unless `restoreErased`), warns when the
+  ledger holds rows of another `keyId` (`otherKeyRecordCount` / `otherKeyWarning`), and also refuses an
+  account whose record of an erasure in progress (of the target id) is stale and started after the
+  snapshot; with the override, `stampRestored` writes that erasure's ledger row already carrying
+  `restoredAt`. `stampRestored` (public, returns the refs it could not mark, report field
+  `restoredStampFailed`) runs in the orchestrator unless `deferRestoredStamp`; `bin/backup.js` defers
+  it until after `--verify-integrity` and marks only the accounts the restore kept (exit code 4 when a
+  mark failed). Lookup answer: `keyId`, `otherKeyRecords`. `bin/erasures.js`: `--list` reads the
+  ledger once, `--check` / `--replay` warn on other-key rows, `--replay` lists ids with date and
+  trigger. `since=` (empty) is refused. `accountErasure:ledger:hmacKey` is not added to
+  `SECRET_PATHS` in config-validation: that list only drives the weak-secret check of the keys
+  `REQUIRED_WHEN` lists (it is no secret registry: no redaction nor cross-core fingerprint reads it),
+  and the key already has its own format check.
 - `bin/erasures.js` (`--list`, `--check`, `--replay [--apply]`); `bin/backup.js --restore-erased`,
-  restore exit code 3.
-- Tests: `components/api-server/test/erasure-ledger.test.js` (`[ERLG]`, `[ERLA]`, `[ERLR]`, `[ERLT]`).
+  restore exit codes 3 and 4.
+- Tests: `components/api-server/test/erasure-ledger.test.js` (`[ERLG]`, `[ERLA]`, `[ERLR]`, `[ERLT]`),
+  `components/business/test/unit/erasureLedger.test.js` (`[ERLU]`, row logic over an in-memory store),
+  `[2CEL1]` in `reg-2core-seq.test.js` (erased on core A, found and refused from core B).
 
 ## 2.0.0-rc.88 - 2026-11-25
 

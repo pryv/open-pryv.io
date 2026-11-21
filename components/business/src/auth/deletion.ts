@@ -249,10 +249,14 @@ class Deletion {
   // in progress stays, and the auto-deletion sweep completes it (this step
   // only), so no erasure looks finished without its proof. Nothing is written
   // for the rollback of an account whose creation failed (trigger `system`):
-  // that account never existed for anyone.
+  // that account never existed for anyone. The trigger is the record's: a
+  // resumed erasure recorded before triggers were kept (null) is `unknown`,
+  // never read as such a rollback.
   async writeErasureLedger (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const record = context.erasure;
-    const trigger = record?.trigger ?? context.erasureTrigger ?? (context.deletionByAdmin === true ? 'admin' : 'holder');
+    const trigger = record != null
+      ? (record.trigger ?? 'unknown')
+      : (context.erasureTrigger ?? (context.deletionByAdmin === true ? 'admin' : 'holder'));
     if (trigger === 'system' || context.erasureLost === true) {
       this.logger.info(`erasure ledger: nothing recorded for account ${context.user.id} (` +
         (trigger === 'system' ? 'rollback of an account creation' : 'the erasure is no longer this one') + ')');

@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import type { MethodNext as Next, ResultBag } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 import type { Platform } from 'platform/src/Platform.ts';
-import { ledgerKey, listErasureRecords, lookupErasureRecords, parseCursor, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT } from 'business/src/erasureLedger/index.ts';
+import { ledgerKey, listErasureRecords, lookupErasureRecords, otherKeyRecordCount, parseCursor, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT } from 'business/src/erasureLedger/index.ts';
 
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
@@ -374,7 +374,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   systemAPI.register('system.erasures.list',
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
     async function listErasures (_context: MethodContext, params: { since?: unknown, limit?: unknown, after?: unknown }, result: ResultBag, next: Next) {
-      const since = params.since == null ? 0 : Number(params.since);
+      const since = params.since == null ? 0 : (params.since === '' ? NaN : Number(params.since));
       if (!Number.isFinite(since) || since < 0) return next(errors.invalidParametersFormat('`since` must be a time in milliseconds since the epoch.', { since: params.since }));
       const limit = params.limit == null ? DEFAULT_LIST_LIMIT : Number(params.limit);
       if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST_LIMIT) return next(errors.invalidParametersFormat(`\`limit\` must be a whole number from 1 to ${MAX_LIST_LIMIT}.`, { limit: params.limit }));
@@ -400,9 +400,14 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         return next(errors.invalidParametersFormat('Give exactly one of `userId` or `username` (a non-empty string).'));
       }
       try {
-        const erasures = await lookupErasureRecords(platform, ledgerKeyOf(), byId ? { userId: params.userId as string } : { username: params.username as string });
+        const key = ledgerKeyOf();
+        const erasures = await lookupErasureRecords(platform, key, byId ? { userId: params.userId as string } : { username: params.username as string });
         result.erased = erasures.length > 0;
         result.erasures = erasures;
+        // The key the lookup matched with, and the records of other keys it
+        // cannot match (a key change): `erased: false` is then not a proof.
+        result.keyId = key.keyId;
+        result.otherKeyRecords = await otherKeyRecordCount(platform, key);
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));

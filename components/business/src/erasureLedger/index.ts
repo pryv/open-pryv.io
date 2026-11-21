@@ -63,6 +63,13 @@ export type ErasureLedgerRow = {
   attempts: number;
   serverVersion: string | null;
   restoredAt?: number;
+  /**
+   * When a later erasure replaced a record no restore had marked (an account
+   * brought back by a storage restore, erased again by `bin/erasures.js
+   * --replay`): the date and trigger of the first erasure, the one asked for.
+   */
+  firstDeletedAt?: number;
+  firstTrigger?: string;
 };
 
 export type ErasureLedgerEntry = ErasureLedgerRow & { userIdHash: string };
@@ -131,13 +138,26 @@ export type ErasureFacts = {
   auditMode: 'erase' | 'keep';
   attempts: number;
   serverVersion: string | null;
+  /** Set only for a record written already marked restored (an unfinished erasure a restore overrode). */
+  restoredAt?: number;
 };
 
 /**
- * Write the record of an erasure. A row already there for the same id (an
- * account restored, then erased again) is replaced: its `restoredAt` goes.
+ * Write the record of an erasure. A row already there for the same id:
+ *  - of the same erasure (same `startedAt`, not marked restored: the step ran
+ *    twice, its completion was not recorded) is kept as it is;
+ *  - marked restored (an account restored, then erased again) is replaced,
+ *    its `restoredAt` goes;
+ *  - otherwise (an account brought back without a restore marking it, then
+ *    erased again) is replaced, keeping the date and trigger of the first
+ *    erasure in `firstDeletedAt` / `firstTrigger`.
  */
 export async function writeErasureRecord (kv: LedgerKv, k: LedgerKey, facts: ErasureFacts): Promise<ErasureLedgerEntry> {
+  const hash = userIdHash(k, facts.userId);
+  const existing = parseRow(await kv.getPlatformKv(LEDGER_PREFIX + hash));
+  if (existing != null && existing.keyId === k.keyId && existing.restoredAt == null && existing.startedAt === facts.startedAt && facts.restoredAt == null) {
+    return { userIdHash: hash, ...existing };
+  }
   const row: ErasureLedgerRow = {
     v: ROW_VERSION,
     keyId: k.keyId,
@@ -151,9 +171,26 @@ export async function writeErasureRecord (kv: LedgerKv, k: LedgerKey, facts: Era
     attempts: facts.attempts,
     serverVersion: facts.serverVersion
   };
-  const hash = userIdHash(k, facts.userId);
+  if (existing != null && existing.restoredAt == null) {
+    row.firstDeletedAt = existing.firstDeletedAt ?? existing.deletedAt;
+    row.firstTrigger = existing.firstTrigger ?? existing.trigger;
+  }
+  if (facts.restoredAt != null) row.restoredAt = facts.restoredAt;
   await kv.setPlatformKv(LEDGER_PREFIX + hash, JSON.stringify(row));
   return { userIdHash: hash, ...row };
+}
+
+/** How many rows were written under another key than `k` (no longer matched by an id or a name). */
+export async function otherKeyRecordCount (kv: Pick<LedgerKv, 'listPlatformKvEntries'>, k: LedgerKey): Promise<number> {
+  return (await allErasureRecords(kv)).filter((e) => e.keyId !== k.keyId).length;
+}
+
+/** The warning a reader of the ledger prints when it holds rows of another key; null when none. */
+export function otherKeyWarning (count: number): string | null {
+  if (count === 0) return null;
+  return `the erasure ledger holds ${count} record(s) written under another key (accountErasure.ledger.hmacKey, or auth.adminAccessKey ` +
+    'it is derived from, changed since, or differs between cores): they are listed but no longer matched by an id or a name, so a ' +
+    'restore does not refuse those accounts and a replay does not find them. They are matched again only under the key that wrote them.';
 }
 
 /** The record of the account `userId`, or null. */
