@@ -308,5 +308,22 @@ describe('[ADCR] accesses: credentials and a delegated personal access', functio
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
       assert.strictEqual(res.body.webhook.url, 'https://hook.example/path');
     });
+
+    it('[WHSR3] webhooks.rotateSecret: forbidden to the delegate on an owner webhook, allowed on its own; the owner may', async function () {
+      const refused = await coreRequest.post(`/${username}/webhooks/${ownerHookId}/rotate-secret`).set('Authorization', delegateToken);
+      assert.strictEqual(refused.status, 403, JSON.stringify(refused.body));
+      assert.ok(!JSON.stringify(refused.body).includes('whsec_'), 'no secret in the refusal');
+      const still = await coreRequest.get(`/${username}/webhooks/${ownerHookId}`).set('Authorization', ownerToken);
+      assert.strictEqual(still.body.webhook.signed, false, 'the refused rotation minted nothing');
+
+      const own = await coreRequest.post(`/${username}/webhooks/${ownHookId}/rotate-secret`).set('Authorization', delegateToken);
+      assert.strictEqual(own.status, 200, JSON.stringify(own.body));
+      assert.match(own.body.webhook.secret, /^whsec_[A-Za-z0-9_-]{43}$/);
+
+      const asOwner = await coreRequest.post(`/${username}/webhooks/${ownerHookId}/rotate-secret`).set('Authorization', ownerToken);
+      assert.strictEqual(asOwner.status, 200, JSON.stringify(asOwner.body));
+      assert.match(asOwner.body.webhook.secret, /^whsec_[A-Za-z0-9_-]{43}$/);
+      assert.strictEqual(asOwner.body.webhook.signed, true);
+    });
   });
 });

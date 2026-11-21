@@ -18,6 +18,47 @@
   be plain names and an IP address. Certificates already issued and existing CAs are unchanged;
   nothing to do on upgrade.
 
+### Webhook calls are signed
+
+A receiver can now check that a webhook call comes from the platform, without a secret in the
+webhook URL.
+
+- `webhooks.create` returns a `secret` (`whsec_` followed by 43 characters) in its result, once:
+  no other method returns it, so store it when the webhook is created.
+- Each call of a webhook with a secret carries a `Pryv-Signature: t=<unix seconds>,v1=<hex>` header.
+  `v1` is the HMAC-SHA256, keyed with the secret (the whole string, as UTF-8), of `t`, a `.` and the
+  exact bytes of the request body. Verify it on the raw body, before parsing the JSON, with a
+  constant-time comparison, and refuse a call whose `t` is more than 300 seconds away from your
+  clock. Every call is signed afresh (retries and `webhooks.test` included); split the header on
+  `,` and ignore keys you do not know.
+- New method `webhooks.rotateSecret` (`POST /{username}/webhooks/{id}/rotate-secret`): replaces the
+  secret at once and returns the new one in `webhook.secret`. Same access rules as
+  `webhooks.update`; refused (`forbidden`) to an account delegate for a webhook whose URL it may not
+  read in full.
+- The account owner (a personal access) may rotate the secret of an app's webhook: the app then no
+  longer knows the secret, and calls `webhooks.rotateSecret` itself to learn a new one.
+- A call already under way when the secret is rotated may still carry the previous signature.
+- Webhooks have a read-only `signed` property (`true` when calls carry the signature).
+- Webhooks created before this release have no secret and send unsigned calls (`signed: false`)
+  until `webhooks.rotateSecret` gives them one. Not a breaking change: a receiver that ignores the
+  header works as before.
+
+### Access requests: opened only by the auth page (`access.openedOnlyByAuthPage`, off by default)
+
+A pending access request (`POST /reg/access`) lives `access.unopenedRequestTtl` seconds (default
+600) until it is first read, then the full hour. By default any read opens it, the app's own polls
+included, so an app that polls right away keeps every request alive for the hour even when nobody
+looks at the auth page.
+
+- New setting `access.openedOnlyByAuthPage` (default `false`: unchanged behaviour). When `true`,
+  only a read carrying `?authPage=1` (`GET /reg/access/{key}?authPage=1`) opens the request; the
+  app's polls still read it but no longer stretch its unopened life.
+- The app-web-user-account auth page sends `?authPage=1` from its next release. Turn the setting on
+  only once your auth page sends it: otherwise requests stay at their unopened life while the user
+  is still deciding.
+- A courtesy flag, not a control: anyone can add `?authPage=1` to a read; it only restores the
+  current behaviour for that request, and the per-IP request budget is unchanged.
+
 ### Per-account and per-connection limits (on by default)
 
 New ceilings protect a core from one token or one account taking all of a worker's capacity. Each

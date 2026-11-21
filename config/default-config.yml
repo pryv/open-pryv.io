@@ -887,6 +887,11 @@ access:
   # and the app both read it right away); the first read gives it the full
   # hour. 0 = the full hour from creation.
   unopenedRequestTtl: 600
+  # When true, only the auth page's read (it adds ?authPage=1; the
+  # app-web-user-account auth page does) opens a request: the app's own polls
+  # then no longer give it the full hour. Turn it on once your auth page sends
+  # the flag; an auth page that does not leaves requests at the unopened life.
+  openedOnlyByAuthPage: false
 
 # === PER-CORE: access deletion records ===
 # A deleted access stays as a deletion record (accesses.get includeDeletions),

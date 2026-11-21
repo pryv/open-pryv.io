@@ -653,6 +653,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   modified_by TEXT,
   deleted DOUBLE PRECISION,
   scopes JSONB,
+  secret TEXT,
   PRIMARY KEY (user_id, id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_url

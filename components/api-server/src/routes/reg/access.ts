@@ -254,6 +254,13 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     return typeof value === 'number' && value >= 0 ? value : DEFAULT_UNOPENED_REQUEST_TTL_S;
   }
 
+  // Read per request, same reason as terminalRetentionMs. When true, only a
+  // read by the auth page (`?authPage=1`) opens a pending request; the app's
+  // own polls no longer give it its full lifetime.
+  function openedOnlyByAuthPage (): boolean {
+    return app.config.get('access:openedOnlyByAuthPage') === true;
+  }
+
   // Read per request, same reason as terminalRetentionMs.
   function handoffTtlSeconds (): number {
     const value = app.config.get('access:handoffTtl');
@@ -637,8 +644,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // credential stays readable briefly (clients poll it more than once),
       // then the key is gone, instead of lingering for the full request TTL.
       await accessState.markDelivered(req.params.key, state, terminalRetentionMs());
-      // First read of a pending request gives it its full lifetime.
-      await accessState.markOpened(req.params.key, state);
+      // First read of a pending request gives it its full lifetime: any
+      // read, or with `access.openedOnlyByAuthPage` only the auth page's.
+      if (!openedOnlyByAuthPage() || req.query.authPage === '1') {
+        await accessState.markOpened(req.params.key, state);
+      }
 
       res.status(state.code).json(response);
     } catch (err) { next(err); }

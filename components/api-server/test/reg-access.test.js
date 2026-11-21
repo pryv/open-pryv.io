@@ -290,6 +290,33 @@ describe('[RGAC] Register access authorization', () => {
         assert.strictEqual(later.body.status, 'NEED_SIGNIN');
       });
     });
+
+    it('[RAU3] with access.openedOnlyByAuthPage, the app\'s own polls leave the request at the unopened life', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, unopenedRequestTtl: 1, openedOnlyByAuthPage: true } }, async () => {
+        const created = await createRequest();
+        assert.strictEqual(created.status, 201);
+        const appPoll = await coreRequest.get('/reg/access/' + created.body.key);
+        assert.strictEqual(appPoll.status, 201);
+        await sleep(1200);
+        const gone = await coreRequest.get('/reg/access/' + created.body.key);
+        assert.strictEqual(gone.status, 400, 'expired at the unopened life: ' + JSON.stringify(gone.body));
+        assert.strictEqual(gone.body.error.id, 'unknown-access-key');
+      });
+    });
+
+    it('[RAU4] with access.openedOnlyByAuthPage, the auth page\'s read (?authPage=1) gives the full lifetime', async () => {
+      await withInjectedConfig({ access: { maxLiveRequests: 0, unopenedRequestTtl: 1, openedOnlyByAuthPage: true } }, async () => {
+        const created = await createRequest();
+        assert.strictEqual(created.status, 201);
+        assert.strictEqual((await coreRequest.get('/reg/access/' + created.body.key)).status, 201, 'the app polls first');
+        const page = await coreRequest.get('/reg/access/' + created.body.key + '?authPage=1');
+        assert.strictEqual(page.status, 201);
+        await sleep(1200);
+        const later = await coreRequest.get('/reg/access/' + created.body.key);
+        assert.strictEqual(later.status, 201, JSON.stringify(later.body));
+        assert.strictEqual(later.body.status, 'NEED_SIGNIN');
+      });
+    });
   });
 
   describe('POST /reg/access with client-supplied authUrl (access:trustedAuthUrls)', () => {

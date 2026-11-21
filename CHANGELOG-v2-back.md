@@ -17,6 +17,41 @@
   CN so LibreSSL accepts the config; `issueNodeCert` refuses a coreId / hostname that is not DNS labels
   and an ip that `net.isIP` rejects (they reach `-subj` and the extfile). Tests `[CLCX1-4]`.
 
+### Signed webhook calls: storage and wiring
+
+- PostgreSQL: `webhooks.secret TEXT` in the table DDL, and migration
+  `20261120_120000_webhooks_secret.js` (`ADD COLUMN IF NOT EXISTS`) for existing databases. SQLite
+  keeps the webhook in its JSON `data` column: no schema change. The secret is stored in clear in
+  the webhook row (the server reads it on every call), travels in server backups (`sanitize` keeps
+  it) and is restored with the webhook.
+- `business/src/webhooks/destination.ts`: `signatureHeader(secret, body, nowSeconds)`,
+  `generateWebhookSecret()`; `postWebhook` takes the secret as 4th argument and signs the buffer it
+  sends. `Webhook`: `secret` (in `forStorage()` only when set), `forApi()` adds `signed`,
+  `forApiWithSecret()` for the create and rotate results.
+- Every webhook pubsub message (`webhooks.create`, the reloads after `webhooks.rotateSecret`, a
+  scope change or a rescope, and `webhooks.update` reactivation) now carries `{ id }` only: no
+  secret, no URL. The webhooks service always loads the webhook from storage; the fallback that
+  built a webhook from the message is gone, so a webhook no longer in storage is not run.
+- Webhooks service reloads: `addWebhook` replaces (and stops) a running copy with the same id, so
+  two reloads close together leave one copy; a webhook loaded after boot now gets the service's
+  `apiVersion`, `serial` and logger (before, only the webhooks loaded at start had them, and the
+  calls of the others carried `meta` without `apiVersion` and `serial`).
+- `Webhook.stop()` is final: a stopped copy no longer sends, retries or writes its run, also for a
+  call under way when it is stopped (it used to retry with the previous secret and could set the
+  stored webhook `inactive`). The messages a stopped copy still holds (buffered for a retry or a
+  throttled send) are dropped, not handed to the reloaded copy; the next change notifies again.
+- `webhooks` repository `updateOne` matches live rows only (`deleted: null`): a rotation or a run
+  racing a delete writes nothing on the tombstone.
+- With `migrations:autoRunOnStart: false`, run the migrations before serving: until the `secret`
+  column exists, `webhooks.create` and every webhook delete (the `accesses.delete` cascade
+  included) fail on PostgreSQL.
+- `webhooks.rotateSecret` added to the audit method list (class `write` in the breach-scope report)
+  and to the access rules (same as `webhooks.update`). The audit records the call, not its result.
+- SQLite (fix): deleting a webhook now clears its `scopes` from the tombstone row, as PostgreSQL
+  already did; both engines clear `secret`. `StoredWebhook` gains `scopes` and `secret`.
+- Tests `[WHSG1-9]`, `[WHSR1-7]`, `[WHST1]`, `[WHSP1]`, `[WHSM1]`; `[Z1XD]`, `[XKLU]`, `[YTLW]`, `[UC6J]`, `[JSOH]` updated for the
+  new fields.
+
 ### Keyed store-key hashes, chosen-token floor, CMC retry-row sweep
 
 - `business/src/auth/storeKeyHash.ts`: one helper, HMAC-SHA256 under an HKDF key (purpose

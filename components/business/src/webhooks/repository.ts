@@ -103,7 +103,9 @@ class Repository {
    * Updates certain fields of a webhook for a user
    */
   async updateOne (user: User, update: Record<string, unknown>, webhookId: string) {
-    const query = { id: webhookId };
+    // Never on a deletion record: a rotation or a run racing a delete must not
+    // write a secret or run data back onto the tombstone.
+    const query = { id: webhookId, deleted: null };
     await fromCallback((cb: NodeCallback) => this.storage.updateOne(user, query, update, cb));
   }
 

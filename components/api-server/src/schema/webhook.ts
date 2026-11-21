@@ -55,6 +55,11 @@ export default function (action: string) {
     additionalProperties: false
   });
   helpers.addTrackingProperties(base);
+  if (action === Action.READ) {
+    // Derived: whether the calls carry a signature. Read only: neither the
+    // secret nor this flag can be set through webhooks.update.
+    base.properties.signed = helpers.boolean();
+  }
 
   switch (action) {
     case Action.READ:

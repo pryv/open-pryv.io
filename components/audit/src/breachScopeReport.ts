@@ -69,6 +69,7 @@ const ACTION_CLASS: Record<string, string> = {
   'accesses.update': 'write',
   'webhooks.create': 'write',
   'webhooks.update': 'write',
+  'webhooks.rotateSecret': 'write',
   'profile.update': 'write',
   'account.update': 'write',
   'followedSlices.create': 'write',

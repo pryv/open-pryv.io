@@ -77,10 +77,19 @@ class Webhook {
   // plus the `prepared` (access-bound, expanded) query the engine matches.
   scopes: WebhookScopes | null;
 
+  // Signing secret of the calls (see ./destination.ts signatureHeader). Null
+  // for a webhook created before signing existed and never rotated since.
+  // Never exposed by forApi(), never put in a pubsub payload or a log line.
+  secret: string | null;
+
   engineSubscriber!: Subscriber | null;
 
   // A refused destination is logged once, not on every retry.
   destinationRefusalLogged: boolean;
+
+  // Set by stop(): this copy sends, retries and writes nothing more (the
+  // service runs a fresh copy loaded from storage, see stop()).
+  stopped: boolean;
   constructor (params: WebhookCtorParams) {
     this.id = params.id || cuid();
     this.accessId = params.accessId;
@@ -104,8 +113,10 @@ class Webhook {
     this.isSending = false;
     this.runsSize = params.runsSize || 50;
     this.scopes = params.scopes || null;
+    this.secret = params.secret || null;
     this.engineSubscriber = null;
     this.destinationRefusalLogged = false;
+    this.stopped = false;
   }
 
   startListenting (username: string) {
@@ -138,12 +149,13 @@ class Webhook {
    * Send the message with the throttling and retry mechanics - to use in webhooks service
    */
   async send (message: WebhookMessage, isRescheduled?: boolean) {
-    if (this.state === 'inactive') { return; }
+    if (this.stopped || this.state === 'inactive') { return; }
     // Fire-time access-validity check: self-heal orphan webhooks whose
     // access was revoked (including those created before the cascade delete
     // logic shipped) or has expired.
     if (this.repository != null && typeof this.repository.accessIsUsable === 'function') {
       if (!(await this.repository.accessIsUsable(this.user, this.accessId))) {
+        if (this.stopped) return;
         this.state = 'inactive';
         await makeUpdate(['state'], this);
         return;
@@ -152,6 +164,7 @@ class Webhook {
     if (isRescheduled != null && isRescheduled === true) {
       this.timeout = null;
     }
+    if (this.stopped) return;
     this.messageBuffer.add(message);
     if (tooSoon.call(this) || this.isSending) { return reschedule.call(this, message); }
     this.isSending = true;
@@ -175,6 +188,10 @@ class Webhook {
     }
     log(this, 'Webhook ' + this.id + ' run with status ' + status);
     this.isSending = false;
+    // Stopped while the call was under way (deleted, or reloaded after a
+    // rotation or a scope change): its outcome is not recorded and it is not
+    // retried; the running copy now is the one loaded from storage.
+    if (this.stopped) return;
     if (hasError(status)) {
       this.failCount++;
       this.currentRetries++;
@@ -205,7 +222,7 @@ class Webhook {
       reschedule.call(this, message);
     }
     function reschedule (this: Webhook, message: WebhookMessage) {
-      if (this.timeout != null) { return; }
+      if (this.stopped || this.timeout != null) { return; }
       const delay = this.minIntervalMs * (this.currentRetries || 1);
       this.timeout = setTimeout(() => {
         return this.send(message, true);
@@ -235,12 +252,23 @@ class Webhook {
         serverTime: timestamp.now(),
         serial: this.serial
       }
-    });
+    }, undefined, this.secret);
   }
 
+  /**
+   * Stop this copy for good: no more sends, retries or writes, also for a
+   * call under way when it is stopped. The service stops a copy when its
+   * webhook is deleted or reloaded from storage (rotated secret, changed
+   * scopes, renamed account). The messages this copy still holds (buffered
+   * for a retry or a throttled send, or in the call under way) are dropped,
+   * not handed to the reloaded copy: they are change signals, and the next
+   * change notifies the receiver again.
+   */
   stop () {
+    this.stopped = true;
     if (this.timeout != null) {
       clearTimeout(this.timeout);
+      this.timeout = null;
     }
     if (this.pubsubTurnOffListener != null) {
       this.pubsubTurnOffListener();
@@ -312,6 +340,7 @@ class Webhook {
       'modifiedBy'
     ];
     if (this.scopes != null) fields.push('scopes'); // stored with the `prepared` query for matching
+    if (this.secret != null) fields.push('secret'); // same reason: no `secret: null` on unsigned records
     return pick(this, fields);
   }
 
@@ -340,6 +369,18 @@ class Webhook {
       for (const [key, s] of Object.entries(this.scopes)) publicScopes[key] = { kind: s.kind, query: s.query };
       out.scopes = publicScopes;
     }
+    // Whether the calls are signed; the secret itself is never in this view.
+    out.signed = this.secret != null;
+    return out;
+  }
+
+  /**
+   * The API view plus the signing secret: only for the results of the methods
+   * that mint it (webhooks.create, webhooks.rotateSecret).
+   */
+  forApiWithSecret () {
+    const out = this.forApi();
+    if (this.secret != null) out.secret = this.secret;
     return out;
   }
 
@@ -413,6 +454,7 @@ type WebhookCtorParams = {
   webhooksRepository: WebhooksRepository | null;
   messageBuffer?: Set<WebhookMessage>;
   scopes?: WebhookScopes | null;
+  secret?: string | null;
 };
 type WebhookScope = { kind: string; query: unknown; prepared: EventMatchQuery };
 type WebhookScopes = Record<string, WebhookScope>;

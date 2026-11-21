@@ -20,6 +20,7 @@ type WebhookInstance = {
   accessId: string;
   minIntervalMs?: number;
   forApi (): Record<string, unknown>;
+  forApiWithSecret (): Record<string, unknown>;
   save (): Promise<unknown>;
   update (data: Record<string, unknown>): Promise<unknown>;
   delete (): Promise<unknown>;
@@ -36,7 +37,7 @@ const methodsSchema = require('../schema/webhooksMethods.ts');
 
 const Webhook = require('business').webhooks.Webhook;
 const WebhooksRepository = require('business').webhooks.Repository;
-const { webhookUrlProblem, describeCallFailure } = require('business').webhooks.destination;
+const { webhookUrlProblem, describeCallFailure, generateWebhookSecret } = require('business').webhooks.destination;
 const { prepareWebhookScopes, contextForAccess, reloadRunningWebhook } = require('./helpers/webhookScopes.ts');
 const { reserveWebhookTestCall } = require('business/src/webhooks/testThrottle.ts') as typeof import('../../../business/src/webhooks/testThrottle.ts');
 
@@ -181,12 +182,14 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
       webhooksRepository,
       runsSize: settings.runsSize,
       minIntervalMs: settings.minIntervalMs,
-      maxRetries: settings.maxRetries
+      maxRetries: settings.maxRetries,
+      // Signs every call; returned once, in this result.
+      secret: generateWebhookSecret()
     });
 
     try {
       await webhook.save();
-      result.webhook = webhook.forApi();
+      result.webhook = webhook.forApiWithSecret();
     } catch (error: unknown) {
       // Expecting a duplicate error
       if ((error as DuplicateError).isDuplicateIndex('url')) {
@@ -199,8 +202,49 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
   }
 
   async function bootWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
-    pubsub.webhooks.emit(pubsub.WEBHOOKS_CREATE, Object.assign({ username: context.user.username }, { webhook: result.webhook }));
+    // The id only: the result carries the secret, and a pubsub payload may
+    // cross processes. The webhooks service loads the webhook from storage.
+    const id = (result.webhook as { id: string }).id;
+    pubsub.webhooks.emit(pubsub.WEBHOOKS_CREATE, { username: context.user.username, webhook: { id } });
     return next();
+  }
+
+  // SECRET ROTATION
+
+  api.register(
+    'webhooks.rotateSecret',
+    commonFns.basicAccessAuthorizationCheck,
+    commonFns.getParamsValidation(methodsSchema.rotateSecret.params),
+    rotateWebhookSecret
+  );
+
+  // Replaces the signing secret at once (no overlap window) and returns the
+  // new one; also gives a webhook created before signing its first secret.
+  async function rotateWebhookSecret (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
+    const user = context.user;
+    const webhookId = params.id;
+    try {
+      const webhook = await webhooksRepository.getById(user, webhookId);
+      if (webhook == null) {
+        return next(errors.unknownResource('webhook', params.id));
+      }
+      if (!isWebhookInScope(webhook, context.access)) {
+        return next(errors.forbidden('The webhook was not created by this app access.'));
+      }
+      // A caller that may not see the webhook's credentials may not take its secret.
+      if (!(await mayShowWebhookCredentials(context, webhook))) {
+        return next(errors.forbidden('This access may not see the credentials of this webhook.'));
+      }
+      const update: Record<string, unknown> = { secret: generateWebhookSecret() };
+      context.updateTrackingProperties(update);
+      await webhook.update(update);
+      result.webhook = webhook.forApiWithSecret();
+      // The running copy signs with the previous secret.
+      reloadRunningWebhook(user.username, { id: webhook.id });
+    } catch (e) {
+      return next(errors.unexpectedError(e));
+    }
+    next();
   }
 
   // UPDATE
@@ -253,7 +297,7 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
       await webhook.update(update);
       result.webhook = await forApi(context, webhook);
       // The running copy was built from the previous scopes.
-      if (scopesChanged) reloadRunningWebhook(user.username, result.webhook);
+      if (scopesChanged) reloadRunningWebhook(user.username, { id: webhook.id });
     } catch (e) {
       return next(errors.unexpectedError(e));
     }
@@ -261,7 +305,8 @@ export default async function produceWebhooksApiMethods (api: { register: (...ar
   }
 
   async function reactivateWebhook (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
-    pubsub.webhooks.emit(pubsub.WEBHOOKS_ACTIVATE, Object.assign({ username: context.user.username }, { webhook: result.webhook }));
+    // The id only, like the other webhook messages (no URL on pubsub).
+    pubsub.webhooks.emit(pubsub.WEBHOOKS_ACTIVATE, { username: context.user.username, webhook: { id: (result.webhook as { id: string }).id } });
     return next();
   }
 

@@ -8,6 +8,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
 import { BlockList, isIP } from 'node:net';
+import { createHmac, randomBytes } from 'node:crypto';
 import { getConfigSync } from '@pryv/boiler';
 import type { IncomingMessage } from 'node:http';
 import type { LookupFunction } from 'node:net';
@@ -283,16 +284,43 @@ function checkedLookup (allow: AllowList, host: string): LookupFunction {
   };
 }
 
+/** Name of the header carrying the signature of a webhook call. */
+const SIGNATURE_HEADER = 'Pryv-Signature';
+
+const SECRET_PREFIX = 'whsec_';
+
+/**
+ * A new signing secret: `whsec_` and 32 random bytes in base64url (256 bits).
+ * The prefix lets humans and secret scanners recognise it.
+ */
+function generateWebhookSecret (): string {
+  return SECRET_PREFIX + randomBytes(32).toString('base64url');
+}
+
+/**
+ * Value of the `Pryv-Signature` header for `body` sent at `nowSeconds`:
+ * `t=<unix seconds>,v1=<hex HMAC-SHA256>`, the HMAC keyed with the secret's
+ * UTF-8 bytes (prefix included) over `"<t>."` followed by the exact body bytes.
+ */
+function signatureHeader (secret: string, body: Buffer, nowSeconds: number = Math.floor(Date.now() / 1000)): string {
+  const t = String(Math.floor(nowSeconds));
+  const v1 = createHmac('sha256', Buffer.from(secret, 'utf8')).update(t + '.').update(body).digest('hex');
+  return `t=${t},v1=${v1}`;
+}
+
 /**
  * POST `payload` as JSON to `rawUrl`. Resolves with the status of a 2xx answer;
- * rejects with a WebhookCallError otherwise.
+ * rejects with a WebhookCallError otherwise. With a `secret`, the call carries
+ * a `Pryv-Signature` header computed over the exact bytes sent.
  */
-async function postWebhook (rawUrl: unknown, payload: unknown, settings: DestinationSettings = currentSettings()): Promise<{ status: number }> {
+async function postWebhook (rawUrl: unknown, payload: unknown, settings: DestinationSettings = currentSettings(), secret?: string | null): Promise<{ status: number }> {
   const parsed = parseDestination(rawUrl, settings.allow);
   if (!parsed.ok) throw new WebhookCallError(parsed.kind, parsed.host);
   const { url, host } = parsed;
   const allowedByName = settings.allow.names.has(host.toLowerCase());
   const body = Buffer.from(JSON.stringify(payload));
+  const headers: Record<string, string | number> = { 'Content-Type': 'application/json', 'Content-Length': body.length };
+  if (secret != null && secret !== '') headers[SIGNATURE_HEADER] = signatureHeader(secret, body);
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
   return await new Promise((resolve, reject) => {
     const controller = new AbortController();
@@ -310,7 +338,7 @@ async function postWebhook (rawUrl: unknown, payload: unknown, settings: Destina
       port: url.port === '' ? undefined : Number(url.port),
       path: url.pathname + url.search,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': body.length },
+      headers,
       agent: false,
       signal: controller.signal,
       lookup: allowedByName ? undefined : checkedLookup(settings.allow, host)
@@ -345,6 +373,10 @@ export {
   describeWebhooksConfig,
   currentSettings,
   webhookUrlProblem,
+  SIGNATURE_HEADER,
+  SECRET_PREFIX,
+  generateWebhookSecret,
+  signatureHeader,
   postWebhook,
   describeCallFailure,
   checkedLookup,
