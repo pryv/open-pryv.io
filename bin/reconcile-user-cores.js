@@ -305,7 +305,7 @@ const NO_PASSWORD_STATUS = {
   'no-age-signal': 'no account field, so no age: needs --settle 60 or more',
   'in-flight': 'got a password while the run settled (a registration or restore in flight): kept',
   gone: 'no longer indexed under this name (deleted or renamed meanwhile): left alone',
-  failed: 'erasure failed midway (see the log): its record stays in the erasure ledger and a running core completes ' +
+  failed: 'erasure failed midway (see the log): its record of the erasure in progress stays and a running core completes ' +
     'it (its account auto-deletion sweep, 15 min after the erasure stopped)'
 };
 

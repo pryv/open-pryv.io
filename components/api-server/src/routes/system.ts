@@ -98,6 +98,20 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.post(Paths.System + '/ext-id/holds', contentType.json, setMethodId('system.extIdHolds'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, req.body, methodCallback(res, next, 200));
   });
+  // --------------------- erasure ledger ----------------- //
+  // The durable records of account erasures, platform-wide (any core answers).
+  // The lookup is a POST so that the id or name looked up stays out of URLs
+  // and access logs.
+  expressApp.get(Paths.System + '/admin/erasures', setMethodId('system.erasures.list'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    const params: Record<string, unknown> = {};
+    for (const key of ['since', 'limit', 'after']) {
+      if (req.query[key] != null) params[key] = req.query[key];
+    }
+    systemAPI.call(req.context, params, methodCallback(res, next, 200));
+  });
+  expressApp.post(Paths.System + '/admin/erasures/lookup', contentType.json, setMethodId('system.erasures.get'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, Object.assign({}, req.body), methodCallback(res, next, 200));
+  });
   // --------------------- event-types dictionary status ----------------- //
   // Reports whether the published event-types dictionary loaded, so operators
   // can alert on a core that is running degraded on its embedded fallback.

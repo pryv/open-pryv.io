@@ -281,7 +281,8 @@ describe('[RSER] restore of an account with an erasure record', function () {
       const now = Date.now() - STALE_MS;
       await store.put({ userId: u.id, username: u.username, trigger: 'date', startedAt: now, updatedAt: now, doneSteps: ALL_STEPS, seriesNamespaces: null, attempts: 1, lastError: null });
 
-      const res = restore(u);
+      // erased after its backup (the erasure ledger says so): restored on purpose
+      const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--restore-erased']);
       assertOk(res, 'restore');
       assert.match(res.stdout, /Restored: 1 users/);
       assert.ok(await exists(u), 'the account is back');
@@ -524,7 +525,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
 
       const { o } = await orchestrator();
       const reader = createFilesystemBackupReader(u.dir);
-      const report = await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id });
+      const report = await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id, restoreErased: true });
       await reader.close();
       assert.deepEqual(report.erasuresWithdrawn.map((r) => r.userId), [target.id]);
       assert.equal(await store.get(target.id), null);
@@ -553,7 +554,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
       await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username }, { trigger: 'admin' });
       const { o, lines } = await orchestrator();
       const reader = createFilesystemBackupReader(u.dir);
-      await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id });
+      await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id, restoreErased: true });
       await reader.close();
       assert.deepEqual(await state.getIdentity(target.id, key), { name: 'Ada Lovelace' }, JSON.stringify(lines));
       assert.ok(!lines.some((l) => l.msg.includes('transfer identity')), JSON.stringify(lines));

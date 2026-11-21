@@ -25,6 +25,8 @@ import { Deletion } from 'business/src/auth/deletion.ts';
 import { getPlatform } from 'platform';
 import type { EmailRowsIndex } from 'business/src/emails/heldAddress.ts';
 import { defaultIsLoopWorker } from 'cmc/src/bootRetryLoop.ts';
+import { erasureLedgerConfig } from 'business/src/erasureLedger/config.ts';
+import { purgeExpiredErasureRecords } from 'business/src/erasureLedger/index.ts';
 
 /**
  * The auto-deletion sweep of this core, wired to storage, mail, the deletion
@@ -172,6 +174,19 @@ export async function createAccountAutoDeletionSweep (config: ConfigLike, overri
 }
 
 /**
+ * Remove the erasure-ledger records older than
+ * `accountErasure.ledger.retentionDays` (0 keeps them). Run after each sweep
+ * pass, on every core: the deletes are idempotent. Returns how many went.
+ */
+export async function purgeErasureLedger (config: ConfigLike, now: number = Date.now()): Promise<number> {
+  const ledger = erasureLedgerConfig(config);
+  if (ledger.retentionDays === 0) return 0;
+  const removed = await purgeExpiredErasureRecords(await getPlatform(), ledger.retentionDays, now);
+  if (removed > 0) getLogger('account-auto-deletion').info(`erasure ledger: ${removed} record(s) older than ${ledger.retentionDays} days removed`);
+  return removed;
+}
+
+/**
  * Start the sweep: first pass after a boot delay, then one pass every
  * `sweepIntervalMs` after the previous one ended (passes never overlap).
  * With the feature off (`account.autoDeletion.enabled: false`) a pass only
@@ -192,6 +207,8 @@ export async function startAccountAutoDeletionSweep (config: ConfigLike, options
       // a background pass is not a request: no request time limit
       runMaintenance(() => sweep.runPass())
         .catch((err: unknown) => logger.error('account auto-deletion sweep failed: ' + (err instanceof Error ? err.message : String(err))))
+        .then(() => purgeErasureLedger(config))
+        .catch((err: unknown) => logger.error('erasure ledger retention pass failed: ' + (err instanceof Error ? err.message : String(err))))
         .finally(() => schedule(adConfig.sweepIntervalMs));
     }, delayMs);
     timer.unref();

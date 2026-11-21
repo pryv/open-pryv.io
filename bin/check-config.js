@@ -576,6 +576,24 @@ if (get('account.autoDeletion') != null) {
   }
 }
 
+// accountErasure.ledger: the same check master.js runs at boot (retention
+// under a year warned), plus a hint when its key is derived from the admin key.
+if (get('accountErasure.ledger') != null) {
+  try {
+    const { describeErasureLedgerConfig } = require('../components/business/src/erasureLedger/config.ts');
+    const report = describeErasureLedgerConfig(get('accountErasure.ledger'));
+    for (const p of report.problems) problems.push(`${p.path.join('.')} ${p.message}`);
+    for (const w of report.warnings) warnings.push(w);
+    const key = get('accountErasure.ledger.hmacKey');
+    if (get('accountErasure.ledger.enabled') !== false && (key == null || key === '')) {
+      warnings.push('accountErasure.ledger.hmacKey is not set: the erasure ledger key is derived from auth.adminAccessKey. Set it ' +
+        '(base64 of 32 random bytes, the same on every core) before rotating the admin key, or the records written before cannot be looked up after.');
+    }
+  } catch (err) {
+    warnings.push(`accountErasure.ledger could not be checked here (${err.message}); master.js still checks it at boot.`);
+  }
+}
+
 // account.storageUsed.intervalHours: the same check master.js runs at boot.
 {
   const v = get('account.storageUsed.intervalHours');

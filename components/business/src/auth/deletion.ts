@@ -8,6 +8,8 @@ import { createRequire } from 'node:module';
 import type { ConfigLike as Config, Logger } from '@pryv/boiler';
 import type { DeletionObjection } from './deletionTeardown.ts';
 import type { AccountErasureRow } from 'storages/interfaces/baseStorage/ErasuresLocalDB.ts';
+import { erasureLedgerConfig } from '../erasureLedger/config.ts';
+import { writeErasureRecord, ledgerKey } from '../erasureLedger/index.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const fs = require('fs');
@@ -53,7 +55,7 @@ type MethodContext = {
   erasureLost?: boolean;
 };
 type StepFn = (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown;
-type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditData' | 'dropHFDataAgain';
+type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditData' | 'dropHFDataAgain' | 'writeErasureLedger';
 
 // The series namespaces of `namespaces` whose name is not held by another
 // account (see MethodContext.foreignNames).
@@ -246,6 +248,49 @@ class Deletion {
     next();
   }
 
+  // The durable record of the erasure (business/src/erasureLedger), written
+  // after every other step. A write that fails fails the erasure: its record
+  // in progress stays, and the auto-deletion sweep completes it (this step
+  // only), so no erasure looks finished without its proof. Nothing is written
+  // for the rollback of an account whose creation failed (trigger `system`):
+  // that account never existed for anyone.
+  async writeErasureLedger (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    const record = context.erasure;
+    const trigger = record?.trigger ?? context.erasureTrigger ?? (context.deletionByAdmin === true ? 'admin' : 'holder');
+    if (trigger === 'system' || context.erasureLost === true) {
+      this.logger.info(`erasure ledger: nothing recorded for account ${context.user.id} (` +
+        (trigger === 'system' ? 'rollback of an account creation' : 'the erasure is no longer this one') + ')');
+      return next();
+    }
+    if (!erasureLedgerConfig(this.config).enabled) return next();
+    try {
+      const { getPlatform } = require('platform');
+      const platform = await getPlatform();
+      const { getAPIVersion } = require('middleware/src/project_version.ts');
+      let serverVersion: string | null = null;
+      try { serverVersion = String(await getAPIVersion()); } catch { serverVersion = null; }
+      const now = Date.now();
+      const entry = await writeErasureRecord(platform, ledgerKey(this.config), {
+        userId: context.user.id,
+        username: context.user.username,
+        startedAt: record?.startedAt ?? now,
+        deletedAt: now,
+        trigger,
+        coreId: platform.coreId ?? null,
+        stepsCompleted: record?.doneSteps ?? [],
+        auditMode: this.onUserDeleteMode() === 'keep' ? 'keep' : 'erase',
+        attempts: record?.attempts ?? 1,
+        serverVersion
+      });
+      // One structured line per record: a log shipper keeps a second copy.
+      this.logger.info('account erased', { userIdHash: entry.userIdHash, trigger, coreId: entry.coreId });
+    } catch (err: unknown) {
+      this.logger.error(`the erasure ledger record of account ${context.user.id} could not be written: the erasure is completed again later`, err);
+      return next(errors.unexpectedError(err));
+    }
+    next();
+  }
+
   // Engine-agnostic attachment erasure. The user-directory wipe in
   // deleteAuditData covers the filesystem engine as a side-effect
   // (attachments live under the per-user directory) but leaves objects
@@ -360,7 +405,9 @@ class Deletion {
       'deleteAuditData',
       // Last: points written while the steps above ran, through a series
       // credential still cached by a high-frequency worker.
-      'dropHFDataAgain'
+      'dropHFDataAgain',
+      // Once everything is gone: the durable record that it was.
+      'writeErasureLedger'
     ];
     // Each step runs outside the database time limits of request handling: a
     // large account's rows take longer to remove than any request may, and an
