@@ -210,6 +210,13 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   flood, an existing account the DNS has not resolved in the last `positiveTtlMs` (30 s) counts as
   unknown too: its resolver gets the truncated answer and retries over TCP. A lookup that does not
   end stops counting after 5 s. `0` turns it off.
+- **The embedded DNS answers core information from its refreshed list.** Core names
+  (`<core>.<domain>`), the core of an account, `lsc` and the service names (`reg`, `access`,
+  `mfa`) and hosted sites are answered from the core list the DNS already re-reads every 30 s,
+  instead of one or two platform reads per query, so a flood of an existing account's name costs
+  no core read. A core registered, changed or taken out is seen by the DNS at the next refresh
+  (within 30 s); an account on a core not in the list yet is answered by reading that core. If
+  the refresh keeps failing for 90 s, every answer reads the platform again, as before.
 
 ### Open sockets no longer keep a personal session alive on their own (behaviour change)
 

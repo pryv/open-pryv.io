@@ -135,6 +135,9 @@ class DnsServer {
   #advertisedSites: Set<string> = new Set(); // hosted-site names advertised by any core-info row (refreshed)
   #coreId: string;
   #coreIds: Set<string> = new Set(); // ids of every core-info row (refreshed), plus this core's
+  // Core-info rows of the last successful refresh and when (see #freshCoreInfos).
+  #coreInfos: CoreInfo[] | null = null;
+  #coreInfosAt = 0;
   // Rate-limited aggregated per-request warning.
   #warnPending = 0;
   #warnSample: string | null = null;
@@ -827,7 +830,7 @@ class DnsServer {
    * names: the IPs of every core not marked unavailable.
    */
   async #answerClusterDiscovery (response: BuiltResponse, qname: string, qtype: number) {
-    const cores = await this.#platform.getAllCoreInfos();
+    const cores = await this.#allCoreInfos();
     const ttl = this.#ttl;
 
     for (const core of cores) {
@@ -852,7 +855,8 @@ class DnsServer {
     try {
       const names = new Set<string>();
       const coreIds = new Set<string>([this.#coreId.toLowerCase()]);
-      for (const core of await this.#platform.getAllCoreInfos()) {
+      const cores = await this.#platform.getAllCoreInfos();
+      for (const core of cores) {
         if (typeof core.id === 'string') coreIds.add(core.id.toLowerCase());
         if (Array.isArray(core.sites)) {
           for (const name of core.sites) if (typeof name === 'string') names.add(name.toLowerCase());
@@ -860,9 +864,34 @@ class DnsServer {
       }
       this.#advertisedSites = names;
       this.#coreIds = coreIds;
+      this.#coreInfos = cores;
+      this.#coreInfosAt = Date.now();
     } catch (err: unknown) {
       this.#logger.warn('DNS hosted-site refresh failed: ' + (err as Error).message);
     }
+  }
+
+  /**
+   * The core-info rows of the last refresh while the periodic refresh runs
+   * and that list is recent (under three refresh intervals), else null. Core
+   * names, the core of an account, cluster discovery and hosted sites are
+   * answered from it, so a query costs no PlatformDB read: a core registered
+   * or changed since is seen at the next refresh.
+   */
+  #freshCoreInfos (): CoreInfo[] | null {
+    if (this.#platformRefreshIntervalMs <= 0 || this.#coreInfos == null) return null;
+    if (Date.now() - this.#coreInfosAt > 3 * this.#platformRefreshIntervalMs) return null;
+    return this.#coreInfos;
+  }
+
+  /** Every core-info row: the refreshed list when fresh, else a PlatformDB read. */
+  async #allCoreInfos (): Promise<CoreInfo[]> {
+    return this.#freshCoreInfos() ?? await this.#platform.getAllCoreInfos();
+  }
+
+  #findCoreInfo (cores: CoreInfo[], id: string): CoreInfo | null {
+    const wanted = id.toLowerCase();
+    return cores.find((core) => typeof core.id === 'string' && core.id.toLowerCase() === wanted) ?? null;
   }
 
   #isHostedSite (name: string): boolean {
@@ -874,11 +903,11 @@ class DnsServer {
 
   /**
    * Answer `<site>.{domain}` with the A / AAAA of every core advertising the
-   * site (read fresh). A name configured here that no row advertises yet (this
-   * core's registration not replicated) answers with this core's own row.
+   * site (see #freshCoreInfos). A name configured here that no row advertises
+   * yet (this core's registration not replicated) answers with this core's own row.
    */
   async #answerHostedSite (response: BuiltResponse, qname: string, qtype: number, name: string) {
-    const cores = await this.#platform.getAllCoreInfos();
+    const cores = await this.#allCoreInfos();
     let serving = cores.filter((core) => Array.isArray(core.sites) && core.sites.includes(name));
     if (serving.length === 0 && this.#localSites.has(name)) {
       serving = cores.filter((core) => core.id === this.#coreId);
@@ -945,7 +974,11 @@ class DnsServer {
       return false;
     }
 
-    const coreInfo = await this.#platform.getCoreInfo(coreId);
+    // From the refreshed list; a core missing from it (registered since the
+    // last refresh) is read.
+    const fresh = this.#freshCoreInfos();
+    const coreInfo = (fresh != null ? this.#findCoreInfo(fresh, coreId) : null) ??
+      await this.#platform.getCoreInfo(coreId);
     if (coreInfo == null) {
       this.#setNxdomain(response);
       return false;
@@ -973,9 +1006,13 @@ class DnsServer {
    * Without this branch the hostname advertised in `hostings.*.availableCore`
    * — and used for inter-core HTTP routing in multi-core — is unreachable
    * via the embedded DNS unless the operator pre-populates `dns.staticEntries`.
+   *
+   * Answered from the refreshed list when it is fresh (a name not in it is not
+   * a core, no read: account names cost no core-info read), else read.
    */
   async #tryAnswerCoreInfo (response: BuiltResponse, qname: string, qtype: number, prefix: string) {
-    const coreInfo = await this.#platform.getCoreInfo(prefix);
+    const fresh = this.#freshCoreInfos();
+    const coreInfo = fresh != null ? this.#findCoreInfo(fresh, prefix) : await this.#platform.getCoreInfo(prefix);
     if (coreInfo == null) return false;
     this.#emitCoreInfoRecords(response, qname, qtype, coreInfo);
     return true;
