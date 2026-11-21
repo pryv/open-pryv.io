@@ -468,6 +468,10 @@ class BackupOrchestrator {
     // backed up, each core's reconcile rebuilds them from its local table.
     const { exportNamespaceRows } = await import('platform/src/externalIdIndex.ts');
     platformData.push(...await exportNamespaceRows(this.platformDB));
+    // The erasure ledger: a platform rebuilt from this backup keeps the proof
+    // of the erasures made before it (merged at restore, never removed).
+    const { exportErasureLedgerRows } = await import('business/src/erasureLedger/index.ts');
+    platformData.push(...await exportErasureLedgerRows(this.platformDB));
     await writer.writePlatformData(platformData);
   }
 

@@ -1773,6 +1773,56 @@ describe('[RG2C] Two-core integration tests', function () {
     });
   });
 
+  describe('Erasure ledger across cores', () => {
+    it('[2CEL1] an account erased on Core A is found by Core B\'s lookup, by id and by name, and a restore check with Core B\'s key refuses it', async () => {
+      const username = 'tcerl' + Date.now().toString(36);
+      const reg = await httpRequest(CORE_A_PORT, 'POST', '/users', {
+        appId: 'test-2core',
+        username,
+        password: 'testpassw0rd',
+        email: username + '@test.example.com',
+        insurancenumber: String(Math.floor(Math.random() * 900) + 100),
+        language: 'en',
+        hosting: CORE_A_HOSTING
+      });
+      assert.ok(reg.status === 201 || reg.status === 200, JSON.stringify(reg.body));
+      const listed = await httpRequest(CORE_A_PORT, 'GET', '/system/admin/users', null, { Authorization: ADMIN_KEY });
+      const userId = (listed.body.users || []).find((u) => u.username === username)?.id;
+      assert.ok(userId != null, 'the account is listed on Core A');
+      // a backup of it taken now, before the erasure (unix seconds)
+      const snapshotBefore = Date.now() / 1000 - 1;
+      const del = await httpRequest(CORE_A_PORT, 'DELETE', '/users/' + username, null, { Authorization: ADMIN_KEY });
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+
+      for (const body of [{ userId }, { username: username.toUpperCase() }]) {
+        const res = await httpRequest(CORE_B_PORT, 'POST', '/system/admin/erasures/lookup', body, { Authorization: ADMIN_KEY });
+        assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+        assert.strictEqual(res.body.erased, true, JSON.stringify(body));
+        assert.strictEqual(res.body.erasures.length, 1);
+        assert.strictEqual(res.body.erasures[0].coreId, CORE_A_ID, 'written by Core A');
+        assert.strictEqual(res.body.erasures[0].trigger, 'admin');
+        assert.strictEqual(res.body.otherKeyRecords, 0, 'both cores hash with the same key');
+      }
+      const list = await httpRequest(CORE_B_PORT, 'GET', '/system/admin/erasures?since=' + Math.floor(snapshotBefore * 1000), null, { Authorization: ADMIN_KEY });
+      assert.strictEqual(list.status, 200, JSON.stringify(list.body));
+      assert.ok(list.body.erasures.some((e) => e.coreId === CORE_A_ID && e.trigger === 'admin'), 'listed from Core B');
+
+      // The restore check, with the key Core B derives, over the shared store:
+      // a restore on Core B of a backup taken before the erasure is refused.
+      const RestoreOrchestrator = require('business/src/backup/RestoreOrchestrator.ts').default;
+      const o = Object.create(RestoreOrchestrator.prototype);
+      o.platformDB = platformDB;
+      o.erasures = null;
+      o.staleErasureMs = 0;
+      o.ledgerConfig = { get: (key) => key === 'auth:adminAccessKey' ? ADMIN_KEY : undefined };
+      o.logger = { debug () {}, info () {}, warn () {}, error () {} };
+      const verdict = await o._erasedSinceBackup({ users: [], snapshotBefore }, [{ userId, username }], false);
+      assert.deepStrictEqual(verdict.refused.map((r) => r.userId), [userId]);
+      const later = await o._erasedSinceBackup({ users: [], snapshotBefore: Date.now() / 1000 + 60 }, [{ userId, username }], false);
+      assert.deepStrictEqual(later.refused, [], 'a backup taken after the erasure is not refused');
+    });
+  });
+
   describe('Core B down', () => {
     it('[2C58] a registration Core A forwards to an unreachable Core B answers 503, not a 500', async () => {
       await stopCore(coreB);

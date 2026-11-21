@@ -744,6 +744,35 @@ account:
       # auth.adminAccessKey.
       identitySecretsKey: null
 
+# === PLATFORM-WIDE policy: set the same values on every core ===
+accountErasure:
+  # The erasure ledger: one durable record per erased account, kept after the
+  # account is gone, in the platform database (replicated to every core). It
+  # names the account only by keyed hashes of its user id and username, with
+  # when it was erased, what decided it (holder, admin, date, inactivity,
+  # transfer-fallback, unfinished-registration, ledger-replay) and on which
+  # core. Read it with GET /system/admin/erasures and
+  # POST /system/admin/erasures/lookup (admin key), or bin/erasures.js. A
+  # restore (bin/backup.js --restore) does not bring back an account erased
+  # after its backup unless --restore-erased; bin/erasures.js --replay erases
+  # again the accounts a restore of the storage itself brought back.
+  ledger:
+    # false: erasures leave no record (no proof, no restore check).
+    enabled: true
+    # Days a record is kept after the erasure, then removed by the sweep;
+    # 0 keeps them forever. Keep them at least as long as your longest backup
+    # retention, or a restore of an older backup is not checked. Every core
+    # purges the shared ledger with its own value: the shortest one set on any
+    # core applies to all, so set the same value everywhere.
+    retentionDays: 1825
+    # Key of the hashes (base64 of 32 bytes, YAML only like other secrets),
+    # the same on every core. Empty: derived from auth.adminAccessKey. Set it
+    # before rotating the admin key: records written under another key stay
+    # listed but are no longer matched by an id or a name, so the lookup, the
+    # restore check and the replay all miss them (they warn with the count).
+    # Destroying the key makes the records anonymous.
+    hmacKey: ''
+
 # === PLATFORM-WIDE schema (CRITICAL — drift corrupts user account data) ===
 # `custom.systemStreams` defines the account-field schema. All cores MUST agree.
 # Targeted for PlatformDB migration in a future release.

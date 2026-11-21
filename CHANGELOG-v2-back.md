@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### Erasure ledger
+
+- `components/business/src/erasureLedger/index.ts`: platform KV rows `account-erasure/<userIdHash>`
+  (`v: 1`, `keyId`, `usernameHash`, `startedAt`, `deletedAt`, `trigger`, `coreId`, `stepsCompleted`,
+  `auditMode`, `attempts`, `serverVersion`, optional `restoredAt`). `userIdHash` = hex
+  HMAC-SHA256(key, `'user-id:' + userId`), `usernameHash` the same over `'username:' + lowercased
+  name`. Key: `accountErasure.ledger.hmacKey` (base64, 32 bytes) or `deriveKey(auth.adminAccessKey,
+  'erasure-ledger-v1')` (HKDF, as `storeKeyHash.ts`); not `platform.piiHmacKey`, whose rotation tool
+  re-keys from plaintext a ledger row no longer has. `keyId` = first 8 hex of HMAC(key, `'key-id'`).
+  Listing reads the prefix whole and orders by (`deletedAt`, `userIdHash`); the cursor is that pair.
+  A secondary key ordered by `deletedAt` is the follow-up past about 100,000 rows (not built).
+  `mergeErasureLedgerRows`: a backup row is written when absent, replaces a live one only with a
+  later `deletedAt`, or adds a later `restoredAt` to the same erasure; never removes.
+  `components/business/src/erasureLedger/config.ts`: defaults and the boot check (config-validation
+  and `bin/check-config.js`, which also hints when the key is derived from the admin key).
+- `deletion.ts`: new recorded step `writeErasureLedger`, last of `erasureSteps` (after
+  `dropHFDataAgain`, before `closeErasureRecord`), so `auth.delete` and `eraseAccount` both run it, and
+  a resumed erasure skips it once recorded done. Skipped for `trigger === 'system'` and an erasure that
+  lost its record. A failed write answers the step's error: the record of the erasure in progress
+  stays and the sweep's completion pass runs this step again.
+- Retention: `purgeErasureLedger(config)` runs after each auto-deletion sweep pass (on every core's
+  designated loop worker; the deletes are idempotent).
+- Admin methods `system.erasures.list` / `system.erasures.get` (declared WITHOUT_USER: audited to
+  syslog only), routes in `routes/system.ts`.
+- Backup: `BackupOrchestrator._backupPlatform` also exports the `account-erasure/` rows (`exportAll`
+  carries only `user-unique/` and `user-indexed/`, on both platform engines, so a platform rebuilt from
+  a backup lost every other row). `RestoreOrchestrator._readPlatform` sets them apart,
+  `_mergeErasureLedger` merges them before the accounts are checked (and from `_writePlatform` for a
+  platform-only restore). `_erasedSinceBackup` refuses an account whose row has `deletedAt` after the
+  backup's data of it and no later `restoredAt`; `restoreErased` (`--restore-erased`) restores and
+  stamps `restoredAt` after the platform rows and aliases. Report fields `erasedSince`,
+  `erasedRestored`. The account is dated by `snapshotBeforeByUser[userId]`, a new field of the merged
+  chain manifest (`FilesystemBackupReader.readManifest`: the `snapshotBefore` of the newest run listing
+  the account), else the manifest's `snapshotBefore`, else `backupTimestamp`; unknown: refused.
+- Review follow-ups: `writeErasureLedger` takes the trigger from the record of the erasure in
+  progress whenever there is one (`null` -> `unknown`), so a resumed legacy erasure is not read as a
+  creation rollback. `writeErasureRecord` keeps an existing row of the same erasure (same `startedAt`,
+  same key, not restored: the step ran twice) and carries `firstDeletedAt` / `firstTrigger` when it
+  replaces a row no restore marked. `_erasedSinceBackup` fails closed (`_erasureLedger()` returns
+  `{ error }` when the key cannot be built: the restore throws unless `restoreErased`), warns when the
+  ledger holds rows of another `keyId` (`otherKeyRecordCount` / `otherKeyWarning`), and also refuses an
+  account whose record of an erasure in progress (of the target id) is stale and started after the
+  snapshot; with the override, `stampRestored` writes that erasure's ledger row already carrying
+  `restoredAt`. `stampRestored` (public, returns the refs it could not mark, report field
+  `restoredStampFailed`) runs in the orchestrator unless `deferRestoredStamp`; `bin/backup.js` defers
+  it until after `--verify-integrity` and marks only the accounts the restore kept (exit code 4 when a
+  mark failed). Lookup answer: `keyId`, `otherKeyRecords`. `bin/erasures.js`: `--list` reads the
+  ledger once, `--check` / `--replay` warn on other-key rows, `--replay` lists ids with date and
+  trigger. `since=` (empty) is refused. `accountErasure:ledger:hmacKey` is not added to
+  `SECRET_PATHS` in config-validation: that list only drives the weak-secret check of the keys
+  `REQUIRED_WHEN` lists (it is no secret registry: no redaction nor cross-core fingerprint reads it),
+  and the key already has its own format check.
+- `bin/erasures.js` (`--list`, `--check`, `--replay [--apply]`); `bin/backup.js --restore-erased`,
+  restore exit codes 3 and 4.
+- Log and help wording: "record of the erasure in progress" for the per-core `account_erasures` row
+  (`users/repository.ts`, `bin/reconcile-user-cores.js`, INSTALL.md).
+- Tests: `components/api-server/test/erasure-ledger.test.js` (`[ERLG]`, `[ERLA]`, `[ERLR]`, `[ERLT]`),
+  `components/business/test/unit/erasureLedger.test.js` (`[ERLU]`, row logic over an in-memory store),
+  `[2CEL1]` in `reg-2core-seq.test.js` (erased on core A, found and refused from core B).
+
 ### Erased accounts: SQLite keep-mode marker, PostgreSQL unindexed-user insert trigger
 
 - `components/storage/src/userLocalDirectory.ts`: `ERASED_MARKER` (`erased.json`), written by

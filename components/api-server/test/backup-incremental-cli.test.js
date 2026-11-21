@@ -302,7 +302,11 @@ describe('[BKIC] bin/backup.js incremental chain, end to end', function () {
     assert.doesNotMatch(refused.stdout, /Restored:/);
     assert.ok(!(await streamsOfB()).includes(streamB), 'B not re-created');
 
-    const asOfFull = runCli(['--restore', dir, '--user', userB, '--through-run', 'full', '--overwrite']);
+    // B was erased after the full run: the erasure ledger refuses it without the override.
+    const erased = runCli(['--restore', dir, '--user', userB, '--through-run', 'full', '--overwrite']);
+    assert.strictEqual(erased.status, 1, erased.stdout + erased.stderr);
+    assert.match(erased.stderr, /after this backup .*--restore-erased/);
+    const asOfFull = runCli(['--restore', dir, '--user', userB, '--through-run', 'full', '--overwrite', '--restore-erased']);
     assertOk(asOfFull, 'restore as of the full run');
     assert.match(asOfFull.stdout, /Restored: 1 users/);
     assert.ok((await streamsOfB()).includes(streamB), 'B is back with its stream');
