@@ -989,8 +989,8 @@ function revocationLagWarnings (config) {
   for (const [key, effect] of knobs) {
     const value = Number(config.get(key));
     if (Number.isFinite(value) && value > REVOCATION_LAG_WARN_SECONDS) {
-      warnings.push(`'${key.replace(':', '.')}' is ${value} s: ${effect} for up to that long, ` +
-        `so ${REVOCATION_LAG_WARN_SECONDS} s is used instead.`);
+      warnings.push(`'${key.replace(':', '.')}' is ${value} s, which would mean ${effect} for up to that long: ` +
+        `${REVOCATION_LAG_WARN_SECONDS} s is used instead.`);
     }
   }
   return warnings;

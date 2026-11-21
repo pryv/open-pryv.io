@@ -179,7 +179,7 @@ class DnsServer {
     this.#tcpMaxConnections = tcpMaxConnections ?? (config.get('dns:tcpMaxConnections') as number) ?? DEFAULT_TCP_MAX_CONNECTIONS;
     this.#localSites = new Set(hostedSiteNames(config));
     this.#coreId = (config.get('core:id') as string) || 'single';
-    this.#coreIds = new Set([this.#coreId]);
+    this.#coreIds = new Set([this.#coreId.toLowerCase()]); // queried names are lowercased
     const rrl: RrlOptions = responseRateLimit ?? readRrlConfig((key: string) => config.get(key));
     this.#rateLimiter = new ResponseRateLimiter(rrl);
     this.#missBudget = new LookupMissBudget({ perSecond: rrl.missesPerSecond ?? 0, slip: rrl.slip });
@@ -698,8 +698,9 @@ class DnsServer {
         // A `<coreId>.<domain>` query, else a username: PlatformDB lookups.
         // Over UDP, a name not already known is metered for the whole server.
         const metered = udpClientAddress != null && !this.#isKnownName(prefix);
+        const admittedAt = Date.now();
         if (metered) {
-          const decision = this.#missBudget.admit();
+          const decision = this.#missBudget.admit(admittedAt);
           if (decision !== 'answer') {
             this.#refuseMiss(response, decision);
             return response;
@@ -710,7 +711,7 @@ class DnsServer {
           found = (await this.#tryAnswerCoreInfo(response, qname, qtype, prefix)) ||
             (await this.#answerUsername(response, qname, qtype, prefix));
         } finally {
-          if (metered) this.#missBudget.done(found);
+          if (metered) this.#missBudget.done(found, admittedAt);
         }
       }
     } catch (err: unknown) {
@@ -850,7 +851,7 @@ class DnsServer {
   async #refreshAdvertisedSites () {
     try {
       const names = new Set<string>();
-      const coreIds = new Set<string>([this.#coreId]);
+      const coreIds = new Set<string>([this.#coreId.toLowerCase()]);
       for (const core of await this.#platform.getAllCoreInfos()) {
         if (typeof core.id === 'string') coreIds.add(core.id.toLowerCase());
         if (Array.isArray(core.sites)) {

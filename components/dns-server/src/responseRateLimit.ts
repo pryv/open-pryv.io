@@ -126,6 +126,13 @@ class ResponseRateLimiter {
   }
 }
 
+/**
+ * A lookup still running stops counting against the budget after this long,
+ * so reads that hang (a platform database without a leader) cannot hold the
+ * budget for good.
+ */
+const RUNNING_LOOKUP_MAX_AGE_MS = 5000;
+
 /** Lookups of unknown names that found nothing, for the whole server (`missesPerSecond`). */
 class LookupMissBudget {
   #perSecond: number;
@@ -133,8 +140,9 @@ class LookupMissBudget {
   #second = -1;
   #misses = 0;
   #refused = 0;
-  // Lookups admitted and still running (not reset each second).
-  #running = 0;
+  // Lookups admitted and still running, by the second they were admitted in
+  // (not reset each second; dropped once older than RUNNING_LOOKUP_MAX_AGE_MS).
+  #running: Map<number, number> = new Map();
 
   constructor ({ perSecond, slip }: { perSecond: number; slip: number }) {
     this.#perSecond = perSecond;
@@ -142,28 +150,44 @@ class LookupMissBudget {
   }
 
   /**
-   * 'answer' (the lookup may run; call `done` when it ends) when this second's
-   * misses and the lookups still running are under the budget, otherwise how
-   * to refuse the query.
+   * 'answer' (the lookup may run; call `done` with the same `nowMs` when it
+   * ends) when this second's misses and the lookups still running are under
+   * the budget, otherwise how to refuse the query.
    */
   admit (nowMs: number = Date.now()): RrlDecision {
     if (this.#perSecond <= 0) return 'answer';
     this.#roll(nowMs);
-    if (this.#misses + this.#running < this.#perSecond) {
-      this.#running++;
+    if (this.#misses + this.#runningCount(nowMs) < this.#perSecond) {
+      const second = Math.floor(nowMs / 1000);
+      this.#running.set(second, (this.#running.get(second) ?? 0) + 1);
       return 'answer';
     }
     this.#refused++;
     return this.#slip > 0 && this.#refused % this.#slip === 0 ? 'slip' : 'drop';
   }
 
-  /** An admitted lookup ended; `found` false counts a miss. */
-  done (found: boolean, nowMs: number = Date.now()): void {
+  /** A lookup admitted at `admittedAtMs` ended; `found` false counts a miss. */
+  done (found: boolean, admittedAtMs: number, nowMs: number = Date.now()): void {
     if (this.#perSecond <= 0) return;
-    this.#running = Math.max(0, this.#running - 1);
+    const second = Math.floor(admittedAtMs / 1000);
+    const n = this.#running.get(second);
+    if (n != null) {
+      if (n <= 1) this.#running.delete(second);
+      else this.#running.set(second, n - 1);
+    }
     if (found) return;
     this.#roll(nowMs);
     this.#misses++;
+  }
+
+  #runningCount (nowMs: number): number {
+    const oldest = Math.floor((nowMs - RUNNING_LOOKUP_MAX_AGE_MS) / 1000);
+    let count = 0;
+    for (const [second, n] of this.#running) {
+      if (second < oldest) this.#running.delete(second);
+      else count += n;
+    }
+    return count;
   }
 
   #roll (nowMs: number): void {

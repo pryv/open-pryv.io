@@ -63,15 +63,27 @@ describe('[DRRL] DNS response rate limit', function () {
     const budget = new LookupMissBudget({ perSecond: 3, slip: 2 });
     assert.deepStrictEqual([0, 1, 2].map(() => budget.admit(t)), ['answer', 'answer', 'answer']);
     assert.strictEqual(budget.admit(t), 'drop', 'three lookups running');
-    budget.done(true, t);
+    budget.done(true, t, t);
     assert.strictEqual(budget.admit(t), 'answer', 'a found name gives its slot back');
-    budget.done(false, t);
-    budget.done(false, t);
-    budget.done(false, t);
+    budget.done(false, t, t);
+    budget.done(false, t, t);
+    budget.done(false, t, t);
     assert.deepStrictEqual([0, 1, 2].map(() => budget.admit(t)), ['slip', 'drop', 'slip'], 'three misses this second');
     assert.strictEqual(budget.admit(t + 1000), 'answer', 'next second');
     const off = new LookupMissBudget({ perSecond: 0, slip: 2 });
-    for (let i = 0; i < 100; i++) { assert.strictEqual(off.admit(t), 'answer'); off.done(false, t); }
+    for (let i = 0; i < 100; i++) { assert.strictEqual(off.admit(t), 'answer'); off.done(false, t, t); }
+  });
+
+  it('[DRRL9] lookups that never end stop holding the budget after 5 s; a late end is harmless', function () {
+    const t = 80_000;
+    const budget = new LookupMissBudget({ perSecond: 2, slip: 0 });
+    assert.deepStrictEqual([budget.admit(t), budget.admit(t)], ['answer', 'answer'], 'two hung lookups');
+    assert.strictEqual(budget.admit(t + 3000), 'drop', 'still held 3 s later');
+    assert.strictEqual(budget.admit(t + 6000), 'answer', 'no longer held 6 s later');
+    budget.done(false, t, t + 6000); // one of the hung lookups ends late: a miss, no slot to give back
+    assert.strictEqual(budget.admit(t + 6000), 'drop', 'one miss + one running');
+    budget.done(true, t + 6000, t + 6000);
+    assert.strictEqual(budget.admit(t + 6000), 'answer', 'the slot given back');
   });
 
   async function burst (names, perSecond, { missesPerSecond, knownUsers = [] } = {}) {

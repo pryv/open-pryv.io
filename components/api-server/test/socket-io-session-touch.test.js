@@ -110,4 +110,17 @@ describe('[SIST] socket.io session touch', function () {
     await call(conn, 'streams.get', {});
     assert.strictEqual(counts.touch, 1, 'not again within the minute');
   });
+
+  // Last: it ends the test account's session.
+  it('[SIST3] once the session has expired, a call does not revive it and the next re-validation disconnects the socket', async function () {
+    const conn = await connect();
+    const serverConn = await serverConnection();
+    await new Promise((resolve, reject) => sessions.expireNow(personalToken, (err) => (err ? reject(err) : resolve())));
+    serverConn.lastSessionTouchAt -= 61_000;
+    await call(conn, 'streams.get', {});
+    const disconnected = new Promise((resolve) => conn.once('disconnect', () => resolve(true)));
+    await serverConn.revalidate(manager.storageLayer);
+    const result = await Promise.race([disconnected, new Promise((resolve) => setTimeout(() => resolve(false), 3000))]);
+    assert.strictEqual(result, true, 'the socket is disconnected');
+  });
 });

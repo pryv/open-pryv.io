@@ -135,7 +135,10 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   know (not a core, not an account in the routing cache) that found nothing, lookups still running
   included. Past it, such queries are refused the same way (dropped, every `slip`-th sent
   truncated) until the next second and logged as "UDP lookup(s) of unknown names refused by
-  dns.responseRateLimit.missesPerSecond"; known names and TCP are still answered. `0` turns it off.
+  dns.responseRateLimit.missesPerSecond"; known names and TCP are still answered. During such a
+  flood, an existing account the DNS has not resolved in the last `positiveTtlMs` (30 s) counts as
+  unknown too: its resolver gets the truncated answer and retries over TCP. A lookup that does not
+  end stops counting after 5 s. `0` turns it off.
 
 ### Open sockets no longer keep a personal session alive on their own (behaviour change)
 
@@ -146,7 +149,8 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   the next re-validation. Calls on the socket keep the session
   alive, as HTTP requests do, with at most one session write per connection a minute. A client
   that only listens for notifications over a personal token must make a call from time to time
-  (or reconnect after a new login).
+  (or reconnect after a new login). A session that has expired is no longer extended by any
+  request, HTTP or socket: it stays expired.
 - **`oauth.clientRevokeCheckSeconds` and `caching.accessMaxAgeSeconds` above 300 are used as
   300.** They bound how long a revoked or narrowed access keeps working where no invalidation
   arrives; the boot warning above 300 s now says that 300 s is used instead.

@@ -88,8 +88,9 @@ class SessionsSQLite {
 
   touch (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     const expires = this.getNewExpirationMs();
+    // An expired session is not extended (it stays expired until read).
     concurrentSafeWrite.execute(() => {
-      return this.db.prepare('UPDATE sessions SET expires = ? WHERE id = ?').run(expires, id);
+      return this.db.prepare('UPDATE sessions SET expires = ? WHERE id = ? AND expires > ?').run(expires, id, Date.now());
     })
       .then((res: unknown) => callback(null, res))
       .catch(callback);

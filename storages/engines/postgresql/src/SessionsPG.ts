@@ -76,7 +76,8 @@ class SessionsPG {
 
   touch (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     const expires = this.getNewExpirationDate();
-    this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2', [expires, id])
+    // An expired session is not extended (it stays expired until read).
+    this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2 AND expires > $3', [expires, id, new Date()])
       .then((res: { rows: Array<{ id?: string; data?: SessionData; expires?: Date | string; [k: string]: unknown }>; rowCount?: number }) => callback(null, res))
       .catch(callback);
   }
