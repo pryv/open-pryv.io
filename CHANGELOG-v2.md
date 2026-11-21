@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Generated tokens drawn from the system's secure random source
+
+- **Access tokens, personal (session) tokens and password-reset tokens that the server generates**
+  are now drawn from `node:crypto` directly, instead of an id library that would silently fall back
+  to a non-cryptographic source where the platform lacks one. Same shape as before (24 lowercase
+  letters and digits, a letter first); existing tokens are unchanged.
+
+### Inter-core certificates: purpose and CA limits
+
+- **Node certificates issued when a core joins a multi-core platform** now state their purpose (an
+  end entity, not a CA; digital signature; TLS server and client authentication) instead of leaving
+  it to each verifier's defaults, and a newly created cluster CA may sign end-entity certificates
+  only (`pathlen:0`). The core id, hostname and address given for a node certificate are checked to
+  be plain names and an IP address. Certificates already issued and existing CAs are unchanged;
+  nothing to do on upgrade.
+
 ### Per-account and per-connection limits (on by default)
 
 New ceilings protect a core from one token or one account taking all of a worker's capacity. Each

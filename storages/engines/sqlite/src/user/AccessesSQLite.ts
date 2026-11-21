@@ -15,6 +15,8 @@ const require = createRequire(import.meta.url);
 const { BaseStorageSQLite, decorateSQLiteDuplicateError } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
 const { createId: generateId } = require('@paralleldrive/cuid2');
+// Bearer secrets from node:crypto (ids keep cuid2).
+const { secureToken } = require('../../../../interfaces/_shared/secureToken.ts');
 const timestamp = require('unix-timestamp');
 const fs = require('fs');
 const path = require('path');
@@ -93,7 +95,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   applyDefaults (item: Partial<AccessItem>): AccessItem {
     const copy = Object.assign({}, item) as AccessItem;
     copy.id = copy.id || generateId();
-    copy.token = copy.token || generateId();
+    copy.token = copy.token || secureToken();
     if (copy.deleted === undefined) copy.deleted = null;
     delete copy.apiEndpoint;
     if (this.integrityAccesses.isActive) {
@@ -104,7 +106,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   }
 
   generateToken (): string {
-    return generateId();
+    return secureToken();
   }
 
   /** Query-shaped deletion lookup (accesses-specific; the base

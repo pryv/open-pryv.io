@@ -11,7 +11,8 @@ import type { SqliteDb } from './types.ts';
 import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 const require = createRequire(import.meta.url);
 
-const { createId: cuid } = require('@paralleldrive/cuid2');
+// A bearer secret: from node:crypto, not an id library.
+const { secureToken } = require('../../../interfaces/_shared/secureToken.ts');
 
 const concurrentSafeWrite = require('./concurrentSafeWrite.ts');
 // `sessions` table row (queries select subsets of these columns)
@@ -74,7 +75,7 @@ class SessionsSQLite {
       callback = options as (err: Error | null, id?: string) => void;
       options = {};
     }
-    const id = cuid();
+    const id = secureToken();
     const sessionData = (data && typeof data === 'object') ? data : {};
     const expires = this.getNewExpirationMs();
     concurrentSafeWrite.execute(() => {

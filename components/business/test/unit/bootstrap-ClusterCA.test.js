@@ -163,6 +163,65 @@ describe('[CLUSTERCA] ClusterCA', function () {
     });
   });
 
+  describe('[CLCX] extensions', () => {
+    const text = (pem) => execFileSync('openssl', ['x509', '-noout', '-text'], { input: pem }).toString();
+
+    it('[CLCX1] the CA is a CA limited to end-entity certs (pathlen 0) that signs certs and CRLs only', () => {
+      const ca = new ClusterCA({ dir: tmpDir });
+      ca.ensure();
+      const t = text(ca.getCACertPem());
+      assert.match(t, /Basic Constraints: critical\s+CA:TRUE, pathlen:0/);
+      assert.match(t, /Key Usage: critical\s+Certificate Sign, CRL Sign/);
+      assert.equal(new crypto.X509Certificate(ca.getCACertPem()).ca, true);
+    });
+
+    it('[CLCX2] a node cert is an end entity for TLS server and client use, signed digitally only', () => {
+      const ca = new ClusterCA({ dir: tmpDir });
+      const { certPem } = ca.issueNodeCert({ coreId: 'core-b', ip: '10.0.0.5', hostname: 'core-b.mc.example.com' });
+      const t = text(certPem);
+      assert.match(t, /Basic Constraints: critical\s+CA:FALSE/);
+      assert.match(t, /Key Usage: critical\s+Digital Signature\s/);
+      assert.match(t, /Extended Key Usage:\s+TLS Web Server Authentication, TLS Web Client Authentication/);
+      assert.match(t, /Authority Key Identifier/);
+      const x509 = new crypto.X509Certificate(certPem);
+      assert.equal(x509.ca, false);
+      assert.match(x509.subjectAltName, /DNS:core-b, DNS:core-b\.mc\.example\.com, IP Address:10\.0\.0\.5/);
+    });
+
+    it('[CLCX4] refuses a coreId, hostname or ip that is not a plain name or address', () => {
+      const ca = new ClusterCA({ dir: tmpDir });
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b\nbasicConstraints = CA:TRUE' }), /invalid coreId/);
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b, DNS:evil.example' }), /invalid coreId/);
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b', hostname: 'x/CN=evil' }), /invalid hostname/);
+      assert.throws(() => ca.issueNodeCert({ coreId: 'core-b', ip: '10.0.0.5, DNS:evil' }), /invalid ip/);
+      assert.ok(ca.issueNodeCert({ coreId: 'core-b', hostname: 'core-b.mc.example.com', ip: '2001:db8::1' }).certPem);
+    });
+
+    it('[CLCX3] a node cert cannot sign another cert that a TLS peer would accept', () => {
+      const ca = new ClusterCA({ dir: tmpDir });
+      const node = ca.issueNodeCert({ coreId: 'core-b' });
+      const nodeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pryv-clcx-'));
+      try {
+        // A cert "issued" by the node cert, then verified against the cluster CA.
+        fs.writeFileSync(path.join(nodeDir, 'node.crt'), node.certPem);
+        fs.writeFileSync(path.join(nodeDir, 'node.key'), node.keyPem);
+        execFileSync('openssl', ['ecparam', '-name', 'prime256v1', '-genkey', '-noout', '-out', path.join(nodeDir, 'leaf.key')]);
+        execFileSync('openssl', ['req', '-new', '-key', path.join(nodeDir, 'leaf.key'), '-subj', '/CN=rogue', '-out', path.join(nodeDir, 'leaf.csr')]);
+        execFileSync('openssl', ['x509', '-req', '-in', path.join(nodeDir, 'leaf.csr'), '-CA', path.join(nodeDir, 'node.crt'),
+          '-CAkey', path.join(nodeDir, 'node.key'), '-CAcreateserial', '-CAserial', path.join(nodeDir, 'node.srl'),
+          '-days', '1', '-out', path.join(nodeDir, 'leaf.crt')]);
+        fs.writeFileSync(path.join(nodeDir, 'ca.crt'), ca.getCACertPem());
+        assert.throws(() => execFileSync('openssl', ['verify', '-CAfile', path.join(nodeDir, 'ca.crt'),
+          '-untrusted', path.join(nodeDir, 'node.crt'), path.join(nodeDir, 'leaf.crt')], { stdio: 'pipe' }),
+        'a chain through a node cert must not verify');
+        // The node cert itself does.
+        execFileSync('openssl', ['verify', '-CAfile', path.join(nodeDir, 'ca.crt'), path.join(nodeDir, 'node.crt')], { stdio: 'pipe' });
+      } finally {
+        fs.rmSync(nodeDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe('validity periods', () => {
     it('respects caValidityDays + nodeValidityDays overrides', () => {
       const ca = new ClusterCA({ dir: tmpDir, caValidityDays: 7, nodeValidityDays: 3 });

@@ -9,7 +9,8 @@ import { createRequire } from 'node:module';
 import type { PasswordResetDoc as ResetDoc, PasswordResetImportDoc as ImportDoc } from '../../../interfaces/baseStorage/PasswordResetRequests.ts';
 const require = createRequire(import.meta.url);
 
-const { createId: cuid } = require('@paralleldrive/cuid2');
+// A bearer secret: from node:crypto, not an id library.
+const { secureToken } = require('../../../interfaces/_shared/secureToken.ts');
 const { hashResetToken } = require('../../../interfaces/baseStorage/PasswordResetRequests.ts');
 
 const DEFAULT_MAX_AGE = 60 * 60 * 1000; // 1 hour
@@ -54,7 +55,7 @@ class PasswordResetRequestsPG {
    * same username and removing expired ones. Returns the token.
    */
   generate (username: string, callback: Cb<string>): void {
-    const token = cuid();
+    const token = secureToken();
     const now = new Date();
     const expires = this.getNewExpirationDate();
     this.db.query(
