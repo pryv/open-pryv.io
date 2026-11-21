@@ -119,4 +119,16 @@ describe('[PGUG] a storage refusal for an account erased while the request ran',
       assert.strictEqual(wrapped.httpStatus, 404, code + ': wrapped');
     }
   });
+
+  it('[PGUG10] is logged at warn with the refusal and its table: outside an erasure it is a write under a wrong id', function () {
+    const source = Object.assign(refused('PU001'), { table: 'accesses' });
+    const err = factory.unexpectedError(Object.assign(new Error('Error from data store "local"'), { innerError: source }));
+    const logged = { debug: [], info: [], warn: [], error: [] };
+    const logger = Object.fromEntries(Object.keys(logged).map((level) => [level, (msg, meta) => logged[level].push({ msg, meta })]));
+    errorHandling.logError(err, { url: '/alice/accesses', method: 'POST' }, logger);
+    assert.strictEqual(logged.warn.length, 1);
+    assert.strictEqual(logged.info.length + logged.error.length, 0);
+    assert.strictEqual(logged.warn[0].meta.table, 'accesses');
+    assert.match(logged.warn[0].meta.refusal, /not in the users index/);
+  });
 });

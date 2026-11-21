@@ -17,6 +17,7 @@ import assert from 'node:assert';
 import * as helpers from '../../../test/helpers/index.js';
 import { DatabasePG } from '../src/DatabasePG.ts';
 import { GUARDED_TABLES, isUnindexedUserError } from '../src/unindexedWritesGuard.ts';
+import { userEvents } from '../src/dataStore/localUserEventsPG.ts';
 
 /** One minimal row per guarded table: [sql, params(userId, n)]. */
 const GUARDED_ROWS = {
@@ -136,6 +137,66 @@ describe('[PGUG] PostgreSQL refusal of rows for an unindexed user id', function 
       writer.release();
       eraser.release();
     }
+  });
+
+  it('[PGUG8] the boot check enables a guard trigger left disabled and creates a missing one, with a warning', async function () {
+    const warns = [];
+    const originalWarn = db.logger.warn;
+    let outcome;
+    await db.query('ALTER TABLE profile DISABLE TRIGGER refuse_unindexed_user');
+    await db.query('DROP TRIGGER refuse_unindexed_user ON webhooks');
+    try {
+      db.logger.warn = (msg) => { warns.push(msg); };
+      outcome = await db.ensureUnindexedWritesGuard();
+    } finally {
+      db.logger.warn = originalWarn;
+      await db.ensureUnindexedWritesGuard(); // whatever happened above, leave the guard whole
+    }
+    assert.strictEqual(outcome.profile, 're-enabled');
+    assert.strictEqual(outcome.webhooks, 'created');
+    assert.strictEqual(outcome.events, 'present');
+    assert.ok(warns.some((m) => m.includes('"profile"')), JSON.stringify(warns));
+    const states = await db.query(
+      "SELECT c.relname AS t, tg.tgenabled AS s FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid WHERE tg.tgname = 'refuse_unindexed_user'");
+    const byTable = Object.fromEntries(states.rows.map((r) => [r.t, r.s]));
+    for (const table of GUARDED_TABLES) assert.strictEqual(byTable[table], 'O', table);
+    for (const table of ['profile', 'webhooks']) {
+      await assert.rejects(insert(GUARDED_ROWS[table]), (err) => err.code === 'PU001' && err.table === table, table);
+    }
+  });
+
+  it('[PGUG9] an event link is written only while its event exists, and an account deletion running meanwhile removes it', async function () {
+    await index();
+    const store = Object.create(userEvents);
+    store.init(db, { removeAllForUser: async () => {}, removeAllForEvent: async () => {}, getFileStorageInfos: async () => 0 }, {}, () => {}, {});
+    const links = async () => (await db.query('SELECT count(*)::int AS c FROM event_streams WHERE user_id = $1', [userId])).rows[0].c;
+    // No event: no link, through the link sync and through an update that matched nothing.
+    await store._syncEventStreams(userId, 'pgug-missing', ['s1'], db.query.bind(db));
+    assert.strictEqual(await store.update(userId, { id: 'pgug-missing', content: 'x', streamIds: ['s1'] }, null, { skipVersioning: true }), false);
+    assert.strictEqual(await links(), 0, 'links without their event');
+
+    await db.query('INSERT INTO events (user_id, id) VALUES ($1, $2)', [userId, 'pgug-e9']);
+    const writer = await db.getClient();
+    try {
+      await writer.query('BEGIN');
+      await store._syncEventStreams(userId, 'pgug-e9', ['s1', 's2'], writer.query.bind(writer));
+      // The account's data removal starts while the link insert is in flight.
+      let deleted = false;
+      const deletion = store._deleteUser(userId).then(() => { deleted = true; });
+      await sleep(300);
+      assert.strictEqual(deleted, false, 'the event was deleted while a link insert holding it was in flight');
+      await writer.query('COMMIT');
+      await deletion;
+    } finally {
+      await writer.query('ROLLBACK').catch(() => {});
+      writer.release();
+    }
+    assert.strictEqual(await links(), 0, 'links left after the deletion');
+    const events = await db.query('SELECT count(*)::int AS c FROM events WHERE user_id = $1', [userId]);
+    assert.strictEqual(events.rows[0].c, 0);
+    // Written once the event is gone: nothing stored.
+    await store._syncEventStreams(userId, 'pgug-e9', ['s1'], db.query.bind(db));
+    assert.strictEqual(await links(), 0, 'a link written after its event is gone');
   });
 
   it('[PGUG4] the session setting pryv.unindexed_writes = allow lifts the refusal for that session only', async function () {

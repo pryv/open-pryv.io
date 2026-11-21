@@ -334,16 +334,16 @@ const userEvents = ds.createUserEvents({
       const casClause = onlyIfNotTrashed ? ' AND (trashed IS NULL OR trashed = FALSE)' : '';
       const sql = `UPDATE events SET ${setClauses.join(', ')} WHERE user_id = $1 AND id = $2${casClause}`;
       const res = await queryFn(sql, params);
-      // A CAS miss is a normal outcome (someone else got there first), not a
-      // reason to touch event_streams.
-      if (onlyIfNotTrashed && res.rowCount !== 1) return false;
+      // No event updated (a CAS miss, or the event or its account is gone):
+      // nothing to link in event_streams.
+      if (res.rowCount !== 1) return false;
 
       // Sync event_streams if streamIds changed
       if (eventData.streamIds) {
         await this._syncEventStreams(userId, eventData.id, eventData.streamIds, queryFn);
       }
 
-      return res.rowCount === 1;
+      return true;
     } catch (err: unknown) {
       throw errors.unexpectedError(err);
     }
@@ -512,16 +512,27 @@ const userEvents = ds.createUserEvents({
         [userId, streamId]
       );
       const streamPath = pathRes.rows.length > 0 ? pathRes.rows[0].path : streamId + '/';
+      // Only while the event row exists, and holding it: an account erasure
+      // deletes `events` before `event_streams` (`_deleteUser`), so its event
+      // delete waits for this insert, and its junction delete then sees the
+      // row; a link written after the event is gone stores nothing. (Same
+      // lock argument as the users-index guard of the events table.)
       await queryFn(
-        'INSERT INTO event_streams (user_id, event_id, stream_id, stream_path) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+        'INSERT INTO event_streams (user_id, event_id, stream_id, stream_path) ' +
+        'SELECT $1::text, $2::text, $3::text, $4::text ' +
+        'WHERE EXISTS (SELECT 1 FROM events WHERE user_id = $1::text AND id = $2::text FOR KEY SHARE) ' +
+        'ON CONFLICT DO NOTHING',
         [userId, eventId, streamId, streamPath]
       );
     }
   },
 
   async _deleteUser (this: Store, userId: string): Promise<void> {
-    await this.db.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
+    // Events first: a junction insert in flight holds its event row (see
+    // _syncEventStreams), so this waits for it and the junction delete below
+    // removes what it wrote.
     await this.db.query('DELETE FROM events WHERE user_id = $1', [userId]);
+    await this.db.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
     await this.eventsFileStorage.removeAllForUser(userId);
   },
 

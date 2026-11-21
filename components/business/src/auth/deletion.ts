@@ -77,13 +77,13 @@ function errorText (err: unknown): string {
 
 /**
  * The refusal of per-user file storage to reopen an erased account's files,
- * or of PostgreSQL to store a row for an id the users index no longer holds
- * (SQLSTATE PU001), possibly wrapped.
+ * possibly wrapped. (PostgreSQL's refusal of rows of an unindexed id, PU001,
+ * is not one: no erasure step inserts a row, so it would only hide a fault.)
  */
 function isErasedUserError (err: unknown): boolean {
   for (let e = err, depth = 0; e != null && depth < 5; depth++) {
-    const x = e as { name?: unknown; message?: unknown; code?: unknown; innerError?: unknown; cause?: unknown };
-    if (x.name === 'ErasedUserError' || x.code === 'PU001' || (typeof x.message === 'string' && x.message.startsWith('user directory erased'))) return true;
+    const x = e as { name?: unknown; message?: unknown; innerError?: unknown; cause?: unknown };
+    if (x.name === 'ErasedUserError' || (typeof x.message === 'string' && x.message.startsWith('user directory erased'))) return true;
     e = x.innerError ?? x.cause;
   }
   return false;
