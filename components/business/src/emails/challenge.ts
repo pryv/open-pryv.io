@@ -40,7 +40,8 @@ import * as policy from './registrationPolicy.ts';
 
 /** 32 symbols, no 0/O/1/I: the holder retypes this from another device. */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-export const CODE_LENGTH = 8;
+/** 10 symbols, 50 bits; the attempt budgets below carry the rest of the argument. */
+export const CODE_LENGTH = 10;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -98,9 +99,9 @@ export function generateCode (): string {
   return out;
 }
 
-/** Display form: easier to read back off a screen than eight run-together symbols. */
+/** Display form: two groups of five, easier to read back off a screen than ten run-together symbols. */
 export function formatCode (code: string): string {
-  return code.slice(0, 4) + '-' + code.slice(4);
+  return code.slice(0, 5) + '-' + code.slice(5);
 }
 
 /**

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Registration email codes have 10 symbols
+
+- **The code `POST /reg/email-challenge` mails has 10 symbols (about 50 bits), shown `XXXXX-XXXXX`**, from the same
+  alphabet (no 0, O, 1 or I); it had 8. The attempt budgets are unchanged. A code mailed before the upgrade still
+  verifies; the separator and the case still do not matter.
+- **Release order:** an auth page that caps the code field at 8 symbols cannot submit the new codes. Deploy
+  app-web-user-account from its release that takes 10 symbols before, or with, this core; a custom registration
+  page must accept 10 symbols too.
+
 ### Generated tokens drawn from the system's secure random source
 
 - **Access tokens, personal (session) tokens and password-reset tokens that the server generates**
