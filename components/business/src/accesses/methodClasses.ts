@@ -19,7 +19,7 @@
  * 4. `write` when `last` starts with create / update / delete / set / replace /
  *    claim / release / change / accept / refuse / cancel / detach / dismiss /
  *    issue / notify / request / reset / verify / test / transfer / deactivate /
- *    erase, or is adminRelease or extIdRelease;
+ *    erase / rotate, or is adminRelease or extIdRelease;
  * 5. else `other`.
  */
 
@@ -34,7 +34,7 @@ const READ_NAMES = new Set(['info', 'usernameChanges', 'controlledStatus', 'extI
 const WRITE_PREFIXES = [
   'create', 'update', 'delete', 'set', 'replace', 'claim', 'release', 'change', 'accept', 'refuse',
   'cancel', 'detach', 'dismiss', 'issue', 'notify', 'request', 'reset', 'verify', 'test', 'transfer',
-  'deactivate', 'erase'
+  'deactivate', 'erase', 'rotate'
 ];
 const WRITE_NAMES = new Set(['adminRelease', 'extIdRelease']);
 
