@@ -12,7 +12,7 @@ const assert = require('assert');
 const dgram = require('dgram');
 const dns2 = require('dns2');
 const { Packet } = dns2;
-const { ResponseRateLimiter, networkOf, readRrlConfig, RRL_DEFAULTS } = require('../src/responseRateLimit.ts');
+const { ResponseRateLimiter, LookupMissBudget, networkOf, readRrlConfig, RRL_DEFAULTS } = require('../src/responseRateLimit.ts');
 const { createDnsServer } = require('../src/index.ts');
 
 /**
@@ -53,22 +53,39 @@ describe('[DRRL] DNS response rate limit', function () {
     assert.ok(rrl.size <= 100, 'same second: cleared when nothing is stale: ' + rrl.size);
   });
 
-  it('[DRRL4] defaults: 20 answers a second, slip 2', function () {
+  it('[DRRL4] defaults: 20 answers a second per network, slip 2, 100 misses a second for the server', function () {
     assert.deepStrictEqual(readRrlConfig(() => undefined), { ...RRL_DEFAULTS });
-    assert.deepStrictEqual({ ...RRL_DEFAULTS }, { perSecond: 20, slip: 2 });
+    assert.deepStrictEqual({ ...RRL_DEFAULTS }, { perSecond: 20, slip: 2, missesPerSecond: 100 });
   });
 
-  async function burst (names, perSecond) {
+  it('[DRRL7] miss budget: misses and running lookups count; past it refused (every slip-th truncated); found names give their slot back; next second starts over; 0 is off', function () {
+    const t = 50_000;
+    const budget = new LookupMissBudget({ perSecond: 3, slip: 2 });
+    assert.deepStrictEqual([0, 1, 2].map(() => budget.admit(t)), ['answer', 'answer', 'answer']);
+    assert.strictEqual(budget.admit(t), 'drop', 'three lookups running');
+    budget.done(true, t);
+    assert.strictEqual(budget.admit(t), 'answer', 'a found name gives its slot back');
+    budget.done(false, t);
+    budget.done(false, t);
+    budget.done(false, t);
+    assert.deepStrictEqual([0, 1, 2].map(() => budget.admit(t)), ['slip', 'drop', 'slip'], 'three misses this second');
+    assert.strictEqual(budget.admit(t + 1000), 'answer', 'next second');
+    const off = new LookupMissBudget({ perSecond: 0, slip: 2 });
+    for (let i = 0; i < 100; i++) { assert.strictEqual(off.admit(t), 'answer'); off.done(false, t); }
+  });
+
+  async function burst (names, perSecond, { missesPerSecond, knownUsers = [] } = {}) {
     const lookups = { user: 0, core: 0 };
     const platform = {
-      async getUserCore () { lookups.user++; return null; },
-      async getCoreInfo () { lookups.core++; return null; },
-      async getAllCoreInfos () { return []; }
+      async getUserCore (name) { lookups.user++; return knownUsers.includes(name) ? 'core-a' : null; },
+      async getCoreInfo (id) { lookups.core++; return id === 'core-a' ? { id, ip: '192.0.2.20' } : null; },
+      async getAllCoreInfos () { return []; },
+      peekUserCoreForRouting (name) { return knownUsers.includes(name) ? 'core-a' : undefined; }
     };
     const store = { 'dns:domain': 'rrl.test', 'dns:defaultTTL': 60, 'dns:staticEntries': { www: { a: ['192.0.2.10'] } }, 'dns:records:root': { a: ['192.0.2.1'] } };
     const warnings = [];
     const logger = { info () {}, warn (m) { warnings.push(m); }, error () {}, debug () {} };
-    const server = createDnsServer({ config: { get: (k) => store[k] }, platform, logger, platformRefreshIntervalMs: 0, responseRateLimit: { perSecond, slip: 2 } });
+    const server = createDnsServer({ config: { get: (k) => store[k] }, platform, logger, platformRefreshIntervalMs: 0, responseRateLimit: { perSecond, slip: 2, missesPerSecond } });
     await server.start({ port: 0, ip: '127.0.0.1' });
     const { port } = server._getAddresses().udp;
     const client = dgram.createSocket('udp4');
@@ -113,5 +130,20 @@ describe('[DRRL] DNS response rate limit', function () {
     assert.strictEqual(replies.length, 12);
     assert.ok(replies.every((r) => r.header.tc === 0 && r.answers.length === 1));
     assert.deepStrictEqual(lookups, { user: 0, core: 0 });
+  });
+
+  it('[DRRL8] unknown names from any network: past missesPerSecond for the server they cost no lookup and are refused; an account in the routing cache is still answered', async function () {
+    const names = Array.from({ length: 12 }, (_, i) => `forged${i}.rrl.test`);
+    names.push('alice.rrl.test');
+    const { replies, lookups, warnings } = await burst(names, 0, { missesPerSecond: 3, knownUsers: ['alice'] });
+    const misses = replies.filter((r) => r.header.tc === 0 && /^forged/.test(r.questions[0].name));
+    // 3 per second (6 if the burst crossed a second boundary).
+    assert.ok(misses.length >= 3 && misses.length <= 6, 'unknown names looked up: ' + misses.length);
+    assert.ok(misses.every((r) => r.header.rcode === 3), 'NXDOMAIN');
+    assert.ok(replies.some((r) => r.header.tc === 1), 'some refused queries slip through truncated');
+    assert.strictEqual(lookups.user, misses.length + 1, 'refused names cost no lookup (alice costs one)');
+    const alice = replies.find((r) => r.questions[0].name === 'alice.rrl.test');
+    assert.ok(alice != null && alice.header.tc === 0 && alice.answers.length === 1, 'the known account is answered');
+    assert.ok(warnings.some((w) => /refused by dns\.responseRateLimit\.missesPerSecond/.test(w)), warnings.join(' | '));
   });
 });

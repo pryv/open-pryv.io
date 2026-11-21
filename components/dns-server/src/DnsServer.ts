@@ -27,7 +27,7 @@ import { validateRequest, isIgnorableUdpSource } from './wire.ts';
 import type { WireResult, WireHeader } from './wire.ts';
 import { validateDnsRecord, isEncodableAnswer, normalizeStoredRecord } from './recordValidation.ts';
 import type { EncodableAnswer } from './recordValidation.ts';
-import { ResponseRateLimiter, readRrlConfig, networkOf } from './responseRateLimit.ts';
+import { ResponseRateLimiter, LookupMissBudget, readRrlConfig, networkOf } from './responseRateLimit.ts';
 const require = createRequire(import.meta.url);
 
 const dns2 = require('dns2');
@@ -111,7 +111,9 @@ type PlatformLike = {
   getCoreInfo: (coreId: string) => Promise<CoreInfo | null>;
   getUserCore: (username: string) => Promise<string | null>;
   getUserCoreForRouting?: (username: string) => Promise<string | null>;
+  peekUserCoreForRouting?: (username: string) => string | null | undefined;
 };
+type RrlOptions = { perSecond: number; slip: number; missesPerSecond?: number };
 
 class DnsServer {
   #config: BoilerConfig;
@@ -146,6 +148,11 @@ class DnsServer {
   #rrlPending = 0;
   #rrlSample: string | null = null;
   #rrlTimer: NodeJS.Timeout | null = null;
+  // UDP lookups of unknown names that found nothing, for the whole server
+  // (dns.responseRateLimit.missesPerSecond), and its own aggregated warning.
+  #missBudget: LookupMissBudget;
+  #missPending = 0;
+  #missTimer: NodeJS.Timeout | null = null;
 
   /**
    * @param opts.config - @pryv/boiler config
@@ -154,9 +161,9 @@ class DnsServer {
    * @param [opts.platformRefreshIntervalMs] - override refresh interval (tests)
    * @param [opts.tcpIdleTimeoutMs] - override the TCP idle timeout (tests)
    * @param [opts.tcpMaxConnections] - override the TCP connection cap (tests)
-   * @param [opts.responseRateLimit] - override `dns.responseRateLimit` (tests)
+   * @param [opts.responseRateLimit] - override `dns.responseRateLimit` (tests; `missesPerSecond` absent = off)
    */
-  constructor ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number; responseRateLimit?: { perSecond: number; slip: number } }) {
+  constructor ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number; responseRateLimit?: RrlOptions }) {
     this.#config = config;
     this.#platform = platform;
     this.#logger = logger;
@@ -173,7 +180,9 @@ class DnsServer {
     this.#localSites = new Set(hostedSiteNames(config));
     this.#coreId = (config.get('core:id') as string) || 'single';
     this.#coreIds = new Set([this.#coreId]);
-    this.#rateLimiter = new ResponseRateLimiter(responseRateLimit ?? readRrlConfig((key: string) => config.get(key)));
+    const rrl: RrlOptions = responseRateLimit ?? readRrlConfig((key: string) => config.get(key));
+    this.#rateLimiter = new ResponseRateLimiter(rrl);
+    this.#missBudget = new LookupMissBudget({ perSecond: rrl.missesPerSecond ?? 0, slip: rrl.slip });
   }
 
   /**
@@ -316,6 +325,11 @@ class DnsServer {
       clearTimeout(this.#rrlTimer);
       this.#rrlTimer = null;
       this.#flushRateLimited();
+    }
+    if (this.#missTimer) {
+      clearTimeout(this.#missTimer);
+      this.#missTimer = null;
+      this.#flushMissRefused();
     }
     if (this.#udpSockets.size > 0 || this.#tcpServers.size > 0) {
       await this.#closeListeners();
@@ -680,11 +694,24 @@ class DnsServer {
         // A name answered by PlatformDB lookups (core info, then username)
         // over UDP: past dns.responseRateLimit for its network, no lookup.
         return response;
-      } else if (await this.#tryAnswerCoreInfo(response, qname, qtype, prefix)) {
-        // Was a `<coreId>.<domain>` query — answered from PlatformDB.
       } else {
-        // Assume it's a username — look up the user's core
-        await this.#answerUsername(response, qname, qtype, prefix);
+        // A `<coreId>.<domain>` query, else a username: PlatformDB lookups.
+        // Over UDP, a name not already known is metered for the whole server.
+        const metered = udpClientAddress != null && !this.#isKnownName(prefix);
+        if (metered) {
+          const decision = this.#missBudget.admit();
+          if (decision !== 'answer') {
+            this.#refuseMiss(response, decision);
+            return response;
+          }
+        }
+        let found = false;
+        try {
+          found = (await this.#tryAnswerCoreInfo(response, qname, qtype, prefix)) ||
+            (await this.#answerUsername(response, qname, qtype, prefix));
+        } finally {
+          if (metered) this.#missBudget.done(found);
+        }
       }
     } catch (err: unknown) {
       this.#warnAgg('answer', `${JSON.stringify(qname)}: ${(err as Error).message}`);
@@ -904,8 +931,9 @@ class DnsServer {
 
   /**
    * Answer {username}.{domain} — look up user's core, return its IP or CNAME.
+   * Returns whether the name was found.
    */
-  async #answerUsername (response: BuiltResponse, qname: string, qtype: number, username: string) {
+  async #answerUsername (response: BuiltResponse, qname: string, qtype: number, username: string): Promise<boolean> {
     // Cached per process: a query for a random name costs one PlatformDB read
     // per name and cache window, not one per datagram.
     const coreId = this.#platform.getUserCoreForRouting != null
@@ -913,16 +941,26 @@ class DnsServer {
       : await this.#platform.getUserCore(username);
     if (coreId == null) {
       this.#setNxdomain(response);
-      return;
+      return false;
     }
 
     const coreInfo = await this.#platform.getCoreInfo(coreId);
     if (coreInfo == null) {
       this.#setNxdomain(response);
-      return;
+      return false;
     }
 
     this.#emitCoreInfoRecords(response, qname, qtype, coreInfo);
+    return true;
+  }
+
+  /**
+   * A name known without a lookup: a core id seen at the last refresh, or an
+   * account in the routing cache (a cached unknown name is not known).
+   */
+  #isKnownName (prefix: string): boolean {
+    if (this.#coreIds.has(prefix)) return true;
+    return typeof this.#platform.peekUserCoreForRouting?.(prefix) === 'string';
   }
 
   /**
@@ -990,6 +1028,25 @@ class DnsServer {
     return true;
   }
 
+  /** A query refused by the server-wide miss budget (`response.limited` set). */
+  #refuseMiss (response: BuiltResponse, decision: 'slip' | 'drop'): void {
+    response.limited = decision;
+    this.#missPending++;
+    if (this.#missTimer == null) {
+      this.#missTimer = setTimeout(() => this.#flushMissRefused(), WARN_WINDOW_MS);
+      if (typeof this.#missTimer.unref === 'function') this.#missTimer.unref();
+    }
+  }
+
+  #flushMissRefused () {
+    const n = this.#missPending;
+    this.#missPending = 0;
+    this.#missTimer = null;
+    if (n > 0) {
+      this.#logger.warn(`DNS: ${n} UDP lookup(s) of unknown names refused by dns.responseRateLimit.missesPerSecond in the last ${WARN_WINDOW_MS / 1000}s`);
+    }
+  }
+
   #flushRateLimited () {
     const n = this.#rrlPending;
     const sample = this.#rrlSample;
@@ -1025,7 +1082,7 @@ class DnsServer {
 /**
  * Factory function.
  */
-function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number; responseRateLimit?: { perSecond: number; slip: number } }) {
+function createDnsServer ({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit }: { config: BoilerConfig; platform: PlatformLike; logger: Logger; platformRefreshIntervalMs?: number; tcpIdleTimeoutMs?: number; tcpMaxConnections?: number; responseRateLimit?: RrlOptions }) {
   return new DnsServer({ config, platform, logger, platformRefreshIntervalMs, tcpIdleTimeoutMs, tcpMaxConnections, responseRateLimit });
 }
 

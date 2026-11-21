@@ -971,14 +971,14 @@ function ssoWarnings (config) {
   return warnings;
 }
 
-/** Above this, a revocation-lag setting gets a boot warning. */
+/** Above this, a revocation-lag setting is clamped to it, with a boot warning. */
 const REVOCATION_LAG_WARN_SECONDS = 300;
 
 /**
  * The settings that bound how long a revoked or narrowed access keeps
  * working where no invalidation message arrives: the open-socket
- * re-validation interval and the access cache lifetime. Accepted at any
- * value; above five minutes the operator is told what it costs.
+ * re-validation interval and the access cache lifetime. Above five minutes
+ * they are used as five minutes, and the operator is told.
  */
 function revocationLagWarnings (config) {
   const warnings = [];
@@ -989,8 +989,8 @@ function revocationLagWarnings (config) {
   for (const [key, effect] of knobs) {
     const value = Number(config.get(key));
     if (Number.isFinite(value) && value > REVOCATION_LAG_WARN_SECONDS) {
-      warnings.push(`'${key.replace(':', '.')}' is ${value} s: ${effect} for up to that long. ` +
-        `Values above ${REVOCATION_LAG_WARN_SECONDS} s are not recommended.`);
+      warnings.push(`'${key.replace(':', '.')}' is ${value} s: ${effect} for up to that long, ` +
+        `so ${REVOCATION_LAG_WARN_SECONDS} s is used instead.`);
     }
   }
   return warnings;

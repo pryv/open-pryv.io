@@ -756,10 +756,10 @@ describe('[CVRL] revocation-lag settings', () => {
     return { get, getScopeAndValue: (key) => ({ value: get(key), scope: 'override-file', info: '' }) };
   }
 
-  it('[CVRL1] a socket re-validation interval or an access cache lifetime above 300 s is a boot warning', () => {
+  it('[CVRL1] a socket re-validation interval or an access cache lifetime above 300 s is a boot warning saying 300 s is used', () => {
     const warnings = collectWarnings(configWith({ oauth: { clientRevokeCheckSeconds: 3600 }, caching: { accessMaxAgeSeconds: 900 } }));
-    assert.ok(warnings.some((w) => /oauth\.clientRevokeCheckSeconds' is 3600 s/.test(w)), JSON.stringify(warnings));
-    assert.ok(warnings.some((w) => /caching\.accessMaxAgeSeconds' is 900 s/.test(w)), JSON.stringify(warnings));
+    assert.ok(warnings.some((w) => /oauth\.clientRevokeCheckSeconds' is 3600 s.*300 s is used instead/.test(w)), JSON.stringify(warnings));
+    assert.ok(warnings.some((w) => /caching\.accessMaxAgeSeconds' is 900 s.*300 s is used instead/.test(w)), JSON.stringify(warnings));
   });
 
   it('[CVRL2] values up to 300 s, or unset, are not reported', () => {

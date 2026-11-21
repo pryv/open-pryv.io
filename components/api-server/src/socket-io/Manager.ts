@@ -53,6 +53,12 @@ const MAX_SCOPE_KEY_LENGTH = 256;
  * read; within this window, further changes cost one more pass at its end.
  */
 const REVALIDATION_WINDOW_MS = 1000;
+/**
+ * Calls on a connection keep a personal session alive like HTTP requests do,
+ * with at most one session write per connection in this interval. The
+ * periodic re-validation does not, so an idle socket lets its session expire.
+ */
+const SESSION_TOUCH_INTERVAL_MS = 60_000;
 
 /**
  * A ceiling's current value, read at each use so a configuration change
@@ -524,6 +530,9 @@ class Connection {
 
   // Calls running on this connection (see onMethodCall).
   inflightCalls = 0;
+
+  // When a call last kept the session alive (the handshake did, at connection).
+  lastSessionTouchAt = performance.now();
   constructor (logger: Logger, socket: SocketLike, namespaceContext: NamespaceContext, methodContext: MethodContext, api: Api, apiVersion: string | null, hostname: string, storageLayer: unknown) {
     this.socket = socket;
     this.methodContext = methodContext;
@@ -722,6 +731,7 @@ class Connection {
       return callback(tooManyRequestsData(`At most ${maxInflight} calls run at once on one connection; wait for an answer before sending more.`));
     }
     this.inflightCalls++;
+    this.touchSessionOnActivity();
     try {
       // Scoped-subscription protocol messages are handled inline, not
       // dispatched to the API (the wildcard '*' handler catches every
@@ -733,6 +743,15 @@ class Connection {
     } finally {
       this.inflightCalls--;
     }
+  }
+
+  // A call is activity: keep the personal session alive, at most once per
+  // SESSION_TOUCH_INTERVAL_MS (see there).
+  touchSessionOnActivity (): void {
+    const now = performance.now();
+    if (now - this.lastSessionTouchAt < SESSION_TOUCH_INTERVAL_MS) return;
+    this.lastSessionTouchAt = now;
+    this.methodContext.touchSession(this.storageLayer as Parameters<MethodContext['touchSession']>[0]);
   }
 
   async runMethodCall (apiMethod: string, params: unknown, callback: SocketCallback) {

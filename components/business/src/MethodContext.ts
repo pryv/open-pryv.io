@@ -22,6 +22,8 @@ const cache = require('cache').default;
 const { DummyTracing } = require('tracing');
 const AUTH_SEPARATOR = ' ';
 const ACCESS_TYPE_PERSONAL = 'personal';
+/** Longest revocation lag a setting may introduce (`oauth.clientRevokeCheckSeconds`). */
+const REVOCATION_LAG_MAX_SECONDS = 300;
 
 class MethodContext {
   source: ContextSource;
@@ -261,7 +263,7 @@ class MethodContext {
    * a subclass of APIError.
    *
    */
-  async retrieveExpandedAccess (storage: StorageLike) { // storage layer; not modelled
+  async retrieveExpandedAccess (storage: StorageLike, { touchSession = true }: { touchSession?: boolean } = {}) { // storage layer; not modelled
     try {
       if (this.access == null) { await this.retrieveAccessFromToken(storage); }
       const access = this.access;
@@ -290,8 +292,9 @@ class MethodContext {
       const customAuthStep = this.customAuthStepFn;
       if (customAuthStep != null) { await this.performCustomAuthStep(customAuthStep); }
       // Keep the session alive only once every check passed: a call the
-      // custom auth step refuses does not extend it.
-      this.touchSession(storage);
+      // custom auth step refuses does not extend it. A re-validation is not
+      // activity and passes `touchSession: false`.
+      if (touchSession) this.touchSession(storage);
       // those 2 last are executed in callbatch for each call.
       // Load the streams we can access (once per access object: a cached
       // access shares its first load with every later request).
@@ -315,14 +318,16 @@ class MethodContext {
    * Re-reads the access from storage (never from the access cache) and runs
    * every expansion check on a copy of this context. `this.access` is replaced
    * only once the fresh access passed them all, so calls sharing this context
-   * never see it unset. Throws like retrieveExpandedAccess.
+   * never see it unset. Throws like retrieveExpandedAccess. Does not keep the
+   * session alive: a periodic re-validation is not activity, so an idle open
+   * socket lets its personal session expire.
    */
   async refreshExpandedAccessFromStorage (storage: StorageLike) {
     const fresh: MethodContext = Object.assign(Object.create(Object.getPrototypeOf(this)), this, {
       access: null,
       bypassAccessCache: true
     });
-    await fresh.retrieveExpandedAccess(storage);
+    await fresh.retrieveExpandedAccess(storage, { touchSession: false });
     this.access = fresh.access;
   }
 
@@ -576,10 +581,11 @@ class MethodContext {
     // Clamp the configured TTL: a non-numeric value would make the cache's
     // `now - loadedAt > NaN` always false (never refresh → revoke never takes
     // effect); a non-positive value would refresh on every request.
+    // At most REVOCATION_LAG_MAX_SECONDS (the boot check warns above it).
     let ttlSeconds = 30;
     try {
       const configured = Number(require('@pryv/boiler').getConfigSync().get('oauth:clientRevokeCheckSeconds'));
-      if (Number.isFinite(configured) && configured > 0) ttlSeconds = configured;
+      if (Number.isFinite(configured) && configured > 0) ttlSeconds = Math.min(configured, REVOCATION_LAG_MAX_SECONDS);
     } catch { /* config not booted (unit contexts) — keep the default */ }
     const { getRevokedAt } = require('oauth2/src/revokedClientsCache.ts');
     const { issuedBeforeClientRevoke } = require('oauth2/src/storage.ts');

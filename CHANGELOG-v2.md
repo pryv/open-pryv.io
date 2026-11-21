@@ -129,6 +129,27 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   than 60 times in a minute gets **429 `too-many-requests`** for names not already cached until the
   minute ends; names it already looked up (existing accounts or not) keep their answer, and other
   clients are not affected. Counted per API worker. `0` turns it off.
+- **DNS lookups of unknown names, server-wide: `dns.responseRateLimit.missesPerSecond` (default
+  100).** Forged queries for random names spread over many networks pass the per-network limit.
+  The embedded DNS now bounds, for the whole server, the UDP lookups of names it does not already
+  know (not a core, not an account in the routing cache) that found nothing, lookups still running
+  included. Past it, such queries are refused the same way (dropped, every `slip`-th sent
+  truncated) until the next second and logged as "UDP lookup(s) of unknown names refused by
+  dns.responseRateLimit.missesPerSecond"; known names and TCP are still answered. `0` turns it off.
+
+### Open sockets no longer keep a personal session alive on their own (behaviour change)
+
+- **The periodic re-validation of open socket.io connections** (every
+  `oauth.clientRevokeCheckSeconds`) re-checks the access and its session but no longer extends the
+  session: a socket left open with no calls lets its personal session expire after
+  `auth.sessionMaxAge` (14 days by default) like an idle browser tab, and is then disconnected at
+  the next re-validation. Calls on the socket keep the session
+  alive, as HTTP requests do, with at most one session write per connection a minute. A client
+  that only listens for notifications over a personal token must make a call from time to time
+  (or reconnect after a new login).
+- **`oauth.clientRevokeCheckSeconds` and `caching.accessMaxAgeSeconds` above 300 are used as
+  300.** They bound how long a revoked or narrowed access keeps working where no invalidation
+  arrives; the boot warning above 300 s now says that 300 s is used instead.
 
 ### Webhooks per access, per account and scopes per webhook (on by default)
 

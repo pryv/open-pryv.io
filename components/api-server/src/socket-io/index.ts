@@ -114,12 +114,14 @@ async function setupSocketIO (server: HttpServer, api: { call: (...args: unknown
   // periodically revalidates every connection (re-runs retrieveExpandedAccess →
   // the revoke check → disconnect on failure), bounding a revoked client's
   // socket lifetime to ~clientRevokeCheckSeconds instead of the connection's
-  // full life. revalidateConnections is fire-and-forget per connection.
+  // full life. revalidateConnections is fire-and-forget per connection. The
+  // sweep does not keep personal sessions alive (calls on the socket do). Its
+  // interval stays within 5 s and 300 s (the boot check warns above 300 s).
   const { getConfigSync } = require('@pryv/boiler');
   let revokeSweepSeconds = 30;
   try {
     const configured = Number(getConfigSync().get('oauth:clientRevokeCheckSeconds'));
-    if (Number.isFinite(configured) && configured > 0) revokeSweepSeconds = configured;
+    if (Number.isFinite(configured) && configured > 0) revokeSweepSeconds = Math.min(configured, 300);
   } catch { /* keep default */ }
   const revokeSweep = setInterval(() => {
     try { manager.revalidateConnections(); } catch (err: unknown) {

@@ -17,11 +17,19 @@
  * truncated (TC=1, no records) so a real resolver behind that network retries
  * over TCP, which a forged source cannot complete. TCP is not limited here.
  * `perSecond` 0 turns the limit off; `slip` 0 drops every refused answer.
+ *
+ * A flood of distinct random names from forged sources spread over many
+ * networks passes every per-network limit. `missesPerSecond` bounds, for the
+ * whole server, the UDP lookups of names not already known (not a core, not
+ * in the routing cache as an account) that found nothing; lookups still
+ * running count against it too. Past it such queries are refused the same way
+ * (dropped, every `slip`-th sent truncated) until the next second, while known
+ * names and TCP are answered. 0 turns it off.
  */
 
 import { isIPv4, isIPv6 } from 'node:net';
 
-const RRL_DEFAULTS = Object.freeze({ perSecond: 20, slip: 2 });
+const RRL_DEFAULTS = Object.freeze({ perSecond: 20, slip: 2, missesPerSecond: 100 });
 /** Networks tracked at once; past it the stale ones are dropped (then all, if none is stale). */
 const DEFAULT_MAX_NETWORKS = 100_000;
 
@@ -33,10 +41,11 @@ function countOr (value: unknown, fallback: number): number {
 }
 
 /** The limits to apply, from the `dns.responseRateLimit` config block (defaults when absent or invalid). */
-function readRrlConfig (get: (key: string) => unknown): { perSecond: number; slip: number } {
+function readRrlConfig (get: (key: string) => unknown): { perSecond: number; slip: number; missesPerSecond: number } {
   return {
     perSecond: countOr(get('dns:responseRateLimit:perSecond'), RRL_DEFAULTS.perSecond),
-    slip: countOr(get('dns:responseRateLimit:slip'), RRL_DEFAULTS.slip)
+    slip: countOr(get('dns:responseRateLimit:slip'), RRL_DEFAULTS.slip),
+    missesPerSecond: countOr(get('dns:responseRateLimit:missesPerSecond'), RRL_DEFAULTS.missesPerSecond)
   };
 }
 
@@ -117,5 +126,54 @@ class ResponseRateLimiter {
   }
 }
 
-export { RRL_DEFAULTS, readRrlConfig, networkOf, ResponseRateLimiter };
+/** Lookups of unknown names that found nothing, for the whole server (`missesPerSecond`). */
+class LookupMissBudget {
+  #perSecond: number;
+  #slip: number;
+  #second = -1;
+  #misses = 0;
+  #refused = 0;
+  // Lookups admitted and still running (not reset each second).
+  #running = 0;
+
+  constructor ({ perSecond, slip }: { perSecond: number; slip: number }) {
+    this.#perSecond = perSecond;
+    this.#slip = slip;
+  }
+
+  /**
+   * 'answer' (the lookup may run; call `done` when it ends) when this second's
+   * misses and the lookups still running are under the budget, otherwise how
+   * to refuse the query.
+   */
+  admit (nowMs: number = Date.now()): RrlDecision {
+    if (this.#perSecond <= 0) return 'answer';
+    this.#roll(nowMs);
+    if (this.#misses + this.#running < this.#perSecond) {
+      this.#running++;
+      return 'answer';
+    }
+    this.#refused++;
+    return this.#slip > 0 && this.#refused % this.#slip === 0 ? 'slip' : 'drop';
+  }
+
+  /** An admitted lookup ended; `found` false counts a miss. */
+  done (found: boolean, nowMs: number = Date.now()): void {
+    if (this.#perSecond <= 0) return;
+    this.#running = Math.max(0, this.#running - 1);
+    if (found) return;
+    this.#roll(nowMs);
+    this.#misses++;
+  }
+
+  #roll (nowMs: number): void {
+    const second = Math.floor(nowMs / 1000);
+    if (second === this.#second) return;
+    this.#second = second;
+    this.#misses = 0;
+    this.#refused = 0;
+  }
+}
+
+export { RRL_DEFAULTS, readRrlConfig, networkOf, ResponseRateLimiter, LookupMissBudget };
 export type { RrlDecision };

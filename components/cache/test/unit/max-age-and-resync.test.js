@@ -78,6 +78,22 @@ describe('[CMAX] Cache max age and re-synchronisation', function () {
     });
   });
 
+  describe('[CMAX-F] max age above 300 s', function () {
+    let restore;
+    before(async function () {
+      restore = injectTestConfigSnapshot({ caching: { accessMaxAgeSeconds: 3600 } });
+      await cache.loadConfiguration();
+    });
+    after(async function () {
+      restore();
+      await cache.loadConfiguration();
+    });
+
+    it('[CMA9] is used as 300 s: a worker that missed an invalidation serves a revoked access for at most 5 minutes', function () {
+      assert.strictEqual(cache.getMaxAgeMs(), 300000);
+    });
+  });
+
   describe('[CMAX-C] listeners', function () {
     let rawClient;
     before(async function () {

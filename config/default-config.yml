@@ -981,9 +981,15 @@ dns:
   # retries over TCP, which a forged source address cannot. Bounds the lookups
   # forged queries cost. Other names and TCP are not limited by it.
   # perSecond 0 = no limit; slip 0 = drop every refused answer.
+  # missesPerSecond: for the whole DNS server, UDP lookups of names not already
+  # known (not a core, not an account in the routing cache) that found nothing,
+  # lookups still running included. Past it such queries are refused the same
+  # way until the next second; known names and TCP are still answered. Bounds a
+  # forged flood of random names spread over many networks. 0 = no limit.
   responseRateLimit:
     perSecond: 20
     slip: 2
+    missesPerSecond: 100
   staticEntries: {}      # subdomain → { cname: "..." } or { a: [...] } or { txt: [...] }
   # Notes on staticEntries:
   #  - `reg`, `access`, `mfa` are reserved by the distribution — every core

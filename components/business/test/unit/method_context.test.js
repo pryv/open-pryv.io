@@ -153,6 +153,25 @@ describe('[MCTX] MethodContext', () => {
       await mc.retrieveExpandedAccess(storage);
       assert.deepStrictEqual(order, ['custom', 'touch']);
     });
+    it('[MCTS3] with touchSession: false every check runs but the session is not extended', async () => {
+      const mc = personalContext(null);
+      const storage = storageWithSession();
+      await mc.retrieveExpandedAccess(storage, { touchSession: false });
+      assert.strictEqual(storage.sessions.get.callCount, 1, 'the session was checked');
+      assert.strictEqual(storage.sessions.touch.callCount, 0);
+    });
+    it('[MCTS4] a re-validation from storage does not extend the session', async () => {
+      const mc = personalContext(null);
+      const seen = [];
+      // Copied onto the fresh context the refresh builds.
+      mc.retrieveExpandedAccess = async function (storage, opts) {
+        seen.push(opts);
+        this.access = { id: 'mcts-fresh', token: 'TOKEN', type: 'personal', isPersonal: () => true };
+      };
+      await mc.refreshExpandedAccessFromStorage(storageWithSession());
+      assert.deepStrictEqual(seen, [{ touchSession: false }]);
+      assert.strictEqual(mc.access.id, 'mcts-fresh');
+    });
   });
 
   describe('[MCTX6] #retrieveExpandedAccess failure', () => {

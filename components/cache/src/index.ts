@@ -27,6 +27,7 @@ const _caches: Record<string, InstanceType<typeof LRU>> = {};
 const MAX_PER_CACHE_SIZE = 2000; // maximum elements for each cache (namespace)
 const MAX_USERNAMES = 20000; // name -> userId entries (usernames and aliases)
 const DEFAULT_MAX_AGE_SECONDS = 60;
+const MAX_MAX_AGE_SECONDS = 300;
 // Returned by the epoch getters while this process does not yet follow the
 // user (subscription not confirmed by the broker): no epoch ever equals it, so
 // the fill that captured it is not kept.
@@ -420,7 +421,9 @@ async function loadConfiguration () {
   isActive = !!config.get('caching:isActive');
   const maxAgeSeconds = Number(config.get('caching:accessMaxAgeSeconds') ?? DEFAULT_MAX_AGE_SECONDS);
   if (Number.isFinite(maxAgeSeconds) && maxAgeSeconds > 0) {
-    maxAgeMs = Math.max(1, Math.round(maxAgeSeconds * 1000));
+    // At most 300 s: a worker that missed an invalidation serves a revoked
+    // access for up to this long (the boot check warns above it).
+    maxAgeMs = Math.max(1, Math.round(Math.min(maxAgeSeconds, MAX_MAX_AGE_SECONDS) * 1000));
   } else {
     // 0 would mean "no expiry" to the LRU: never accept it silently
     logger.warn('caching:accessMaxAgeSeconds must be a positive number, using ' + DEFAULT_MAX_AGE_SECONDS);
