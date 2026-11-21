@@ -9,6 +9,9 @@ import type { Logger } from '@pryv/boiler';
 import type { PlatformDB, PlatformEntry } from '../../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { ExternalIdsService, ExternalIdRestoreSummary } from '../external-ids/service.ts';
 import type { ErasuresLocalDB, AccountErasureRow } from '../../../../storages/interfaces/baseStorage/ErasuresLocalDB.ts';
+import type { LedgerKv, LedgerKey } from '../erasureLedger/index.ts';
+import { erasureLedgerConfig } from '../erasureLedger/config.ts';
+import { ledgerKey, readErasureRecord, erasedAfter, markRestored, mergeErasureLedgerRows, isErasureLedgerEntry } from '../erasureLedger/index.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const accountStreams = require('../system-streams/index.ts');
@@ -102,6 +105,8 @@ class RestoreOrchestrator {
   singleCoreStoreChecked = false;
   /** The accounts this restore wrote over (they existed on this core before it): a rollback empties them, never removes them. */
   preExistingAccounts: Set<string> = new Set();
+  /** The configuration the erasure ledger's settings and key are read from (not set: the ledger is not consulted). */
+  ledgerConfig: { get (key: string): unknown } | null = null;
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -121,8 +126,9 @@ class RestoreOrchestrator {
     this.staleErasureMs = STALE_ERASURE_MS;
     const { getPlatform } = require('platform');
     this.coreRouting = await getPlatform();
-    const { getLogger } = require('@pryv/boiler');
+    const { getLogger, getConfig } = require('@pryv/boiler');
     this.logger = getLogger('restore');
+    this.ledgerConfig = await getConfig();
     await accountStreams.init();
     return this;
   }
@@ -159,14 +165,21 @@ class RestoreOrchestrator {
     const deleted = Array.isArray(manifest.deletedUsers) ? manifest.deletedUsers : [];
     for (const d of deleted) this.logger.info(deletedUserMessage(d));
 
+    // Accounts erased after the backup was taken are not brought back
+    // (--restore-erased overrides it): the backup's ledger rows first.
+    await this._mergeErasureLedger(platformRead);
+    const erased = await this._erasedSinceBackup(manifest, manifest.users, opts.restoreErased === true);
+    const refusedIds = new Set(erased.refused.map((r) => r.userId));
+    const users = manifest.users.filter((u: UserManifest) => !refusedIds.has(u.userId));
+
     // Detect conflicts: on this core, and accounts the platform routes to
     // another core (skipped with --skip-conflicts, like the others). An
     // account is listed once, with its first conflict.
-    const localConflicts = await this._detectConflicts(manifest.users);
+    const localConflicts = await this._detectConflicts(users);
     const locallyConflicting = new Set(localConflicts.map((c) => c.userId));
-    const conflicts = [...localConflicts, ...await this._detectOtherCoreAccounts(manifest.users.filter((u: UserManifest) => !locallyConflicting.has(u.userId)))];
-    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number, emailsHeldElsewhere: AccountRef[], externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[] } =
-      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0, emailsHeldElsewhere: [], externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [] };
+    const conflicts = [...localConflicts, ...await this._detectOtherCoreAccounts(users.filter((u: UserManifest) => !locallyConflicting.has(u.userId)))];
+    const report: { restored: UserManifest[], skipped: UserManifest[], conflicts: ConflictRef[], deleted: DeletedUserRef[], extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number, emailsHeldElsewhere: AccountRef[], externalIds: ExternalIdRestoreSummary, aliases: AliasRestoreSummary, erasuresWithdrawn: AccountErasureRow[], erasedSince: ErasedSinceRef[], erasedRestored: ErasedSinceRef[] } =
+      { restored: [], skipped: [], conflicts, deleted, extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0, emailsHeldElsewhere: [], externalIds: emptyExtIdSummary(), aliases: emptyAliasSummary(), erasuresWithdrawn: [], erasedSince: erased.refused, erasedRestored: [] };
     const imported: ImportedAccount[] = [];
     const pendingAliases: PendingAliases[] = [];
 
@@ -177,10 +190,10 @@ class RestoreOrchestrator {
     }
 
     const conflictUserIds = new Set(conflicts.map(c => c.userId));
-    await this._assertNoRunningErasure(manifest.users.filter((u: UserManifest) => !conflictUserIds.has(u.userId)));
+    await this._assertNoRunningErasure(users.filter((u: UserManifest) => !conflictUserIds.has(u.userId)));
 
     try {
-      for (const userManifest of manifest.users) {
+      for (const userManifest of users) {
         const { userId, username } = userManifest;
 
         if (conflictUserIds.has(userId)) {
@@ -205,6 +218,9 @@ class RestoreOrchestrator {
       report.externalIds = await this._restoreExternalIds(imported);
       // After the platform rows too: their alias rows are confirmed, not refused.
       report.aliases = await this._restoreAliases(pendingAliases);
+      const restoredIds = new Set(report.restored.map((u) => u.userId));
+      report.erasedRestored = erased.override.filter((r) => restoredIds.has(r.userId));
+      await this._stampRestored(report.erasedRestored);
     } catch (err) {
       if (report.restored.length > 0) {
         this.logger.error(`Restore stopped by a failure: the ${report.restored.length} account(s) restored before it are kept (their withdrawn erasures, if any, stay withdrawn): ` +
@@ -214,7 +230,8 @@ class RestoreOrchestrator {
     }
 
     this.logger.info(`Restore complete: ${report.restored.length} restored, ${report.skipped.length} skipped, ` +
-      `${report.erasuresWithdrawn.length} unfinished erasure(s) withdrawn`);
+      `${report.erasuresWithdrawn.length} unfinished erasure(s) withdrawn` +
+      (report.erasedSince.length > 0 ? `, ${report.erasedSince.length} erased after the backup (not restored)` : ''));
     return report;
   }
 
@@ -266,6 +283,14 @@ class RestoreOrchestrator {
     // The account's own rows only: the other rows of a whole backup are not
     // read for this restore, nor checked.
     const platformRead = opts.skipPlatform ? null : await this._readPlatform(reader, isReserved, [{ username }]);
+    // An account erased after the backup was taken is not brought back
+    // without --restore-erased (checked on the backed-up id).
+    await this._mergeErasureLedger(platformRead);
+    const erased = await this._erasedSinceBackup(manifest, [userManifest], opts.restoreErased === true);
+    if (erased.refused.length > 0) {
+      throw new Error(`User ${username} (${userId}) was ${erasedText(erased.refused[0])}: not restored. ` +
+        'Pass --restore-erased to restore it anyway (its erasure record is kept, marked restored). Nothing was restored.');
+    }
 
     const erasuresWithdrawn: AccountErasureRow[] = [];
     const imported = await this._restoreSingleUser(reader, userId, username, opts, targetUserId, erasuresWithdrawn);
@@ -280,9 +305,10 @@ class RestoreOrchestrator {
     const emailsHeldElsewhere = await this._emailsHeldElsewhere(restored);
     const externalIds = await this._restoreExternalIds([imported]);
     const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
+    await this._stampRestored(erased.override);
 
     this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
-    return { restored, skipped: [], conflicts, extIdNamespaceSaltMismatch, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn };
+    return { restored, skipped: [], conflicts, extIdNamespaceSaltMismatch, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn, erasedSince: [], erasedRestored: erased.override };
   }
 
   /**
@@ -623,6 +649,74 @@ class RestoreOrchestrator {
     }
     if (running.length > 0) {
       throw new Error(`Restore aborted: an erasure of the account is running now for ${running.join(', ')}; restore once it ended. Nothing was restored.`);
+    }
+  }
+
+  /** The erasure ledger and its key (null: not consulted, e.g. no key configured). */
+  _erasureLedger (): { kv: LedgerKv, key: LedgerKey } | null {
+    if (this.platformDB == null || this.ledgerConfig == null) return null;
+    if (!erasureLedgerConfig(this.ledgerConfig).enabled) return null;
+    try {
+      return { kv: this.platformDB as unknown as LedgerKv, key: ledgerKey(this.ledgerConfig) };
+    } catch (err: unknown) {
+      this.logger.warn(`The erasure ledger is not consulted (${errorMessage(err)}): an account erased after the backup is restored without notice`);
+      return null;
+    }
+  }
+
+  /**
+   * Merge the erasure-ledger rows of the backup into the live ledger, before
+   * the ledger is consulted (a platform rebuilt since the backup gets back the
+   * erasures made before it). Never removes a row (see mergeErasureLedgerRows).
+   */
+  async _mergeErasureLedger (read: PlatformRead | null): Promise<void> {
+    if (read == null || read.erasureLedger.length === 0 || read.erasureLedgerMerged === true) return;
+    read.erasureLedgerMerged = true;
+    if (this.platformDB == null) return;
+    const counts = await mergeErasureLedgerRows(this.platformDB as unknown as LedgerKv, read.erasureLedger);
+    this.logger.info(`Erasure ledger: ${counts.written} record(s) of the backup written, ${counts.kept} already present` +
+      (counts.skipped > 0 ? `, ${counts.skipped} malformed skipped` : ''));
+  }
+
+  /**
+   * The accounts of `users` the erasure ledger says were erased after the
+   * backup's data of them was taken (and not restored since). They are not
+   * restored, unless `restoreErased`: then they are listed in `override`, and
+   * their record is stamped `restoredAt` once restored (`_stampRestored`).
+   */
+  async _erasedSinceBackup (manifest: Manifest, users: UserManifest[], restoreErased: boolean): Promise<{ refused: ErasedSinceRef[], override: ErasedSinceRef[] }> {
+    const out = { refused: [] as ErasedSinceRef[], override: [] as ErasedSinceRef[] };
+    const ledger = this._erasureLedger();
+    if (ledger == null) return out;
+    for (const { userId, username } of users) {
+      const entry = await readErasureRecord(ledger.kv, ledger.key, userId);
+      if (entry == null) continue;
+      const snapshotMs = snapshotMsOf(manifest, userId);
+      if (!erasedAfter(entry, snapshotMs)) continue;
+      const ref: ErasedSinceRef = { userId, username, deletedAt: entry.deletedAt, trigger: entry.trigger, snapshotBefore: snapshotMs };
+      if (restoreErased) {
+        out.override.push(ref);
+        this.logger.warn(`Restoring user ${username} (${userId}) although it was ${erasedText(ref)} (--restore-erased): its erasure record is kept, marked restored`);
+      } else {
+        out.refused.push(ref);
+        this.logger.warn(`Not restoring user ${username} (${userId}): ${erasedText(ref)}. Pass --restore-erased to restore it anyway`);
+      }
+    }
+    return out;
+  }
+
+  /** Stamp `restoredAt` on the erasure record of each account restored with --restore-erased. */
+  async _stampRestored (restored: ErasedSinceRef[]): Promise<void> {
+    const ledger = this._erasureLedger();
+    if (ledger == null) return;
+    const now = Date.now();
+    for (const ref of restored) {
+      try {
+        await markRestored(ledger.kv, ledger.key, ref.userId, now);
+      } catch (err: unknown) {
+        this.logger.error(`The erasure record of the restored user ${ref.username} (${ref.userId}) could not be marked restored (${errorMessage(err)}): ` +
+          'a later restore of this backup is refused again without --restore-erased');
+      }
     }
   }
 
@@ -987,13 +1081,17 @@ class RestoreOrchestrator {
    * and mappings are kept (and checked).
    */
   async _readPlatform (reader: BackupReaderLike, isReserved: (name: string) => boolean, accounts?: Array<{ username: string }>): Promise<PlatformRead> {
-    const read: PlatformRead = { data: [], skipped: 0, mappingUsernames: [], defaultCoreId: null, extIdNamespaces: [] };
+    const read: PlatformRead = { data: [], skipped: 0, mappingUsernames: [], defaultCoreId: null, extIdNamespaces: [], erasureLedger: [] };
     if (!this.platformDB) return read;
     const data = read.data;
     const { isNamespaceRowEntry } = await import('platform/src/externalIdIndex.ts');
     for await (const item of await reader.readPlatformData()) {
       if (isNamespaceRowEntry(item)) {
         read.extIdNamespaces.push(item);
+        continue;
+      }
+      if (isErasureLedgerEntry(item)) {
+        read.erasureLedger.push(item);
         continue;
       }
       // v1 backups (and old v2 exports) write raw `{key, value}` entries straight from
@@ -1167,6 +1265,9 @@ class RestoreOrchestrator {
    */
   async _writePlatform (read: PlatformRead): Promise<{ extIdNamespaceSaltMismatch: string[], uniqueValuesLost: number }> {
     if (!this.platformDB) return { extIdNamespaceSaltMismatch: [], uniqueValuesLost: 0 };
+    // Merged before the accounts on a user restore (so the ledger is
+    // consulted with them); a platform-only restore merges them here.
+    await this._mergeErasureLedger(read);
     const lostFields = new Set<string>();
     const lostOwners = new Set<string>();
     let uniqueValuesLost = 0;
@@ -1263,6 +1364,24 @@ function erasureText (record: AccountErasureRow): string {
 
 function errorMessage (err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * When the backup's data of `userId` was taken (ms): the snapshot of the
+ * newest run of a chain that holds the account, else of the backup. Null when
+ * the backup does not say.
+ */
+function snapshotMsOf (manifest: Manifest, userId: string): number | null {
+  const perUser = manifest.snapshotBeforeByUser?.[userId];
+  const seconds = typeof perUser === 'number' ? perUser : manifest.snapshotBefore;
+  if (typeof seconds === 'number' && Number.isFinite(seconds)) return seconds * 1000;
+  return typeof manifest.backupTimestamp === 'number' ? manifest.backupTimestamp : null;
+}
+
+/** An erasure after the backup, for a log line or an error. */
+function erasedText (ref: ErasedSinceRef): string {
+  return `erased on ${new Date(ref.deletedAt).toISOString()} (trigger ${ref.trigger}), ` +
+    (ref.snapshotBefore != null ? `after this backup (taken ${new Date(ref.snapshotBefore).toISOString()})` : 'after this backup');
 }
 
 /** The aliases a backup manifest entry lists (an entry written before aliases were backed up has none). */
@@ -1390,7 +1509,20 @@ type DeletedUserRef = { userId: string; username: string | null; lastRunId: stri
  * `runs`: the runs of a backup chain the reader merged (absent for one run);
  * `deletedUsers`: the accounts deleted along them, not in `users`.
  */
-type Manifest = { formatVersion: string; backupType: string; users: UserManifest[]; runs?: Array<{ runId: string }>; deletedUsers?: DeletedUserRef[] };
+type Manifest = {
+  formatVersion: string;
+  backupType: string;
+  users: UserManifest[];
+  runs?: Array<{ runId: string }>;
+  deletedUsers?: DeletedUserRef[];
+  /** Unix seconds: data changed after this is not in the backup. */
+  snapshotBefore?: number | null;
+  /** A chain: per account, the snapshot of the newest run that holds it. */
+  snapshotBeforeByUser?: Record<string, number | null>;
+  backupTimestamp?: number;
+};
+/** An account the erasure ledger says was erased after the backup (`snapshotBefore` in ms). */
+type ErasedSinceRef = { userId: string; username: string; deletedAt: number; trigger: string; snapshotBefore: number | null };
 type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed' | 'other-core'; reason: string };
 /** The platform's name -> core rows and this core's identity (the Platform's methods the restore calls). */
 type CoreRoutingLike = {
@@ -1412,6 +1544,9 @@ type PlatformRead = {
   mappingUsernames: string[];
   defaultCoreId: string | null;
   extIdNamespaces: Array<{ key: string, value: string }>;
+  /** The erasure-ledger rows of the backup (`account-erasure/...`), merged into the live ledger. */
+  erasureLedger: Array<{ key: string, value: string }>;
+  erasureLedgerMerged?: boolean;
   /** Owner of a row (storage form or clear) -> username, once filtered to restored accounts. */
   ownerNames?: Map<string, string>;
 };
@@ -1448,5 +1583,7 @@ type RestoreOptions = {
   deleteOnSuccess?: boolean;
   moveOnSuccess?: string;
   remapUserId?: string;
+  /** Restore the accounts the erasure ledger says were erased after the backup (refused by default). */
+  restoreErased?: boolean;
 };
 type NodeCallback<T = unknown> = (err: Error | null | undefined, value?: T) => void;

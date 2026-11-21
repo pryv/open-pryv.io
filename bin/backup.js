@@ -24,6 +24,7 @@
 //   node bin/backup.js --restore /path/to/backup
 //   node bin/backup.js --restore /path/to/backup --overwrite
 //   node bin/backup.js --restore /path/to/backup --user userId123
+//   node bin/backup.js --restore /path/to/backup --user userId123 --restore-erased
 //   node bin/backup.js --restore /path/to/backup --skip-conflicts --move-on-success /path/to/done
 //   node bin/backup.js --restore /path/to/backup --skip-conflicts --delete-on-success
 //   node bin/backup.js --restore /path/to/backup --private-key recipient.key.pem
@@ -284,7 +285,8 @@ async function runRestore (args) {
     overwrite: args.overwrite,
     skipConflicts: args.skipConflicts,
     deleteOnSuccess: args.deleteOnSuccess,
-    moveOnSuccess: args.moveOnSuccess
+    moveOnSuccess: args.moveOnSuccess,
+    restoreErased: args.restoreErased
   };
 
   let report;
@@ -427,6 +429,18 @@ async function runRestore (args) {
       console.log(`    - ${r.username} (${r.userId}): started ${new Date(r.startedAt).toISOString()}, trigger ${r.trigger ?? 'unknown'}, steps done: ${r.doneSteps.join(', ') || 'none'}`);
     }
   }
+  if (report.erasedSince && report.erasedSince.length > 0) {
+    console.log(`  Erased after this backup (not restored; --restore-erased restores them): ${report.erasedSince.length} users`);
+    for (const u of report.erasedSince) {
+      console.log(`    - ${u.username} (${u.userId}): erased on ${new Date(u.deletedAt).toISOString()}, trigger ${u.trigger}`);
+    }
+  }
+  if (report.erasedRestored && report.erasedRestored.length > 0) {
+    console.log(`  Restored although erased after this backup (--restore-erased; their erasure records are marked restored): ${report.erasedRestored.length} users`);
+    for (const u of report.erasedRestored) {
+      console.log(`    - ${u.username} (${u.userId}): erased on ${new Date(u.deletedAt).toISOString()}, trigger ${u.trigger}`);
+    }
+  }
   if (report.skipped.length > 0) {
     console.log(`  Skipped: ${report.skipped.length} users`);
     for (const u of report.skipped) {
@@ -482,6 +496,8 @@ async function runRestore (args) {
     }
   }
 
+  // Nothing restored because every account was erased after the backup.
+  if (verifyExitCode === 0 && report.restored.length === 0 && report.erasedSince && report.erasedSince.length > 0) return 3;
   return verifyExitCode;
 }
 
@@ -604,6 +620,7 @@ function parseArgs (argv) {
     signingKey: null,
     signingKeyPassphrase: null,
     signingPubkey: null,
+    restoreErased: false,
     help: false
   };
 
@@ -695,6 +712,9 @@ function parseArgs (argv) {
       case '--signing-pubkey':
         args.signingPubkey = argv[++i];
         break;
+      case '--restore-erased':
+        args.restoreErased = true;
+        break;
       case '--help':
       case '-h':
         args.help = true;
@@ -749,6 +769,10 @@ function parseArgs (argv) {
   }
   if (args.signingPubkey && !args.restore && !args.inspect) {
     console.error('Error: --signing-pubkey goes with --restore or --inspect; a backup is signed with --signing-key');
+    process.exit(1);
+  }
+  if (args.restoreErased && !args.restore) {
+    console.error('Error: --restore-erased goes with --restore');
     process.exit(1);
   }
 
@@ -847,6 +871,13 @@ Restore:
   --require-encrypted       Refuse a backup that is not encrypted
   --allow-plaintext         Restore a plaintext backup even though a decryption
                             secret was supplied (refused by default)
+  --restore-erased          Restore an account the erasure ledger says was
+                            erased after this backup was taken. Without it such
+                            an account is not restored (listed in the report; a
+                            restore that restores nothing else exits 3, and a
+                            --user restore of it fails). With it, the account is
+                            restored and its erasure record is kept, marked
+                            restored (with --user: that account only)
 
 Inspect (reads the directory only; no storage access):
   --inspect <path>          List the runs of a backup directory (id, type, scope,
@@ -873,6 +904,8 @@ Restore exit codes (with --verify-integrity):
   0   all restored users verified clean (or nothing to verify)
   1   an integrity failure was found and rolled back
   2   restored, but one or more users could not be verified
+  3   nothing restored: every account of the backup was erased after it
+      (see --restore-erased)
 
 Inspect exit codes:
   0   OK

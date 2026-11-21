@@ -1,5 +1,58 @@
 # Changelog - API Changes
 
+## 2.0.0-rc.89 - 2026-11-26
+
+### Erasure ledger: a durable record of each erased account (on by default)
+
+Requested by an operator: a way to prove, after the account is gone, that an account was erased, and
+to keep a restore from bringing an erased account back unnoticed.
+
+- **Every account erasure writes one record** in the platform database (replicated to every core),
+  once all the data is gone: keyed hashes (HMAC-SHA256) of the user id and of the username, when the
+  erasure started and ended, what decided it (`trigger`: `holder` and `admin` for `DELETE /users/:username`
+  with the personal token or the admin key, `date` and `inactivity` for the auto-deletion,
+  `ledger-replay`), the core, the steps done, the `audit.onUserDelete` mode, the attempts and the server
+  version. No username, email, address, access id or content. Nothing is written for the rollback of an
+  account creation that failed, or `DELETE /system/users/:username?onlyReg=true` (they erase no
+  account). A later erasure
+  of the same id (an account restored, then erased again) replaces the record.
+- **A record that cannot be written fails the erasure**: the data is gone, the call answers an error,
+  and the erasure is completed (this last step only) by the auto-deletion sweep 15 minutes later, as
+  for any erasure that stops half way. An erasure never looks finished without its record.
+- **One log line per record** (`account erased`, with `userIdHash`, `trigger`, `coreId`): a log shipper
+  keeps a second copy.
+- **New admin routes** (admin key in `Authorization`, any core answers):
+  - `GET /system/admin/erasures?since=<ms>&limit=<1..1000, default 200>&after=<cursor>`: the records
+    erased since a time, oldest first, `{ erasures: [{ userIdHash, deletedAt, trigger, coreId, ... }], next }`;
+    pass `next` as `after` for the next page (`null` on the last one).
+  - `POST /system/admin/erasures/lookup` with `{ "userId": "..." }` or `{ "username": "..." }` (any
+    case): `{ erased, erasures }`. A POST, so that the id or name stays out of URLs and access logs. A
+    name used again by a later account answers "an account of this name was erased at T".
+- **New configuration** (platform-wide: the same values on every core):
+  `accountErasure.ledger.enabled` (default `true`), `accountErasure.ledger.retentionDays` (default
+  `1825`, five years; `0` keeps the records forever; the sweep removes older records; a value under 365
+  gets a boot warning: keep it at least as long as your longest backup retention), and
+  `accountErasure.ledger.hmacKey` (base64 of 32 bytes; empty: derived from `auth.adminAccessKey`). Set
+  the key before rotating the admin key: records written under another key stay listed but can no
+  longer be looked up by id or name (each record carries a `keyId`). Destroying the key makes the
+  records anonymous. Both hashes are pseudonymous personal data while the key exists: the record is
+  kept for the proof of erasure (accountability), minimised and time-limited; add one line for it to
+  your record of processing activities.
+- **Behaviour change of `bin/backup.js --restore`:** an account the ledger records as erased after the
+  backup was taken (and not restored since) is **not restored**. A whole restore lists it under
+  "Erased after this backup" and restores the others (exit code `3` when it restores nothing else); a
+  `--user` restore of it fails, naming the override. **`--restore-erased`** restores it anyway and
+  marks its record `restoredAt` (the record is kept). A chain is dated per account by the newest run
+  that holds it.
+- **Platform backups carry the ledger**, and a restore merges it into the live one (a newer erasure
+  wins, nothing is removed): a platform database rebuilt from a backup keeps the proof of the erasures
+  made before it.
+- **New tool `bin/erasures.js`**: `--list [--since <ms | ISO date>] [--limit <n>]`, `--check <userId |
+  username>`, and `--replay [--apply]` for a core whose storage was restored from a snapshot or a
+  database dump taken before some erasures: it looks up every account of this core in the ledger and
+  (with `--apply`; a dry run by default, counts only) erases again those recorded as erased and not
+  restored since, with the trigger `ledger-replay`.
+
 ## 2.0.0-rc.88 - 2026-11-25
 
 ### Consent offers can require a verified email address (#173)

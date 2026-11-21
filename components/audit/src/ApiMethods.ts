@@ -100,6 +100,9 @@ const ALL_METHODS = [
   'system.extIdNamespaces.delete',
   'system.extIdHolds',
   'system.extIdRelease',
+  // The erasure ledger (admin key): no account of this core in the context.
+  'system.erasures.list',
+  'system.erasures.get',
   'auth.hostings',
   // External ids of the account (personal token), and the core lookup by id.
   'account.externalIds.claim',
@@ -196,6 +199,8 @@ const WITHOUT_USER_METHODS = [
   'system.extIdNamespaces.set',
   'system.extIdNamespaces.delete',
   'system.extIdRelease',
+  'system.erasures.list',
+  'system.erasures.get',
   'mfa.recover',
   // OAuth events with no resolvable user at emit time (pre-consent /authorize,
   // /refuse, or reuse of an already-consumed code/refresh where the user is

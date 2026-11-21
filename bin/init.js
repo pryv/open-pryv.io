@@ -1011,6 +1011,20 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #       claimWindowDays: 90
 # #       identitySecretsKey: null
 
+# # accountErasure.ledger: a durable record of each erased account (keyed
+# # hashes of its id and name, when, why, which core), kept retentionDays
+# # (default 5 years, 0 = forever) in the platform database. Admin routes
+# # GET /system/admin/erasures and POST /system/admin/erasures/lookup, tool
+# # bin/erasures.js; bin/backup.js --restore refuses an account erased after
+# # its backup unless --restore-erased. hmacKey: base64 of 32 bytes, the same
+# # on every core (empty = derived from auth.adminAccessKey: set it before
+# # rotating the admin key). Platform-wide: the same values on every core.
+# # accountErasure:
+# #   ledger:
+# #     enabled: true
+# #     retentionDays: 1825
+# #     hmacKey: ''
+
 # # caching.accessMaxAgeSeconds — max age of cached accesses, streams and
 # # username lookups (default 60). Bounds how long a worker that missed an
 # # invalidation keeps using a deleted or changed access; a lower value costs
