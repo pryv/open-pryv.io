@@ -53,6 +53,9 @@ describe('[ACCO] account', function () {
   server.on('test-account-changed', function () { accountNotifCount++; });
 
   before(function (done) {
+    // Resets four fixture sets, then starts the server child process: in a
+    // full run on a loaded machine this overran the default 20 s.
+    this.timeout(60000);
     async.series([
       testData.resetUsers,
       testData.resetEvents,
