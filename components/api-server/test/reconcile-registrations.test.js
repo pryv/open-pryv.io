@@ -18,6 +18,9 @@ const require = createRequire(import.meta.url);
 
 const timestamp = require('unix-timestamp');
 const { ErrorIds } = require('errors');
+// Account-store rows a dead registration left: written while the id is
+// indexed (the database refuses rows of an unindexed id), the entry removed after.
+const { writeAsOrphans } = require('test-helpers/src/indexedUserIds.ts');
 
 const PASSWORD = 'test-password-1';
 const APP_ID = 'pryv-test-no-cors';
@@ -97,8 +100,10 @@ describe('[RCRG] unfinished registrations sweep', function () {
     const keptFields = await accountStorage.getAccountFields(kept.userId);
     const orphanId = cuid();
     const old = timestamp.now() - 2 * DAY;
-    await accountStorage.setAccountField(orphanId, 'email', orphanId + '@example.com', 'system', old);
-    await accountStorage.setAccountField(orphanId, 'language', 'en', 'system', old);
+    await writeAsOrphans([orphanId], async () => {
+      await accountStorage.setAccountField(orphanId, 'email', orphanId + '@example.com', 'system', old);
+      await accountStorage.setAccountField(orphanId, 'language', 'en', 'system', old);
+    });
     try {
       const dry = await sweep();
       const listed = dry.accountStoreOrphans.find((o) => o.userId === orphanId);
@@ -126,13 +131,15 @@ describe('[RCRG] unfinished registrations sweep', function () {
     const kept = await freshUser('rckc');
     const old = timestamp.now() - 2 * DAY;
     const ids = { recent: cuid(), password: cuid(), erasure: cuid(), access: cuid() };
-    await accountStorage.setAccountField(ids.recent, 'language', 'en', 'system', timestamp.now());
-    for (const key of ['password', 'erasure', 'access']) {
-      await accountStorage.setAccountField(ids[key], 'language', 'en', 'system', old);
-    }
-    await accountStorage.addPasswordHash(ids.password, 'not-a-real-hash', 'system', old);
+    await writeAsOrphans(Object.values(ids), async () => {
+      await accountStorage.setAccountField(ids.recent, 'language', 'en', 'system', timestamp.now());
+      for (const key of ['password', 'erasure', 'access']) {
+        await accountStorage.setAccountField(ids[key], 'language', 'en', 'system', old);
+      }
+      await accountStorage.addPasswordHash(ids.password, 'not-a-real-hash', 'system', old);
+      await usersRepository.createPersonalAccessForUser(ids.access, cuid(), APP_ID);
+    });
     await erasures.insertIfAbsent(erasureRow(ids.erasure, 'rcrgerasure'));
-    await usersRepository.createPersonalAccessForUser(ids.access, cuid(), APP_ID);
     try {
       const applied = await sweep({ apply: true });
       const reasons = Object.fromEntries(Object.entries(ids).map(([key, id]) =>
@@ -368,7 +375,7 @@ describe('[RCRG] unfinished registrations sweep', function () {
   it('[RCRG7] PostgreSQL: an empty users index facing account-store rows is refused, dry run too, unless forced', async function () {
     if (!isPG()) return this.skip();
     const orphanId = cuid();
-    await accountStorage.setAccountField(orphanId, 'language', 'en', 'system', timestamp.now() - 2 * DAY);
+    await writeAsOrphans([orphanId], () => accountStorage.setAccountField(orphanId, 'language', 'en', 'system', timestamp.now() - 2 * DAY));
     const usersIndex = usersRepository.usersIndex;
     const original = usersIndex.getAllByUsername;
     usersIndex.getAllByUsername = async () => ({}); // a lost index, or a wrong --config

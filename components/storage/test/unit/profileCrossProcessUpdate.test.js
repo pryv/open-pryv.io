@@ -18,8 +18,8 @@ const require = createRequire(import.meta.url);
 const assert = require('node:assert');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const cuid = require('cuid');
 const { fromCallback } = require('utils');
+const { indexedUserId, unindexUserIds } = require('test-helpers/src/indexedUserIds.ts');
 const storage = require('storage');
 
 const WORKER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../support/incWorker.js');
@@ -30,7 +30,7 @@ describe('[PXPU] read-modify-write across processes (profile)', function () {
   it('[PXP1] concurrent increments from 4 processes all land', async function () {
     await storage.userLocalDirectory.init();
     const profile = (await storage.getStorageLayer()).profile;
-    const userId = cuid();
+    const userId = await indexedUserId();
     await fromCallback((cb) => profile.insertOne(userId, { id: 'counter', data: { count: 0 } }, cb));
     const PROCS = 4;
     const TIMES = 60;
@@ -43,6 +43,7 @@ describe('[PXPU] read-modify-write across processes (profile)', function () {
     await Promise.all(runs);
     const item = await fromCallback((cb) => profile.findOne(userId, { id: 'counter' }, null, cb));
     await fromCallback((cb) => profile.removeAll(userId, cb));
+    await unindexUserIds([userId]);
     assert.strictEqual(item.data.count, PROCS * TIMES, 'every increment from every process must land');
   });
 });

@@ -13,7 +13,10 @@ import type { Logger, ConfigLike } from '@pryv/boiler';
  * All engine files import { _internals } from './_internals.ts'.
  */
 
-type UserLocalDirectoryLike = { ensureUserDirectory: (userId: string) => Promise<string> };
+type UserLocalDirectoryLike = {
+  ensureUserDirectory: (userId: string) => Promise<string>;
+  ensureUserFile: (userId: string, fileName: string) => Promise<string>;
+};
 
 const registry: Record<string, unknown> = {};
 

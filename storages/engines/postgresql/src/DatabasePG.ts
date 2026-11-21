@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 
 import type { Logger } from '@pryv/boiler';
+import { UNINDEXED_WRITES_GUARD_SQL } from './unindexedWritesGuard.ts';
 const require = createRequire(import.meta.url);
 
 const { AsyncLocalStorage } = require('node:async_hooks');
@@ -827,6 +828,9 @@ CREATE TABLE IF NOT EXISTS attachment_files (
   data BYTEA NOT NULL,
   PRIMARY KEY (user_id, event_id, file_id, seq)
 );
-`;
+` +
+// Rows of a user id the users index does not hold are refused (see
+// unindexedWritesGuard.ts); after every table it names.
+UNINDEXED_WRITES_GUARD_SQL;
 
 export { DatabasePG, runMaintenance, isInMaintenance, setRequestServingForTests, STATEMENT_CANCELLED };

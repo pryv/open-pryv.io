@@ -12,6 +12,9 @@ const require = createRequire(import.meta.url);
 const storage = require('storage');
 const { fromCallback } = require('utils');
 const { getConfig } = require('@pryv/boiler');
+// Rows an account deletion left: written while the id is indexed (the
+// database refuses rows of an unindexed id), the entry removed after.
+const { writeAsOrphans } = require('test-helpers/src/indexedUserIds.ts');
 
 /**
  * [UIIX] the users index integrity check reports the user ids holding rows
@@ -37,8 +40,8 @@ describe('[UIIX] users index integrity: orphan user ids', function () {
 
   it('[UIIX1] an access row of a user id unknown to the index is reported, and no longer once removed', async function () {
     const orphan = { id: 'uiix' + cuid(), username: 'uiixgone' + cuid().toLowerCase().slice(1, 10) };
-    await fromCallback((cb) => storageLayer.accesses.insertOne(orphan,
-      { id: cuid(), token: cuid(), type: 'app', name: 'uiix left behind', permissions: [], created: 1, createdBy: 'test', modified: 1, modifiedBy: 'test' }, cb));
+    await writeAsOrphans([orphan.id], () => fromCallback((cb) => storageLayer.accesses.insertOne(orphan,
+      { id: cuid(), token: cuid(), type: 'app', name: 'uiix left behind', permissions: [], created: 1, createdBy: 'test', modified: 1, modifiedBy: 'test' }, cb)));
     try {
       const check = await usersIndex.checkIntegrity();
       assert.ok(check.errors.some((e) => e.includes('"' + orphan.id + '"') && e.includes('"accesses"')),
@@ -58,7 +61,7 @@ describe('[UIIX] users index integrity: orphan user ids', function () {
   it('[UIIX3] an event of a user id unknown to the index is reported, and no longer once removed', async function () {
     const orphan = { id: 'uiix' + cuid() };
     const event = { id: cuid(), streamIds: ['uiix3'], type: 'note/txt', content: 'left behind', time: 1, created: 1, createdBy: 'test', modified: 1, modifiedBy: 'test' };
-    await fromCallback((cb) => storageLayer.events.importAll(orphan, [event], cb));
+    await writeAsOrphans([orphan.id], () => fromCallback((cb) => storageLayer.events.importAll(orphan, [event], cb)));
     try {
       const check = await usersIndex.checkIntegrity();
       assert.ok(check.errors.some((e) => e.includes('"' + orphan.id + '"') && e.includes('"events"')),

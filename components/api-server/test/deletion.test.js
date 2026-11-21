@@ -449,7 +449,7 @@ describe('[PGTD] DELETE /users/:username', () => {
           // Checked before any read: opening the audit again would create the file.
           assert.ok(fs.existsSync(path.join(userDir, auditName)), 'the audit database file is kept at its path');
           const leftOver = fs.readdirSync(userDir).filter((name) => !isAuditFile(name));
-          assert.deepStrictEqual(leftOver, [], 'only the audit files stay in the user directory');
+          assert.deepStrictEqual(leftOver, [userLocalDirectory.ERASED_MARKER], 'only the audit files and the erased marker stay in the user directory');
         } else {
           assert.strictEqual(fs.existsSync(userDir), false, 'the user directory is removed (the audit is not file-backed)');
         }

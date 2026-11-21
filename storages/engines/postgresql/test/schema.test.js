@@ -57,22 +57,27 @@ describe('[PGSC] PostgreSQL schema', function () {
   it('[PG04] should execute basic CRUD on events table', async function () {
     const userId = 'test-schema-' + Date.now();
     const eventId = 'evt-' + Date.now();
+    // Rows are refused for a user id the users index does not hold.
+    await db.query('INSERT INTO users_index (username, user_id) VALUES ($1, $1)', [userId]);
+    try {
+      // INSERT
+      await db.query(
+        `INSERT INTO events (user_id, id, stream_ids, type, content, time, created, created_by, modified, modified_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [userId, eventId, '["test-stream"]', 'note/txt', '{"text":"hello"}', 1000, 1000, 'test', 1000, 'test']
+      );
 
-    // INSERT
-    await db.query(
-      `INSERT INTO events (user_id, id, stream_ids, type, content, time, created, created_by, modified, modified_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [userId, eventId, '["test-stream"]', 'note/txt', '{"text":"hello"}', 1000, 1000, 'test', 1000, 'test']
-    );
+      // SELECT
+      const res = await db.query('SELECT * FROM events WHERE user_id = $1 AND id = $2', [userId, eventId]);
+      assert.strictEqual(res.rows.length, 1);
+      assert.strictEqual(res.rows[0].type, 'note/txt');
 
-    // SELECT
-    const res = await db.query('SELECT * FROM events WHERE user_id = $1 AND id = $2', [userId, eventId]);
-    assert.strictEqual(res.rows.length, 1);
-    assert.strictEqual(res.rows[0].type, 'note/txt');
-
-    // DELETE
-    await db.query('DELETE FROM events WHERE user_id = $1', [userId]);
-    const check = await db.query('SELECT count(*) FROM events WHERE user_id = $1', [userId]);
-    assert.strictEqual(parseInt(check.rows[0].count), 0);
+      // DELETE
+      await db.query('DELETE FROM events WHERE user_id = $1', [userId]);
+      const check = await db.query('SELECT count(*) FROM events WHERE user_id = $1', [userId]);
+      assert.strictEqual(parseInt(check.rows[0].count), 0);
+    } finally {
+      await db.query('DELETE FROM users_index WHERE user_id = $1', [userId]);
+    }
   });
 });

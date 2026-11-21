@@ -26,9 +26,9 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn) {
     let storage;
     let userId;
 
-    before(() => {
+    before(async () => {
       storage = getStorage();
-      userId = getUserId();
+      userId = await getUserId(); // may be async: an id the storage accepts rows for
     });
 
     after((done) => {

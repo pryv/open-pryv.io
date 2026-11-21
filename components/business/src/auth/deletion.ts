@@ -75,11 +75,15 @@ function errorText (err: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** The refusal of per-user file storage to reopen an erased account's files, possibly wrapped. */
+/**
+ * The refusal of per-user file storage to reopen an erased account's files,
+ * or of PostgreSQL to store a row for an id the users index no longer holds
+ * (SQLSTATE PU001), possibly wrapped.
+ */
 function isErasedUserError (err: unknown): boolean {
   for (let e = err, depth = 0; e != null && depth < 5; depth++) {
-    const x = e as { name?: unknown; message?: unknown; innerError?: unknown; cause?: unknown };
-    if (x.name === 'ErasedUserError' || (typeof x.message === 'string' && x.message.startsWith('user directory erased'))) return true;
+    const x = e as { name?: unknown; message?: unknown; code?: unknown; innerError?: unknown; cause?: unknown };
+    if (x.name === 'ErasedUserError' || x.code === 'PU001' || (typeof x.message === 'string' && x.message.startsWith('user directory erased'))) return true;
     e = x.innerError ?? x.cause;
   }
   return false;

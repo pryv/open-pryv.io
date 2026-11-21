@@ -146,8 +146,8 @@ class SqliteStorage {
   }
 
   async dbgetPathForUser (userId: string): Promise<string> {
-    const userPath = await _internals.userLocalDirectory.ensureUserDirectory(userId);
-    return path.join(userPath, this.id + '-' + this.getVersion() + '.sqlite');
+    // Refused for a database not there yet in an erased account's kept directory.
+    return await _internals.userLocalDirectory.ensureUserFile(userId, this.id + '-' + this.getVersion() + '.sqlite');
   }
 
   /** The database file path, without creating its directory. */
