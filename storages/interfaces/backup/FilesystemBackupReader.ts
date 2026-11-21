@@ -265,9 +265,16 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
       // deleted along the chain apart.
       const users: unknown[] = [];
       const index = new Map<string, number>();
+      // Per user, the snapshot of the newest run that holds it: what its data
+      // is as of (an account erased after it is not restored unawares).
+      const snapshotBeforeByUser: Record<string, number | null> = {};
       for (const h of runs) {
         for (const u of (Array.isArray(h.manifest?.users) ? h.manifest!.users as unknown[] : [])) {
           const id = (u as { userId?: unknown } | null)?.userId;
+          if (typeof id === 'string') {
+            const snapshot = h.manifest?.snapshotBefore;
+            snapshotBeforeByUser[id] = typeof snapshot === 'number' ? snapshot : null;
+          }
           if (typeof id === 'string' && index.has(id)) {
             users[index.get(id)!] = u;
           } else {
@@ -286,6 +293,7 @@ function createFilesystemBackupReader (inputPath: string, options?: ReaderOption
         ...runs[0].manifest,
         users: users.filter((u) => !deleted.has((u as { userId?: unknown } | null)?.userId as string)),
         deletedUsers,
+        snapshotBeforeByUser,
         runs: runs.map((h) => ({ runId: h.run.runId, backupType: h.run.backupType, snapshotBefore: h.manifest?.snapshotBefore ?? null, users: h.userIds.size }))
       };
     },

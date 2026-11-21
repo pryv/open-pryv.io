@@ -1426,7 +1426,7 @@ class UsersRepository {
             `(${c.accountFields} account fields, trigger ${UNFINISHED_REGISTRATION_TRIGGER})`);
         } catch (err) {
           c.status = 'failed';
-          logger.error(`unfinished registration: the erasure of account ${c.userId} failed; its record stays in the erasure ledger ` +
+          logger.error(`unfinished registration: the erasure of account ${c.userId} failed; its record of the erasure in progress stays ` +
             'and a running core completes it (the account auto-deletion sweep resumes unfinished erasures): ' +
             ((err as Error)?.message ?? String(err)));
         }

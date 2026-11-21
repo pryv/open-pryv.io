@@ -93,8 +93,10 @@ describe('[RSER] restore of an account with an erasure record', function () {
     return { id: fu.attrs.id, username, streamId, dir };
   }
 
+  // An erasure that started after the backup refuses a plain restore
+  // ([ERLR] covers that): these restores override it, as an operator would.
   function restore (u) {
-    return runCli(['--restore', u.dir, '--user', u.username, '--overwrite']);
+    return runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--restore-erased']);
   }
 
   async function streamIdsOf (u) {
@@ -281,7 +283,8 @@ describe('[RSER] restore of an account with an erasure record', function () {
       const now = Date.now() - STALE_MS;
       await store.put({ userId: u.id, username: u.username, trigger: 'date', startedAt: now, updatedAt: now, doneSteps: ALL_STEPS, seriesNamespaces: null, attempts: 1, lastError: null });
 
-      const res = restore(u);
+      // erased after its backup (the erasure ledger says so): restored on purpose
+      const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--restore-erased']);
       assertOk(res, 'restore');
       assert.match(res.stdout, /Restored: 1 users/);
       assert.ok(await exists(u), 'the account is back');
@@ -414,7 +417,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
         return JSON.stringify({ ...event, content: 'tampered' });
       }).join('\n'));
 
-      const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--verify-integrity']);
+      const res = runCli(['--restore', u.dir, '--user', u.username, '--overwrite', '--verify-integrity', '--restore-erased']);
       assert.strictEqual(res.status, 1, res.stdout + res.stderr);
       // The account was still indexed (its erasure stopped before removing
       // it): the rollback empties it, the put-back erasure completes it.
@@ -437,7 +440,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
       await stoppedErasure(a);
       const { o, lines } = await orchestrator();
       const reader = await combinedReader([a, b]);
-      const report = await o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true });
+      const report = await o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true, restoreErased: true });
       await reader.close();
       assert.deepEqual(report.restored.map((r) => r.userId).sort(), [a.id, b.id].sort());
       assert.deepEqual(report.erasuresWithdrawn.map((r) => r.userId), [a.id]);
@@ -489,7 +492,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
       const { o, lines } = await orchestrator();
       const reader = await combinedReader([a, b], b);
       try {
-        await assert.rejects(o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true }), /injected backup read error/);
+        await assert.rejects(o.restoreAllUsers(reader, { overwrite: true, skipPlatform: true, restoreErased: true }), /injected backup read error/);
       } finally {
         await reader.close();
       }
@@ -524,7 +527,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
 
       const { o } = await orchestrator();
       const reader = createFilesystemBackupReader(u.dir);
-      const report = await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id });
+      const report = await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id, restoreErased: true });
       await reader.close();
       assert.deepEqual(report.erasuresWithdrawn.map((r) => r.userId), [target.id]);
       assert.equal(await store.get(target.id), null);
@@ -553,7 +556,7 @@ describe('[RSER] restore of an account with an erasure record', function () {
       await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username }, { trigger: 'admin' });
       const { o, lines } = await orchestrator();
       const reader = createFilesystemBackupReader(u.dir);
-      await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id });
+      await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: target.id, restoreErased: true });
       await reader.close();
       assert.deepEqual(await state.getIdentity(target.id, key), { name: 'Ada Lovelace' }, JSON.stringify(lines));
       assert.ok(!lines.some((l) => l.msg.includes('transfer identity')), JSON.stringify(lines));

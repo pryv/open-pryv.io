@@ -568,6 +568,14 @@ function checkAutoDeletion (config, problems) {
   }
 }
 
+// accountErasure.ledger: value shapes (enabled, retentionDays, hmacKey).
+function checkErasureLedger (config, problems) {
+  const { describeErasureLedgerConfig } = require('../../components/business/src/erasureLedger/config.ts');
+  for (const p of describeErasureLedgerConfig(config.get('accountErasure:ledger')).problems) {
+    problems.push({ message: p.path.join('.') + ' ' + p.message, path: p.path, payload: {} });
+  }
+}
+
 // account.storageUsed.intervalHours: hours between two storage-size passes,
 // 0 turns the job off. A typo must not silently turn it off.
 function checkStorageUsed (config, problems) {
@@ -717,6 +725,7 @@ async function validate (config) {
   checkCmcOutbound(config, problems);
   checkIntegrityAlgorithm(config, problems);
   checkAutoDeletion(config, problems);
+  checkErasureLedger(config, problems);
   checkStorageUsed(config, problems);
   checkPasswordCheckLimit(config, problems);
   checkPgTimeLimits(config, problems);
@@ -884,6 +893,8 @@ function collectWarnings (config) {
   warnings.push(...checkTrustedProxiesConfig(config.get('http:trustedProxies'), config.get('cluster:hfsWorkers')).warnings);
   warnings.push(...revocationLagWarnings(config));
   warnings.push(...describeAutoDeletion(config).warnings);
+  const { describeErasureLedgerConfig } = require('../../components/business/src/erasureLedger/config.ts');
+  warnings.push(...describeErasureLedgerConfig(config.get('accountErasure:ledger')).warnings);
   const { describePgTimeLimits } = require('../../storages/engines/postgresql/src/timeLimits.ts');
   warnings.push(...describePgTimeLimits(config.get('storages:engines:postgresql')).warnings);
   warnings.push(...oauthWarnings(config));
@@ -1030,6 +1041,7 @@ module.exports = {
   checkTrustedProxies,
   checkIntegrityAlgorithm,
   checkAutoDeletion,
+  checkErasureLedger,
   checkPgTimeLimits,
   checkUserDataRootPersistence,
   checkCoreIdentity,
