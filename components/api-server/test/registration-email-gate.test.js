@@ -176,7 +176,7 @@ describe('[EMCR] registration email gate', function () {
     assert.strictEqual(challengeRes.body.sent, true);
 
     const code = mergeVar(captured[0], 'CODE');
-    assert.match(code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/, 'the mailed code is formatted in two groups');
+    assert.match(code, /^[A-Z2-9]{5}-[A-Z2-9]{5}$/, 'the mailed code is formatted in two groups of five');
     assert.strictEqual(mergeVar(captured[0], 'EMAIL'), email);
     assert.ok(!JSON.stringify(captured[0].message.subject || '').includes(code.replace('-', '')),
       'the code must not travel in the subject');

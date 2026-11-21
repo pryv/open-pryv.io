@@ -13,8 +13,10 @@ const path = require('node:path');
 const cuid = require('cuid');
 const { userLocalDirectory, getUserAccountStorage } = require('storage');
 const conformanceTests = require('storages/interfaces/baseStorage/conformance/UserAccountStorage.test.js').default;
+const { indexedUserId, unindexUserIds } = require('test-helpers/src/indexedUserIds.ts');
 
 describe('[UAST] Users Account Storage', () => {
+  after(() => unindexUserIds());
   conformanceTests(
     async () => {
       await userLocalDirectory.init();
@@ -22,7 +24,8 @@ describe('[UAST] Users Account Storage', () => {
     },
     async (userId) => {
       await userLocalDirectory.deleteUserDirectory(userId);
-    }
+    },
+    indexedUserId
   );
 });
 
@@ -180,13 +183,13 @@ describe('[UASF] SQLite account storage follows its file on disk', function () {
     let opens = 0;
     _internals.set('userLocalDirectory', new Proxy(original, {
       get (target, prop) {
-        if (prop !== 'ensureUserDirectory') return target[prop];
+        if (prop !== 'ensureUserFile') return target[prop];
         return async (id, ...rest) => {
           if (id === userId) {
             opens++;
             await new Promise((resolve) => setTimeout(resolve, 50));
           }
-          return target.ensureUserDirectory(id, ...rest);
+          return target.ensureUserFile(id, ...rest);
         };
       }
     }));

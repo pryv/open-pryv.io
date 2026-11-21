@@ -17,7 +17,6 @@ import { fileIdentity } from './fileIdentity.ts';
 import { closeQuietly } from './closeQuietly.ts';
 const require = createRequire(import.meta.url);
 
-const path = require('path');
 const SQLite3 = require('better-sqlite3');
 const { LRUCache: LRU } = require('lru-cache');
 const timestamp = require('unix-timestamp');
@@ -418,8 +417,8 @@ async function getUserDB (userId: string): Promise<SQLite3Instance> {
 }
 
 async function openUserDB (userId: string): Promise<SQLite3Instance> {
-  const userPath = await _internals.userLocalDirectory.ensureUserDirectory(userId);
-  const dbPath = path.join(userPath, `account-${VERSION}.sqlite`);
+  // Refused for a database not there yet in an erased account's kept directory.
+  const dbPath: string = await _internals.userLocalDirectory.ensureUserFile(userId, `account-${VERSION}.sqlite`);
   const db = new SQLite3(dbPath, DB_OPTIONS);
   let fileId: string | null;
   try {

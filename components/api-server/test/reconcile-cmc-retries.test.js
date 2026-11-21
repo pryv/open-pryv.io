@@ -16,6 +16,8 @@ const require = createRequire(import.meta.url);
  * holds nothing else and has no erasure record. PostgreSQL only.
  */
 
+const { writeAsOrphans } = require('test-helpers/src/indexedUserIds.ts');
+
 const RETRY_TYPE = 'cmc-internal/retry-cmc';
 const RETRY_STREAM = ':_cmc:_internal:retries';
 
@@ -35,7 +37,13 @@ describe('[RCCR] CMC retry rows of erased accounts', function () {
     return require('storages').databasePG != null;
   }
 
+  // Rows an erasure left: written while the id is indexed (the database
+  // refuses rows of an unindexed id), the entry removed after.
   async function addEvent (userId, type = RETRY_TYPE, streamId = RETRY_STREAM) {
+    return await writeAsOrphans([userId], () => addEventRows(userId, type, streamId));
+  }
+
+  async function addEventRows (userId, type, streamId) {
     const id = cuid();
     const now = Date.now() / 1000;
     await connection.query(
@@ -126,7 +134,7 @@ describe('[RCCR] CMC retry rows of erased accounts', function () {
     await addEvent(inErasure);
     await erasures.insertIfAbsent(erasureRow(inErasure));
     await addEvent(withAccount);
-    await accountStorage.setAccountField(withAccount, 'language', 'en', 'system', Date.now() / 1000);
+    await writeAsOrphans([withAccount], () => accountStorage.setAccountField(withAccount, 'language', 'en', 'system', Date.now() / 1000));
     const keptEventId = await addEvent(keptId);
     try {
       const applied = await usersRepository.reconcileCmcRetryOrphans({ apply: true });

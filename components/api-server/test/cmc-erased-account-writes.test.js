@@ -19,7 +19,8 @@ const require = createRequire(import.meta.url);
  * and no file in the erased account's directory. A grant that cannot be
  * stored is not delivered to the requester either. Run on both engines, and
  * with the audit `keep` mode, where the erasure leaves the user directory in
- * place (reads may re-open empty databases there, never with a row). Also: an erasure record on an account that still exists (an erasure
+ * place with its audit files and the erased marker only (no database is
+ * opened there again). Also: an erasure record on an account that still exists (an erasure
  * under way, or one that stopped half way) refuses the same writes and keeps
  * the account out of the retry loop, and nothing of it is left once the record
  * is gone.
@@ -274,8 +275,13 @@ describe('[CMCER] cmc orchestration of an account erased meanwhile', function ()
       if (onUserDelete === 'erase') {
         assert.strictEqual(directoryEntries(account.id), null, 'user directory re-created');
       } else {
-        // The kept directory may get back empty databases from the reads the
-        // late work makes (a store opens its file on a read): no row in them.
+        // The kept directory holds the audit files and the erased marker,
+        // nothing else: the late work's reads open no new database there.
+        const entries = directoryEntries(account.id);
+        if (entries != null) {
+          assert.ok(entries.includes(userLocalDirectory.ERASED_MARKER), 'no erased marker in the kept directory: ' + JSON.stringify(entries));
+          assert.deepStrictEqual(entries.filter((name) => !name.startsWith('audit') && name !== userLocalDirectory.ERASED_MARKER), [], 'files re-created in the kept directory');
+        }
         assert.deepStrictEqual(rowsInKeptDatabases(account.id), {}, 'rows written into the kept directory');
       }
       assert.strictEqual(peer.reads, 1);
@@ -284,6 +290,24 @@ describe('[CMCER] cmc orchestration of an account erased meanwhile', function ()
       assert.deepStrictEqual(unhandled, [], 'unhandled rejections');
     });
   }
+
+  it('[CMCER6] PostgreSQL: a late write that bypasses the guard is refused by the database, as an account-gone error', async function () {
+    if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
+    const { isAccountGoneError } = require('cmc/src/accountWriteGuard.ts');
+    const account = await freshAccount();
+    await erase(account);
+    const mall = await getMall(); // the plain mall: no account check above the storage
+    const now = Date.now() / 1000;
+    const late = { id: cuid(), streamIds: [':_cmc:_internal:retries'], type: 'cmc-internal/retry-cmc', content: { capabilityUrl: 'https://' + cuid() + '@' + PEER_HOST + '/' }, time: now, created: now, createdBy: 'test', modified: now, modifiedBy: 'test' };
+    await assert.rejects(mall.events.create(account.id, late), (err) => {
+      assert.ok(isAccountGoneError(err), String(err?.stack ?? err));
+      return true;
+    });
+    assert.deepStrictEqual(await orphanRowsOf(account.id), [], 'rows written for the erased account');
+    const db = require('storages').databasePG;
+    const left = await db.query('SELECT (SELECT count(*) FROM events WHERE user_id = $1)::int + (SELECT count(*) FROM event_streams WHERE user_id = $1)::int AS c', [account.id]);
+    assert.strictEqual(left.rows[0].c, 0);
+  });
 
   it('[CMCER5] an erasure record on an account that still exists refuses the writes, warns, and leaves nothing once removed', async function () {
     const account = await freshAccount();

@@ -419,8 +419,10 @@ class RestoreOrchestrator {
       // User may already exist — that's fine if we're overwriting
       if (!opts.overwrite) throw e;
     }
-
     try {
+      // Entry refused above (overwrite): an erased marker left in the
+      // account's kept local directory goes all the same, before its data.
+      await require('storage').userLocalDirectory.unmarkErased(targetUserId);
       return await this._writeUserData(userReader, username, opts, targetUserId, userId);
     } catch (err) {
       await this._clearFailedAccount(targetUserId, username, indexedHere, err);

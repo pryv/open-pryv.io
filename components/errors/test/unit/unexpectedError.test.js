@@ -96,3 +96,27 @@ describe('[UNXS] a statement stopped by the database time limit', function () {
     assert.strictEqual(factory.unexpectedError(err).httpStatus, 500);
   });
 });
+
+describe('[PGUG] a storage refusal for an account erased while the request ran', function () {
+  function refused (code) {
+    const err = new Error(code === 'PU001' ? 'user id "u1" is not in the users index: row refused' : 'user directory erased: u1');
+    err.code = code;
+    return err;
+  }
+
+  it('[PGUG7] answers 404 unknown-resource "Unknown user", the source kept as innerError, also when wrapped again', function () {
+    for (const code of ['PU001', 'USER_ERASED']) {
+      const source = refused(code);
+      const err = factory.unexpectedError(source);
+      assert.strictEqual(err.id, ErrorIds.UnknownResource, code);
+      assert.strictEqual(err.httpStatus, 404, code);
+      assert.strictEqual(err.message, 'Unknown user');
+      assert.strictEqual(err.innerError, source);
+      assert.ok(!JSON.stringify(errorHandling.getPublicErrorData(err)).includes('u1'), 'the id is not echoed');
+      assert.strictEqual(factory.unexpectedError(err), err, code + ': wrapped again');
+      // A data store's wrapping of the refusal maps the same.
+      const wrapped = factory.unexpectedError(Object.assign(new Error('Error from data store "local"'), { innerError: source }));
+      assert.strictEqual(wrapped.httpStatus, 404, code + ': wrapped');
+    }
+  });
+});

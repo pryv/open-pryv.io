@@ -11,20 +11,25 @@ const require = createRequire(import.meta.url);
  * UserAccountStorage conformance test suite.
  * @param {Function} getStorage - async function returning an initialized UserAccountStorage instance
  * @param {Function} cleanupFn - async function called after tests for cleanup (receives userId)
+ * @param {Function} [newUserId] - async function returning a fresh user id the
+ *   storage accepts rows for (an engine may refuse ids its users index lacks);
+ *   default: a bare cuid
  */
-export default function conformanceTests (getStorage, cleanupFn) {
+export default function conformanceTests (getStorage, cleanupFn, newUserId) {
   const assert = require('node:assert');
   const cuid = require('cuid');
   const timestamp = require('unix-timestamp');
   const encryption = require('utils').encryption;
+  const newId = newUserId ?? (async () => cuid());
 
   describe('UserAccountStorage conformance', () => {
     const passwords = [];
-    const userId = cuid();
+    let userId;
     let storage;
 
     before(async () => {
       storage = await getStorage();
+      userId = await newId();
       // create five passwords with one day delay between each other
       const now = timestamp.now();
       for (let i = 4; i >= 0; i--) {
@@ -43,7 +48,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
 
     describe('addPasswordHash()', () => {
       it('[B2I7] must throw an error if two passwords are added with the same time', async () => {
-        const userId2 = cuid();
+        const userId2 = await newId();
         const now = timestamp.now();
         await storage.addPasswordHash(userId2, 'hash_1', 'test', now);
         try {
@@ -70,7 +75,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
 
     describe('getCurrentPasswordTime()', () => {
       it('[85PW] must return the time of the current password', async () => {
-        const uId = cuid();
+        const uId = await newId();
         const time = timestamp.now('-1w');
         await storage.addPasswordHash(uId, 'hash', 'test', time);
         const actualTime = await storage.getCurrentPasswordTime(uId);
@@ -143,7 +148,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
 
     describe('clearHistory()', () => {
       it('must clear password history for user', async () => {
-        const uId = cuid();
+        const uId = await newId();
         await storage.addPasswordHash(uId, 'hash1', 'test', timestamp.now());
         await storage.clearHistory(uId);
         const hash = await storage.getPasswordHash(uId);
@@ -153,7 +158,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
 
     describe('getAccountFieldsWithMeta()', () => {
       it('[ATM06] must return each field\'s current value with its latest and first times', async () => {
-        const uId = cuid();
+        const uId = await newId();
         await storage.setAccountField(uId, 'email', 'a@example.com', 'first', 1000);
         await storage.setAccountField(uId, 'email', 'b@example.com', 'second', 3000);
         await storage.setAccountField(uId, 'email', 'c@example.com', 'third', 2000);
@@ -176,7 +181,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
 
     describe('setAccountField()', () => {
       it('[ATM10] a write on the same instant as another version of the field goes just after it', async () => {
-        const uId = cuid();
+        const uId = await newId();
         await storage.setAccountField(uId, 'language', 'en', 'a', 1000);
         const second = await storage.setAccountField(uId, 'language', 'fr', 'b', 1000);
         assert.strictEqual(second.time, 1000.001);
@@ -192,7 +197,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
       });
 
       it('[ATM09] concurrent writes of one field all land', async () => {
-        const uId = cuid();
+        const uId = await newId();
         const values = ['a', 'b', 'c', 'd', 'e'];
         await Promise.all(values.map((v) => storage.setAccountField(uId, 'language', v, v, 2000)));
         const history = await storage.getAccountFieldHistory(uId, 'language');
@@ -204,7 +209,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
 
     describe('migration methods', () => {
       it('_exportAll() must return passwords and storeKeyValues', async () => {
-        const uId = cuid();
+        const uId = await newId();
         const time = timestamp.now();
         await storage.addPasswordHash(uId, 'hash_export', 'test', time);
         const kvStore = storage.getKeyValueDataForStore('migration-store');
@@ -217,8 +222,8 @@ export default function conformanceTests (getStorage, cleanupFn) {
       });
 
       it('[UAX1] _exportAll() then _importAll() must round-trip the password history with its author', async () => {
-        const src = cuid();
-        const dst = cuid();
+        const src = await newId();
+        const dst = await newId();
         const t0 = timestamp.now('-2d');
         const t1 = timestamp.now('-1d');
         await storage.addPasswordHash(src, 'hash_rt_0', 'access-a', t0);
@@ -246,7 +251,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
       });
 
       it('[UAX2] _importAll() must accept a legacy export whose password history lacks createdBy', async () => {
-        const dst = cuid();
+        const dst = await newId();
         const time = timestamp.now('-1d');
         await storage._importAll(dst, {
           passwords: [{ hash: 'hash_legacy', time }],
@@ -257,7 +262,7 @@ export default function conformanceTests (getStorage, cleanupFn) {
       });
 
       it('_clearAll() must remove all data for user', async () => {
-        const uId = cuid();
+        const uId = await newId();
         await storage.addPasswordHash(uId, 'hash_clear', 'test', timestamp.now());
         await storage._clearAll(uId);
         const hash = await storage.getPasswordHash(uId);

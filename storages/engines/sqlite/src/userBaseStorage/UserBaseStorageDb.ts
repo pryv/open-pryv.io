@@ -86,8 +86,8 @@ class UserBaseStorageDb {
   }
 
   static async open (userId: string): Promise<UserBaseStorageDb> {
-    const userDir = await _internals.userLocalDirectory.ensureUserDirectory(userId);
-    const dbPath = path.join(userDir, `baseStorage-${VERSION}.sqlite`);
+    // Refused for a database not there yet in an erased account's kept directory.
+    const dbPath: string = await _internals.userLocalDirectory.ensureUserFile(userId, `baseStorage-${VERSION}.sqlite`);
     const inst = new UserBaseStorageDb(dbPath);
     await inst.init();
     inst.fileId = await fileIdentity(dbPath);

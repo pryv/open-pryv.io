@@ -15,8 +15,8 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert');
-const cuid = require('cuid');
 const { fromCallback } = require('utils');
+const { indexedUserId, unindexUserIds } = require('test-helpers/src/indexedUserIds.ts');
 const storage = require('storage');
 
 describe('[PCAS] UserStorage.compareAndSetJson (profile)', function () {
@@ -34,8 +34,10 @@ describe('[PCAS] UserStorage.compareAndSetJson (profile)', function () {
     profile = (await storage.getStorageLayer()).profile;
   });
 
+  after(() => unindexUserIds());
+
   beforeEach(async function () {
-    userId = cuid();
+    userId = await indexedUserId();
     await fromCallback((cb) => profile.insertOne(userId, {
       id: 'private',
       data: { keep: 'me', mfa: { totp: { secret: 'S1', lastUsedStep: 10 } } }
