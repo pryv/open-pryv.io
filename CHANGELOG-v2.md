@@ -14,7 +14,7 @@
 ### Erased accounts: no database re-created in a kept directory, no row stored on PostgreSQL
 
 Work still running for an account while it is erased (a long request, a CMC dispatch reading a peer)
-can no longer leave anything behind for that account.
+can no longer store rows in the tables listed below, nor re-create files in a kept directory.
 
 - **SQLite with `audit.onUserDelete: keep`**: the erasure leaves the account's directory with its
   audit files and a marker file, `erased.json` (`{"v":1,"erasedAt":<ms>}`; no username), and nothing
@@ -28,14 +28,38 @@ can no longer leave anything behind for that account.
 - **PostgreSQL**: the database refuses a new row for a user id that the users index does not hold
   (SQLSTATE `PU001`), in `events`, `streams`, `accesses`, `profile`, `webhooks`, `account_fields`,
   `passwords` and `store_key_values`. The erasure removes an account's index entry before its data,
-  and an insert in flight holds that entry until it commits: once the entry is gone, nothing more is
-  stored for the account. Installed at boot (function `refuse_unindexed_user()`, one `BEFORE INSERT`
-  trigger per table) and by the migration `20261121_120000_unindexed_user_guard`. Rows already stored
-  are not checked. `event_streams`, `audit_events` (kept for erased accounts under `keep`),
-  `series_data` and `attachment_files` are not checked.
+  and an insert in flight holds that entry until it commits: once the entry is gone, no new row is
+  stored for the account in those tables. Installed at boot (function `refuse_unindexed_user()`, one
+  `BEFORE INSERT` trigger per table, a trigger found disabled is enabled again with a warning) and by
+  the migration `20261121_120000_unindexed_user_guard`. Rows already stored are not checked. Not
+  checked: `audit_events` (kept for erased accounts under `keep`), `series_data` (series points) and
+  `attachment_files` (attachment content stored in PostgreSQL). `event_streams` (an event's stream
+  links) has no trigger, but a link is now written only while its event row exists, and an account
+  deletion removes the events before the links, so no link is left for an erased account either.
 - A request whose account is erased while it runs, and whose write or file open is refused as above,
   answers `404` `unknown-resource` ("Unknown user"), as a request naming an unknown account (it was a
-  `500` unexpected error).
+  `500` unexpected error). The server logs each such refusal at warn, with the table: outside an
+  erasure it points at a write under a wrong user id.
+- **Upgrade and rollback.** All processes of a core must run this release: a process of an earlier
+  release writes a registration's personal access before the account's index entry, which the
+  database now refuses (registration with a session fails). During the upgrade, do not let a process
+  of the earlier release serve registrations once a process of this release has started on the
+  database. To roll back to an earlier release, first remove the guard (the earlier release does not
+  remove it), with every process stopped:
+
+  ```sql
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON events;
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON streams;
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON accesses;
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON profile;
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON webhooks;
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON account_fields;
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON passwords;
+  DROP TRIGGER IF EXISTS refuse_unindexed_user ON store_key_values;
+  DROP FUNCTION IF EXISTS refuse_unindexed_user();
+  ```
+
+  Starting this release again installs it again.
 - **Loading data with your own PostgreSQL tools**: a data-only `pg_restore` into an existing schema
   loads tables in an order that puts rows before their `users_index` entries; run it with
   `--disable-triggers`, or `SET pryv.unindexed_writes = 'allow'` in that session. A full `pg_restore`
@@ -43,9 +67,11 @@ can no longer leave anything behind for that account.
   account's index entry before its data and is not affected either.
 - Registration with a session writes the account's index entry before its personal access; nothing
   changes for clients.
-- Cost: one index lookup and row lock per inserted row of those tables, about 11 µs per single-row
-  insert; on batch `events.create` through the API the measured slowdown is about 1 to 2 %, within the
-  noise of the measurement (bench script `components/api-server/test/bench/pg-unindexed-writes.bench.js`).
+- Cost: one index lookup and row lock per inserted row of those tables. Measured on a single writer:
+  11 to 18 µs per single-row insert, 0.3 to 1.7 % of the time of an `events.create` in an API batch
+  call; a throughput comparison with and without the guard was within its measurement noise. Not yet
+  measured: several concurrent writers of one account, which all lock the same index entry (bench
+  script `components/api-server/test/bench/pg-unindexed-writes.bench.js`).
 
 ### Generated tokens drawn from the system's secure random source
 

@@ -30,14 +30,19 @@ export { isStatementCancelled };
  * refusal of an erased account (USER_ERASED). Possibly wrapped.
  */
 function isAccountGoneRefusal (err: unknown): boolean {
+  return accountGoneRefusalOf(err) != null;
+}
+
+/** The refusal itself (see `isAccountGoneRefusal`) in `err`'s chain, if any. */
+function accountGoneRefusalOf (err: unknown): { code: string; message?: string; table?: unknown } | null {
   for (let e = err, depth = 0; e != null && depth < 5; depth++) {
-    const x = e as { code?: unknown; innerError?: unknown; cause?: unknown };
-    if (x.code === 'PU001' || x.code === 'USER_ERASED') return true;
+    const x = e as { code?: unknown; message?: string; table?: unknown; innerError?: unknown; cause?: unknown };
+    if (x.code === 'PU001' || x.code === 'USER_ERASED') return x as { code: string; message?: string; table?: unknown };
     e = x.innerError ?? x.cause;
   }
-  return false;
+  return null;
 }
-export { isAccountGoneRefusal };
+export { isAccountGoneRefusal, accountGoneRefusalOf };
 
 /**
  * The full factory contract — one entry per error producer below.

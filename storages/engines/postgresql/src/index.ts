@@ -176,8 +176,12 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
                 [userId, streamId]
               );
               const streamPath = pathRes.rows.length > 0 ? pathRes.rows[0].path : streamId + '/';
+              // Only while its event row exists, held (as in localUserEventsPG).
               await connection.query(
-                'INSERT INTO event_streams (user_id, event_id, stream_id, stream_path) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+                'INSERT INTO event_streams (user_id, event_id, stream_id, stream_path) ' +
+                'SELECT $1::text, $2::text, $3::text, $4::text ' +
+                'WHERE EXISTS (SELECT 1 FROM events WHERE user_id = $1::text AND id = $2::text FOR KEY SHARE) ' +
+                'ON CONFLICT DO NOTHING',
                 [userId, event.id, streamId, streamPath]
               );
             }
@@ -189,8 +193,9 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
     clearAll (userOrUserId: UserOrId, callback: (err: Error | null) => void) {
       const userId = typeof userOrUserId === 'string' ? userOrUserId : userOrUserId.id;
       (async () => {
-        await connection.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
+        // Events first, as the account erasure does (see localUserEventsPG._deleteUser).
         await connection.query('DELETE FROM events WHERE user_id = $1', [userId]);
+        await connection.query('DELETE FROM event_streams WHERE user_id = $1', [userId]);
       })().then(() => callback(null)).catch(callback);
     }
   };

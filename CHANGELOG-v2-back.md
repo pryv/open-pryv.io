@@ -15,35 +15,48 @@
   `EventLocalFiles.saveAttachmentFromStream` (it created the directory with a bare `mkdir`, so an
   attachment saved late re-created an erased account's directory in erase mode too: now refused like
   the databases). `unmarkErased(userId)`: unlinks the marker and drops the process mark; called by
-  `usersLocalIndex.addUser` before the engine insert (every path that makes an id live again indexes
-  it before writing its data: registration, every restore form, fixtures) and by
-  `RestoreOrchestrator._importUser` for an `--overwrite` whose index insert was refused.
-  `forgetErasedTestOnly` removes the marker too. The per-process `erased` set is unchanged (erase
+  `usersLocalIndex.addUser` once the engine insert succeeded (a refused entry leaves the marker; every
+  path that makes an id live again indexes it before writing its data: registration, every restore
+  form, fixtures) and by `RestoreOrchestrator._importUser` for an `--overwrite` whose index insert was
+  refused. A restore that fails after that puts the marker back (`hasErasedMarker` read before,
+  `remarkErased` after `_clearFailedAccount`). `forgetErasedTestOnly` removes the marker too. The per-process `erased` set is unchanged (erase
   mode). The naive variant that used that set as the signal broke a restore by another process and
   is not what this does.
 - Residual (SQLite keep mode): an open that passed the check just before the marker was written can
   still create one empty file after the removal loop (a millisecond window, no row in it).
 - `storages/engines/postgresql/src/unindexedWritesGuard.ts`: `refuse_unindexed_user()` (plpgsql:
   `PERFORM 1 FROM users_index WHERE user_id = NEW.user_id FOR KEY SHARE`, `RAISE ... USING ERRCODE =
-  'PU001'` when not found, `RETURN NEW` when `current_setting('pryv.unindexed_writes', true) =
-  'allow'`) and a `BEFORE INSERT ... FOR EACH ROW` trigger `refuse_unindexed_user` on `events`,
-  `streams`, `accesses`, `profile`, `webhooks`, `account_fields`, `passwords`, `store_key_values`
-  (created only where absent: no table lock at every boot). Appended to `SCHEMA_SQL`; migration
-  `20261121_120000_unindexed_user_guard.js` runs the same SQL. Not a foreign key: the erasure removes
-  the index entry first and is multi-step and resumable, `RESTRICT` would block it and `CASCADE` would
-  turn a lost index into a data wipe. The lock is what closes the window: the index delete waits for
-  an insert in flight, and the data removal after it sees that row.
-- Excluded tables: `event_streams` (written after its event), `audit_events`, `series_data`,
-  `attachment_files` (removed before the index entry), `external_ids`, `alias_index`,
-  `cmc_deletion_notices`, `account_erasures`. Residual: `events.create` without a mall transaction
-  writes the event row and its `event_streams` rows as separate statements, so the index lock ends
-  with the first; an erasure running entirely between the two leaves `event_streams` rows (ids and
-  stream paths, no content) for the erased id.
-- Error mapping: `errors.isAccountGoneRefusal(err)` (`code` `PU001` or `USER_ERASED`, through
-  `innerError` / `cause`); `factory.unexpectedError` answers such a refusal `404` `unknown-resource`
-  "Unknown user" (kept as is when wrapped again). CMC `isAccountGoneError` and the erasure's
-  `isErasedUserError` accept `PU001` (and walk wrapped errors), so a late CMC write refused by the
-  database logs at info like a guard drop.
+  'PU001', TABLE = TG_TABLE_NAME` when not found, `RETURN NEW` when
+  `current_setting('pryv.unindexed_writes', true) = 'allow'`) and a `BEFORE INSERT ... FOR EACH ROW`
+  trigger `refuse_unindexed_user` on `events`, `streams`, `accesses`, `profile`, `webhooks`,
+  `account_fields`, `passwords`, `store_key_values`. `installUnindexedWritesGuard(client, logger)` runs
+  in `DatabasePG._initSchemaOnce` after `SCHEMA_SQL`, under the schema advisory lock, with
+  `lock_timeout` 2 s and up to 5 attempts on `55P03` / `40P01`: replaces the function, then per table,
+  each its own statement (a first install under traffic holds one table's lock at a time), creates the
+  trigger where absent and enables one found with `tgenabled` other than `O` / `A` (warn), logging at
+  error and going on when a table keeps timing out. `DatabasePG.ensureUnindexedWritesGuard()` takes the
+  advisory lock and runs the same; the migration `20261121_120000_unindexed_user_guard.js` calls it.
+  Not a foreign key: the erasure removes the index entry first and is multi-step and resumable,
+  `RESTRICT` would block it and `CASCADE` would turn a lost index into a data wipe. The lock is what
+  closes the window: the index delete waits for an insert in flight, and the data removal after it
+  sees that row.
+- `event_streams` without a trigger (one more probe and lock per stream of every event): the link
+  insert (`localUserEventsPG._syncEventStreams`, and the engine's `importAll`) is now
+  `INSERT ... SELECT ... WHERE EXISTS (SELECT 1 FROM events WHERE user_id = $1 AND id = $2 FOR KEY
+  SHARE)`, and `_deleteUser` (and `clearAll`) delete `events` before `event_streams`: the event delete
+  waits for a link insert in flight, the link delete after it sees the row, and a link written once the
+  event is gone stores nothing. The residual of a link written between an event's insert and an
+  erasure is closed. `update` no longer syncs the links when it matched no event (it did without
+  `onlyIfNotTrashed`).
+- Other excluded tables: `audit_events`, `series_data`, `attachment_files` (removed before the index
+  entry), `external_ids`, `alias_index`, `cmc_deletion_notices`, `account_erasures`.
+- Error mapping: `errors.isAccountGoneRefusal(err)` / `accountGoneRefusalOf(err)` (`code` `PU001` or
+  `USER_ERASED`, through `innerError` / `cause`); `factory.unexpectedError` answers such a refusal
+  `404` `unknown-resource` "Unknown user" (kept as is when wrapped again); `errorHandling.logError`
+  logs it at warn with the refusal's message and table (a `PU001` outside an erasure is a write under a
+  wrong id). CMC `isAccountGoneError` accepts `PU001` (and walks wrapped errors), so a late CMC write
+  refused by the database logs at info like a guard drop. The erasure's `isErasedUserError` does not:
+  no erasure step inserts a row.
 - `UsersRepository.createLocalUserData`: `usersIndex.addUser` runs before the session and the
   personal access (the access insert would otherwise be refused); `compensateFailedInsert` unchanged.
 - Tests: `[ERMK1-5]` (marker written and kept, `ensureUserFile`, a child process refused, `addUser`
@@ -51,7 +64,10 @@
   process), `[CMCER3]` / `[CMCER4]` assert the kept directory holds only `audit*` and the marker,
   `[CMCER6]` (PostgreSQL: a write bypassing the CMC guard is refused as account-gone), `[PGUG1-4]`
   (engine: per-table refusal, unguarded tables, the lock race, the session setting), `[PGUG5]`
-  (registration order), `[PGUG6]` (erased account refused until restored), `[PGUG7]` (404 mapping).
+  (registration order), `[PGUG6]` (erased account refused until restored), `[PGUG7]` (404 mapping),
+  `[PGUG10]` (warn log with the table), `[PGUG8]` (a disabled or missing trigger is enabled / created again), `[PGUG9]` (no link
+  without its event; the link delete after the event delete sees a link written in flight),
+  `[ERMK6]` (a refused `addUser` keeps the marker).
   Storage-level tests that write under ids of their own index them first:
   `test-helpers/src/indexedUserIds.ts`; the `UserStorage` / `UserAccountStorage` conformance suites
   take an id factory; `[WHBK]` indexes its made-up accounts; `[PG04]` indexes its id. Tests that build
@@ -59,11 +75,13 @@
   indexed while they are written, the entry removed after, which is how such rows arise). `[ULE2]`
   and `[DKP1]` expect the marker; `[UASF4]` intercepts `ensureUserFile`.
 - Bench (not in the matrix): `components/api-server/test/bench/pg-unindexed-writes.bench.js`
-  (`[PGUB]`, run command in its header): trigger enabled / disabled in alternating rounds. On a loaded
-  dev machine: trigger time ~11 µs per single-row insert (`EXPLAIN ANALYZE`), 0.3 to 1.7 % of the API
-  per-event time of a batch `events.create`; A/B throughput of API batches, paired-round median
-  slowdown 2.4 to 4.4 % with quartiles about +-8 % (noise-bound), mean 1.3 to 3.2 %; set-based
-  `INSERT ... SELECT` into `events` ~6.5 µs per row, about 20 % of that statement.
+  (`[PGUB]`, run command in its header): trigger enabled / disabled in alternating rounds, single
+  writer. The cost figure is the direct one: 11 to 18 µs of trigger time per single-row insert
+  (`EXPLAIN ANALYZE`), 0.3 to 1.7 % of the API per-event time of a batch `events.create`. The A/B
+  throughput comparison was noise-bound on the loaded dev machine it ran on (per-round spread about
+  +-8 %) and shows nothing either way. A set-based `INSERT ... SELECT` into `events` pays ~6.5 µs per
+  row, about 20 % of that statement (bulk loads only). Not measured: concurrent writers of one account
+  (they all lock the same `users_index` tuple; MultiXacts when they overlap).
 
 ### Bearer secrets from node:crypto, cluster cert extensions
 

@@ -30,7 +30,6 @@ import assert from 'node:assert';
 import cuid from 'cuid';
 import * as storages from 'storages';
 import { getMall } from 'mall';
-import { UNINDEXED_WRITES_GUARD_SQL, GUARDED_TABLES } from 'storages/engines/postgresql/src/unindexedWritesGuard.ts';
 
 const BATCH = Number(process.env.BENCH_BATCH || 500);
 const ROUNDS = Number(process.env.BENCH_ROUNDS || 8);
@@ -43,16 +42,15 @@ function median (values) {
 }
 
 describe('[PGUB] bench: PostgreSQL refusal of unindexed user rows', function () {
-  let db, fixtures, username, userId, token, streamId, installedHere;
+  let db, fixtures, username, userId, token, streamId;
 
   before(async function () {
     if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
     await initTests();
     await initCore();
     db = storages.databasePG;
-    const present = await db.query("SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = 'refuse_unindexed_user'");
-    installedHere = present.rows[0].n === 0;
-    await db.query(UNINDEXED_WRITES_GUARD_SQL);
+    // Installed by the boot; also enables a trigger an interrupted run left disabled.
+    await db.ensureUnindexedWritesGuard();
     username = 'pgub' + cuid.slug().toLowerCase();
     token = cuid();
     fixtures = getNewFixture();
@@ -72,10 +70,6 @@ describe('[PGUB] bench: PostgreSQL refusal of unindexed user rows', function () 
     // suite's integrity check.
     await db.query("DELETE FROM events WHERE user_id = $1 AND id LIKE 'pgub-%'", [userId]);
     await fixtures?.clean();
-    if (installedHere) {
-      for (const t of GUARDED_TABLES) await db.query(`DROP TRIGGER IF EXISTS refuse_unindexed_user ON ${t}`);
-      await db.query('DROP FUNCTION IF EXISTS refuse_unindexed_user()');
-    }
   });
 
   async function setTrigger (on) {

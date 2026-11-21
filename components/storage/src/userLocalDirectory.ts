@@ -19,7 +19,7 @@ const fsSync = require('fs');
 
 const { getConfig } = require('@pryv/boiler');
 
-export { init, ensureUserDirectory, ensureUserFile, getPathForUser, listUserIds, deleteUserDirectory, unmarkErased, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED, ERASED_MARKER };
+export { init, ensureUserDirectory, ensureUserFile, getPathForUser, listUserIds, deleteUserDirectory, unmarkErased, hasErasedMarker, remarkErased, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED, ERASED_MARKER };
 
 let config: ConfigLike;
 let basePath: string | undefined;
@@ -90,23 +90,13 @@ function isErased (userId: string): boolean {
 /**
  * The id is an account again (indexed by a restore or a registration): its
  * directory may hold files again. Removes the erased marker and this
- * process's mark. Called before the account's data is written.
+ * process's mark. Called once the id is indexed, before the account's data
+ * is written.
  */
 async function unmarkErased (userId: string): Promise<void> {
   erased.delete(userId);
-  if (basePath == null) {
-    try {
-      await init();
-    } catch (err: unknown) {
-      return; // no per-user local directory in this setup: no marker either
-    }
-  }
-  let markerPath: string;
-  try {
-    markerPath = getPathForUser(userId, ERASED_MARKER);
-  } catch (err: unknown) {
-    return; // not an id a local directory can hold: no marker either
-  }
+  const markerPath = await markerPathIfAny(userId);
+  if (markerPath == null) return;
   try {
     await fs.unlink(markerPath);
   } catch (err: unknown) {
@@ -306,6 +296,39 @@ async function deleteUserDirectory (userId: string, keep: string[] = [], options
     }
   }
   await fs.rm(userFolder, { recursive: true, force: true });
+}
+
+/** Whether the user's directory carries the erased marker. */
+async function hasErasedMarker (userId: string): Promise<boolean> {
+  const markerPath = await markerPathIfAny(userId);
+  return markerPath != null && await exists(markerPath);
+}
+
+/** The marker's path, or null where no marker can exist (no local directory configured, an id no directory can hold). */
+async function markerPathIfAny (userId: string): Promise<string | null> {
+  if (basePath == null) {
+    try {
+      await init();
+    } catch (err: unknown) {
+      return null; // no per-user local directory in this setup
+    }
+  }
+  try {
+    return getPathForUser(userId, ERASED_MARKER);
+  } catch (err: unknown) {
+    return null; // not an id a local directory can hold
+  }
+}
+
+/**
+ * Put the erased marker back in the user's directory, if the directory is
+ * there: a restore of an erased account that failed after `unmarkErased`
+ * leaves the account erased again.
+ */
+async function remarkErased (userId: string): Promise<void> {
+  const userFolder = getPathForUser(userId);
+  if (!(await exists(userFolder))) return;
+  await writeErasedMarker(userFolder);
 }
 
 /** The erased marker in `userFolder`; one already there (a resumed erasure) is kept as it is. */

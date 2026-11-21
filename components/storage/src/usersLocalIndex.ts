@@ -75,11 +75,12 @@ class UsersLocalIndex {
   }
 
   async addUser (username: string, userId: string): Promise<void> {
-    // The id is an account again (a restore of an erased one): its kept local
-    // directory may hold new files again. Before the entry, which every path
-    // making an id live writes before the account's data.
-    await userLocalDirectory.unmarkErased(userId);
     await this.db.addUser(username, userId);
+    // The id is an account again (a restore of an erased one): its kept local
+    // directory may hold new files again. Once the entry is written (a refused
+    // entry leaves the marker), and before the account's data, which every
+    // path making an id live writes after its entry.
+    await userLocalDirectory.unmarkErased(userId);
     logger.debug('addUser', username, userId);
   }
 

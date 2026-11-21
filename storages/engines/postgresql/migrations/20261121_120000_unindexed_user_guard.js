@@ -7,17 +7,17 @@
 'use strict';
 
 /**
- * Refuse rows of a user id the users index does not hold: installs the
+ * Refuse rows of a user id the users index does not hold: the
  * `refuse_unindexed_user()` function and its BEFORE INSERT trigger on the
- * user-keyed tables (see src/unindexedWritesGuard.ts). The schema DDL run at
- * boot installs them too; this migration records the change for existing
- * deployments. Rows already stored are not checked.
+ * user-keyed tables (see src/unindexedWritesGuard.ts). The boot installs them
+ * (and enables a trigger left disabled) before migrations run; this migration
+ * records the change for existing deployments and runs the same check, under
+ * the same advisory lock as the boot. Rows already stored are not checked.
  *
- * Idempotent: CREATE OR REPLACE FUNCTION, triggers created only where absent.
+ * Idempotent.
  */
 module.exports = {
   async up (context) {
-    const { UNINDEXED_WRITES_GUARD_SQL } = require('../src/unindexedWritesGuard.ts');
-    await context.db.query(UNINDEXED_WRITES_GUARD_SQL);
+    await context.db.ensureUnindexedWritesGuard();
   }
 };

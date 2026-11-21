@@ -211,6 +211,30 @@ describe('[ERMK] userLocalDirectory: the erased marker of a kept directory', fun
       await usersLocalIndex.deleteById(userId);
     }
   });
+
+  it('[ERMK6] an index entry refused (the name is taken) leaves the marker; hasErasedMarker / remarkErased', async function () {
+    await erasedKeepingAudit();
+    const usersLocalIndex = await getUsersLocalIndex();
+    const holderId = cuid();
+    const username = 'ermk' + cuid.slug().toLowerCase();
+    await usersLocalIndex.addUser(username, holderId);
+    try {
+      await assert.rejects(usersLocalIndex.addUser(username, userId));
+      assert.strictEqual(await userLocalDirectory.hasErasedMarker(userId), true, 'the marker stays');
+      await assert.rejects(userLocalDirectory.ensureUserFile(userId, 'account.sqlite'), (err) => err.code === 'USER_ERASED');
+      // Removed, then put back (a failed restore).
+      await userLocalDirectory.unmarkErased(userId);
+      assert.strictEqual(await userLocalDirectory.hasErasedMarker(userId), false);
+      await userLocalDirectory.remarkErased(userId);
+      assert.strictEqual(await userLocalDirectory.hasErasedMarker(userId), true);
+      // No directory: nothing to mark.
+      const goneId = cuid();
+      await userLocalDirectory.remarkErased(goneId);
+      assert.strictEqual(fs.existsSync(userLocalDirectory.getPathForUser(goneId)), false);
+    } finally {
+      await usersLocalIndex.deleteById(holderId);
+    }
+  });
 });
 
 /** `ensureUserFile(userId, fileName)` in a child process: `{ ok, path }` or `{ ok: false, code }`. */

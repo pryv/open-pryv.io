@@ -407,6 +407,9 @@ class RestoreOrchestrator {
     // differs from its run's file table, a link) does so before anything of
     // the account is written or cleared.
     const userReader = await reader.openUser(userId);
+    const userLocalDirectory = require('storage').userLocalDirectory;
+    // An erased account's kept directory: marked again if this restore fails.
+    const wasErased: boolean = await userLocalDirectory.hasErasedMarker(targetUserId);
 
     // Ensure user exists in local index
     let indexedHere = false;
@@ -422,10 +425,17 @@ class RestoreOrchestrator {
     try {
       // Entry refused above (overwrite): an erased marker left in the
       // account's kept local directory goes all the same, before its data.
-      await require('storage').userLocalDirectory.unmarkErased(targetUserId);
+      await userLocalDirectory.unmarkErased(targetUserId);
       return await this._writeUserData(userReader, username, opts, targetUserId, userId);
     } catch (err) {
       await this._clearFailedAccount(targetUserId, username, indexedHere, err);
+      if (wasErased) {
+        try {
+          await userLocalDirectory.remarkErased(targetUserId);
+        } catch (markErr: unknown) {
+          this.logger.error(`Restore of user ${username} (${targetUserId}) failed, and its erased marker could not be put back (${errorMessage(markErr)})`);
+        }
+      }
       throw err;
     }
   }
