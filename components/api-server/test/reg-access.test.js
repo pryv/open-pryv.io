@@ -388,6 +388,84 @@ describe('[RGAC] Register access authorization', () => {
     });
   });
 
+  describe('POST /reg/access returnURL (shape, access:returnOrigins)', () => {
+    const BOUND = { access: { returnOrigins: 'bound-app@https://app.example.com' } };
+    const body = (appId, returnURL, extra) => ({
+      requestingAppId: appId,
+      requestedPermissions: [{ streamId: 'diary', level: 'read' }],
+      returnURL,
+      ...extra
+    });
+    function assertRefused (res) {
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-parameters');
+      assert.deepStrictEqual(res.body.error.data, { param: 'returnURL' });
+      assert.strictEqual(res.body.key, undefined, 'no request is created');
+    }
+
+    it('[RAO1] with the key unset, any http(s) returnURL is still accepted', async () => {
+      const res = await coreRequest.post('/reg/access').send(body('bound-app', 'https://anywhere.example.net/cb#'));
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    });
+
+    it('[RAO2] a bound app returning to its registered origin is accepted and the poll echoes the address', async () => {
+      await withInjectedConfig(BOUND, async () => {
+        const res = await coreRequest.post('/reg/access').send(body('bound-app', 'https://app.example.com/page?x=1#'));
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        const poll = await coreRequest.get('/reg/access/' + res.body.key);
+        assert.strictEqual(poll.body.returnURL, 'https://app.example.com/page?x=1#');
+      });
+    });
+
+    it('[RAO3] a bound app returning to another origin is refused before any request exists', async () => {
+      await withInjectedConfig(BOUND, async () => {
+        const res = await coreRequest.post('/reg/access').send(body('bound-app', 'https://evil.example.net/cb'));
+        assertRefused(res);
+        assert.match(res.body.error.message, /not on an origin registered/);
+        assert.ok(!res.body.error.message.includes('evil.example.net'), 'the value is not echoed');
+      });
+    });
+
+    it('[RAO4] a bound app in poll-only mode (returnURL false or absent) is accepted', async () => {
+      await withInjectedConfig(BOUND, async () => {
+        for (const returnURL of [false, undefined, null, 'false']) {
+          const res = await coreRequest.post('/reg/access').send(body('bound-app', returnURL));
+          assert.strictEqual(res.status, 201, JSON.stringify(returnURL));
+        }
+      });
+    });
+
+    it('[RAO5] an unbound app is not restricted when the key is set', async () => {
+      await withInjectedConfig(BOUND, async () => {
+        const res = await coreRequest.post('/reg/access').send(body('other-app', 'https://anywhere.example.net/cb'));
+        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      });
+    });
+
+    it('[RAO6] a request carrying oauthState follows the same rule', async () => {
+      await withInjectedConfig(BOUND, async () => {
+        const refusedRes = await coreRequest.post('/reg/access')
+          .send(body('bound-app', 'https://evil.example.net/cb', { oauthState: 'xyz123' }));
+        assertRefused(refusedRes);
+        const acceptedRes = await coreRequest.post('/reg/access')
+          .send(body('bound-app', 'https://app.example.com/cb', { oauthState: 'xyz123' }));
+        assert.strictEqual(acceptedRes.status, 201, JSON.stringify(acceptedRes.body));
+      });
+    });
+
+    it('[RAO8] a script or local scheme is refused with the key unset', async () => {
+      for (const returnURL of ['javascript:alert(document.domain)//', 'data:text/html,x', 'file:///etc/passwd']) {
+        assertRefused(await coreRequest.post('/reg/access').send(body('any-app', returnURL)));
+      }
+    });
+
+    it('[RAO9] a non-string or credential-carrying returnURL is refused with the key unset', async () => {
+      for (const returnURL of [true, 42, { url: 'https://app.example.com' }, 'https://app.example.com@evil.example.net/']) {
+        assertRefused(await coreRequest.post('/reg/access').send(body('any-app', returnURL)));
+      }
+    });
+  });
+
   describe('POST /reg/access with a consent sidecar', () => {
     const PERMS = [
       { streamId: 'diary', level: 'read', defaultName: 'Journal' },
