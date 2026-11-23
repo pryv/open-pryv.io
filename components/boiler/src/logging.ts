@@ -39,15 +39,31 @@ class SyncFileTransport extends Transport {
     ensureLogDir(this.filePath);
   }
 
-  log (info: Record<string, unknown>, callback: () => void): void {
+  log (info: Record<string | symbol, unknown>, callback: () => void): void {
     try {
-      const entry = {
+      const entry: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
         level: info.level,
         pid: process.pid,
         message: info.message,
       };
-      fs.appendFileSync(this.filePath, JSON.stringify(entry) + '\n', { mode: LOG_FILE_MODE });
+      // The context (already masked), as the other file transport writes it:
+      // an unexpected error's message only carries a reference, its stack is
+      // in the context.
+      const items = (info[Symbol.for('splat')] || []) as Array<{ context?: unknown } | undefined>;
+      if (items.length === 1 && items[0] && items[0].context !== undefined) {
+        entry.context = items[0].context;
+      } else if (items.length > 0 && items[0] !== undefined) {
+        entry.context = items.length === 1 ? items[0] : items;
+      }
+      let line: string;
+      try {
+        line = JSON.stringify(entry, jsonReplacer);
+      } catch {
+        delete entry.context;
+        line = JSON.stringify(entry);
+      }
+      fs.appendFileSync(this.filePath, line + '\n', { mode: LOG_FILE_MODE });
     } catch (_e) {
       // Logging must never throw back into the caller's path.
     }

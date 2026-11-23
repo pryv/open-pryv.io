@@ -408,6 +408,12 @@ describe('[AUDT] Audit', function () {
 
   describe('[AT06] Filtering', function () {
     describe('[AT61] when filtering by calledMethods', function () {
+      // Each hook below writes up to one audit row per API method (about 130),
+      // each its own committed insert through the small audit write pool (or a
+      // per-user SQLite file): the time is bound by disk flushes, ~0.3 s idle
+      // but past 3 s while another workload keeps the disk busy. The suite's
+      // 2 s default is too tight for that; the work itself is fixed and awaited.
+      this.timeout(20000);
       let restoreAT61;
       before(function () {
         // Snapshot scope at [AT61] entry; nested [AT62]-[AT69] still

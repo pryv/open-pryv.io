@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Test diagnostics
+
+- boiler `SyncFileTransport` (`logs:fileSync`, the test trail `var-pryv/logs/test-sync.log`) writes each
+  entry's context, masked, as the `logs:file` transport does: an `unexpected-error` line used to carry
+  only its reference, the inner stack was lost. Test `[BLFS3]`.
+- Audit `[AT61]` filtering hooks get a 20 s timeout: each writes up to one audit row per API method, one
+  committed insert each, which passes the suite's 2 s while another workload keeps the disk busy.
+
 ### Mandrill merge-tag language
 
 - `mailCapability.ts` `describeMergeLanguage` (problems + warnings), used by the boot validation

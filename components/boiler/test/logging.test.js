@@ -212,7 +212,8 @@ describe('[BLFM] boiler log file modes', function () {
 
   // Boots the logger (initLoggerWithConfig) in a fresh process with these
   // logs settings, writes `count` error entries in a tight loop and exits.
-  function bootLoggerAndLog (logs, count = 1) {
+  // `context`, a JS expression, is logged with each entry.
+  function bootLoggerAndLog (logs, count = 1, context = 'undefined') {
     const values = {
       'logs:console': { active: false, level: 'info', format: {} },
       'logs:console:active': false,
@@ -227,7 +228,7 @@ describe('[BLFM] boiler log file modes', function () {
       "logging.setGlobalName('blfm');",
       'const values = JSON.parse(process.env.BLFM_VALUES);',
       'await logging.initLoggerWithConfig({ get: (key) => values[key] });',
-      `for (let i = 0; i < ${count}; i++) logging.getLogger('blfm').error('blfm entry ' + i);`,
+      `for (let i = 0; i < ${count}; i++) logging.getLogger('blfm').error('blfm entry ' + i, ${context});`,
       'setTimeout(() => process.exit(0), 1500);'
     ].join('\n');
     const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
@@ -285,6 +286,18 @@ describe('[BLFM] boiler log file modes', function () {
     const files = fs.readdirSync(logDir).filter((n) => n.startsWith('core.log.')).map((n) => n.replace(/\.gz$/, ''));
     assert.ok(new Set(files).size > 1, 'the size cap started new files: ' + files);
     assert.strictEqual(entriesIn(logDir).size, 300, 'every entry of the burst is in a file');
+  });
+
+  it('[BLFS3] the sync file keeps an entry\'s context (an error stack included), masked', function () {
+    const syncPath = path.join(dir, 'sync-context', 'logs', 'core-sync.log');
+    bootLoggerAndLog({
+      fileSync: { active: true, path: syncPath, level: 'warn' }
+    }, 1, "{ innerError: new Error('blfs3 inner').stack, password: 'blfs3-secret' }");
+    const lines = fs.readFileSync(syncPath, 'utf8').split('\n').filter((l) => l.includes('blfm entry 0'));
+    assert.strictEqual(lines.length, 1, fs.readFileSync(syncPath, 'utf8'));
+    const entry = JSON.parse(lines[0]);
+    assert.match(entry.context.innerError, /Error: blfs3 inner\n\s+at /);
+    assert.ok(!lines[0].includes('blfs3-secret'), lines[0]);
   });
 
   it('[BLFS2] without rotation, one file at the configured path holds every entry of a burst', function () {
