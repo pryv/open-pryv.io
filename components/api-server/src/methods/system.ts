@@ -28,6 +28,7 @@ type StoredMfa = { content?: Record<string, unknown>; recoveryCodes?: string[]; 
 const commonFns = require('./helpers/commonFunctions.ts');
 const { notifyMfaChange, auditMfaChange } = require('./helpers/mfaChange.ts');
 const { notifyExternalIdReleased, auditExternalIdReleased } = require('./helpers/externalIdRelease.ts');
+const { resetAutoDeletion } = require('./helpers/autoDeletionAdminReset.ts');
 const { Profile: MFAProfile } = require('business/src/mfa/index.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const methodsSchema = require('../schema/systemMethods.ts');
@@ -362,6 +363,29 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         next();
       } catch (err) {
         return next(extIdError(err));
+      }
+    }
+  );
+
+  // ------------------------------------------------- auto-deletion reset
+  // An administrator stops a pending auto-deletion for a holder (support
+  // case): the schedule restarts from now, or the holder's own setting is
+  // removed on their request (`removeSetting`). On the account's core; on
+  // another core the route answers 307 to it.
+  systemAPI.register('system.autoDeletion.reset',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    commonFns.getParamsValidation(methodsSchema.autoDeletionReset.params),
+    async function autoDeletionReset (_context: MethodContext, params: { username: string, reason: string, removeSetting?: boolean }, result: ResultBag, next: Next) {
+      try {
+        const outcome = await resetAutoDeletion(config, platform, params);
+        if (outcome.kind === 'remote') {
+          result.redirect = outcome.coreUrl;
+          return next();
+        }
+        Object.assign(result, outcome.result);
+        next();
+      } catch (err) {
+        return next(err instanceof APIError ? err : errors.unexpectedError(err));
       }
     }
   );

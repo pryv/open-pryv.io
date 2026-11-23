@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Account auto-deletion: an administrator can stop a pending deletion for a holder
+
+For the support case of a holder who cannot sign in in time (in hospital, travelling) and whose
+account is about to be deleted or transferred.
+
+- **New admin route** `POST /system/admin/auto-deletion/clear` (admin key in `Authorization`, method
+  `system.autoDeletion.reset`), body `{ "username": "...", "reason": "...", "removeSetting": false }`:
+  - by default the **schedule restarts**: its clock starts again from now, as a sign-in would, with
+    its full period, reminders and minimum notice; the policy that applies (the operator's preset or
+    the holder's own period) is not changed. A holder's own **date** has no clock: refused with
+    `400 invalid-operation`, `error.data.reason: "date-schedule"`.
+  - `"removeSetting": true` **removes the holder's own schedule** (date or period; the platform's
+    policy applies again, from now). It is the holder's own erasure request: use it only on their
+    verified request. "Never" is never removed (it would arm the preset).
+  - A transfer claim window not claimed yet is cancelled as a use of the account would (inactivity
+    schedules; the transfer stays armed unless the setting is removed), the beneficiary is told; a
+    pending claim invite is withdrawn. Once the claimant controls the account the transfer is done:
+    completed, answered `409 auto-deletion-transfer-claimed`.
+  - An erasure already started is refused (`400 invalid-operation`, `error.data.reason:
+    "erasure-in-progress"`).
+  - Answer: `{ cleared, removedSetting, transferCancelled, was, autoDeletion, notified }`, where `was`
+    and `autoDeletion` give `source`, `mode`, `action`, `deleteAt` before and after, and `notified` is
+    `mail`, `audit-only` (no address, mail off or failed) or `none` (nothing was pending: `cleared:
+    false`, nothing written; a repeated call is harmless). The account on another core: `307` to that
+    core's same route, with `{ server }`.
+  - Every change is mailed to the holder with the `reason` as written (keep it factual), recorded in
+    the account's own audit trail (action `account.autoDeletion.resetByAdmin`: what was pending, what is
+    now, the reason) and logged (no reason, no address).
+- **Mail template `account-deletion-scheduled`**: two new variables, `BY_OPERATOR` (`"true"` when an
+  administrator made the change) and `OPERATOR_REASON`. The bundled en / fr templates then name the
+  support and its reason, and end with "If you did not ask for this, contact the support of your
+  platform" instead of the advice to change the password. **Upgrade note:** platforms whose templates
+  were seeded earlier keep their stored template until it is set again (`PUT
+  /system/admin/mail/templates/account-deletion-scheduled/<lang>/html`); until then this mail states
+  the new schedule but not the operator's reason.
+- **Fix: the auto-deletion sweep reads the holder's setting and the schedule again right before an
+  erasure** (and before opening a transfer claim window): a change made while the account was being
+  checked (the holder moving their date later, an administrator's reset) leaves the account to the
+  next pass, which judges it on what is there then. Before, such a change landing during the pass was
+  ignored and the account erased.
+
 ### Access requests: `returnURL` checked at creation, return origins per app (`access.returnOrigins`)
 
 `POST /reg/access` stored the `returnURL` as sent, and auth pages navigate to it once the user

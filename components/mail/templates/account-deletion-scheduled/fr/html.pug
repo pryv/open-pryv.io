@@ -1,4 +1,7 @@
 p Bonjour #{USERNAME},
+if BY_OPERATOR
+  p Le support de votre plateforme a modifié la suppression automatique de votre compte : #{OPERATOR_REASON}
+  p Les rappels reçus avant ce changement ne s'appliquent plus.
 if TRIGGER_DATE
   if ACTION_TRANSFER
     p Votre compte sera transféré à #{BENEFICIARY} le #{DEADLINE}, dans #{DAYS_LEFT} jours.
@@ -35,4 +38,7 @@ if ACCOUNT_APP_URL
     a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
 else
   p Pour modifier ou annuler ce réglage, connectez-vous à la page de votre compte et changez le réglage de suppression automatique.
-p Si vous n'êtes pas à l'origine de ce changement, connectez-vous, changez votre mot de passe sans attendre et contactez le support de votre plateforme.
+if BY_OPERATOR
+  p Si vous n'avez pas demandé ce changement, contactez le support de votre plateforme.
+else
+  p Si vous n'êtes pas à l'origine de ce changement, connectez-vous, changez votre mot de passe sans attendre et contactez le support de votre plateforme.

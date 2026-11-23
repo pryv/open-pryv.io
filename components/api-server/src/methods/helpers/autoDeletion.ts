@@ -295,12 +295,14 @@ export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeleti
 
 /**
  * Send the confirmation of a setting change; true when it went out. Never
- * throws: a failure is logged and the change stands.
+ * throws: a failure is logged and the change stands. `extra`: more template
+ * variables (an administrator's change: `BY_OPERATOR`, `OPERATOR_REASON`).
  */
-export async function sendConfirmation (config: ConfigLike, user: UserRef, facts: AccountFacts, schedule: Schedule, now: number, setting: Setting | null = null): Promise<boolean> {
+export async function sendConfirmation (config: ConfigLike, user: UserRef, facts: AccountFacts, schedule: Schedule, now: number, setting: Setting | null = null,
+  extra: Record<string, string> = {}): Promise<boolean> {
   const transfer = await transferVars(config, user, schedule.policy?.action === 'transfer' ? setting : null);
   return await sendAutoDeletionMail(config, 'scheduled', user, facts,
-    (lang) => ({ ...confirmationSubstitutions(config, user, schedule, lang, now), ...transfer })) === 'sent';
+    (lang) => ({ ...confirmationSubstitutions(config, user, schedule, lang, now), ...transfer, BY_OPERATOR: '', OPERATOR_REASON: '', ...extra })) === 'sent';
 }
 
 /**
