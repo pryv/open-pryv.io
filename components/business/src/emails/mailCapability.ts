@@ -107,6 +107,34 @@ export function describeMailCapability (config: ConfigReader): MailCapability {
   return { ok: problems.length === 0, method, problems };
 }
 
+export type MergeLanguage = 'mailchimp' | 'handlebars';
+export const MERGE_LANGUAGES: readonly MergeLanguage[] = ['mailchimp', 'handlebars'];
+
+/**
+ * `services.email.mergeLanguage`: the merge-tag language Mandrill uses to fill
+ * the variables of a send (its `merge_language`). Unset, Mandrill applies the
+ * account's default, Mailchimp merge tags (`*|VAR|*`), whose HTML escaping its
+ * documentation does not state; `handlebars` escapes `{{VAR}}`. Only read with
+ * method `mandrill`.
+ */
+export function describeMergeLanguage (config: ConfigReader): { problems: string[]; warnings: string[] } {
+  const problems: string[] = [];
+  const warnings: string[] = [];
+  const value = config.get('services:email:mergeLanguage');
+  if (value != null && value !== '') {
+    if (typeof value !== 'string' || !(MERGE_LANGUAGES as readonly string[]).includes(value)) {
+      problems.push("services.email.mergeLanguage must be 'handlebars' or 'mailchimp' (or unset)");
+    }
+  } else if (config.get('services:email:method') === 'mandrill' && config.get('services:email:enabled') !== false) {
+    warnings.push('services.email.mergeLanguage is not set (method mandrill): Mandrill fills the template variables ' +
+      'with its account default, Mailchimp merge tags (*|VAR|*), whose HTML escaping it does not document, so a value ' +
+      "such as a name or an administrator's reason may reach the mail as HTML. Set 'services.email.mergeLanguage: " +
+      "handlebars' and write the Mandrill templates with {{VAR}} (escaped), or set 'mailchimp' to keep *|VAR|* " +
+      'templates and silence this warning.');
+  }
+  return { problems, warnings };
+}
+
 /**
  * True when `services.email` (the object) selects in-process delivery but
  * names no SMTP host: mail is not configured, so a send is skipped rather than

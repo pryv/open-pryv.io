@@ -175,6 +175,7 @@
   "services.email.from.address",
   "services.email.from.name",
   "services.email.maxPerHour",
+  "services.email.mergeLanguage",
   "services.email.method",
   "services.email.mfaChangeTemplate",
   "services.email.resetPasswordTemplate",

@@ -277,6 +277,16 @@ if (get('account.emailVerification.requireAtRegistration') === true) {
   }
 }
 
+// services.email.mergeLanguage: a known value, and a warning for Mandrill
+// without it (the same predicate as checkMergeLanguage and collectWarnings in
+// config/plugins/config-validation.js).
+{
+  const { describeMergeLanguage } = require('../components/business/src/emails/mailCapability.ts');
+  const report = describeMergeLanguage(configReader);
+  problems.push(...report.problems);
+  warnings.push(...report.warnings);
+}
+
 // platform.piiHmacKey: required when PlatformDB PII is hashed, the
 // default-config value of platform.piiMode (mirrors REQUIRED_WHEN in
 // config/plugins/config-validation.js)

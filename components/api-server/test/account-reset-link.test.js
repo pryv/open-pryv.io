@@ -39,14 +39,14 @@ describe('[RSLK] password-reset link', function () {
     await fixtures.clean();
   });
 
-  async function requestResetLink (pageURL) {
+  async function requestResetMail (pageURL, email = {}) {
     const username = 'rsl' + cuid().toLowerCase().slice(1, 12);
     await fixtures.user(username, { email: username + '@reset.example.com' });
     const captured = [];
     nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json')
       .reply(200, (uri, body) => { captured.push(body); return {}; });
     await withInjectedConfig({
-      services: { email: { enabled: { resetPassword: true } } },
+      services: { email: { enabled: { resetPassword: true }, ...email } },
       auth: { passwordResetPageURL: pageURL }
     }, async () => {
       const res = await coreRequest.post('/' + username + '/account/request-password-reset')
@@ -54,12 +54,24 @@ describe('[RSLK] password-reset link', function () {
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     });
     assert.strictEqual(captured.length, 1);
-    const vars = captured[0].message.global_merge_vars;
+    return captured[0].message;
+  }
+
+  async function requestResetLink (pageURL) {
+    const vars = (await requestResetMail(pageURL)).global_merge_vars;
     return {
       link: new URL(vars.find((v) => v.name === 'RESET_LINK').content),
       token: vars.find((v) => v.name === 'RESET_TOKEN').content
     };
   }
+
+  it('[RSLK7] Mandrill gets merge_language only when services.email.mergeLanguage is set', async function () {
+    const page = 'https://app.example.com/reset-password';
+    assert.strictEqual('merge_language' in (await requestResetMail(page, { mergeLanguage: null })), false);
+    for (const language of ['handlebars', 'mailchimp']) {
+      assert.strictEqual((await requestResetMail(page, { mergeLanguage: language })).merge_language, language);
+    }
+  });
 
   it('[RSLK1] a page URL without a query gets ?resetToken=', async function () {
     const { link, token } = await requestResetLink('https://app.example.com/reset-password');

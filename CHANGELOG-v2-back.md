@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Mandrill merge-tag language
+
+- `mailCapability.ts` `describeMergeLanguage` (problems + warnings), used by the boot validation
+  (`checkMergeLanguage`, `collectWarnings`) and `bin/check-config.js`; `mailing.ts` adds
+  `merge_language` to the Mandrill message when the key is set. Tests `[CV-GA9]`, `[RSLK7]`, `[CKML1]`;
+  `[CV-GA1]`..`[CV-GA3]` set the key so their warning counts stay about verification.
+
 ### Effective configuration document
 
 - `components/business/src/effectiveConfig/`: `classification.ts` (the allow-list: ordered rules

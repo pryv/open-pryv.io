@@ -298,7 +298,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
     }
 
     const GATE_VALUES = {
-      services: { email: { enabled: { verifyEmail: true }, method: 'mandrill', url: 'https://mail.example.com/send', key: 'k' } },
+      services: { email: { enabled: { verifyEmail: true }, method: 'mandrill', mergeLanguage: 'mailchimp', url: 'https://mail.example.com/send', key: 'k' } },
       auth: {}
     };
 
@@ -329,7 +329,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
 
     it('[CV-GA3] an explicitly-off platform is neither a problem nor a warning', () => {
       const config = scopedConfig({
-        services: { email: { enabled: { verifyEmail: false }, method: 'mandrill', url: 'u', key: 'k' } },
+        services: { email: { enabled: { verifyEmail: false }, method: 'mandrill', mergeLanguage: 'mailchimp', url: 'u', key: 'k' } },
         auth: {}
       }, 'override-file');
       const problems = [];
@@ -385,6 +385,32 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
       assert.match(warnings[0], /mail is not configured, so the welcome, password-reset, email-verification, MFA-change, external-id-release, auto-deletion confirmation, auto-deletion reminder, auto-deletion on-hold, transfer beneficiary named, transfer claim link, transfer started, transfer cancelled, transfer lapsed and transfer completed mails are not sent/);
       assert.ok(!/: it is '/.test(warnings[0]), 'an empty host is not shown');
       assert.match(warnings[1], /email verification is on by default but 'auth\.emailVerificationPageURL' is not set/);
+    });
+
+    it('[CV-GA9] services.email.mergeLanguage: an unknown value refuses the boot; mandrill without it warns once', () => {
+      const { checkMergeLanguage } = require('../../../config/plugins/config-validation.js');
+      const mandrill = { enabled: { verifyEmail: false }, method: 'mandrill', url: 'u', key: 'k' };
+      for (const bad of ['Handlebars', 'mustache', 3, true]) {
+        const problems = [];
+        checkMergeLanguage(scopedConfig({ services: { email: { ...mandrill, mergeLanguage: bad } }, auth: {} }, 'override-file'), problems);
+        assert.strictEqual(problems.length, 1, JSON.stringify(bad));
+        assert.match(problems[0].message, /services\.email\.mergeLanguage must be 'handlebars' or 'mailchimp'/);
+      }
+      for (const ok of ['handlebars', 'mailchimp', null, undefined, '']) {
+        const problems = [];
+        checkMergeLanguage(scopedConfig({ services: { email: { ...mandrill, mergeLanguage: ok } }, auth: {} }, 'override-file'), problems);
+        assert.deepStrictEqual(problems, [], JSON.stringify(ok));
+      }
+      const unset = collectWarnings(scopedConfig({ services: { email: mandrill }, auth: {} }, 'override-file'));
+      assert.strictEqual(unset.length, 1, JSON.stringify(unset));
+      assert.match(unset[0], /services\.email\.mergeLanguage is not set \(method mandrill\)/);
+      for (const email of [
+        { ...mandrill, mergeLanguage: 'handlebars' },
+        { ...mandrill, enabled: false },
+        { enabled: { verifyEmail: false }, method: 'microservice', url: 'u', key: 'k' }
+      ]) {
+        assert.deepStrictEqual(collectWarnings(scopedConfig({ services: { email }, auth: {} }, 'override-file')), [], JSON.stringify(email));
+      }
     });
 
     it('[CV-GA6] no mail warning when mail is off or the SMTP host is set', () => {
