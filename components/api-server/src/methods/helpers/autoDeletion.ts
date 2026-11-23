@@ -395,18 +395,21 @@ export async function sendTransferMail (config: ConfigLike, account: UserRef, fa
  * the transfer record names) is accepted only while that transfer is still
  * claimed by the invited account. A transfer cancelled, lapsed or declined
  * while its invite could not be withdrawn never hands the account over.
+ * Asked again once the relationship is active (`activated`): a transfer the
+ * sweep completed meanwhile, on seeing it active, still counts.
  * Other invites: null (no say).
  */
-export async function transferInviteRefusal (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string }): Promise<string | null> {
+export async function transferInviteRefusal (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string; activated?: boolean }): Promise<string | null> {
   const record = await (await getState()).getTransfer(input.bUserId);
   const named = record?.claimedBy?.relId != null && record.claimedBy.relId === input.relId;
   if (input.purpose !== TRANSFER_INVITE_PURPOSE && !named) return null;
-  const claimedBy = record?.status === 'claimed' ? record.claimedBy : null;
+  const holds = record?.status === 'claimed' || (input.activated === true && record?.status === 'completed');
+  const claimedBy = holds ? record?.claimedBy : null;
   if (claimedBy != null && claimedBy.username.toLowerCase() === input.delegateUsername.toLowerCase() &&
       (claimedBy.relId == null || claimedBy.relId === input.relId)) {
     return null;
   }
-  logger.warn(`auto-deletion: a transfer invite of account ${input.bUserId} to "${input.delegateUsername}" was accepted after the transfer ended (${record?.status ?? 'no record'}): refused, the invite withdrawn`);
+  logger.warn(`auto-deletion: a transfer invite of account ${input.bUserId} to "${input.delegateUsername}" refused: the transfer is not claimed by this account (${record?.status ?? 'no record'}); the invite withdrawn`);
   return 'This invite was for an account transfer that is no longer open.';
 }
 

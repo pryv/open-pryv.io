@@ -793,7 +793,9 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     }
     const b = p.evaluation.bookkeeping ?? p.prev;
     if (b == null) throw new Error('a transfer window without a schedule');
-    // Right before erasing: a use, or an accept, since the pass began wins.
+    // Right before erasing: a use since the pass began wins, and so does an
+    // accept already completed (the invite was withdrawn above; once the
+    // record no longer reads `claimed`, a late accept is refused).
     if (await cancelledByUse(p, record, await deps.readActivity(account))) return;
     if (record.claimedBy != null && await deps.delegationOf(account, record.claimedBy) === 'active') {
       await complete(p, record);
@@ -836,11 +838,12 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     // What records the start: once the last look said go, or after the
     // erasure when `deps.erase` did not ask (an unfinished erasure of the
     // account taken over instead, which completes whatever happened since).
+    // `beforeStart` runs only before an erasure: after one, the account and
+    // what it would mark are gone, and nothing is written for it.
     let started = false;
-    const recordStart = async (): Promise<void> => {
+    const announce = async (): Promise<void> => {
       started = true;
       ctx.erasuresStarted++;
-      await beforeStart?.();
       logger.warn(`auto-deletion: erasing account "${account.username}" (${account.id}), trigger ${trigger}`, record);
       if (deps.recordErasure != null) {
         try {
@@ -854,13 +857,14 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     const confirm = async (): Promise<boolean> => {
       try {
         if (!(await isUnchanged(p))) return false;
-        await recordStart();
-        return true;
+        await beforeStart?.();
       } catch (err) {
-        // The erasure is withdrawn (not started): judged again next pass.
+        // The erasure is withdrawn (not started, no slot taken): judged again next pass.
         lookFailed = err;
         return false;
       }
+      await announce();
+      return true;
     };
     let done: boolean | void;
     try {
@@ -872,19 +876,14 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     }
     if (done === false) {
       if (lookFailed != null) {
-        logger.warn(`auto-deletion sweep: the schedule of account "${account.username}" (${account.id}) could not be read again before its erasure: erasure withdrawn, judged again by the next pass: ${errorText(lookFailed)}`);
+        ctx.result.failed++;
+        logger.warn(`auto-deletion sweep: the last check before the erasure of account "${account.username}" (${account.id}) failed (its schedule could not be read again, or its start not recorded): erasure withdrawn, judged again by the next pass: ${errorText(lookFailed)}`);
       } else {
         logger.info(`auto-deletion sweep: the schedule of account "${account.username}" (${account.id}) changed while being checked: its erasure left to the next pass`);
       }
       return;
     }
-    if (!started) {
-      try {
-        await recordStart();
-      } catch (err) {
-        logger.error(`auto-deletion: the start of the erasure of account "${account.username}" (${account.id}) was not recorded: ${errorText(err)}`);
-      }
-    }
+    if (!started) await announce();
     ctx.result.erased++;
     logger.warn(`auto-deletion: account "${account.username}" (${account.id}) erased, trigger ${trigger}`, record);
   }

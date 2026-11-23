@@ -735,13 +735,16 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     }
   });
 
-  it('[ADCLP] a transfer cancelled while its claim invite could not be withdrawn: the invite can no longer be accepted', async function () {
-    const owner = await freshUser();
-    const claimant = await freshUser({ prefix: 'adcb' });
+  /**
+   * An open window claimed by `claimant` (invite out), then cancelled by the
+   * sweep on the owner's use while the invite withdraw fails. `beforeCancel`
+   * runs once the invite is out.
+   */
+  async function cancelledWithInviteOut (owner, claimant, beforeCancel) {
     await openWindow(owner, transferTo('b@adcl.example.com'));
     const record = await state.getTransfer(owner.id);
     assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
-    // The owner comes back; the sweep cancels the transfer, the withdraw fails.
+    if (beforeCancel != null) await beforeCancel();
     await new Promise((resolve, reject) => storageLayer.accesses.updateOne({ id: owner.id, username: owner.username }, { id: owner.personalAccessId }, { lastUsed: T0 + 102 * DAY },
       (err) => (err ? reject(err) : resolve())));
     const delegation = getTransferDelegation();
@@ -754,9 +757,114 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     }
     assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
     assert.equal((await delegation.stateOf(owner, claimant.username)).status, 'invite', 'the invite is still out');
+  }
+
+  async function accessesOf (u) {
+    return await new Promise((resolve, reject) => storageLayer.accesses.find({ id: u.id, username: u.username }, {}, null, (err, rows) => (err ? reject(err) : resolve(rows))));
+  }
+
+  async function controlledBy (u) {
+    const res = await coreRequest.get(`/${u.username}/delegations/controlled`).set('Authorization', u.token);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    return res.body.controlled;
+  }
+
+  it('[ADCLP] a transfer cancelled while its claim invite could not be withdrawn: the invite can no longer be accepted', async function () {
+    const owner = await freshUser();
+    const claimant = await freshUser({ prefix: 'adcb' });
+    await cancelledWithInviteOut(owner, claimant);
+    assert.equal((await controlledBy(claimant)).length, 1, 'the claimant sees the invite');
     const accepted = await accept(claimant, owner);
-    assert.notEqual(accepted.status, 200, JSON.stringify(accepted.body));
-    assert.notEqual((await delegation.stateOf(owner, claimant.username)).status, 'active', 'the claimant does not control the account');
+    assert.equal(accepted.status, 410, JSON.stringify(accepted.body));
+    const delegation = getTransferDelegation();
+    assert.equal((await delegation.stateOf(owner, claimant.username)).status, 'none', 'the invite is gone on the owner\'s side');
+    assert.deepEqual(await controlledBy(claimant), [], 'and on the claimant\'s side');
+    assert.ok(!(await accessesOf(owner)).some((a) => a.clientData?.delegation != null), 'no capability or control access left');
+    // What the sweep reads next: the transfer stays cancelled, nothing completes.
+    const r = await (await sweepFor([owner])).run(T0 + 104 * DAY);
+    assert.equal(r.transfersCompleted, 0);
+    assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
+  });
+
+  describe('[ADTI] delegation invites beside a transfer', function () {
+    it('[ADTI1] an invite sent before invites carried their purpose, named by the record: refused once the transfer ended', async function () {
+      const owner = await freshUser();
+      const claimant = await freshUser({ prefix: 'adcb' });
+      await cancelledWithInviteOut(owner, claimant, async () => {
+        const mall = await require('mall').getMall();
+        const anchor = await require('delegation/src/store.ts').findAnchorByDelegate(mall, owner.id, claimant.username);
+        assert.equal(anchor.content.purpose, 'account-transfer');
+        await mall.events.updateWithMerge(owner.id, anchor.id, (stored) => {
+          const { purpose: _p, ...content } = stored.content;
+          return { ...stored, content };
+        });
+        const stripped = await require('delegation/src/store.ts').findAnchorByDelegate(mall, owner.id, claimant.username);
+        assert.equal(stripped.content.purpose, undefined, 'stored without a purpose');
+      });
+      assert.equal((await state.getTransfer(owner.id)).claimedBy.relId != null, true, 'the record names the invite');
+      const accepted = await accept(claimant, owner);
+      assert.equal(accepted.status, 410, JSON.stringify(accepted.body));
+      assert.equal((await getTransferDelegation().stateOf(owner, claimant.username)).status, 'none');
+    });
+
+    it('[ADTI2] ordinary invites are accepted beside a transfer cancelled, or claimed by another account', async function () {
+      const attachRequest = (from, to) => coreRequest.post(`/${from.username}/delegations/attach-request`).set('Authorization', from.token).send({ delegateUsername: to.username });
+      // Cancelled: an ordinary invite to the same claimant afterwards.
+      const owner = await freshUser();
+      const claimant = await freshUser({ prefix: 'adcb' });
+      await openWindow(owner, transferTo('b@adcl.example.com'));
+      const record = await state.getTransfer(owner.id);
+      assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
+      assert.equal((await reset({ username: owner.username, reason: REASON })).status, 200);
+      assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
+      assert.equal((await attachRequest(owner, claimant)).status, 201);
+      const accepted = await accept(claimant, owner);
+      assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+      // Claimed by another account (its invite out): an ordinary invite to a third one.
+      const owner2 = await freshUser();
+      const claimant2 = await freshUser({ prefix: 'adcb' });
+      const third = await freshUser({ prefix: 'adct' });
+      await openWindow(owner2, transferTo('b@adcl.example.com'));
+      const record2 = await state.getTransfer(owner2.id);
+      assert.equal((await claim(owner2, linkOf(owner2, 'claim', record2.claimSalt), claimant2)).status, 200);
+      assert.equal((await attachRequest(owner2, third)).status, 201);
+      const accepted2 = await accept(third, owner2);
+      assert.equal(accepted2.status, 200, JSON.stringify(accepted2.body));
+      assert.equal((await state.getTransfer(owner2.id)).status, 'claimed', 'the transfer is untouched');
+      assert.equal((await accept(claimant2, owner2)).status, 200, 'and its own invite still accepted');
+    });
+
+    it('[ADTI3] the controlled-side entry (the claimant on another core) refuses it too', async function () {
+      const owner = await freshUser();
+      const claimant = await freshUser({ prefix: 'adcb' });
+      await cancelledWithInviteOut(owner, claimant);
+      const record = await state.getTransfer(owner.id);
+      const capability = (await accessesOf(owner)).find((a) => a.clientData?.delegation?.kind === 'invite-capability');
+      assert.ok(capability?.token != null);
+      const res = await coreRequest.post(`/${owner.username}/delegations/controlled-side/accept-response`)
+        .set('Authorization', capability.token)
+        .send({ relId: record.claimedBy.relId, delegate: { username: claimant.username, hostSlug: record.claimedBy.hostSlug ?? 'self' } });
+      assert.equal(res.status, 410, JSON.stringify(res.body));
+      assert.equal((await getTransferDelegation().stateOf(owner, claimant.username)).status, 'none');
+      assert.ok(!(await accessesOf(owner)).some((a) => a.clientData?.delegation?.kind === 'control'), 'no control access minted');
+    });
+
+    it('[ADTI4] asked once the relationship is active, a transfer completed meanwhile still counts', async function () {
+      const { transferInviteRefusal } = require('api-server/src/methods/helpers/autoDeletion.ts');
+      const u = await freshUser();
+      const base = { email: 'b@adcl.example.com', createdAt: T0, declineSalt: 's', claimedBy: { username: 'adcbclaimant', relId: 'rel-1' } };
+      const ask = (extra = {}) => transferInviteRefusal({ bUserId: u.id, relId: 'rel-1', delegateUsername: 'adcbclaimant', purpose: 'account-transfer', ...extra });
+      await state.saveTransfer(u.id, { ...base, status: 'claimed' });
+      assert.equal(await ask(), null);
+      assert.equal(await ask({ activated: true }), null);
+      assert.notEqual(await ask({ delegateUsername: 'adcbsomeoneelse' }), null, 'another account');
+      await state.saveTransfer(u.id, { ...base, status: 'completed' });
+      assert.equal(await ask({ activated: true }), null, 'completed by the sweep on seeing it active');
+      assert.notEqual(await ask(), null, 'never before activation');
+      await state.saveTransfer(u.id, { ...base, status: 'cancelled' });
+      assert.notEqual(await ask({ activated: true }), null);
+      assert.equal(await ask({ purpose: undefined, relId: 'rel-other' }), null, 'an ordinary invite: no say');
+    });
   });
 
   it('[ADCLY] the sweep opens no claim window when the setting changed while the account was checked', async function () {
@@ -860,6 +968,27 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     });
     assert.ok(await exists(changed));
     assert.equal(await exists(other), false);
+  });
+
+  it('[ADCLL] a fallback erasure run without the last look writes nothing for the erased account', async function () {
+    const { Deletion } = require('business/src/auth/deletion.ts');
+    const deletion = new Deletion(null, storageLayer, config);
+    const u = await freshUser();
+    await openWindow(u, transferTo('b@adcl.example.com', { fallback: 'delete' }));
+    const record = await state.getTransfer(u.id);
+    const recorded = [];
+    // Without the last look (an erasure taken over completes whatever happened).
+    const s = await sweepFor([u], {
+      erase: async (account, options) => deletion.eraseAccount(account, { teardown: true, trigger: options.trigger }),
+      recordErasure: async (account) => { recorded.push(account.id); }
+    });
+    const r = await s.run(record.endsAt + DAY);
+    assert.equal(r.erased, 1, JSON.stringify(s.lines));
+    assert.equal(await exists(u), false);
+    assert.equal(await state.getTransfer(u.id), null, 'no transfer record written after the erasure');
+    assert.deepEqual(recorded, [u.id], 'its start recorded');
+    assert.ok(s.lines.some((l) => l.level === 'warn' && l.msg.includes('erasing account') && l.msg.includes(u.username)), JSON.stringify(s.lines));
+    assert.ok(!s.lines.some((l) => l.level === 'error'), JSON.stringify(s.lines));
   });
 
   it('[ADCLR] a setting or a schedule changed between the pass\'s read and the erasure: not erased this pass', async function () {

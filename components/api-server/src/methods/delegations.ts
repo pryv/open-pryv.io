@@ -45,7 +45,7 @@ const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require
 const { setDeletionTeardownStep, trackTeardownDelivery, setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
 const { setTransferDelegation, TRANSFER_INVITE_PURPOSE } = require('./helpers/transferDelegation.ts');
 // An account-transfer invite is accepted only while its transfer is claimed.
-const acceptCheck = async (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string }): Promise<string | null> =>
+const acceptCheck = async (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string; activated?: boolean }): Promise<string | null> =>
   await require('./helpers/autoDeletion.ts').transferInviteRefusal(input);
 const cmc = require('cmc');
 const delegation = require('delegation');

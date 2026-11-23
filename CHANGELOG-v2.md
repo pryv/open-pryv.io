@@ -51,8 +51,15 @@ account is about to be deleted or transferred.
   setting, an administrator's reset) or lapsed while the claimant's delegation invite could not be
   withdrawn, the claimant could still accept that invite and take control of the account. The
   owner's core now accepts an invite sent for a transfer only while that transfer is still claimed
-  by the invited account; otherwise the accept is refused (`410`) and the invite withdrawn. Ordinary
-  delegation invites are not affected.
+  by the invited account, checked before the control access is created and again once the
+  relationship is active; otherwise the accept is refused (`410`) and the invite withdrawn: it
+  leaves the owner's delegate list, and the claimant's core drops it from the claimant's list. An
+  accept interrupted before it completed is checked the same way when it is repeated. Ordinary
+  delegation invites are not affected. Invites sent before this version carry no mark of their
+  purpose: they are recognised while the transfer record still names them. One whose record was
+  replaced since (the owner named a beneficiary again, or a new claim window opened) is accepted as
+  an ordinary invite until it expires, so this exposure ends at most one claim invite lifetime after
+  the upgrade.
 - **Fix: the auto-deletion sweep no longer acts on a schedule changed while it checks the account.**
   It never writes its schedule row over one changed since it read it, and it reads the holder's
   setting, the schedule row and the transfer record again right before an erasure, a transfer claim
