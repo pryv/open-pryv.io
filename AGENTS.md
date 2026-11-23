@@ -244,7 +244,12 @@ Naming: a bare `Xxx` is a canonical type defined once and imported (`import type
 5. `bootstrap-config.yml` at the baseConfigDir (written by `master.js --bootstrap` on core join; replaced by a re-join)
 6. `override-config.yml` at the baseConfigDir (the operator's; never written by the server)
 
-Understand this before debugging why a setting "isn't taking effect".
+Understand this before debugging why a setting "isn't taking effect". `GET /system/admin/config/effective`
+(admin key) answers the merged result with each key's source layer, secrets redacted.
+
+**Adding a configuration key:** classify it in `components/business/src/effectiveConfig/classification.ts`
+(shown, URL origin only, secret or opaque; scope `platform` or `core`). The unit test `[CFC1]` fails for a
+key of `config/default-config.yml` that no rule names; an unclassified key is redacted at runtime.
 
 ## Where to read next
 

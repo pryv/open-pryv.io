@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Effective configuration of a core, secrets redacted (new admin route)
+
+Requested for compliance work: reading the safeguards a core actually runs with (for a record of
+processing activities, an impact assessment, a configuration baseline) needed shell access to the host
+and a manual merge of the configuration files.
+
+- **`GET /system/admin/config/effective`** (admin key in `Authorization`; 404 without it) answers the
+  configuration the answering core runs with: `{ configMeta, keys }`. `keys` is a flat map, sorted, keyed
+  by dotted path (`http.port`, `oauth.signingKeys.0.kid`), each entry `{ value, source, scope }`:
+  `source` names the layer that set it (`default-file`, `base-file`, `override-file`, `bootstrap-file`,
+  `env`, `argv`, `derived`, `service-info`, `shipped-plugin`, `built-in`, `platform-db` for the
+  observability values a platform row decides), `scope` is `platform` (expected identical on every core)
+  or `core` (differs by design: host, ports, paths, local credentials, local tuning).
+- **Secrets are never shown.** A secret, or a whole subtree that can carry credentials (SMS provider
+  endpoints, telemetry headers, data-store settings, OAuth extension options), is
+  `{ redacted: true, class, set, type, placeholder?, size?, fingerprint? }`, with no fragment of the
+  value. `fingerprint` (12 hex) is an HMAC keyed by `auth.filesReadTokenSecret` and bound to the path:
+  equal secrets on two cores show the same fingerprint, a reader cannot test candidate values against it.
+  None is given when that secret is a placeholder or shorter than 16 characters
+  (`configMeta.secretFingerprints: false`).
+- **Shown only when classified.** Every key is classified (shown, URL origin only, secret, or opaque); a
+  key no rule names (an operator's custom key, a typo) is redacted as `unclassified`, as is a shown key
+  whose name looks like a secret. Every shown string is also scanned: one containing a configured secret,
+  a PEM block, a `Bearer`/`Basic` value, a JWT or key-like material is redacted (`value-pattern`); a URL
+  loses its credentials and query values (`sanitized: true`). Environment variables and command-line
+  flags appear only when they set a known configuration key; unknown top-level keys of the
+  configuration files are listed by name in `configMeta.unknownTopLevelKeys`.
+- **Two digests** in `configMeta.digests` (SHA-256 of the canonical JSON of `{ format, keys }`, entries
+  without `source` and `scope`): `platform` over the `platform` keys, to compare cores
+  (`?digest=true` answers `configMeta` only), and `full` over every key, to compare a core with an
+  earlier baseline. `configMeta` also carries `format` (`pryv-effective-config/1`), `coreId`,
+  `apiVersion`, `snapshotAt` and the configuration file names.
+- Only `digest` (`true` or `false`) is accepted as a parameter (400 otherwise); no parameter widens the
+  answer. `Cache-Control: no-store`. Each call is audited without a user (written to syslog when the
+  audit syslog is on) and logged (`[config-effective-read]`). The answer is the view of the API worker
+  that answers; values the master process alone sets are not in it. Platform storage unreachable: 503.
+
 ### Erasure ledger: a durable record of each erased account (on by default)
 
 Requested by an operator: a way to prove, after the account is gone, that an account was erased, and

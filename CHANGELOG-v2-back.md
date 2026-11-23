@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Effective configuration document
+
+- `components/business/src/effectiveConfig/`: `classification.ts` (the allow-list: ordered rules
+  `{ pattern, class, scope }`, most specific match wins, `NAME_EXCEPTIONS` for the name heuristic),
+  `redact.ts` (value scan, redacted entries, fingerprints, `stableStringify`), `snapshot.ts` (walk of
+  each known top-level section over the boiler layers, per-leaf source by own-property descent through
+  `config.store.stores`, digests). Unit tests `[CFGU]` (`[CFC1]` completeness over
+  `default-config.yml`, `[CFC3]` canary leak test), API tests `[CFGE]`.
+- `Platform.getObservabilityResolution()` returns the resolved observability values plus their origin
+  (`local` / `db` / `default`); `getObservabilityConfig()` returns its `values`, unchanged.
+- Method `system.getEffectiveConfig` is audited without a user (`WITHOUT_USER_METHODS`).
+
 ### Erasure ledger
 
 - `components/business/src/erasureLedger/index.ts`: platform KV rows `account-erasure/<userIdHash>`
