@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Effective configuration document
+
+- `components/business/src/effectiveConfig/`: `classification.ts` (the allow-list: ordered rules
+  `{ pattern, class, scope }`, most specific match wins, `NAME_EXCEPTIONS` for the name heuristic),
+  `redact.ts` (value scan, redacted entries, fingerprints, `stableStringify`), `snapshot.ts` (walk of
+  each known top-level section over the boiler layers, per-leaf source by own-property descent through
+  `config.store.stores`, digests). Unit tests `[CFGU]` (`[CFC1]` completeness over
+  `default-config.yml`, `[CFC3]` canary leak test), API tests `[CFGE]`.
+- `Platform.getObservabilityResolution()` returns the resolved observability values plus their origin
+  (`local` / `db` / `default`); `getObservabilityConfig()` returns its `values`, unchanged.
+- Method `system.getEffectiveConfig` is audited without a user (`WITHOUT_USER_METHODS`).
+- `secretValues.ts` `PUBLIC_DEVELOPMENT_SECRETS` lists the published admin keys and files-read secrets
+  too; the effective-configuration fingerprint key relies on it instead of a list of its own.
+  `tools/backup-roundtrip` (which runs its legs with `NODE_ENV=production`) draws its admin key and
+  files-read secret per run. Tests `[CVWS4]`, `[CKPK5]`.
+
 ### Erasure ledger
 
 - `components/business/src/erasureLedger/index.ts`: platform KV rows `account-erasure/<userIdHash>`

@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### Effective configuration of a core, secrets redacted (new admin route)
+
+Requested for compliance work: reading the safeguards a core actually runs with (for a record of
+processing activities, an impact assessment, a configuration baseline) needed shell access to the host
+and a manual merge of the configuration files.
+
+- **`GET /system/admin/config/effective`** (admin key in `Authorization`; 404 without it) answers the
+  configuration the answering core runs with: `{ configMeta, keys }`. `keys` is a flat map, sorted, keyed
+  by dotted path (`http.port`, `oauth.signingKeys.0.kid`), each entry `{ value, source, scope }`:
+  `source` names the layer that set it (`default-file`, `base-file`, `override-file`, `bootstrap-file`,
+  `env`, `argv`, `derived`, `service-info`, `shipped-plugin`, `built-in`, `platform-db` for the
+  observability values a platform row decides), `scope` is `platform` (expected identical on every core)
+  or `core` (differs by design: host, ports, paths, local credentials, local tuning).
+- **Secrets are never shown.** A secret, or a whole subtree that can carry credentials (SMS provider
+  endpoints, telemetry headers, data-store settings, OAuth extension options), is
+  `{ redacted: true, class, set, type, placeholder?, size?, fingerprint? }`, with no fragment of the
+  value (`placeholder: true` tells that the value is a template one such as `REPLACE ME`).
+  `fingerprint` (12 hex) is an HMAC keyed by `auth.filesReadTokenSecret` and bound to the path: equal
+  values on two cores show the same fingerprint, and candidate values cannot be tested against it
+  without `auth.filesReadTokenSecret`. Every entry that hides all or part of its value carries one (a
+  sanitised URL too), so a change in what is hidden still changes the digests; `auth.adminAccessKey`
+  (known to whoever reads the document) and `auth.filesReadTokenSecret` never do. None at all when
+  `auth.filesReadTokenSecret` is a placeholder, a value published in this repository or shorter than
+  16 characters (`configMeta.secretFingerprints: false`).
+- **Shown only when classified.** Every key is classified (shown, URL origin only, secret, or opaque); a
+  key no rule names (an operator's custom key, a typo, an unknown member of the OAuth, syslog or data-store
+  settings) is redacted as `unclassified`, as is a shown key whose name looks like a secret. Every shown
+  string is also scanned: one containing a configured secret (or its base64 or URL-encoded form), a PEM
+  block, a `Bearer`/`Basic` value, a JWT, key-like material or a `user:password@host` shape is redacted
+  (`value-pattern`). A URL loses its credentials, query values and `;` parameters (`sanitized: true`);
+  one that does not parse cleanly is redacted rather than shown. Environment variables and command-line
+  flags appear only when they set a known configuration key; unknown top-level keys of the
+  configuration files are listed by name in `configMeta.unknownTopLevelKeys`.
+- **Two digests** in `configMeta.digests` (SHA-256 of the canonical JSON of `{ format, keys }`, object
+  keys sorted in UTF-16 code unit order, entries without `source` and `scope`): `platform` over the
+  `platform` keys, to compare cores
+  (`?digest=true` answers `configMeta` only), and `full` over every key, to compare a core with an
+  earlier baseline. `configMeta` also carries `format` (`pryv-effective-config/1`), `coreId`,
+  `apiVersion`, `snapshotAt` and the configuration file names.
+- Only `digest` (`true` or `false`) is accepted as a parameter (400 otherwise); no parameter widens the
+  answer. `Cache-Control: no-store`. Each call is audited without a user (written to syslog when the
+  audit syslog is on) and logged (`[config-effective-read]`). The answer is the view of the API worker
+  that answers; values the master process alone sets are not in it. Platform storage unreachable: 503.
+
+### Production refuses the published development admin key and files-read secret
+
+- **BREAKING: a production core (`NODE_ENV=production`, the Docker image) refuses to boot** when
+  `auth.adminAccessKey` is `dev-only-admin-access-key`, or `auth.filesReadTokenSecret` is
+  `dev-only-files-read-token-secret` or `libjs-test-files-secret`: values shipped in this repository's
+  development and test configurations, as good as public. Until now only the published
+  `platform.piiHmacKey` was refused. `bin/check-config.js` reports them as a warning ("a production core
+  refuses to boot with it"). Set long random values of your own (`openssl rand -hex 32`); a new
+  `auth.filesReadTokenSecret` invalidates the attachment read tokens already handed out.
+
 ### Access requests: `returnURL` checked at creation, return origins per app (`access.returnOrigins`)
 
 `POST /reg/access` stored the `returnURL` as sent, and auth pages navigate to it once the user

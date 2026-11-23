@@ -112,6 +112,13 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.post(Paths.System + '/admin/erasures/lookup', contentType.json, setMethodId('system.erasures.get'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, Object.assign({}, req.body), methodCallback(res, next, 200));
   });
+  // --------------------- effective configuration ----------------- //
+  // The configuration this core runs with, secrets redacted; `?digest=true`
+  // answers the digests only. Never cached by a client or proxy.
+  expressApp.get(Paths.System + '/admin/config/effective', setMethodId('system.getEffectiveConfig'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    res.set('Cache-Control', 'no-store');
+    systemAPI.call(req.context, Object.assign({}, req.query), methodCallback(res, next, 200));
+  });
   // --------------------- event-types dictionary status ----------------- //
   // Reports whether the published event-types dictionary loaded, so operators
   // can alert on a core that is running degraded on its embedded fallback.

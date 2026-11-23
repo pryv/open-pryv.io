@@ -1848,6 +1848,17 @@ class Platform {
    * }>}
    */
   async getObservabilityConfig () {
+    return (await this.getObservabilityResolution()).values;
+  }
+
+  /**
+   * The resolved observability configuration (`values`, as
+   * `getObservabilityConfig()` returns it) and, per value, which side decided
+   * it (`origins`: `local` = the configuration files, `db` = a PlatformDB
+   * row, `default` = neither). Read by the effective configuration document.
+   */
+  async getObservabilityResolution () {
+    type Origin = 'local' | 'db' | 'default';
     // `observability` config section — operator YAML overrides.
     type ObservabilityYaml = {
       enabled?: boolean;
@@ -1911,7 +1922,23 @@ class Platform {
       (db['otlp-flush-interval'] != null ? Number(parseJsonString(db['otlp-flush-interval'])) : null);
     const otlp = { endpoint, headers, flushIntervalSeconds };
 
-    return { enabled, provider, appName, logLevel, hostname, otlp };
+    const pick = (local: unknown, dbValue: unknown, dbFirst: boolean): Origin => {
+      if (dbFirst && dbValue != null) return 'db';
+      if (local != null && local !== '') return 'local';
+      if (!dbFirst && dbValue != null) return 'db';
+      return 'default';
+    };
+    const origins: Record<string, Origin> = {
+      enabled: localYaml.enabled === false ? 'local' : pick(localYaml.enabled, db.enabled, true),
+      provider: pick(localYaml.provider, db.provider, true),
+      logLevel: pick(localYaml.logLevel, db['log-level'], true),
+      appName: pick(localYaml.appName, db['app-name'], true),
+      endpoint: pick(localYaml.otlp?.endpoint, db['otlp-endpoint'], false),
+      headers: pick(localYaml.otlp?.headers, db['otlp-headers'], false),
+      flushIntervalSeconds: pick(localYaml.otlp?.flushIntervalSeconds, db['otlp-flush-interval'], false)
+    };
+
+    return { values: { enabled, provider, appName, logLevel, hostname, otlp }, origins };
   }
 
   /**

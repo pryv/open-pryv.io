@@ -58,6 +58,11 @@ OVERRIDE="$SC/config/override-config.yml"
 OVERRIDE_BAK=""
 MASTER_PID=""
 MASTER_LOG="$BACKUP_DIR/master.log"
+# The legs run with NODE_ENV=production, which refuses secrets published in the
+# repository: draw them per run (the same for every leg).
+random_secret () { node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('hex'))"; }
+RT_ADMIN_KEY="$(random_secret)"
+RT_FILES_SECRET="$(random_secret)"
 
 # Same resolution as `just clean-test-data`: env overrides win, then
 # config/test-config.yml, then the canonical ports.
@@ -137,8 +142,8 @@ service:
   api: http://127.0.0.1:$PORT/{username}/
   register: http://127.0.0.1:$PORT/reg/
 auth:
-  adminAccessKey: rt-admin-roundtrip-key
-  filesReadTokenSecret: rt-files-secret-roundtrip
+  adminAccessKey: $RT_ADMIN_KEY
+  filesReadTokenSecret: $RT_FILES_SECRET
   passwordResetPageURL: http://127.0.0.1:$PORT/reset
   trustedApps: "*@*"
 platform:
@@ -218,7 +223,7 @@ wait_for_ready () {
 # Seed the fixture user (see the header for what it contains).
 # Progress goes to stderr; nothing is printed on stdout.
 seed_fixture () {
-  local ADMIN="rt-admin-roundtrip-key"
+  local ADMIN="$RT_ADMIN_KEY"
   local USERNAME="rtuser$(date +%s | tail -c 7)"
   local PASSWORD="rt-secret-pass"
   local EMAIL="${USERNAME}@example.com"
