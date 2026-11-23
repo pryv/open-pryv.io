@@ -228,6 +228,13 @@ warning; set it to `true` explicitly and the page URL becomes required at boot.
 (`services.email.from`) is recommended for deliverability but is not required
 for the server to consider mail configured.
 
+With `mandrill`, set `services.email.mergeLanguage: handlebars` and write your
+Mandrill templates with `{{VAR}}`: Mandrill HTML-escapes those values (names,
+links, an administrator's reason). Unset, Mandrill uses its account default
+(Mailchimp `*|VAR|*` tags, whose escaping it does not document) and the server
+logs a warning at boot; `mailchimp` keeps `*|VAR|*` templates without the
+warning.
+
 Run `node bin/check-config.js <your-config.yml>` to see both as warnings before
 you boot.
 

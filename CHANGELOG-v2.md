@@ -46,6 +46,15 @@ and a manual merge of the configuration files.
   audit syslog is on) and logged (`[config-effective-read]`). The answer is the view of the API worker
   that answers; values the master process alone sets are not in it. Platform storage unreachable: 503.
 
+### Mandrill: merge-tag language (`services.email.mergeLanguage`)
+
+- **New optional key `services.email.mergeLanguage`** (`handlebars` or `mailchimp`, default unset), sent to
+  Mandrill as `merge_language`. With `handlebars` and `{{VAR}}` templates, Mandrill HTML-escapes the variables
+  (names, links, an administrator's reason). Unset, Mandrill keeps using the account default (Mailchimp
+  `*|VAR|*` tags, whose escaping it does not document), as before, and a core with `method: mandrill` now logs a
+  boot warning (also reported by `bin/check-config.js`). Any other value refuses the boot. **Operators on
+  Mandrill:** convert the templates to `{{VAR}}` and set `handlebars`, or set `mailchimp` to keep them as they are.
+
 ### Production refuses the published development admin key and files-read secret
 
 - **BREAKING: a production core (`NODE_ENV=production`, the Docker image) refuses to boot** when

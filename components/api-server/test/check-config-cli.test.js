@@ -288,6 +288,25 @@ describe('[CKPK] bin/check-config.js platform.piiHmacKey', function () {
     }
   });
 
+  it('[CKML1] services.email.mergeLanguage: an unknown value is a problem; mandrill without it is a warning', () => {
+    const mandrill = (extra) => BASE + `
+services:
+  email:
+    method: mandrill
+    url: https://mandrillapp.example.com/api/1.0/messages/send-template.json
+    key: a-mandrill-key-0123456789
+${extra}`;
+    const bad = runCheck(mandrill('    mergeLanguage: mustache\n'), null);
+    assert.strictEqual(bad.status, 1, bad.stdout + bad.stderr);
+    assert.match(bad.stderr, /services\.email\.mergeLanguage must be 'handlebars' or 'mailchimp'/);
+    const unset = runCheck(mandrill(''), null);
+    assert.strictEqual(unset.status, 0, unset.stdout + unset.stderr);
+    assert.match(unset.stdout, /services\.email\.mergeLanguage is not set \(method mandrill\)/);
+    const set = runCheck(mandrill('    mergeLanguage: handlebars\n'), null);
+    assert.strictEqual(set.status, 0, set.stdout + set.stderr);
+    assert.doesNotMatch(set.stdout + set.stderr, /mergeLanguage/);
+  });
+
   it('[CKPK3] the development base layer supplies the key', () => {
     const res = runCheck(BASE_WITHOUT_PII_KEY, 'development');
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);

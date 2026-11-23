@@ -192,6 +192,10 @@ export const sendmail = function (emailSettings: EmailSettings, template: string
             tags: [template]
           }
         };
+        // Unset: Mandrill's account default (the boot warns about it).
+        if (emailSettings.mergeLanguage === 'handlebars' || emailSettings.mergeLanguage === 'mailchimp') {
+          data.message.merge_language = emailSettings.mergeLanguage;
+        }
         _sendmail(url, data, callback);
       }
       break;
@@ -323,6 +327,7 @@ type EmailSettings = {
   smtp?: { host?: string; [k: string]: unknown };
   from?: string;
   defaultLang?: string;
+  mergeLanguage?: string | null;
 };
 type EmailMethod = 'mandrill' | 'microservice' | 'in-process';
 type MandrillData = {
@@ -335,6 +340,7 @@ type MandrillMessage = {
   to: Recipient[];
   global_merge_vars: Array<MandrillSubstitution>;
   tags: Array<string>;
+  merge_language?: 'handlebars' | 'mailchimp';
 };
 type MandrillSubstitution = {
   name: string;
