@@ -1,4 +1,7 @@
 p Hi #{USERNAME},
+if BY_OPERATOR
+  p The support of your platform changed the auto-deletion of your account: #{OPERATOR_REASON}
+  p The reminders you received before this change no longer apply.
 if TRIGGER_DATE
   if ACTION_TRANSFER
     p Your account is now set to be transferred to #{BENEFICIARY} on #{DEADLINE}, in #{DAYS_LEFT} days.
@@ -35,4 +38,7 @@ if ACCOUNT_APP_URL
     a(href=ACCOUNT_APP_URL target="_blank" rel="noopener") #{ACCOUNT_APP_URL}
 else
   p To change or cancel this, sign in to your account page and change the auto-deletion setting.
-p If you did not make this change, sign in, change your password right away and contact the support of your platform.
+if BY_OPERATOR
+  p If you did not ask for this, contact the support of your platform.
+else
+  p If you did not make this change, sign in, change your password right away and contact the support of your platform.

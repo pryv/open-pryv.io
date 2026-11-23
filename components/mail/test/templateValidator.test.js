@@ -163,6 +163,25 @@ describe('[MTVA] mail template validator', () => {
     }
   });
 
+  it('[ADCLN] the auto-deletion confirmation names the support and its reason when an administrator made the change (en, fr)', () => {
+    const pug = require('pug');
+    const base = { USERNAME: 'ada', SCHEDULED: 'true', TRIGGER_INACTIVITY: 'true', INACTIVITY_DAYS: '365', DEADLINE: 'some day', DAYS_LEFT: '365', BY_OPERATOR: '', OPERATOR_REASON: '' };
+    const texts = {
+      en: { by: 'The support of your platform changed', ask: 'If you did not ask for this', self: 'If you did not make this change' },
+      fr: { by: 'Le support de votre plateforme a modifié', ask: 'Si vous n\'avez pas demandé ce changement', self: 'Si vous n\'êtes pas à l\'origine de ce changement' }
+    };
+    for (const [lang, t] of Object.entries(texts)) {
+      const render = pug.compileFile(path.join(BUNDLED, 'account-deletion-scheduled', lang, 'html.pug'));
+      const byOperator = render({ ...base, BY_OPERATOR: 'true', OPERATOR_REASON: 'back from <hospital>' });
+      assert.ok(byOperator.includes(t.by), lang + ': ' + byOperator);
+      assert.ok(byOperator.includes('back from &lt;hospital&gt;'), lang + ': the reason, escaped');
+      assert.ok(byOperator.includes(t.ask) && !byOperator.includes(t.self), lang + ': ' + byOperator);
+      const byHolder = render(base);
+      assert.ok(!byHolder.includes(t.by) && byHolder.includes(t.self) && !byHolder.includes(t.ask), lang + ': ' + byHolder);
+      assert.ok(render({ ...base, BY_OPERATOR: undefined, OPERATOR_REASON: undefined }).includes(t.self), lang + ': without the variables (an earlier sender)');
+    }
+  });
+
   it('[MTVA5] a local is a dotted identifier path that names no global', () => {
     for (const ok of ['USERNAME', 'user.name', 'CODE_MAX_AGE_MINUTES', 'token']) assert.ok(isLocalPath(ok), ok);
     for (const bad of ['process', 'globalThis', 'require', 'this', 'locals', 'pug_mixins', 'Buffer', 'URL', 'a.__proto__',

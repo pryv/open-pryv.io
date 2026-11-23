@@ -506,3 +506,159 @@ describe('[DAID] the delegate account id on the anchor', function () {
     assert.equal((await anchorFor(mall, NAME_A)).content.status, C.STATUS.STALE, 'still stale');
   });
 });
+
+describe('[DACK] the host\'s say on an accept', function () {
+  beforeEach(function () { seq = 0; });
+
+  const REFUSED = 'refused by the host';
+  /** An accept check answering `answers[i]` at its i-th ask (null: go), recording what it was asked. */
+  function hostCheck (answers) {
+    const asked = [];
+    const check = async (input) => {
+      asked.push(input);
+      return answers[asked.length - 1] ?? null;
+    };
+    return { asked, check };
+  }
+  const controlsOf = async (mall, relId) => (await mall.accesses.get(USER_B))
+    .filter((a) => a.clientData?.delegation?.kind === C.CLIENTDATA_KIND.CONTROL && a.clientData.delegation.relId === relId);
+  async function nothingLeft (mall, relId) {
+    assert.deepEqual(await controlsOf(mall, relId), [], 'no control access');
+    assert.equal(await markerOf(mall, USER_B, relId, C.CLIENTDATA_KIND.INVITE_CAPABILITY), null, 'no invite capability');
+    assert.equal(await anchorFor(mall, NAME_A), null, 'no anchor');
+  }
+  const acceptOn = (mall, acceptCheck, relId) => attach.handleAcceptResponse({ mall, now: nowSeconds, acceptCheck }, {
+    bUserId: USER_B, relId, delegate: { username: NAME_A, hostSlug: HOST_SLUG }
+  });
+
+  it('[DACK1] refused before the mint: nothing minted, the invite withdrawn, 410', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A, purpose: 'some-purpose' });
+    const host = hostCheck([REFUSED]);
+    await assert.rejects(acceptOn(mall, host.check, req.relId), (e) => e.httpStatus === 410 && e.message === REFUSED);
+    assert.equal(host.asked.length, 1);
+    assert.equal(host.asked[0].purpose, 'some-purpose', 'the purpose read from the anchor');
+    assert.equal(host.asked[0].activated, false);
+    await nothingLeft(mall, req.relId);
+  });
+
+  it('[DACK2] an accept interrupted before the flip is not healed against a refusal', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    // Minted, the anchor still `invite` (a stop between the mint and the flip).
+    await store.mintMarkerAccess(mall, USER_B, {
+      name: '__deleg-ctl-' + req.relId.substring(0, 8),
+      clientDataDelegation: { kind: C.CLIENTDATA_KIND.CONTROL, relId: req.relId, delegate: { username: NAME_A, hostSlug: HOST_SLUG } },
+      expires: null
+    });
+    const host = hostCheck([REFUSED]);
+    await assert.rejects(acceptOn(mall, host.check, req.relId), (e) => e.httpStatus === 410);
+    await nothingLeft(mall, req.relId);
+  });
+
+  it('[DACK3] refused once active (the purpose ended between the two asks): the activation is undone, 410', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    const host = hostCheck([null, REFUSED]);
+    await assert.rejects(acceptOn(mall, host.check, req.relId), (e) => e.httpStatus === 410);
+    assert.deepEqual(host.asked.map((a) => a.activated), [false, true]);
+    await nothingLeft(mall, req.relId);
+  });
+
+  it('[DACK4] a check that fails once active undoes the activation only: the invite stays, a repeated accept succeeds', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    let calls = 0;
+    const failing = async () => { if (++calls === 2) throw new Error('host check failed'); return null; };
+    await assert.rejects(acceptOn(mall, failing, req.relId), /host check failed/);
+    assert.deepEqual(await controlsOf(mall, req.relId), [], 'no control access');
+    const anchor = await anchorFor(mall, NAME_A);
+    assert.equal(anchor?.content.status, C.STATUS.INVITE, 'the anchor back to invite');
+    assert.equal(anchor.content.controlAccessId ?? null, null);
+    assert.ok(await markerOf(mall, USER_B, req.relId, C.CLIENTDATA_KIND.INVITE_CAPABILITY), 'the invite capability kept');
+    const again = await acceptOn(mall, hostCheck([]).check, req.relId);
+    assert.ok(again.controlApiEndpoint);
+    assert.equal((await anchorFor(mall, NAME_A)).content.status, C.STATUS.ACTIVE);
+    assert.equal((await controlsOf(mall, req.relId)).length, 1);
+  });
+
+  it('[DACK6] a settled re-accept is not asked again', async function () {
+    const mall2 = makeFakeMall();
+    const req2 = await attach.requestAttach(requestDeps(mall2), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    const host = hostCheck([]);
+    const first = await acceptOn(mall2, host.check, req2.relId);
+    assert.equal(host.asked.length, 2);
+    const again = await acceptOn(mall2, host.check, req2.relId);
+    assert.equal(again.controlApiEndpoint, first.controlApiEndpoint);
+    assert.equal(host.asked.length, 2, 'the re-accept of an active anchor is not asked');
+  });
+
+  it('[DACK7] a refusal whose capability removal fails still answers 410, the anchor removed first', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    const capability = await markerOf(mall, USER_B, req.relId, C.CLIENTDATA_KIND.INVITE_CAPABILITY);
+    const failingDelete = {
+      ...mall,
+      accesses: {
+        ...mall.accesses,
+        delete: async (userId, params) => {
+          if (params.id === capability.id) throw new Error('capability removal failed');
+          return await mall.accesses.delete(userId, params);
+        }
+      }
+    };
+    const warned = [];
+    const deps = { mall: failingDelete, now: nowSeconds, acceptCheck: hostCheck([null, REFUSED]).check, logger: { warn: (msg, ctx) => warned.push({ msg, ctx }) } };
+    await assert.rejects(attach.handleAcceptResponse(deps, { bUserId: USER_B, relId: req.relId, delegate: { username: NAME_A, hostSlug: HOST_SLUG } }),
+      (e) => e.httpStatus === 410 && e.message === REFUSED);
+    assert.deepEqual(await controlsOf(mall, req.relId), [], 'no control access');
+    assert.equal(await anchorFor(mall, NAME_A), null, 'no anchor: nothing reads as active');
+    assert.equal(warned.length, 1, JSON.stringify(warned));
+    assert.equal(warned[0].ctx.relId, req.relId);
+  });
+
+  it('[DACK8] an anchor activated by a concurrent accept since it was read is settled, not asked', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    const first = await acceptOn(mall, hostCheck([]).check, req.relId);
+    // This accept read the anchor before the other one flipped it.
+    let stale = true;
+    const lagging = {
+      ...mall,
+      events: {
+        ...mall.events,
+        get: async (userId, params) => {
+          const list = await mall.events.get(userId, params);
+          if (!stale) return list;
+          stale = false;
+          return list.map((e) => (e.type === C.ET_ANCHOR ? { ...e, content: { ...e.content, status: C.STATUS.INVITE } } : e));
+        }
+      }
+    };
+    const host = hostCheck([REFUSED, REFUSED]);
+    const res = await acceptOn(lagging, host.check, req.relId);
+    assert.equal(res.controlApiEndpoint, first.controlApiEndpoint);
+    assert.equal(host.asked.length, 0, 'not asked');
+    assert.equal((await anchorFor(mall, NAME_A)).content.status, C.STATUS.ACTIVE);
+  });
+
+  it('[DACK5] the delegate side drops its mirror and notify access when the invite is refused (410)', async function () {
+    const mall = makeFakeMall();
+    const req = await attach.requestAttach(requestDeps(mall), { bUserId: USER_B, bUsername: NAME_B, delegateUsername: NAME_A });
+    const host = hostCheck([REFUSED]);
+    const deps = {
+      ...acceptDeps(mall),
+      callControlledSide: async (_endpoint, action, body) => {
+        try {
+          const res = await attach.handleAcceptResponse({ mall, now: nowSeconds, acceptCheck: host.check }, { bUserId: USER_B, ...body });
+          return { ok: true, status: 200, body: res };
+        } catch (err) {
+          return { ok: false, status: err.httpStatus, body: { id: err.id } };
+        }
+      }
+    };
+    await assert.rejects(attach.acceptAttach(deps, { aUserId: USER_A, aUsername: NAME_A, controlledUsername: NAME_B }), (e) => e.httpStatus === 410);
+    assert.equal(await store.findMirrorByRelId(mall, USER_A, req.relId), null, 'no mirror left');
+    assert.equal(await markerOf(mall, USER_A, req.relId, C.CLIENTDATA_KIND.NOTIFY), null, 'no notify access left');
+  });
+});

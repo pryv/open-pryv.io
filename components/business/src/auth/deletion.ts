@@ -439,19 +439,51 @@ class Deletion {
    * auto-deletion's `date` or `inactivity`), kept in its record.
    * `resumeOnly`: only complete an unfinished erasure; when the account has
    * no record of one (any more), nothing is erased and the result is false.
+   * `confirm`: asked once a new erasure is recorded as in progress, before
+   * its first step (whoever checks for an erasure in progress sees it from
+   * then on); false or a throw withdraws the record, nothing is erased, and
+   * the result is false (the throw is passed on).
    */
-  async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean; trigger?: string; resumeOnly?: boolean } = {}): Promise<boolean> {
+  async eraseAccount (account: { id: string; username: string }, options: { teardown?: boolean; trigger?: string; resumeOnly?: boolean; confirm?: () => Promise<boolean> } = {}): Promise<boolean> {
     const context: MethodContext = { user: { id: account.id, username: account.username } };
     context.erasureTrigger = options.trigger ?? 'system';
     context.erasureResumeOnly = options.resumeOnly === true;
     const result: ResultBag = {};
-    for (const step of this.erasureSteps(options)) {
+    const steps = this.erasureSteps(options);
+    for (let i = 0; i < steps.length; i++) {
       await new Promise<void>((resolve, reject) => {
-        step(context, {}, result, (err?: unknown) => err != null ? reject(err) : resolve());
+        steps[i](context, {}, result, (err?: unknown) => err != null ? reject(err) : resolve());
       });
       if (context.erasureNothingToResume === true) return false;
+      // Step 0 opened the record. Only a new erasure is asked: one taken over
+      // has already removed data, it is completed whatever happened since.
+      if (i === 0 && options.confirm != null && context.erasure?.attempts === 1 && context.erasure.doneSteps.length === 0 &&
+          !(await this.#confirmStart(context, options.confirm))) {
+        return false;
+      }
     }
     return true;
+  }
+
+  /** Asks `confirm`; on false or a throw the record goes (an erasure left recorded would be completed by the sweep). */
+  async #confirmStart (context: MethodContext, confirm: () => Promise<boolean>): Promise<boolean> {
+    let go = false;
+    try {
+      go = await confirm();
+      return go;
+    } finally {
+      if (!go) {
+        this.#stopHeartbeat(context);
+        await context.erasureWrites;
+        if (context.erasureLost !== true) {
+          try {
+            await (await erasuresStore()).delete(context.user.id);
+          } catch (err) {
+            this.logger.error(`account erasure: the record of the erasure of "${context.user.username}" (${context.user.id}) not started was not withdrawn: it will be completed: ${errorText(err)}`);
+          }
+        }
+      }
+    }
   }
 
   // The record of this erasure, in the core's storage the erasure does not

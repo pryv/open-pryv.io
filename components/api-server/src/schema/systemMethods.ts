@@ -106,3 +106,13 @@ const __ex_extIdRelease = {
   }, { required: ['namespace', 'blindedValue', 'reason'] })
 };
 export { __ex_extIdRelease as extIdRelease };
+// The username is a lookup key (an alias, a legacy name): resolved, not checked
+// against today's rule. The reason is mailed to the holder.
+const __ex_autoDeletionReset = {
+  params: helpers.object({
+    username: helpers.string({ minLength: 1, maxLength: 100 }),
+    reason: helpers.string({ minLength: 1, maxLength: 500 }),
+    removeSetting: helpers.boolean()
+  }, { required: ['username', 'reason'], additionalProperties: false })
+};
+export { __ex_autoDeletionReset as autoDeletionReset };

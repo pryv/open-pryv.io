@@ -53,6 +53,12 @@ type AnchorContent = {
   controlAccessId?: string;
   patAccessId?: string;
   lastTokenIssuedAt?: number;
+  /**
+   * What the relationship was requested for, when not the owner's own choice
+   * (`account-transfer`: requested on the owner's behalf for a transfer of the
+   * account; its accept is checked by the host, see `acceptCheck`).
+   */
+  purpose?: string;
 };
 
 /**

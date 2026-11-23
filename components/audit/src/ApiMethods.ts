@@ -101,6 +101,8 @@ const ALL_METHODS = [
   'system.extIdNamespaces.delete',
   'system.extIdHolds',
   'system.extIdRelease',
+  // An administrator restarts or removes an account's auto-deletion schedule.
+  'system.autoDeletion.reset',
   // The erasure ledger (admin key): no account of this core in the context.
   'system.erasures.list',
   'system.erasures.get',
@@ -165,7 +167,11 @@ const ALL_METHODS = [
   // An account erased by the auto-deletion sweep (no API call): recorded in
   // its own trail before the erasure, where the trail outlives the account
   // (`audit.onUserDelete: keep`).
-  'account.autoDeletion.erase'
+  'account.autoDeletion.erase',
+  // An auto-deletion schedule reset by an administrator
+  // (system.autoDeletion.reset, audited without a user): recorded in the
+  // account's own trail.
+  'account.autoDeletion.resetByAdmin'
 ];
 
 const NOT_AUDITED_METHODS = [
@@ -206,6 +212,7 @@ const WITHOUT_USER_METHODS = [
   'system.extIdNamespaces.set',
   'system.extIdNamespaces.delete',
   'system.extIdRelease',
+  'system.autoDeletion.reset',
   'system.erasures.list',
   'system.erasures.get',
   'system.getEffectiveConfig',

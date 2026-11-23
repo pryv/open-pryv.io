@@ -26,7 +26,15 @@
  *  - the account is due: its activity is read again (a sign-in since the
  *    evaluation wins), the deletion guards are asked (a refusal is recorded as
  *    `blocked`, mailed to the holder once, and asked again on every later
- *    pass, silently), then the account is erased between two WARN log lines.
+ *    pass, silently), the setting and the schedule row are read again, and a
+ *    last time once the erasure is recorded as in progress (a change made
+ *    meanwhile, by the holder or an administrator, leaves the account to the
+ *    next pass), then the account is erased between two WARN log lines.
+ *
+ * The pass never writes its schedule row over one changed since it read it,
+ * and reads the setting, the row and the transfer record again before every
+ * act it cannot undo (an erasure, a claim window opening, its end, its
+ * cancellation): a change made meanwhile stops the account's pass there.
  *    The erasure keeps its own record: one that fails half-way is completed
  *    by a later pass.
  *
@@ -49,6 +57,7 @@
 
 import type { AutoDeletionConfig } from './config.ts';
 import type { Setting, Bookkeeping, TransferRecord } from './state.ts';
+import { isMaterialChange, sameState } from './state.ts';
 import type { AccountActivity } from '../accesses/accountActivity.ts';
 import { effectivePolicy, evaluate, withNotice, ENGINE_BLOCKS, DAY_SECONDS } from './deadline.ts';
 import type { Policy, Evaluation } from './deadline.ts';
@@ -152,9 +161,11 @@ export type SweepDeps<F extends SweepFacts = SweepFacts> = {
    * Erases the account, or completes its unfinished erasure. With `resume`,
    * only completes one: false when the account has no record of an
    * unfinished erasure to take over any more (nothing erased). Any other
-   * result (`undefined` included) counts as completed.
+   * result (`undefined` included) counts as completed. A new erasure calls
+   * `confirm` once it is recorded as in progress and before its first step:
+   * false withdraws it (nothing erased, result false).
    */
-  erase: (account: SweepAccount, options: { trigger?: Trigger; resume?: boolean }) => Promise<boolean | void>;
+  erase: (account: SweepAccount, options: { trigger?: Trigger; resume?: boolean; confirm?: () => Promise<boolean> }) => Promise<boolean | void>;
   /** Durable record of the erasure (an audit row that outlives the account), written before it starts. */
   recordErasure?: (account: SweepAccount, record: ErasureRecord) => Promise<void>;
   /** Pryv seconds. */
@@ -233,6 +244,21 @@ function withoutBlocked (b: Bookkeeping): Bookkeeping {
 
 const isGuardBlock = (blocked: Bookkeeping['blocked'] | undefined): boolean => blocked != null && !ENGINE_BLOCKS.includes(blocked.reason);
 
+/**
+ * The holder's setting, the schedule row or the transfer record changed
+ * while the pass was checking the account (the holder changed their setting,
+ * an administrator reset the schedule, a beneficiary claimed): the account's
+ * pass stops there, the next pass judges it on what is there then.
+ */
+class ChangedMeanwhile extends Error {
+  /** What was not done, for the log line. */
+  readonly act: string;
+  constructor (act: string) {
+    super('changed while being checked');
+    this.act = act;
+  }
+}
+
 export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F>) {
   const { state, logger } = deps;
   let running = false;
@@ -276,6 +302,10 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       try {
         await processAccount(account, ctx);
       } catch (err) {
+        if (err instanceof ChangedMeanwhile) {
+          logger.info(`auto-deletion sweep: the schedule of account "${account.username}" (${account.id}) changed while being checked: ${err.act} left to the next pass`);
+          continue;
+        }
         ctx.result.failed++;
         logger.error(`auto-deletion sweep: account "${account.username}" (${account.id}) not processed, retried on the next pass: ${errorText(err)}`);
       }
@@ -387,9 +417,16 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     let stored = prev;
     const save = async (next: Bookkeeping | null): Promise<void> => {
       if (config.dryRun) return;
+      // This pass's row written over one changed since it was read (an
+      // administrator's reset during a reminder send) would undo that change.
+      if (isMaterialChange(stored, next) && isMaterialChange(stored, await state.getBookkeeping(account.id))) {
+        throw new ChangedMeanwhile('its schedule update');
+      }
       await state.saveBookkeeping(account.id, stored, next);
       stored = next;
     };
+    // The transfer record as this pass last left it (compared before acting).
+    let seenTransfer = transfer;
 
     // A transfer that ended while the setting that armed it is still there (the
     // process stopped between the two writes): its end is finished, no new
@@ -402,8 +439,10 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       }
       return;
     }
+    const current = (): Bookkeeping | null => stored;
+    const transferRead = (): TransferRecord | null => seenTransfer;
     if (policy != null && setting != null && transfer != null && (transfer.status === 'open' || transfer.status === 'claimed')) {
-      await runWindow({ account, ctx, facts, setting, policy, prev, guardBlock, evaluation, save }, transfer);
+      await runWindow({ account, ctx, facts, setting, policy, prev, guardBlock, evaluation, save, current, transferRead }, transfer);
       return;
     }
     if (policy != null && setting?.transfer != null && transfer?.status === 'named' && transfer.namedAt == null &&
@@ -413,7 +452,8 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       const outcome = await send(ctx, () => deps.sendTransferMail(account, facts, { kind: 'named', to: 'beneficiary', record: transfer, setting, now }));
       if (outcome === 'sent') {
         refusedNamed.delete(account.id);
-        await state.saveTransfer(account.id, { ...transfer, namedAt: now });
+        seenTransfer = { ...transfer, namedAt: now };
+        await state.saveTransfer(account.id, seenTransfer);
       } else if (outcome === 'rejected' && !refusedNamed.has(account.id)) {
         refusedNamed.add(account.id);
         logger.warn(`auto-deletion sweep: the mail server refuses the transfer beneficiary of account "${account.username}" (${account.id}); retried at every pass, not logged again`);
@@ -474,9 +514,9 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
         return;
       }
     }
-    const p: AccountPass = { account, ctx, facts, setting, policy, prev, guardBlock, evaluation, save };
+    const p: AccountPass = { account, ctx, facts, setting, policy, prev, guardBlock, evaluation, save, current, transferRead };
     if (isTransfer) {
-      await openWindow(p, b, transfer);
+      await openWindow(p, b, seenTransfer);
       return;
     }
 
@@ -493,10 +533,10 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       logger.info(`auto-deletion sweep (dry run): would erase account "${account.username}" (${account.id}), trigger ${policy.mode}`);
       return;
     }
-    ctx.erasuresStarted++;
+    await checkUnchanged(p, 'its erasure');
     b = withoutBlocked(b);
     await save(b);
-    await erase(account, b, ctx);
+    await erase(p, b);
   }
 
   /** What one account's pass holds, for the steps below. */
@@ -510,7 +550,29 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     guardBlock: Bookkeeping['blocked'] | null;
     evaluation: Evaluation;
     save: (next: Bookkeeping | null) => Promise<void>;
+    /** The schedule row as this pass last left it. */
+    current: () => Bookkeeping | null;
+    /** The transfer record as this pass last left it (read for a transfer policy only). */
+    transferRead: () => TransferRecord | null;
   };
+
+  /**
+   * Whether the holder's setting, the schedule row and (for a transfer) the
+   * transfer record are still what this pass holds. Read again right before
+   * an act that cannot be undone: an erasure (again once its record is open,
+   * see `erase`), a claim window opening, a window's end or its cancellation.
+   */
+  async function isUnchanged (p: AccountPass): Promise<boolean> {
+    if (!sameState(await state.getSetting(p.account.id), p.setting)) return false;
+    if (isMaterialChange(p.current(), await state.getBookkeeping(p.account.id))) return false;
+    if (p.policy.action === 'transfer' && !sameState(await state.getTransfer(p.account.id), p.transferRead())) return false;
+    return true;
+  }
+
+  /** A change made meanwhile (the holder, an administrator, a claim) stops the account's pass: the next one judges it. */
+  async function checkUnchanged (p: AccountPass, act: string): Promise<void> {
+    if (!(await isUnchanged(p))) throw new ChangedMeanwhile(act);
+  }
 
   async function erasureObjection (p: AccountPass): Promise<Objection | null> {
     if (p.policy.source === 'user' && p.facts.selfDeletionAllowed === false) {
@@ -567,6 +629,7 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       logger.info(`auto-deletion sweep (dry run): would open the transfer claim window of account "${account.username}" (${account.id})`);
       return;
     }
+    await checkUnchanged(p, 'its claim window');
     const now = deps.now();
     const named = previous?.status === 'named' && previous.email === transferSetting.email ? previous : null;
     let record: TransferRecord = {
@@ -666,6 +729,8 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
   async function cancelledByUse (p: AccountPass, record: TransferRecord, activity: AccountActivity): Promise<boolean> {
     if ((record.status !== 'open' && record.status !== 'claimed') || p.policy.mode !== 'inactivity') return false;
     if (activity.at == null || record.openedAt == null || activity.at <= record.openedAt) return false;
+    // The writes below are built from this pass's view of the setting.
+    await checkUnchanged(p, 'the cancellation of its transfer');
     // A claim not accepted yet has transferred nothing: the owner's use still wins.
     if (record.status === 'claimed' && record.claimedBy != null) {
       if (await deps.delegationOf(p.account, record.claimedBy) !== 'invite') return false;
@@ -706,6 +771,8 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
   async function endWindow (p: AccountPass, record: TransferRecord): Promise<void> {
     const { account, ctx, facts, setting } = p;
     const flow = flowDeps(ctx);
+    // The fallback (`keep` rewrites the setting) follows this pass's view of it.
+    await checkUnchanged(p, 'the end of its claim window');
     if (record.status === 'claimed' && record.claimedBy != null) {
       try {
         await deps.withdrawInvite(account, record.claimedBy);
@@ -726,7 +793,11 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     }
     const b = p.evaluation.bookkeeping ?? p.prev;
     if (b == null) throw new Error('a transfer window without a schedule');
-    // Right before erasing: a use, or an accept, since the pass began wins.
+    // Right before erasing: a use since the pass began wins, and so does an
+    // accept already completed. The invite was withdrawn above; if that
+    // failed, an accept landing between the read below and the
+    // `fallback-delete` mark still passes (milliseconds, the erasure wins),
+    // and once the record reads `fallback-delete` a late accept is refused.
     if (await cancelledByUse(p, record, await deps.readActivity(account))) return;
     if (record.claimedBy != null && await deps.delegationOf(account, record.claimedBy) === 'active') {
       await complete(p, record);
@@ -737,14 +808,23 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       await hold(p, b, objection);
       return;
     }
-    ctx.erasuresStarted++;
+    await checkUnchanged(p, 'its erasure');
     const cleared = withoutBlocked(b);
     await p.save(cleared);
-    await state.saveTransfer(account.id, { ...record, status: 'fallback-delete', closedAt: deps.now() });
-    await erase(account, cleared, ctx, 'transfer-fallback');
+    await erase(p, cleared, 'transfer-fallback', async () => {
+      await state.saveTransfer(account.id, { ...record, status: 'fallback-delete', closedAt: deps.now() });
+    });
   }
 
-  async function erase (account: SweepAccount, b: Bookkeeping, ctx: PassContext, triggerOverride?: Trigger): Promise<void> {
+  /**
+   * Erases the account. Once its erasure is recorded as in progress (from
+   * then on an administrator's reset sees it and answers so), the setting and
+   * the schedule are read a last time before the first step: a change made
+   * before that point wins, the record is withdrawn and nothing is erased.
+   * `beforeStart` runs after that check (what records the start).
+   */
+  async function erase (p: AccountPass, b: Bookkeeping, triggerOverride?: Trigger, beforeStart?: () => Promise<void>): Promise<void> {
+    const { account, ctx } = p;
     const trigger: Trigger = triggerOverride ?? (b.appliedPolicy.mode === 'date' ? 'date' : 'inactivity');
     const sent = b.reminders.sent.filter((s) => s.skipped !== true).map((s) => s.at);
     const notices = b.firstNoticeAt != null && !sent.includes(b.firstNoticeAt) ? [b.firstNoticeAt, ...sent] : sent;
@@ -757,21 +837,55 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       deleteAt: b.deleteAt ?? b.deadline,
       notices
     };
-    logger.warn(`auto-deletion: erasing account "${account.username}" (${account.id}), trigger ${trigger}`, record);
-    if (deps.recordErasure != null) {
-      try {
-        await deps.recordErasure(account, record);
-      } catch (err) {
-        logger.error(`auto-deletion: the erasure record of account "${account.username}" (${account.id}) was not written: ${errorText(err)}`);
+    // What records the start: once the last look said go, or after the
+    // erasure when `deps.erase` did not ask (an unfinished erasure of the
+    // account taken over instead, which completes whatever happened since).
+    // `beforeStart` runs only before an erasure: after one, the account and
+    // what it would mark are gone, and nothing is written for it.
+    let started = false;
+    const announce = async (): Promise<void> => {
+      started = true;
+      ctx.erasuresStarted++;
+      logger.warn(`auto-deletion: erasing account "${account.username}" (${account.id}), trigger ${trigger}`, record);
+      if (deps.recordErasure != null) {
+        try {
+          await deps.recordErasure(account, record);
+        } catch (err) {
+          logger.error(`auto-deletion: the erasure record of account "${account.username}" (${account.id}) was not written: ${errorText(err)}`);
+        }
       }
-    }
+    };
+    let lookFailed: unknown = null;
+    const confirm = async (): Promise<boolean> => {
+      try {
+        if (!(await isUnchanged(p))) return false;
+        await beforeStart?.();
+      } catch (err) {
+        // The erasure is withdrawn (not started, no slot taken): judged again next pass.
+        lookFailed = err;
+        return false;
+      }
+      await announce();
+      return true;
+    };
+    let done: boolean | void;
     try {
-      await deps.erase(account, { trigger });
+      done = await deps.erase(account, { trigger, confirm });
     } catch (err) {
       ctx.result.failed++;
       logger.error(`auto-deletion: the erasure of account "${account.username}" (${account.id}) failed, completed on a later pass: ${errorText(err)}`);
       return;
     }
+    if (done === false) {
+      if (lookFailed != null) {
+        ctx.result.failed++;
+        logger.warn(`auto-deletion sweep: the last check before the erasure of account "${account.username}" (${account.id}) failed (its schedule could not be read again, or its start not recorded): erasure withdrawn, judged again by the next pass: ${errorText(lookFailed)}`);
+      } else {
+        logger.info(`auto-deletion sweep: the schedule of account "${account.username}" (${account.id}) changed while being checked: its erasure left to the next pass`);
+      }
+      return;
+    }
+    if (!started) await announce();
     ctx.result.erased++;
     logger.warn(`auto-deletion: account "${account.username}" (${account.id}) erased, trigger ${trigger}`, record);
   }

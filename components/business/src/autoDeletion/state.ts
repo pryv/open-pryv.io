@@ -186,6 +186,11 @@ export function isMaterialChange (prev: Bookkeeping | null, next: Bookkeeping | 
   return materialKey(prev) !== materialKey(next);
 }
 
+/** Whether two stored values (settings, transfer records) are the same, key order aside: a database may reorder the keys. */
+export function sameState (a: Setting | TransferRecord | null, b: Setting | TransferRecord | null): boolean {
+  return stableJson(a) === stableJson(b);
+}
+
 function materialKey (b: Bookkeeping): string {
   const { lastActivity, deadline, deleteAt, ...rest } = b;
   const day = (t: number | null | undefined) => t == null ? null : Math.floor(t / DAY_SECONDS);

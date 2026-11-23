@@ -65,6 +65,58 @@ and a manual merge of the configuration files.
   refuses to boot with it"). Set long random values of your own (`openssl rand -hex 32`); a new
   `auth.filesReadTokenSecret` invalidates the attachment read tokens already handed out.
 
+### Account auto-deletion: an administrator can stop a pending deletion for a holder
+
+For the support case of a holder who cannot sign in in time (in hospital, travelling) and whose
+account is about to be deleted or transferred.
+
+- **New admin route** `POST /system/admin/auto-deletion/clear` (admin key in `Authorization`, method
+  `system.autoDeletion.reset`), body `{ "username": "...", "reason": "...", "removeSetting": false }`:
+  - by default the **schedule restarts**: its clock starts again from now, as a sign-in would, with
+    its full period, reminders and minimum notice; the policy that applies (the operator's preset or
+    the holder's own period) is not changed. A holder's own **date** has no clock: refused with
+    `400 invalid-operation`, `error.data.reason: "date-schedule"`.
+  - `"removeSetting": true` **removes the holder's own schedule** (date or period; the platform's
+    policy applies again, from now). It is the holder's own erasure request: use it only on their
+    verified request. "Never" is never removed (it would arm the preset).
+  - A transfer claim window not claimed yet is cancelled as a use of the account would (inactivity
+    schedules; the transfer stays armed unless the setting is removed), the beneficiary is told; a
+    pending claim invite is withdrawn. Once the claimant controls the account the transfer is done:
+    completed, answered `409 auto-deletion-transfer-claimed`.
+  - A pending claim invite is withdrawn first (on this core; the claimant's core is told best effort,
+    an unreachable one does not block the call). If this core could not remove it (a storage
+    error), the call answers `503 api-unavailable`, nothing changed, and can be repeated.
+  - An erasure already started is refused (`400 invalid-operation`, `error.data.reason:
+    "erasure-in-progress"`). The same answer when an erasure starts while the call runs: the
+    schedule written by the call then stands (nothing is erased by it), without mail or trail row.
+  - Answer: `{ cleared, removedSetting, transferCancelled, was, autoDeletion, notified }`, where `was`
+    and `autoDeletion` give `source`, `mode`, `action`, `deleteAt` before and after, and `notified` is
+    `mail` (the holder was mailed), `audit-only` (not mailed: no address, mail off or failed; a row in
+    the account's own audit trail) or `none` (neither: nothing was pending and nothing was written,
+    `cleared: false`, a repeated call is harmless; or, with `cleared: true`, audit off as well). The
+    account on another core: `307` to that core's same route, with `{ server }`.
+  - Every change is mailed to the holder with the `reason` as written: plain text, factual, no markup
+    and no third party's data. It is recorded in the account's own audit trail (action
+    `account.autoDeletion.resetByAdmin`: what was pending, what is now, the reason; also when the
+    call completes a transfer and answers `409`) and logged (no reason, no address).
+- **Mail template `account-deletion-scheduled`**: two new variables, `BY_OPERATOR` (`"true"` when an
+  administrator made the change) and `OPERATOR_REASON`. The bundled en / fr templates then name the
+  support and its reason, and end with "If you did not ask for this, contact the support of your
+  platform" instead of the advice to change the password. **Upgrade note:** platforms whose templates
+  were seeded earlier keep their stored template until it is set again (`PUT
+  /system/admin/mail/templates/account-deletion-scheduled/<lang>/html`). Until then the mail sent
+  after an administrator's reset states the new schedule but not the reason, and still ends with "If
+  you did not make this change, sign in, change your password right away...", which is the wrong
+  advice after a support action: set the template again before using the route. On the Mandrill
+  path, the escaping of `OPERATOR_REASON` depends on the platform's own Mandrill template.
+- **Fix: the auto-deletion sweep no longer acts on a schedule changed while it checks the account.**
+  It never writes its schedule row over one changed since it read it, and it reads the holder's
+  setting, the schedule row and the transfer record again right before an erasure, a transfer claim
+  window opening, its end or its cancellation, and a last time once the erasure is recorded as in
+  progress. A change made meanwhile (the holder moving their date later, an administrator's reset, a
+  claim) stops that account's pass; the next pass judges it on what is there then. Before, such a
+  change landing during the pass could be ignored, or written over, and the account erased.
+
 ### Access requests: `returnURL` checked at creation, return origins per app (`access.returnOrigins`)
 
 `POST /reg/access` stored the `returnURL` as sent, and auth pages navigate to it once the user
@@ -647,6 +699,15 @@ call that would pass it; what an account already holds stays readable.
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+- **A transfer that ended cannot be completed by accepting its old invite.** The owner's core
+  accepts a delegation invite sent for a transfer only while that transfer is still claimed by the
+  invited account, checked before the control access is created and again once the relationship is
+  active; otherwise the accept is refused (`410`) and the invite withdrawn: it leaves the owner's
+  delegate list, and the claimant's core drops it from the claimant's list. This covers a transfer
+  cancelled (the owner using the account again or changing the setting, an administrator's reset),
+  declined or lapsed while the claimant's invite could not be withdrawn. An accept interrupted
+  before it completed is checked the same way when it is repeated. Ordinary delegation invites are
+  not affected.
 
 ## 2.0.0-rc.87 - 2026-11-18
 

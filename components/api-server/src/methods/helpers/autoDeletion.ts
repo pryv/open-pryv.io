@@ -25,6 +25,7 @@ import type { AccountActivity } from 'business/src/accesses/accountActivity.ts';
 import { buildMallForCmc } from './cmcMall.ts';
 import { sendmail, isLoggedMailFailure, isRecipientRejected, isRecipientDeferred } from './mailing.ts';
 import { availableActions, availableTriggers, autoDeletionConfig, transferIdentityKey, transferLinkKey } from './autoDeletionPolicy.ts';
+import { TRANSFER_INVITE_PURPOSE } from './transferDelegation.ts';
 
 /**
  * What `account.getAutoDeletion` / `account.setAutoDeletion` need to know
@@ -295,12 +296,14 @@ export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeleti
 
 /**
  * Send the confirmation of a setting change; true when it went out. Never
- * throws: a failure is logged and the change stands.
+ * throws: a failure is logged and the change stands. `extra`: more template
+ * variables (an administrator's change: `BY_OPERATOR`, `OPERATOR_REASON`).
  */
-export async function sendConfirmation (config: ConfigLike, user: UserRef, facts: AccountFacts, schedule: Schedule, now: number, setting: Setting | null = null): Promise<boolean> {
+export async function sendConfirmation (config: ConfigLike, user: UserRef, facts: AccountFacts, schedule: Schedule, now: number, setting: Setting | null = null,
+  extra: Record<string, string> = {}): Promise<boolean> {
   const transfer = await transferVars(config, user, schedule.policy?.action === 'transfer' ? setting : null);
   return await sendAutoDeletionMail(config, 'scheduled', user, facts,
-    (lang) => ({ ...confirmationSubstitutions(config, user, schedule, lang, now), ...transfer })) === 'sent';
+    (lang) => ({ ...confirmationSubstitutions(config, user, schedule, lang, now), ...transfer, BY_OPERATOR: '', OPERATOR_REASON: '', ...extra })) === 'sent';
 }
 
 /**
@@ -384,6 +387,30 @@ export async function sendTransferMail (config: ConfigLike, account: UserRef, fa
   });
   return await sendAutoDeletionMail(config, TRANSFER_MAIL_KINDS[notice.kind], account, facts, substitutions,
     notice.to === 'beneficiary' ? { email: record.email } : undefined);
+}
+
+/**
+ * The accept check of a delegation invite (the delegation's `acceptCheck`):
+ * an invite sent for an account transfer (its purpose, or the relationship
+ * the transfer record names) is accepted only while that transfer is still
+ * claimed by the invited account. A transfer cancelled, lapsed or declined
+ * while its invite could not be withdrawn never hands the account over.
+ * Asked again once the relationship is active (`activated`): a transfer the
+ * sweep completed meanwhile, on seeing it active, still counts.
+ * Other invites: null (no say).
+ */
+export async function transferInviteRefusal (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string; activated?: boolean }): Promise<string | null> {
+  const record = await (await getState()).getTransfer(input.bUserId);
+  const named = record?.claimedBy?.relId != null && record.claimedBy.relId === input.relId;
+  if (input.purpose !== TRANSFER_INVITE_PURPOSE && !named) return null;
+  const holds = record?.status === 'claimed' || (input.activated === true && record?.status === 'completed');
+  const claimedBy = holds ? record?.claimedBy : null;
+  if (claimedBy != null && claimedBy.username.toLowerCase() === input.delegateUsername.toLowerCase() &&
+      (claimedBy.relId == null || claimedBy.relId === input.relId)) {
+    return null;
+  }
+  logger.warn(`auto-deletion: a transfer invite of account ${input.bUserId} to "${input.delegateUsername}" refused: the transfer is not claimed by this account (${record?.status ?? 'no record'}); the invite withdrawn`);
+  return 'This invite was for an account transfer that is no longer open.';
 }
 
 /** What `account.getAutoDeletion` shows of a transfer (never the beneficiary's name or date of birth). */

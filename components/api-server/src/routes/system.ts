@@ -94,6 +94,17 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       methodCallback(res, next, 200)(err, result);
     });
   });
+  // --------------------- auto-deletion reset (admin) ----------------- //
+  // The account lives on another core: 307 to that core's same route.
+  expressApp.post(Paths.System + '/admin/auto-deletion/clear', contentType.json, setMethodId('system.autoDeletion.reset'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    systemAPI.call(req.context, Object.assign({}, req.body), (err: unknown, result: Record<string, unknown> | null) => {
+      if (err == null && typeof result?.redirect === 'string') {
+        const server = result.redirect.replace(/\/?$/, '/');
+        return res.status(307).location(server + 'system/admin/auto-deletion/clear').json({ server });
+      }
+      methodCallback(res, next, 200)(err, result);
+    });
+  });
   // --------------------- external-id holder (core to core) ----------------- //
   expressApp.post(Paths.System + '/ext-id/holds', contentType.json, setMethodId('system.extIdHolds'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, req.body, methodCallback(res, next, 200));
