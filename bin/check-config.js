@@ -207,6 +207,17 @@ checkStateKey('sso.stateKey',
   }
 }
 
+// access.returnOrigins — optional; when set, a string whose every entry parses
+// (same parser and rule as the server's boot check).
+{
+  const { parseTrustedApps } = require('../components/business/src/auth/trustedApps.ts');
+  const value = get('access.returnOrigins');
+  if (value != null) {
+    if (typeof value !== 'string') problems.push('access.returnOrigins must be a string of comma-separated <appId>@<origin> entries');
+    else for (const error of parseTrustedApps(value).errors) problems.push(`access.returnOrigins: ${error}`);
+  }
+}
+
 // auth.passwordResetPageURL — required unless services.email.enabled.resetPassword === false
 {
   const emailEnabled = get('services.email.enabled');

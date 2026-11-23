@@ -911,9 +911,9 @@ socketIO:
   maxScopesPerConnection: 100
 
 # === PER-CORE: access requests (POST /reg/access) ===
-# Other keys (defaultAuthUrl, trustedAuthUrls, terminalRetentionMs,
-# handoffTtl, maxLiveRequests, maxRequestBytes) keep their defaults when
-# absent; see the bin/init.js appendix.
+# Other keys (defaultAuthUrl, trustedAuthUrls, returnOrigins,
+# terminalRetentionMs, handoffTtl, maxLiveRequests, maxRequestBytes) keep
+# their defaults when absent; see the bin/init.js appendix.
 access:
   # Most live access requests created from one address (an IPv4 address, or
   # one /64 of IPv6) on this core; past it POST /reg/access answers 429. A

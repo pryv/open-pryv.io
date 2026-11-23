@@ -34,6 +34,7 @@ const { clientIp } = require('middleware/src/clientIp.ts');
 const { APIError } = require('errors');
 const slugify = require('utils').slugify;
 const { MIN_CHOSEN_TOKEN_LENGTH } = require('business/src/accesses/chosenToken.ts');
+const { checkReturnURL } = require('business/src/auth/returnOrigins.ts');
 
 const logger = getLogger('routes:reg:access');
 
@@ -409,6 +410,17 @@ export default function (expressApp: ExpressApp, app: AppLike) {
             error: { id: 'invalid-parameters', message: `token must be a string of at least ${MIN_CHOSEN_TOKEN_LENGTH} characters (after slugification); omit it to get a generated one` }
           });
         }
+      }
+
+      // The return address is stored as sent and never changed afterwards,
+      // and auth pages navigate to it: check its shape, and its origin when
+      // the operator bound this app id (access:returnOrigins). Refused here,
+      // before the user signs in and consents for a redirect that must fail.
+      const returnURLError = checkReturnURL(app.config.get('access:returnOrigins'), requestingAppId, req.body.returnURL);
+      if (returnURLError != null) {
+        return res.status(400).json({
+          error: { id: 'invalid-parameters', message: returnURLError, data: { param: 'returnURL' } }
+        });
       }
 
       const { key, state, expiresAt } = accessState.buildState({

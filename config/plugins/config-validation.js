@@ -217,6 +217,30 @@ function checkTrustedApps (config, problems) {
   }
 }
 
+// `access.returnOrigins` binds app ids to the origins their access requests
+// may return to. Optional, but a malformed entry would silently leave an app
+// unbound: refuse the boot instead.
+function checkReturnOrigins (config, problems) {
+  const { parseTrustedApps } = require('../../components/business/src/auth/trustedApps.ts');
+  const value = config.get('access:returnOrigins');
+  if (value == null) return;
+  if (typeof value !== 'string') {
+    problems.push({
+      message: "'access:returnOrigins' must be a string of comma-separated <appId>@<origin> entries.",
+      path: ['access', 'returnOrigins'],
+      payload: { path: 'access:returnOrigins' }
+    });
+    return;
+  }
+  for (const error of parseTrustedApps(value).errors) {
+    problems.push({
+      message: `'access:returnOrigins' entry is invalid: ${error}`,
+      path: ['access', 'returnOrigins'],
+      payload: { path: 'access:returnOrigins' }
+    });
+  }
+}
+
 // Enum-style validation for `audit:onUserDelete` mode + gate for
 // `pseudonymise`, which is not implemented. Lives alongside REQUIRED_WHEN
 // so future enum-style gates land in the same shape.
@@ -710,6 +734,7 @@ async function validate (config) {
   checkRequiredWhen(config, problems);
   checkOptionalSecrets(config, problems);
   checkTrustedApps(config, problems);
+  checkReturnOrigins(config, problems);
   checkAuditOnUserDeleteMode(config, problems);
   checkDnsTopologyConsistency(config, problems);
   checkDnsLessExplicit(config, problems);
@@ -1026,6 +1051,7 @@ module.exports = {
   checkRequiredWhen,
   checkOptionalSecrets,
   checkTrustedApps,
+  checkReturnOrigins,
   checkAuditOnUserDeleteMode,
   checkDnsTopologyConsistency,
   checkDnsLessExplicit,

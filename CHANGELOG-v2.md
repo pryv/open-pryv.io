@@ -46,6 +46,28 @@ and a manual merge of the configuration files.
   audit syslog is on) and logged (`[config-effective-read]`). The answer is the view of the API worker
   that answers; values the master process alone sets are not in it. Platform storage unreachable: 503.
 
+### Access requests: `returnURL` checked at creation, return origins per app (`access.returnOrigins`)
+
+`POST /reg/access` stored the `returnURL` as sent, and auth pages navigate to it once the user
+decides. It is now checked when the request is created (it cannot be changed afterwards):
+
+- **BREAKING: the shape is always checked.** A `returnURL` is absent (`undefined`, `null`, `false`,
+  `""` or `"false"`, the poll-only mode), or a string that parses as an absolute URL with no control
+  character, no `user:password@` part and a scheme other than `javascript:`, `data:`, `vbscript:` or
+  `blob:` (an `http(s)` address must carry its `//`). Anything else is refused with
+  `400 invalid-parameters` and `error.data.param: "returnURL"`. An `http(s)` address, a custom scheme
+  (`myapp://callback`) or a `file:` page URL (hybrid apps) is accepted as before.
+- **New optional key `access.returnOrigins`** binds app ids to the origins their requests may return
+  to, with the grammar of `auth.trustedApps`: `<appId>@<origin>` entries, comma separated, a leading
+  `*.` label for subdomains, `:*` for any port, `*` as the app id to bind every app, `<appId>@*` to
+  exempt one. A bound app's request whose `returnURL` is on no registered origin (scheme, host and
+  port compared; the path is free) is refused with the same `400`; the message neither echoes the
+  value nor lists the origins. An unbound app, and any app when the key is unset (the default), is
+  not restricted. A malformed entry refuses the boot (and `bin/check-config.js` reports it). Set it
+  identically on every core.
+- This is redirect hygiene, not client authentication: whoever creates a request can still read its
+  outcome by polling. Apps that need their redirect bound to the client use the OAuth2 flow.
+
 ### Erasure ledger: a durable record of each erased account (on by default)
 
 Requested by an operator: a way to prove, after the account is gone, that an account was erased, and

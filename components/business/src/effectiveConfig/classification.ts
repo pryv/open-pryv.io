@@ -174,6 +174,7 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['limits.**', P, c],
   ['socketIO.**', P, c],
   ['access.**', P, c],
+  ['access.returnOrigins', P, p],
   ['accessState.**', P, c],
   ['accesses.**', P, c],
   ['trace.**', P, c],
