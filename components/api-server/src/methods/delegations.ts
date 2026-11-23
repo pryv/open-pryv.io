@@ -346,7 +346,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
     return async function callControlledSide (endpoint: string, action: 'accept-response' | 'refuse-response' | 'accept-complete', body: Record<string, unknown>) {
       const target = await resolveTarget(controlledUsername);
       if (target.isSelf && target.userId != null) {
-        const deps = { mall, now: nowSeconds, acceptCheck };
+        const deps = { mall, now: nowSeconds, acceptCheck, logger };
         try {
           if (action === 'accept-response') {
             const res = await delegation.handleAcceptResponse(deps, { bUserId: target.userId, ...(body as object) } as never);
@@ -792,7 +792,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
     async function (context: MethodContext, params: { relId?: string; delegate?: { username: string; hostSlug: string }; notifyApiEndpoint?: string }, result: Record<string, unknown>, next: MethodNext) {
       try {
         const relId = context.access?.clientData?.delegation?.relId ?? params.relId;
-        const res = await delegation.handleAcceptResponse({ mall, now: nowSeconds, acceptCheck }, {
+        const res = await delegation.handleAcceptResponse({ mall, now: nowSeconds, acceptCheck, logger }, {
           bUserId: context.user.id,
           relId: String(relId),
           delegate: params.delegate!,

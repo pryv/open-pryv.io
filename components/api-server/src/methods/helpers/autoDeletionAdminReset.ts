@@ -251,7 +251,9 @@ export async function resetAutoDeletion (config: ConfigLike, platform: PlatformL
   // above then stand (nothing is erased by them), with no mail and no trail
   // row: the account is being erased, or the erasure was withdrawn by a sweep
   // pass that saw this reset (a repeated call then answers `cleared: false`).
-  const stillThere = async () => (await usersRepository.getUserIdForUsername(user.username) as string | null) === userId;
+  // By id, read from the index storage: the lookup by name may be served from
+  // this process's cache, which another worker's erasure busts only later.
+  const stillThere = async () => (await usersRepository.getUsernameForUserId(userId) as string | null) != null;
   if (await erasureStarted(erasures, userId, stillThere)) throw erasureInProgress();
 
   const mailed = await sendConfirmation(config, user, facts, schedule, now, next, { BY_OPERATOR: 'true', OPERATOR_REASON: params.reason });

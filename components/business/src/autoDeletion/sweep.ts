@@ -794,8 +794,10 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
     const b = p.evaluation.bookkeeping ?? p.prev;
     if (b == null) throw new Error('a transfer window without a schedule');
     // Right before erasing: a use since the pass began wins, and so does an
-    // accept already completed (the invite was withdrawn above; once the
-    // record no longer reads `claimed`, a late accept is refused).
+    // accept already completed. The invite was withdrawn above; if that
+    // failed, an accept landing between the read below and the
+    // `fallback-delete` mark still passes (milliseconds, the erasure wins),
+    // and once the record reads `fallback-delete` a late accept is refused.
     if (await cancelledByUse(p, record, await deps.readActivity(account))) return;
     if (record.claimedBy != null && await deps.delegationOf(account, record.claimedBy) === 'active') {
       await complete(p, record);

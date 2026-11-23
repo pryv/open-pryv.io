@@ -452,7 +452,11 @@ export default async function (api: Api) {
         if (before?.claimedBy != null && before.claimedBy.username.toLowerCase() !== claimant.toLowerCase()) {
           return next(errors.autoDeletionTransferClaimed());
         }
-        const bound: TransferRecord = { ...record, status: 'claimed', claimedBy: { ...(record.claimedBy ?? {}), username: claimant, at: record.claimedBy?.at ?? now } };
+        const claimedBy: NonNullable<TransferRecord['claimedBy']> = { ...(record.claimedBy ?? {}), username: claimant, at: record.claimedBy?.at ?? now };
+        // An invite issued again below: the record names none until it is out
+        // (the former one's id would refuse an accept of the new invite).
+        if (rel.status !== 'invite' || rel.expired === true) delete claimedBy.relId;
+        const bound: TransferRecord = { ...record, status: 'claimed', claimedBy };
         await state.saveTransfer(owner.id, bound);
         try {
           if (rel.status === 'invite' && rel.expired === true) {

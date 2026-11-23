@@ -128,6 +128,8 @@ type ControlledSideDeps = {
    * (e.g. an account transfer that is no longer open), null lets it proceed.
    */
   acceptCheck?: (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string; activated?: boolean }) => Promise<string | null>;
+  /** Told what was left when undoing a refused or unconfirmed accept failed. */
+  logger?: { warn: (msg: string, ctx?: Record<string, unknown>) => void };
 };
 
 // ------------------------------------------------------------------- payloads
@@ -357,9 +359,12 @@ async function acceptAttach (deps: AcceptRefuseDeps, params: {
     if (peer.status >= 400 && peer.status < 500) {
       // 410: B withdrew it for good (expired, refused by its host, stale):
       // the mirror and the notify access minted above have nothing left to serve.
+      // Best effort: a failed removal keeps the 410 answer (refuse removes it later).
       if (peer.status === 410) {
-        await dropNotifyAccess(mall, params.aUserId, content.relId);
-        await store.deleteMirror(mall, params.aUserId, mirror);
+        try {
+          await dropNotifyAccess(mall, params.aUserId, content.relId);
+          await store.deleteMirror(mall, params.aUserId, mirror);
+        } catch (_e) { /* the mirror lingers until refused or reconciled */ }
       }
       throw delegationError(DelegationErrorIds.INVITE_EXPIRED,
         'The delegation invite is no longer valid on the controlled account', 410, { peerStatus: peer.status });
@@ -471,11 +476,14 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
     }
     // An accept interrupted before the flip: the host has its say before the
     // anchor is healed, as on a fresh accept. An anchor already active is a
-    // settled re-accept, not asked again.
-    const healing = content.status !== C.STATUS.ACTIVE;
-    if (healing) await askHost(deps, params, anchor, content, { controlId: existingControl.id, activated: false });
-    const activatedAt = await healAnchorToActive(deps, params, anchor, existingControl.id, delegateIdPatch);
-    if (healing) await askHost(deps, params, anchor, content, { controlId: existingControl.id, activated: true });
+    // settled re-accept, not asked again; read once more, since a concurrent
+    // accept may have flipped it after the read above.
+    let current = anchor;
+    if (content.status !== C.STATUS.ACTIVE) current = (await store.findAnchorByRelId(mall, params.bUserId, params.relId)) ?? anchor;
+    const healing = (current.content as AnchorContent).status !== C.STATUS.ACTIVE;
+    if (healing) await askHost(deps, params, current, content, { controlId: existingControl.id, activated: false });
+    const activatedAt = await healAnchorToActive(deps, params, current, existingControl.id, delegateIdPatch);
+    if (healing) await askHost(deps, params, current, content, { controlId: existingControl.id, activated: true });
     return { controlApiEndpoint: existingControl.apiEndpoint, relId: params.relId, activatedAt };
   }
 
@@ -550,11 +558,12 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
 }
 
 /**
- * The host's say on an accept (`deps.acceptCheck`). On a refusal the control
- * access (when one is minted), the invite capability and the anchor are
- * removed, then 410. A check that fails once the anchor is active removes
- * them too (an activation the host could not confirm is not kept), then
- * rethrows; before that, a failure just stops the accept.
+ * The host's say on an accept (`deps.acceptCheck`). On a refusal the invite
+ * is withdrawn (`withdrawAccept`), then 410. A check that fails once the
+ * anchor is active undoes the activation only (`undoActivation`: the invite
+ * stays, a repeated accept is a fresh one), then rethrows; before that, a
+ * failure just stops the accept. A failed removal never replaces the answer:
+ * it is logged with what was left.
  */
 async function askHost (deps: ControlledSideDeps, params: { bUserId: string; relId: string }, anchor: store.EventLike,
   content: AnchorContent, opts: { controlId?: string; activated: boolean }): Promise<void> {
@@ -569,20 +578,51 @@ async function askHost (deps: ControlledSideDeps, params: { bUserId: string; rel
       activated: opts.activated,
     });
   } catch (err) {
-    if (opts.activated) await withdrawAccept(deps.mall, params, anchor, opts.controlId);
+    if (opts.activated) await undoActivation(deps, params, anchor, opts.controlId);
     throw err;
   }
   if (refusal == null) return;
-  await withdrawAccept(deps.mall, params, anchor, opts.controlId);
+  await withdrawAccept(deps, params, anchor, opts.controlId);
   throw delegationError(DelegationErrorIds.INVITE_EXPIRED, refusal, 410);
 }
 
-/** Removes an invite the host refused: the control access first (the credential), the capability, the anchor. */
-async function withdrawAccept (mall: MallLike, params: { bUserId: string; relId: string }, anchor: store.EventLike, controlId?: string): Promise<void> {
-  if (controlId != null) await store.deleteAccessById(mall, params.bUserId, controlId);
-  const capability = await store.findMarkerAccess(mall, params.bUserId, params.relId, C.CLIENTDATA_KIND.INVITE_CAPABILITY);
-  if (capability != null) await store.deleteAccessById(mall, params.bUserId, capability.id);
-  await store.deleteAnchor(mall, params.bUserId, anchor);
+/**
+ * Removes an invite the host refused: the control access first (the
+ * credential), then the anchor (nothing reads as active any more), then the
+ * capability (inert without its anchor; its TTL ends it).
+ */
+async function withdrawAccept (deps: ControlledSideDeps, params: { bUserId: string; relId: string }, anchor: store.EventLike, controlId?: string): Promise<void> {
+  const { mall } = deps;
+  const left: string[] = [];
+  if (controlId != null) await attempt(left, 'control access', () => store.deleteAccessById(mall, params.bUserId, controlId));
+  await attempt(left, 'anchor', () => store.deleteAnchor(mall, params.bUserId, anchor));
+  await attempt(left, 'invite capability', async () => {
+    const capability = await store.findMarkerAccess(mall, params.bUserId, params.relId, C.CLIENTDATA_KIND.INVITE_CAPABILITY);
+    if (capability != null) await store.deleteAccessById(mall, params.bUserId, capability.id);
+  });
+  if (left.length > 0) deps.logger?.warn('delegation: a refused invite was not fully removed', { relId: params.relId, left });
+}
+
+/** An activation the host could not confirm: the control access removed, the anchor back to `invite`, the capability kept. */
+async function undoActivation (deps: ControlledSideDeps, params: { bUserId: string; relId: string }, anchor: store.EventLike, controlId?: string): Promise<void> {
+  const { mall } = deps;
+  const left: string[] = [];
+  if (controlId != null) await attempt(left, 'control access', () => store.deleteAccessById(mall, params.bUserId, controlId));
+  await attempt(left, 'anchor still active', () => store.updateAnchorContent(mall, params.bUserId, anchor, {
+    status: C.STATUS.INVITE,
+    activatedAt: undefined,
+    controlAccessId: undefined,
+  }));
+  if (left.length > 0) deps.logger?.warn('delegation: an unconfirmed activation was not fully undone', { relId: params.relId, left });
+}
+
+/** Runs one removal step; a failure is noted in `left` instead of thrown. */
+async function attempt (left: string[], what: string, step: () => Promise<unknown>): Promise<void> {
+  try {
+    await step();
+  } catch (err) {
+    left.push(what + ' (' + String((err as Error)?.message || err) + ')');
+  }
 }
 
 /**
