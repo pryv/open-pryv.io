@@ -741,7 +741,36 @@ describe('[CVWS] config-validation weak secrets', () => {
     assert.match(weakSecretReason('OVERRIDE ME'), /placeholder/);
     assert.strictEqual(weakSecretReason(undefined), null);
     for (const devValue of ['dev-only-admin-access-key', 'dev-only-files-read-token-secret']) {
-      assert.strictEqual(weakSecretReason(devValue, { production: true }), null, 'development-config.yml boots');
+      assert.strictEqual(weakSecretReason(devValue), null, 'development-config.yml boots outside production');
+    }
+  });
+
+  it('[CVWS4] in production, the admin key and files-read secret published for development and tests are refused', () => {
+    const published = {
+      'auth:adminAccessKey': ['dev-only-admin-access-key', 'rt-admin-roundtrip-key'],
+      'auth:filesReadTokenSecret': ['dev-only-files-read-token-secret', 'libjs-test-files-secret', 'rt-files-secret-roundtrip']
+    };
+    const run = (path, value) => {
+      const problems = [];
+      checkRequiredWhen(fakeConfig({ ...allHappy, [path]: value }), problems);
+      return problems.find((p) => p.payload && p.payload.path === path);
+    };
+    for (const [path, values] of Object.entries(published)) {
+      for (const value of values) assert.strictEqual(run(path, value), undefined, `${value} accepted outside production`);
+    }
+    const saved = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      for (const [path, values] of Object.entries(published)) {
+        for (const value of values) {
+          const p = run(path, value);
+          assert.ok(p && p.payload.weakSecret, `${path}=${value} refused in production`);
+          assert.match(p.message, /public development\/test value/);
+        }
+        assert.strictEqual(run(path, require('node:crypto').randomBytes(24).toString('hex')), undefined, `${path}: own value boots`);
+      }
+    } finally {
+      process.env.NODE_ENV = saved;
     }
   });
 });

@@ -277,6 +277,17 @@ describe('[CKPK] bin/check-config.js platform.piiHmacKey', function () {
     assert.doesNotMatch(own.stdout + own.stderr, /piiHmacKey/);
   });
 
+  it('[CKPK5] the published development admin key and files-read secret are flagged: a production core refuses them', () => {
+    const res = runCheck(BASE
+      .replace('adminAccessKey: an-admin-key', 'adminAccessKey: dev-only-admin-access-key')
+      .replace('filesReadTokenSecret: a-files-secret', 'filesReadTokenSecret: dev-only-files-read-token-secret'), null);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    for (const key of ['adminAccessKey', 'filesReadTokenSecret']) {
+      assert.match(res.stdout + res.stderr,
+        new RegExp(`auth\\.${key} is the public development/test value: a production core refuses to boot with it`));
+    }
+  });
+
   it('[CKPK3] the development base layer supplies the key', () => {
     const res = runCheck(BASE_WITHOUT_PII_KEY, 'development');
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);

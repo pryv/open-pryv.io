@@ -106,6 +106,8 @@ const ALL_METHODS = [
   // The erasure ledger (admin key): no account of this core in the context.
   'system.erasures.list',
   'system.erasures.get',
+  // The effective configuration of the core (admin key), secrets redacted.
+  'system.getEffectiveConfig',
   'auth.hostings',
   // External ids of the account (personal token), and the core lookup by id.
   'account.externalIds.claim',
@@ -213,6 +215,7 @@ const WITHOUT_USER_METHODS = [
   'system.autoDeletion.reset',
   'system.erasures.list',
   'system.erasures.get',
+  'system.getEffectiveConfig',
   'mfa.recover',
   // OAuth events with no resolvable user at emit time (pre-consent /authorize,
   // /refuse, or reuse of an already-consumed code/refresh where the user is

@@ -9,6 +9,7 @@ import type { MethodNext as Next, ResultBag } from './_types.ts';
 import type { MethodContext as BaseMethodContext } from 'business/src/MethodContext.ts';
 import type { Platform } from 'platform/src/Platform.ts';
 import { ledgerKey, listErasureRecords, lookupErasureRecords, otherKeyRecordCount, parseCursor, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT } from 'business/src/erasureLedger/index.ts';
+import { buildEffectiveConfig, scopesFromStores } from 'business/src/effectiveConfig/index.ts';
 
 const require = createRequire(import.meta.url);
 const errors = require('errors').factory;
@@ -39,6 +40,7 @@ const storages = require('storages');
 const { ready, getLogger } = require('@pryv/boiler');
 const { getUsersRepository } = require('business/src/users/index.ts');
 const { getEventTypesLoadState } = require('business').types;
+const { getAPIVersion } = require('middleware/src/project_version.ts');
 
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
@@ -432,6 +434,44 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         // cannot match (a key change): `erased: false` is then not a proof.
         result.keyId = key.keyId;
         result.otherKeyRecords = await otherKeyRecordCount(platform, key);
+        next();
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+    }
+  );
+
+  // ------------------------------------------------- effective configuration
+  // The configuration this API worker runs with, secrets redacted
+  // (business/src/effectiveConfig). Audited without a user; the log line is
+  // the trace of record when the audit syslog is off.
+  systemAPI.register('system.getEffectiveConfig',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    async function getEffectiveConfig (_context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
+      const extra = Object.keys(params).filter((k) => k !== 'digest');
+      if (extra.length > 0) return next(errors.invalidParametersFormat('Unknown parameter(s): ' + extra.join(', ') + '. Only `digest` is accepted.', { parameters: extra }));
+      if (params.digest != null && params.digest !== 'true' && params.digest !== 'false') {
+        return next(errors.invalidParametersFormat('`digest` must be `true` or `false`.', { digest: params.digest }));
+      }
+      const digestOnly = params.digest === 'true';
+      let observability;
+      try {
+        observability = await platform.getObservabilityResolution();
+      } catch (err) {
+        logger.warn('[config-effective-read] platform storage unreachable: ' + (err instanceof Error ? err.message : String(err)));
+        return next(errors.apiUnavailable('The platform storage is unreachable: the effective configuration cannot be resolved now.'));
+      }
+      try {
+        const doc = buildEffectiveConfig({
+          scopes: scopesFromStores(config.store.stores),
+          merged: (key: string) => config.get(key),
+          observability,
+          coreId: String(config.get('core:id')),
+          apiVersion: await getAPIVersion()
+        });
+        logger.info('[config-effective-read] mode=' + (digestOnly ? 'digest' : 'full'));
+        result.configMeta = doc.configMeta;
+        if (!digestOnly) result.keys = doc.keys;
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));
