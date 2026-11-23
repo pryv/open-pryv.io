@@ -46,6 +46,16 @@ and a manual merge of the configuration files.
   audit syslog is on) and logged (`[config-effective-read]`). The answer is the view of the API worker
   that answers; values the master process alone sets are not in it. Platform storage unreachable: 503.
 
+### Production refuses the published development admin key and files-read secret
+
+- **BREAKING: a production core (`NODE_ENV=production`, the Docker image) refuses to boot** when
+  `auth.adminAccessKey` is `dev-only-admin-access-key`, or `auth.filesReadTokenSecret` is
+  `dev-only-files-read-token-secret` or `libjs-test-files-secret`: values shipped in this repository's
+  development and test configurations, as good as public. Until now only the published
+  `platform.piiHmacKey` was refused. `bin/check-config.js` reports them as a warning ("a production core
+  refuses to boot with it"). Set long random values of your own (`openssl rand -hex 32`); a new
+  `auth.filesReadTokenSecret` invalidates the attachment read tokens already handed out.
+
 ### Access requests: `returnURL` checked at creation, return origins per app (`access.returnOrigins`)
 
 `POST /reg/access` stored the `returnURL` as sent, and auth pages navigate to it once the user

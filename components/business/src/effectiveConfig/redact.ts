@@ -49,12 +49,6 @@ export function isSet (value: unknown): boolean {
   return true;
 }
 
-// Values of `auth.filesReadTokenSecret` published in this repository (development
-// and test configurations): anyone can key with them, so they key nothing.
-const PUBLISHED_FILES_READ_SECRETS: readonly string[] = [
-  'dev-only-files-read-token-secret', 'libjs-test-files-secret', 'rt-files-secret-roundtrip', 'some_token'
-];
-
 /**
  * The fingerprint key, derived from `auth.filesReadTokenSecret` (required
  * identical on every core, never shown), or null when that secret is too weak
@@ -63,8 +57,8 @@ const PUBLISHED_FILES_READ_SECRETS: readonly string[] = [
  */
 export function fingerprintKey (filesReadTokenSecret: unknown): Buffer | null {
   if (typeof filesReadTokenSecret !== 'string') return null;
+  // the production rule also refuses the values published for development and tests
   if (weakSecretReason(filesReadTokenSecret, { production: true }) != null) return null;
-  if (PUBLISHED_FILES_READ_SECRETS.includes(filesReadTokenSecret.trim())) return null;
   return createHmac('sha256', filesReadTokenSecret).update(FINGERPRINT_LABEL).digest();
 }
 

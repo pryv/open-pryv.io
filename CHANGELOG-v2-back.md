@@ -13,6 +13,10 @@
 - `Platform.getObservabilityResolution()` returns the resolved observability values plus their origin
   (`local` / `db` / `default`); `getObservabilityConfig()` returns its `values`, unchanged.
 - Method `system.getEffectiveConfig` is audited without a user (`WITHOUT_USER_METHODS`).
+- `secretValues.ts` `PUBLIC_DEVELOPMENT_SECRETS` lists the published admin keys and files-read secrets
+  too; the effective-configuration fingerprint key relies on it instead of a list of its own.
+  `tools/backup-roundtrip` (which runs its legs with `NODE_ENV=production`) draws its admin key and
+  files-read secret per run. Tests `[CVWS4]`, `[CKPK5]`.
 
 ### Erasure ledger
 

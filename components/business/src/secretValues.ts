@@ -28,10 +28,16 @@ export function isPlaceholderValue (value: unknown): boolean {
 }
 
 // Secrets published in this repository for development and tests
-// (config/development-config.yml, scripts/components-run). Fine there; in
-// production they are as good as no secret.
+// (config/development-config.yml, config/libjs-test-config.yml,
+// scripts/components-run). Fine there; in production they are as good as no
+// secret. Shorter test values are already refused by MIN_SECRET_LENGTH.
 const PUBLIC_DEVELOPMENT_SECRETS: readonly string[] = [
-  'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=' // platform.piiHmacKey
+  'WLthDQK7GoYZINg7uIeWN9eANnj2BSh4zEZmRPyR5y0=', // platform.piiHmacKey
+  'dev-only-admin-access-key', // auth.adminAccessKey
+  'dev-only-files-read-token-secret', // auth.filesReadTokenSecret
+  'libjs-test-files-secret', // auth.filesReadTokenSecret
+  'rt-admin-roundtrip-key', // auth.adminAccessKey, former backup round-trip value
+  'rt-files-secret-roundtrip' // auth.filesReadTokenSecret, former backup round-trip value
 ];
 
 /**
