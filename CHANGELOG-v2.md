@@ -18,19 +18,26 @@ and a manual merge of the configuration files.
 - **Secrets are never shown.** A secret, or a whole subtree that can carry credentials (SMS provider
   endpoints, telemetry headers, data-store settings, OAuth extension options), is
   `{ redacted: true, class, set, type, placeholder?, size?, fingerprint? }`, with no fragment of the
-  value. `fingerprint` (12 hex) is an HMAC keyed by `auth.filesReadTokenSecret` and bound to the path:
-  equal secrets on two cores show the same fingerprint, a reader cannot test candidate values against it.
-  None is given when that secret is a placeholder or shorter than 16 characters
-  (`configMeta.secretFingerprints: false`).
+  value (`placeholder: true` tells that the value is a template one such as `REPLACE ME`).
+  `fingerprint` (12 hex) is an HMAC keyed by `auth.filesReadTokenSecret` and bound to the path: equal
+  values on two cores show the same fingerprint, and candidate values cannot be tested against it
+  without `auth.filesReadTokenSecret`. Every entry that hides all or part of its value carries one (a
+  sanitised URL too), so a change in what is hidden still changes the digests; `auth.adminAccessKey`
+  (known to whoever reads the document) and `auth.filesReadTokenSecret` never do. None at all when
+  `auth.filesReadTokenSecret` is a placeholder, a value published in this repository or shorter than
+  16 characters (`configMeta.secretFingerprints: false`).
 - **Shown only when classified.** Every key is classified (shown, URL origin only, secret, or opaque); a
-  key no rule names (an operator's custom key, a typo) is redacted as `unclassified`, as is a shown key
-  whose name looks like a secret. Every shown string is also scanned: one containing a configured secret,
-  a PEM block, a `Bearer`/`Basic` value, a JWT or key-like material is redacted (`value-pattern`); a URL
-  loses its credentials and query values (`sanitized: true`). Environment variables and command-line
+  key no rule names (an operator's custom key, a typo, an unknown member of the OAuth, syslog or data-store
+  settings) is redacted as `unclassified`, as is a shown key whose name looks like a secret. Every shown
+  string is also scanned: one containing a configured secret (or its base64 or URL-encoded form), a PEM
+  block, a `Bearer`/`Basic` value, a JWT, key-like material or a `user:password@host` shape is redacted
+  (`value-pattern`). A URL loses its credentials, query values and `;` parameters (`sanitized: true`);
+  one that does not parse cleanly is redacted rather than shown. Environment variables and command-line
   flags appear only when they set a known configuration key; unknown top-level keys of the
   configuration files are listed by name in `configMeta.unknownTopLevelKeys`.
-- **Two digests** in `configMeta.digests` (SHA-256 of the canonical JSON of `{ format, keys }`, entries
-  without `source` and `scope`): `platform` over the `platform` keys, to compare cores
+- **Two digests** in `configMeta.digests` (SHA-256 of the canonical JSON of `{ format, keys }`, object
+  keys sorted in UTF-16 code unit order, entries without `source` and `scope`): `platform` over the
+  `platform` keys, to compare cores
   (`?digest=true` answers `configMeta` only), and `full` over every key, to compare a core with an
   earlier baseline. `configMeta` also carries `format` (`pryv-effective-config/1`), `coreId`,
   `apiVersion`, `snapshotAt` and the configuration file names.

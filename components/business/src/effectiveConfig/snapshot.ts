@@ -23,8 +23,8 @@ import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import { EXTRA_TOP_LEVEL_KEYS, findRule, isNameException, pathLooksSecret, type Rule, type RuleScope } from './classification.ts';
 import {
-  fingerprint, fingerprintKey, MAX_STRING_LENGTH, redactedEntry, sanitizeUrl, secretNeedles, stableStringify,
-  stringLooksSecret, urlOrigin, type RedactedEntry, type RedactionClass
+  fingerprint, fingerprintKey, MAX_STRING_LENGTH, redactedEntry, secretNeedles, showableString, stableStringify,
+  stringLooksSecret, type RedactedEntry, type RedactionClass
 } from './redact.ts';
 
 export const FORMAT = 'pryv-effective-config/1';
@@ -53,7 +53,7 @@ export type SnapshotInput = {
   apiVersion: string,
   now?: Date
 };
-export type ShownEntry = { value: unknown, sanitized?: true };
+export type ShownEntry = { value: unknown, sanitized?: true, fingerprint?: string };
 export type KeyEntry = (ShownEntry | RedactedEntry) & { source: string, scope: RuleScope };
 export type ConfigMeta = {
   format: string,
@@ -135,7 +135,7 @@ export function buildEffectiveConfig (input: SnapshotInput): EffectiveConfig {
   }
 
   // 2. live secrets, searched for inside every shown string
-  const needles = secretNeedles(leaves.filter((l) => l.kind === 'secret' || l.kind === 'opaque').map((l) => l.value));
+  const needles = secretNeedles(leaves.filter((l) => l.kind === 'secret' || l.kind === 'opaque' || hiddenByName(l)).map((l) => l.value));
   const auth = input.merged('auth');
   const fpKey = fingerprintKey(isPlainObject(auth) ? auth.filesReadTokenSecret : undefined);
 
@@ -251,23 +251,37 @@ function walk (node: unknown, segments: string[], ancestors: Set<unknown>, depth
   out.push({ segments, value: node, rule, kind: rule == null ? 'unclassified' : rule.class });
 }
 
+/** True when a public leaf is redacted for its secret-looking name. */
+function hiddenByName (leaf: Leaf): boolean {
+  return (leaf.kind === 'public' || leaf.kind === 'url-origin' || leaf.kind === 'unclassified') &&
+    pathLooksSecret(leaf.segments) && !isNameException(leaf.segments);
+}
+
+/**
+ * Every entry that hides all or part of its value carries the keyed
+ * fingerprint of the full value, so a change of what is hidden still changes
+ * the digests. Never for the admin key (its reader knows it: a known value
+ * would let them test candidates for the fingerprint key offline) nor for the
+ * fingerprint key itself.
+ */
+const NO_FINGERPRINT_PATHS = new Set(['auth.adminAccessKey', 'auth.filesReadTokenSecret']);
+
 function toEntry (leaf: Leaf, encoded: string, needles: readonly string[], fpKey: Buffer | null): ShownEntry | RedactedEntry {
   const value = leaf.value;
+  const fp = (fpKey != null && !NO_FINGERPRINT_PATHS.has(encoded) && leaf.kind !== 'unsupported-type') ? fingerprint(fpKey, encoded, value) : null;
   switch (leaf.kind) {
     case 'secret':
-    case 'opaque': {
-      const fp = (fpKey != null && encoded !== 'auth.filesReadTokenSecret') ? fingerprint(fpKey, encoded, value) : null;
+    case 'opaque':
       return redactedEntry(leaf.kind, value, { size: leaf.kind === 'opaque' || encoded === 'invitationTokens', fingerprint: fp });
-    }
     case 'public':
     case 'url-origin':
       break;
     default:
-      return redactedEntry(leaf.kind, value);
+      return redactedEntry(leaf.kind, value, { fingerprint: fp });
   }
-  if (pathLooksSecret(leaf.segments) && !isNameException(leaf.segments)) return redactedEntry('unclassified', value);
+  if (hiddenByName(leaf)) return redactedEntry('unclassified', value, { fingerprint: fp });
   const originOnly = leaf.kind === 'url-origin';
-  if (typeof value === 'string') return showString(value, originOnly, needles);
+  if (typeof value === 'string') return withFingerprint(showString(value, originOnly, needles, fp), fp);
   if (Array.isArray(value)) {
     let sanitized = false;
     const shown: unknown[] = [];
@@ -277,26 +291,27 @@ function toEntry (leaf: Leaf, encoded: string, needles: readonly string[], fpKey
         shown.push(item);
         continue;
       }
-      const e = showString(item, originOnly, needles);
-      if ('redacted' in e) return redactedEntry(e.class, value);
+      const e = showString(item, originOnly, needles, fp);
+      if ('redacted' in e) return redactedEntry(e.class, value, { fingerprint: fp });
       if (e.sanitized === true) sanitized = true;
       shown.push(e.value);
     }
-    return sanitized ? { value: shown, sanitized: true } : { value: shown };
+    return withFingerprint(sanitized ? { value: shown, sanitized: true } : { value: shown }, fp);
   }
   return { value };
 }
 
-function showString (s: string, originOnly: boolean, needles: readonly string[]): ShownEntry | RedactedEntry {
+function withFingerprint (entry: ShownEntry | RedactedEntry, fp: string | null): ShownEntry | RedactedEntry {
+  if (fp != null && !('redacted' in entry) && entry.sanitized === true) entry.fingerprint = fp;
+  return entry;
+}
+
+function showString (s: string, originOnly: boolean, needles: readonly string[], fp: string | null): ShownEntry | RedactedEntry {
   if (s.length > MAX_STRING_LENGTH) return redactedEntry('unsupported-type', s);
-  if (stringLooksSecret(s, needles)) return redactedEntry('value-pattern', s);
-  if (originOnly) {
-    const origin = urlOrigin(s);
-    if (origin != null) return origin === s ? { value: s } : { value: origin, sanitized: true };
-  }
-  const url = sanitizeUrl(s);
-  if (url != null && url.sanitized) return { value: url.value, sanitized: true };
-  return { value: s };
+  if (stringLooksSecret(s, needles)) return redactedEntry('value-pattern', s, { fingerprint: fp });
+  const shown = showableString(s, originOnly);
+  if (shown == null) return redactedEntry('value-pattern', s, { fingerprint: fp });
+  return shown.sanitized ? { value: shown.value, sanitized: true } : { value: s };
 }
 
 function findSource (scopes: readonly ConfigScope[], segments: readonly string[]): string {

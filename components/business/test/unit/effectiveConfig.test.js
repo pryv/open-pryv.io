@@ -123,6 +123,44 @@ describe('[CFGU] effective configuration document', function () {
       if (rule == null || (rule.scope !== 'platform' && rule.scope !== 'core')) missing.push(segments.join('.'));
     }
     assert.deepEqual(missing, [], 'unclassified keys in default-config.yml: add a rule in effectiveConfig/classification.ts');
+    // Keys shown through a wildcard rule are pinned: a new key under a wildcard
+    // family fails here until its author decides it is not a secret.
+    const viaWildcard = leafPaths(loadDefault(), [], [])
+      .filter((segments) => findRule(segments).pattern.some((s) => s.includes('*')))
+      .map((segments) => segments.join('.'))
+      .sort();
+    const pinned = JSON.parse(fs.readFileSync(path.resolve(here, '../fixtures/effectiveConfig-wildcard-leaves.json'), 'utf8'));
+    assert.deepEqual(viaWildcard, pinned, 'a key of default-config.yml is classified by a wildcard rule: check it is not a secret, then update test/fixtures/effectiveConfig-wildcard-leaves.json');
+  });
+
+  it('[CFC0] the secret and opaque paths are classified as such', function () {
+    const secrets = [
+      'auth.adminAccessKey', 'auth.filesReadTokenSecret', 'platform.piiHmacKey', 'letsEncrypt.atRestKey', 'oauth.stateKey',
+      'sso.stateKey', 'sso.providers.x.clientSecret', 'oauth.signingKeys.0.privateKeyPem', 'services.mfa.methods.totp.secretsKey',
+      'services.email.key', 'services.email.smtp.auth.user', 'services.email.smtp.auth.pass', 'storages.engines.postgresql.user',
+      'storages.engines.postgresql.password', 'storages.engines.s3.accessKeyId', 'storages.engines.s3.secretAccessKey',
+      'account.autoDeletion.transfer.identitySecretsKey', 'accountErasure.ledger.hmacKey', 'invitationTokens'
+    ];
+    const opaque = [
+      'services.mfa.methods.sms.endpoints', 'services.mfa.sms.endpoints', 'observability.otlp.headers', 'oauth.extensionOptions',
+      'custom.dataStores.0.settings', 'logs.custom.settings'
+    ];
+    for (const p of secrets) assert.equal(findRule(p.split('.'))?.class, 'secret', p);
+    for (const p of opaque) assert.equal(findRule(p.split('.'))?.class, 'opaque', p);
+    // unknown members of the sections that hold credentials are not shown
+    const doc = build({
+      'override-file': {
+        oauth: { clientAssertionSeed: 'seed-value-12345', clients: [{ psk: 'x' }], signingKeys: [{ kid: 'k', extra: 'e' }, 'bare'] },
+        custom: { dataStores: [{ id: 'd', token: 't' }] },
+        audit: { syslog: { options: { tls: { psk: 'p' } } } },
+        cmc: { pairing: { code: 1 }, signing_key: 'k', ACCESS_KEY: 'a', dbDsn: 'd', jwtValue: 'j' }
+      }
+    });
+    for (const k of ['oauth.clientAssertionSeed', 'oauth.clients.0.psk', 'oauth.signingKeys.0.extra', 'oauth.signingKeys.1',
+      'custom.dataStores.0.token', 'audit.syslog.options.tls.psk', 'cmc.signing_key', 'cmc.ACCESS_KEY', 'cmc.dbDsn', 'cmc.jwtValue']) {
+      assert.equal(doc.keys[k].redacted, true, k);
+    }
+    assert.equal(doc.keys['oauth.signingKeys.0.kid'].value, 'k');
   });
 
   it('[CFC2] no shipped key is redacted by the name heuristic; a new secret-looking key is', function () {
@@ -208,11 +246,48 @@ describe('[CFGU] effective configuration document', function () {
     assert.equal(k['trace.enable'].class, 'value-pattern');
     assert.equal(k['tcpBroker.port'].class, 'value-pattern');
     assert.equal(k['migrations.autoRunOnStart'].class, 'value-pattern');
-    assert.deepEqual(k['auth.passwordResetPageURL'], { value: 'https://***@reset.example.com/a?t=***&x=***', sanitized: true, source: 'override-file', scope: 'platform' });
+    const { fingerprint: urlFp, ...urlEntry } = k['auth.passwordResetPageURL'];
+    assert.match(urlFp, /^[0-9a-f]{12}$/);
+    assert.deepEqual(urlEntry, { value: 'https://***@reset.example.com/a?t=***&x=***', sanitized: true, source: 'override-file', scope: 'platform' });
     assert.deepEqual(k['auth.trustedApps'].value, ['https://app.example.com/?k=***', 'plain']);
     assert.equal(k['auth.trustedApps'].sanitized, true);
     assert.equal(k['storages.engines.rqlite.url'].value, 'http://rqlite.local:4001');
     assert.equal(JSON.stringify(doc).includes(adminKey), false);
+  });
+
+  it('[CFC4b] URLs that do not parse cleanly, and secrets hidden in other forms, fail closed', function () {
+    const adminKey = 'an-admin-key-0123456789abcdef';
+    const bad = [
+      'https://user:pa/ss@host.example.com/x', 'http://u:pw@h:99999/', 'https://user:12#ss@host.example.com/',
+      ' https://u:pw@h.example.com/', 'see postgres://u:pw@h/db', 'u:pw@h.example.com:4001', '//u:pw@h.example.com/x',
+      'mailto:u:pw@h', 'jdbc:postgresql://h/db?user=u&password=pw'
+    ];
+    for (const value of bad) {
+      for (const key of ['passwordResetPageURL', 'emailVerificationPageURL']) {
+        const doc = build({ 'override-file': { auth: { [key]: value }, storages: { engines: { rqlite: { url: value } } } } });
+        const json = JSON.stringify(doc);
+        assert.equal(json.includes('pw') || json.includes('pa/ss') || json.includes('12#ss'), false, 'shown: ' + value);
+        assert.equal(doc.keys['auth.' + key].redacted, true, value);
+        assert.equal(doc.keys['storages.engines.rqlite.url'].redacted, true, value);
+      }
+    }
+    const doc = build({
+      'override-file': {
+        auth: { adminAccessKey: adminKey, passwordResetPageURL: 'https://h.example.com/a;jsessionid=abc/b?tokenvalueabc&x=1' },
+        reporting: { templateVersion: 'key=0123456789abcdef0123456789abcdef' },
+        dns: { domain: 'https://h.example.com/' + Buffer.from(adminKey).toString('base64url') },
+        storages: { engines: { rqlite: { url: 'not a url' } } },
+        trace: { enable: 'see https://plain.example.com/path and http://other.example.com' }
+      }
+    });
+    const k = doc.keys;
+    assert.equal(k['auth.passwordResetPageURL'].value, 'https://h.example.com/a/b?***&x=***');
+    assert.match(k['auth.passwordResetPageURL'].fingerprint, /^[0-9a-f]{12}$/);
+    assert.equal(k['reporting.templateVersion'].class, 'value-pattern');
+    assert.equal(k['dns.domain'].class, 'value-pattern');
+    assert.equal(k['storages.engines.rqlite.url'].class, 'value-pattern');
+    assert.equal(k['trace.enable'].value, 'see https://plain.example.com/path and http://other.example.com');
+    assert.equal(build({ 'override-file': { storages: { engines: { rqlite: { url: '' } } } } }).keys['storages.engines.rqlite.url'].value, '');
   });
 
   it('[CFC5] the environment layer reports only keys under known sections', function () {
@@ -251,7 +326,8 @@ describe('[CFGU] effective configuration document', function () {
     assert.equal(Object.getPrototypeOf(k), null);
     assert.equal(k['observability.enabled'].source, 'platform-db');
     assert.equal(k['observability.logLevel'].source, 'derived');
-    assert.deepEqual(k['observability.otlp.endpoint'], { value: 'https://otlp.example.com', sanitized: true, source: 'platform-db', scope: 'platform' });
+    const { fingerprint: _fp, ...endpoint } = k['observability.otlp.endpoint'];
+    assert.deepEqual(endpoint, { value: 'https://otlp.example.com', sanitized: true, source: 'platform-db', scope: 'platform' });
     assert.equal(k['observability.otlp.headers'].class, 'opaque');
     assert.equal(k['observability.otlp.headers'].source, 'platform-db');
     const sorted = Object.keys(k).slice().sort();
@@ -271,7 +347,16 @@ describe('[CFGU] effective configuration document', function () {
     assert.equal(a.keys['auth.filesReadTokenSecret'].fingerprint, undefined);
     assert.equal(a.configMeta.secretFingerprints, true);
     assert.equal(a.keys['letsEncrypt.atRestKey'].placeholder, true);
-    for (const weak of ['REPLACE ME', 'short']) {
+    // the admin key's reader knows it: no fingerprint to test the key against
+    const withAdmin = build({ 'override-file': { auth: { adminAccessKey: 'an-admin-key-0123456789abcdef' } } });
+    assert.equal(withAdmin.keys['auth.adminAccessKey'].set, true);
+    assert.equal(withAdmin.keys['auth.adminAccessKey'].fingerprint, undefined);
+    // hidden parts still move the digests
+    const u1 = build({ 'override-file': { auth: { passwordResetPageURL: 'https://h.example.com/?t=one' } } });
+    const u2 = build({ 'override-file': { auth: { passwordResetPageURL: 'https://h.example.com/?t=two' } } });
+    assert.equal(u1.keys['auth.passwordResetPageURL'].value, u2.keys['auth.passwordResetPageURL'].value);
+    assert.notEqual(u1.configMeta.digests.platform, u2.configMeta.digests.platform);
+    for (const weak of ['REPLACE ME', 'short', 'dev-only-files-read-token-secret']) {
       const d = build(layer('pw-one', weak));
       assert.equal(d.configMeta.secretFingerprints, false);
       assert.equal(JSON.stringify(d).includes('"fingerprint"'), false);

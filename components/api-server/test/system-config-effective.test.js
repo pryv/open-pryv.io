@@ -51,6 +51,8 @@ describe('[CFGE] GET /system/admin/config/effective', () => {
     assert.strictEqual(res.body.keys['auth.adminAccessKey'].redacted, true);
     assert.strictEqual(res.body.keys['auth.adminAccessKey'].class, 'secret');
     assert.strictEqual(res.body.keys.PATH, undefined);
+    assert.strictEqual(res.body.keys['service.api'].value, config.get('service:api'));
+    assert.strictEqual(res.body.keys['auth.trustedApps'].value, config.get('auth:trustedApps'));
     assert.ok(res.body.meta, 'the usual API envelope meta is kept');
     for (const [k, entry] of Object.entries(res.body.keys)) {
       assert.ok(!entry.source.startsWith('scope:'), k + ' has an unlabelled source ' + entry.source);

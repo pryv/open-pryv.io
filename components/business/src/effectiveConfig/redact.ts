@@ -12,7 +12,7 @@
  */
 
 import { createHmac } from 'node:crypto';
-import { isPlaceholderValue, MIN_SECRET_LENGTH } from '../secretValues.ts';
+import { isPlaceholderValue, weakSecretReason } from '../secretValues.ts';
 
 export type RedactionClass = 'secret' | 'opaque' | 'unclassified' | 'value-pattern' | 'shape-mismatch' | 'unsupported-type';
 export type ValueType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null';
@@ -49,14 +49,22 @@ export function isSet (value: unknown): boolean {
   return true;
 }
 
+// Values of `auth.filesReadTokenSecret` published in this repository (development
+// and test configurations): anyone can key with them, so they key nothing.
+const PUBLISHED_FILES_READ_SECRETS: readonly string[] = [
+  'dev-only-files-read-token-secret', 'libjs-test-files-secret', 'rt-files-secret-roundtrip', 'some_token'
+];
+
 /**
  * The fingerprint key, derived from `auth.filesReadTokenSecret` (required
  * identical on every core, never shown), or null when that secret is too weak
- * to key with: then the document carries no fingerprint at all.
+ * to key with (a placeholder, a published value, shorter than
+ * MIN_SECRET_LENGTH): then the document carries no fingerprint at all.
  */
 export function fingerprintKey (filesReadTokenSecret: unknown): Buffer | null {
   if (typeof filesReadTokenSecret !== 'string') return null;
-  if (isPlaceholderValue(filesReadTokenSecret) || filesReadTokenSecret.length < MIN_SECRET_LENGTH) return null;
+  if (weakSecretReason(filesReadTokenSecret, { production: true }) != null) return null;
+  if (PUBLISHED_FILES_READ_SECRETS.includes(filesReadTokenSecret.trim())) return null;
   return createHmac('sha256', filesReadTokenSecret).update(FINGERPRINT_LABEL).digest();
 }
 
@@ -92,13 +100,18 @@ export function stableStringify (value: unknown): string {
   return '{' + parts.join(',') + '}';
 }
 
-/** The live secret strings searched for inside every shown string. */
+/**
+ * The live secret strings searched for inside every shown string, with their
+ * base64, base64url and URL-encoded forms.
+ */
 export function secretNeedles (values: unknown[]): string[] {
   const out = new Set<string>();
   const add = (v: unknown, depth: number) => {
     if (depth > 12) return;
     if (typeof v === 'string') {
-      if (v.length >= MIN_NEEDLE_LENGTH && !isPlaceholderValue(v)) out.add(v);
+      if (v.length < MIN_NEEDLE_LENGTH || isPlaceholderValue(v)) return;
+      const buf = Buffer.from(v, 'utf8');
+      for (const form of [v, buf.toString('base64').replace(/=+$/, ''), buf.toString('base64url'), encodeURIComponent(v)]) out.add(form);
       return;
     }
     if (v != null && typeof v === 'object') {
@@ -109,57 +122,101 @@ export function secretNeedles (values: unknown[]): string[] {
   return [...out];
 }
 
-const PEM_OR_AUTH = /-----BEGIN|^\s*(Bearer|Basic)\s/i;
+const PEM_OR_AUTH = /-----BEGIN|(^|\s)(Bearer|Basic)\s/i;
 const JWT_SHAPE = /eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/;
-const HEX_KEY = /^[0-9a-fA-F]{32,}$/;
-const B64_KEY = /^[A-Za-z0-9+/_-]{40,}={0,2}$/;
+const HEX_RUN = /[0-9a-fA-F]{32,}/;
+const B64_WHOLE = /^[A-Za-z0-9+/_-]{40,}={0,2}$/;
+const B64_RUN = /[A-Za-z0-9+_-]{40,}/g;
 const URL_START = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
+const URL_TOKEN = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s,]*/g;
+// `user:password@host`, with or without a scheme in front.
+const USERINFO_SHAPE = /[^\s/?#@:]+:[^\s/?#@]*@[^\s@]/;
+
+function mixedClasses (s: string): boolean {
+  return /[0-9]/.test(s) && /[A-Z]/.test(s) && /[a-z]/.test(s);
+}
 
 /** True when a string must not be shown, whatever its key. */
 export function stringLooksSecret (s: string, needles: readonly string[]): boolean {
   for (const needle of needles) {
     if (s.includes(needle)) return true;
   }
-  if (PEM_OR_AUTH.test(s) || JWT_SHAPE.test(s)) return true;
-  if (HEX_KEY.test(s)) return true;
-  if (B64_KEY.test(s) && !s.startsWith('/') && /[0-9]/.test(s) && /[A-Z]/.test(s) && /[a-z]/.test(s)) return true;
+  if (PEM_OR_AUTH.test(s) || JWT_SHAPE.test(s) || HEX_RUN.test(s)) return true;
+  if (B64_WHOLE.test(s) && !s.startsWith('/') && mixedClasses(s)) return true;
+  for (const run of s.match(B64_RUN) ?? []) if (mixedClasses(run)) return true;
   return false;
 }
 
 /**
- * A URL with any userinfo replaced by `***`, every query value by `***` and
- * no fragment (`sanitized: true`), the string unchanged when it has none of
- * them, or null when the string is not a URL with a scheme.
+ * The URL of a string that is exactly one URL with a scheme (no surrounding
+ * space, parsed by WHATWG URL), or null. A string holding `@` whose parsed
+ * URL has no user name is refused too: a `#`, `?` or `/` left unencoded in a
+ * password moves it out of the userinfo, where no sanitising would see it.
  */
-export function sanitizeUrl (s: string): { value: string, sanitized: boolean } | null {
-  if (!URL_START.test(s)) return null;
+function parseWholeUrl (s: string): URL | null {
+  if (!URL_START.test(s) || /\s/.test(s)) return null;
   let url: URL;
   try {
     url = new URL(s);
   } catch {
     return null;
   }
+  if (s.includes('@') && url.username === '') return null;
+  return url;
+}
+
+/**
+ * How a string is shown: unchanged, sanitised (`sanitized: true`), or
+ * refused (null: the caller redacts it). Fails closed:
+ * - a string that is one URL: userinfo replaced by `***`, every query
+ *   parameter by `name=***` (a parameter without value by `***`), `;`
+ *   path parameters and the fragment dropped; with `originOnly`, scheme,
+ *   host and port only;
+ * - with `originOnly`, anything else that is not empty is refused;
+ * - a string holding URLs among other text: shown only when each of them is a
+ *   plain URL (no userinfo, query, fragment or `;` parameter);
+ * - a result still shaped like `user:password@host` is refused.
+ */
+export function showableString (s: string, originOnly: boolean): { value: string, sanitized: boolean } | null {
+  let result: { value: string, sanitized: boolean } | null;
+  const whole = parseWholeUrl(s);
+  if (whole != null) {
+    result = originOnly ? originOf(s, whole) : sanitizeParsed(s, whole);
+  } else if (originOnly) {
+    result = s === '' ? { value: s, sanitized: false } : null;
+  } else if (s.includes('://')) {
+    const tokens = s.match(URL_TOKEN) ?? [];
+    const plain = tokens.length === s.split('://').length - 1 && tokens.every((t) => {
+      const u = parseWholeUrl(t);
+      return u != null && !t.includes('@') && !/[?#;]/.test(t);
+    });
+    result = plain ? { value: s, sanitized: false } : null;
+  } else {
+    result = { value: s, sanitized: false };
+  }
+  if (result != null && USERINFO_SHAPE.test(result.value)) return null;
+  return result;
+}
+
+function originOf (s: string, url: URL): { value: string, sanitized: boolean } {
+  const origin = url.protocol + '//' + url.host;
+  return origin === s ? { value: s, sanitized: false } : { value: origin, sanitized: true };
+}
+
+function sanitizeParsed (s: string, url: URL): { value: string, sanitized: boolean } {
   const hasUserinfo = url.username !== '' || url.password !== '';
   const hasQuery = s.includes('?');
   const hasFragment = s.includes('#');
-  if (!hasUserinfo && !hasQuery && !hasFragment) return { value: s, sanitized: false };
+  const hasPathParams = url.pathname.includes(';');
+  if (!hasUserinfo && !hasQuery && !hasFragment && !hasPathParams) return { value: s, sanitized: false };
   if (hasUserinfo) {
     url.username = '***';
     url.password = '';
   }
-  const names = [...new Set([...url.searchParams.keys()])];
-  for (const name of names) url.searchParams.set(name, '***');
+  url.pathname = url.pathname.replace(/;[^/]*/g, '');
+  const params: string[] = [];
+  for (const [name, value] of url.searchParams) params.push(value === '' ? '***' : encodeURIComponent(name) + '=***');
+  url.search = params.length > 0 ? '?' + params.join('&') : '';
   url.hash = '';
   return { value: url.toString(), sanitized: true };
-}
-
-/** Scheme, host and port of a URL, or null when it is not one. */
-export function urlOrigin (s: string): string | null {
-  if (!URL_START.test(s)) return null;
-  try {
-    const url = new URL(s);
-    return url.protocol + '//' + url.host;
-  } catch {
-    return null;
-  }
 }
