@@ -268,7 +268,7 @@ const NO_FINGERPRINT_PATHS = new Set(['auth.adminAccessKey', 'auth.filesReadToke
 
 function toEntry (leaf: Leaf, encoded: string, needles: readonly string[], fpKey: Buffer | null): ShownEntry | RedactedEntry {
   const value = leaf.value;
-  const fp = (fpKey != null && !NO_FINGERPRINT_PATHS.has(encoded) && leaf.kind !== 'unsupported-type') ? fingerprint(fpKey, encoded, value) : null;
+  const fp = (fpKey != null && !NO_FINGERPRINT_PATHS.has(encoded) && leaf.kind !== 'unsupported-type') ? safeFingerprint(fpKey, encoded, value) : null;
   switch (leaf.kind) {
     case 'secret':
     case 'opaque':
@@ -299,6 +299,16 @@ function toEntry (leaf: Leaf, encoded: string, needles: readonly string[], fpKey
     return withFingerprint(sanitized ? { value: shown, sanitized: true } : { value: shown }, fp);
   }
   return { value };
+}
+
+// A value JSON cannot serialise (a bigint inside an array) has no fingerprint;
+// its entry is redacted as `unsupported-type` further on.
+function safeFingerprint (key: Buffer, encoded: string, value: unknown): string | null {
+  try {
+    return fingerprint(key, encoded, value);
+  } catch {
+    return null;
+  }
 }
 
 function withFingerprint (entry: ShownEntry | RedactedEntry, fp: string | null): ShownEntry | RedactedEntry {

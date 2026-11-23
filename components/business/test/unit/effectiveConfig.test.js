@@ -390,7 +390,7 @@ describe('[CFGU] effective configuration document', function () {
     for (let i = 0; i < 15; i++) deep = { d: deep };
     const doc = build({
       memory: {
-        limits: { fn: () => 1, date: new Date(0), cycle, deep, long: 'x'.repeat(5000), nan: NaN }
+        limits: { fn: () => 1, date: new Date(0), cycle, deep, long: 'x'.repeat(5000), nan: NaN, big: [1n] }
       }
     });
     const k = doc.keys;
@@ -400,6 +400,9 @@ describe('[CFGU] effective configuration document', function () {
     assert.equal(k['limits.cycle.a'].value, 1);
     assert.equal(k['limits.long'].class, 'unsupported-type');
     assert.equal(k['limits.nan'].class, 'unsupported-type');
+    assert.equal(k['limits.big'].class, 'unsupported-type');
+    const list = build({ 'override-file': { auth: { trustedApps: 'a@https://h.example.com:3000,b@https://g.example.com' } } });
+    assert.equal(list.keys['auth.trustedApps'].value, 'a@https://h.example.com:3000,b@https://g.example.com');
     assert.ok(Object.keys(k).some((p) => p.startsWith('limits.deep.') && k[p].class === 'unsupported-type'));
   });
 });

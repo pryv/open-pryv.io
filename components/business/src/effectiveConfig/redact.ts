@@ -130,7 +130,8 @@ const B64_RUN = /[A-Za-z0-9+_-]{40,}/g;
 const URL_START = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//;
 const URL_TOKEN = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s,]*/g;
 // `user:password@host`, with or without a scheme in front.
-const USERINFO_SHAPE = /[^\s/?#@:]+:[^\s/?#@]*@[^\s@]/;
+// (Not across a comma: lists such as `app@https://host:3000,other@https://host`.)
+const USERINFO_SHAPE = /[^\s/?#@:,]+:[^\s/?#@,]*@[^\s@]/;
 
 function mixedClasses (s: string): boolean {
   return /[0-9]/.test(s) && /[A-Z]/.test(s) && /[a-z]/.test(s);
