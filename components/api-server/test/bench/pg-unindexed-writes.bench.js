@@ -15,7 +15,10 @@
  *   2. `mall.events.create` one by one (storage level, no HTTP);
  *   3. a set-based `INSERT ... SELECT` of rows into `events` (the trigger's
  *      own per-row cost, nothing else around it).
- * Reports medians and the slowdown of each.
+ * Reports medians and the slowdown of each. Single writer: concurrent writers
+ * are measured by pg-unindexed-writes-concurrent.bench.js. The trigger is
+ * enabled again at the end, also when the run is killed
+ * (guard-trigger-toggle.js).
  *
  * Run from components/api-server, PostgreSQL engine, test database:
  *   STORAGE_ENGINE=postgresql NODE_ENV=test npx mocha --no-config --exit \
@@ -30,6 +33,7 @@ import assert from 'node:assert';
 import cuid from 'cuid';
 import * as storages from 'storages';
 import { getMall } from 'mall';
+import { guardTriggerToggle } from './guard-trigger-toggle.js';
 
 const BATCH = Number(process.env.BENCH_BATCH || 500);
 const ROUNDS = Number(process.env.BENCH_ROUNDS || 8);
@@ -42,13 +46,14 @@ function median (values) {
 }
 
 describe('[PGUB] bench: PostgreSQL refusal of unindexed user rows', function () {
-  let db, fixtures, username, userId, token, streamId;
+  let db, toggle, fixtures, username, userId, token, streamId;
 
   before(async function () {
     if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
     await initTests();
     await initCore();
     db = storages.databasePG;
+    toggle = guardTriggerToggle(db);
     // Installed by the boot; also enables a trigger an interrupted run left disabled.
     await db.ensureUnindexedWritesGuard();
     username = 'pgub' + cuid.slug().toLowerCase();
@@ -65,7 +70,9 @@ describe('[PGUB] bench: PostgreSQL refusal of unindexed user rows', function () 
 
   after(async function () {
     if (db == null) return;
-    await setTrigger(true);
+    const state = await toggle.restore();
+    console.log(`PGUB events guard trigger at the end: tgenabled ${state}`);
+    assert.strictEqual(state, 'O');
     // Rows written without the API carry no integrity: removed before the
     // suite's integrity check.
     await db.query("DELETE FROM events WHERE user_id = $1 AND id LIKE 'pgub-%'", [userId]);
@@ -73,7 +80,7 @@ describe('[PGUB] bench: PostgreSQL refusal of unindexed user rows', function () 
   });
 
   async function setTrigger (on) {
-    await db.query(`ALTER TABLE events ${on ? 'ENABLE' : 'DISABLE'} TRIGGER refuse_unindexed_user`);
+    await toggle.set(on);
   }
 
   async function apiBatch () {

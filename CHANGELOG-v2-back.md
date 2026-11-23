@@ -156,8 +156,17 @@
   (`EXPLAIN ANALYZE`), 0.3 to 1.7 % of the API per-event time of a batch `events.create`. The A/B
   throughput comparison was noise-bound on the loaded dev machine it ran on (per-round spread about
   +-8 %) and shows nothing either way. A set-based `INSERT ... SELECT` into `events` pays ~6.5 µs per
-  row, about 20 % of that statement (bulk loads only). Not measured: concurrent writers of one account
-  (they all lock the same `users_index` tuple; MultiXacts when they overlap).
+  row, about 20 % of that statement (bulk loads only). Concurrent writers:
+  `pg-unindexed-writes-concurrent.bench.js` (`[PGUC]`, 1 to 16 parallel writers, one account and
+  separate accounts, API batch and direct SQL). No deadlock, no error, no row-lock wait. The trigger
+  takes 13 to 35 µs median per insert (mean up to ~60 µs, one run of 413 µs under machine load) and
+  stays under 1 % of a writer's API per-event time (one loaded run: 5 % at 16 writers on one
+  account); the A/B throughput is noise-bound again. Writers of ONE account at database speed make
+  about 0.8 to 1 MultiXact per insert (0.03 to 0.12 through the in-process API) and wait on the
+  `users_index` page, so from 8 writers that account's trigger time is 1.3 to 2 times that of
+  separate accounts; the stop condition is met on the API path, not proven for a database-bound
+  single-account load. Both benches enable the trigger again at the end, also when killed (watchdog
+  process, `guard-trigger-toggle.js`); a boot also enables a disabled guard.
 
 ### Bearer secrets from node:crypto, cluster cert extensions
 
