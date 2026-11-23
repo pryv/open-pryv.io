@@ -37,7 +37,7 @@ const { getTransferDelegation } = require('api-server/src/methods/helpers/transf
 const { withInjectedConfig, injectTestConfigSnapshot, pollUntil } = require('test-helpers');
 const { useNock } = require('test-helpers/src/nockScope.ts');
 
-/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
+/* global initTests, initCore, coreRequest, getNewFixture, assert, cuid, sinon */
 
 const DAY = 24 * 60 * 60;
 const PASSWORD = 'adcl-password-123';
@@ -512,7 +512,16 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     await state.setSetting(u.id, inactivity(100), 'test');
     const s = await sweepFor([u]);
     for (const d of [0, 40]) await s.run(T0 + d * DAY);
-    assert.equal((await reset({ username: u.username, reason: REASON })).status, 200);
+    const audit = (await import('audit')).default;
+    const spy = sinon.spy(audit, 'eventForUser');
+    const callRow = () => spy.getCalls().find((c) => c.args[1]?.content?.action === 'system.autoDeletion.reset');
+    try {
+      assert.equal((await reset({ username: u.username, reason: REASON })).status, 200);
+      await pollUntil(async () => callRow() != null, (found) => found, { timeoutMs: 3000 });
+      assert.equal(callRow().args[0], undefined, 'the call itself is recorded without a user');
+    } finally {
+      spy.restore();
+    }
     const rows = await resetRows(u);
     assert.equal(rows.length, 1);
     const row = rows[0];
@@ -574,6 +583,184 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     } finally {
       await platform.deleteUserCore(username);
     }
+  });
+
+  it('[ADCLS] a reset landing while the sweep sends a reminder is not written over: the account is not erased', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, inactivity(100), 'test');
+    let during = null;
+    const s = await sweepFor([u], {
+      sendReminder: async (account, facts, notice) => {
+        if (notice.leadDays === 1) during = await reset({ username: u.username, reason: REASON });
+        return 'sent';
+      }
+    });
+    for (const d of [0, 40, 70, 93, 99]) await s.run(T0 + d * DAY);
+    assert.equal(during?.status, 200, JSON.stringify(during?.body));
+    assert.equal(during.body.cleared, true);
+    const b = await state.getBookkeeping(u.id);
+    assert.deepEqual(b.reminders.sent, [], 'the reset\'s row, not the pass\'s: ' + JSON.stringify(b));
+    near(b.policyAppliedAt, nowS(), 'the reset\'s clock');
+    assert.ok(s.lines.some((l) => l.msg.includes('changed while being checked')), JSON.stringify(s.lines));
+    // On the reset's clock: nothing due, nothing to remind.
+    const N = Math.ceil(nowS());
+    for (const d of [1, 2]) {
+      const r = await s.run(N + d * DAY);
+      assert.equal(r.erased + r.reminders, 0, 'day ' + d);
+    }
+    assert.ok(await exists(u));
+  });
+
+  it('[ADCLT] removeSetting on a holder\'s inactivity schedule: the setting goes, nothing scheduled without a preset', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, inactivity(100), 'test');
+    await (await sweepFor([u])).run(T0);
+    const res = await reset({ username: u.username, reason: REASON, removeSetting: true });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.removedSetting, true);
+    assert.equal(res.body.was.mode, 'inactivity');
+    assert.deepEqual(res.body.autoDeletion, { source: 'none', mode: 'never', action: 'delete', deleteAt: null });
+    assert.equal(await state.getSetting(u.id), null);
+    assert.equal(await state.getBookkeeping(u.id), null);
+  });
+
+  it('[ADCLU] removeSetting with a transfer only named: cancelled, the beneficiary told, the identity erased', async function () {
+    await withInjectedConfig(MAIL_ON, async () => {
+      const u = await freshUser();
+      await state.setSetting(u.id, { mode: 'inactivity', inactivityDays: 100, action: 'transfer', transfer: transferTo('b@adcl.example.com', { identityGiven: true }), updatedAt: T0 }, 'test');
+      await state.setIdentity(u.id, { name: 'Bea' }, transferIdentityKey(config), 'test');
+      await state.saveTransfer(u.id, { email: 'b@adcl.example.com', status: 'named', createdAt: T0, declineSalt: 'adcl-salt', namedAt: T0 });
+      await (await sweepFor([u])).run(T0);
+      const captured = capture();
+      const res = await reset({ username: u.username, reason: REASON, removeSetting: true });
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.transferCancelled, true);
+      const record = await state.getTransfer(u.id);
+      assert.equal(record.status, 'cancelled');
+      assert.equal(record.closedReason, 'operator');
+      assert.equal(await state.getSetting(u.id), null);
+      assert.deepEqual(await accountStorage.getAccountFieldHistory(u.id, IDENTITY_FIELD), []);
+      await pollUntil(async () => captured.length, (n) => n >= 2, { timeoutMs: 3000 });
+      const toBeneficiary = captured.find((m) => m.template_name === 'account-transfer-cancelled');
+      assert.equal(toBeneficiary.message.to[0].email, 'b@adcl.example.com');
+    });
+  });
+
+  it('[ADCLV] a date-mode claim window: refused without removeSetting, cancelled with it', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, { mode: 'date', date: T0 + 20 * DAY, action: 'transfer', transfer: transferTo('b@adcl.example.com'), updatedAt: T0 }, 'test');
+    const s = await sweepFor([u]);
+    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+    assert.equal((await s.run(T0 + 21 * DAY)).transfersOpened, 1);
+    const refused = await reset({ username: u.username, reason: REASON });
+    assert.equal(refused.status, 400, JSON.stringify(refused.body));
+    assert.equal(refused.body.error.data.reason, 'date-schedule');
+    assert.equal((await state.getTransfer(u.id)).status, 'open', 'nothing written');
+    const res = await reset({ username: u.username, reason: REASON, removeSetting: true });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.transferCancelled, true);
+    assert.equal((await state.getTransfer(u.id)).status, 'cancelled');
+    assert.equal(await state.getSetting(u.id), null);
+  });
+
+  it('[ADCLW] the claimant controls the account: 409 with removeSetting too, the completion in the account\'s trail', async function () {
+    const owner = await freshUser();
+    const claimant = await freshUser({ prefix: 'adcb' });
+    await openWindow(owner, transferTo('b@adcl.example.com'));
+    const record = await state.getTransfer(owner.id);
+    assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
+    assert.equal((await accept(claimant, owner)).status, 200);
+    const res = await reset({ username: owner.username, reason: REASON, removeSetting: true });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal((await state.getTransfer(owner.id)).status, 'completed');
+    if (config.get('audit:active') === true) {
+      const rows = await resetRows(owner);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].content.record.completedTransfer, true);
+    }
+  });
+
+  it('[ADCLX] an erasure recorded while the reset writes: answered erasure-in-progress', async function () {
+    const u = await freshUser();
+    await state.setSetting(u.id, inactivity(100), 'test');
+    await (await sweepFor([u])).run(T0 - 10 * DAY);
+    const erasures = await getErasuresLocal();
+    const now = Date.now();
+    const row = { userId: u.id, username: u.username, trigger: 'inactivity', startedAt: now, updatedAt: now, doneSteps: ['runTeardownSteps'], seriesNamespaces: null, attempts: 1, lastError: null };
+    const stub = sinon.stub(erasures, 'get');
+    stub.callThrough();
+    stub.withArgs(u.id).onFirstCall().resolves(null).onSecondCall().resolves(row);
+    try {
+      const res = await reset({ username: u.username, reason: REASON });
+      assert.equal(res.status, 400, JSON.stringify(res.body));
+      assert.equal(res.body.error.data.reason, 'erasure-in-progress');
+      assert.equal(stub.withArgs(u.id).callCount, 2, 'checked before and after the writes');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('[ADCLY] the sweep opens no claim window when the setting changed while the account was checked', async function () {
+    const u = await freshUser();
+    const armed = { mode: 'date', date: T0 + 20 * DAY, action: 'transfer', transfer: transferTo('b@adcl.example.com'), updatedAt: T0 };
+    await state.setSetting(u.id, armed, 'test');
+    let race = false;
+    const s = await sweepFor([u], {
+      readActivity: async (account) => {
+        if (race) await state.setSetting(u.id, { ...armed, date: T0 + 60 * DAY, updatedAt: T0 + DAY }, 'test');
+        return await getActivity(storageLayer.accesses, account, s.clock.t);
+      }
+    });
+    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+    race = true;
+    const r = await s.run(T0 + 21 * DAY);
+    assert.equal(r.transfersOpened, 0);
+    assert.equal(await state.getTransfer(u.id), null);
+    assert.deepEqual(s.sent.transfer, []);
+  });
+
+  it('[ADCLZ] the fallback erasure at the end of a window waits when the schedule changed meanwhile', async function () {
+    const u = await freshUser();
+    await openWindow(u, transferTo('b@adcl.example.com', { fallback: 'delete' }));
+    const record = await state.getTransfer(u.id);
+    let race = false;
+    const s = await sweepFor([u], {
+      readActivity: async (account) => {
+        if (race) await state.saveBookkeeping(u.id, await state.getBookkeeping(u.id), null);
+        return await getActivity(storageLayer.accesses, account, s.clock.t);
+      }
+    });
+    race = true;
+    const r = await s.run(record.endsAt + DAY);
+    assert.equal(r.erased, 0, JSON.stringify(s.lines));
+    assert.ok(await exists(u));
+    assert.equal((await state.getTransfer(u.id)).status, 'open', 'not marked for erasure');
+  });
+
+  it('[ADCLQ] a change landing once the erasure is recorded as in progress: the record is withdrawn, nothing erased', async function () {
+    const { Deletion } = require('business/src/auth/deletion.ts');
+    const deletion = new Deletion(null, storageLayer, config);
+    const u = await freshUser();
+    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    let seenRecord = null;
+    const s = await sweepFor([u], {
+      erase: async (account, options) => deletion.eraseAccount(account, {
+        teardown: true,
+        trigger: options.trigger,
+        confirm: async () => {
+          seenRecord = await (await getErasuresLocal()).get(u.id);
+          await state.setSetting(u.id, onDate(T0 + 60 * DAY), 'test');
+          return await options.confirm();
+        }
+      })
+    });
+    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+    const r = await s.run(T0 + 20 * DAY);
+    assert.ok(seenRecord != null, 'recorded as in progress when the last look runs');
+    assert.equal(r.erased, 0, JSON.stringify(s.lines));
+    assert.ok(await exists(u));
+    assert.equal(await (await getErasuresLocal()).get(u.id), null, 'the record withdrawn: no later pass completes it');
+    assert.ok(!s.lines.some((l) => l.msg.includes('erasing account')), 'no erasure announced');
   });
 
   it('[ADCLR] a setting or a schedule changed between the pass\'s read and the erasure: not erased this pass', async function () {

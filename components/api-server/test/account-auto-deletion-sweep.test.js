@@ -202,7 +202,9 @@ describe('[ADSW] account auto-deletion sweep', function () {
       assert.equal(r.erased, 1, JSON.stringify(s.lines));
       const calls = spy.getCalls().filter((c) => c.args[0].id === u.id);
       assert.equal(calls.length, 1);
-      assert.deepEqual(calls[0].args[1], { teardown: true, trigger: 'date' });
+      const { confirm, ...options } = calls[0].args[1];
+      assert.deepEqual(options, { teardown: true, trigger: 'date' });
+      assert.equal(typeof confirm, 'function', 'the last look before the first step');
     } finally {
       spy.restore();
     }

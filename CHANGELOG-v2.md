@@ -20,28 +20,38 @@ account is about to be deleted or transferred.
     schedules; the transfer stays armed unless the setting is removed), the beneficiary is told; a
     pending claim invite is withdrawn. Once the claimant controls the account the transfer is done:
     completed, answered `409 auto-deletion-transfer-claimed`.
+  - A claim invite that cannot be withdrawn (the claimant's core unreachable) refuses the call with
+    `503 api-unavailable`, nothing changed: it could still be accepted after the transfer is
+    cancelled.
   - An erasure already started is refused (`400 invalid-operation`, `error.data.reason:
     "erasure-in-progress"`).
   - Answer: `{ cleared, removedSetting, transferCancelled, was, autoDeletion, notified }`, where `was`
     and `autoDeletion` give `source`, `mode`, `action`, `deleteAt` before and after, and `notified` is
-    `mail`, `audit-only` (no address, mail off or failed) or `none` (nothing was pending: `cleared:
-    false`, nothing written; a repeated call is harmless). The account on another core: `307` to that
-    core's same route, with `{ server }`.
-  - Every change is mailed to the holder with the `reason` as written (keep it factual), recorded in
-    the account's own audit trail (action `account.autoDeletion.resetByAdmin`: what was pending, what is
-    now, the reason) and logged (no reason, no address).
+    `mail` (the holder was mailed), `audit-only` (not mailed: no address, mail off or failed; a row in
+    the account's own audit trail) or `none` (neither: nothing was pending and nothing was written,
+    `cleared: false`, a repeated call is harmless; or, with `cleared: true`, audit off as well). The
+    account on another core: `307` to that core's same route, with `{ server }`.
+  - Every change is mailed to the holder with the `reason` as written: plain text, factual, no markup
+    and no third party's data. It is recorded in the account's own audit trail (action
+    `account.autoDeletion.resetByAdmin`: what was pending, what is now, the reason; also when the
+    call completes a transfer and answers `409`) and logged (no reason, no address).
 - **Mail template `account-deletion-scheduled`**: two new variables, `BY_OPERATOR` (`"true"` when an
   administrator made the change) and `OPERATOR_REASON`. The bundled en / fr templates then name the
   support and its reason, and end with "If you did not ask for this, contact the support of your
   platform" instead of the advice to change the password. **Upgrade note:** platforms whose templates
   were seeded earlier keep their stored template until it is set again (`PUT
-  /system/admin/mail/templates/account-deletion-scheduled/<lang>/html`); until then this mail states
-  the new schedule but not the operator's reason.
-- **Fix: the auto-deletion sweep reads the holder's setting and the schedule again right before an
-  erasure** (and before opening a transfer claim window): a change made while the account was being
-  checked (the holder moving their date later, an administrator's reset) leaves the account to the
-  next pass, which judges it on what is there then. Before, such a change landing during the pass was
-  ignored and the account erased.
+  /system/admin/mail/templates/account-deletion-scheduled/<lang>/html`). Until then the mail sent
+  after an administrator's reset states the new schedule but not the reason, and still ends with "If
+  you did not make this change, sign in, change your password right away...", which is the wrong
+  advice after a support action: set the template again before using the route. On the Mandrill
+  path, the escaping of `OPERATOR_REASON` depends on the platform's own Mandrill template.
+- **Fix: the auto-deletion sweep no longer acts on a schedule changed while it checks the account.**
+  It never writes its schedule row over one changed since it read it, and it reads the holder's
+  setting, the schedule row and the transfer record again right before an erasure, a transfer claim
+  window opening, its end or its cancellation, and a last time once the erasure is recorded as in
+  progress. A change made meanwhile (the holder moving their date later, an administrator's reset, a
+  claim) stops that account's pass; the next pass judges it on what is there then. Before, such a
+  change landing during the pass could be ignored, or written over, and the account erased.
 
 ### Access requests: `returnURL` checked at creation, return origins per app (`access.returnOrigins`)
 

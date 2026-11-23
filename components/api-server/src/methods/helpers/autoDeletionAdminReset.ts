@@ -15,7 +15,7 @@ import { effectivePolicy, withNotice, ENGINE_BLOCKS, DAY_SECONDS } from 'busines
 import type { Policy } from 'business/src/autoDeletion/deadline.ts';
 import { completeTransfer, cancelTransfer } from 'business/src/autoDeletion/transferFlow.ts';
 import type { TransferFlowDeps } from 'business/src/autoDeletion/transferFlow.ts';
-import type { Setting, Bookkeeping } from 'business/src/autoDeletion/state.ts';
+import type { Setting, Bookkeeping, TransferRecord } from 'business/src/autoDeletion/state.ts';
 import { getState, loadAccountFacts, computeSchedule, sendConfirmation, sendTransferMail } from './autoDeletion.ts';
 import type { AccountFacts } from './autoDeletion.ts';
 import { autoDeletionConfig } from './autoDeletionPolicy.ts';
@@ -36,6 +36,12 @@ import { getTransferDelegation } from './transferDelegation.ts';
  * An erasure already started is refused. Every change is mailed to the
  * holder with the administrator's reason, recorded in the account's own
  * trail and logged (never the reason or an address in the log).
+ *
+ * Against a sweep pass running at the same time: the new schedule row is
+ * written first, and the sweep reads the setting, the row and the transfer
+ * record again before every irreversible step, the last time once its
+ * erasure is recorded as in progress; this method looks for an erasure in
+ * progress after its writes. One of the two always sees the other.
  */
 
 const logger = getLogger('methods:autoDeletionAdmin');
@@ -97,6 +103,22 @@ function isFresh (prev: Bookkeeping, next: Bookkeeping | null): boolean {
     dayOf(prev.deadline) === dayOf(next.deadline);
 }
 
+type ErasuresStore = Awaited<ReturnType<typeof getErasuresLocal>>;
+
+/**
+ * An erasure of the account is in progress. One just recorded, no step done
+ * yet, may be a sweep pass about to read the schedule a last time (it then
+ * sees this reset and withdraws it): looked at again after a moment.
+ */
+async function erasureStarted (erasures: ErasuresStore, userId: string): Promise<boolean> {
+  const row = await erasures.get(userId);
+  if (row == null) return false;
+  if (row.doneSteps.length > 0) return true;
+  await new Promise((resolve) => setTimeout(resolve, ERASURE_SETTLE_MS));
+  return (await erasures.get(userId)) != null;
+}
+const ERASURE_SETTLE_MS = 1000;
+
 function erasureInProgress () {
   return errors.invalidOperation('The erasure of this account has started; it cannot be stopped (the sweep completes it).', { reason: 'erasure-in-progress' });
 }
@@ -138,15 +160,18 @@ export async function resetAutoDeletion (config: ConfigLike, platform: PlatformL
 
   // A claim window, as the sweep sees one (it runs only under a setting).
   const window = setting != null && (transfer?.status === 'open' || transfer?.status === 'claimed') ? transfer : null;
+  const claimant = window?.status === 'claimed' ? window.claimedBy?.username ?? null : null;
+  /** The claimant controls the account: the transfer is done (completed, recorded, 409). */
+  const refuseClaimed = async (record: TransferRecord): Promise<never> => {
+    await completeTransfer(flow, user, facts, record);
+    await auditReset(config, userId, { reason: params.reason, completedTransfer: true, was: { ...was, deadline: prev?.deadline ?? null, transferStatus: record.status } });
+    logger.warn(`auto-deletion: reset of account "${user.username}" (${user.id}) refused: "${claimant}" controls it, transfer completed`);
+    throw errors.autoDeletionTransferClaimed();
+  };
   let inviteOut = false;
-  if (window?.status === 'claimed' && window.claimedBy != null) {
-    const rel = await getTransferDelegation()?.stateOf(user, window.claimedBy.username);
-    if (rel?.status === 'active') {
-      // The claimant controls the account: the transfer is done.
-      await completeTransfer(flow, user, facts, window);
-      logger.warn(`auto-deletion: reset of account "${user.username}" (${user.id}) refused: "${window.claimedBy.username}" controls it, transfer completed`);
-      throw errors.autoDeletionTransferClaimed();
-    }
+  if (window != null && claimant != null) {
+    const rel = await getTransferDelegation()?.stateOf(user, claimant);
+    if (rel?.status === 'active') await refuseClaimed(window);
     inviteOut = rel?.status === 'invite';
   }
 
@@ -163,45 +188,58 @@ export async function resetAutoDeletion (config: ConfigLike, platform: PlatformL
     if (isFresh(prev, computeSchedule(adConfig, setting, facts, null, now).evaluation.bookkeeping)) return unchanged();
   }
 
-  // The transfer: a window not claimed yet is cancelled as a use of the
-  // account cancels it; one only named goes with the setting.
-  let transferCancelled = false;
-  let next: Setting | null = setting;
-  if (window != null) {
-    if (inviteOut && window.claimedBy != null) {
-      try {
-        await getTransferDelegation()?.withdraw(user, window.claimedBy.username);
-      } catch (err) {
-        logger.warn(`auto-deletion: the pending invite of account "${user.username}" (${user.id}) to "${window.claimedBy.username}" was not withdrawn: ${err instanceof Error ? err.message : String(err)}`);
-      }
+  // A claim not accepted yet: its invite is withdrawn before anything is
+  // written. An accept that landed meanwhile completes the transfer; an
+  // invite still out (the claimant's core unreachable) refuses the call, as
+  // it could still be accepted after the transfer is cancelled.
+  if (window != null && claimant != null && inviteOut) {
+    const delegation = getTransferDelegation();
+    try {
+      await delegation?.withdraw(user, claimant);
+    } catch (err) {
+      logger.warn(`auto-deletion: the pending invite of account "${user.username}" (${user.id}) to "${claimant}" was not withdrawn: ${err instanceof Error ? err.message : String(err)}`);
     }
-    const declined = window.closedReason === 'declined';
-    await cancelTransfer(flow, user, facts, window, { reason: 'operator', mailOwner: false, keepIdentity: !removing && !declined });
-    transferCancelled = true;
-    // The beneficiary had declined: the schedule goes on as the owner's
-    // fallback, never as a transfer to them again.
-    if (declined && !removing && setting != null) {
-      const { transfer: _t, ...rest } = setting;
-      next = { ...rest, action: 'delete', updatedAt: now };
-      await state.setSetting(userId, next, ADMIN);
+    const rel = await delegation?.stateOf(user, claimant);
+    if (rel?.status === 'active') await refuseClaimed(window);
+    if (rel?.status === 'invite') {
+      throw errors.apiUnavailable('The pending transfer invite of this account could not be withdrawn; nothing was changed. Try again later.');
     }
-  }
-  if (removing) {
-    if (window == null && transfer?.status === 'named') {
-      await cancelTransfer(flow, user, facts, transfer, { reason: 'operator', mailOwner: false });
-      transferCancelled = true;
-    }
-    if (setting?.action === 'transfer') await state.eraseIdentity(userId);
-    next = null;
-    await state.setSetting(userId, null, ADMIN);
   }
 
-  // The schedule starts again from now (the row of the old one goes).
+  // The setting after the reset: removed, or (the beneficiary had declined)
+  // the owner's fallback, never a transfer to them again.
+  const declined = window?.closedReason === 'declined';
+  let next: Setting | null = setting;
+  if (removing) {
+    next = null;
+  } else if (window != null && declined && setting != null) {
+    const { transfer: _t, ...rest } = setting;
+    next = { ...rest, action: 'delete', updatedAt: now };
+  }
+
+  // The new schedule first: a sweep pass running now backs off as soon as
+  // the row changed, and a reset stopped half-way leaves no due row behind.
+  // (`account.autoDeletion.dryRun` covers the sweep only: an administrator's
+  // reset is applied.)
   const schedule = computeSchedule(adConfig, next, facts, null, now);
   let b = schedule.evaluation.bookkeeping;
   await state.saveBookkeeping(userId, prev, b);
+
+  // The transfer: a window not claimed yet is cancelled as a use of the
+  // account cancels it; one only named goes with the setting.
+  let transferCancelled = false;
+  if (window != null) {
+    await cancelTransfer(flow, user, facts, window, { reason: 'operator', mailOwner: false, keepIdentity: !removing && !declined });
+    transferCancelled = true;
+  } else if (removing && transfer?.status === 'named') {
+    await cancelTransfer(flow, user, facts, transfer, { reason: 'operator', mailOwner: false });
+    transferCancelled = true;
+  }
+  if (removing && setting?.action === 'transfer') await state.eraseIdentity(userId);
+  if (next !== setting) await state.setSetting(userId, next, ADMIN);
+
   // An erasure that started meanwhile wins: the honest answer.
-  if (await erasures.get(userId) != null) throw erasureInProgress();
+  if (await erasureStarted(erasures, userId)) throw erasureInProgress();
 
   const mailed = await sendConfirmation(config, user, facts, schedule, now, next, { BY_OPERATOR: 'true', OPERATOR_REASON: params.reason });
   if (mailed && b != null) {
@@ -209,21 +247,23 @@ export async function resetAutoDeletion (config: ConfigLike, platform: PlatformL
     await state.saveBookkeeping(userId, b, noticed);
     b = noticed;
   }
+  const after = summary(schedule.policy, b);
+  const audited = await auditReset(config, userId, {
+    reason: params.reason,
+    removedSetting: removing,
+    transferCancelled,
+    was: { ...was, deadline: prev?.deadline ?? null, transferStatus: transfer?.status ?? null },
+    now: { ...after, deadline: b?.deadline ?? null }
+  });
   const result: ResetResult = {
     cleared: true,
     removedSetting: removing,
     transferCancelled,
     was,
-    autoDeletion: summary(schedule.policy, b),
-    notified: mailed ? 'mail' : 'audit-only'
+    autoDeletion: after,
+    // `audit-only`: not mailed, a row in the account's own trail; `none`: neither.
+    notified: mailed ? 'mail' : audited ? 'audit-only' : 'none'
   };
-  await auditReset(config, userId, {
-    reason: params.reason,
-    removedSetting: removing,
-    transferCancelled,
-    was: { ...was, deadline: prev?.deadline ?? null, transferStatus: transfer?.status ?? null },
-    now: { ...result.autoDeletion, deadline: b?.deadline ?? null }
-  });
   logger.warn(`auto-deletion: an administrator reset the schedule of account "${user.username}" (${user.id}): ` +
     `${removing ? 'the holder\'s setting removed' : 'restarted from now'}${transferCancelled ? ', transfer cancelled' : ''}, ` +
     `was ${was.source} ${was.mode}, now ${result.autoDeletion.source} ${result.autoDeletion.mode}`);
@@ -234,10 +274,11 @@ export async function resetAutoDeletion (config: ConfigLike, platform: PlatformL
  * Row of the reset in the account's own trail: what was pending and what is
  * now, and the administrator's reason; never an address. The admin call
  * itself is audited without a user (its caller holds no access of the account).
+ * True when the row is stored in the trail.
  */
-async function auditReset (config: ConfigLike, userId: string, record: Record<string, unknown>): Promise<void> {
+async function auditReset (config: ConfigLike, userId: string, record: Record<string, unknown>): Promise<boolean> {
   try {
-    if (config.get('audit:active') !== true) return;
+    if (config.get('audit:active') !== true) return false;
     const auditSingleton = (await import('audit')).default;
     const C = auditSingleton.CONSTANTS;
     const now = timestamp.now();
@@ -254,7 +295,10 @@ async function auditReset (config: ConfigLike, userId: string, record: Record<st
       type: 'audit-log/account-auto-deletion',
       content: { action: ADMIN_RESET_ACTION, source: { name: 'admin' }, record }
     }, ADMIN_RESET_ACTION);
+    const audited = auditSingleton.filter?.isAudited(ADMIN_RESET_ACTION) as { storage?: boolean } | boolean | undefined;
+    return typeof audited === 'object' && audited?.storage === true;
   } catch (err) {
     logger.error(`auto-deletion: the reset audit row of user ${userId} was not written`, err);
+    return false;
   }
 }

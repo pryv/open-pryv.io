@@ -186,8 +186,8 @@ export function isMaterialChange (prev: Bookkeeping | null, next: Bookkeeping | 
   return materialKey(prev) !== materialKey(next);
 }
 
-/** Whether two settings are the same (key order aside: a database may reorder the keys). */
-export function sameSetting (a: Setting | null, b: Setting | null): boolean {
+/** Whether two stored values (settings, transfer records) are the same, key order aside: a database may reorder the keys. */
+export function sameState (a: Setting | TransferRecord | null, b: Setting | TransferRecord | null): boolean {
   return stableJson(a) === stableJson(b);
 }
 
