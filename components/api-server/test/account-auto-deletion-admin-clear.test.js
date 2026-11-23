@@ -985,7 +985,16 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     const r = await s.run(record.endsAt + DAY);
     assert.equal(r.erased, 1, JSON.stringify(s.lines));
     assert.equal(await exists(u), false);
-    assert.equal(await state.getTransfer(u.id), null, 'no transfer record written after the erasure');
+    // PostgreSQL reads no row; SQLite refuses to reopen an erased account's
+    // database (it would re-create it): either way nothing was written.
+    let after;
+    try {
+      after = await state.getTransfer(u.id);
+    } catch (err) {
+      assert.equal(err.name, 'ErasedUserError', String(err));
+      after = null;
+    }
+    assert.equal(after, null, 'no transfer record written after the erasure');
     assert.deepEqual(recorded, [u.id], 'its start recorded');
     assert.ok(s.lines.some((l) => l.level === 'warn' && l.msg.includes('erasing account') && l.msg.includes(u.username)), JSON.stringify(s.lines));
     assert.ok(!s.lines.some((l) => l.level === 'error'), JSON.stringify(s.lines));
