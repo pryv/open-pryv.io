@@ -158,7 +158,8 @@
   +-8 %) and shows nothing either way. A set-based `INSERT ... SELECT` into `events` pays ~6.5 µs per
   row, about 20 % of that statement (bulk loads only). Concurrent writers:
   `pg-unindexed-writes-concurrent.bench.js` (`[PGUC]`, 1 to 16 parallel writers, one account and
-  separate accounts, API batch and direct SQL). No deadlock, no error, no row-lock wait. The trigger
+  separate accounts, API batch and direct SQL). No deadlock, no SQL error, no row-lock wait (one API
+  `unexpected-error` in about 45k events at 16 writers on one account, not reproduced). The trigger
   takes 13 to 35 µs median per insert (mean up to ~60 µs, one run of 413 µs under machine load) and
   stays under 1 % of a writer's API per-event time (one loaded run: 5 % at 16 writers on one
   account); the A/B throughput is noise-bound again. Writers of ONE account at database speed make
