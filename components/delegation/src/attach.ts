@@ -121,6 +121,12 @@ type SystemInviteDeps = {
 type ControlledSideDeps = {
   mall: MallLike;
   now: () => number;
+  /**
+   * The host's last say on a fresh accept, before the control access is
+   * minted: a refusal message withdraws the invite (e.g. an account transfer
+   * that is no longer open), null lets it proceed.
+   */
+  acceptCheck?: (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string }) => Promise<string | null>;
 };
 
 // ------------------------------------------------------------------- payloads
@@ -145,6 +151,8 @@ async function requestAttach (deps: RequestAttachDeps, params: {
   bUserId: string;
   bUsername: string;
   delegateUsername: string;
+  /** Recorded in the anchor (see `AnchorContent.purpose`). */
+  purpose?: string;
 }): Promise<{ relId: string; delegate: { username: string }; status: string; requestedAt: number; expiresAt: number }> {
   const { mall, now, idGen, self } = deps;
   const delegateUsername = String(params.delegateUsername || '').trim();
@@ -192,6 +200,7 @@ async function requestAttach (deps: RequestAttachDeps, params: {
     status: C.STATUS.INVITE,
     requestedAt,
   };
+  if (typeof params.purpose === 'string' && params.purpose.length > 0) anchorContent.purpose = params.purpose;
   const anchor = await store.createAnchor(mall, params.bUserId, anchorContent, now);
 
   // Invite capability — a bearer marker access A uses to reach back into B's
@@ -467,6 +476,16 @@ async function handleAcceptResponse (deps: ControlledSideDeps, params: {
   const capExpires = capability.expires;
   if (typeof capExpires === 'number' && capExpires <= now()) {
     throw delegationError(DelegationErrorIds.INVITE_EXPIRED, 'The delegation invite has expired', 410);
+  }
+  // The host's last say (an invite sent on the owner's behalf for a purpose
+  // that has ended since): refused, the invite withdrawn.
+  if (deps.acceptCheck != null) {
+    const refusal = await deps.acceptCheck({ bUserId: params.bUserId, relId: params.relId, delegateUsername: anchorDelegate.username, purpose: content.purpose });
+    if (refusal != null) {
+      await store.deleteAccessById(mall, params.bUserId, capability.id);
+      await store.deleteAnchor(mall, params.bUserId, anchor);
+      throw delegationError(DelegationErrorIds.INVITE_EXPIRED, refusal, 410);
+    }
   }
 
   // Mint the control access, stamping the ANCHOR's delegate values (D3). Recover

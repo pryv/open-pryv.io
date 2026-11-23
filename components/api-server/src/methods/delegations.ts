@@ -43,7 +43,10 @@ const { getDeletionNoticesLocal } = require('business/src/auth/deletionNotices.t
 const { selfIdentityHost } = require('./helpers/selfIdentityHost.ts');
 const { buildSystemCreateAccountDeps, assertDelegatedUsernameAllowed } = require('./helpers/delegationAccounts.ts');
 const { setDeletionTeardownStep, trackTeardownDelivery, setDeletionGuard } = require('business/src/auth/deletionTeardown.ts');
-const { setTransferDelegation } = require('./helpers/transferDelegation.ts');
+const { setTransferDelegation, TRANSFER_INVITE_PURPOSE } = require('./helpers/transferDelegation.ts');
+// An account-transfer invite is accepted only while its transfer is claimed.
+const acceptCheck = async (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string }): Promise<string | null> =>
+  await require('./helpers/autoDeletion.ts').transferInviteRefusal(input);
 const cmc = require('cmc');
 const delegation = require('delegation');
 // Production id generator (the legacy `cuid` package is dev-only and is pruned
@@ -343,7 +346,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
     return async function callControlledSide (endpoint: string, action: 'accept-response' | 'refuse-response' | 'accept-complete', body: Record<string, unknown>) {
       const target = await resolveTarget(controlledUsername);
       if (target.isSelf && target.userId != null) {
-        const deps = { mall, now: nowSeconds };
+        const deps = { mall, now: nowSeconds, acceptCheck };
         try {
           if (action === 'accept-response') {
             const res = await delegation.handleAcceptResponse(deps, { bUserId: target.userId, ...(body as object) } as never);
@@ -602,7 +605,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
       try {
         const self = await selfIdentity(owner.username);
         const deps = { mall, now: nowSeconds, idGen: newRelId, self, inviteTtlSeconds: ttlSeconds, resolveTarget, deliverInvite: makeDeliverInvite() };
-        const res = await delegation.requestAttach(deps, { bUserId: owner.id, bUsername: owner.username, delegateUsername });
+        const res = await delegation.requestAttach(deps, { bUserId: owner.id, bUsername: owner.username, delegateUsername, purpose: TRANSFER_INVITE_PURPOSE });
         const anchor = await delegation.store.findAnchorByDelegate(mall, owner.id, delegateUsername);
         return { relId: res.relId, hostSlug: anchor?.content?.delegate?.hostSlug };
       } catch (err) { throw toApiError(err); }
@@ -789,7 +792,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
     async function (context: MethodContext, params: { relId?: string; delegate?: { username: string; hostSlug: string }; notifyApiEndpoint?: string }, result: Record<string, unknown>, next: MethodNext) {
       try {
         const relId = context.access?.clientData?.delegation?.relId ?? params.relId;
-        const res = await delegation.handleAcceptResponse({ mall, now: nowSeconds }, {
+        const res = await delegation.handleAcceptResponse({ mall, now: nowSeconds, acceptCheck }, {
           bUserId: context.user.id,
           relId: String(relId),
           delegate: params.delegate!,

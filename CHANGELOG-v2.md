@@ -20,11 +20,12 @@ account is about to be deleted or transferred.
     schedules; the transfer stays armed unless the setting is removed), the beneficiary is told; a
     pending claim invite is withdrawn. Once the claimant controls the account the transfer is done:
     completed, answered `409 auto-deletion-transfer-claimed`.
-  - A claim invite that cannot be withdrawn (the claimant's core unreachable) refuses the call with
-    `503 api-unavailable`, nothing changed: it could still be accepted after the transfer is
-    cancelled.
+  - A pending claim invite is withdrawn first (on this core; the claimant's core is told best effort,
+    an unreachable one does not block the call). If this core could not remove it (a storage
+    error), the call answers `503 api-unavailable`, nothing changed, and can be repeated.
   - An erasure already started is refused (`400 invalid-operation`, `error.data.reason:
-    "erasure-in-progress"`).
+    "erasure-in-progress"`). The same answer when an erasure starts while the call runs: the
+    schedule written by the call then stands (nothing is erased by it), without mail or trail row.
   - Answer: `{ cleared, removedSetting, transferCancelled, was, autoDeletion, notified }`, where `was`
     and `autoDeletion` give `source`, `mode`, `action`, `deleteAt` before and after, and `notified` is
     `mail` (the holder was mailed), `audit-only` (not mailed: no address, mail off or failed; a row in
@@ -45,6 +46,13 @@ account is about to be deleted or transferred.
   you did not make this change, sign in, change your password right away...", which is the wrong
   advice after a support action: set the template again before using the route. On the Mandrill
   path, the escaping of `OPERATOR_REASON` depends on the platform's own Mandrill template.
+- **Security fix: an account transfer that ended can no longer be completed by accepting its old
+  invite.** When a transfer was cancelled (the owner using the account again or changing the
+  setting, an administrator's reset) or lapsed while the claimant's delegation invite could not be
+  withdrawn, the claimant could still accept that invite and take control of the account. The
+  owner's core now accepts an invite sent for a transfer only while that transfer is still claimed
+  by the invited account; otherwise the accept is refused (`410`) and the invite withdrawn. Ordinary
+  delegation invites are not affected.
 - **Fix: the auto-deletion sweep no longer acts on a schedule changed while it checks the account.**
   It never writes its schedule row over one changed since it read it, and it reads the holder's
   setting, the schedule row and the transfer record again right before an erasure, a transfer claim

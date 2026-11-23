@@ -14,6 +14,9 @@
 
 type UserRef = { id: string; username: string };
 
+/** The purpose recorded on a delegation invite sent for an account transfer. */
+export const TRANSFER_INVITE_PURPOSE = 'account-transfer';
+
 export type RelationshipState = {
   status: 'active' | 'invite' | 'stale' | 'none';
   relId?: string;

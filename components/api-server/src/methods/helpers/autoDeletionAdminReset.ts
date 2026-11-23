@@ -41,7 +41,10 @@ import { getTransferDelegation } from './transferDelegation.ts';
  * written first, and the sweep reads the setting, the row and the transfer
  * record again before every irreversible step, the last time once its
  * erasure is recorded as in progress; this method looks for an erasure in
- * progress after its writes. One of the two always sees the other.
+ * progress after its writes (and, finding none, that the account still
+ * exists: a record also goes when the erasure completes). One of the two
+ * always sees the other. An `erasure-in-progress` answered at that point
+ * comes after this method's writes: they stand, without mail or trail row.
  */
 
 const logger = getLogger('methods:autoDeletionAdmin');
@@ -106,16 +109,20 @@ function isFresh (prev: Bookkeeping, next: Bookkeeping | null): boolean {
 type ErasuresStore = Awaited<ReturnType<typeof getErasuresLocal>>;
 
 /**
- * An erasure of the account is in progress. One just recorded, no step done
- * yet, may be a sweep pass about to read the schedule a last time (it then
- * sees this reset and withdraws it): looked at again after a moment.
+ * An erasure of the account is in progress, or already over. One just
+ * recorded, no step done yet, may be a sweep pass about to read the schedule
+ * a last time (it then sees this reset and withdraws it): looked at again
+ * after a moment. No record means withdrawn, or completed: the account is
+ * then looked up (`stillThere`).
  */
-async function erasureStarted (erasures: ErasuresStore, userId: string): Promise<boolean> {
+async function erasureStarted (erasures: ErasuresStore, userId: string, stillThere: () => Promise<boolean>): Promise<boolean> {
   const row = await erasures.get(userId);
-  if (row == null) return false;
-  if (row.doneSteps.length > 0) return true;
-  await new Promise((resolve) => setTimeout(resolve, ERASURE_SETTLE_MS));
-  return (await erasures.get(userId)) != null;
+  if (row != null) {
+    if (row.doneSteps.length > 0) return true;
+    await new Promise((resolve) => setTimeout(resolve, ERASURE_SETTLE_MS));
+    if ((await erasures.get(userId)) != null) return true;
+  }
+  return !(await stillThere());
 }
 const ERASURE_SETTLE_MS = 1000;
 
@@ -189,9 +196,11 @@ export async function resetAutoDeletion (config: ConfigLike, platform: PlatformL
   }
 
   // A claim not accepted yet: its invite is withdrawn before anything is
-  // written. An accept that landed meanwhile completes the transfer; an
-  // invite still out (the claimant's core unreachable) refuses the call, as
-  // it could still be accepted after the transfer is cancelled.
+  // written. An accept that landed meanwhile completes the transfer. The
+  // withdrawal removes the invite on this core first (the claimant's core is
+  // told best effort, an unreachable one does not stop it): an invite still
+  // out means this core's storage failed, and the call is refused, nothing
+  // written, to be repeated.
   if (window != null && claimant != null && inviteOut) {
     const delegation = getTransferDelegation();
     try {
@@ -238,8 +247,12 @@ export async function resetAutoDeletion (config: ConfigLike, platform: PlatformL
   if (removing && setting?.action === 'transfer') await state.eraseIdentity(userId);
   if (next !== setting) await state.setSetting(userId, next, ADMIN);
 
-  // An erasure that started meanwhile wins: the honest answer.
-  if (await erasureStarted(erasures, userId)) throw erasureInProgress();
+  // An erasure that started meanwhile wins: the honest answer. The writes
+  // above then stand (nothing is erased by them), with no mail and no trail
+  // row: the account is being erased, or the erasure was withdrawn by a sweep
+  // pass that saw this reset (a repeated call then answers `cleared: false`).
+  const stillThere = async () => (await usersRepository.getUserIdForUsername(user.username) as string | null) === userId;
+  if (await erasureStarted(erasures, userId, stillThere)) throw erasureInProgress();
 
   const mailed = await sendConfirmation(config, user, facts, schedule, now, next, { BY_OPERATOR: 'true', OPERATOR_REASON: params.reason });
   if (mailed && b != null) {

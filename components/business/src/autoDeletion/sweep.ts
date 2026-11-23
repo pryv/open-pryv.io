@@ -534,7 +534,6 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       return;
     }
     await checkUnchanged(p, 'its erasure');
-    ctx.erasuresStarted++;
     b = withoutBlocked(b);
     await save(b);
     await erase(p, b);
@@ -806,7 +805,6 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       return;
     }
     await checkUnchanged(p, 'its erasure');
-    ctx.erasuresStarted++;
     const cleared = withoutBlocked(b);
     await p.save(cleared);
     await erase(p, cleared, 'transfer-fallback', async () => {
@@ -835,8 +833,13 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       deleteAt: b.deleteAt ?? b.deadline,
       notices
     };
-    const confirm = async (): Promise<boolean> => {
-      if (!(await isUnchanged(p))) return false;
+    // What records the start: once the last look said go, or after the
+    // erasure when `deps.erase` did not ask (an unfinished erasure of the
+    // account taken over instead, which completes whatever happened since).
+    let started = false;
+    const recordStart = async (): Promise<void> => {
+      started = true;
+      ctx.erasuresStarted++;
       await beforeStart?.();
       logger.warn(`auto-deletion: erasing account "${account.username}" (${account.id}), trigger ${trigger}`, record);
       if (deps.recordErasure != null) {
@@ -846,7 +849,18 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
           logger.error(`auto-deletion: the erasure record of account "${account.username}" (${account.id}) was not written: ${errorText(err)}`);
         }
       }
-      return true;
+    };
+    let lookFailed: unknown = null;
+    const confirm = async (): Promise<boolean> => {
+      try {
+        if (!(await isUnchanged(p))) return false;
+        await recordStart();
+        return true;
+      } catch (err) {
+        // The erasure is withdrawn (not started): judged again next pass.
+        lookFailed = err;
+        return false;
+      }
     };
     let done: boolean | void;
     try {
@@ -857,8 +871,19 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       return;
     }
     if (done === false) {
-      logger.info(`auto-deletion sweep: the schedule of account "${account.username}" (${account.id}) changed while being checked: its erasure left to the next pass`);
+      if (lookFailed != null) {
+        logger.warn(`auto-deletion sweep: the schedule of account "${account.username}" (${account.id}) could not be read again before its erasure: erasure withdrawn, judged again by the next pass: ${errorText(lookFailed)}`);
+      } else {
+        logger.info(`auto-deletion sweep: the schedule of account "${account.username}" (${account.id}) changed while being checked: its erasure left to the next pass`);
+      }
       return;
+    }
+    if (!started) {
+      try {
+        await recordStart();
+      } catch (err) {
+        logger.error(`auto-deletion: the start of the erasure of account "${account.username}" (${account.id}) was not recorded: ${errorText(err)}`);
+      }
     }
     ctx.result.erased++;
     logger.warn(`auto-deletion: account "${account.username}" (${account.id}) erased, trigger ${trigger}`, record);

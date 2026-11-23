@@ -700,6 +700,65 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     }
   });
 
+  it('[ADCLX2] an erasure that completes while the reset waits on it: answered erasure-in-progress, not cleared', async function () {
+    const { Deletion } = require('business/src/auth/deletion.ts');
+    const deletion = new Deletion(null, storageLayer, config);
+    const u = await freshUser();
+    await state.setSetting(u.id, inactivity(100), 'test');
+    await (await sweepFor([u])).run(T0 - 10 * DAY);
+    const erasures = await getErasuresLocal();
+    const original = erasures.get.bind(erasures);
+    const now = Date.now();
+    const justOpened = { userId: u.id, username: u.username, trigger: 'inactivity', startedAt: now, updatedAt: now, doneSteps: [], seriesNamespaces: null, attempts: 1, lastError: null };
+    let calls = 0;
+    let erasing = false;
+    const stub = sinon.stub(erasures, 'get').callsFake(async (id) => {
+      if (id !== u.id || erasing) return await original(id);
+      calls++;
+      if (calls !== 2) return await original(id);
+      // After the reset's writes: an erasure just recorded, then completed during the wait.
+      erasing = true;
+      try {
+        await deletion.eraseAccount({ id: u.id, username: u.username }, { teardown: true, trigger: 'inactivity' });
+      } finally {
+        erasing = false;
+      }
+      return justOpened;
+    });
+    try {
+      const res = await reset({ username: u.username, reason: REASON });
+      assert.equal(res.status, 400, JSON.stringify(res.body));
+      assert.equal(res.body.error.data.reason, 'erasure-in-progress');
+      assert.equal(await exists(u), false);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('[ADCLP] a transfer cancelled while its claim invite could not be withdrawn: the invite can no longer be accepted', async function () {
+    const owner = await freshUser();
+    const claimant = await freshUser({ prefix: 'adcb' });
+    await openWindow(owner, transferTo('b@adcl.example.com'));
+    const record = await state.getTransfer(owner.id);
+    assert.equal((await claim(owner, linkOf(owner, 'claim', record.claimSalt), claimant)).status, 200);
+    // The owner comes back; the sweep cancels the transfer, the withdraw fails.
+    await new Promise((resolve, reject) => storageLayer.accesses.updateOne({ id: owner.id, username: owner.username }, { id: owner.personalAccessId }, { lastUsed: T0 + 102 * DAY },
+      (err) => (err ? reject(err) : resolve())));
+    const delegation = getTransferDelegation();
+    const stub = sinon.stub(delegation, 'withdraw').rejects(new Error('withdraw made to fail'));
+    try {
+      const s = await sweepFor([owner]);
+      assert.equal((await s.run(T0 + 103 * DAY)).transfersCancelled, 1);
+    } finally {
+      stub.restore();
+    }
+    assert.equal((await state.getTransfer(owner.id)).status, 'cancelled');
+    assert.equal((await delegation.stateOf(owner, claimant.username)).status, 'invite', 'the invite is still out');
+    const accepted = await accept(claimant, owner);
+    assert.notEqual(accepted.status, 200, JSON.stringify(accepted.body));
+    assert.notEqual((await delegation.stateOf(owner, claimant.username)).status, 'active', 'the claimant does not control the account');
+  });
+
   it('[ADCLY] the sweep opens no claim window when the setting changed while the account was checked', async function () {
     const u = await freshUser();
     const armed = { mode: 'date', date: T0 + 20 * DAY, action: 'transfer', transfer: transferTo('b@adcl.example.com'), updatedAt: T0 };
@@ -761,6 +820,46 @@ describe('[ADCL] admin reset of an auto-deletion schedule', function () {
     assert.ok(await exists(u));
     assert.equal(await (await getErasuresLocal()).get(u.id), null, 'the record withdrawn: no later pass completes it');
     assert.ok(!s.lines.some((l) => l.msg.includes('erasing account')), 'no erasure announced');
+  });
+
+  it('[ADCLO] an erasure run without the last look still records its start; a withdrawn one takes no slot of maxDeletionsPerPass', async function () {
+    const { Deletion } = require('business/src/auth/deletion.ts');
+    const deletion = new Deletion(null, storageLayer, config);
+    // Without the last look (an erasure taken over completes whatever happened).
+    const plain = await freshUser();
+    await state.setSetting(plain.id, onDate(T0 + 20 * DAY), 'test');
+    const recorded = [];
+    const s1 = await sweepFor([plain], {
+      erase: async (account, options) => deletion.eraseAccount(account, { teardown: true, trigger: options.trigger }),
+      recordErasure: async (account) => { recorded.push(account.id); }
+    });
+    for (const d of [0, 13, 19]) await s1.run(T0 + d * DAY);
+    assert.equal((await s1.run(T0 + 20 * DAY)).erased, 1);
+    assert.deepEqual(recorded, [plain.id], 'its start recorded');
+    assert.ok(s1.lines.some((l) => l.level === 'warn' && l.msg.includes('erasing account') && l.msg.includes(plain.username)));
+    // Cap 1: the first erasure is withdrawn by its last look, the second goes ahead in the same pass.
+    const changed = await freshUser();
+    const other = await freshUser();
+    for (const u of [changed, other]) await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    const s2 = await sweepFor([changed, other], {
+      erase: async (account, options) => deletion.eraseAccount(account, {
+        teardown: true,
+        trigger: options.trigger,
+        confirm: async () => {
+          if (account.id === changed.id) await state.setSetting(changed.id, onDate(T0 + 60 * DAY), 'test');
+          return await options.confirm();
+        }
+      })
+    });
+    for (const d of [0, 13, 19]) await s2.run(T0 + d * DAY);
+    await withInjectedConfig({ account: { autoDeletion: { maxDeletionsPerPass: 1 } } }, async () => {
+      const r = await s2.run(T0 + 20 * DAY);
+      assert.equal(r.erased, 1, JSON.stringify(s2.lines));
+      assert.equal(r.deferred, 0);
+      assert.equal(r.failed, 0);
+    });
+    assert.ok(await exists(changed));
+    assert.equal(await exists(other), false);
   });
 
   it('[ADCLR] a setting or a schedule changed between the pass\'s read and the erasure: not erased this pass', async function () {

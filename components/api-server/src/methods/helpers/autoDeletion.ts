@@ -25,6 +25,7 @@ import type { AccountActivity } from 'business/src/accesses/accountActivity.ts';
 import { buildMallForCmc } from './cmcMall.ts';
 import { sendmail, isLoggedMailFailure, isRecipientRejected, isRecipientDeferred } from './mailing.ts';
 import { availableActions, availableTriggers, autoDeletionConfig, transferIdentityKey, transferLinkKey } from './autoDeletionPolicy.ts';
+import { TRANSFER_INVITE_PURPOSE } from './transferDelegation.ts';
 
 /**
  * What `account.getAutoDeletion` / `account.setAutoDeletion` need to know
@@ -386,6 +387,27 @@ export async function sendTransferMail (config: ConfigLike, account: UserRef, fa
   });
   return await sendAutoDeletionMail(config, TRANSFER_MAIL_KINDS[notice.kind], account, facts, substitutions,
     notice.to === 'beneficiary' ? { email: record.email } : undefined);
+}
+
+/**
+ * The accept check of a delegation invite (the delegation's `acceptCheck`):
+ * an invite sent for an account transfer (its purpose, or the relationship
+ * the transfer record names) is accepted only while that transfer is still
+ * claimed by the invited account. A transfer cancelled, lapsed or declined
+ * while its invite could not be withdrawn never hands the account over.
+ * Other invites: null (no say).
+ */
+export async function transferInviteRefusal (input: { bUserId: string; relId: string; delegateUsername: string; purpose?: string }): Promise<string | null> {
+  const record = await (await getState()).getTransfer(input.bUserId);
+  const named = record?.claimedBy?.relId != null && record.claimedBy.relId === input.relId;
+  if (input.purpose !== TRANSFER_INVITE_PURPOSE && !named) return null;
+  const claimedBy = record?.status === 'claimed' ? record.claimedBy : null;
+  if (claimedBy != null && claimedBy.username.toLowerCase() === input.delegateUsername.toLowerCase() &&
+      (claimedBy.relId == null || claimedBy.relId === input.relId)) {
+    return null;
+  }
+  logger.warn(`auto-deletion: a transfer invite of account ${input.bUserId} to "${input.delegateUsername}" was accepted after the transfer ended (${record?.status ?? 'no record'}): refused, the invite withdrawn`);
+  return 'This invite was for an account transfer that is no longer open.';
 }
 
 /** What `account.getAutoDeletion` shows of a transfer (never the beneficiary's name or date of birth). */
