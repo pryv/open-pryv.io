@@ -912,7 +912,10 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # # to (the 'returnURL' the auth page redirects to), same grammar as
 # # auth.trustedApps: '<appId>@<origin>' entries, comma separated, '*' as the
 # # app id binds every app, '<appId>@*' exempts one. A bound app's request
-# # whose returnURL is on another origin is refused with 400. Unset = no app
+# # whose returnURL is on another origin is refused with 400; app ids not
+# # listed stay unrestricted unless a '*@' entry exists. Only the origin of
+# # an entry counts (a path in it is ignored); write a custom-scheme host
+# # (myapp://callback) exactly as the app sends it. Unset = no app
 # # bound. Set it identically on every core. Redirect hygiene only: binding
 # # a client to its redirect is what the OAuth2 flow gives.
 # # access.terminalRetentionMs: how long a decided access request (ACCEPTED,

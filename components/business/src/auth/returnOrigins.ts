@@ -14,7 +14,7 @@
  * - Shape, always: a return address is absent (`undefined`, `null`, `false`,
  *   `""` or `"false"`: poll-only mode), or a string that parses as a URL, with
  *   no control character, no `user:password@` part, and a scheme other than
- *   `javascript:`, `data:`, `vbscript:`, `blob:` or `file:`.
+ *   `javascript:`, `data:`, `vbscript:` or `blob:`.
  * - Origin, when the operator sets `access.returnOrigins`: same grammar as
  *   `auth.trustedApps` (`<appId>@<origin pattern>`, comma separated). An app
  *   id is bound when an entry names it or a `*@...` entry exists; a bound
@@ -27,9 +27,12 @@
 import { parseTrustedApps, isTrustedApp } from './trustedApps.ts';
 
 const ABSENT = new Set<unknown>([undefined, null, false, '', 'false']);
-const REFUSED_SCHEMES = new Set(['javascript:', 'data:', 'vbscript:', 'blob:', 'file:']);
+// `file:` is not refused: an http(s) auth page cannot navigate to it, and
+// lib-js sends the page URL of a hybrid app served from `file://`.
+const REFUSED_SCHEMES = new Set(['javascript:', 'data:', 'vbscript:', 'blob:']);
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+const WITH_AUTHORITY_RE = /^\s*https?:[\\/]{2}/i;
 
 /**
  * `null` when `returnURL` is acceptable for `appId`, else the refusal message
@@ -48,11 +51,18 @@ export function checkReturnURL (setting: unknown, appId: unknown, returnURL: unk
     return 'returnURL is not a valid URL';
   }
   if (url.username !== '' || url.password !== '') return 'returnURL is not a valid URL';
+  // `https:host/x` parses here with that host, but a page assigning it to
+  // `location.href` resolves it against its own origin: require the `//`.
+  if ((url.protocol === 'https:' || url.protocol === 'http:') && !WITH_AUTHORITY_RE.test(returnURL)) {
+    return 'returnURL is not a valid URL';
+  }
   if (REFUSED_SCHEMES.has(url.protocol)) return 'returnURL uses a scheme that is not allowed';
 
   if (typeof setting !== 'string' || setting.trim() === '') return null;
-  const { apps } = parseTrustedApps(setting);
-  const bound = apps.some((app) => app.appId === '*' || app.appId === appId);
+  const { apps, errors } = parseTrustedApps(setting);
+  // An invalid entry (refused at boot) would leave its app unbound: fail
+  // closed instead, every app is then bound to the valid entries only.
+  const bound = errors.length > 0 || apps.some((app) => app.appId === '*' || app.appId === appId);
   if (!bound) return null;
   if (isTrustedApp(apps, appId, returnURL)) return null;
   return 'returnURL is not on an origin registered for this app (access:returnOrigins)';

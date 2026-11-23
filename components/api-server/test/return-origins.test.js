@@ -91,16 +91,38 @@ describe('[RTOR] access request returnURL: shape and access.returnOrigins', () =
     ok(undefined, 'mobile-app', 'myapp://callback/done');
   });
 
-  it('[RTO10] script-capable and local schemes are refused, key or no key, any case or leading space', () => {
+  it('[RTO10] script-capable schemes are refused, key or no key, any case or leading space; file: is not', () => {
     for (const setting of [undefined, '*@*']) {
       for (const url of [
         'javascript:alert(1)//', 'JavaScript:alert(1)', ' javascript:alert(1)',
         'data:text/html,<script>x</script>', 'vbscript:msgbox(1)',
-        'blob:https://app.example.com/0b4c', 'file:///etc/passwd'
+        'blob:https://app.example.com/0b4c'
       ]) {
         refused(setting, 'my-app', url, /scheme that is not allowed/);
       }
     }
+    // A hybrid app served from file:// (lib-js sends its page URL on mobile).
+    ok(undefined, 'my-app', 'file:///var/app/www/index.html#');
+  });
+
+  it('[RTO12] an invalid entry fails closed: every app is then bound to the valid entries', () => {
+    const setting = 'a@https://app.*.example.com, b@https://b.example.com';
+    refused(setting, 'a', 'https://evil.example.net/');
+    refused(setting, 'other', 'https://evil.example.net/');
+    ok(setting, 'b', 'https://b.example.com/x');
+    ok('broken', 'a', false);
+  });
+
+  it('[RTO13] a requestingAppId of "*" gets no wildcard power; backslash and authority-less forms resolve as a browser does', () => {
+    ok(SETTING, '*', 'https://evil.example.net/');
+    refused('*@https://app.example.com, x@*', '*', 'https://evil.example.net/');
+    ok(SETTING, 'my-app', 'https://app.example.com\\@evil.example.net/');
+    refused(SETTING, 'my-app', 'https://evil.example.net\\@app.example.com/');
+    for (const url of ['https:app.example.com/x', 'https:/app.example.com/x', 'HTTPS:app.example.com']) {
+      refused(undefined, 'my-app', url, /not a valid URL/);
+    }
+    ok(undefined, 'my-app', 'HTTPS://app.example.com/x');
+    ok(undefined, 'my-app', 'https:\\\\app.example.com/x');
   });
 
   it('[RTO11] a non-string return address is refused', () => {

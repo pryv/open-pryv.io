@@ -453,8 +453,8 @@ describe('[RGAC] Register access authorization', () => {
       });
     });
 
-    it('[RAO8] a script or local scheme is refused with the key unset', async () => {
-      for (const returnURL of ['javascript:alert(document.domain)//', 'data:text/html,x', 'file:///etc/passwd']) {
+    it('[RAO8] a script-capable scheme is refused with the key unset', async () => {
+      for (const returnURL of ['javascript:alert(document.domain)//', 'data:text/html,x', 'vbscript:x']) {
         assertRefused(await coreRequest.post('/reg/access').send(body('any-app', returnURL)));
       }
     });
