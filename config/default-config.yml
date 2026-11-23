@@ -483,6 +483,12 @@ services:
     # --- microservice mode (legacy) ---
     url: http://127.0.0.1:9000/sendmail/     # external service-mail endpoint
     key: ''                                  # shared Authorization header
+    # --- mandrill mode (url + key above) ---
+    # Merge-tag language of the Mandrill templates, sent as `merge_language`:
+    # 'handlebars' ({{VAR}}, HTML-escaped by Mandrill, recommended) or
+    # 'mailchimp' (*|VAR|*, Mandrill does not document whether it escapes).
+    # Unset (null): the Mandrill account default, with a boot warning.
+    mergeLanguage: null
     # --- shared between modes ---
     welcomeTemplate: welcome-email
     resetPasswordTemplate: reset-password

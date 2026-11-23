@@ -501,6 +501,15 @@ function checkEmailVerificationGate (config, problems) {
   });
 }
 
+// services.email.mergeLanguage: a typo must not silently fall back to the
+// Mandrill account default.
+function checkMergeLanguage (config, problems) {
+  const { describeMergeLanguage } = require('../../components/business/src/emails/mailCapability.ts');
+  for (const message of describeMergeLanguage(config).problems) {
+    problems.push({ message, path: ['services', 'email', 'mergeLanguage'], payload: { value: config.get('services:email:mergeLanguage') } });
+  }
+}
+
 // MFA settings that cannot work refuse the boot here, where the message is
 // clear; the login-path normalizer stays non-throwing so a typo never bricks
 // logins.
@@ -742,6 +751,7 @@ async function validate (config) {
   checkSeriesEngineDependency(config, problems);
   checkSsoConfig(config, problems);
   checkEmailVerificationGate(config, problems);
+  checkMergeLanguage(config, problems);
   checkMfaConfig(config, problems);
   checkHostedSites(config, problems);
   checkAdapterRoutes(config, problems);
@@ -908,6 +918,8 @@ function collectWarnings (config) {
       'Set the missing keys (the page is the /verify-email route of your auth UI), or set ' +
       "'services.email.enabled.verifyEmail: false' to turn the feature off explicitly.");
   }
+  const { describeMergeLanguage } = require('../../components/business/src/emails/mailCapability.ts');
+  warnings.push(...describeMergeLanguage(config).warnings);
   const { describeMfaConfig } = require('../../components/business/src/mfa/configCheck.ts');
   warnings.push(...describeMfaConfig(config.get('services:mfa')).warnings);
   const { describeHostedSites, hostedSitesInputFromConfig } = require('../../components/business/src/hostedSites.ts');
@@ -1059,6 +1071,7 @@ module.exports = {
   checkSeriesEngineDependency,
   checkSsoConfig,
   checkEmailVerificationGate,
+  checkMergeLanguage,
   checkMfaConfig,
   checkPasswordCheckLimit,
   checkHostedSites,
