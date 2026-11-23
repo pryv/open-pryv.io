@@ -100,20 +100,6 @@ account is about to be deleted or transferred.
   you did not make this change, sign in, change your password right away...", which is the wrong
   advice after a support action: set the template again before using the route. On the Mandrill
   path, the escaping of `OPERATOR_REASON` depends on the platform's own Mandrill template.
-- **Security fix: an account transfer that ended can no longer be completed by accepting its old
-  invite.** When a transfer was cancelled (the owner using the account again or changing the
-  setting, an administrator's reset) or lapsed while the claimant's delegation invite could not be
-  withdrawn, the claimant could still accept that invite and take control of the account. The
-  owner's core now accepts an invite sent for a transfer only while that transfer is still claimed
-  by the invited account, checked before the control access is created and again once the
-  relationship is active; otherwise the accept is refused (`410`) and the invite withdrawn: it
-  leaves the owner's delegate list, and the claimant's core drops it from the claimant's list. An
-  accept interrupted before it completed is checked the same way when it is repeated. Ordinary
-  delegation invites are not affected. Invites sent before this version carry no mark of their
-  purpose: they are recognised while the transfer record still names them. One whose record was
-  replaced since (the owner named a beneficiary again, or a new claim window opened) is accepted as
-  an ordinary invite until it expires, so this exposure ends at most one claim invite lifetime after
-  the upgrade.
 - **Fix: the auto-deletion sweep no longer acts on a schedule changed while it checks the account.**
   It never writes its schedule row over one changed since it read it, and it reads the holder's
   setting, the schedule row and the transfer record again right before an erasure, a transfer claim
@@ -704,6 +690,15 @@ call that would pass it; what an account already holds stays readable.
 - **With the held-address rule of 2.0.0-rc.72** (no notice to an address another account holds): the
   owner of a transfer whose stored address another account holds is not marked told of its start (it
   is tried again at each pass); mails to a transfer beneficiary are unchanged.
+- **A transfer that ended cannot be completed by accepting its old invite.** The owner's core
+  accepts a delegation invite sent for a transfer only while that transfer is still claimed by the
+  invited account, checked before the control access is created and again once the relationship is
+  active; otherwise the accept is refused (`410`) and the invite withdrawn: it leaves the owner's
+  delegate list, and the claimant's core drops it from the claimant's list. This covers a transfer
+  cancelled (the owner using the account again or changing the setting, an administrator's reset),
+  declined or lapsed while the claimant's invite could not be withdrawn. An accept interrupted
+  before it completed is checked the same way when it is repeated. Ordinary delegation invites are
+  not affected.
 
 ## 2.0.0-rc.87 - 2026-11-18
 
