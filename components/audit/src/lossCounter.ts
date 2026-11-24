@@ -4,8 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+import cluster from 'node:cluster';
+import * as observability from 'business/src/observability/index.ts';
 
 /**
  * Audit records that should have been written and were not, counted in this
@@ -19,9 +19,6 @@ const require = createRequire(import.meta.url);
  * Counting never throws, never waits and never changes the answer of the call
  * whose record was lost.
  */
-
-const cluster = require('node:cluster');
-const observability = require('business/src/observability/index.ts');
 
 /** `valid` / `error`: the record of an API call; `event`: any other record. */
 const KINDS = Object.freeze(['valid', 'error', 'event'] as const);
@@ -63,13 +60,17 @@ function emptyTotals (): LossTotals {
   };
 }
 
-function isLoss (kind: unknown, reason: unknown): boolean {
-  return (KINDS as readonly unknown[]).includes(kind) && (REASONS as readonly unknown[]).includes(reason);
+function isKind (value: unknown): value is LossKind {
+  return (KINDS as readonly unknown[]).includes(value);
 }
 
-/** Adds one loss to `totals`; ignores a pair outside the vocabularies. */
-function addTo (totals: LossTotals, kind: LossKind, reason: LossReason, at: number): void {
-  if (!isLoss(kind, reason)) return;
+function isReason (value: unknown): value is LossReason {
+  return (REASONS as readonly unknown[]).includes(value);
+}
+
+/** Adds one loss to `totals`; ignores a pair outside the vocabularies (it may come from another process). */
+function addTo (totals: LossTotals, kind: unknown, reason: unknown, at: number): void {
+  if (!isKind(kind) || !isReason(reason)) return;
   totals.total += 1;
   totals.byKind[kind] += 1;
   totals.byReason[reason] += 1;
@@ -120,5 +121,5 @@ function _reset (): void {
   totals = emptyTotals();
 }
 
-export { KINDS, REASONS, LOSS_MESSAGE, record, snapshot, isLoss, addTo, copyTotals, emptyTotals, nowSeconds, _setTransport, _reset };
+export { KINDS, REASONS, LOSS_MESSAGE, record, snapshot, addTo, copyTotals, emptyTotals, nowSeconds, _setTransport, _reset };
 export type { LossKind, LossReason, LossTotals, LossSnapshot };

@@ -10,12 +10,13 @@
   `errorApiCall` before it); callers log, they never count. The one exception is the OAuth event dropped
   before the audit object (`oauth2/src/audit.ts`).
 - `lossAggregator.ts` (master): totals of the core, answers a worker's status request;
-  `routes/auditStatusIpc.ts` (worker): 2 s, then its own counts.
+  `methods/helpers/auditStatusIpc.ts` (worker): 2 s, then its own counts.
 - Observability allow-list: metric `audit.records.lost`, two closed label lists (pinned equal to the audit
   component's by `[ALRS1]`).
-- `validApiCall` / `errorApiCall` finish their tracing span when the write fails.
-- Tests `[ALRS1]`..`[ALRS4]` (`observability.test.js`), `[ALRC1]`..`[ALRCA]`, `[ALRW1]`..`[ALRW6]`
-  (`audit-lost-rows.test.js`, the last one on a real cluster).
+- `validApiCall` / `errorApiCall` finish their tracing span when the write fails or the record cannot be built; a tracing
+  error no longer replaces the audit error.
+- Tests `[ALRS1]`..`[ALRS4]` (`observability.test.js`), `[ALRC1]`..`[ALRCA]`, `[ALRW1]`..`[ALRW8]`
+  (`audit-lost-rows.test.js`, `[ALRW6]` on a real cluster).
 
 ### Batch audit writes
 

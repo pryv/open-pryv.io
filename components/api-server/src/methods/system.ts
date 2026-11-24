@@ -529,7 +529,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
     async function getAuditStatus (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
-        const { readLossStatus } = require('../routes/auditStatusIpc.ts');
+        const { readLossStatus } = require('./helpers/auditStatusIpc.ts');
         const { scope, since, lost } = await readLossStatus();
         result.audit = { active: (await ready()).get('audit:active') === true, scope, since, lost };
         return next();

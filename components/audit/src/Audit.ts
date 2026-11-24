@@ -58,16 +58,22 @@ type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; stora
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
 type AuditStorage = { forUser (userId: string): Promise<{ createEvent (e: AuditEventLike): Promise<unknown> }> };
 
+/** Tracing must not replace the error of the write it traces. */
+function endSpan (tracing: Tracing, name: string): void {
+  try { tracing.finishSpan(name); } catch { /* the audit outcome stands */ }
+}
+
 /**
  * Runs the part of an API call record that comes before `eventForUser`: a
  * throw there loses the record, and is counted here because the write that
  * would count it is never reached.
  */
-function buildCounted<T> (kind: LossKind, build: () => T): T {
+function buildCounted<T> (kind: LossKind, tracing: Tracing, spanName: string, build: () => T): T {
   try {
     return build();
   } catch (err) {
     lossCounter.record(kind, 'invalid-record');
+    endSpan(tracing, spanName);
     throw err;
   }
 }
@@ -117,7 +123,7 @@ class Audit {
   async validApiCall (context: MethodContext, _result: unknown) {
     const methodId = context.methodId;
     const userId = context?.user?.id;
-    const event = buildCounted('valid', (): AuditEventLike | null => {
+    const event = buildCounted('valid', context.tracing, 'audit.validApiCall', (): AuditEventLike | null => {
       if (!this.filter.isAudited(methodId)) { return null; }
       context.tracing.startSpan('audit.validApiCall');
       // Some audited methods legitimately run without an access — a credential
@@ -144,14 +150,14 @@ class Audit {
         methodId
       });
     } finally {
-      context.tracing.finishSpan('audit.validApiCall');
+      endSpan(context.tracing, 'audit.validApiCall');
     }
   }
 
   async errorApiCall (context: MethodContext, error: { id?: string; message?: string }) {
     const methodId = context.methodId;
     const userId = context?.user?.id;
-    const event = buildCounted('error', (): AuditEventLike | null => {
+    const event = buildCounted('error', context.tracing, 'audit.errorApiCall', (): AuditEventLike | null => {
       if (!this.filter.isAudited(methodId)) { return null; }
       context.tracing.startSpan('audit.errorApiCall');
       if (context.access?.id == null) {
@@ -168,7 +174,7 @@ class Audit {
     try {
       await this.eventForUser(userId, event, methodId, 'error');
     } finally {
-      context.tracing.finishSpan('audit.errorApiCall');
+      endSpan(context.tracing, 'audit.errorApiCall');
     }
   }
 

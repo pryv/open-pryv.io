@@ -19,10 +19,11 @@ before. It is now also counted, so a loss can be alerted on without reading logs
   to what a core with telemetry sends.
 - A failure to hand a record to syslog no longer prevents it from being stored in the audit storage; it is
   logged at `error` level and counted as `syslog-failed`.
-- A core with no audit storage logs it once at `error` level and counts each record it cannot store
-  (it was silent).
-- Not counted: a process stopped between answering a call and writing its record, and syslog delivery
-  errors reported after the call.
+- A core with no audit storage logs it at `error` level, once per worker, and counts each record it cannot
+  store (it was silent).
+- Not counted: a process stopped between answering a call and writing its record, a storage write that never
+  ends, syslog delivery errors reported after the call, and what a command-line tool could not write. A
+  restart sets the counts back to zero and drops the telemetry of the interval in progress.
 
 ### Batch calls: an audit-log write failure no longer changes a call's answer
 

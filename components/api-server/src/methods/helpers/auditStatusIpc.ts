@@ -4,10 +4,11 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-
+import { randomUUID } from 'node:crypto';
+import cluster from 'node:cluster';
+import { snapshot } from 'audit/src/lossCounter.ts';
+import { STATUS_REQUEST, STATUS_REPLY } from 'audit/src/lossAggregator.ts';
 import type { LossSnapshot } from 'audit/src/lossCounter.ts';
-const require = createRequire(import.meta.url);
 
 /**
  * Worker side of `GET /system/audit-status`: asks the master for the lost
@@ -15,11 +16,6 @@ const require = createRequire(import.meta.url);
  * or when it does not answer in time, the counts of this process are
  * returned, marked `scope: 'process'`. Never rejects.
  */
-
-const { randomUUID } = require('node:crypto');
-const cluster = require('node:cluster');
-const { snapshot } = require('audit/src/lossCounter.ts');
-const { STATUS_REQUEST, STATUS_REPLY } = require('audit/src/lossAggregator.ts');
 
 const DEFAULT_TIMEOUT_MS = 2000;
 

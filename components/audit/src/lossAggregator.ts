@@ -4,10 +4,8 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createRequire } from 'node:module';
-
-import type { LossKind, LossReason, LossSnapshot } from './lossCounter.ts';
-const require = createRequire(import.meta.url);
+import { LOSS_MESSAGE, addTo, copyTotals, emptyTotals, nowSeconds } from './lossCounter.ts';
+import type { LossSnapshot } from './lossCounter.ts';
 
 /**
  * Master side of the lost audit records count: adds up what the workers
@@ -17,14 +15,12 @@ const require = createRequire(import.meta.url);
  * between cores.
  */
 
-const { LOSS_MESSAGE, addTo, copyTotals, emptyTotals, nowSeconds } = require('./lossCounter.ts');
-
 const STATUS_REQUEST = 'audit:loss-status';
 const STATUS_REPLY = 'audit:loss-status:reply';
 
 type WorkerLike = { send: (message: unknown, cb?: (err: Error | null) => void) => unknown };
 type ClusterLike = { on: (event: 'message', fn: (worker: WorkerLike, message: unknown) => void) => unknown };
-type IncomingMessage = { type?: string; kind?: LossKind; reason?: LossReason; requestId?: string } | null | undefined;
+type IncomingMessage = { type?: string; kind?: unknown; reason?: unknown; requestId?: string } | null | undefined;
 
 /** Attaches to the cluster; returns the totals reader (for the master and tests). */
 function attach (clusterLike: ClusterLike): { snapshot: () => LossSnapshot } {

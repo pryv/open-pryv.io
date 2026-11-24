@@ -176,7 +176,7 @@ describe('[ALRC] lost audit records are counted', function () {
     const before = totals();
     assert.strictEqual((await create('alrc4')).status, 201);
     await audit.validApiCall({ methodId: 'system.getAuditStatus', tracing: {} }, {});
-    assert.deepStrictEqual(await settled(before, 1), { total: 0, byKind: {}, byReason: {} });
+    assert.deepStrictEqual(await settled(before, 0), { total: 0, byKind: {}, byReason: {} });
   });
 
   it('[ALRC5] a record that is not valid is refused as before, and counted', async function () {
@@ -190,11 +190,19 @@ describe('[ALRC] lost audit records are counted', function () {
 
   it('[ALRC6] a call whose record cannot be built is counted once, as its own kind', async function () {
     const before = totals();
-    const tracing = { startSpan: () => {}, finishSpan: () => {}, logForSpan: () => {} };
+    const spans = [];
+    const tracing = { startSpan: () => {}, finishSpan: (name) => { spans.push(name); throw new Error('tracing failure'); }, logForSpan: () => {} };
     const context = { methodId: 'events.get', user: { id: username }, access: { id: 'a' }, tracing, get callerId () { throw new Error('cannot build'); } };
     await assert.rejects(audit.validApiCall(context, {}), /cannot build/);
     await assert.rejects(audit.errorApiCall(context, { id: 'x', message: 'y' }), /cannot build/);
     assert.deepStrictEqual(since(before), { total: 2, byKind: { valid: 1, error: 1 }, byReason: { 'invalid-record': 2 } });
+    assert.deepStrictEqual(spans, ['audit.validApiCall', 'audit.errorApiCall'], 'both spans are finished');
+
+    // and a tracing error does not replace the error of the write
+    failWrites();
+    const writable = { methodId: 'events.get', user: { id: username }, access: { id: 'a' }, tracing };
+    await assert.rejects(audit.validApiCall(writable, {}), /simulated audit storage failure/);
+    await assert.rejects(audit.errorApiCall(writable, { id: 'x', message: 'y' }), /simulated audit storage failure/);
   });
 
   it('[ALRC7] counting that fails changes nothing: the caller gets the original error', async function () {
@@ -236,6 +244,13 @@ describe('[ALRC] lost audit records are counted', function () {
     assert.deepStrictEqual(since(before), { total: 2, byKind: { event: 2 }, byReason: { 'storage-unavailable': 2 } });
     const logged = fs.readFileSync(SYNC_LOG).subarray(offset).toString();
     assert.strictEqual(logged.split('No audit storage').length - 1, 1, logged);
+
+    // With a failing syslog too, the one record is one loss, the storage's.
+    noStorage.filter = { isAudited: () => ({ syslog: true, storage: true }) };
+    noStorage._syslog = { eventForUser: () => { throw new Error('simulated syslog failure'); } };
+    const both = totals();
+    await noStorage.eventForUser(username, row());
+    assert.deepStrictEqual(since(both), { total: 1, byKind: { event: 1 }, byReason: { 'storage-unavailable': 1 } });
   });
 
   it('[ALRCA] an OAuth event dropped before the audit object is counted', async function () {
@@ -250,7 +265,9 @@ describe('[ALRC] lost audit records are counted', function () {
     before(async function () {
       adminKey = (await require('@pryv/boiler').getConfig()).get('auth:adminAccessKey');
       // initCore wires only the user-facing API (see migrations-status.test.js).
-      await require('api-server/src/methods/system.ts').default(global.app.systemAPI, global.app.api);
+      if (!global.app.systemAPI.has('system.getAuditStatus')) {
+        await require('api-server/src/methods/system.ts').default(global.app.systemAPI, global.app.api);
+      }
     });
 
     const get = (key) => {
@@ -284,11 +301,22 @@ describe('[ALRC] lost audit records are counted', function () {
       assert.ok(!JSON.stringify(status).includes(username), 'no account in the answer');
     });
 
+    it('[ALRW7] `active` follows the configuration', async function () {
+      const { injectTestConfigSnapshot } = require('test-helpers');
+      const restore = injectTestConfigSnapshot({ audit: { active: false } });
+      try {
+        assert.strictEqual((await get(adminKey)).body.audit.active, false);
+      } finally {
+        restore();
+      }
+      assert.strictEqual((await get(adminKey)).body.audit.active, true);
+    });
+
     it('[ALRW3] the read itself is not audited and answers while the audit storage fails', async function () {
       const before = totals();
       auditStorage.forUser = async () => { throw new Error('simulated audit storage failure'); };
       assert.strictEqual((await get(adminKey)).status, 200);
-      assert.deepStrictEqual(await settled(before, 1), { total: 0, byKind: {}, byReason: {} });
+      assert.deepStrictEqual(await settled(before, 0), { total: 0, byKind: {}, byReason: {} });
     });
 
     it('[ALRW4] the master adds up what the workers report and ignores anything else', function () {
@@ -314,7 +342,7 @@ describe('[ALRC] lost audit records are counted', function () {
     });
 
     it('[ALRW5] a worker takes the master\'s answer to its own request, its own counts otherwise', async function () {
-      const { readLossStatus } = require('api-server/src/routes/auditStatusIpc.ts');
+      const { readLossStatus } = require('api-server/src/methods/helpers/auditStatusIpc.ts');
       const lost = { total: 7, byKind: {}, byReason: {}, lastAt: 1 };
       function handle (answer) {
         const proc = new EventEmitter();
@@ -339,12 +367,26 @@ describe('[ALRC] lost audit records are counted', function () {
       assert.deepStrictEqual(await readLossStatus({ processHandle: silent, isWorker: false }), local);
     });
 
+    it('[ALRW8] bin/master.js keeps the totals of the core', function () {
+      const source = fs.readFileSync(path.resolve(__dirname, '../../../bin/master.js'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      const primary = source.indexOf('if (cluster.isPrimary) {');
+      const worker = source.indexOf('\n} else {', primary);
+      const attached = source.indexOf("\n    require('audit/src/lossAggregator.ts').attach(cluster);\n");
+      assert.ok(primary !== -1 && worker > primary, 'the two branches of master.js are found');
+      assert.ok(attached > primary && attached < worker, 'attached in the primary branch');
+    });
+
     it('[ALRW6] on a real cluster: totals of the core, kept when a worker leaves', async function () {
       const out = await new Promise((resolve, reject) => {
         execFile(process.execPath, [path.join(__dirname, 'support/auditLossCluster.js')], { timeout: 40_000 },
           (err, stdout, stderr) => err != null ? reject(new Error(err.message + '\n' + stderr)) : resolve(stdout));
       });
-      const status = JSON.parse(out.trim().split('\n').pop());
+      const lines = out.trim().split('\n').map((line) => JSON.parse(line));
+      const status = lines.find((line) => line.status != null).status;
+      // A loss on a channel that is gone, or closing, must not stop the worker.
+      assert.deepStrictEqual(lines.find((line) => line.late != null), { late: 2, connected: false });
+      assert.deepStrictEqual(lines.find((line) => line.exit != null), { exit: 0, signal: null });
       assert.strictEqual(status.scope, 'core');
       assert.strictEqual(status.lost.total, 3);
       assert.deepStrictEqual(status.lost.byKind, { valid: 1, error: 1, event: 1 });
