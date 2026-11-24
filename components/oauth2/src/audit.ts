@@ -144,10 +144,9 @@ type OAuthAuditEventRow = {
  * Emit an audit row. MUST be awaited so a failure is observed here rather
  * than lost to an unhandled rejection.
  *
- * Failure policy (deliberate — differs from the core API path, where an audit
- * failure fails the call): emission failures are SURFACED via logServerError
- * but NOT propagated — an audit-backend hiccup must not deny an OAuth token
- * grant (availability is prioritised over audit completeness on this path).
+ * Failure policy (that of every API call): emission failures are SURFACED via
+ * logServerError but NOT propagated, an audit-backend hiccup must not deny an
+ * OAuth token grant.
  * No-op when `audit:active` is false or boiler is not yet initialised.
  */
 export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload): Promise<void> {
@@ -176,6 +175,8 @@ export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload)
   // miswiring breaks that, drop the row with a clear log instead.
   if (userId == null && !USERLESS_EVENTS.has(event)) {
     logServerError('audit: user-resolved event "' + event + '" emitted without a userId — dropping the audit row', null);
+    // dropped before the audit object, which counts every other loss
+    require('audit/src/lossCounter.ts').record('event', 'invalid-record');
     return;
   }
 

@@ -396,6 +396,25 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.ok(actions.has('sso.login'), 'expected an sso.login audit row, saw ' + JSON.stringify([...actions]));
   });
 
+  it('[IPAU5] a sign-in without second factor: its event and its one-time secret, one record each, none for the mint', async function () {
+    const email = cuid() + '@ipau5.example.com';
+    const u = await makeProvedUser(email);
+    idp.control.email = email;
+    const p = hashParams(await runCallback());
+    assert.strictEqual(p.ssoStatus, 'login');
+    const ret = await coreRequest.post(`/${u.username}/shared-secrets/retrieve`).send({ key: p.ssoKey });
+    const audit = await coreRequest.get(`/${u.username}/events`).set('Authorization', ret.body.secret.token)
+      .query({ streams: [':_audit:'], limit: 200 });
+    assert.strictEqual(audit.status, 200, JSON.stringify(audit.body));
+    const of = (action) => audit.body.events.filter((e) => e.content?.action === action);
+    assert.strictEqual(of('sso.login').length, 1);
+    assert.strictEqual(of('auth.ssoLogin').length, 0, 'one sign-in, one record');
+    const secrets = of('sharedSecrets.create');
+    assert.strictEqual(secrets.length, 1, JSON.stringify(secrets));
+    assert.deepStrictEqual(secrets[0].content.source, { name: 'sso' });
+    assert.ok(!JSON.stringify(audit.body.events).includes(ret.body.secret.token), 'no token in the trail');
+  });
+
   // --- ssoReturn: the auth app's return context survives the real mint ---
 
   const RETURN_VALUE = 'returnURL=https%3A%2F%2Fapp.example%2Fcb&state=abc&h=n1';

@@ -49,7 +49,9 @@ export type OAuthMethodResult = {
 };
 
 /** Run an API method on an already-authenticated context. */
-export type ApiCall = (context: Ctx, methodId: string, params: Record<string, unknown>) => Promise<OAuthMethodResult>;
+export type ApiRead = (context: Ctx, methodId: string, params: Record<string, unknown>) => Promise<OAuthMethodResult>;
+/** The same, recorded in the audit log, except the refusals the caller expects. */
+export type ApiWrite = (context: Ctx, methodId: string, params: Record<string, unknown>, options?: { expectedErrorIds?: string[] }) => Promise<OAuthMethodResult>;
 
 /** The signed CMC offer material an /accept carries (see the oauth2 component). */
 export type CmcOffer = {
@@ -113,7 +115,8 @@ export type GlueEnv = {
   config: { get (key: string): unknown };
   storageLayer: unknown;
   logger: { warn: (...a: unknown[]) => void; debug: (...a: unknown[]) => void; info: (...a: unknown[]) => void };
-  apiCall: ApiCall;
+  apiRead: ApiRead;
+  apiWrite: ApiWrite;
 };
 
 /**

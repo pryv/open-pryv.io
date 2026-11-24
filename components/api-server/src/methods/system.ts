@@ -521,6 +521,24 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     }
   );
 
+  // ------------------------------------------------------ auditStatus
+  // How many audit records this core could not write since it started. Counts
+  // only: no account, method or message. Read without storage, so it answers
+  // when the audit storage is the failing part.
+  systemAPI.register('system.getAuditStatus',
+    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    async function getAuditStatus (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+      try {
+        const { readLossStatus } = require('./helpers/auditStatusIpc.ts');
+        const { scope, since, lost } = await readLossStatus();
+        result.audit = { active: (await ready()).get('audit:active') === true, scope, since, lost };
+        return next();
+      } catch (err) {
+        return next(errors.unexpectedError(err));
+      }
+    }
+  );
+
   // --------------------------------------------------------------- checks
   systemAPI.register('system.checkPlatformIntegrity',
     async function performSystemsChecks (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {

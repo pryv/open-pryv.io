@@ -61,13 +61,9 @@ const { getConfig, getConfigUnsafe } = require('@pryv/boiler');
 // resets that mall tests rely on and timed them out under matrix
 // mode. The default engine is already PG, so this is a no-op move.
 //
-// We DELIBERATELY leave `storages:audit:engine` alone in all modes:
-// UserAuditDatabasePG.createEvent has a pre-existing `null value in
-// column "eventid"` constraint violation that fires on `[ASTO]` audit
-// unit tests as soon as audit storage is routed through PG. The
-// audit unit tests live in the audit component (which loads only
-// helpers-base.ts) — leaving audit untouched here keeps that suite
-// green while still aligning the rest of the storage engine choice.
+// We DELIBERATELY leave `storages:audit:engine` alone in all modes: the
+// audit component, which loads only helpers-base.ts, runs on its default
+// engine in the matrix and on PostgreSQL through `just test-pg-audit`.
 require('./testStorageEngines.ts').applyTestStorageEngine();
 
 // platform.piiMode defaults to "hashed" since 2.0.0-rc.3, and Platform.init

@@ -179,18 +179,18 @@ describe('[SDHF] Storing data in a HF series', function () {
     });
   });
   describe('[SD02] UPDATE and DELETE on handling event affect the serie', function () {
-    this.timeout(5000);
+    this.timeout(30_000);
     let hfServer;
     let apiServer;
-    // Spawns a server.
+    // Spawns two servers.
     before(async () => {
       logger.debug('spawning');
       hfServer = await spawnContext.spawn();
       apiServer = await apiServerContext.spawn();
     });
     after(() => {
-      hfServer.stop();
-      apiServer.stop();
+      hfServer?.stop();
+      apiServer?.stop();
     });
     after(async function () {
       await pryv.clean();

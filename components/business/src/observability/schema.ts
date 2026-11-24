@@ -31,6 +31,7 @@ const METRICS = {
   CALLS: 'api.method.calls',
   DURATION: 'api.method.duration',
   ERRORS: 'api.method.errors',
+  AUDIT_LOST: 'audit.records.lost',
   DROPPED: 'telemetry.dropped'
 } as const;
 
@@ -39,6 +40,8 @@ const METRIC_ATTRIBUTES: Record<string, readonly string[]> = {
   [METRICS.CALLS]: ['method.id', 'status.class'],
   [METRICS.DURATION]: ['method.id', 'status.class'],
   [METRICS.ERRORS]: ['method.id', 'error.code'],
+  // No method: which action was not recorded stays on the core.
+  [METRICS.AUDIT_LOST]: ['audit.record.kind', 'audit.loss.reason'],
   [METRICS.DROPPED]: ['reason']
 };
 
@@ -91,6 +94,16 @@ const SAFE_INSTANCE_ID = /^[A-Za-z0-9_.\-:]{0,128}$/;
 
 /** Closed enums for every attribute whose values are not open-ended. */
 const STATUS_CLASSES: readonly string[] = ['2xx', '3xx', '4xx', '5xx'];
+
+/**
+ * Which record was not written, and why. Written out here rather than imported
+ * from the audit component, so this file stays the whole definition of what
+ * may leave; a test pins that the two lists are the same.
+ */
+const AUDIT_RECORD_KINDS: readonly string[] = ['valid', 'error', 'event'];
+const AUDIT_LOSS_REASONS: readonly string[] = [
+  'storage-write-failed', 'storage-unavailable', 'invalid-record', 'syslog-failed'
+];
 
 /**
  * Reasons a payload can be dropped. Reported as `telemetry.dropped` so a
@@ -205,6 +218,10 @@ function validateAttribute (key: string, value: string): ValidationResult {
       return validateFrames(value);
     case 'error.count':
       return /^\d{1,9}$/.test(value) ? OK : { ok: false, reason: DROP_REASONS.INVALID_VALUE };
+    case 'audit.record.kind':
+      return AUDIT_RECORD_KINDS.includes(value) ? OK : { ok: false, reason: DROP_REASONS.INVALID_VALUE };
+    case 'audit.loss.reason':
+      return AUDIT_LOSS_REASONS.includes(value) ? OK : { ok: false, reason: DROP_REASONS.INVALID_VALUE };
     case 'reason':
       return Object.values(DROP_REASONS).includes(value as never)
         ? OK
@@ -260,6 +277,8 @@ export {
   validateResource,
   ERROR_ATTRIBUTES,
   STATUS_CLASSES,
+  AUDIT_RECORD_KINDS,
+  AUDIT_LOSS_REASONS,
   DROP_REASONS,
   RESOURCE_ATTRIBUTES,
   registerMethodIds,

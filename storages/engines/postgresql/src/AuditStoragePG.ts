@@ -41,10 +41,15 @@ class AuditStoragePG {
    */
   readDb: DbLike;
   logger: Logger;
+  /** Whether the users index is in this database (base storage on PostgreSQL). */
+  seesUsersIndex: boolean;
+  /** Shared with the per-user handles, cached ones included. */
+  guard: { on: boolean } = { on: false };
 
-  constructor (db: DbLike, readDb?: DbLike) {
+  constructor (db: DbLike, readDb?: DbLike, options: { seesUsersIndex?: boolean } = {}) {
     this.db = db;
     this.readDb = readDb ?? db;
+    this.seesUsersIndex = options.seesUsersIndex === true;
     this.logger = _internals.getLogger('audit-storage-pg');
     this.userDBsCache = new LRU({
       max: CACHE_SIZE,
@@ -73,12 +78,23 @@ class AuditStoragePG {
     this.checkInitialized();
     let userDb = this.userDBsCache.get(userId);
     if (!userDb) {
-      const fresh: UserAuditDbLike = new UserAuditDatabasePG(this.db, userId, this.logger, this.readDb);
+      const fresh: UserAuditDbLike = new UserAuditDatabasePG(this.db, userId, this.logger, this.readDb, this.guard);
       await fresh.init();
       this.userDBsCache.set(userId, fresh);
       userDb = fresh;
     }
     return userDb;
+  }
+
+  /**
+   * Refuse (`true`) or accept (`false`, also the initial state) records of a
+   * user id the users index does not hold: an erased account. Without effect
+   * when the users index is not in this database.
+   * @returns whether such records are refused from now on
+   */
+  refuseUnindexedUsers (on: boolean): boolean {
+    this.guard.on = on && this.seesUsersIndex;
+    return this.guard.on;
   }
 
   async deleteUser (userId: string): Promise<void> {

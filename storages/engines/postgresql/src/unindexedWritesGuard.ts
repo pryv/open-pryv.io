@@ -21,7 +21,9 @@
  * guarded: `event_streams` (each link is written only while its event row
  * exists, holding it, and the erasure deletes `events` before
  * `event_streams`: see localUserEventsPG), `audit_events` (kept for erased
- * ids under `audit.onUserDelete: keep`), `series_data` (per-point cost; the
+ * ids under `audit.onUserDelete: keep`, which a trigger cannot know: the
+ * insert of UserAuditDatabasePG does the same check under `erase`, and a
+ * restore imports without it), `series_data` (per-point cost; the
  * erasure drops series again last), `attachment_files` (removed before the
  * index entry), and the core-level tables (`external_ids`, `alias_index`,
  * `cmc_deletion_notices`, `account_erasures`).

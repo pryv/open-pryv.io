@@ -79,12 +79,12 @@ type SessionHelpers = {
 };
 
 export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
-  const { apiCall } = env;
+  const { apiRead, apiWrite } = env;
 
   // Idempotent streams.create: swallows "already exists" only.
   async function ensureStream (context: Ctx, id: string, parentId: string, name: string): Promise<void> {
     try {
-      await apiCall(context, 'streams.create', { id, parentId, name });
+      await apiWrite(context, 'streams.create', { id, parentId, name }, { expectedErrorIds: ['item-already-exists'] });
     } catch (err: unknown) {
       const e = err as { id?: string; data?: { id?: string } } | null;
       const errId = e?.id ?? e?.data?.id;
@@ -96,7 +96,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // The durable consent record for a granular OAuth grant is the CMC
   // data-grant on the user's account, keyed by the offer event id.
   async function findDataGrantByOffer (context: Ctx, offerEventId: string): Promise<DataGrant | null> {
-    const result = await apiCall(context, 'accesses.get', {});
+    const result = await apiRead(context, 'accesses.get', {});
     for (const a of (result?.accesses ?? [])) {
       const cmcCd = a?.clientData?.cmc;
       if (cmcCd?.role === 'counterparty' && cmcCd?.offerEventId === offerEventId) return a;
@@ -121,7 +121,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       const scopeStreamId = OAUTH_CMC_PARENT + ':' + clientId;
       await ensureStream(context, OAUTH_CMC_PARENT, ':_cmc:apps', 'OAuth2 grants');
       await ensureStream(context, scopeStreamId, OAUTH_CMC_PARENT, clientId);
-      const created = await apiCall(context, 'events.create', {
+      const created = await apiWrite(context, 'events.create', {
         streamIds: [scopeStreamId],
         type: 'consent/accept-cmc',
         content: {
@@ -143,11 +143,11 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       // grant only once the trigger says completed.
       dataGrant = await awaitConsentOutcome<DataGrant>({
         getTrigger: async () => {
-          const trigger = await apiCall(context, 'events.getOne', { id: acceptEventId });
+          const trigger = await apiRead(context, 'events.getOne', { id: acceptEventId });
           return (trigger?.event?.content ?? {}) as ConsentTrigger;
         },
         resolveDataGrant: async (trigger) => {
-          const all = await apiCall(context, 'accesses.get', {});
+          const all = await apiRead(context, 'accesses.get', {});
           const list: DataGrant[] = all?.accesses ?? [];
           // Prefer the id the dispatch stamped; fall back to the acceptEventId
           // match for robustness if the stamp is somehow absent.
@@ -181,7 +181,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       const merged = mergeStreamPermissions(currentPermissions, grantedPermissions, 'join');
       if (merged.conflicts.length > 0) throw new PermissionMergeConflictError(merged.conflicts);
       if (!samePermissionKeys(currentPermissions, merged.permissions)) {
-        const updated = await apiCall(context, 'accesses.update', {
+        const updated = await apiWrite(context, 'accesses.update', {
           id: dataGrant.id,
           update: { permissions: merged.permissions },
         });
@@ -294,7 +294,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
         let created;
         try {
           if (adopt != null) adopting.addressAliasToAdopt = adopt;
-          created = await apiCall(context, 'accesses.create', {
+          created = await apiWrite(context, 'accesses.create', {
             type: 'app',
             name: REGISTRY_GRANT_PREFIX + clientId,
             deviceName: REGISTRY_GRANT_DEVICE,
@@ -321,7 +321,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       }
     }
     if (!samePermissionKeys(grant.permissions ?? [], permissions)) {
-      const updated = await apiCall(context, 'accesses.update', {
+      const updated = await apiWrite(context, 'accesses.update', {
         id: grant.id,
         update: { permissions },
       });
@@ -340,7 +340,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // itself and the consent is refused; one written before is withdrawn by
   // the deletion.
   async function keepSoleHolder (context: Ctx, ours: DataGrant, alias: string): Promise<void> {
-    const all = await apiCall(context, 'accesses.get', { includeExpired: true });
+    const all = await apiRead(context, 'accesses.get', { includeExpired: true });
     const order = (a: DataGrant) => [typeof a.created === 'number' ? a.created : 0, String(a.id)] as const;
     const before = (a: DataGrant, b: DataGrant) => {
       const [ca, ia] = order(a);
@@ -374,7 +374,7 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   // withdrawal), so the consent that triggered it, at that address, adopts it
   // again rather than finding the name gone.
   async function findRegistryGrant (context: Ctx, clientId: string, opts: { repair?: boolean } = {}): Promise<DataGrant | null> {
-    const result = await apiCall(context, 'accesses.get', { includeExpired: true });
+    const result = await apiRead(context, 'accesses.get', { includeExpired: true });
     let grant = (result?.accesses ?? []).find((a) =>
       a?.type === 'app' && a?.name === REGISTRY_GRANT_PREFIX + clientId &&
       a?.deviceName === REGISTRY_GRANT_DEVICE) ?? null;

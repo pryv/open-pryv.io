@@ -13,6 +13,7 @@ import type { AuditEvent, SummarizeParams, SummaryGroup } from '../../../interfa
 const require = createRequire(import.meta.url);
 
 const { Readable } = require('stream');
+const { UNINDEXED_USER_ERRCODE } = require('./unindexedWritesGuard.ts');
 const { summaryBudgetError, summaryAccessFilter, SUMMARY_ERROR_TYPE } = require('../../../interfaces/auditStorage/UserAuditDatabase.ts');
 
 // SQLSTATE of a statement cancelled by `statement_timeout`.
@@ -38,6 +39,23 @@ type LoggerLike = { getLogger (name: string): unknown };
 
 type DbLike = DatabasePG;
 
+type UnindexedUserGuard = { on: boolean };
+
+/**
+ * The insert of one record. The second form writes nothing for a user id the
+ * users index does not hold, and keeps the index entry it found until the
+ * insert commits: an account erasure, which removes the entry, waits for it
+ * and then removes the record too (see unindexedWritesGuard.ts, which does the
+ * same for the other tables with a trigger).
+ */
+const INSERT_INTO = 'INSERT INTO audit_events (user_id, eventid, head_id, stream_ids, time, deleted, end_time, type, content, description, client_data, integrity, attachments, trashed, created, created_by, modified, modified_by)';
+const INSERT_EVENT = INSERT_INTO + `
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`;
+const INSERT_EVENT_OF_INDEXED_USER = INSERT_INTO + `
+       SELECT $1::text, $2::text, $3::text, $4::text, $5::float8, $6::float8, $7::float8, $8::text, $9::jsonb, $10::text,
+              $11::jsonb, $12::text, $13::jsonb, $14::boolean, $15::float8, $16::text, $17::float8, $18::text
+       FROM (SELECT 1 FROM users_index WHERE user_id = $1::text FOR KEY SHARE) AS indexed`;
+
 class UserAuditDatabasePG {
   db: DbLike; // DatabasePG — not yet typed externally
   /**
@@ -50,11 +68,14 @@ class UserAuditDatabasePG {
   readDb: DbLike;
   userId: string;
   logger: unknown;
+  /** Shared with the storage: whether a record of an unindexed user id is refused. */
+  guard: UnindexedUserGuard;
 
-  constructor (db: DbLike, userId: string, logger: LoggerLike, readDb?: DbLike) {
+  constructor (db: DbLike, userId: string, logger: LoggerLike, readDb?: DbLike, guard: UnindexedUserGuard = { on: false }) {
     this.db = db;
     this.readDb = readDb ?? db;
     this.userId = userId;
+    this.guard = guard;
     this.logger = logger.getLogger('audit-user-pg');
   }
 
@@ -144,11 +165,15 @@ class UserAuditDatabasePG {
 
   async createEvent (event: AuditEvent): Promise<void> {
     const row = toDB(event);
-    await this.db.query(
-      `INSERT INTO audit_events (user_id, eventid, head_id, stream_ids, time, deleted, end_time, type, content, description, client_data, integrity, attachments, trashed, created, created_by, modified, modified_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+    const guarded = this.guard.on;
+    const res = await this.db.query(
+      guarded ? INSERT_EVENT_OF_INDEXED_USER : INSERT_EVENT,
       [this.userId, row.eventid, row.head_id, row.stream_ids, row.time, row.deleted, row.end_time, row.type, row.content, row.description, row.client_data, row.integrity, row.attachments, row.trashed, row.created, row.created_by, row.modified, row.modified_by]
     );
+    if (guarded && res.rowCount === 0) {
+      throw Object.assign(new Error(`user id "${this.userId}" is not in the users index: audit record refused`),
+        { code: UNINDEXED_USER_ERRCODE, table: 'audit_events' });
+    }
   }
 
   async createEventSync (event: AuditEvent): Promise<void> {
