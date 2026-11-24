@@ -11,6 +11,10 @@
 - `UserAuditDatabasePG.createEvent`: `INSERT ... SELECT` from the locked `users_index` entry when
   `AuditStoragePG.refuseUnindexedUsers(true)` (set by `Audit.init` unless `keep`; without effect when the
   base storage is not PostgreSQL). `importAllEvents` is not guarded (restore).
+  Cost (`test/bench/pg-audit-unindexed.bench.js`, idle Linux x86_64, audit pool 5, 40 alternating rounds of
+  1000 records): one writer, about 3.4 ms per record, no difference; five writers, about 510 us without,
+  +95 us (18 to 20 %) with, the same on one account and on five (no contention on the locked entry), of
+  which the lock is about 25 us and the guarded statement the rest.
 - `Audit.ts`: a refusal of an erased account is a `warn`, not a loss (`erasedAccountRefusal.ts`).
 - `workerStop.ts` (API worker): the CMC loop drain and the telemetry flush share one signal hook, one bound
   and one re-raise; `emitter.shutdown` waits for a send in progress.

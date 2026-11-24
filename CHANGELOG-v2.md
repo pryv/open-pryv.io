@@ -22,6 +22,9 @@
   engines a record refused for this reason is logged at `warn` and is not counted as lost. `keep` is
   unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies but
   the refusal does not.
+  Cost: each audit record written to PostgreSQL now checks, in the same statement, that its account is
+  still indexed, and holds that entry until the record is committed. Measured: about 0.1 ms per record
+  under five concurrent writers, nothing measurable with one. With `keep` the check is off.
   **Upgrade note**: records left by earlier versions stay. On a core that never ran with
   `audit.onUserDelete: keep`, and whose base and audit storage are both PostgreSQL, remove them once with
   `DELETE FROM audit_events a WHERE NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = a.user_id);`
