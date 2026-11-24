@@ -27,7 +27,7 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
   // `pool` is the STREAMED-READ pool, which is what an aborted audit query
   // holds; `writePool` is the one audit writes use. They are deliberately two
   // different pools, so a reader can never queue a write behind it.
-  let fixtures, username, token, userId, pool, poolMax, writePool, eventsPath;
+  let fixtures, user, username, token, userId, pool, poolMax, writePool, eventsPath;
   const SEEDED = 20000; // far beyond any socket buffer: the server is provably mid-cursor
 
   before(async function () {
@@ -49,7 +49,7 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
     }
 
     fixtures = getNewFixture();
-    const user = await fixtures.user(charlatan.Lorem.characters(7), { password: cuid() });
+    user = await fixtures.user(charlatan.Lorem.characters(7), { password: cuid() });
     await user.stream({ id: 'yo', name: 'YO' });
     const access = (await user.access({ type: 'personal', token: cuid() })).attrs;
     await user.session(access.token);
@@ -234,8 +234,12 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
     const held = [];
     try {
       // Occupy every connection of the READ pool with paused readers.
+      // One access each: an access runs one streamed audit read at a time
+      // (`limits.audit.maxConcurrentReadsPerAccess`).
       for (let i = 0; i < poolMax; i++) {
-        held.push(await startPausedRead());
+        const reader = (await user.access({ type: 'personal', token: cuid() })).attrs;
+        await user.session(reader.token);
+        held.push(await startPausedRead(reader.token));
       }
       const occupied = await until(() => checkedOut() >= poolMax, 10000);
       assert.ok(occupied,
@@ -272,7 +276,7 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
    * arrive, leaving the server mid-cursor holding a connection. Returns a
    * handle that releases it.
    */
-  async function startPausedRead () {
+  async function startPausedRead (readerToken) {
     return await new Promise((resolve, reject) => {
       const { port } = coreServer.address();
       const req = http.get({
@@ -281,7 +285,7 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
         // Same explicit limit as abortMidResponse: without it the page is small
         // enough to finish before we can stop reading, and nothing is held.
         path: eventsPath + '?streams[]=' + encodeURIComponent(':_audit:') + '&limit=' + SEEDED,
-        headers: { Authorization: token }
+        headers: { Authorization: readerToken }
       }, (res) => {
         res.once('data', () => {
           res.pause(); // stop reading: the server stays parked mid-response

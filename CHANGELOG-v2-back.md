@@ -6,6 +6,8 @@
 
 - `[CFE5]` no longer looks for a short secret (CI's PostgreSQL password, `pryv`) inside an answer whose host names
   contain it; it also asserts that each secret key is redacted.
+- `[AUAB4]` (PostgreSQL audit engine) fills the audit read pool with one access per reader: the limit of one streamed
+  audit read per access made it wait forever.
 
 ### CI supply chain
 
