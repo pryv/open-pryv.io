@@ -54,7 +54,8 @@ async function callAudited (api: ApiLike, context: MethodContext, methodId: stri
     result = await new Promise<unknown>((resolve, reject) => {
       api.call(context, params, (err, res) => err != null ? reject(err) : resolve(res));
     });
-    // Drained before the record: a streamed read has then finished counting.
+    // Drained before the record: a streamed read has then finished counting. (A
+    // write streams nothing: its drain does not fail after it took effect.)
     obj = await new Promise<Record<string, unknown>>((resolve, reject) => {
       (result as DrainableResult).toObject((err, res) => err != null ? reject(err) : resolve((res ?? {}) as Record<string, unknown>));
     });

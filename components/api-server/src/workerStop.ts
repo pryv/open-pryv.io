@@ -6,7 +6,8 @@
  */
 
 /**
- * What an API worker finishes before it ends on SIGTERM or SIGINT.
+ * What an API worker finishes before it ends on SIGTERM (or on SIGINT, where
+ * the process has no handler of its own ending it at once, as bin/server has).
  *
  * A signal listener replaces Node's default exit: the signal is raised again,
  * once, when every task is done or after a bound (inside the master's own,

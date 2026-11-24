@@ -86,9 +86,9 @@ describe('[IPAU] audit records of in-process API calls', function () {
       .then(async (res) => ({ status: res.status, body: await res.json(), network }));
   }
 
-  function handoff () {
+  function handoff (as = token) {
     const { createHandoff } = require('api-server/src/routes/reg/credentialHandoff.ts');
-    return createHandoff({ app: global.app, username, token, apiEndpoint: 'https://' + token + '@ipau.example.com/', requestingAppId: 'ipau', ttlSeconds: 60 });
+    return createHandoff({ app: global.app, username, token: as, apiEndpoint: 'https://' + as + '@ipau.example.com/', requestingAppId: 'ipau', ttlSeconds: 60 });
   }
 
   const note = () => ({ streamIds: ['s'], type: 'note/txt', content: cuid() });
@@ -101,7 +101,7 @@ describe('[IPAU] audit records of in-process API calls', function () {
     assert.deepStrictEqual(res.network, []);
     assert.strictEqual(found.length, 1, JSON.stringify(found));
     assert.strictEqual(found[0].type, 'audit-log/pryv-api');
-    assert.deepStrictEqual(found[0].content.source, { name: 'local-delivery', ip: null });
+    assert.deepStrictEqual(found[0].content.source, { name: 'local-delivery' });
     assert.ok(found[0].streamIds.includes(':_audit:access-' + accessId), JSON.stringify(found[0].streamIds));
     assert.ok(found[0].content.record?.integrity != null, 'the integrity reference of the created event');
   });
@@ -136,10 +136,15 @@ describe('[IPAU] audit records of in-process API calls', function () {
     assert.ok(res.handoff?.key, JSON.stringify(res));
     assert.strictEqual(found.length, 1, JSON.stringify(found));
     assert.strictEqual(found[0].type, 'audit-log/pryv-api');
-    assert.deepStrictEqual(found[0].content.source, { name: 'credential-handoff', ip: null });
+    assert.deepStrictEqual(found[0].content.source, { name: 'credential-handoff' });
     assert.ok(found[0].streamIds.includes(':_audit:access-' + accessId));
     const text = JSON.stringify(found[0]);
     assert.ok(!text.includes(token) && !text.includes(res.handoff.key), text);
+
+    const unknown = await added('sharedSecrets.create', async () => { res = await handoff(cuid()); });
+    assert.ok(res.fallback, JSON.stringify(res));
+    assert.strictEqual(unknown.length, 1, JSON.stringify(unknown));
+    assert.strictEqual(unknown[0].type, 'audit-log/pryv-api-error');
 
     const { injectTestConfigSnapshot } = require('test-helpers');
     const restore = injectTestConfigSnapshot({ sharedSecrets: { enabled: false } });
@@ -210,7 +215,8 @@ describe('[IPAU] audit records of in-process API calls', function () {
   it('[IPAU0] nothing else runs an API method in-process without a record', function () {
     // Outside these, `api.call` is given to `methodCallback`, whose HTTP answer
     // writes the record. Each file here records its calls itself, or says in a
-    // comment what records them instead.
+    // comment what records them instead. (Sees the sources of the components
+    // and receivers named after the API; not a dispatcher under another name.)
     const ALLOWED = {
       'api-server/src/methods/helpers/auditedCall.ts': 1,
       'api-server/src/methods/utility.ts': 1,
@@ -228,8 +234,9 @@ describe('[IPAU] audit records of in-process API calls', function () {
           if (entry.name !== 'node_modules') scan(full);
         } else if (entry.name.endsWith('.ts')) {
           const source = fs.readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-          for (const match of source.matchAll(/\b(?:api|API)\.call\(/g)) {
-            if (/methodCallback\(/.test(source.slice(match.index, match.index + 250))) continue;
+          for (const match of source.matchAll(/\w*(?:api|API)\.call\(/g)) {
+            // the call's own statement only
+            if (/methodCallback\(/.test(source.slice(match.index).split(';')[0])) continue;
             const file = path.relative(root, full);
             found[file] = (found[file] ?? 0) + 1;
           }
@@ -241,5 +248,15 @@ describe('[IPAU] audit records of in-process API calls', function () {
       if (fs.existsSync(src)) scan(src);
     }
     assert.deepStrictEqual(found, ALLOWED);
+
+    // What goes through the two unrecorded dispatchers.
+    const read = (file) => fs.readFileSync(path.join(root, 'api-server/src/routes', file), 'utf8');
+    const reads = [];
+    for (const file of fs.readdirSync(path.join(root, 'api-server/src/routes/oauth2'))) {
+      for (const [, args] of read('oauth2/' + file).matchAll(/apiRead\(([^)]*)/g)) reads.push(args.split(',')[1]?.trim());
+    }
+    assert.deepStrictEqual([...new Set(reads)].sort(), ["'accesses.get'", "'events.getOne'"]);
+    assert.strictEqual(read('sso.ts').split('callUnrecorded(').length - 1, 1, 'one use (the definition has a space before its parenthesis)');
+    assert.match(read('sso.ts'), /mintCtx\.methodId = 'auth\.ssoLogin';\n\s*const login = await callUnrecorded\(mintCtx,/);
   });
 });

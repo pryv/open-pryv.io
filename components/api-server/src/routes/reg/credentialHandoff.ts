@@ -41,7 +41,7 @@ import { MethodContext } from 'business';
 import * as delegation from 'delegation';
 import { resolveUserCore, type UserCorePlatform } from './userCore.ts';
 import type { AppLike } from '../_types.ts';
-import { callAudited } from '../../methods/helpers/auditedCall.ts';
+import { auditRefusedCall, callAudited } from '../../methods/helpers/auditedCall.ts';
 
 /** How long we wait on another core before giving up and falling back. */
 const REMOTE_TIMEOUT_MS = 3000;
@@ -131,8 +131,13 @@ export async function createHandoff (params: CreateHandoffParams): Promise<Hando
       const context = new MethodContext(
         { name: 'credential-handoff', ip: null }, username, token, null, {}, {}, null
       );
-      await context.init();
-      await context.retrieveExpandedAccess(app.storageLayer);
+      try {
+        await context.init();
+        await context.retrieveExpandedAccess(app.storageLayer);
+      } catch (err) {
+        if (context.user?.id != null) await auditRefusedCall(context, 'sharedSecrets.create', err);
+        throw err;
+      }
       if (delegation.isDelegationDerivedAccess(context.access)) {
         return { fallback: 'delegation-derived' };
       }

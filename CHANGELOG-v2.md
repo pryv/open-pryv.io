@@ -8,15 +8,17 @@
   core (`events.create`, source `local-delivery`), the one-time secret of a credential hand-off or of a
   third-party sign-in (`sharedSecrets.create`, sources `credential-handoff` and `sso`) and the writes of an
   OAuth consent (`events.create`, `accesses.create`, `accesses.update`, `streams.create`, source `oauth2`)
-  left no record. They now leave the record the same call leaves over HTTP, success or refusal, with
-  `source.ip: null` (no client connection made the call). The lookups the server makes for itself during
+  left no record. They now leave the record the same call leaves over HTTP, success or refusal, without
+  `source.ip` (no client connection made the call). The lookups the server makes for itself during
   these flows are not recorded.
 - Batch calls: the record of a call no longer carries the integrity reference (`content.record`) of an
   earlier create of the same batch.
 - **PostgreSQL audit storage: no record is left for an erased account.** With `audit.onUserDelete: erase`
   (the default) and `storages.audit.engine: postgresql`, a call still running while its account was erased
   could leave one audit record under the erased id. The record is now refused, and the erasure removes
-  audit records a second time once the account is gone (step `deleteAuditDataStorageAgain`). On both
+  audit records a second time once the account is gone (step `deleteAuditDataStorageAgain`, also
+  named in `stepsCompleted` of the erasure ledger). During a rolling restart a worker of an earlier
+  version still writes without the refusal. On both
   engines a record refused for this reason is logged at `warn` and is not counted as lost. `keep` is
   unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies but
   the refusal does not.

@@ -120,7 +120,9 @@ class Audit {
     const config = await getConfig();
     this._storage = require('storages').auditStorage;
     this.#keepsErasedTrails = config.get('audit:onUserDelete') === 'keep';
-    this._storage?.refuseUnindexedUsers?.(!this.#keepsErasedTrails);
+    // Read again at each `init`, as the erasure reads it at each erasure.
+    const refuses = this._storage?.refuseUnindexedUsers?.(!this.#keepsErasedTrails);
+    if (refuses != null) logger.info('Audit records of accounts that are erased: ' + (refuses ? 'refused' : 'accepted'));
     this._syslog = await getSyslog();
     this.filter = new AuditFilter({
       syslogFilter: config.get('audit:syslog:filter'),
@@ -279,6 +281,13 @@ class Audit {
 }
 export default Audit;
 export { Audit };
+/** A call made in-process has no address: the key is left out (the published event type has it a string). */
+function recordedSource (source: unknown): unknown {
+  if (source == null || typeof source !== 'object' || (source as { ip?: unknown }).ip !== null) return source;
+  const { ip: _ip, ...rest } = source as { ip: null };
+  return rest;
+}
+
 function buildDefaultEvent (context: MethodContext): AuditEventLike {
   const time = timestamp.now();
   // When the caller's access has been versioned (serial non-null),
@@ -309,7 +318,7 @@ function buildDefaultEvent (context: MethodContext): AuditEventLike {
     modified: time,
     trashed: false,
     content: {
-      source: context.source,
+      source: recordedSource(context.source),
       action: context.methodId,
       query: context.originalQuery
     }

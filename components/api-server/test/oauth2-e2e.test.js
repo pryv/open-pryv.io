@@ -246,7 +246,7 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       .post('/oauth2/authorize/accept')
       .send({
         state: signedState,
-        username,
+        username: overrides.username ?? username,
         userToken: overrides.userToken ?? personalToken,
         grantedPermissions,
       });
@@ -524,25 +524,33 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       }
     });
 
-    it('[IPAUA] the consent event of a granular grant is recorded once, and a stream that exists already is not an error record', async function () {
+    it('[IPAUA] the consent event of a granular grant is recorded once; an existing stream is not an error record', async function () {
+      const who = 'ipaua' + cuid().slice(-10);
+      const userToken = cuid();
+      const user = await fixtures.user(who);
+      await user.access({ token: userToken, type: 'personal' });
+      await user.session(userToken);
+      for (const id of ['health', 'diary']) await ensureStream('/' + who + '/streams', userToken, { id, name: id });
       const trail = async () => {
-        const db = await require('storages').auditStorage.forUser(username);
+        const db = await require('storages').auditStorage.forUser(who);
         const mine = (await db.getEvents({ query: [] })).filter((e) => e.content?.source?.name === 'oauth2');
         const of = (action, type) => mine.filter((e) => e.content.action === action && e.type === type).length;
         return {
           consents: of('events.create', 'audit-log/pryv-api'),
+          streams: of('streams.create', 'audit-log/pryv-api'),
           lookups: of('accesses.get', 'audit-log/pryv-api') + of('events.getOne', 'audit-log/pryv-api'),
           errors: mine.filter((e) => e.type === 'audit-log/pryv-api-error').length
         };
       };
-      const before = await trail();
-      const r = await runFullFlow();
-      assert.equal(r.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(r.tokenRes));
-      const after = await trail();
-      // This client's grant exists by now or is created here; never twice.
-      assert.ok(after.consents - before.consents <= 1, JSON.stringify({ before, after }));
-      assert.ok(after.consents >= 1, 'the consent event of the first authorization is recorded: ' + JSON.stringify(after));
-      assert.deepEqual([after.lookups, after.errors], [0, 0], JSON.stringify(after));
+      const first = await runFullFlow({ username: who, userToken });
+      assert.equal(first.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(first.tokenRes));
+      const once = await trail();
+      assert.deepEqual([once.consents, once.lookups, once.errors], [1, 0, 0], JSON.stringify(once));
+      assert.ok(once.streams >= 1, JSON.stringify(once));
+      // Again: the grant and its streams exist.
+      const again = await runFullFlow({ username: who, userToken });
+      assert.equal(again.tokenRes.status, 200, 'POST /oauth2/token: ' + describeRes(again.tokenRes));
+      assert.deepEqual(await trail(), once);
     });
 
     it('[OE08] the platform store (replicated to every core) holds no code, refresh token, access token or username', async function () {

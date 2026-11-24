@@ -400,6 +400,7 @@ function _reset (): void {
     flushTimer = null;
   }
   config = null;
+  inFlight.clear();
   counters.clear();
   histograms.clear();
   errorGroups.clear();

@@ -21,15 +21,23 @@ describe('[WSTP] what an API worker finishes before it stops', function () {
     proc.kill = (pid, signal) => { kills.push([pid, signal]); };
   });
 
+  /** Once the signal was raised again; then the time for one too many. */
+  async function killed () {
+    for (let i = 0; i < 400 && kills.length === 0; i++) await sleep(5);
+    await sleep(20);
+  }
+
   it('[WSTP1] the tasks run together; the signal is raised again once, after the slower one', async function () {
-    const { onWorkerStop } = createWorkerStop(proc, 5_000);
+    const { onWorkerStop } = createWorkerStop(proc, 60_000);
+    let release;
     const done = [];
     onWorkerStop('fast', async () => { done.push('fast'); });
-    onWorkerStop('slow', async () => { await sleep(60); done.push('slow'); });
+    onWorkerStop('slow', () => new Promise((resolve) => { release = () => { done.push('slow'); resolve(); }; }));
     proc.emit('SIGTERM');
     await sleep(20);
     assert.deepStrictEqual([done, kills], [['fast'], []], 'not before the slower one');
-    await sleep(120);
+    release();
+    await killed();
     assert.deepStrictEqual(done, ['fast', 'slow']);
     assert.deepStrictEqual(kills, [[4242, 'SIGTERM']]);
     assert.strictEqual(proc.listenerCount('SIGTERM'), 0, 'the default action ends the process');
@@ -39,20 +47,19 @@ describe('[WSTP] what an API worker finishes before it stops', function () {
     const { onWorkerStop } = createWorkerStop(proc, 40);
     onWorkerStop('stuck', () => new Promise(() => {}));
     proc.emit('SIGTERM');
-    await sleep(10);
     assert.deepStrictEqual(kills, []);
-    await sleep(100);
+    await killed();
     assert.deepStrictEqual(kills, [[4242, 'SIGTERM']]);
   });
 
   it('[WSTP3] a task that throws or rejects does not stop the others', async function () {
-    const { onWorkerStop } = createWorkerStop(proc, 5_000);
+    const { onWorkerStop } = createWorkerStop(proc, 60_000);
     let done = false;
     onWorkerStop('throws', () => { throw new Error('thrown'); });
     onWorkerStop('rejects', () => Promise.reject(new Error('rejected')));
     onWorkerStop('works', async () => { await sleep(20); done = true; });
     proc.emit('SIGINT');
-    await sleep(80);
+    await killed();
     assert.strictEqual(done, true);
     assert.deepStrictEqual(kills, [[4242, 'SIGINT']]);
   });
@@ -65,7 +72,7 @@ describe('[WSTP] what an API worker finishes before it stops', function () {
     onWorkerStop('a', () => { ran.push('second'); });
     assert.strictEqual(proc.listenerCount('SIGTERM'), 1);
     proc.emit('SIGTERM');
-    await sleep(20);
+    await killed();
     assert.deepStrictEqual(ran, ['second']);
     assert.strictEqual(kills.length, 1);
   });

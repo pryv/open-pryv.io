@@ -411,7 +411,7 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(of('auth.ssoLogin').length, 0, 'one sign-in, one record');
     const secrets = of('sharedSecrets.create');
     assert.strictEqual(secrets.length, 1, JSON.stringify(secrets));
-    assert.deepStrictEqual(secrets[0].content.source, { name: 'sso', ip: null });
+    assert.deepStrictEqual(secrets[0].content.source, { name: 'sso' });
     assert.ok(!JSON.stringify(audit.body.events).includes(ret.body.secret.token), 'no token in the trail');
   });
 

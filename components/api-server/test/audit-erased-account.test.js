@@ -131,11 +131,25 @@ describe('[AGPE] audit records of an account erased meanwhile', function () {
   it('[AGPE4] an account that erases itself in a batch leaves no record and counts no loss', async function () {
     const { username, token } = await newUser();
     const before = lossCounter.snapshot().lost.total;
-    const res = await coreRequest.post('/' + username).set('Authorization', token)
-      .send([{ method: 'auth.delete', params: { username } }]);
-    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-    if (res.body.results[0].error != null) this.skip(); // personal-token deletion not enabled in this configuration
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    // The record of the batch itself, written after the answer.
+    const original = audit.eventForUser;
+    let written;
+    const envelope = new Promise((resolve) => { written = resolve; });
+    audit.eventForUser = async function (...args) {
+      try { return await original.apply(audit, args); } finally { if (args[0] === username && args[2] === 'callBatch') written(); }
+    };
+    const restore = require('test-helpers').injectTestConfigSnapshot({ 'user-account': { delete: ['adminToken', 'personalToken'] } });
+    try {
+      const res = await coreRequest.post('/' + username).set('Authorization', token)
+        .send([{ method: 'auth.delete', params: { username } }]);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.results[0].error, undefined, JSON.stringify(res.body));
+      await envelope;
+      await new Promise((resolve) => setImmediate(resolve)); // its outcome, in the caller
+    } finally {
+      restore();
+      audit.eventForUser = original;
+    }
     if (isPg) assert.strictEqual(await count(username), 0);
     else await assert.rejects(auditStorage.forUser(username), /erased/);
     assert.strictEqual(lossCounter.snapshot().lost.total, before);

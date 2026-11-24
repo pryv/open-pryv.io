@@ -170,6 +170,7 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
       //    context authenticated AS that token, the oauth2.ts precedent), and
       //    hand off only the one-time key.
       const handoffCtx = new MethodContext({ name: 'sso', ip: null }, username, login.token, null, {}, {}, null);
+      // The token was minted just above: no refusal to record before the call.
       await handoffCtx.init();
       await handoffCtx.retrieveExpandedAccess(app.storageLayer);
       const handoff: SsoMintResult = await callAudited(app.api, handoffCtx, 'sharedSecrets.create', {

@@ -889,7 +889,7 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const created = await trail('accesses.create');
     assert.equal(created.length, 1, JSON.stringify(created));
     assert.equal(created[0].type, 'audit-log/pryv-api');
-    assert.deepEqual(created[0].content.source, { name: 'oauth2', ip: null });
+    assert.deepEqual(created[0].content.source, { name: 'oauth2' });
     assert.equal((await trail('oauth.consent.granted')).length, 1);
     assert.equal((await trail('accesses.update')).length, 0);
 
