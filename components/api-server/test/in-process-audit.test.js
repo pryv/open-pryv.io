@@ -102,7 +102,7 @@ describe('[IPAU] audit records of in-process API calls', function () {
     assert.strictEqual(found.length, 1, JSON.stringify(found));
     assert.strictEqual(found[0].type, 'audit-log/pryv-api');
     assert.deepStrictEqual(found[0].content.source, { name: 'local-delivery' });
-    assert.ok(found[0].streamIds.includes(':_audit:access-' + accessId), JSON.stringify(found[0].streamIds));
+    assert.ok(found[0].streamIds.includes('access-' + accessId), JSON.stringify(found[0].streamIds));
     assert.ok(found[0].content.record?.integrity != null, 'the integrity reference of the created event');
   });
 
@@ -137,7 +137,7 @@ describe('[IPAU] audit records of in-process API calls', function () {
     assert.strictEqual(found.length, 1, JSON.stringify(found));
     assert.strictEqual(found[0].type, 'audit-log/pryv-api');
     assert.deepStrictEqual(found[0].content.source, { name: 'credential-handoff' });
-    assert.ok(found[0].streamIds.includes(':_audit:access-' + accessId));
+    assert.ok(found[0].streamIds.includes('access-' + accessId));
     const text = JSON.stringify(found[0]);
     assert.ok(!text.includes(token) && !text.includes(res.handoff.key), text);
 

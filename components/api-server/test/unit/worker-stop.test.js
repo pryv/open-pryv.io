@@ -55,12 +55,15 @@ describe('[WSTP] what an API worker finishes before it stops', function () {
   it('[WSTP3] a task that throws or rejects does not stop the others', async function () {
     const { onWorkerStop } = createWorkerStop(proc, 60_000);
     let done = false;
+    let doneAtKill = null;
+    const kill = proc.kill;
+    proc.kill = (...args) => { doneAtKill = done; kill(...args); };
     onWorkerStop('throws', () => { throw new Error('thrown'); });
     onWorkerStop('rejects', () => Promise.reject(new Error('rejected')));
     onWorkerStop('works', async () => { await sleep(20); done = true; });
     proc.emit('SIGINT');
     await killed();
-    assert.strictEqual(done, true);
+    assert.strictEqual(doneAtKill, true);
     assert.deepStrictEqual(kills, [[4242, 'SIGINT']]);
   });
 

@@ -165,7 +165,7 @@ describe('[AGPE] audit records of an account erased meanwhile', function () {
       if (userId === username) calls++;
       return await originalDeleteUser.call(auditStorage, userId);
     };
-    const erasures = require('business/src/auth/erasures.ts').getErasuresLocal();
+    const erasures = await require('business/src/auth/erasures.ts').getErasuresLocal();
     const anHourAgo = Date.now() - 3600_000;
     await erasures.put({
       userId: username,
@@ -184,10 +184,12 @@ describe('[AGPE] audit records of an account erased meanwhile', function () {
   });
 
   it('[AGPE6] a restore imports the trail of an id that is not in the index', async function () {
+    const { username } = await newUser();
+    const exported = await (await auditStorage.forUser(username)).exportAllEvents();
+    assert.strictEqual(exported.length, 1);
     const userId = 'agpe-import-' + cuid().slice(-6);
     ids.push(userId);
-    const db = await auditStorage.forUser(userId);
-    await db.importAllEvents([{ ...row(), id: cuid(), trashed: false, endTime: 1 }]);
+    await (await auditStorage.forUser(userId)).importAllEvents(exported.map((e) => ({ ...e, user_id: userId })));
     assert.strictEqual(await count(userId), 1);
   });
 
