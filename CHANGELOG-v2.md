@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Audit: in-process calls, erased accounts, telemetry at stop
+
+- **API calls the server makes for a flow are in the audit trail.** A delivery to an account of the same
+  core (`events.create`, source `local-delivery`), the one-time secret of a credential hand-off or of a
+  third-party sign-in (`sharedSecrets.create`, sources `credential-handoff` and `sso`) and the writes of an
+  OAuth consent (`events.create`, `accesses.create`, `accesses.update`, `streams.create`, source `oauth2`)
+  left no record. They now leave the record the same call leaves over HTTP, success or refusal, with
+  `source.ip: null` (no client connection made the call). The lookups the server makes for itself during
+  these flows are not recorded.
+- Batch calls: the record of a call no longer carries the integrity reference (`content.record`) of an
+  earlier create of the same batch.
+- **PostgreSQL audit storage: no record is left for an erased account.** With `audit.onUserDelete: erase`
+  (the default) and `storages.audit.engine: postgresql`, a call still running while its account was erased
+  could leave one audit record under the erased id. The record is now refused, and the erasure removes
+  audit records a second time once the account is gone (step `deleteAuditDataStorageAgain`). On both
+  engines a record refused for this reason is logged at `warn` and is not counted as lost. `keep` is
+  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies but
+  the refusal does not.
+  **Upgrade note**: records left by earlier versions stay. On a core that never ran with
+  `audit.onUserDelete: keep`, and whose base and audit storage are both PostgreSQL, remove them once with
+  `DELETE FROM audit_events a WHERE NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = a.user_id);`
+  (with `keep`, these rows are the trails kept on purpose).
+- **Telemetry is sent when a core stops.** On a normal stop (SIGTERM) each API worker sends what it has
+  aggregated, within 2 seconds, so a restart no longer loses up to one reporting interval. Still lost: a
+  worker that is killed or crashes, and an endpoint that does not answer in that time.
+
 ### Lost audit records are counted (new admin route, new telemetry metric)
 
 An audit record that cannot be written leaves the call's answer unchanged and an `error` log line, as
@@ -23,7 +49,7 @@ before. It is now also counted, so a loss can be alerted on without reading logs
   store (it was silent).
 - Not counted: a process stopped between answering a call and writing its record, a storage write that never
   ends, syslog delivery errors reported after the call, and what a command-line tool could not write. A
-  restart sets the counts back to zero and drops the telemetry of the interval in progress.
+  restart sets the counts back to zero.
 
 ### Batch calls: an audit-log write failure no longer changes a call's answer
 

@@ -298,12 +298,25 @@ function joinUrl (base: string, path: string): string {
   return base.replace(/\/+$/, '') + path;
 }
 
+/** The sends in progress. */
+const inFlight = new Set<Promise<void>>();
+
 /**
  * Send whatever is buffered. Never throws: a send failure is counted (in
  * the NEXT interval, since the current one has already been drained) and
  * logged at warn.
  */
 async function flush (): Promise<void> {
+  const sending = flushNow();
+  inFlight.add(sending);
+  try {
+    await sending;
+  } finally {
+    inFlight.delete(sending);
+  }
+}
+
+async function flushNow (): Promise<void> {
   if (config == null) return;
   const cfg = config;
   const endMs = nowMs();
@@ -369,14 +382,14 @@ function init (cfg: EmitterConfig): void {
   if (typeof flushTimer.unref === 'function') flushTimer.unref();
 }
 
-/** Stop the timer and send whatever is left. */
+/** Stop the timer, send whatever is left, and wait for a send in progress. */
 async function shutdown (): Promise<void> {
   if (flushTimer != null) {
     clearInterval(flushTimer);
     flushTimer = null;
   }
   if (config == null) return;
-  await flush();
+  await Promise.allSettled([...inFlight, flush()]);
   config = null;
 }
 

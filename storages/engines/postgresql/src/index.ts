@@ -374,7 +374,9 @@ function createAuditStorage (): unknown {
   // whole core. Two pools make the worst case "readers starve readers", which
   // is a cost to the reader rather than a hole in the record.
   const auditReadDb = new DatabasePG({ ...connection, max: pgConfig.auditReadPoolSize || 5 });
-  return new AuditStoragePG(auditDb, auditReadDb);
+  // The base storage registers its connection before the audit storage is
+  // created; the users index is in the same database.
+  return new AuditStoragePG(auditDb, auditReadDb, { seesUsersIndex: _internals.databasePG != null });
 }
 
 // -- FileStorage (PostgreSQL) -------------------------------------------

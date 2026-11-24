@@ -44,6 +44,8 @@ import { platformRoutedLabels } from '../platformLabels.ts';
 import { hostWrongCoreGuard } from './oauth2/hostWrongCore.ts';
 import { perUserAddressingFor } from '../addressedAccount.ts';
 import { perUserIssuerResolver } from './oauth2/perUserIssuer.ts';
+import { callAudited } from '../methods/helpers/auditedCall.ts';
+import type { MethodContext as MethodContextType } from 'business/src/MethodContext.ts';
 const require = createRequire(import.meta.url);
 
 const oauth2 = require('oauth2');
@@ -164,11 +166,13 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
   }
 
   // ---------------------------------------------------------------------
-  // apiCall: run an API method on an already-authenticated context.
+  // apiRead: run an API method on an already-authenticated context, with no
+  // audit record: the lookups of the glue, whose result goes to no caller.
   // The api dispatcher reads methodId off the context (set by the
   // setMethodId middleware on the normal route path; we set it here).
+  // apiWrite: the same, recorded: whatever changes the account.
   // ---------------------------------------------------------------------
-  async function apiCall (context: Ctx, methodId: string, params: Record<string, unknown>): Promise<OAuthMethodResult> {
+  async function apiRead (context: Ctx, methodId: string, params: Record<string, unknown>): Promise<OAuthMethodResult> {
     context.methodId = methodId;
     return await new Promise((resolve, reject) => {
       api.call(context, params, (err: unknown, result: unknown) => {
@@ -176,6 +180,10 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
         resolve(result as OAuthMethodResult);
       });
     });
+  }
+
+  async function apiWrite (context: Ctx, methodId: string, params: Record<string, unknown>, options?: { expectedErrorIds?: string[] }): Promise<OAuthMethodResult> {
+    return await callAudited(api, context as unknown as MethodContextType, methodId, params, options) as OAuthMethodResult;
   }
 
   // ---------------------------------------------------------------------
@@ -210,7 +218,7 @@ export default function mountOAuth2 (expressApp: ExpressApp, app: AppLike): void
     expressApp.post('/oauth2/authorize', authorizeGuard);
   }
 
-  const env: GlueEnv = { config, storageLayer, logger, apiCall };
+  const env: GlueEnv = { config, storageLayer, logger, apiRead, apiWrite };
   const sessions = createSessions(env);
   const grants = createGrants(env, sessions);
   const { revokeChain, revokeSession } = createRevoke(env, sessions);

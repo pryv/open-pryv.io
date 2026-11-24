@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Audit: in-process calls, erased accounts, telemetry at stop
+
+- `methods/helpers/auditedCall.ts` `callAudited`: runs an API method in-process and records it after
+  draining, as batch and socket.io do (`localDelivery.ts`, `routes/reg/credentialHandoff.ts`,
+  `routes/sso.ts`, `routes/oauth2.ts` `apiWrite`; `apiRead` stays unrecorded). `[IPAU0]` lists the only
+  files that may dispatch without `methodCallback`. `resetAuditEnrichment` also serves `callBatch`.
+- `UserAuditDatabasePG.createEvent`: `INSERT ... SELECT` from the locked `users_index` entry when
+  `AuditStoragePG.refuseUnindexedUsers(true)` (set by `Audit.init` unless `keep`; without effect when the
+  base storage is not PostgreSQL). `importAllEvents` is not guarded (restore).
+- `Audit.ts`: a refusal of an erased account is a `warn`, not a loss (`erasedAccountRefusal.ts`).
+- `workerStop.ts` (API worker): the CMC loop drain and the telemetry flush share one signal hook, one bound
+  and one re-raise; `emitter.shutdown` waits for a send in progress.
+- Tests `[IPAU*]` (`in-process-audit`, `sso-e2e-seq`, `oauth2-registry-consent`, `oauth2-e2e`), `[AGPE*]`
+  (`audit-erased-account`), `[AGPG*]` (PostgreSQL storage), `[WSTP*]` (`unit/worker-stop`), `[OBSF*]`
+  (`observability`). `[SD02]`: its hook starts two servers, 30 s instead of 5 s.
+
 ### Lost audit records
 
 - `components/audit/src/lossCounter.ts`: counts per process, by kind and cause; tells the observability

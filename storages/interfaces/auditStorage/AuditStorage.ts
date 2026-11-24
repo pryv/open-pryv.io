@@ -23,6 +23,11 @@ export interface AuditStorage {
   checkInitialized(): void;
   forUser(userId: string): Promise<UserAuditDatabase>;
   deleteUser(userId: string): Promise<void>;
+  /**
+   * Optional: refuse records of accounts that are erased, where the storage
+   * does not do it by nature. Returns whether it does from now on.
+   */
+  refuseUnindexedUsers?(on: boolean): boolean;
   close(): void;
 }
 

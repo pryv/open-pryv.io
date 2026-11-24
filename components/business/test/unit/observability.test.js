@@ -714,6 +714,50 @@ describe('[OBSU] observability choke point', function () {
       ]);
     });
 
+    it('[OBSF1] shutdown sends what is buffered, then nothing more is kept', async function () {
+      const sink = captureSink();
+      initEmitter(sink);
+      observability.recordAuditLoss('valid', 'storage-write-failed');
+      await observability.shutdown();
+      assert.strictEqual(sink.sent.length, 1);
+      assert.deepStrictEqual(sink.sent[0].body.resourceMetrics[0].scopeMetrics[0].metrics.map((m) => m.name), ['audit.records.lost']);
+      observability.recordAuditLoss('valid', 'storage-write-failed');
+      assert.deepStrictEqual(emitter._buffered().counters, {});
+    });
+
+    it('[OBSF2] shutdown waits for a send in progress, and sends what came since', async function () {
+      const sink = captureSink();
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      const ended = [];
+      const send = sink.send;
+      let n = 0;
+      initEmitter({
+        ...sink,
+        send: async (...args) => {
+          const id = ++n;
+          if (id === 1) await held;
+          await send.apply(sink, args);
+          ended.push(id);
+        }
+      });
+      observability.recordAuditLoss('valid', 'storage-write-failed');
+      observability.flush();
+      observability.recordAuditLoss('event', 'invalid-record');
+      let stopped = false;
+      const stopping = observability.shutdown().then(() => { stopped = true; });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.deepStrictEqual([stopped, ended], [false, [2]], 'the second send is out, the first still held');
+      release();
+      await stopping;
+      assert.deepStrictEqual(ended, [2, 1]);
+    });
+
+    it('[OBSF3] shutdown of an inactive emitter sends nothing', async function () {
+      await observability.shutdown();
+      assert.deepStrictEqual(emitter._buffered().counters, {});
+    });
+
     it('[ALRS4] nothing is kept while telemetry is off, and no value makes it throw', function () {
       observability.recordAuditLoss('valid', 'storage-write-failed');
       emitter.recordAuditLoss('valid', 'storage-write-failed'); // its own check too

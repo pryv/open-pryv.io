@@ -17,6 +17,7 @@ const { fromCallback } = require('utils');
 const { getLogger, ready } = require('@pryv/boiler');
 const { getPasswordRules } = require('business/src/users/index.ts');
 const updateAccessUsageStats = require('./helpers/updateAccessUsageStats.ts').default;
+const { resetAuditEnrichment } = require('./helpers/auditedCall.ts') as typeof import('./helpers/auditedCall.ts');
 const { withoutCredentialUrls } = require('business/src/accesses/credentialUrls.ts');
 
 type AuditModule = {
@@ -187,10 +188,7 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
     // batched read's records get counted twice in the breach report. Restore the
     // envelope's own identity and clear the per-read enrichment.
     context.methodId = 'callBatch';
-    context.auditRecordCount = undefined;
-    context.auditRecordCountIncomplete = undefined;
-    context.auditScopedStreamIds = undefined;
-    context.auditScopedStreamCount = undefined;
+    resetAuditEnrichment(context);
     context.disableAccessUsageStats = false; // to allow tracking functions
     if (overBudget) {
       result.results = undefined;
@@ -216,13 +214,10 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
         countCall(call.method);
         // update methodId to match the call todo
         context.methodId = call.method;
-        // The context is REUSED across batched calls — clear the breach-scope
-        // audit enrichment so a read's counts never leak onto the next call's
-        // audit row (only a read re-sets them).
-        context.auditRecordCount = undefined;
-        context.auditRecordCountIncomplete = undefined;
-        context.auditScopedStreamIds = undefined;
-        context.auditScopedStreamCount = undefined;
+        // The context is REUSED across batched calls: what a call left for its
+        // audit record (a read's counts, the integrity reference of a create)
+        // must not show on the next one's.
+        resetAuditEnrichment(context);
         context.resultArrayLimit = remaining;
         // Perform API call
         const res = await fromCallback((cb: (err: unknown, res: unknown) => void) => api.call(context, call.params, cb)) as { toObject: (cb: (err: unknown, res: unknown) => void) => void };

@@ -34,13 +34,14 @@
  * delegation-derived token reaching the REMOTE arm with no hint is not
  * detected here (the access lives on the other core); it is an accepted
  * residual, harmless because the secret only carries an already-minted token
- * and the create is audited on the user's core.
+ * and the create is audited on the user's core, on both arms.
  */
 
 import { MethodContext } from 'business';
 import * as delegation from 'delegation';
 import { resolveUserCore, type UserCorePlatform } from './userCore.ts';
 import type { AppLike } from '../_types.ts';
+import { callAudited } from '../../methods/helpers/auditedCall.ts';
 
 /** How long we wait on another core before giving up and falling back. */
 const REMOTE_TIMEOUT_MS = 3000;
@@ -71,16 +72,6 @@ export type CreateHandoffParams = {
 export type HandoffResult =
   | { handoff: { type: 'shared-secret'; key: string }; apiEndpoint: string }
   | { fallback: string };
-
-/** Promisify the internal method dispatch (the routes/sso.ts pattern). */
-function callMethod (app: AppLike, context: unknown, params: unknown): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    app.api.call(context, params, (err: unknown, result: unknown) => {
-      if (err != null) return reject(err);
-      resolve((result ?? {}) as Record<string, unknown>);
-    });
-  });
-}
 
 /**
  * Strip the credential from a posted apiEndpoint: the token rides either in
@@ -145,8 +136,7 @@ export async function createHandoff (params: CreateHandoffParams): Promise<Hando
       if (delegation.isDelegationDerivedAccess(context.access)) {
         return { fallback: 'delegation-derived' };
       }
-      context.methodId = 'sharedSecrets.create';
-      const result = await callMethod(app, context, createParams);
+      const result = await callAudited(app.api, context, 'sharedSecrets.create', createParams);
       key = (result.sharedSecret as { key?: unknown } | undefined)?.key;
     } else {
       // Remote user core: create over HTTPS with the app token. The target is

@@ -55,7 +55,7 @@ type MethodContext = {
   erasureLost?: boolean;
 };
 type StepFn = (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown;
-type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditData' | 'dropHFDataAgain' | 'writeErasureLedger';
+type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditDataStorageAgain' | 'deleteAuditData' | 'dropHFDataAgain' | 'writeErasureLedger';
 
 // The series namespaces of `namespaces` whose name is not held by another
 // account (see MethodContext.foreignNames).
@@ -388,6 +388,15 @@ class Deletion {
     }
   }
 
+  // Records written between deleteAuditDataStorage and the removal of the
+  // account (a call in flight) are still there where the audit storage is not
+  // in the user's directory (wiped by deleteAuditData). From now on the storage
+  // refuses new ones. A failure fails the step: a record left is a residue.
+  async deleteAuditDataStorageAgain (context: MethodContext, params: unknown, result: ResultBag, next: Next) {
+    if (typeof require('storages').auditStorage?.existingPathForUser === 'function') return next();
+    await this.deleteAuditDataStorage(context, params, result, next);
+  }
+
   /**
    * The erasure steps, in their (load-bearing) order: auth.delete registers
    * them after its checks, eraseAccount runs them for the other paths that
@@ -406,6 +415,7 @@ class Deletion {
       // deleteUser opens the user's per-user SQLite files to remove its rows:
       // after the directory wipe it would create them again, empty. Wipe last.
       'deleteUser',
+      'deleteAuditDataStorageAgain',
       'deleteAuditData',
       // Last: points written while the steps above ran, through a series
       // credential still cached by a high-frequency worker.

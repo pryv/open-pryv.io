@@ -8,6 +8,7 @@ import { MethodContext } from 'business/src/MethodContext.ts';
 import type { CustomAuthFunction } from 'business/src/MethodContext.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { getConfigSync } from '@pryv/boiler';
+import { auditRefusedCall, callAudited } from './auditedCall.ts';
 
 type Api = { call: (context: MethodContext, params: unknown, callback: (err: unknown, result: unknown) => void) => void };
 type NetworkFetch = (url: string, init?: RequestInit) => Promise<Response>;
@@ -31,7 +32,8 @@ function accountUrlParts (url: string, apiFormat: string): { username: string; p
  * A `fetch` for deliveries to accounts: an `events` POST to an account hosted
  * on this core runs in-process (`events.create`, authenticated with the same
  * token, through the whole method chain) instead of going out to the core's
- * own public URL and back; anything else goes to the network.
+ * own public URL and back; anything else goes to the network. The recipient's
+ * audit log records the delivery as it records one coming from another core.
  */
 function localFirstFetch (api: Api, storageLayer: unknown, networkFetch: NetworkFetch = (url, init) => globalThis.fetch(url, init)): NetworkFetch {
   return async function (url: string, init?: RequestInit): Promise<Response> {
@@ -47,31 +49,20 @@ function localFirstFetch (api: Api, storageLayer: unknown, networkFetch: Network
     // application registers it at boot).
     const { getApplication } = await import('api-server/src/application.ts');
     const customAuthStepFn = getApplication().getCustomAuthFunction('server.js') as CustomAuthFunction | null;
-    const context = new MethodContext({ name: 'http' }, parts.username, headers.get('authorization'), customAuthStepFn, {}, {}, null);
+    const context = new MethodContext({ name: 'local-delivery', ip: null }, parts.username, headers.get('authorization'), customAuthStepFn, {}, {}, null);
+    let authenticated = false;
     try {
       await context.init();
       await context.retrieveExpandedAccess(storageLayer as Parameters<MethodContext['retrieveExpandedAccess']>[0]);
-      context.methodId = 'events.create';
+      authenticated = true;
       const params = JSON.parse(String(init?.body ?? '{}'));
-      const result = await new Promise((resolve, reject) => {
-        api.call(context, params, (err, res) => err != null ? reject(err) : resolve(res));
-      });
-      return Response.json(toPlain(result), { status: 201 });
+      return Response.json(await callAudited(api, context, 'events.create', params), { status: 201 });
     } catch (err) {
+      if (!authenticated && context.user?.id != null) await auditRefusedCall(context, 'events.create', err);
       const e = err as { httpStatus?: number; id?: string; message?: string };
       return Response.json({ error: { id: e?.id ?? 'unexpected-error', message: e?.message ?? String(err) } }, { status: e?.httpStatus ?? 500 });
     }
   };
-}
-
-// An API result may hold streams to pipe; a delivery reads only the JSON fields.
-function toPlain (result: unknown): unknown {
-  if (result == null || typeof result !== 'object') return result;
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(result)) {
-    if (typeof v !== 'function' && !(v != null && typeof (v as { pipe?: unknown }).pipe === 'function')) out[k] = v;
-  }
-  return out;
 }
 
 export { localFirstFetch, accountUrlParts };

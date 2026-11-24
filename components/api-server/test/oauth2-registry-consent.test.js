@@ -876,6 +876,31 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
       JSON.stringify(r.subjectChange) === JSON.stringify({ from: 'pseudonym', to: 'account' })), JSON.stringify(granteds));
   });
 
+  it('[IPAU6] a consent leaves the record of its own writes, none for its lookups', async () => {
+    const who = await newUser();
+    const trail = async (action) => {
+      const db = await require('storages').auditStorage.forUser(who.username);
+      return (await db.getEvents({ query: [] })).filter((e) => e.content?.action === action);
+    };
+    const lookups = async () => (await trail('accesses.get')).length + (await trail('events.getOne')).length;
+
+    const before = await lookups();
+    await consentAndToken(who, 'read/a');
+    const created = await trail('accesses.create');
+    assert.equal(created.length, 1, JSON.stringify(created));
+    assert.equal(created[0].type, 'audit-log/pryv-api');
+    assert.deepEqual(created[0].content.source, { name: 'oauth2', ip: null });
+    assert.equal((await trail('oauth.consent.granted')).length, 1);
+    assert.equal((await trail('accesses.update')).length, 0);
+
+    await consentAndToken(who, 'read/a write/b');
+    assert.equal((await trail('accesses.create')).length, 1);
+    const updated = await trail('accesses.update');
+    assert.equal(updated.length, 1, JSON.stringify(updated));
+    assert.equal(updated[0].type, 'audit-log/pryv-api');
+    assert.equal(await lookups(), before, 'the lookups of the consent are not recorded');
+  });
+
   it('[OCMP12] grammar forbids pass and reach the grant and the session; the defaults go unless allowed on the client row', async () => {
     const who = await newUser();
     const c = await consent(who, 'read/a ctx/locked');

@@ -144,10 +144,9 @@ type OAuthAuditEventRow = {
  * Emit an audit row. MUST be awaited so a failure is observed here rather
  * than lost to an unhandled rejection.
  *
- * Failure policy (deliberate — differs from the core API path, where an audit
- * failure fails the call): emission failures are SURFACED via logServerError
- * but NOT propagated — an audit-backend hiccup must not deny an OAuth token
- * grant (availability is prioritised over audit completeness on this path).
+ * Failure policy (that of every API call): emission failures are SURFACED via
+ * logServerError but NOT propagated, an audit-backend hiccup must not deny an
+ * OAuth token grant.
  * No-op when `audit:active` is false or boiler is not yet initialised.
  */
 export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload): Promise<void> {

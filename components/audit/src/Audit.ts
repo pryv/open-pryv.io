@@ -17,6 +17,7 @@ const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods.ts');
 const AuditFilter = require('./AuditFilter.ts').default;
 const { AuditAccessIds } = require('./MethodContextUtils.ts');
 const lossCounter = require('./lossCounter.ts');
+const { isErasedAccountRefusal } = require('./erasedAccountRefusal.ts') as typeof import('./erasedAccountRefusal.ts');
 const util = require('util');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
@@ -56,7 +57,10 @@ type AuditEventLike = {
 };
 type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; storage?: boolean } | boolean };
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
-type AuditStorage = { forUser (userId: string): Promise<{ createEvent (e: AuditEventLike): Promise<unknown> }> };
+type AuditStorage = {
+  forUser (userId: string): Promise<{ createEvent (e: AuditEventLike): Promise<unknown> }>;
+  refuseUnindexedUsers? (on: boolean): boolean;
+};
 
 /** Tracing must not replace the error of the write it traces. */
 function endSpan (tracing: Tracing, name: string): void {
@@ -93,6 +97,9 @@ class Audit {
 
   #storageAbsenceLogged = false;
 
+  /** `audit.onUserDelete: keep`: the trail of an erased account stays open. */
+  #keepsErasedTrails = false;
+
   /**
    * Requires to call async init() to use
    */
@@ -112,6 +119,8 @@ class Audit {
     logger.debug('Audit initiating...');
     const config = await getConfig();
     this._storage = require('storages').auditStorage;
+    this.#keepsErasedTrails = config.get('audit:onUserDelete') === 'keep';
+    this._storage?.refuseUnindexedUsers?.(!this.#keepsErasedTrails);
     this._syslog = await getSyslog();
     this.filter = new AuditFilter({
       syslogFilter: config.get('audit:syslog:filter'),
@@ -202,8 +211,7 @@ class Audit {
           }
         } else {
           reason = 'storage-write-failed';
-          const userStorage = await this.storage.forUser(userId!);
-          await userStorage.createEvent(event);
+          await this.#store(this.storage, userId!, event);
         }
       }
     } catch (err) {
@@ -211,6 +219,20 @@ class Audit {
       throw err;
     }
     if (silentLoss != null) lossCounter.record(kind, silentLoss);
+  }
+
+  /**
+   * Writes the record. One refused because its account was erased meanwhile
+   * (a call in flight) is not lost: the erasure exists to remove it.
+   */
+  async #store (storage: AuditStorage, userId: string, event: AuditEventLike): Promise<void> {
+    try {
+      const userStorage = await storage.forUser(userId);
+      await userStorage.createEvent(event);
+    } catch (err) {
+      if (this.#keepsErasedTrails || !isErasedAccountRefusal(err)) throw err;
+      logger.warn('Audit record not written: account ' + userId + ' is erased, or not in the users index');
+    }
   }
 
   /** Validates the record, gives it an id, and tells where it has to go. */
