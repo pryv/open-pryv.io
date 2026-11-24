@@ -89,8 +89,15 @@ describe('[CFGE] GET /system/admin/config/effective', () => {
     const text = res.text;
     const secrets = [adminKey, config.get('auth:filesReadTokenSecret'), config.get('storages:engines:postgresql:password'), config.get('platform:piiHmacKey')];
     for (const s of secrets) {
-      if (typeof s !== 'string' || s.length < 4) continue;
+      // a short value (CI's database password is `pryv`) is also part of host names
+      if (typeof s !== 'string' || s.length < 8) continue;
       assert.strictEqual(text.includes(s), false, 'a configured secret appears in the answer');
+    }
+    for (const k of ['auth.adminAccessKey', 'auth.filesReadTokenSecret', 'storages.engines.postgresql.password', 'platform.piiHmacKey']) {
+      const entry = res.body.keys[k];
+      if (entry == null) continue;
+      assert.strictEqual(entry.redacted, true, k);
+      assert.strictEqual(entry.value, undefined, k);
     }
   });
 

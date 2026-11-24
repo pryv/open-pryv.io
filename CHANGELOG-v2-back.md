@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Tests
+
+- `[CFE5]` no longer looks for a short secret (CI's PostgreSQL password, `pryv`) inside an answer whose host names
+  contain it; it also asserts that each secret key is redacted.
+
 ### CI supply chain
 
 - Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`
