@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Lost audit records are counted (new admin route, new telemetry metric)
+
+An audit record that cannot be written leaves the call's answer unchanged and an `error` log line, as
+before. It is now also counted, so a loss can be alerted on without reading logs.
+
+- **`GET /system/audit-status`** (admin key in `Authorization`; 404 without it, not audited) answers
+  `{ audit: { active, scope, since, lost: { total, byKind, byReason, lastAt } } }`: what the answering
+  core could not write since it started. Kinds: `valid`, `error` (the record of an API call that
+  succeeded or failed), `event` (any other record). Reasons: `storage-write-failed`,
+  `storage-unavailable`, `invalid-record`, `syslog-failed`. `scope` is `core` (all the workers) or
+  `process` (the answering process only, without a master or when it does not answer). Counts only: no
+  account, method or message. Alert on `lost.total` above zero, on every core.
+- **Telemetry**, when enabled, sends the counter `audit.records.lost` with the labels
+  `audit.record.kind` and `audit.loss.reason` (the values above) and nothing else. This is an addition
+  to what a core with telemetry sends.
+- A failure to hand a record to syslog no longer prevents it from being stored in the audit storage; it is
+  logged at `error` level and counted as `syslog-failed`.
+- A core with no audit storage logs it once at `error` level and counts each record it cannot store
+  (it was silent).
+- Not counted: a process stopped between answering a call and writing its record, and syslog delivery
+  errors reported after the call.
+
 ### Batch calls: an audit-log write failure no longer changes a call's answer
 
 - In a batch, a call whose audit record could not be written was answered with `unexpected-error`

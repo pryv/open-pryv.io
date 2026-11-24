@@ -176,6 +176,8 @@ export async function audit (event: OAuthAuditEvent, payload: OAuthAuditPayload)
   // miswiring breaks that, drop the row with a clear log instead.
   if (userId == null && !USERLESS_EVENTS.has(event)) {
     logServerError('audit: user-resolved event "' + event + '" emitted without a userId — dropping the audit row', null);
+    // dropped before the audit object, which counts every other loss
+    require('audit/src/lossCounter.ts').record('event', 'invalid-record');
     return;
   }
 

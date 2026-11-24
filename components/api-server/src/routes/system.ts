@@ -142,6 +142,13 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.get(Paths.System + '/migrations-status', setMethodId('system.getMigrationsStatus'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
+  // --------------------- audit status ----------------- //
+  // How many audit records this core could not write since it started, so a
+  // monitor can alert on lost records without reading logs.
+  expressApp.get(Paths.System + '/audit-status', setMethodId('system.getAuditStatus'), function (req: PryvRequest, res: Response, next: NextFunction) {
+    res.set('Cache-Control', 'no-store');
+    systemAPI.call(req.context, {}, methodCallback(res, next, 200));
+  });
   // --------------------- admin force-renew --------------------- //
   // POST /system/admin/certs/force-renew — operator-triggered ACME
   // rollover. The orchestrator lives in the master process; this worker

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Lost audit records
+
+- `components/audit/src/lossCounter.ts`: counts per process, by kind and cause; tells the observability
+  facade (`recordAuditLoss`) and, from a cluster worker, the master. Counting is guarded, synchronous and in
+  memory. Only the audit object counts (`Audit.ts`: `eventForUser`, and the part of `validApiCall` /
+  `errorApiCall` before it); callers log, they never count. The one exception is the OAuth event dropped
+  before the audit object (`oauth2/src/audit.ts`).
+- `lossAggregator.ts` (master): totals of the core, answers a worker's status request;
+  `routes/auditStatusIpc.ts` (worker): 2 s, then its own counts.
+- Observability allow-list: metric `audit.records.lost`, two closed label lists (pinned equal to the audit
+  component's by `[ALRS1]`).
+- `validApiCall` / `errorApiCall` finish their tracing span when the write fails.
+- Tests `[ALRS1]`..`[ALRS4]` (`observability.test.js`), `[ALRC1]`..`[ALRCA]`, `[ALRW1]`..`[ALRW6]`
+  (`audit-lost-rows.test.js`, the last one on a real cluster).
+
 ### Batch audit writes
 
 - `methods/utility.ts` `callBatchApiFn`: the per-call audit runs outside the call's `try`, through

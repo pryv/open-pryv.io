@@ -18,7 +18,8 @@ const require = createRequire(import.meta.url);
  * is therefore a property of two files that can be read end to end, not
  * of a vendor library's evolving defaults. Concretely, what leaves is:
  * per-method call counts, durations and error counts (identifiers from
- * our own API registry, status classes, error codes), plus stack traces
+ * our own API registry, status classes, error codes), the number of audit
+ * records that could not be written (by kind and cause), plus stack traces
  * for server-side faults with all paths rewritten repository-relative.
  * URLs, headers, parameters, payloads, usernames and error messages have
  * no representation in the schema, so they cannot be emitted.
@@ -102,6 +103,15 @@ function recordError (err: unknown, methodId?: string | null): void {
   } catch { /* idem */ }
 }
 
+/**
+ * Count one audit record that could not be written (see the audit component:
+ * it is the only caller). Kind and reason only, never the action or account.
+ */
+function recordAuditLoss (kind: string, reason: string): void {
+  if (!emitter.isActive()) return;
+  try { emitter.recordAuditLoss(kind, reason); } catch { /* idem */ }
+}
+
 /** Send whatever is buffered (used at shutdown and by tests). */
 async function flush (): Promise<void> {
   try { await emitter.flush(); } catch { /* idem */ }
@@ -117,5 +127,5 @@ function _reset (): void {
   schema._resetVocabularies();
 }
 
-export { init, isActive, recordApiCall, recordError, flush, shutdown, _reset };
+export { init, isActive, recordApiCall, recordAuditLoss, recordError, flush, shutdown, _reset };
 export type { ObservabilityInit };

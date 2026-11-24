@@ -339,6 +339,7 @@ describe('[OBSU] observability choke point', function () {
       observability.recordApiCall('events.create', 9, Object.assign(new Error('x'), {
         id: 'unexpected-error', httpStatus: 500
       }));
+      observability.recordAuditLoss('valid', 'storage-write-failed');
       await observability.flush();
 
       assert.strictEqual(sink.sent.length, 2, 'metrics and logs are sent separately');
@@ -346,7 +347,8 @@ describe('[OBSU] observability choke point', function () {
       const logsCall = sink.sent.find(function (s) { return s.url.endsWith('/v1/logs'); });
       assert.ok(metricsCall != null && logsCall != null);
 
-      const allowedDataKeys = new Set(['method.id', 'status.class', 'error.code', 'reason']);
+      const allowedDataKeys = new Set(['method.id', 'status.class', 'error.code', 'reason',
+        'audit.record.kind', 'audit.loss.reason']);
       const resourceMetric = metricsCall.body.resourceMetrics[0];
       for (const attribute of resourceMetric.resource.attributes) {
         assert.ok(schema.RESOURCE_ATTRIBUTES.includes(attribute.key),
@@ -560,6 +562,10 @@ describe('[OBSU] observability choke point', function () {
       observability.recordApiCall('events.create', 40, err);
       observability.recordApiCall('alice@example.com', 5);
       observability.recordError(err, 'events.get');
+      // A lost audit record, and the same smuggling through its two labels.
+      observability.recordAuditLoss('error', 'storage-write-failed');
+      observability.recordAuditLoss('alice@example.com', 'storage-write-failed');
+      observability.recordAuditLoss('valid', 'my-private-stream');
 
       await observability.flush();
 
@@ -575,6 +581,7 @@ describe('[OBSU] observability choke point', function () {
       assert.ok(wire.includes('unexpected-error'), 'the error code must survive');
       assert.ok(wire.includes('api.method.calls'), 'metrics must survive');
       assert.ok(wire.includes('error.stack'), 'a stack must survive');
+      assert.ok(wire.includes('audit.records.lost'), 'the lost audit records count must survive');
       // And the smuggled method id was refused, not silently accepted.
       assert.ok(wire.includes(schema.DROP_REASONS.UNKNOWN_METHOD_ID),
         'the refusal must be visible as a counted drop');
@@ -642,6 +649,80 @@ describe('[OBSU] observability choke point', function () {
       });
       assert.strictEqual(sidecar.activated, true, sidecar.reason);
       observability._reset();
+    });
+  });
+
+  describe('[ALRS] lost audit records', function () {
+    const KINDS = ['valid', 'error', 'event'];
+    const REASONS = ['storage-write-failed', 'storage-unavailable', 'invalid-record', 'syslog-failed'];
+
+    it('[ALRS1] the metric, its two keys and their values are exactly these, here and in the audit component', function () {
+      assert.strictEqual(schema.METRICS.AUDIT_LOST, 'audit.records.lost');
+      assert.deepStrictEqual([...schema.METRIC_ATTRIBUTES['audit.records.lost']], ['audit.record.kind', 'audit.loss.reason']);
+      assert.deepStrictEqual([...schema.AUDIT_RECORD_KINDS], KINDS);
+      assert.deepStrictEqual([...schema.AUDIT_LOSS_REASONS], REASONS);
+      const lossCounter = require('audit/src/lossCounter.ts');
+      assert.deepStrictEqual([...lossCounter.KINDS], KINDS);
+      assert.deepStrictEqual([...lossCounter.REASONS], REASONS);
+    });
+
+    it('[ALRS2] every pair of the lists validates; anything else is refused and counted as a drop', function () {
+      schema.registerMethodIds(METHOD_IDS);
+      const check = (attributes) => schema.validateMetric('audit.records.lost', attributes, 1);
+      for (const kind of KINDS) {
+        for (const reason of REASONS) {
+          assert.strictEqual(check({ 'audit.record.kind': kind, 'audit.loss.reason': reason }).ok, true, kind + ' ' + reason);
+        }
+      }
+      const refused = (attributes, expected) => {
+        assert.deepStrictEqual(check(attributes), { ok: false, reason: expected }, JSON.stringify(attributes));
+      };
+      const { INVALID_VALUE, UNKNOWN_ATTRIBUTE } = schema.DROP_REASONS;
+      refused({ 'audit.record.kind': 'batch', 'audit.loss.reason': REASONS[0] }, INVALID_VALUE);
+      refused({ 'audit.record.kind': KINDS[0], 'audit.loss.reason': 'connect ECONNREFUSED 10.0.0.4' }, INVALID_VALUE);
+      refused({ 'audit.record.kind': KINDS[0], 'audit.loss.reason': 42 }, INVALID_VALUE);
+      refused({ 'audit.record.kind': KINDS[0], 'audit.loss.reason': REASONS[0], 'method.id': 'events.get' }, UNKNOWN_ATTRIBUTE);
+      refused({ 'audit.record.kind': KINDS[0], 'audit.loss.reason': REASONS[0], username: 'alice' }, UNKNOWN_ATTRIBUTE);
+      // The two keys belong to this metric only.
+      assert.strictEqual(schema.validateMetric(schema.METRICS.CALLS, { 'audit.record.kind': 'valid' }, 1).ok, false);
+
+      initEmitter(captureSink());
+      observability.recordAuditLoss('alice', REASONS[0]);
+      const { counters } = emitter._buffered();
+      assert.strictEqual(counters['audit.records.lost'], undefined, 'a refused pair is not counted as a loss');
+      assert.deepStrictEqual(counters['telemetry.dropped'], [{ attributes: { reason: INVALID_VALUE }, value: 1 }]);
+    });
+
+    it('[ALRS3] on the wire: one sum, the two keys, values of the lists, the counts', async function () {
+      const sink = captureSink();
+      initEmitter(sink);
+      observability.recordAuditLoss('valid', 'storage-write-failed');
+      observability.recordAuditLoss('valid', 'storage-write-failed');
+      observability.recordAuditLoss('event', 'invalid-record');
+      await observability.flush();
+
+      assert.strictEqual(sink.sent.length, 1, 'metrics only: a lost record sends no error report');
+      const metrics = sink.sent[0].body.resourceMetrics[0].scopeMetrics[0].metrics;
+      assert.deepStrictEqual(metrics.map((m) => m.name), ['audit.records.lost']);
+      const points = metrics[0].sum.dataPoints.map((p) => ({
+        labels: Object.fromEntries(p.attributes.map((a) => [a.key, a.value.stringValue])),
+        count: Number(p.asInt)
+      }));
+      assert.deepStrictEqual(points, [
+        { labels: { 'audit.record.kind': 'valid', 'audit.loss.reason': 'storage-write-failed' }, count: 2 },
+        { labels: { 'audit.record.kind': 'event', 'audit.loss.reason': 'invalid-record' }, count: 1 }
+      ]);
+    });
+
+    it('[ALRS4] nothing is kept while telemetry is off, and no value makes it throw', function () {
+      observability.recordAuditLoss('valid', 'storage-write-failed');
+      emitter.recordAuditLoss('valid', 'storage-write-failed'); // its own check too
+      initEmitter(captureSink());
+      assert.deepStrictEqual(emitter._buffered().counters, {}, 'a loss before init is not buffered');
+      for (const bad of [undefined, null, 1, {}, Symbol('x')]) {
+        observability.recordAuditLoss(bad, bad);
+      }
+      assert.strictEqual(emitter._buffered().counters['audit.records.lost'], undefined);
     });
   });
 

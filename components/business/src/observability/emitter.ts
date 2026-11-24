@@ -199,6 +199,23 @@ function recordApiCall (
 }
 
 /**
+ * Count one audit record that was not written.
+ *
+ * @param kind: 'valid' | 'error' | 'event'.
+ * @param lossReason: why, from the schema's closed list.
+ */
+function recordAuditLoss (kind: string, lossReason: string): void {
+  if (config == null) return;
+  const attributes: Attributes = { 'audit.record.kind': kind, 'audit.loss.reason': lossReason };
+  const check = validateMetric(METRICS.AUDIT_LOST, attributes, 1);
+  if (!check.ok) {
+    countDrop(check.reason);
+    return;
+  }
+  addToCounter(METRICS.AUDIT_LOST, attributes, 1);
+}
+
+/**
  * Report one server-side failure: registry code, class name and sanitized
  * stack. Client-side (4xx) failures are counted by `recordApiCall` and do
  * not come through here.
@@ -386,7 +403,7 @@ function _buffered () {
 }
 
 export {
-  init, isActive, recordApiCall, reportError, flush, shutdown, knownErrorCodes,
+  init, isActive, recordApiCall, recordAuditLoss, reportError, flush, shutdown, knownErrorCodes,
   clampInterval, DEFAULT_FLUSH_INTERVAL_MS, MIN_FLUSH_INTERVAL_MS, MAX_FLUSH_INTERVAL_MS,
   _reset, _buffered
 };

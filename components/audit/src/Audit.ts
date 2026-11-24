@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { LossKind, LossReason } from './lossCounter.ts';
 const require = createRequire(import.meta.url);
 
 const { getSyslog } = require('./syslog/index.ts');
@@ -15,9 +16,11 @@ const validation = require('./validation.ts');
 const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods.ts');
 const AuditFilter = require('./AuditFilter.ts').default;
 const { AuditAccessIds } = require('./MethodContextUtils.ts');
+const lossCounter = require('./lossCounter.ts');
 const util = require('util');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
+
 /**
  * EventEmitter interface is just for tests syncing for now
  */
@@ -55,6 +58,24 @@ type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; stora
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
 type AuditStorage = { forUser (userId: string): Promise<{ createEvent (e: AuditEventLike): Promise<unknown> }> };
 
+/**
+ * Runs the part of an API call record that comes before `eventForUser`: a
+ * throw there loses the record, and is counted here because the write that
+ * would count it is never reached.
+ */
+function buildCounted<T> (kind: LossKind, build: () => T): T {
+  try {
+    return build();
+  } catch (err) {
+    lossCounter.record(kind, 'invalid-record');
+    throw err;
+  }
+}
+
+/**
+ * A record that cannot be written is counted HERE (`lossCounter`), once per
+ * record, and the error re-thrown: callers log it and never count.
+ */
 class Audit {
   _storage: AuditStorage | undefined;
 
@@ -63,6 +84,9 @@ class Audit {
   filter!: AuditFilterLike;
 
   tracer: unknown;
+
+  #storageAbsenceLogged = false;
+
   /**
    * Requires to call async init() to use
    */
@@ -92,49 +116,99 @@ class Audit {
 
   async validApiCall (context: MethodContext, _result: unknown) {
     const methodId = context.methodId;
-    if (!this.filter.isAudited(methodId)) { return; }
-    context.tracing.startSpan('audit.validApiCall');
     const userId = context?.user?.id;
-    // Some audited methods legitimately run without an access — a credential
-    // handed over by one-time key authenticates the request without one. Same
-    // substitution errorApiCall already makes; without it buildDefaultEvent
-    // dereferences null and the SUCCESS path throws while the failure path
-    // audits fine.
-    if (context.access?.id == null) {
-      context.access = { id: AuditAccessIds.INVALID };
-    }
-    const event: AuditEventLike = buildDefaultEvent(context);
-    if (context.auditIntegrityPayload != null) {
-      event.content.record = context.auditIntegrityPayload;
-    }
-    event.type = CONSTANTS.EVENT_TYPE_VALID;
-    await this.eventForUser(userId, event, methodId);
-    context.tracing.logForSpan('audit.validApiCall', {
-      userId,
-      event,
-      methodId
+    const event = buildCounted('valid', (): AuditEventLike | null => {
+      if (!this.filter.isAudited(methodId)) { return null; }
+      context.tracing.startSpan('audit.validApiCall');
+      // Some audited methods legitimately run without an access — a credential
+      // handed over by one-time key authenticates the request without one. Same
+      // substitution errorApiCall already makes; without it buildDefaultEvent
+      // dereferences null and the SUCCESS path throws while the failure path
+      // audits fine.
+      if (context.access?.id == null) {
+        context.access = { id: AuditAccessIds.INVALID };
+      }
+      const built: AuditEventLike = buildDefaultEvent(context);
+      if (context.auditIntegrityPayload != null) {
+        built.content.record = context.auditIntegrityPayload;
+      }
+      built.type = CONSTANTS.EVENT_TYPE_VALID;
+      return built;
     });
-    context.tracing.finishSpan('audit.validApiCall');
+    if (event == null) { return; }
+    try {
+      await this.eventForUser(userId, event, methodId, 'valid');
+      context.tracing.logForSpan('audit.validApiCall', {
+        userId,
+        event,
+        methodId
+      });
+    } finally {
+      context.tracing.finishSpan('audit.validApiCall');
+    }
   }
 
   async errorApiCall (context: MethodContext, error: { id?: string; message?: string }) {
     const methodId = context.methodId;
-    if (!this.filter.isAudited(methodId)) { return; }
-    context.tracing.startSpan('audit.errorApiCall');
     const userId = context?.user?.id;
-    if (context.access?.id == null) {
-      // an access loaded then refused by a later check is recorded by its id
-      context.access = { id: context.failedAccessId ?? AuditAccessIds.INVALID };
+    const event = buildCounted('error', (): AuditEventLike | null => {
+      if (!this.filter.isAudited(methodId)) { return null; }
+      context.tracing.startSpan('audit.errorApiCall');
+      if (context.access?.id == null) {
+        // an access loaded then refused by a later check is recorded by its id
+        context.access = { id: context.failedAccessId ?? AuditAccessIds.INVALID };
+      }
+      const built: AuditEventLike = buildDefaultEvent(context);
+      built.type = CONSTANTS.EVENT_TYPE_ERROR;
+      built.content.id = error.id;
+      built.content.message = error.message;
+      return built;
+    });
+    if (event == null) { return; }
+    try {
+      await this.eventForUser(userId, event, methodId, 'error');
+    } finally {
+      context.tracing.finishSpan('audit.errorApiCall');
     }
-    const event: AuditEventLike = buildDefaultEvent(context);
-    event.type = CONSTANTS.EVENT_TYPE_ERROR;
-    event.content.id = error.id;
-    event.content.message = error.message;
-    await this.eventForUser(userId, event, methodId);
-    context.tracing.finishSpan('audit.errorApiCall');
   }
 
-  async eventForUser (userId: string | undefined, event: AuditEventLike, _methodId?: string) {
+  async eventForUser (userId: string | undefined, event: AuditEventLike, _methodId?: string, kind: LossKind = 'event') {
+    // What failed, should the write below throw; also the losses that do not.
+    let reason: LossReason = 'invalid-record';
+    let silentLoss: LossReason | null = null;
+    try {
+      const { syslog, storage } = this.#checked(userId, event);
+      if (this.syslog && syslog) {
+        try {
+          this.syslog.eventForUser(userId, event);
+        } catch (err) {
+          // The mirror must not cost the record kept in the audit storage.
+          silentLoss = 'syslog-failed';
+          logger.error('Failed to send an audit record to syslog', err);
+        }
+      }
+      if (storage) {
+        if (this.storage == null) {
+          silentLoss = 'storage-unavailable';
+          if (!this.#storageAbsenceLogged) {
+            this.#storageAbsenceLogged = true;
+            logger.error('No audit storage: audit records are not stored');
+          }
+        } else {
+          reason = 'storage-write-failed';
+          const userStorage = await this.storage.forUser(userId!);
+          await userStorage.createEvent(event);
+        }
+      }
+    } catch (err) {
+      lossCounter.record(kind, reason);
+      throw err;
+    }
+    if (silentLoss != null) lossCounter.record(kind, silentLoss);
+  }
+
+  /** Validates the record, gives it an id, and tells where it has to go. */
+  #checked (userId: string | undefined, event: AuditEventLike): { syslog?: boolean; storage?: boolean } {
     logger.debug('eventForUser: ' +
             userId +
             ' ' +
@@ -164,14 +238,7 @@ class Audit {
     // null-id row, which is the worse of the two. Assign it here, above both.
     if (event.id == null) event.id = cuid();
 
-    const isAudited = this.filter.isAudited(methodId) as { syslog?: boolean; storage?: boolean };
-    if (this.syslog && isAudited.syslog) {
-      this.syslog.eventForUser(userId, event);
-    }
-    if (this.storage && isAudited.storage) {
-      const userStorage = await this.storage.forUser(userId!);
-      await userStorage.createEvent(event);
-    }
+    return this.filter.isAudited(methodId) as { syslog?: boolean; storage?: boolean };
   }
 
   async reloadConfig () {
