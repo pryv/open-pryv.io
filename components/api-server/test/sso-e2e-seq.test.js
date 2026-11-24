@@ -312,6 +312,13 @@ describe('[SSOE] SSO sign-in end-to-end (mint + handoff)', function () {
     assert.strictEqual(mint.err?.httpStatus, 403);
 
     assert.deepStrictEqual(await footprint(), before, 'the refused sign-in wrote no session and no access');
+
+    // The account was found: its own trail says the sign-in failed, without the error.
+    const trail = await (await require('storages').auditStorage.forUser(user.id)).getEvents({ query: [] });
+    const failed = trail.filter((e) => e.content?.action === 'sso.failed');
+    assert.strictEqual(failed.length, 1, JSON.stringify(trail.map((e) => e.content?.action)));
+    assert.deepStrictEqual(failed[0].content.record, { userId: user.id, provider: PROVIDER, code: 'sso-failed' });
+    assert.strictEqual(trail.filter((e) => e.content?.action === 'sso.refused').length, 0);
   });
 
   it('[MLSX2] a sign-in refused after its MFA session opened ends that session, which then holds no pending place', async function () {

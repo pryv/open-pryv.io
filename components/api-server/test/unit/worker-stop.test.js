@@ -7,6 +7,7 @@
 
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 import { createWorkerStop } from '../../src/workerStop.ts';
 
 function sleep (ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
@@ -78,6 +79,26 @@ describe('[WSTP] what an API worker finishes before it stops', function () {
     await killed();
     assert.deepStrictEqual(ran, ['second']);
     assert.strictEqual(kills.length, 1);
+  });
+
+  it('[WSTP6] isStopping: while the tasks run, not before, not once the signal is raised again', async function () {
+    const { onWorkerStop, isStopping } = createWorkerStop(proc, 60_000);
+    let release;
+    onWorkerStop('slow', () => new Promise((resolve) => { release = resolve; }));
+    assert.strictEqual(isStopping(), false);
+    proc.emit('SIGINT');
+    assert.strictEqual(isStopping(), true);
+    release();
+    await killed();
+    assert.strictEqual(isStopping(), false);
+  });
+
+  it('[WSTP7] bin/server ends the worker on SIGINT only once the tasks are done', function () {
+    const source = fs.readFileSync(new URL('../../bin/server', import.meta.url), 'utf8');
+    const handler = source.slice(source.indexOf("process.on('SIGINT'"), source.indexOf('process.exit(2)'));
+    assert.ok(handler.length > 0, 'the SIGINT handler of bin/server is found');
+    // Asked after every listener of the signal ran (the stop hook may be registered after this one).
+    assert.match(handler, /setImmediate\(\(\) => \{\s*if \(isStopping\(\)\) return;/);
   });
 
   it('[WSTP5] the other signal while stopping: the worker leaves at once, once', async function () {

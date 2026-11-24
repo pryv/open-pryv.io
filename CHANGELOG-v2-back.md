@@ -18,6 +18,8 @@
 - `Audit.ts`: a refusal of an erased account is a `warn`, not a loss (`erasedAccountRefusal.ts`).
 - `workerStop.ts` (API worker): the CMC loop drain and the telemetry flush share one signal hook, one bound
   and one re-raise; `emitter.shutdown` waits for a send in progress.
+- `bin/server` on SIGINT: exits once `workerStop` is done (`isStopping`, asked after every listener ran).
+  `emitter.defaultSend`: `AbortSignal.timeout`. New user-resolved audit action `sso.failed`.
 - Tests `[IPAU*]` (`in-process-audit`, `sso-e2e-seq`, `oauth2-registry-consent`, `oauth2-e2e`), `[AGPE*]`
   (`audit-erased-account`), `[AGPG*]` (PostgreSQL storage), `[WSTP*]` (`unit/worker-stop`), `[OBSF*]`
   (`observability`). `[SD02]`: its hook starts two servers, 30 s instead of 5 s.

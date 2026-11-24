@@ -283,11 +283,15 @@ function drain () {
   return { countersOut, histogramsOut, errorsOut };
 }
 
-async function defaultSend (url: string, body: unknown, headers: Record<string, string>): Promise<void> {
+/** A send that takes longer is abandoned (counted as failed): it would hold the next flush, and a stop. */
+const SEND_TIMEOUT_MS = 10_000;
+
+async function defaultSend (url: string, body: unknown, headers: Record<string, string>, timeoutMs = SEND_TIMEOUT_MS): Promise<void> {
   const response = await fetch(url, {
     method: 'POST',
     headers: Object.assign({ 'content-type': 'application/json' }, headers),
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs)
   });
   if (!response.ok) {
     throw new Error('OTLP endpoint returned ' + response.status);
@@ -419,6 +423,6 @@ function _buffered () {
 export {
   init, isActive, recordApiCall, recordAuditLoss, reportError, flush, shutdown, knownErrorCodes,
   clampInterval, DEFAULT_FLUSH_INTERVAL_MS, MIN_FLUSH_INTERVAL_MS, MAX_FLUSH_INTERVAL_MS,
-  _reset, _buffered
+  _reset, _buffered, defaultSend as _defaultSend, SEND_TIMEOUT_MS
 };
 export type { EmitterConfig };
