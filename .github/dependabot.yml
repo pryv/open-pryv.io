@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Actions are pinned to a commit: this keeps the pins current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### CI supply chain
+
+- Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`
+  (weekly, GitHub Actions only). The jobs, which also run for a release tag, no longer restore an npm cache.
+
 ### Batch audit writes
 
 - `methods/utility.ts` `callBatchApiFn`: the per-call audit runs outside the call's `try`, through

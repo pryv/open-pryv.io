@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Security: Node.js 24.22.3
+
+- The Docker image moves from Node 24.22.1 to 24.22.3, which carries the Node.js security release of
+  2026-11-10 (seven high-severity fixes, among them disclosure of process memory to an HTTP peer and an
+  uncaught exception a remote client can trigger in a TLS server, so a core that terminates TLS itself is
+  directly exposed). `engines.node` is now `>=24.22.3 <25.0.0`; the server warns at boot and
+  `bin/check-config.js` reports a problem on an older Node. Native installs: upgrade Node to 24.22.3 or
+  later and run `npm rebuild`; a host can take the Node upgrade before this release.
+- The rebuilt image also takes Debian's fixed glibc (CVE-2026-19499, CVE-2026-5435).
+
 ### Batch calls: an audit-log write failure no longer changes a call's answer
 
 - In a batch, a call whose audit record could not be written was answered with `unexpected-error`

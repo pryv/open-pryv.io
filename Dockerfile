@@ -12,11 +12,11 @@
 # native modules need below.
 # Node 24.19.0 to 24.21.x abort the process when better-sqlite3 statements are
 # garbage-collected (nodejs/node#65446); the 24.22.1 runtime does not, whichever
-# headers the addons were built against. Never pin a 24.x below 24.22.1: the
-# Node security release of 2026-10-21 (Brotli decoder RCE, TLS hostname checks)
-# is fixed from 24.22.1 on.
-# Pinned: node:24.22.1-trixie-slim.
-FROM node:24-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea
+# headers the addons were built against. Never pin a 24.x below 24.22.3: the
+# Node security release of 2026-11-10 (HTTP/1 and HTTP/2 memory disclosure,
+# remote crash of a TLS server) is fixed from 24.22.3 on.
+# Pinned: node:24.22.3-trixie-slim.
+FROM node:24-trixie-slim@sha256:4d00acb4bcc42c454c4eb801526f7ad7f772ea3bd4fd168c5cc2e384abcbb9d4
 
 WORKDIR /app
 

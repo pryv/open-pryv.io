@@ -2,12 +2,11 @@
 
 ## Prerequisites
 
-- **Node.js** 24.x, **24.22.1 or later** (matches `engines.node` in `package.json`; the Docker
-  image pins 24.22.1). Earlier 24.x releases carry the vulnerabilities fixed by the Node.js security
-  release of 2026-10-21 (among them a Brotli decoder flaw reachable through the server's outbound
-  HTTP calls). Node 24.19.0 to 24.21.x also abort the process when a SQLite statement is
+- **Node.js** 24.x, **24.22.3 or later** (matches `engines.node` in `package.json`; the Docker
+  image pins 24.22.3). Earlier 24.x releases carry the vulnerabilities fixed by the Node.js security
+  releases of 2026-10-21 and 2026-11-10 (among them a remote crash of a TLS server). Node 24.19.0 to 24.21.x also abort the process when a SQLite statement is
   garbage-collected ([nodejs/node#65446](https://github.com/nodejs/node/issues/65446)), and SQLite
-  is the default audit engine. After moving a host to 24.22.1, rebuild the native modules
+  is the default audit engine. After moving a host to 24.22.3, rebuild the native modules
   (`npm rebuild`) so they match the runtime. See "Node major bumps" below.
 - **Database**: PostgreSQL 14+ (default) or SQLite (bundled — alternative for low-volume / single-user deployments)
 - **rqlite** — distributed SQLite used for the platform DB. The `rqlited` binary is bundled under `bin-ext/` after `just setup-dev-env` (Docker image: `/app/bin-ext/rqlited`). `bin/master.js` spawns and supervises it; no manual install needed in single- or multi-core deployments.
@@ -935,7 +934,7 @@ curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-`setup_24.x` installs the LATEST 24.x, which must be 24.22.1 or later. A host held on an earlier
+`setup_24.x` installs the LATEST 24.x, which must be 24.22.3 or later. A host held on an earlier
 24.x (the previous advice was to hold 24.18.1) has to be released and upgraded, then its native
 modules rebuilt (check `node -v` on every host):
 
@@ -947,7 +946,7 @@ node -v
 npm rebuild
 ```
 
-`node -v` must print v24.22.1 or later. Run `npm rebuild` in the install directory, as the user
+`node -v` must print v24.22.3 or later. Run `npm rebuild` in the install directory, as the user
 that owns it, so the native modules match the new runtime. You may hold the package again
 (`sudo apt-mark hold nodejs`) to control when Node moves; never move to an earlier 24.x.
 
