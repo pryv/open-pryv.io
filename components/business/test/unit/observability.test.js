@@ -753,6 +753,23 @@ describe('[OBSU] observability choke point', function () {
       assert.deepStrictEqual(ended, [2, 1]);
     });
 
+    it('[OBSF4] a telemetry endpoint that does not answer is given up after the timeout', async function () {
+      const http = require('node:http');
+      const sockets = new Set();
+      const server = http.createServer(() => { /* never answers */ });
+      server.on('connection', (s) => { sockets.add(s); });
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      try {
+        const started = Date.now();
+        await assert.rejects(emitter._defaultSend('http://127.0.0.1:' + server.address().port + '/v1/metrics', {}, {}, 200), (err) => err.name === 'TimeoutError');
+        assert.ok(Date.now() - started < 5000);
+        assert.strictEqual(emitter.SEND_TIMEOUT_MS, 10_000);
+      } finally {
+        for (const s of sockets) s.destroy();
+        await new Promise((resolve) => server.close(resolve));
+      }
+    });
+
     it('[OBSF3] shutdown of an inactive emitter sends nothing', async function () {
       await observability.shutdown();
       assert.deepStrictEqual(emitter._buffered().counters, {});

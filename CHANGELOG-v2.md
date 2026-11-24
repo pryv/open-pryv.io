@@ -39,9 +39,14 @@
   `audit.onUserDelete: keep`, and whose base and audit storage are both PostgreSQL, remove them once with
   `DELETE FROM audit_events a WHERE NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = a.user_id);`
   (with `keep`, these rows are the trails kept on purpose).
-- **Telemetry is sent when a core stops.** On a normal stop (SIGTERM) each API worker sends what it has
+- **Telemetry is sent when a core stops.** On a normal stop each API worker sends what it has
   aggregated, within 2 seconds, so a restart no longer loses up to one reporting interval. Still lost: a
-  worker that is killed or crashes, and an endpoint that does not answer in that time.
+  worker that is killed or crashes, and an endpoint that does not answer in that time. The same holds for
+  SIGINT (Ctrl+C on a core in the foreground). A telemetry send is abandoned after 10 seconds (it had no
+  limit).
+- A third-party sign-in that fails after its account was found (its session or its hand-off could not be
+  made) is recorded in that account's audit log as `sso.failed` (provider and a coarse code, no error). It
+  was `sso.refused`, without the account, in syslog only.
 
 ### Lost audit records are counted (new admin route, new telemetry metric)
 

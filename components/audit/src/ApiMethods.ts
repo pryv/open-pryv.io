@@ -152,9 +152,11 @@ const ALL_METHODS = [
   'oauth.client.metadata_refused',
   // Third-party sign-in (OIDC relying party). Emitted from routes/sso.ts's
   // onIdentity (a bare api.call bypasses the method-wrapper audit, like oauth2).
-  // sso.login is user-resolved (the signed-in account's trail); sso.refused has
-  // no resolvable user at emit time (no-account / unproved email / mint error).
+  // sso.login is user-resolved (the signed-in account's trail); sso.failed too:
+  // the account was found, its session or hand-off could not be made;
+  // sso.refused has no resolvable user at emit time (no account, unproved email).
   'sso.login',
+  'sso.failed',
   'sso.refused',
   // MFA removed from outside the account's own session (a recovery code, an
   // admin reset). Emitted directly via audit.eventForUser() from the mfa and

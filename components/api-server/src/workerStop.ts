@@ -6,8 +6,9 @@
  */
 
 /**
- * What an API worker finishes before it ends on SIGTERM (or on SIGINT, where
- * the process has no handler of its own ending it at once, as bin/server has).
+ * What an API worker finishes before it ends on SIGTERM or SIGINT. A
+ * listener of the process's own that ends it (bin/server on SIGINT) first asks
+ * `isStopping()`, and acts on the signal raised again.
  *
  * A signal listener replaces Node's default exit: the signal is raised again,
  * once, when every task is done or after a bound (inside the master's own,
@@ -26,7 +27,7 @@ type ProcessLike = {
 const BOUND_MS = 2_000;
 const SIGNALS: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
 
-function createWorkerStop (proc: ProcessLike = process, boundMs = BOUND_MS): { onWorkerStop: (name: string, task: Task) => void } {
+function createWorkerStop (proc: ProcessLike = process, boundMs = BOUND_MS): { onWorkerStop: (name: string, task: Task) => void; isStopping: () => boolean } {
   const tasks = new Map<string, Task>();
   let hooked = false;
   let left = false;
@@ -53,9 +54,14 @@ function createWorkerStop (proc: ProcessLike = process, boundMs = BOUND_MS): { o
     for (const signal of SIGNALS) proc.once(signal, () => stop(signal));
   }
 
-  return { onWorkerStop };
+  /** True while the tasks run: a listener of its own that ends the process waits for the signal raised again. */
+  function isStopping (): boolean {
+    return stopping && !left;
+  }
+
+  return { onWorkerStop, isStopping };
 }
 
-const { onWorkerStop } = createWorkerStop();
+const { onWorkerStop, isStopping } = createWorkerStop();
 
-export { onWorkerStop, createWorkerStop };
+export { onWorkerStop, isStopping, createWorkerStop };

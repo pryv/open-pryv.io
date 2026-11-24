@@ -98,10 +98,12 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   // Dedicated SSO audit row. onIdentity dispatches via a bare api.call that
   // bypasses the method-wrapper audit (same as oauth2), so it must emit its own,
   // and fail-soft: an audit-backend hiccup must never deny a sign-in (mirrors
-  // the oauth2 audit policy). `sso.login` is user-resolved (the account's trail);
-  // `sso.refused` has no resolvable user (no-account / unproved / mint error) and
-  // routes to syslog only. Payload carries the provider + coarse outcome, no PII.
-  async function emitSsoAudit (event: 'sso.login' | 'sso.refused', payload: { userId?: string | null; provider: string; code?: string; mfa?: boolean }): Promise<void> {
+  // the oauth2 audit policy). `sso.login` and `sso.failed` (the account was
+  // found, its session or hand-off could not be made) are user-resolved (the
+  // account's trail); `sso.refused` has no resolvable user (no account,
+  // unproved email) and routes to syslog only. Payload carries the provider +
+  // coarse outcome, no PII.
+  async function emitSsoAudit (event: 'sso.login' | 'sso.failed' | 'sso.refused', payload: { userId?: string | null; provider: string; code?: string; mfa?: boolean }): Promise<void> {
     try {
       if (config.get('audit:active') !== true) return;
       // Loaded on demand, not at module scope: the audit singleton must not be
@@ -143,12 +145,13 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
 
     const username = outcome.username;
     const appId = `sso-${claims.provider}`;
+    let mintCtx: InstanceType<typeof MethodContext> | null = null;
     try {
       // 1) Mint the session. Server-internal, token-less context, exactly the
       //    shape auth.login runs on (init loads the user, no access). No custom
       //    auth step: the identity is already proven by the IdP, and running an
       //    operator hook here is neither needed nor wanted.
-      const mintCtx = new MethodContext({ name: 'sso', ip: null }, username, null, null, {}, {}, null);
+      mintCtx = new MethodContext({ name: 'sso', ip: null }, username, null, null, {}, {}, null);
       await mintCtx.init();
       mintCtx.methodId = 'auth.ssoLogin';
       const login = await callUnrecorded(mintCtx, { username, appId, origin: '' });
@@ -195,7 +198,8 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
       // No downgrade: a mint or handoff failure NEVER falls back to putting the
       // token in the URL. Uniform coarse error; detail to the server trail.
       logger.error(`sso: session mint / handoff failed for provider "${claims.provider}"`, err);
-      await emitSsoAudit('sso.refused', { provider: claims.provider, code: 'sso-failed' });
+      const userId = mintCtx?.user?.id;
+      await emitSsoAudit(userId != null ? 'sso.failed' : 'sso.refused', { ...(userId != null ? { userId } : {}), provider: claims.provider, code: 'sso-failed' });
       return toFragment('ssoError=sso-failed');
     }
   }

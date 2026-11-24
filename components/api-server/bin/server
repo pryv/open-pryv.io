@@ -4,6 +4,7 @@
 
 const Server = require('../src/server.ts').default;
 const { getApplication } = require('api-server/src/application.ts');
+const { isStopping } = require('../src/workerStop.ts');
 
 const loadCommonMeta = require('../src/methods/helpers/setCommonMeta.ts').loadSettings;
 
@@ -21,8 +22,13 @@ const logger = getLogger('serverRoot');
     logger.info('Server stopped.');
   });
   process.on('SIGINT', () => {
-    logger.warn('Received SIGINT. Exiting...');
-    process.exit(2);
+    // What the worker finishes first (src/workerStop.ts) raises SIGINT again.
+    // Its listener may come after this one: asked once every listener ran.
+    setImmediate(() => {
+      if (isStopping()) return;
+      logger.warn('Received SIGINT. Exiting...');
+      process.exit(2);
+    });
   });
 
   // Start the server
