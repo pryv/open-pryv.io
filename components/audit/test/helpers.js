@@ -47,9 +47,13 @@ base.init({
     // (e.g. userLocalDirectory) are available when audit creates its storage.
     await require('storages').init();
     await audit.init();
-    // These tests write for ids that are not accounts; a storage that refuses
-    // them is tested where accounts are erased (audit-erased-account).
-    audit.storage.refuseUnindexedUsers?.(false);
+    // These tests write for ids that are not accounts. A storage that refuses
+    // such records is tested where accounts are erased (audit-erased-account);
+    // here it never does, also when the application starts the audit again.
+    if (audit.storage.refuseUnindexedUsers != null) {
+      audit.storage.refuseUnindexedUsers(false);
+      audit.storage.refuseUnindexedUsers = () => false;
+    }
     global.audit = audit;
   },
   globals: {
