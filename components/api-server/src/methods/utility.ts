@@ -197,8 +197,21 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
       return next(errors.tooManyResults(totalBudget));
     }
     next();
+    /** Audit one batched call. The call is already decided: a failing audit
+     * write is logged, never answered (as on the single-call transports). */
+    async function auditBatchedCall (call: ApiCall, outcome: 'success' | 'error', write: (a: AuditModule) => Promise<void>) {
+      if (!isAuditActive || !audit) return;
+      try {
+        await write(audit);
+      } catch (auditErr) {
+        logger.error('Failed to audit a batched call (' + outcome + '): ' + call.method +
+          ' for pryv://' + context.user.username, auditErr);
+      }
+    }
     async function executeCall (call: ApiCall) {
       const remaining = Math.max(totalBudget - itemsUsed, 1);
+      let callResult: unknown;
+      let obj: unknown;
       try {
         countCall(call.method);
         // update methodId to match the call todo
@@ -212,14 +225,11 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
         context.auditScopedStreamCount = undefined;
         context.resultArrayLimit = remaining;
         // Perform API call
-        const result = await fromCallback((cb: (err: unknown, res: unknown) => void) => api.call(context, call.params, cb)) as { toObject: (cb: (err: unknown, res: unknown) => void) => void };
-        // Drain the result FIRST so streamed reads finish counting, THEN audit —
-        // otherwise a batched events.get audits a false recordCount: 0.
-        const obj = await fromCallback((cb: (err: unknown, res: unknown) => void) => result.toObject(cb));
+        const res = await fromCallback((cb: (err: unknown, res: unknown) => void) => api.call(context, call.params, cb)) as { toObject: (cb: (err: unknown, res: unknown) => void) => void };
+        callResult = res;
+        obj = await fromCallback((cb: (err: unknown, res: unknown) => void) => res.toObject(cb));
         itemsUsed += countItems(obj);
         if (itemsUsed > totalBudget) overBudget = true;
-        if (isAuditActive && audit) { await audit.validApiCall(context, result); }
-        return obj;
       } catch (err) {
         // A drain refused by the shared budget (not by the API-wide per-call
         // ceiling) is the batch going over its total.
@@ -232,9 +242,14 @@ export default async function (api: { register: (...args: unknown[]) => void; ca
           url: 'pryv://' + context.user.username
         };
         errorHandling.logError(err, reqContext, logger);
-        if (isAuditActive && audit) { await audit.errorApiCall(context, err); }
+        await auditBatchedCall(call, 'error', (a) => a.errorApiCall(context, err));
         return { error: errorHandling.getPublicErrorData(err) };
       }
+      // The result was drained FIRST so streamed reads finished counting, THEN
+      // audit: otherwise a batched events.get audits a false recordCount: 0.
+      // Outside the try: the call has taken effect, its answer stands.
+      await auditBatchedCall(call, 'success', (a) => a.validApiCall(context, callResult));
+      return obj;
     }
   }
 }

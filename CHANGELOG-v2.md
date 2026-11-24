@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Batch calls: an audit-log write failure no longer changes a call's answer
+
+- In a batch, a call whose audit record could not be written was answered with `unexpected-error`
+  although it had succeeded (a created event was stored, and a retry duplicated it), and a failure while
+  recording a failed call ended the whole batch with a 500. As for single HTTP calls and socket.io, each
+  call now keeps its own result; the audit failure is logged at `error` level
+  (`Failed to audit a batched call`). Operators should alert on that line.
+- socket.io calls and same-core delegation token issuance now log a failed audit write at `error` level
+  too (was `warn`), with its stack.
+
 ### Effective configuration of a core, secrets redacted (new admin route)
 
 Requested for compliance work: reading the safeguards a core actually runs with (for a record of

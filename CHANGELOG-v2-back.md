@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Batch audit writes
+
+- `methods/utility.ts` `callBatchApiFn`: the per-call audit runs outside the call's `try`, through
+  `auditBatchedCall`, which catches and logs a failed write (success and error audits alike); order kept:
+  call, drain, count, audit. Tests `[BAUF1]`..`[BAUF5]` (`batch-audit-failure.test.js`).
+- `socket-io/Manager.ts` audit-failure logs `warn` to `error`; `methods/delegations.ts` logs the audit
+  failure at `error` with the error object (the stack was dropped).
+
 ### Test diagnostics
 
 - boiler `SyncFileTransport` (`logs:fileSync`, the test trail `var-pryv/logs/test-sync.log`) writes each

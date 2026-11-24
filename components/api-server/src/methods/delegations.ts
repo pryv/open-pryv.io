@@ -130,9 +130,7 @@ export default async function produceDelegationsApiMethods (api: { register (...
       };
       await audit.validApiCall(context, {});
     } catch (err) {
-      logger.warn('same-core issueToken audit-write failed (continuing)', {
-        error: String((err as Error)?.message || err),
-      });
+      logger.error('same-core issueToken audit-write failed (continuing)', err);
     }
   }
 
