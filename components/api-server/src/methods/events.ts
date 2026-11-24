@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import type { EventsQueryState } from '../../../../storages/interfaces/_shared/types.ts';
 import { openUploadedFile } from './helpers/uploadedFiles.ts';
 import { claimSingleUseAccept } from './helpers/cmcAcceptClaim.ts';
+import { onWorkerStop } from '../workerStop.ts';
 import { clientFor as clusterKvClientFor } from 'messages/src/cluster_kv.ts';
 
 import type { MethodNext } from './_types.ts';
@@ -138,7 +139,6 @@ const typeRepo = new TypeRepository();
 // kept so they can be stopped at shutdown.
 type CmcRetryLoopHandle = { stopAll?: () => Promise<void> } | null;
 let cmcRetryLoop: CmcRetryLoopHandle = null;
-let cmcShutdownHooked = false;
 async function stopCmcRetryLoop (): Promise<void> {
   const handle = cmcRetryLoop;
   cmcRetryLoop = null;
@@ -739,20 +739,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     userIdsProvider: cmcLoopUserIds,
   }) as CmcRetryLoopHandle;
   // The schedulers drain at shutdown (an in-flight tick finishes, no new one
-  // starts); the worker has no other shutdown path. A signal listener
-  // replaces Node's default exit, so the signal is raised again once the
-  // drain is done (or after a short bound), and the process ends as before.
-  if (cmcRetryLoop != null && !cmcShutdownHooked) {
-    cmcShutdownHooked = true;
-    for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      process.once(signal, () => {
-        let done = false;
-        const leave = () => { if (done) return; done = true; process.kill(process.pid, signal); };
-        const bound = setTimeout(leave, 2_000);
-        stopCmcRetryLoop().catch(() => {}).finally(() => { clearTimeout(bound); leave(); });
-      });
-    }
-  }
+  // starts).
+  if (cmcRetryLoop != null) onWorkerStop('cmc-retry-loop', stopCmcRetryLoop);
 
   function applyPrerequisitesForCreation (context: MethodContext, params: EventsCreateParams, result: EventsCreateResult, next: MethodNext) {
     // Invariant: the params-validation step landed params on context.newEvent.

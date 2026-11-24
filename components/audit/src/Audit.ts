@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import type { LossKind, LossReason } from './lossCounter.ts';
 const require = createRequire(import.meta.url);
 
 const { getSyslog } = require('./syslog/index.ts');
@@ -15,9 +16,12 @@ const validation = require('./validation.ts');
 const { WITHOUT_USER_METHODS_MAP } = require('./ApiMethods.ts');
 const AuditFilter = require('./AuditFilter.ts').default;
 const { AuditAccessIds } = require('./MethodContextUtils.ts');
+const lossCounter = require('./lossCounter.ts');
+const { isErasedAccountRefusal } = require('./erasedAccountRefusal.ts') as typeof import('./erasedAccountRefusal.ts');
 const util = require('util');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
+
 /**
  * EventEmitter interface is just for tests syncing for now
  */
@@ -53,8 +57,35 @@ type AuditEventLike = {
 };
 type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; storage?: boolean } | boolean };
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
-type AuditStorage = { forUser (userId: string): Promise<{ createEvent (e: AuditEventLike): Promise<unknown> }> };
+type AuditStorage = {
+  forUser (userId: string): Promise<{ createEvent (e: AuditEventLike): Promise<unknown> }>;
+  refuseUnindexedUsers? (on: boolean): boolean;
+};
 
+/** Tracing must not replace the error of the write it traces. */
+function endSpan (tracing: Tracing, name: string): void {
+  try { tracing.finishSpan(name); } catch { /* the audit outcome stands */ }
+}
+
+/**
+ * Runs the part of an API call record that comes before `eventForUser`: a
+ * throw there loses the record, and is counted here because the write that
+ * would count it is never reached.
+ */
+function buildCounted<T> (kind: LossKind, tracing: Tracing, spanName: string, build: () => T): T {
+  try {
+    return build();
+  } catch (err) {
+    lossCounter.record(kind, 'invalid-record');
+    endSpan(tracing, spanName);
+    throw err;
+  }
+}
+
+/**
+ * A record that cannot be written is counted HERE (`lossCounter`), once per
+ * record, and the error re-thrown: callers log it and never count.
+ */
 class Audit {
   _storage: AuditStorage | undefined;
 
@@ -63,6 +94,12 @@ class Audit {
   filter!: AuditFilterLike;
 
   tracer: unknown;
+
+  #storageAbsenceLogged = false;
+
+  /** `audit.onUserDelete: keep`: the trail of an erased account stays open. */
+  #keepsErasedTrails = false;
+
   /**
    * Requires to call async init() to use
    */
@@ -82,6 +119,10 @@ class Audit {
     logger.debug('Audit initiating...');
     const config = await getConfig();
     this._storage = require('storages').auditStorage;
+    this.#keepsErasedTrails = config.get('audit:onUserDelete') === 'keep';
+    // Read again at each `init`, as the erasure reads it at each erasure.
+    const refuses = this._storage?.refuseUnindexedUsers?.(!this.#keepsErasedTrails);
+    if (refuses != null) logger.info('Audit records of accounts that are erased: ' + (refuses ? 'refused' : 'accepted'));
     this._syslog = await getSyslog();
     this.filter = new AuditFilter({
       syslogFilter: config.get('audit:syslog:filter'),
@@ -92,49 +133,112 @@ class Audit {
 
   async validApiCall (context: MethodContext, _result: unknown) {
     const methodId = context.methodId;
-    if (!this.filter.isAudited(methodId)) { return; }
-    context.tracing.startSpan('audit.validApiCall');
     const userId = context?.user?.id;
-    // Some audited methods legitimately run without an access — a credential
-    // handed over by one-time key authenticates the request without one. Same
-    // substitution errorApiCall already makes; without it buildDefaultEvent
-    // dereferences null and the SUCCESS path throws while the failure path
-    // audits fine.
-    if (context.access?.id == null) {
-      context.access = { id: AuditAccessIds.INVALID };
-    }
-    const event: AuditEventLike = buildDefaultEvent(context);
-    if (context.auditIntegrityPayload != null) {
-      event.content.record = context.auditIntegrityPayload;
-    }
-    event.type = CONSTANTS.EVENT_TYPE_VALID;
-    await this.eventForUser(userId, event, methodId);
-    context.tracing.logForSpan('audit.validApiCall', {
-      userId,
-      event,
-      methodId
+    const event = buildCounted('valid', context.tracing, 'audit.validApiCall', (): AuditEventLike | null => {
+      if (!this.filter.isAudited(methodId)) { return null; }
+      context.tracing.startSpan('audit.validApiCall');
+      // Some audited methods legitimately run without an access — a credential
+      // handed over by one-time key authenticates the request without one. Same
+      // substitution errorApiCall already makes; without it buildDefaultEvent
+      // dereferences null and the SUCCESS path throws while the failure path
+      // audits fine.
+      if (context.access?.id == null) {
+        context.access = { id: AuditAccessIds.INVALID };
+      }
+      const built: AuditEventLike = buildDefaultEvent(context);
+      if (context.auditIntegrityPayload != null) {
+        built.content.record = context.auditIntegrityPayload;
+      }
+      built.type = CONSTANTS.EVENT_TYPE_VALID;
+      return built;
     });
-    context.tracing.finishSpan('audit.validApiCall');
+    if (event == null) { return; }
+    try {
+      await this.eventForUser(userId, event, methodId, 'valid');
+      context.tracing.logForSpan('audit.validApiCall', {
+        userId,
+        event,
+        methodId
+      });
+    } finally {
+      endSpan(context.tracing, 'audit.validApiCall');
+    }
   }
 
   async errorApiCall (context: MethodContext, error: { id?: string; message?: string }) {
     const methodId = context.methodId;
-    if (!this.filter.isAudited(methodId)) { return; }
-    context.tracing.startSpan('audit.errorApiCall');
     const userId = context?.user?.id;
-    if (context.access?.id == null) {
-      // an access loaded then refused by a later check is recorded by its id
-      context.access = { id: context.failedAccessId ?? AuditAccessIds.INVALID };
+    const event = buildCounted('error', context.tracing, 'audit.errorApiCall', (): AuditEventLike | null => {
+      if (!this.filter.isAudited(methodId)) { return null; }
+      context.tracing.startSpan('audit.errorApiCall');
+      if (context.access?.id == null) {
+        // an access loaded then refused by a later check is recorded by its id
+        context.access = { id: context.failedAccessId ?? AuditAccessIds.INVALID };
+      }
+      const built: AuditEventLike = buildDefaultEvent(context);
+      built.type = CONSTANTS.EVENT_TYPE_ERROR;
+      built.content.id = error.id;
+      built.content.message = error.message;
+      return built;
+    });
+    if (event == null) { return; }
+    try {
+      await this.eventForUser(userId, event, methodId, 'error');
+    } finally {
+      endSpan(context.tracing, 'audit.errorApiCall');
     }
-    const event: AuditEventLike = buildDefaultEvent(context);
-    event.type = CONSTANTS.EVENT_TYPE_ERROR;
-    event.content.id = error.id;
-    event.content.message = error.message;
-    await this.eventForUser(userId, event, methodId);
-    context.tracing.finishSpan('audit.errorApiCall');
   }
 
-  async eventForUser (userId: string | undefined, event: AuditEventLike, _methodId?: string) {
+  async eventForUser (userId: string | undefined, event: AuditEventLike, _methodId?: string, kind: LossKind = 'event') {
+    // What failed, should the write below throw; also the losses that do not.
+    let reason: LossReason = 'invalid-record';
+    let silentLoss: LossReason | null = null;
+    try {
+      const { syslog, storage } = this.#checked(userId, event);
+      if (this.syslog && syslog) {
+        try {
+          this.syslog.eventForUser(userId, event);
+        } catch (err) {
+          // The mirror must not cost the record kept in the audit storage.
+          silentLoss = 'syslog-failed';
+          logger.error('Failed to send an audit record to syslog', err);
+        }
+      }
+      if (storage) {
+        if (this.storage == null) {
+          silentLoss = 'storage-unavailable';
+          if (!this.#storageAbsenceLogged) {
+            this.#storageAbsenceLogged = true;
+            logger.error('No audit storage: audit records are not stored');
+          }
+        } else {
+          reason = 'storage-write-failed';
+          await this.#store(this.storage, userId!, event);
+        }
+      }
+    } catch (err) {
+      lossCounter.record(kind, reason);
+      throw err;
+    }
+    if (silentLoss != null) lossCounter.record(kind, silentLoss);
+  }
+
+  /**
+   * Writes the record. One refused because its account was erased meanwhile
+   * (a call in flight) is not lost: the erasure exists to remove it.
+   */
+  async #store (storage: AuditStorage, userId: string, event: AuditEventLike): Promise<void> {
+    try {
+      const userStorage = await storage.forUser(userId);
+      await userStorage.createEvent(event);
+    } catch (err) {
+      if (this.#keepsErasedTrails || !isErasedAccountRefusal(err)) throw err;
+      logger.warn('Audit record not written: account ' + userId + ' is erased, or not in the users index');
+    }
+  }
+
+  /** Validates the record, gives it an id, and tells where it has to go. */
+  #checked (userId: string | undefined, event: AuditEventLike): { syslog?: boolean; storage?: boolean } {
     logger.debug('eventForUser: ' +
             userId +
             ' ' +
@@ -164,14 +268,7 @@ class Audit {
     // null-id row, which is the worse of the two. Assign it here, above both.
     if (event.id == null) event.id = cuid();
 
-    const isAudited = this.filter.isAudited(methodId) as { syslog?: boolean; storage?: boolean };
-    if (this.syslog && isAudited.syslog) {
-      this.syslog.eventForUser(userId, event);
-    }
-    if (this.storage && isAudited.storage) {
-      const userStorage = await this.storage.forUser(userId!);
-      await userStorage.createEvent(event);
-    }
+    return this.filter.isAudited(methodId) as { syslog?: boolean; storage?: boolean };
   }
 
   async reloadConfig () {
@@ -184,6 +281,13 @@ class Audit {
 }
 export default Audit;
 export { Audit };
+/** A call made in-process has no address: the key is left out (the published event type has it a string). */
+function recordedSource (source: unknown): unknown {
+  if (source == null || typeof source !== 'object' || (source as { ip?: unknown }).ip !== null) return source;
+  const { ip: _ip, ...rest } = source as { ip: null };
+  return rest;
+}
+
 function buildDefaultEvent (context: MethodContext): AuditEventLike {
   const time = timestamp.now();
   // When the caller's access has been versioned (serial non-null),
@@ -214,7 +318,7 @@ function buildDefaultEvent (context: MethodContext): AuditEventLike {
     modified: time,
     trashed: false,
     content: {
-      source: context.source,
+      source: recordedSource(context.source),
       action: context.methodId,
       query: context.originalQuery
     }

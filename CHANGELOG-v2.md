@@ -12,6 +12,60 @@
   later and run `npm rebuild`; a host can take the Node upgrade before this release.
 - The rebuilt image also takes Debian's fixed glibc (CVE-2026-19499, CVE-2026-5435).
 
+### Audit: in-process calls, erased accounts, telemetry at stop
+
+- **API calls the server makes for a flow are in the audit trail.** A delivery to an account of the same
+  core (`events.create`, source `local-delivery`), the one-time secret of a credential hand-off or of a
+  third-party sign-in (`sharedSecrets.create`, sources `credential-handoff` and `sso`) and the writes of an
+  OAuth consent (`events.create`, `accesses.create`, `accesses.update`, `streams.create`, source `oauth2`)
+  left no record. They now leave the record the same call leaves over HTTP, success or refusal, without
+  `source.ip` (no client connection made the call). The lookups the server makes for itself during
+  these flows are not recorded.
+- Batch calls: the record of a call no longer carries the integrity reference (`content.record`) of an
+  earlier create of the same batch.
+- **PostgreSQL audit storage: no record is left for an erased account.** With `audit.onUserDelete: erase`
+  (the default) and `storages.audit.engine: postgresql`, a call still running while its account was erased
+  could leave one audit record under the erased id. The record is now refused, and the erasure removes
+  audit records a second time once the account is gone (step `deleteAuditDataStorageAgain`, also
+  named in `stepsCompleted` of the erasure ledger). During a rolling restart a worker of an earlier
+  version still writes without the refusal. On both
+  engines a record refused for this reason is logged at `warn` and is not counted as lost. `keep` is
+  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies but
+  the refusal does not.
+  Cost: each audit record written to PostgreSQL now checks, in the same statement, that its account is
+  still indexed, and holds that entry until the record is committed. Measured: about 0.1 ms per record
+  under five concurrent writers, nothing measurable with one. With `keep` the check is off.
+  **Upgrade note**: records left by earlier versions stay. On a core that never ran with
+  `audit.onUserDelete: keep`, and whose base and audit storage are both PostgreSQL, remove them once with
+  `DELETE FROM audit_events a WHERE NOT EXISTS (SELECT 1 FROM users_index u WHERE u.user_id = a.user_id);`
+  (with `keep`, these rows are the trails kept on purpose).
+- **Telemetry is sent when a core stops.** On a normal stop (SIGTERM) each API worker sends what it has
+  aggregated, within 2 seconds, so a restart no longer loses up to one reporting interval. Still lost: a
+  worker that is killed or crashes, and an endpoint that does not answer in that time.
+
+### Lost audit records are counted (new admin route, new telemetry metric)
+
+An audit record that cannot be written leaves the call's answer unchanged and an `error` log line, as
+before. It is now also counted, so a loss can be alerted on without reading logs.
+
+- **`GET /system/audit-status`** (admin key in `Authorization`; 404 without it, not audited) answers
+  `{ audit: { active, scope, since, lost: { total, byKind, byReason, lastAt } } }`: what the answering
+  core could not write since it started. Kinds: `valid`, `error` (the record of an API call that
+  succeeded or failed), `event` (any other record). Reasons: `storage-write-failed`,
+  `storage-unavailable`, `invalid-record`, `syslog-failed`. `scope` is `core` (all the workers) or
+  `process` (the answering process only, without a master or when it does not answer). Counts only: no
+  account, method or message. Alert on `lost.total` above zero, on every core.
+- **Telemetry**, when enabled, sends the counter `audit.records.lost` with the labels
+  `audit.record.kind` and `audit.loss.reason` (the values above) and nothing else. This is an addition
+  to what a core with telemetry sends.
+- A failure to hand a record to syslog no longer prevents it from being stored in the audit storage; it is
+  logged at `error` level and counted as `syslog-failed`.
+- A core with no audit storage logs it at `error` level, once per worker, and counts each record it cannot
+  store (it was silent).
+- Not counted: a process stopped between answering a call and writing its record, a storage write that never
+  ends, syslog delivery errors reported after the call, and what a command-line tool could not write. A
+  restart sets the counts back to zero.
+
 ### Batch calls: an audit-log write failure no longer changes a call's answer
 
 - In a batch, a call whose audit record could not be written was answered with `unexpected-error`

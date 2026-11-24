@@ -14,6 +14,42 @@
 - Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`
   (weekly, GitHub Actions only). The jobs, which also run for a release tag, no longer restore an npm cache.
 
+### Audit: in-process calls, erased accounts, telemetry at stop
+
+- `methods/helpers/auditedCall.ts` `callAudited`: runs an API method in-process and records it after
+  draining, as batch and socket.io do (`localDelivery.ts`, `routes/reg/credentialHandoff.ts`,
+  `routes/sso.ts`, `routes/oauth2.ts` `apiWrite`; `apiRead` stays unrecorded). `[IPAU0]` lists the only
+  files that may dispatch without `methodCallback`. `resetAuditEnrichment` also serves `callBatch`.
+- `UserAuditDatabasePG.createEvent`: `INSERT ... SELECT` from the locked `users_index` entry when
+  `AuditStoragePG.refuseUnindexedUsers(true)` (set by `Audit.init` unless `keep`; without effect when the
+  base storage is not PostgreSQL). `importAllEvents` is not guarded (restore).
+  Cost (`test/bench/pg-audit-unindexed.bench.js`, idle Linux x86_64, audit pool 5, 40 alternating rounds of
+  1000 records): one writer, about 3.4 ms per record, no difference; five writers, about 510 us without,
+  +95 us (18 to 20 %) with, the same on one account and on five (no contention on the locked entry), of
+  which the lock is about 25 us and the guarded statement the rest.
+- `Audit.ts`: a refusal of an erased account is a `warn`, not a loss (`erasedAccountRefusal.ts`).
+- `workerStop.ts` (API worker): the CMC loop drain and the telemetry flush share one signal hook, one bound
+  and one re-raise; `emitter.shutdown` waits for a send in progress.
+- Tests `[IPAU*]` (`in-process-audit`, `sso-e2e-seq`, `oauth2-registry-consent`, `oauth2-e2e`), `[AGPE*]`
+  (`audit-erased-account`), `[AGPG*]` (PostgreSQL storage), `[WSTP*]` (`unit/worker-stop`), `[OBSF*]`
+  (`observability`). `[SD02]`: its hook starts two servers, 30 s instead of 5 s.
+
+### Lost audit records
+
+- `components/audit/src/lossCounter.ts`: counts per process, by kind and cause; tells the observability
+  facade (`recordAuditLoss`) and, from a cluster worker, the master. Counting is guarded, synchronous and in
+  memory. Only the audit object counts (`Audit.ts`: `eventForUser`, and the part of `validApiCall` /
+  `errorApiCall` before it); callers log, they never count. The one exception is the OAuth event dropped
+  before the audit object (`oauth2/src/audit.ts`).
+- `lossAggregator.ts` (master): totals of the core, answers a worker's status request;
+  `methods/helpers/auditStatusIpc.ts` (worker): 2 s, then its own counts.
+- Observability allow-list: metric `audit.records.lost`, two closed label lists (pinned equal to the audit
+  component's by `[ALRS1]`).
+- `validApiCall` / `errorApiCall` finish their tracing span when the write fails or the record cannot be built; a tracing
+  error no longer replaces the audit error.
+- Tests `[ALRS1]`..`[ALRS4]` (`observability.test.js`), `[ALRC1]`..`[ALRCA]`, `[ALRW1]`..`[ALRW8]`
+  (`audit-lost-rows.test.js`, `[ALRW6]` on a real cluster).
+
 ### Batch audit writes
 
 - `methods/utility.ts` `callBatchApiFn`: the per-call audit runs outside the call's `try`, through

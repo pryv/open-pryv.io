@@ -199,6 +199,23 @@ function recordApiCall (
 }
 
 /**
+ * Count one audit record that was not written.
+ *
+ * @param kind: 'valid' | 'error' | 'event'.
+ * @param lossReason: why, from the schema's closed list.
+ */
+function recordAuditLoss (kind: string, lossReason: string): void {
+  if (config == null) return;
+  const attributes: Attributes = { 'audit.record.kind': kind, 'audit.loss.reason': lossReason };
+  const check = validateMetric(METRICS.AUDIT_LOST, attributes, 1);
+  if (!check.ok) {
+    countDrop(check.reason);
+    return;
+  }
+  addToCounter(METRICS.AUDIT_LOST, attributes, 1);
+}
+
+/**
  * Report one server-side failure: registry code, class name and sanitized
  * stack. Client-side (4xx) failures are counted by `recordApiCall` and do
  * not come through here.
@@ -281,12 +298,25 @@ function joinUrl (base: string, path: string): string {
   return base.replace(/\/+$/, '') + path;
 }
 
+/** The sends in progress. */
+const inFlight = new Set<Promise<void>>();
+
 /**
  * Send whatever is buffered. Never throws: a send failure is counted (in
  * the NEXT interval, since the current one has already been drained) and
  * logged at warn.
  */
 async function flush (): Promise<void> {
+  const sending = flushNow();
+  inFlight.add(sending);
+  try {
+    await sending;
+  } finally {
+    inFlight.delete(sending);
+  }
+}
+
+async function flushNow (): Promise<void> {
   if (config == null) return;
   const cfg = config;
   const endMs = nowMs();
@@ -352,14 +382,14 @@ function init (cfg: EmitterConfig): void {
   if (typeof flushTimer.unref === 'function') flushTimer.unref();
 }
 
-/** Stop the timer and send whatever is left. */
+/** Stop the timer, send whatever is left, and wait for a send in progress. */
 async function shutdown (): Promise<void> {
   if (flushTimer != null) {
     clearInterval(flushTimer);
     flushTimer = null;
   }
   if (config == null) return;
-  await flush();
+  await Promise.allSettled([...inFlight, flush()]);
   config = null;
 }
 
@@ -370,6 +400,7 @@ function _reset (): void {
     flushTimer = null;
   }
   config = null;
+  inFlight.clear();
   counters.clear();
   histograms.clear();
   errorGroups.clear();
@@ -386,7 +417,7 @@ function _buffered () {
 }
 
 export {
-  init, isActive, recordApiCall, reportError, flush, shutdown, knownErrorCodes,
+  init, isActive, recordApiCall, recordAuditLoss, reportError, flush, shutdown, knownErrorCodes,
   clampInterval, DEFAULT_FLUSH_INTERVAL_MS, MIN_FLUSH_INTERVAL_MS, MAX_FLUSH_INTERVAL_MS,
   _reset, _buffered
 };

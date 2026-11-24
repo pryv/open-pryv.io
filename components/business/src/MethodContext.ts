@@ -786,10 +786,12 @@ type CustomAuthFunctionCallback = (err: Error | null | undefined) => void;
 type CustomAuthFunction = (ctx: MethodContext, cb: CustomAuthFunctionCallback) => void;
 type NodeCallback<T = unknown> = (err: unknown, value?: T) => void;
 
-type ContextSourceName = 'http' | 'socket.io' | 'hf' | 'test';
+// The last four are calls the server makes in-process, for a flow: no client
+// connection made them, so no address (`ip: null`).
+type ContextSourceName = 'http' | 'socket.io' | 'hf' | 'test' | 'local-delivery' | 'credential-handoff' | 'sso' | 'oauth2';
 type ContextSource = {
   name: ContextSourceName;
-  ip?: string;
+  ip?: string | null;
 };
 type UserDef = {
   id: string | undefined | null;

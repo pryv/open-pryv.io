@@ -884,6 +884,10 @@ if (cluster.isPrimary) {
       }
     });
 
+    // Lost audit records: workers report each one, any worker can ask for the
+    // totals of the core (GET /system/audit-status).
+    require('audit/src/lossAggregator.ts').attach(cluster);
+
     // Admin force-renew IPC. The api-server route
     // POST /system/admin/certs/force-renew runs in a worker; it sends
     // `acme:force-renew` to the master, which holds the

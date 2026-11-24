@@ -95,6 +95,7 @@ const ALL_METHODS = [
   'system.listCores',
   'system.getEventTypesStatus',
   'system.getMigrationsStatus',
+  'system.getAuditStatus',
   'system.extIdNamespaces.list',
   'system.extIdNamespaces.get',
   'system.extIdNamespaces.set',
@@ -190,6 +191,8 @@ const NOT_AUDITED_METHODS = [
   'system.getEventTypesStatus',
   // read-only storage schema status, no per-user context
   'system.getMigrationsStatus',
+  // read-only count of lost audit records, no per-user context
+  'system.getAuditStatus',
   // read-only, no per-user context
   'system.extIdNamespaces.list',
   'system.extIdNamespaces.get',

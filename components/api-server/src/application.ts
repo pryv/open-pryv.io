@@ -191,6 +191,10 @@ class Application {
       const methodIds = this.api.getMethodKeys().concat(this.systemAPI.getMethodKeys());
       const result = startFromEnv({ methodIds, serviceVersion: this.apiVersion, logger });
       if (result.activated) {
+        const { onWorkerStop } = require('./workerStop.ts');
+        const observability = require('business/src/observability/index.ts');
+        // What is aggregated since the last send goes out before the worker ends.
+        onWorkerStop('telemetry', () => observability.shutdown());
         logger.info('observability: telemetry emitter active (' + methodIds.length + ' methods)');
       } else {
         logger.debug('observability: inactive (' + result.reason + ')');

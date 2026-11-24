@@ -215,7 +215,12 @@ describe('[BAUF] audit-write failures inside a batch', function () {
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.ok(res.body.results[0].event?.id, JSON.stringify(res.body.results[0]));
     const afterCreate = await auditRows('events.create');
-    const afterBatch = await auditRows('callBatch');
+    // The record of the envelope is written after the answer.
+    let afterBatch = await auditRows('callBatch');
+    for (let i = 0; i < 100 && afterBatch.valid === beforeBatch.valid; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      afterBatch = await auditRows('callBatch');
+    }
     assert.strictEqual(afterCreate.valid, beforeCreate.valid + 1, 'one valid record for the call');
     assert.strictEqual(afterCreate.error, beforeCreate.error, 'no error record');
     assert.strictEqual(afterBatch.valid, beforeBatch.valid + 1, 'one valid record for the envelope');

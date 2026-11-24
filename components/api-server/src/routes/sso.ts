@@ -28,6 +28,7 @@ import { getPlatform } from 'platform';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { buildSsoLinkDeps } from './ssoLinkDeps.ts';
 import { MethodContext } from 'business';
+import { callAudited } from '../methods/helpers/auditedCall.ts';
 import timestamp from 'unix-timestamp';
 import { createId as cuid } from '@paralleldrive/cuid2';
 
@@ -71,10 +72,10 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
   // `sso:stateKey`, required at boot while `sso:enabled` is true.
   const stateKey = ssoStateKeyFromConfig(config);
 
-  // Promisified api dispatch: the dispatcher reads methodId off the context
-  // (set here, since we bypass the setMethodId route middleware), mirroring
-  // routes/oauth2.ts's apiCall.
-  function callMethod (context: unknown, params: unknown): Promise<SsoMintResult> {
+  // Promisified api dispatch, with no audit record of its own: for
+  // `auth.ssoLogin` only, whose record is `sso.login` / `sso.refused` (one
+  // sign-in, one record). The dispatcher reads methodId off the context.
+  function callUnrecorded (context: unknown, params: unknown): Promise<SsoMintResult> {
     return new Promise((resolve, reject) => {
       app.api.call(context, params, (err: unknown, result: unknown) => {
         if (err != null) return reject(err);
@@ -150,7 +151,7 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
       const mintCtx = new MethodContext({ name: 'sso', ip: null }, username, null, null, {}, {}, null);
       await mintCtx.init();
       mintCtx.methodId = 'auth.ssoLogin';
-      const login = await callMethod(mintCtx, { username, appId, origin: '' });
+      const login = await callUnrecorded(mintCtx, { username, appId, origin: '' });
 
       if (login.mfaToken != null) {
         // MFA active: the real token is quarantined in the MFA session; hand off
@@ -169,10 +170,10 @@ export default function mountSso (expressApp: ExpressApp, app: AppLike): void {
       //    context authenticated AS that token, the oauth2.ts precedent), and
       //    hand off only the one-time key.
       const handoffCtx = new MethodContext({ name: 'sso', ip: null }, username, login.token, null, {}, {}, null);
+      // The token was minted just above: no refusal to record before the call.
       await handoffCtx.init();
       await handoffCtx.retrieveExpandedAccess(app.storageLayer);
-      handoffCtx.methodId = 'sharedSecrets.create';
-      const handoff = await callMethod(handoffCtx, {
+      const handoff: SsoMintResult = await callAudited(app.api, handoffCtx, 'sharedSecrets.create', {
         title: 'sso-login-handoff',
         ttl: 60,
         onConsumed: { message: 'consumed' },
