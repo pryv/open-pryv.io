@@ -242,9 +242,9 @@ per-user OAuth address). These are per-core names, so they are not in the snapsh
 
 Read this before adding a core under Dokku, Kubernetes, Docker Compose, or any orchestrator that runs health checks — **adding a core can take a previously-healthy core's control plane offline** if you skip these precautions.
 
-### Quorum: a new core counts as a voter immediately
+### Quorum: a core that joins as a voter counts immediately
 
-rqlite is a Raft cluster. A new core joins **as a voter** as soon as it registers, and a Raft cluster needs a **majority** of voters reachable to elect a leader and accept platform writes:
+rqlite is a Raft cluster. A core bootstrapped with `--bootstrap-as-voter` counts **as a voter** as soon as it joins (without it, a new core is a non-voter and does not change the quorum), and a Raft cluster needs a **majority** of voters reachable to elect a leader and accept platform writes:
 
 | Voters | Majority needed | Tolerates losing |
 |---|---|---|
