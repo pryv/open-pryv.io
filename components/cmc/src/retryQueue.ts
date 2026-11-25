@@ -65,7 +65,7 @@ const require = createRequire(import.meta.url);
 
 const C = require('./constants.ts');
 const { isRetryableFailure, isPeerAccessGone, postToPeer, stripCredentials, retryAfterOf } = require('./outbound.ts');
-const { CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
+const { CAPABILITY_REFUSAL_IDS, CmcErrorIds } = require('./errorIds.ts');
 const { findDataGrantByAcceptEventId, hasBackChannel } = require('./handleAccept.ts');
 const { isAccountGoneError } = require('./accountWriteGuard.ts');
 
@@ -349,10 +349,23 @@ async function enqueueDelivery (params: {
   return event;
 }
 
-/** A terminal delivery record keeps the host, not the token. */
+/**
+ * A terminal delivery record keeps the host, not the token. A back-channel
+ * delivery also carries a credential in its body (this account's own
+ * back-channel endpoint): dropped from the body too.
+ */
 function terminalDelivery (c: RetryContent): RetryContent['delivery'] {
   if (c.delivery == null) return c.delivery;
-  return { ...c.delivery, apiEndpoint: stripCredentials(c.delivery.apiEndpoint) };
+  const delivery = { ...c.delivery, apiEndpoint: stripCredentials(c.delivery.apiEndpoint) };
+  if (c.originalType === C.ET_BACK_CHANNEL) {
+    const body = c.delivery.body as { content?: Record<string, unknown> } | null | undefined;
+    if (body?.content != null && typeof body.content === 'object') {
+      const content: Record<string, unknown> = { ...body.content };
+      delete content.apiEndpoint;
+      delivery.body = { ...body, content };
+    }
+  }
+  return delivery;
 }
 
 /** What one send of a queued delivery decided; the caller stores it. */
@@ -1110,6 +1123,12 @@ const NON_RETRYABLE_REASONS = new Set([
   // An accept naming a counterparty whose relationship was made with another
   // endpoint: a property of the stored event and the relationship.
   'cmc-incoming-accept-counterparty-endpoint-mismatch',
+  // An accept older than the one its relationship is paired with (a later
+  // accept replaced it): re-running reaches the same verdict.
+  CmcErrorIds.INCOMING_ACCEPT_SUPERSEDED,
+  // An accept whose consent already ended (withdrawn, or replaced by a newer
+  // accept of the same relationship): never minted or delivered again.
+  CmcErrorIds.ACCEPT_WITHDRAWN,
   // Scope-update verdicts are properties of the stored request and grant;
   // re-running reaches the same answer.
   'cmc-scope-request-not-found',

@@ -5,7 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { OutboundDeps, CmcAccessLike, MallAccessesLike, MallEventsLike, MallStreamsLike } from './_types.ts';
+import type { OutboundDeps, CmcAccessLike, MallAccessesLike, MallEventsLike, MallStreamsLike, RetryContext } from './_types.ts';
 import { retryAfterOf } from './outbound.ts';
 import type { Features } from './features.ts';
 
@@ -36,6 +36,8 @@ const { CmcErrorIds, CAPABILITY_REFUSAL_IDS } = require('./errorIds.ts');
 // business/src/accesses/consentEffectiveGuard.ts.
 const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffectiveGuard.ts');
 const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
+const replacedGrants: typeof import('./replacedGrants.ts') = require('./replacedGrants.ts');
+const acceptWithdrawal: typeof import('./acceptWithdrawal.ts') = require('./acceptWithdrawal.ts');
 
 type OfferShape = {
   id?: string;
@@ -121,13 +123,33 @@ async function handleAccept (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[]; createdBy?: string };
   selfIdentity: { username: string; host: string };
-  deps: { mall: MallLike } & OutboundDeps & DelegationDeps & VerifiedEmailDeps;
+  deps: { mall: MallLike; retryContext?: RetryContext } & OutboundDeps & DelegationDeps & VerifiedEmailDeps;
 }): Promise<AcceptHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
   const { mall } = deps;
 
   if (triggerEvent.type !== C.ET_ACCEPT) {
     return { ok: false, reason: 'cmc-handler-wrong-type', detail: { type: triggerEvent.type } };
+  }
+  // A replay from the retry queue is a server act, not one of the person: it
+  // must never restore a consent the person's own record says has ended. The
+  // marker lives on the trigger as stored (the queue's snapshot predates it):
+  // `withdrawal` set (the grant was deleted, revoked or replaced) refuses the
+  // replay before anything is read, minted or delivered. A read that fails is
+  // retried, never taken as a pass. On a live dispatch the trigger was just
+  // written and cannot carry the server-owned marker.
+  let acceptCreated: number | null = null;
+  if (deps.retryContext != null && typeof triggerEvent.id === 'string' && triggerEvent.id.length > 0 && mall.events?.getOne != null) {
+    let stored: Record<string, unknown> | null;
+    try {
+      stored = await mall.events.getOne(userId, triggerEvent.id);
+    } catch (err: unknown) {
+      return { ok: false, reason: 'cmc-handler-trigger-unreadable', detail: { message: String((err as Error)?.message || err) } };
+    }
+    if ((stored?.content as { withdrawal?: unknown } | null | undefined)?.withdrawal != null) {
+      return { ok: false, reason: CmcErrorIds.ACCEPT_WITHDRAWN };
+    }
+    if (typeof stored?.created === 'number') acceptCreated = stored.created;
   }
   const capabilityUrl = (triggerEvent.content as { capabilityUrl?: string })?.capabilityUrl;
   if (typeof capabilityUrl !== 'string' || capabilityUrl.length === 0) {
@@ -443,6 +465,46 @@ async function handleAccept (params: {
   //     constraint message echoed to the client).
   let dataGrantAccess: CmcAccessLike | undefined | null;
   dataGrantAccess = await findDataGrantByAcceptEventId({ mall, userId, acceptEventId: triggerEvent?.id });
+
+  // 3d. A replay of an accept the person has since replaced: a NEWER grant
+  // of the same relationship (role, counterparty, scope) exists than this
+  // accept's own grant (or than the accept itself, when it minted none). The
+  // latest accept of the person wins: nothing is minted or delivered, and an
+  // own grant the requester never paired (no back-channel) is ended and its
+  // accept marked `replaced`. A paired one is left to the newer grant's
+  // back-channel, which ends it.
+  if (deps.retryContext != null && typeof mall.accesses.get === 'function') {
+    const after = typeof dataGrantAccess?.created === 'number' ? dataGrantAccess.created : acceptCreated;
+    if (after != null && anchorScope != null) {
+      const newer = replacedGrants.newerGrantOf({
+        accesses: await mall.accesses.get(userId, {}),
+        role: isMembership ? C.ROLE_MEMBER : C.ROLE_COUNTERPARTY,
+        counterparty,
+        scopeStreamId: anchorScope,
+        after,
+        excludeId: dataGrantAccess?.id ?? null,
+      });
+      if (newer != null) {
+        const newerAcceptEventId = typeof newer.clientData?.cmc?.acceptEventId === 'string' ? newer.clientData.cmc.acceptEventId : null;
+        if (dataGrantAccess != null && !hasBackChannel(dataGrantAccess)) {
+          await deleteGrantQuietly(mall, userId, dataGrantAccess.id, deps);
+          await acceptWithdrawal.stampWithdrawalOnAccept({
+            userId,
+            relationshipCmc: dataGrantAccess.clientData?.cmc,
+            by: 'replaced',
+            accessId: dataGrantAccess.id,
+            access: dataGrantAccess,
+            replacedBy: { acceptEventId: newerAcceptEventId, accessId: newer.id },
+            deps: { mall, logger: deps.logger },
+          });
+        }
+        deps.logger?.info?.('cmc/handleAccept: a replayed accept was replaced by a newer one of the same relationship; not delivered', {
+          acceptEventId: triggerEvent.id ?? null, newerAccessId: newer.id,
+        });
+        return { ok: false, reason: CmcErrorIds.ACCEPT_WITHDRAWN, detail: { replacedBy: { acceptEventId: newerAcceptEventId, accessId: newer.id } } };
+      }
+    }
+  }
   const mintedHere = dataGrantAccess == null;
   if (dataGrantAccess == null) {
     try {

@@ -377,6 +377,14 @@ const CmcErrorIds = {
   // An offer asks a stream the plugin manages on the accepter's account
   // (the inbox, the internal subtree, a chats / collectors leaf).
   OFFER_STREAM_NOT_OFFERABLE: 'cmc-offer-stream-not-offerable',
+  // An accept re-dispatched (retry queue) whose consent already ended: its
+  // trigger carries `withdrawal` (its grant deleted, revoked or replaced), or
+  // the person accepted again since for the same counterparty and scope (a
+  // newer grant exists). Nothing is minted or delivered; permanent.
+  ACCEPT_WITHDRAWN: 'cmc-accept-withdrawn',
+  // Requester side: an accept received before the one the relationship is
+  // paired with (a later accept replaced it), refused; permanent.
+  INCOMING_ACCEPT_SUPERSEDED: 'cmc-incoming-accept-superseded',
 } as const;
 
 type CmcErrorId = (typeof CmcErrorIds)[keyof typeof CmcErrorIds];
