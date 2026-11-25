@@ -12,6 +12,28 @@
   later and run `npm rebuild`; a host can take the Node upgrade before this release.
 - The rebuilt image also takes Debian's fixed glibc (CVE-2026-19499, CVE-2026-5435).
 
+### Bundled rqlite 10.7.5
+
+- The bundled rqlite is 10.7.5 (was 10.6.0; SQLite 3.54.1, built with the patched Go toolchain and `x/net`
+  0.63.0). No data-directory step from 10.5.1 or 10.6.0: upgrade the followers first and the leader last; a
+  node can go back to them on the same data directory (INSTALL.md, "Upgrading the bundled rqlite"). Native installs:
+  `storages/engines/rqlite/scripts/setup` pins 10.7.5 and never replaces an existing binary, so replace
+  `bin-ext/rqlited` yourself while the core is stopped.
+- rqlite security fixes: a malformed inter-node request from a host that reaches the Raft port without the
+  cluster's certificate could stop `rqlited` when Raft TLS is off (10.6.4, GHSA-f4f3-px5g-gm4x); a query can
+  no longer open another database file (10.6.3, GHSA-j62w-8865-2h7x). A core whose Raft port uses mutual TLS
+  and whose HTTP API listens on loopback, the defaults of a multi-core platform, exposes neither to the
+  network. The other rqlite advisories of these releases concern its authentication file, which a core
+  does not use.
+- **Multi-core: a platform write the cluster did not carry out is an error.** While the leader restarts, a
+  follower can answer a forwarded write with HTTP 200, an error and no result. The server took that for a
+  success, so the write (a unique name, a routing row, a token, a revocation) was lost without any sign. The
+  call now fails (500), as it does when the platform store is down. A process that starts while the cluster
+  elects its leader waits for it, up to 15 seconds.
+- Multi-core: a request a follower forwards to the leader is sent once (10.6.0 sent it again after a
+  failure, so a write whose answer was lost could be applied twice), and a join that would change a
+  member's role is refused unless the member was removed first (the documented way).
+
 ### Audit: in-process calls, erased accounts, telemetry at stop
 
 - **API calls the server makes for a flow are in the audit trail.** A delivery to an account of the same
@@ -478,7 +500,7 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   without a Raft log entry per read (other reads of the name-to-core mapping stay `strong`). It
   fails, as before, while the cluster has no leader (rqlite's linearizable wait is 1 s by
   default). An external rqlited (`storages.engines.rqlite.external`) must support the
-  `linearizable` read level; the bundled version is 10.6.0. A read at `strong` or `linearizable`
+  `linearizable` read level; the bundled version is 10.7.5. A read at `strong` or `linearizable`
   that rqlite answers with no result (no leader yet) is now an error instead of "no such row".
 - **DNS response rate limit: `dns.responseRateLimit.perSecond` (default 20) and `slip` (default
   2).** Answers that need a platform lookup (a `<core>.<domain>` or `<username>.<domain>` name,
