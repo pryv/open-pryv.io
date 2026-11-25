@@ -1216,6 +1216,18 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
         assert.equal(mall.store.get('invite-1').content.status, 'accepted');
         assert.deepEqual(posted, []);
       }
+      // The duplicate-name heal path with an unreadable age: retried, not healed.
+      {
+        const mall = repairMall({ pairedAt: 3000 });
+        let gets = 0;
+        const get = mall.accesses.get;
+        mall.accesses.get = async (...a) => { if (++gets === 1) throw new Error('storage down'); return get(...a); };
+        mall.accesses.create = async (_u, params) => { mall.relationship.name = params.name; throw Object.assign(new Error('item-already-exists'), { id: 'item-already-exists' }); };
+        mall.events.getOne = async (_u, id) => { if (id === 'acc-evt-2') throw new Error('storage down'); return mall.store.get(id) ?? null; };
+        const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf({ created: undefined }), selfIdentity: SELF, deps: { mall, fetch: okFetch([]), memberSweep: sweepSpy() } });
+        assert.equal(r.reason, 'cmc-incoming-accept-age-unreadable');
+        assert.equal(mall.calls.accessesUpdated.some((u) => u.id === 'acc-rel'), false, 'not healed');
+      }
       // A later accept, or the same moment (the same accept delivered again), passes and moves the stamp; a relationship without one is healed as before.
       for (const pairedAt of [1000, 2000, undefined]) {
         const mall = repairMall({ pairedAt });

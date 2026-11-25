@@ -635,7 +635,20 @@ is one (counterparty, scope) pair on both accounts, and the latest accept wins:
   never a pass). Before the mint, a NEWER accepter-side grant of the same role, counterparty and scope than the
   accept's own grant (or than the accept, when it minted none; `replacedGrants.newerGrantOf`) refuses it the same
   way; its own grant, when the requester never paired it (no back-channel), is deleted and its accept marked
-  `replaced`. Only on a retry: a live accept was just written and cannot carry the marker. The requester-side twin
+  `replaced` (only once the delete succeeded or found it gone; another failure is retried,
+  `cmc-handler-replaced-grant-delete-failed`, nothing marked). When the requester DID pair the own grant, it took
+  this accept: the replay completes without a new delivery and the grant stands until the newer one is paired. The
+  relationship compared is the one of the own grant's stored stamps when it exists (role, counterparty, scope), and
+  its pairing is judged on the same read of the accesses. The newer grant need not be paired: if its accept then
+  fails for good, the person ends with no grant (the latest accept failed; the earlier one is not revived). A
+  deleted own `member` grant is not swept here (a mall deletion runs no route post-hook): the periodic pass sweeps
+  it as `vanished`. A trigger the person deleted (read back null, or with `deleted`) refuses the replay too.
+  Only on a retry: a live accept was just written and cannot carry the marker.
+- **A paired grant is never rolled back.** When an accept delivery is refused for good (a 4xx, a refused
+  destination), the grant is rolled back only while it carries no back-channel, judged on the grant as stored
+  now: a replay of an accept the requester already took may meet a link consumed, invalidated (an open link closed
+  after this subject joined: the response-stream hook answers `cmc-capability-invalidated` before its
+  already-joined check), expired or collected since, and the working grant is kept and the replay completes. The requester-side twin
   is the `cmc-incoming-accept-superseded` guard above (an unreadable age on a stamped relationship is retried).
 - **The back-channel delivery is retried.** A failed post of the back-channel
   to the new grant (network, timeout, 5xx, 408 / 429) is queued as a delivery

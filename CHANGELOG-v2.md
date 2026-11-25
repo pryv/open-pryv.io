@@ -16,7 +16,11 @@
   the same relationship and retries later is refused with `cmc-incoming-accept-superseded`. On the person's core, a
   queued retry of an accept is refused with `cmc-accept-withdrawn` (on the person's accept trigger, not retried)
   when the person accepted again since for the same requester and scope, or when the consent ended meanwhile (its
-  accept carries `withdrawal`): nothing is minted or delivered again.
+  accept carries `withdrawal`, or the person deleted it): nothing is minted or delivered again. A retry of an accept
+  the requester already took completes without a new delivery.
+- A retried accept delivery that the requester's core refuses for good (link invalidated, consumed or expired since,
+  destination refused) no longer deletes a consent grant the requester already paired: the working relationship is
+  kept. Before, any such refusal other than "consumed" or "already accepted" rolled the grant back.
 - The back-channel delivery that follows an accept is now retried by the retry loop when the person's core cannot be
   reached, instead of being lost.
 - **Group accounts.** The offboarding record (`consent/member-revoke-cmc`) reports a member access `residual` rather

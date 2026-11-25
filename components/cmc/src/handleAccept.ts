@@ -38,6 +38,7 @@ const { assertGrantedWithinOffer } = require('business/src/accesses/consentEffec
 const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
 const replacedGrants: typeof import('./replacedGrants.ts') = require('./replacedGrants.ts');
 const acceptWithdrawal: typeof import('./acceptWithdrawal.ts') = require('./acceptWithdrawal.ts');
+const relationshipKey: typeof import('./relationshipKey.ts') = require('./relationshipKey.ts');
 
 type OfferShape = {
   id?: string;
@@ -148,6 +149,12 @@ async function handleAccept (params: {
     }
     if ((stored?.content as { withdrawal?: unknown } | null | undefined)?.withdrawal != null) {
       return { ok: false, reason: CmcErrorIds.ACCEPT_WITHDRAWN };
+    }
+    // The person deleted the accept trigger (a personal token may) while its
+    // retry was pending: the record a replay would stand on is gone, refused
+    // the same way. A deleted event can read back by id with `deleted` set.
+    if (stored == null || stored.deleted != null) {
+      return { ok: false, reason: CmcErrorIds.ACCEPT_WITHDRAWN, detail: { reason: 'trigger-gone' } };
     }
     if (typeof stored?.created === 'number') acceptCreated = stored.created;
   }
@@ -469,39 +476,62 @@ async function handleAccept (params: {
   // 3d. A replay of an accept the person has since replaced: a NEWER grant
   // of the same relationship (role, counterparty, scope) exists than this
   // accept's own grant (or than the accept itself, when it minted none). The
-  // latest accept of the person wins: nothing is minted or delivered, and an
-  // own grant the requester never paired (no back-channel) is ended and its
-  // accept marked `replaced`. A paired one is left to the newer grant's
-  // back-channel, which ends it.
+  // latest accept of the person wins: nothing is minted or delivered again.
+  //   - an own grant the requester never paired (no back-channel) is ended
+  //     and its accept marked `replaced` (only once the delete succeeded; a
+  //     failed delete is retried, nothing marked);
+  //   - an own grant the requester DID pair took this accept: it stands, the
+  //     replay completes without a new delivery, and a later pairing of the
+  //     newer grant ends it (replacedGrants.endReplacedGrants).
+  // The relationship is the one of the own grant's stored stamps when it
+  // exists (not of the offer as read now), and the own grant is judged on the
+  // same read of the accesses as the newer one.
+  let alreadyTaken = false;
   if (deps.retryContext != null && typeof mall.accesses.get === 'function') {
+    const accesses = await mall.accesses.get(userId, {});
+    const own = dataGrantAccess == null ? null : (accesses.find((a) => a?.id === dataGrantAccess!.id) ?? null);
     const after = typeof dataGrantAccess?.created === 'number' ? dataGrantAccess.created : acceptCreated;
-    if (after != null && anchorScope != null) {
-      const newer = replacedGrants.newerGrantOf({
-        accesses: await mall.accesses.get(userId, {}),
-        role: isMembership ? C.ROLE_MEMBER : C.ROLE_COUNTERPARTY,
-        counterparty,
-        scopeStreamId: anchorScope,
-        after,
-        excludeId: dataGrantAccess?.id ?? null,
-      });
-      if (newer != null) {
+    const ownCmc = own?.clientData?.cmc;
+    const relationship = ownCmc != null && typeof ownCmc.role === 'string'
+      ? { role: ownCmc.role, counterparty: ownCmc.counterparty, scopeStreamId: relationshipKey.scopeOfAccess(own) }
+      : { role: isMembership ? C.ROLE_MEMBER : C.ROLE_COUNTERPARTY, counterparty, scopeStreamId: anchorScope };
+    if (after != null && relationship.scopeStreamId != null) {
+      const newer = replacedGrants.newerGrantOf({ accesses, ...relationship, after, excludeId: dataGrantAccess?.id ?? null });
+      if (newer != null && own != null && hasBackChannel(own)) {
+        alreadyTaken = true;
+        dataGrantAccess = own;
+      } else if (newer != null) {
         const newerAcceptEventId = typeof newer.clientData?.cmc?.acceptEventId === 'string' ? newer.clientData.cmc.acceptEventId : null;
-        if (dataGrantAccess != null && !hasBackChannel(dataGrantAccess)) {
-          await deleteGrantQuietly(mall, userId, dataGrantAccess.id, deps);
+        const replacedBy = { acceptEventId: newerAcceptEventId, accessId: newer.id };
+        if (dataGrantAccess != null) {
+          // Gone from the list read above: deleted meanwhile, as wanted.
+          if (own != null) {
+            try {
+              if (mall.accesses.delete == null) throw new Error('mall-no-delete');
+              await mall.accesses.delete(userId, { id: own.id });
+            } catch (err: unknown) {
+              if ((err as { id?: unknown })?.id !== 'unknown-resource') {
+                deps.logger?.error?.('cmc/handleAccept: the grant of a replaced accept could not be deleted; retried', {
+                  acceptEventId: triggerEvent.id ?? null, dataGrantAccessId: own.id, error: String((err as Error)?.message || err),
+                });
+                return { ok: false, reason: 'cmc-handler-replaced-grant-delete-failed', detail: { dataGrantAccessId: own.id, replacedBy } };
+              }
+            }
+          }
           await acceptWithdrawal.stampWithdrawalOnAccept({
             userId,
-            relationshipCmc: dataGrantAccess.clientData?.cmc,
+            relationshipCmc: (own ?? dataGrantAccess).clientData?.cmc,
             by: 'replaced',
             accessId: dataGrantAccess.id,
-            access: dataGrantAccess,
-            replacedBy: { acceptEventId: newerAcceptEventId, accessId: newer.id },
+            access: own ?? dataGrantAccess,
+            replacedBy,
             deps: { mall, logger: deps.logger },
           });
         }
         deps.logger?.info?.('cmc/handleAccept: a replayed accept was replaced by a newer one of the same relationship; not delivered', {
           acceptEventId: triggerEvent.id ?? null, newerAccessId: newer.id,
         });
-        return { ok: false, reason: CmcErrorIds.ACCEPT_WITHDRAWN, detail: { replacedBy: { acceptEventId: newerAcceptEventId, accessId: newer.id } } };
+        return { ok: false, reason: CmcErrorIds.ACCEPT_WITHDRAWN, detail: { replacedBy } };
       }
     }
   }
@@ -596,6 +626,14 @@ async function handleAccept (params: {
   }
 
   // 4. Deliver the accept response back to the requester via capability.
+  // Not again for a replay the requester already took (3d: its grant carries
+  // the back-channel): the relationship stands, the replay completes.
+  if (alreadyTaken) {
+    deps.logger?.info?.('cmc/handleAccept: a replayed accept the requester already took (back-channel present): completed without a new delivery', {
+      acceptEventId: triggerEvent?.id, dataGrantAccessId: dataGrantAccess.id,
+    });
+    return acceptedResult();
+  }
   const capabilityId: string | null = ((offer?.content as { capabilityId?: string } | undefined)?.capabilityId ?? null) as string | null;
   if (typeof capabilityId !== 'string' || capabilityId.length === 0) {
     return {
@@ -645,16 +683,19 @@ async function handleAccept (params: {
     // access in place; the outbound retry queue will re-attempt delivery. A
     // refused destination is as permanent as a 4xx: same roll-back.
     const refused = delivery?.response?.reason === 'refused';
+    const permanent = delivery?.response?.reason === 'http-4xx' || refused;
     const rejection = delivery?.response?.reason === 'http-4xx' ? capabilityRejectionReason(delivery?.response?.body) : null;
-    if ((rejection === CmcErrorIds.CAPABILITY_CONSUMED || rejection === CmcErrorIds.CAPABILITY_ALREADY_ACCEPTED_BY_YOU) &&
-        hasBackChannel(dataGrantAccess)) {
-      // The requester already took THIS accept: an earlier delivery whose
-      // answer was lost (a timeout) went through, and its back-channel has
-      // arrived on the grant. The relationship stands: complete, keep the grant.
-      deps.logger?.info?.('cmc/handleAccept: the capability was already used by this accept (back-channel present): completed', {
-        acceptEventId: triggerEvent?.id, dataGrantAccessId: dataGrantAccess.id, reason: rejection,
+    // A grant the requester already paired (its back-channel arrived) is never
+    // rolled back, whatever the capability answers now: an earlier delivery
+    // whose answer was lost went through, and the link may have been consumed,
+    // invalidated (an open link closed after this subject joined), expired or
+    // collected since. Judged on the grant as stored now.
+    const paired = permanent && hasBackChannel(await currentGrant(mall, userId, dataGrantAccess, deps));
+    if (paired) {
+      deps.logger?.info?.('cmc/handleAccept: the requester already took this accept (back-channel present): completed, grant kept', {
+        acceptEventId: triggerEvent?.id, dataGrantAccessId: dataGrantAccess.id, reason: rejection ?? delivery?.response?.reason,
       });
-    } else if (delivery?.response?.reason === 'http-4xx' || refused) {
+    } else if (permanent) {
       try {
         if (mall.accesses.delete != null) {
           await mall.accesses.delete(userId, { id: dataGrantAccess.id });
@@ -685,26 +726,48 @@ async function handleAccept (params: {
   // Anchor streams already provisioned at step 2a (so they could be
   // referenced in the data-grant access permissions).
 
-  return {
-    ok: true,
-    capabilityId: ((offer?.content as { capabilityId?: string } | undefined)?.capabilityId ?? null) as string | null,
-    dataGrantAccessId: dataGrantAccess!.id!,
-    dataGrantApiEndpoint: dataGrantAccess!.apiEndpoint!,
-    offerEventId: offer!.id!,
-    backChannelApiEndpoint: null, // filled in by a follow-up pass when the requester returns it
-    anchorStreamIds: preCreatedAnchorIds,
-    // Return the resolved counterparty (the REQUESTER's identity) so the
-    // dispatcher can stamp `content.from = {username, host}` on the
-    // accept trigger event. Without this, listAcceptedRelationships's
-    // mapper falls back to `content.acceptedBy` (which carries the
-    // accepter's own data-grant endpoint with its token stripped, not the
-    // requester identity), and the patient app can't discover WHICH doctor
-    // each relationship belongs to.
-    requesterIdentity: counterparty,
-    // The resolved features, stamped on the trigger by the dispatcher over
-    // whatever the client wrote, so the app reads the relationship's value.
-    features,
-  };
+  return acceptedResult();
+
+  function acceptedResult (): AcceptHandlerResult {
+    return {
+      ok: true,
+      capabilityId: ((offer?.content as { capabilityId?: string } | undefined)?.capabilityId ?? null) as string | null,
+      dataGrantAccessId: dataGrantAccess!.id!,
+      dataGrantApiEndpoint: dataGrantAccess!.apiEndpoint!,
+      offerEventId: offer!.id!,
+      backChannelApiEndpoint: null, // filled in by a follow-up pass when the requester returns it
+      anchorStreamIds: preCreatedAnchorIds,
+      // Return the resolved counterparty (the REQUESTER's identity) so the
+      // dispatcher can stamp `content.from = {username, host}` on the
+      // accept trigger event. Without this, listAcceptedRelationships's
+      // mapper falls back to `content.acceptedBy` (which carries the
+      // accepter's own data-grant endpoint with its token stripped, not the
+      // requester identity), and the patient app can't discover WHICH doctor
+      // each relationship belongs to.
+      // Non-null: checked before anything is minted (narrowing does not reach this closure).
+      requesterIdentity: counterparty!,
+      // The resolved features, stamped on the trigger by the dispatcher over
+      // whatever the client wrote, so the app reads the relationship's value.
+      features,
+    };
+  }
+}
+
+/**
+ * The grant as stored now (the copy in hand may predate the requester's
+ * back-channel), null when it is gone; the copy in hand when it cannot be
+ * read.
+ */
+async function currentGrant (mall: MallLike, userId: string, grant: CmcAccessLike, deps: OutboundDeps): Promise<CmcAccessLike | null> {
+  if (typeof grant?.id !== 'string') return grant;
+  try {
+    return await findAccessById(mall, userId, grant.id);
+  } catch (err: unknown) {
+    deps.logger?.debug?.('cmc/handleAccept: the grant could not be re-read; judged on the copy in hand', {
+      dataGrantAccessId: grant.id, error: String((err as Error)?.message || err),
+    });
+    return grant;
+  }
 }
 
 type AcceptFailure = { ok: false; reason: string; detail?: unknown };

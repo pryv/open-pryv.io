@@ -30,7 +30,12 @@
   `relationshipEnded` leaves a keyless record `residual` / `grant-unknown` while its expiry is ahead. The
   close-out runs right after the heal. An unreadable accept age on a stamped relationship is a retryable failure.
   A terminal queued back-channel delivery drops the endpoint from its body.
-- Tests: `[CMCSA]` e2e `CSA05`-`CSA16` (`components/api-server/test/cmc-second-accept.test.js`), unit `CSA20`-`CSA41`
+- `handleAccept` 3d: a paired own grant completes the replay without delivering (`acceptedResult`); the own grant
+  is judged and the relationship taken from the same read of the accesses (its stored stamps); the `replaced`
+  marker only after the delete succeeded (else `cmc-handler-replaced-grant-delete-failed`, retryable); a deleted
+  trigger refuses the replay. The delivery roll-back tests the back-channel on the grant as stored now
+  (`currentGrant`) before any roll-back.
+- Tests: `[CMCSA]` e2e `CSA05`-`CSA16` (`components/api-server/test/cmc-second-accept.test.js`), unit `CSA20`-`CSA47`
   in `components/cmc/test`; `[MR44]`, `[HMA11]`, `[HMA13]` updated to the new verdicts and fixtures.
 
 ### Tests

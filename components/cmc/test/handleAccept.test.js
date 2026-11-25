@@ -1417,11 +1417,16 @@ describe('[CMCHA] cmc/handleAccept', () => {
       ({ r } = await replay(mall));
       assert.equal(r.reason, CmcErrorIds.ACCEPT_WITHDRAWN);
       assert.equal(mall.calls.accessesCreated.length, 0, 'no grant minted over the newer one');
-      // A paired own grant: refused, not deleted (the newer grant's back-channel ends it).
+      // A paired own grant: the requester took this accept; it stands, the
+      // replay completes without a new delivery (the newer grant's back-channel
+      // ends it if that one is ever paired).
       mall = replayMall({ accesses: [grant('g-1', 1000, { acceptEventId: TRIGGER.id, backChannelApiEndpoint: 'https://bc@example.com/' }), grant('g-2', 2000)] });
-      ({ r } = await replay(mall));
-      assert.equal(r.reason, CmcErrorIds.ACCEPT_WITHDRAWN);
+      ({ r, calls } = await replay(mall));
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.dataGrantAccessId, 'g-1');
+      assert.equal(calls.filter((c) => c.init.method === 'POST').length, 0, 'not delivered again');
       assert.deepEqual(mall.calls.accessesDeleted, []);
+      assert.equal(mall.store.get(TRIGGER.id).content.withdrawal, undefined);
       // Not the same relationship (another scope, another requester, an older grant): the replay goes on.
       for (const other of [grant('g-3', 2000, { scopeStreamId: SCOPE + ':other' }), grant('g-4', 2000, { counterparty: { username: 'provider-b', host: 'example.com' } }), grant('g-5', 100)]) {
         mall = replayMall({ accesses: [own, other] });
@@ -1429,6 +1434,87 @@ describe('[CMCHA] cmc/handleAccept', () => {
         assert.equal(r.ok, true, other.id + ': ' + JSON.stringify(r));
         assert.deepEqual(mall.calls.accessesDeleted, []);
       }
+    });
+
+    it('[CSA43] the pairing of the own grant is judged on the same read as the newer grant: a back-channel stamped after the first read keeps it', async () => {
+      const unpaired = grant('g-1', 1000, { acceptEventId: TRIGGER.id });
+      const paired = grant('g-1', 1000, { acceptEventId: TRIGGER.id, backChannelApiEndpoint: 'https://bc@example.com/' });
+      const mall = replayMall({ accesses: [unpaired, grant('g-2', 2000)] });
+      // The own grant is first found unpaired; the requester's back-channel lands before the list of 3d is read.
+      let gets = 0;
+      mall.accesses.get = async () => (++gets <= 2 ? [unpaired, grant('g-2', 2000)] : [paired, grant('g-2', 2000)]);
+      const { r, calls } = await replay(mall);
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(mall.calls.accessesDeleted, [], 'a paired grant is never deleted');
+      assert.equal(calls.filter((c) => c.init.method === 'POST').length, 0);
+    });
+
+    it('[CSA44] the replaced marker is written only once the own grant is gone: a delete that fails is retried and marks nothing; one already gone (unknown-resource) is marked', async () => {
+      let mall = replayMall({ accesses: [grant('g-1', 1000, { acceptEventId: TRIGGER.id }), grant('g-2', 2000)] });
+      mall.accesses.delete = async () => { throw new Error('storage down'); };
+      let { r } = await replay(mall);
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-handler-replaced-grant-delete-failed');
+      assert.equal(isRetryableReason(r.reason, r.detail), true);
+      assert.equal(mall.store.get(TRIGGER.id).content.withdrawal, undefined, 'nothing marked while the grant lives');
+      mall = replayMall({ accesses: [grant('g-1', 1000, { acceptEventId: TRIGGER.id }), grant('g-2', 2000)] });
+      mall.accesses.delete = async () => { throw Object.assign(new Error('gone'), { id: 'unknown-resource' }); };
+      ({ r } = await replay(mall));
+      assert.equal(r.reason, CmcErrorIds.ACCEPT_WITHDRAWN);
+      assert.equal(mall.store.get(TRIGGER.id).content.withdrawal?.by, 'replaced');
+    });
+
+    it('[CSA45] the relationship is the one of the own grant\'s stored stamps, not of the offer as read now', async () => {
+      // The offer now names another scope than the one the own grant was made for.
+      const moved = { ...OFFER, content: { ...OFFER.content, originStreamId: SCOPE + ':moved' } };
+      const mall = replayMall({ accesses: [grant('g-1', 1000, { acceptEventId: TRIGGER.id }), grant('g-2', 2000)] });
+      const { r } = await replay(mall, [{ status: 200, body: { events: [moved] } }, { status: 201, body: { event: { id: 'r1' } } }]);
+      assert.equal(r.reason, CmcErrorIds.ACCEPT_WITHDRAWN, JSON.stringify(r));
+      assert.deepEqual(mall.calls.accessesDeleted.map((d) => d.id), ['g-1']);
+    });
+
+    it('[CSA46] a replay whose accept trigger the person deleted is refused for good (nothing left to stand on)', async () => {
+      for (const gone of [null, { id: TRIGGER.id, deleted: 1700 }]) {
+        const mall = replayMall();
+        mall.events.getOne = async () => gone;
+        const { r, calls } = await replay(mall);
+        assert.equal(r.reason, CmcErrorIds.ACCEPT_WITHDRAWN);
+        assert.deepEqual(r.detail, { reason: 'trigger-gone' });
+        assert.equal(isRetryableReason(r.reason, r.detail), false);
+        assert.deepEqual([calls.length, mall.calls.accessesCreated.length], [0, 0]);
+      }
+    });
+  });
+
+  describe('[CMCHA-KEEP] a grant the requester paired is never rolled back', () => {
+    const PAIRED = {
+      id: 'acc-paired',
+      type: 'app',
+      apiEndpoint: 'https://paired-tok@recipient.example.com/',
+      clientData: { cmc: { role: 'counterparty', acceptEventId: 'evt-accept', counterparty: { username: 'provider-a', host: 'example.com' }, backChannelApiEndpoint: 'https://bc@example.com/' } },
+    };
+
+    it('[CSA47] a replayed delivery refused for good (link invalidated, token expired, destination refused) keeps a grant that carries the back-channel and completes; an unpaired one is still rolled back', async () => {
+      const refusals = [
+        { status: 400, body: { error: { id: 'invalid-operation', data: { id: 'cmc-capability-invalidated' } } } },
+        { status: 403, body: { error: { id: 'invalid-access-token' } } },
+        Object.assign(new Error('peer call refused'), { code: 'EPEERREFUSED', kind: 'address', host: '10.0.0.1' }),
+      ];
+      for (const refusal of refusals) {
+        const mall = fakeMall();
+        mall.accesses.get = async () => [PAIRED];
+        const { fetch } = fakeFetch([{ status: 200, body: { events: [VALID_OFFER] } }, refusal]);
+        const r = await handleAccept({ userId: 'u1', triggerEvent: ACCEPT_TRIGGER, selfIdentity: { username: 'alice', host: 'recipient.example.com' }, deps: { mall, fetch } });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.equal(r.dataGrantAccessId, 'acc-paired');
+        assert.deepEqual(mall.calls.accessesDeleted, [], 'the paired grant is kept');
+      }
+      const mall = fakeMall();
+      mall.accesses.get = async () => [{ ...PAIRED, clientData: { cmc: { ...PAIRED.clientData.cmc, backChannelApiEndpoint: null } } }];
+      const { fetch } = fakeFetch([{ status: 200, body: { events: [VALID_OFFER] } }, refusals[0]]);
+      const r = await handleAccept({ userId: 'u1', triggerEvent: ACCEPT_TRIGGER, selfIdentity: { username: 'alice', host: 'recipient.example.com' }, deps: { mall, fetch } });
+      assert.equal(r.reason, 'cmc-capability-invalidated');
+      assert.deepEqual(mall.calls.accessesDeleted.map((d) => d.id), ['acc-paired']);
     });
   });
 });

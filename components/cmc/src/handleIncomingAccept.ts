@@ -545,6 +545,9 @@ async function handleIncomingAccept (params: {
     if (!mayHealRelationship(existing, grantedApiEndpoint, capabilityIdToConsume)) {
       return refuseForeignHeal(existing, deps.logger);
     }
+    if (age === 'unreadable' && receivedAtOf(existing) != null) {
+      return { ok: false, reason: 'cmc-incoming-accept-age-unreadable', detail: { backChannelAccessId: existing.id ?? null } };
+    }
     if (isSupersededAccept(existing, acceptReceivedAt)) {
       return refuseSupersededAccept(existing, acceptEvent, deps.logger);
     }
