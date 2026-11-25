@@ -145,8 +145,8 @@ const warnings = [];
 
 // Node runtime floor (engines.node is advisory only; master.js warns at boot).
 const [nodeMajor, nodeMinor, nodePatch] = process.versions.node.split('.').map(Number);
-if (nodeMajor < 24 || (nodeMajor === 24 && (nodeMinor < 22 || (nodeMinor === 22 && nodePatch < 1)))) {
-  problems.push(`Node.js ${process.version} is below 24.22.1 (security fixes of 2026-10-21): upgrade Node and run \`npm rebuild\`, see INSTALL.md "Node major bumps"`);
+if (nodeMajor < 24 || (nodeMajor === 24 && (nodeMinor < 22 || (nodeMinor === 22 && nodePatch < 3)))) {
+  problems.push(`Node.js ${process.version} is below 24.22.3 (security fixes of 2026-11-10): upgrade Node and run \`npm rebuild\`, see INSTALL.md "Node major bumps"`);
 }
 
 // service.* required (mirrors REQUIRED_SERVICE_FIELDS in config/plugins/config-validation.js)

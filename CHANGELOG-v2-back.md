@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.0.0-rc.88 - 2026-11-25
+
+### CI supply chain
+
+- Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`
+  (weekly, GitHub Actions only). The jobs, which also run for a release tag, no longer restore an npm cache.
+
 ### PostgreSQL time limits: per-batch cursor, maintenance pool, guarded clients
 
 - `DatabasePG`: the pools of a request-serving process (`utils.isRequestServingProcess()`, now

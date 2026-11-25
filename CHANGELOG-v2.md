@@ -20,6 +20,16 @@
 - OAuth: the first authorization on such an offer is checked too, and answers `400 invalid_grant` when the address is
   not proved. Offers without the field are unchanged.
 
+### Security: Node.js 24.22.3
+
+- The Docker image moves from Node 24.22.1 to 24.22.3, which carries the Node.js security release of
+  2026-11-10 (seven high-severity fixes, among them disclosure of process memory to an HTTP peer and an
+  uncaught exception a remote client can trigger in a TLS server, so a core that terminates TLS itself is
+  directly exposed). `engines.node` is now `>=24.22.3 <25.0.0`; the server warns at boot and
+  `bin/check-config.js` reports a problem on an older Node. Native installs: upgrade Node to 24.22.3 or
+  later and run `npm rebuild`; a host can take the Node upgrade before this release.
+- The rebuilt image also takes Debian's fixed glibc (CVE-2026-19499, CVE-2026-5435).
+
 ## 2.0.0-rc.87 - 2026-11-18
 
 ### OAuth2 registry clients: the session of a composed re-consent holds the request only (behaviour change)

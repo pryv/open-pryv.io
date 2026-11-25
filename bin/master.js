@@ -123,13 +123,13 @@ if (cluster.isPrimary) {
     const error = (msg) => logger.error(msg);
 
     // engines.node is advisory only (npm does not enforce it), so a native host
-    // held on an older Node would run on silently. Below 24.22.1 the runtime
-    // lacks the Node.js security fixes of 2026-10-21 (Brotli decoder, TLS
-    // hostname checks) and 24.19 to 24.21 abort on SQLite statement GC.
+    // held on an older Node would run on silently. Below 24.22.3 the runtime
+    // lacks the Node.js security fixes of 2026-11-10 (HTTP memory disclosure,
+    // remote crash of a TLS server) and 24.19 to 24.21 abort on SQLite statement GC.
     const [nodeMajor, nodeMinor, nodePatch] = process.versions.node.split('.').map(Number);
-    if (nodeMajor < 24 || (nodeMajor === 24 && (nodeMinor < 22 || (nodeMinor === 22 && nodePatch < 1)))) {
-      warn(`Node.js ${process.version} is below 24.22.1, the minimum this release supports ` +
-        '(security fixes of 2026-10-21): upgrade Node and run `npm rebuild`, see INSTALL.md "Node major bumps".');
+    if (nodeMajor < 24 || (nodeMajor === 24 && (nodeMinor < 22 || (nodeMinor === 22 && nodePatch < 3)))) {
+      warn(`Node.js ${process.version} is below 24.22.3, the minimum this release supports ` +
+        '(security fixes of 2026-11-10): upgrade Node and run `npm rebuild`, see INSTALL.md "Node major bumps".');
     }
 
     // oauth.consentUrl: not a boot-time required key (OAuth has no enable
