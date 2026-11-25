@@ -114,17 +114,17 @@ export async function recordAccessWrite (userId: string, action: AccessWriteActi
 
 /**
  * `deleteAccessChain`, recorded: one record naming the access and what went
- * with it. A deletion that fails once the access is gone is recorded too, with
- * the access alone.
+ * with it. A deletion that fails once the access is gone is recorded too.
  */
 export async function deleteAccessChainRecorded (user: DeletionUser, params: DeletionParams, write: AccessWrite): Promise<Awaited<ReturnType<typeof deleteAccessChain>>> {
   const before = await liveAccess(user, params.id);
+  const gone: string[] = [];
   let outcome: Awaited<ReturnType<typeof deleteAccessChain>>;
   try {
-    outcome = await deleteAccessChain(user, params);
+    outcome = await deleteAccessChain(user, { ...params, onDeleted: (ids) => { gone.push(...ids); } });
   } catch (err) {
-    if (before != null && await liveAccess(user, params.id) == null) {
-      await recordAccessWrite(user.id, 'accesses.deleted', { ...write, access: before });
+    if (before != null && (gone.length > 0 || await liveAccess(user, params.id) == null)) {
+      await recordAccessWrite(user.id, 'accesses.deleted', { ...write, access: before, related: gone });
     }
     throw err;
   }
@@ -158,7 +158,8 @@ function kindOf (access: AccessRef): { kind?: string } {
   } | null | undefined;
   const stamp = clientData?.cmc?.role ?? clientData?.delegation?.kind;
   if (typeof stamp === 'string' && /^[a-z][a-z-]{0,31}$/.test(stamp)) return { kind: stamp };
-  if (clientData?.oauth?.dataGrantId != null) return { kind: 'oauth-session' };
+  // Stamped on a session, and on what a session creates.
+  if (clientData?.oauth?.dataGrantId != null) return { kind: access.type === 'app' ? 'oauth-session' : 'oauth-session-child' };
   if (clientData?.oauth?.grantOf != null) return { kind: 'oauth-grant' };
   return {};
 }

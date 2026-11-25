@@ -506,10 +506,10 @@ export function createSessions (env: GlueEnv) {
 
   async function revokeAccessLocal ({ userId, username, accessId, clientId }: {
     userId: string; username: string; accessId: string; clientId: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const accessesRepository = accessesRepo(storageLayer, 'oauth2.revokeAccessLocal');
     const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
-    if (access == null) return;
+    if (access == null) return false;
     const user = { id: userId, username };
     await fromCallback((cb: (e: unknown, r?: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
     // The cache validates tokens on `expires` only, never `deleted`.
@@ -520,6 +520,7 @@ export function createSessions (env: GlueEnv) {
     // still carries it, released if this session was its last holder.
     if (typeof access.alias === 'string') await releaseAliasesIfUnused(user, [access.alias]);
     pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
+    return true;
   }
 
   // ---------------------------------------------------------------------

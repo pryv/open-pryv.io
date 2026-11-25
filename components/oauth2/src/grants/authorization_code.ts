@@ -63,10 +63,10 @@ export type AuthCodeAccessResolver = (params: {
   permissions?: Array<Record<string, unknown>>;
 } | null>;
 
-/** Delete an access from this core's storage (best-effort orphan cleanup). */
+/** Delete an access from this core's storage (best-effort orphan cleanup); false when there was none to delete. */
 export type AuthCodeAccessRevoker = (params: {
   userId: string; username: string; accessId: string; clientId: string;
-}) => Promise<void>;
+}) => Promise<boolean | void>;
 
 export type AuthCodeDeps = {
   config: { get (key: string): unknown };
@@ -216,8 +216,8 @@ export async function handleAuthorizationCode (
       }
     } else if (row.coreId === coreId && username != null && typeof deps.revokeAccessLocal === 'function') {
       try {
-        await deps.revokeAccessLocal({ userId: row.userId, username, accessId: row.accessId, clientId: row.clientId });
-        await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, accessId: row.accessId, reason: 'issuance failed' });
+        const revoked = await deps.revokeAccessLocal({ userId: row.userId, username, accessId: row.accessId, clientId: row.clientId });
+        if (revoked !== false) await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, accessId: row.accessId, reason: 'issuance failed' });
       } catch (err) {
         // Best-effort: the access then dies by its own (short) TTL.
         logServerError('authorization_code: orphan access revoke failed', err);

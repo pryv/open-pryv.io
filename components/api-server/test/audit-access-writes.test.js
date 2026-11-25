@@ -105,8 +105,14 @@ describe('[ASDW] audit records of the accesses the server writes', function () {
     let found = await added(() => mall.accesses.update(username, { id, update: { permissions: [{ streamId: 's', level: 'read' }] } }));
     assert.strictEqual(found.length, 1, JSON.stringify(found));
     assertRecord(found[0], 'accesses.changed', id, { source: 'cmc', accessType: 'app', kind: 'data-grant', cause: 'plugin', changed: ['permissions'] });
-    found = await added(() => mall.accesses.update(username, { id, update: { expires: Date.now() / 1000 + 1000 } }));
+    const expires = Date.now() / 1000 + 1000;
+    found = await added(() => mall.accesses.update(username, { id, update: { expires } }));
     assert.deepStrictEqual(found.map((e) => e.content.record.changed), [['expires']]);
+    // What the access already has, written back: nothing changed.
+    found = await added(() => mall.accesses.update(username, { id, update: { permissions: [{ streamId: 's', level: 'read' }], expires } }));
+    assert.deepStrictEqual(found, []);
+    found = await added(() => mall.accesses.update(username, { id, update: { permissions: [{ streamId: 's', level: 'manage' }], expires } }));
+    assert.deepStrictEqual(found.map((e) => e.content.record.changed), [['permissions']]);
     found = await added(() => mall.accesses.update(username, { id, update: { clientData: { cmc: { role: 'data-grant', mark: 1 } } } }));
     assert.deepStrictEqual(found, []);
   });
@@ -153,7 +159,7 @@ describe('[ASDW] audit records of the accesses the server writes', function () {
     assert.deepStrictEqual(found.map((e) => e.content.action), ['accesses.changed', 'accesses.changed'], JSON.stringify(found));
     const byId = Object.fromEntries(found.map((e) => [e.content.record.accessId, e]));
     assertRecord(byId[session.id], 'accesses.changed', session.id, { source: 'oauth2', accessType: 'app', kind: 'oauth-session', cause: 'grant-changed', grantId: grant.id, changed: ['permissions'] });
-    assertRecord(byId[child.attrs.id], 'accesses.changed', child.attrs.id, { source: 'oauth2', accessType: 'shared', kind: 'oauth-session', cause: 'grant-changed', grantId: grant.id, changed: ['permissions'] });
+    assertRecord(byId[child.attrs.id], 'accesses.changed', child.attrs.id, { source: 'oauth2', accessType: 'shared', kind: 'oauth-session-child', cause: 'grant-changed', grantId: grant.id, changed: ['permissions'] });
     assert.deepStrictEqual(await added(() => reconcileSessionsOfGrant(who(), grant.id)), [], 'nothing to change');
 
     await setGrant([{ streamId: 'elsewhere', level: 'read' }]);
@@ -188,6 +194,7 @@ describe('[ASDW] audit records of the accesses the server writes', function () {
     for (const late of [false, true]) {
       const clientId = 'c-' + cuid();
       const grant = await appAccess({ clientData: { oauth: { grantOf: clientId } } });
+      const session = await appAccess({ name: 'oauth:' + clientId, clientData: { oauth: { dataGrantId: grant.id } } });
       let restore;
       if (late) {
         // after the rows are deleted
@@ -207,7 +214,8 @@ describe('[ASDW] audit records of the accesses the server writes', function () {
       } finally {
         restore();
       }
-      assert.deepStrictEqual(found.map((e) => [e.content.action, e.content.record.accessId]), [['accesses.deleted', grant.id]], 'late: ' + late);
+      assert.deepStrictEqual(found.map((e) => [e.content.action, e.content.record.accessId, e.content.record.related]),
+        [['accesses.deleted', grant.id, [session.id]]], 'late: ' + late);
     }
   });
 

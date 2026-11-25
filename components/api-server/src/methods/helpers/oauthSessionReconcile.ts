@@ -206,7 +206,6 @@ export async function reconcileSessionsOfGrant (user: SessionUser, grantId: stri
   // of its webhooks resolved again against the narrower permissions.
   async function afterRewrite (row: AccessRow, permissions: PermissionEntry[], modified: number): Promise<void> {
     if (typeof row.token === 'string') cache.unsetAccessLogic(user.id, { id: row.id, token: row.token });
-    await recordAccessWrite(user.id, 'accesses.changed', { ...GRANT_CHANGED, access: row, changed: ['permissions'] });
     notifyScopedAccessChange(user.username, { id: row.id, type: row.type, permissions: permissions as Array<{ streamId?: string }> }, 'update');
     await reindexAccessNonFatal(user.username, { id: row.id, type: row.type, expires: row.expires, modified });
     try {
@@ -214,6 +213,7 @@ export async function reconcileSessionsOfGrant (user: SessionUser, grantId: stri
     } catch (err) {
       logger.error(`webhooks of access ${row.id} not re-scoped after the change of its grant ${base}: ${(err as Error).message}`);
     }
+    await recordAccessWrite(user.id, 'accesses.changed', { ...GRANT_CHANGED, access: row, changed: ['permissions'] });
   }
   let sessionDeleted = false;
   for (const session of sessions) {

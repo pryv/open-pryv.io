@@ -36,8 +36,9 @@
   `accesses.all` does.** A session removed because its issuance failed now leaves `oauth.token.revoked`
   (reason `issuance failed`). The breach-scope report lists these records without counting them as calls of
   the access.
-- The audit rows of `accesses.update` and `accesses.delete` name the access (`content.record.accessId`), and
-  the accesses deleted with it (`related`). The id was only in the path, which is not recorded.
+- The audit rows of successful `accesses.update` and `accesses.delete` calls name the access
+  (`content.record.accessId`), and the accesses deleted with it (`related`). The id was only in the path,
+  which is not recorded (a refused call still does not name it).
 - `audit.storage.filter` / `audit.syslog.filter`: an entry that matches no method is reported at boot and by
   `bin/check-config.js` (it selected nothing, silently).
 - Batch calls: the record of a call no longer carries the integrity reference (`content.record`) of an

@@ -15,6 +15,7 @@ import { getErasuresLocal } from 'business/src/auth/erasures.ts';
 import { getLogger } from '@pryv/boiler';
 import { deleteAccessChainRecorded, recordAccessWrite } from './accessWriteAudit.ts';
 import { reconcileSessionsOfGrant } from './oauthSessionReconcile.ts';
+import { samePermissionKeys } from '../../routes/oauth2/types.ts';
 
 import type { MallLike } from 'cmc/src/_types.ts';
 
@@ -40,7 +41,16 @@ import type { MallLike } from 'cmc/src/_types.ts';
 let cached: MallLike | null = null;
 
 type NodeCallback = (err: Error | null, result?: unknown) => void;
-type PluginAccess = { id: string; type?: string; clientData?: { delegation?: unknown } | null };
+type PluginAccess = { id: string; type?: string; permissions?: Permissions | null; expires?: number | null; clientData?: { delegation?: unknown } | null };
+type Permissions = Parameters<typeof samePermissionKeys>[0];
+
+/** What a record of a changed access is about. */
+const RECORDED_FIELDS = ['permissions', 'expires'] as const;
+
+function sameValue (field: typeof RECORDED_FIELDS[number], before: unknown, after: unknown): boolean {
+  if (field === 'expires') return (before ?? null) === (after ?? null);
+  return samePermissionKeys((before ?? []) as Permissions, (after ?? []) as Permissions);
+}
 
 /** The plugin an access belongs to: the delegation plugin stamps its own. */
 function pluginOf (access: PluginAccess | null | undefined): 'cmc' | 'delegation' {
@@ -114,13 +124,10 @@ async function buildMallForCmc (): Promise<MallLike> {
   };
   const adapterUpdate = updatable.update.bind(updatable);
   updatable.update = async (userId, params) => {
+    const before = params?.update != null && RECORDED_FIELDS.some((field) => field in params.update)
+      ? await fromCallback((cb: NodeCallback) => storageLayer.accesses.findOne({ id: userId }, { id: params.id }, null, cb)) as PluginAccess | null
+      : null;
     const updated = await adapterUpdate(userId, params);
-    const changed = (['permissions', 'expires'] as const).filter((field) => params?.update != null && field in params.update);
-    if (changed.length > 0) {
-      await recordAccessWrite(userId, 'accesses.changed', {
-        source: pluginOf(updated), cause: 'plugin', access: { id: params.id, type: updated?.type, clientData: updated?.clientData }, changed
-      });
-    }
     if (Array.isArray(params?.update?.permissions)) {
       try {
         const u = await usersRepository.getUserById(userId);
@@ -128,6 +135,13 @@ async function buildMallForCmc (): Promise<MallLike> {
       } catch (err: unknown) {
         getLogger('cmc:mall-accesses-adapter').warn(`OAuth sessions of access ${params.id} not re-cut after its update: ${(err as Error)?.message ?? err}`);
       }
+    }
+    // A plugin may write back the permissions an access already has.
+    const changed = before == null ? [] : RECORDED_FIELDS.filter((field) => field in params.update && !sameValue(field, before[field], params.update[field]));
+    if (changed.length > 0) {
+      await recordAccessWrite(userId, 'accesses.changed', {
+        source: pluginOf(updated), cause: 'plugin', access: { id: params.id, type: before?.type, clientData: updated?.clientData ?? before?.clientData }, changed
+      });
     }
     return updated;
   };
