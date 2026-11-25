@@ -58,6 +58,10 @@ function initBoiler () {
     }, {
       pluginAsync: require('../config/plugins/systemStreams')
     }, {
+      // the purge records what it deletes
+      scope: 'default-audit-path',
+      file: path.resolve(__dirname, '../config/plugins/default-path.js')
+    }, {
       plugin: require('../config/plugins/core-identity')
     }]
   });
@@ -1827,6 +1831,14 @@ async function configRegions () {
 
 // The purge runs this core's account teardown (api-server), loaded on use.
 async function purgeOnThisCore (clientId) {
+  // Each access deleted leaves its record in the account's audit trail.
+  // The purge is done also when the audit cannot be opened: it is said, not refused.
+  try {
+    const { getConfig } = require('@pryv/boiler');
+    if ((await getConfig()).get('audit:active')) await require('audit').default.init();
+  } catch (err) {
+    console.error('Warning: the audit could not be opened, the deletions are not recorded in the accounts\' audit trails: ' + err.message);
+  }
   const { purgeClientGrants } = require('api-server/src/methods/helpers/oauthGrantPurge.ts');
   return await purgeClientGrants(clientId);
 }

@@ -24,7 +24,8 @@ import cache from 'cache';
 import { pubsub, USERNAME_BASED_ACCESSES_CHANGED } from 'messages';
 import { fromCallback } from 'utils';
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
-import { deleteAccessChain, accessChainIds, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
+import { accessChainIds, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
+import { deleteAccessChainRecorded, recordAccessWrite } from '../../methods/helpers/accessWriteAudit.ts';
 // CMC back-channel revoke notify: pure DI HTTP sender, no MethodContext needed.
 import * as cmc from 'cmc';
 import * as cmcRelationshipKey from 'cmc/src/relationshipKey.ts';
@@ -32,6 +33,7 @@ import { selfIdentityHost } from '../../methods/helpers/selfIdentityHost.ts';
 import { accessesRepo } from './types.ts';
 
 const cmcOutbound = cmc.outbound;
+const REUSE = { source: 'oauth2', cause: 'refresh-token-reuse' } as const;
 
 /** The session glue revokeSession needs (see sessions.ts). */
 type SessionLookup = {
@@ -56,7 +58,7 @@ export function createRevoke (env: GlueEnv, sessions?: SessionLookup) {
     if (username == null) return false;
     const access = await sessions.findOAuthSessionAccess(userId, username, accessId, clientId);
     if (access == null || access.deleted != null) return false;
-    const outcome = await deleteAccessChain({ id: userId, username }, { id: accessId });
+    const outcome = await deleteAccessChainRecorded({ id: userId, username }, { id: accessId }, { source: 'oauth2', cause: 'client-revocation' });
     return outcome.deleted;
   }
 
@@ -89,10 +91,10 @@ export function createRevoke (env: GlueEnv, sessions?: SessionLookup) {
     // and so does the end of this function, for a chain the bare fallback
     // below soft-deleted.
     const aliases: string[] = typeof dataGrant?.alias === 'string' ? [dataGrant.alias] : [];
-    if (dataGrant != null && typeof dataGrant.id === 'string' && dataGrant.deleted == null) await deleteOrForce(dataGrant.id);
+    if (dataGrant != null && typeof dataGrant.id === 'string' && dataGrant.deleted == null) await deleteOrForce(dataGrant);
     for (const session of await liveSessions()) {
       if (typeof session.alias === 'string') aliases.push(session.alias);
-      await deleteOrForce(session.id);
+      await deleteOrForce(session);
     }
     try {
       await releaseAliasesIfUnused(user, aliases);
@@ -108,11 +110,15 @@ export function createRevoke (env: GlueEnv, sessions?: SessionLookup) {
     // A failing side effect (a webhook store error) must not leave the chain
     // alive: fall back to the bare soft-delete of the whole chain (the access,
     // what it manages, the grant's sessions and what they created).
-    async function deleteOrForce (id: string): Promise<void> {
+    async function deleteOrForce (access: DataGrant): Promise<void> {
+      const id = access.id;
       try {
-        await deleteAccessChain(user, { id });
+        await deleteAccessChainRecorded(user, { id }, REUSE);
       } catch (err: unknown) {
         logger.warn('oauth2.revokeChain: teardown of ' + id + ' failed, soft-deleting its chain bare', err);
+        // Gone already: deleteAccessChainRecorded recorded it, a late side effect failed.
+        const live = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
+          accessesRepository.findOne(user, { id }, null, cb));
         let ids = [id];
         try { ids = await accessChainIds(user, id); } catch (readErr: unknown) {
           logger.warn('oauth2.revokeChain: could not read the chain of ' + id + ', soft-deleting it alone', readErr);
@@ -120,6 +126,7 @@ export function createRevoke (env: GlueEnv, sessions?: SessionLookup) {
         for (const chainId of ids) {
           await fromCallback((cb: (e: unknown, r?: unknown) => void) => accessesRepository.delete(user, { id: chainId }, cb));
         }
+        if (live != null) await recordAccessWrite(userId, 'accesses.deleted', { ...REUSE, access, related: ids });
       }
     }
 

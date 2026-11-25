@@ -104,4 +104,19 @@ function filter (filter: AuditFilter): void {
   }
 }
 
-export { eventForUser, eventWithoutUser, filter };
+/**
+ * The entries of `methods.include` / `methods.exclude` that match no audited
+ * method: never an error (an entry of another release must not stop a boot),
+ * but the records the operator meant are not selected.
+ */
+function unknownFilterMethods (filter: AuditFilter | null | undefined): string[] {
+  const entries: unknown[] = [filter?.methods?.include, filter?.methods?.exclude].flatMap((list) => Array.isArray(list) ? list : []);
+  return [...new Set(entries.filter((m): m is string => typeof m === 'string'))].filter((m) => {
+    if (m === 'all' || ALL_METHODS_MAP[m] === true) return false;
+    const parts = m.split('.');
+    const isAggregate = parts.length === 2 && parts[1] === 'all';
+    return !(isAggregate && ALL_METHODS.some((known: string) => known.startsWith(parts[0] + '.')));
+  });
+}
+
+export { eventForUser, eventWithoutUser, filter, unknownFilterMethods };

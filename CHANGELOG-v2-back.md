@@ -20,6 +20,14 @@
   draining, as batch and socket.io do (`localDelivery.ts`, `routes/reg/credentialHandoff.ts`,
   `routes/sso.ts`, `routes/oauth2.ts` `apiWrite`; `apiRead` stays unrecorded). `[IPAU0]` lists the only
   files that may dispatch without `methodCallback`. `resetAuditEnrichment` also serves `callBatch`.
+- `methods/helpers/accessWriteAudit.ts`: `recordAccessWrite`, and `deleteAccessChainRecorded` for every
+  deletion that is not the API route. The CMC and delegation writes are recorded once, where their accesses
+  adapter is wired (`cmcMall.ts`); nothing changes in the two components. `[ASDWD]` pins where a chain is
+  deleted and where access rows are written directly. `bin/oauth-client.js` initialises the audit for the
+  purge (a warning, never a refusal, when it cannot). Tests `[ASDW*]` (`audit-access-writes`), and in
+  `oauth2-registry-consent`, `oauth2-e2e`, `oauth2-registry-purge`, `oauth2-per-user-audience`, `AuditFilter`,
+  `breachScopeReport`.
+- `unknownFilterMethods` (`audit/src/validation.ts`), boot warning `[CVAF*]`.
 - `UserAuditDatabasePG.createEvent`: `INSERT ... SELECT` from the locked `users_index` entry when
   `AuditStoragePG.refuseUnindexedUsers(true)` (set by `Audit.init` unless `keep`; without effect when the
   base storage is not PostgreSQL). `importAllEvents` is not guarded (restore).

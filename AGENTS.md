@@ -273,7 +273,7 @@ key of `config/default-config.yml` that no rule names; an unclassified key is re
 - [Event types](https://pryv.github.io/event-types/): the curated type catalogue.
 - [System streams](https://pryv.github.io/customer-resources/system-streams/): how account fields map to streams.
 - [Getting started](https://pryv.github.io/getting-started/): first API calls.
-- [Guides](https://pryv.github.io/guides/): app guidelines, audit logs, consent, custom auth, data modelling, webhooks.
+- Guides: [app guidelines](https://pryv.github.io/guides/app-guidelines/), [audit logs](https://pryv.github.io/guides/audit-logs/), [consent](https://pryv.github.io/guides/consent/), [custom auth](https://pryv.github.io/guides/custom-auth/), [data modelling](https://pryv.github.io/guides/data-modelling/), [webhooks](https://pryv.github.io/guides/webhooks/).
 - [FAQ API](https://pryv.github.io/faq-api/) and [FAQ Infra](https://pryv.github.io/faq-infra/).
 
 **Operator-facing setup guides (pryv.github.io/customer-resources/):**

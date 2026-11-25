@@ -125,6 +125,17 @@ describe('[BSRP] breachScopeReport (pure module)', () => {
     assert.strictEqual(r.records.read.calls, 1); // error row excluded from record counting
   });
 
+  it('[BSRB] lists what the server did to the access, without counting it as a call of it', () => {
+    const row = { streamIds: ['access-' + BASE, 'action-accesses.deleted'], type: 'audit-log/access', time: 1999, content: { action: 'accesses.deleted', record: { accessId: BASE, cause: 'plugin' } } };
+    const alone = buildReport([readRow()], { id: BASE, name: 'app', type: 'app', permissions: [] }, { accessId: BASE, type: 'app' }, meta());
+    const r = buildReport([readRow(), row], { id: BASE, name: 'app', type: 'app', permissions: [] }, { accessId: BASE, type: 'app' }, meta());
+    assert.deepStrictEqual(r.activity.byAction['accesses.deleted'], { valid: 1, error: 0 }, JSON.stringify(r.activity));
+    const { byAction: _a, ...activity } = r.activity;
+    const { byAction: _b, ...expected } = alone.activity;
+    assert.deepStrictEqual(activity, expected);
+    assert.deepStrictEqual(r.records, alone.records);
+  });
+
   it('[BSR9] collects write integrity evidence and counts deletes/getOne', () => {
     const rows = [
       { streamIds: ['access-' + BASE, 'action-events.create'], type: 'audit-log/pryv-api', time: 1400, content: { action: 'events.create', record: { key: 'e1', integrity: 'sha:abc' } } },

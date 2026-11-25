@@ -217,6 +217,7 @@ export async function handleAuthorizationCode (
     } else if (row.coreId === coreId && username != null && typeof deps.revokeAccessLocal === 'function') {
       try {
         await deps.revokeAccessLocal({ userId: row.userId, username, accessId: row.accessId, clientId: row.clientId });
+        await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, accessId: row.accessId, reason: 'issuance failed' });
       } catch (err) {
         // Best-effort: the access then dies by its own (short) TTL.
         logServerError('authorization_code: orphan access revoke failed', err);

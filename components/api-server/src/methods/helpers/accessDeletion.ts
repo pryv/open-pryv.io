@@ -32,8 +32,10 @@ import type { PlatformDB } from '../../../../../storages/interfaces/platformStor
  *
  * One implementation for the route and for the plugins (the CMC and
  * delegation teardowns delete through the mall accesses adapter, which calls
- * this): a consent withdrawn through any path leaves the same record as a
- * plain `accesses.delete`.
+ * this): a consent withdrawn through any path leaves the same deletion record
+ * in the accesses store as a plain `accesses.delete`. The audit record is the
+ * caller's: the row of the API call, or `deleteAccessChainRecorded`
+ * (accessWriteAudit.ts) for every other caller.
  */
 
 type AccessRow = {

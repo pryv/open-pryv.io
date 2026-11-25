@@ -53,3 +53,25 @@ describe('[CVAE] audit engine boot warning', () => {
     assert.equal(auditWarnings('sqlite', 'postgresql', { active: true }).length, 1);
   });
 });
+
+describe('[CVAF] audit filter boot warning', () => {
+  const filterWarnings = (audit) => collectWarnings(config('postgresql', 'postgresql', audit)).filter((w) => w.includes(".filter'"));
+  const filter = (include, exclude = []) => ({ filter: { methods: { include, exclude } } });
+
+  it('[CVAF1] names the entries that match no method, per filter, and stays silent on valid ones', () => {
+    const found = filterWarnings({ active: true, storage: filter(['event.get', 'events.get']), syslog: filter(['all'], ['accesses.al']) });
+    assert.equal(found.length, 2, JSON.stringify(found));
+    assert.match(found[0], /^'audit\.storage\.filter' .*"event\.get"\./);
+    assert.ok(!found[0].includes('"events.get"'));
+    assert.match(found[1], /^'audit\.syslog\.filter' .*"accesses\.al"/);
+    assert.deepEqual(filterWarnings({ active: true, storage: filter(['events.all', 'accesses.deleted']), syslog: filter(['all']) }), []);
+    assert.deepEqual(filterWarnings({ active: false, storage: filter(['event.get']), syslog: filter(['all']) }), []);
+  });
+
+  it('[CVAF2] the shipped defaults are silent', () => {
+    const yaml = require('js-yaml');
+    const fs = require('node:fs');
+    const defaults = yaml.load(fs.readFileSync(new URL('../../../config/default-config.yml', import.meta.url), 'utf8'));
+    assert.deepEqual(filterWarnings(defaults.audit), []);
+  });
+});
