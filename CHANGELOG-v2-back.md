@@ -17,7 +17,8 @@
 
 - `DBrqlite.execute`: an answer with a top-level `error`, or without `results[0]`, throws
   (`RqliteNoAnswerError`); `init` retries it until there is a leader (`initWaitMs`). Never sent again by
-  `execute`: what was answered may have been applied. Default-level reads are unchanged. Tests `[RQNA*]`.
+  `execute`: what was answered may have been applied. A failed registration releases its invitation token
+  and its external id claim independently, and answers with the first failure. Default-level reads are unchanged. Tests `[RQNA*]`.
 
 ### CI supply chain
 

@@ -29,7 +29,8 @@
   follower can answer a forwarded write with HTTP 200, an error and no result. The server took that for a
   success, so the write (a unique name, a routing row, a token, a revocation) was lost without any sign. The
   call now fails (500), as it does when the platform store is down. A process that starts while the cluster
-  elects its leader waits for it, up to 15 seconds.
+  elects its leader waits for it, up to 15 seconds; with no leader by then it does not start (before, it
+  could start with its first platform writes lost, or fail at once).
 - Multi-core: a request a follower forwards to the leader is sent once (10.6.0 sent it again after a
   failure, so a write whose answer was lost could be applied twice), and a join that would change a
   member's role is refused unless the member was removed first (the documented way).

@@ -100,6 +100,7 @@ describe('[RQNA] rqlite writes without a result', () => {
     calls = 0;
     global.fetch = async () => {
       const body = bodies[Math.min(calls++, bodies.length - 1)];
+      if (typeof body === 'number') return { ok: false, status: body, async text () { return 'leader not found'; } };
       return { ok: true, async json () { return body; }, async text () { return ''; } };
     };
   }
@@ -125,10 +126,17 @@ describe('[RQNA] rqlite writes without a result', () => {
     await assert.rejects(db.execute('x'), /^Error: rqlite SQL error: near "x"/);
   });
 
+  it('[RQNA4] an expired access request still reads as gone when it cannot be dropped', async () => {
+    const expired = { results: [{ columns: ['value'], values: [[JSON.stringify({ value: {}, expiresAt: 1 })]] }] };
+    answer([expired, { results: [], error: 'not leader' }]);
+    assert.equal(await db.getAccessState('k'), null);
+    assert.equal(calls, 2);
+  });
+
   it('[RQNA3] init waits for a leader, within its limit; another failure is not waited for', async () => {
-    answer([{ results: [], error: 'not leader' }, { results: [] }, { results: [{ time: 0.1 }] }]);
+    answer([{ results: [], error: 'not leader' }, { results: [] }, 503, { results: [{ time: 0.1 }] }]);
     await db.init();
-    assert.equal(calls, 3);
+    assert.equal(calls, 4);
     db.initWaitMs = 300;
     answer([{ results: [], error: 'not leader' }]);
     await assert.rejects(db.init(), /got no result: not leader/);
