@@ -87,7 +87,8 @@ class DBrqlite {
       body: JSON.stringify(body)
     });
     if (!res.ok) {
-      throw new Error(`rqlite execute failed (${res.status}): ${await res.text()}`);
+      const message = `rqlite execute failed (${res.status}): ${await res.text()}`;
+      throw res.status === 503 ? new RqliteNoAnswerError(message) : new Error(message);
     }
     const data = await res.json();
     const result = data.results?.[0];
@@ -681,8 +682,13 @@ class DBrqlite {
     if (rows.length === 0) return null;
     const parsed = JSON.parse(rows[0].value);
     if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) {
-      // Lazy expire: drop the row so the next call doesn't pay this cost.
-      await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+      // Lazy expire: drop the row so the next call doesn't pay this cost. A
+      // row that cannot be dropped now stays expired.
+      try {
+        await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+      } catch (err) {
+        if (!(err instanceof RqliteNoAnswerError)) throw err;
+      }
       return null;
     }
     return parsed;
