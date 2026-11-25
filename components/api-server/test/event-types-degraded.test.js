@@ -104,6 +104,28 @@ describe('[ETDG] event-types dictionary degraded fail-closed', function () {
     assert.strictEqual(res.status, 201);
   });
 
+  it('[ETD5] a JSON answer that is no event types list does not count as loaded, and changes nothing', async function () {
+    const fs = require('node:fs');
+    const file = path.join(require('node:os').tmpdir(), 'etd5-' + cuid() + '.json');
+    try {
+      for (const body of [{ error: 'not found' }, {}, [], 'text', null, 12, { types: null }, { types: [] }, { types: 'x' }, { version: '9.9.9', classes: {} }]) {
+        _resetEventTypesLoadStateForTests();
+        fs.writeFileSync(file, JSON.stringify(body));
+        await assert.rejects(new TypeRepository().tryUpdate('file://' + file), /not an event types list/, JSON.stringify(body));
+        const state = getEventTypesLoadState();
+        assert.strictEqual(state.degraded, true, JSON.stringify(body));
+        assert.match(state.lastError, /not an event types list/);
+        assert.strictEqual((await createUnknown()).status, 400, JSON.stringify(body));
+      }
+      // A small operator list is one.
+      fs.writeFileSync(file, JSON.stringify({ version: '1', types: {} }));
+      await new TypeRepository().tryUpdate('file://' + file);
+      assert.strictEqual(getEventTypesLoadState().degraded, false);
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  });
+
   it('[ETD4] the admin status endpoint reports the dictionary load state', async function () {
     _resetEventTypesLoadStateForTests();
     const res = await coreRequest
