@@ -238,6 +238,12 @@ The `scope` parameter carries exactly **one consent-offer reference**,
    `/oauth2/authorize/accept` (all-or-nothing → `granted == offered`; with
    choice → `granted ⊆ offered` AND all `mandatory` entries present),
    returning `invalid_scope` otherwise.
+
+   **Verified email.** An offer may carry `request.requireVerifiedEmail: true`
+   (see the messaging guide). The first authorization is then refused with
+   `400 invalid_grant` while the account's primary address is not proved
+   (`cmc-verified-email-required`); a re-authorization on an existing grant is
+   not checked. The consent screen does not yet help the person verify.
 2. **The operator registers the offer on the client**:
    `--cmc-offer <name>=<capabilityUrl>` together with `--scope cmc:<name>`.
 3. **At `GET /oauth2/authorize`** the core resolves the offer through its

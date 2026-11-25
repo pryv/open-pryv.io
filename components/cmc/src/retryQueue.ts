@@ -1083,6 +1083,10 @@ const NON_RETRYABLE_REASONS = new Set([
   // granted set and the accepting access; a replay runs without that access,
   // so it could only skip the access-dependent checks, never pass them.
   'cmc-offer-invalid-permissions',
+  // The accepting account's address is not proved. A retry could complete the
+  // accept long after it was reported failed, without a new approval: once
+  // the address is proved the person accepts again.
+  'cmc-verified-email-required',
   'cmc-granted-permissions-not-subset',
   'cmc-insufficient-permissions',
   'cmc-system-counterparty-access-not-found',

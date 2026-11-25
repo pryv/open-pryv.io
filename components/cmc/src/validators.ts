@@ -134,6 +134,8 @@ function validateRequest (content: unknown): ValidationResult {
     if (r.membership != null && typeof r.membership !== 'boolean') {
       errors.push('content.request.membership: must be a boolean if present');
     }
+
+    errors.push(...verifiedEmailOfferViolations(r));
   }
 
   // requesterMeta: optional, object
@@ -384,6 +386,41 @@ function offerPermissionViolations (permissions: unknown): string[] {
 }
 
 /**
+ * The rule for an offer that requires a verified email address
+ * (`request.requireVerifiedEmail: true`: the accept is refused while the
+ * accepting account's primary address is not proved). Such an offer must ask
+ * to read the address, and keep that entry mandatory when the person may
+ * choose entries: the requester then always receives the address whose proof
+ * it required, and never learns that an account has a proved address without
+ * being granted it. A membership holds no account stream, so it cannot carry
+ * the requirement. Enforced on the requester's write and again by the accept,
+ * on the offer as read.
+ *
+ * Takes the offer's `request` object; returns the violations (empty when the
+ * offer is admissible). `null` reads as absent, like the other optional flags.
+ */
+function verifiedEmailOfferViolations (request: unknown): string[] {
+  if (!isPlainObject(request) || request.requireVerifiedEmail == null) return [];
+  if (typeof request.requireVerifiedEmail !== 'boolean') {
+    return ['content.request.requireVerifiedEmail: must be a boolean if present'];
+  }
+  if (!request.requireVerifiedEmail) return [];
+  if (request.membership === true) {
+    return ['content.request.requireVerifiedEmail: a membership offer cannot require a verified email'];
+  }
+  const permissions: unknown[] = Array.isArray(request.permissions) ? request.permissions : [];
+  const emailEntry = permissions.find((p) => isPlainObject(p) && typeof p.streamId === 'string' &&
+    canonicalStreamId(p.streamId) === C.ACCOUNT_EMAIL_STREAM_ID && p.level === 'read') as Record<string, unknown> | undefined;
+  if (emailEntry == null) {
+    return ['content.request.requireVerifiedEmail: the offer must ask ' + C.ACCOUNT_EMAIL_STREAM_ID + ' at level read'];
+  }
+  if (request.allowUserChoice === true && emailEntry.mandatory !== true) {
+    return ['content.request.requireVerifiedEmail: with allowUserChoice, the ' + C.ACCOUNT_EMAIL_STREAM_ID + ' entry must be mandatory'];
+  }
+  return [];
+}
+
+/**
  * The account-stream rules of accesses.create applied to a permission set
  * the plugin is about to store through the mall (which applies none of
  * them): hidden or unknown account streams, the account root or an account
@@ -592,5 +629,6 @@ export {
   validateMemberRevoke,
   membershipOfferViolations,
   offerPermissionViolations,
+  verifiedEmailOfferViolations,
   accountStreamPermissionsError,
 };

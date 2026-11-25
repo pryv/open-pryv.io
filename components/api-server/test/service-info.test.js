@@ -197,6 +197,14 @@ describe('[SINF] Service', () => {
       });
     });
 
+    it('[RVEG] advertises features.cmcRequireVerifiedEmail; an explicit value wins', async () => {
+      const get = async () => (await coreRequest.get('/' + username + '/service/info')).body.features.cmcRequireVerifiedEmail;
+      assert.strictEqual(await get(), true);
+      await withInjectedConfig({ service: { features: { cmcRequireVerifiedEmail: false } } }, async () => {
+        assert.strictEqual(await get(), false);
+      });
+    });
+
     it('[SN13] advertises features.passwordResetByEmail: reset mail switched on AND mail configured; an explicit value wins', async () => {
       const get = async () => (await coreRequest.get('/' + username + '/service/info')).body.features.passwordResetByEmail;
       // Test config ships resetPassword switched off.

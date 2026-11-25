@@ -152,6 +152,9 @@ type DispatchDeps = {
   // account. Wired by the api-server for live and retry dispatch alike.
   lineageOf?: (access: unknown) => { kind?: unknown; relId?: unknown; delegate?: unknown; viaAccessId?: unknown } | null;
   relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
+  // Whether the account's primary email address is proved (see
+  // handleAccept.ts): an offer may require it. Wired like the two above.
+  primaryEmailProved?: (userId: string) => Promise<boolean> | boolean;
   // Set by the retry loop on a re-dispatch: what the previous attempt
   // reported. Handlers read it to skip a step that already took effect
   // (handleRevoke: a delivery the peer already received). Absent live.

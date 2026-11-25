@@ -224,6 +224,25 @@ describe('[CMCBRL] cmc/bootRetryLoop', () => {
     await sched.stop();
   });
 
+  it('[RVER] the checks of a live accept are handed to the loop\'s own dispatch', async () => {
+    const checks = {
+      lineageOf: () => null,
+      relationshipExists: async () => true,
+      primaryEmailProved: async () => true,
+    };
+    const sched = startRetryLoopIfEnabled({
+      ...STUB_DEPS,
+      ...checks,
+      config: fakeConfig({ cmc: { retryLoop: { enabled: true } } }),
+      userIdsProvider: () => [],
+      isLoopWorker: () => true,
+    });
+    for (const [name, check] of Object.entries(checks)) {
+      assert.equal(sched.deps.retryDeps.dispatchDeps[name], check, name);
+    }
+    await sched.stop();
+  });
+
   it('[BRL05] runs a tick with the configured retry deps', async () => {
     const ticked = [];
     const fakeScheduler = startRetryLoopIfEnabled({

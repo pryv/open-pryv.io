@@ -121,6 +121,12 @@ describe('[CPOLL] OAuth2 consent poll is outcome-driven', function () {
     assert.strictEqual(e.cmcErrorId, 'cmc-capability-invalidated');
   });
 
+  it('[RVEI] an accept refused for an unproved email maps to cmc-accept-rejected with that id', function () {
+    const e = buildConsentRejectionError({ reason: 'cmc-verified-email-required' });
+    assert.strictEqual(e.code, 'cmc-accept-rejected');
+    assert.strictEqual(e.cmcErrorId, 'cmc-verified-email-required');
+  });
+
   it('[CPOLL5] a non-delivery-rejected failure stays a generic error (maps to 500, not 400)', function () {
     const generic = buildConsentRejectionError({ reason: 'cmc-delivery-timeout' });
     assert.strictEqual(generic.code, undefined, 'generic failures carry no cmc-accept-rejected code');
