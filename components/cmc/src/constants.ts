@@ -75,6 +75,10 @@ const RESERVED_PARENT_STREAM_IDS = [
 // User-creatable region root. Children are owned by the user's apps.
 const USER_CREATABLE_PARENT_STREAM_ID = NS_APPS;
 
+// The account's email stream: what an offer that requires a verified email
+// address must ask to read (validators.verifiedEmailOfferViolations).
+const ACCOUNT_EMAIL_STREAM_ID = ':system:email';
+
 // Sub-segments reserved as plugin-managed children of ANY stream under
 // `:_cmc:apps:<app-code>:...`. The plugin auto-creates these when acceptance
 // happens; user code may not.
@@ -380,6 +384,7 @@ export {
   RESERVED_PARENT_STREAM_IDS,
   USER_CREATABLE_PARENT_STREAM_ID,
   APP_RESERVED_SEGMENTS,
+  ACCOUNT_EMAIL_STREAM_ID,
 
   // group accounts
   ET_MEMBER_ACCESS,

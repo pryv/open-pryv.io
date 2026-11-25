@@ -75,6 +75,15 @@ type DelegationDeps = {
   relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
 };
 
+/**
+ * Verified-email deps for the accept path, wired by the api-server:
+ * `primaryEmailProved` is true when the account has a primary email address
+ * whose ownership was proved. Absent, an offer that requires one is refused.
+ */
+type VerifiedEmailDeps = {
+  primaryEmailProved?: (userId: string) => Promise<boolean> | boolean;
+};
+
 type AcceptHandlerResult =
   | {
     ok: true;
@@ -112,7 +121,7 @@ async function handleAccept (params: {
   userId: string;
   triggerEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[]; createdBy?: string };
   selfIdentity: { username: string; host: string };
-  deps: { mall: MallLike } & OutboundDeps & DelegationDeps;
+  deps: { mall: MallLike } & OutboundDeps & DelegationDeps & VerifiedEmailDeps;
 }): Promise<AcceptHandlerResult> {
   const { userId, triggerEvent, selfIdentity, deps } = params;
   const { mall } = deps;
@@ -168,6 +177,24 @@ async function handleAccept (params: {
   const offerViolations = validators.offerPermissionViolations((offerRequest as { permissions?: unknown } | null | undefined)?.permissions);
   if (offerViolations.length > 0) {
     return { ok: false, reason: CmcErrorIds.OFFER_STREAM_NOT_OFFERABLE, detail: { errors: offerViolations } };
+  }
+
+  // An offer that requires a verified email: refused, before anything is
+  // created, while this account's primary address is not proved. The offer's
+  // own rule is re-applied first (an older or foreign requester core did not
+  // check it). The proof is a condition of the grant, checked when it is
+  // made: a replay that finds the grant an earlier dispatch minted only
+  // delivers it again.
+  const emailViolations = validators.verifiedEmailOfferViolations(offerRequest);
+  if (emailViolations.length > 0) {
+    return { ok: false, reason: CmcErrorIds.OFFER_INVALID_PERMISSIONS, detail: { errors: emailViolations } };
+  }
+  const requireVerifiedEmail = (offerRequest as { requireVerifiedEmail?: unknown } | null | undefined)?.requireVerifiedEmail === true;
+  if (requireVerifiedEmail) {
+    const earlierGrant = await findDataGrantByAcceptEventId({ mall, userId, acceptEventId: triggerEvent?.id });
+    if (earlierGrant == null && !(await isPrimaryEmailProved(userId, deps))) {
+      return { ok: false, reason: CmcErrorIds.VERIFIED_EMAIL_REQUIRED };
+    }
   }
 
   // The relationship's features: the offer's, narrowed by what the accept
@@ -416,6 +443,7 @@ async function handleAccept (params: {
   //     constraint message echoed to the client).
   let dataGrantAccess: CmcAccessLike | undefined | null;
   dataGrantAccess = await findDataGrantByAcceptEventId({ mall, userId, acceptEventId: triggerEvent?.id });
+  const mintedHere = dataGrantAccess == null;
   if (dataGrantAccess == null) {
     try {
       // Invariant: dataGrantPayload is assigned in the build step above; the
@@ -467,6 +495,13 @@ async function handleAccept (params: {
       ok: false,
       reason: 'cmc-handler-data-grant-no-apiendpoint',
     };
+  }
+
+  // Checked again now that the grant exists and before it is delivered: the
+  // primary address may have changed since the first check.
+  if (requireVerifiedEmail && mintedHere && !(await isPrimaryEmailProved(userId, deps))) {
+    await deleteGrantQuietly(mall, userId, dataGrantAccess.id!, deps);
+    return { ok: false, reason: CmcErrorIds.VERIFIED_EMAIL_REQUIRED };
   }
 
   if (lineage != null) {
@@ -784,6 +819,23 @@ async function delegationStillLive (params: {
   return { ok: true };
 }
 
+/**
+ * True when the account's primary email address is proved. False when it
+ * cannot be told (no check wired, or a check that failed): an offer that
+ * requires a verified email never mints on an unknown.
+ */
+async function isPrimaryEmailProved (userId: string, deps: VerifiedEmailDeps & Pick<OutboundDeps, 'logger'>): Promise<boolean> {
+  if (deps.primaryEmailProved == null) return false;
+  try {
+    return (await deps.primaryEmailProved(userId)) === true;
+  } catch (err: unknown) {
+    deps.logger?.warn?.('cmc/handleAccept: the verified-email check failed', {
+      userId, error: String((err as Error)?.message || err),
+    });
+    return false;
+  }
+}
+
 /** `createdBy` is `<accessId>` or `<accessId> <callerId>`. */
 function accessIdOf (createdBy: string): string {
   const separatorIndex = createdBy.indexOf(' ');
@@ -813,7 +865,7 @@ async function deleteGrantQuietly (mall: MallLike, userId: string, accessId: str
   try {
     if (mall.accesses.delete != null) await mall.accesses.delete(userId, { id: accessId });
   } catch (err: unknown) {
-    deps.logger?.error?.('cmc/handleAccept: a grant given through an ended delegation could not be deleted', {
+    deps.logger?.error?.('cmc/handleAccept: a grant whose condition no longer held could not be deleted', {
       accessId,
       error: String((err as Error)?.message || err),
     });

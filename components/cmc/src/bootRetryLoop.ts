@@ -51,6 +51,9 @@ type BootDeps = {
   // and its relationship.
   lineageOf?: (access: unknown) => { kind?: unknown; relId?: unknown; delegate?: unknown; viaAccessId?: unknown } | null;
   relationshipExists?: (userId: string, relId: string) => Promise<boolean> | boolean;
+  // Verified email, forwarded the same way: a retried accept that has no
+  // grant yet is checked like a live one.
+  primaryEmailProved?: (userId: string) => Promise<boolean> | boolean;
   // Group accounts (memberSweep.ts): forwarded to the dispatch (a retried
   // revoke sweeps), and its periodic ledger pass runs on its own scheduler
   // beside the retry loop (`cmc:memberAccess:sweepIntervalMs`), once at boot
@@ -142,6 +145,7 @@ function startRetryLoopIfEnabled (deps: BootDeps): unknown {
       selfIdentityFor: deps.selfIdentityFor,
       lineageOf: deps.lineageOf,
       relationshipExists: deps.relationshipExists,
+      primaryEmailProved: deps.primaryEmailProved,
       memberSweep: deps.memberSweep,
       // The retry loop OWNS the retry lifecycle: processRetryEvent
       // reschedules (or retires) the very event it is re-dispatching. The

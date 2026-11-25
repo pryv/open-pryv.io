@@ -545,6 +545,13 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     : (_access: unknown) => null;
   const delegationRelationshipExists = async (userId: string, relId: string): Promise<boolean> =>
     (await delegation.store.findAnchorByRelId(mallForCmc, userId, relId)) != null;
+  // Whether an account's primary email address is proved, for a consent offer
+  // that requires it.
+  const cmcPrimaryEmailProved = async (userId: string): Promise<boolean> => {
+    const email = await usersRepository.getOnePropertyValue(userId, 'email');
+    if (typeof email !== 'string' || email === '') return false;
+    return (await emailsStatus.primaryVerification(userId, email)).content.verified;
+  };
   // `content.approvedBy` on an accept: server-owned, stamped from the writing
   // access when it is delegation-derived, a client-supplied one dropped.
   const cmcAcceptStampingHook = cmc.createAcceptStampingHook({ lineageOf: delegationLineageOf });
@@ -612,6 +619,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     selfIdentityFor: cmcSelfIdentityFor,
     lineageOf: delegationLineageOf,
     relationshipExists: delegationRelationshipExists,
+    primaryEmailProved: cmcPrimaryEmailProved,
     memberAccess: cmcMemberAccessOptions,
     mintRegistry: cmcMemberMintRegistry,
     memberSweep: cmcMemberSweep,
@@ -729,6 +737,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     selfIdentityFor: cmcSelfIdentityFor,
     lineageOf: delegationLineageOf,
     relationshipExists: delegationRelationshipExists,
+    primaryEmailProved: cmcPrimaryEmailProved,
     memberSweep: cmcMemberSweep,
     deletionOutbox: getDeletionNoticesLocal,
     fetch: peerFetch,

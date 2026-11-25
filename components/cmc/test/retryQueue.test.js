@@ -111,6 +111,9 @@ describe('[CMCRQ] cmc/retryQueue', () => {
       assert.equal(isRetryableReason('cmc-granted-permissions-not-subset'), false);
       assert.equal(isRetryableReason('cmc-insufficient-permissions'), false);
     });
+    it('[RVEC] an accept refused for an unproved email is not retried (the person accepts again)', () => {
+      assert.equal(isRetryableReason('cmc-verified-email-required'), false);
+    });
     it('[RQ03] delivery-failed with peer 5xx / network / timeout is retryable', () => {
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'http-5xx' }), true);
       assert.equal(isRetryableReason('cmc-handler-delivery-failed', { peerReason: 'network' }), true);

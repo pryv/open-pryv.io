@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Consent offers can require a verified email address (#173)
+
+- **`request.requireVerifiedEmail: true` on a `consent/request-cmc` offer** (new, optional): the accept is refused
+  while the accepting account's primary email address is not proved. The accept trigger ends `failed` with the new
+  reason `cmc-verified-email-required` (no detail, not retried); nothing is granted, the core sends nothing to the
+  requester, and the link stays usable, so a new accept works once the address is proved.
+- The address is that of the account the accept is written on, also when a delegate accepts for an account it manages.
+- The offer must ask `:system:email` at `read`, `mandatory` when `allowUserChoice` is set; a membership offer cannot
+  carry the requirement. Refused at write (`cmc-invalid-event-content`) and again at accept
+  (`cmc-offer-invalid-permissions`).
+- A core that enforces it advertises `features.cmcRequireVerifiedEmail: true` in its service info; an earlier core
+  stores the field and ignores it. An earlier offer that carried the field in another shape is refused at accept.
+- **Not a guarantee to the requester, even with the flag.** It stops ordinary clients and guides the person. It is
+  enforced on the accepter's side, and a person determined to can answer a link with a grant made by hand. A requester
+  that acts on the address must read the `verification/email` event through the grant each time it uses the address.
+- OAuth: the first authorization on such an offer is checked too, and answers `400 invalid_grant` when the address is
+  not proved. Offers without the field are unchanged.
+
 ### Security: Node.js 24.22.3
 
 - The Docker image moves from Node 24.22.1 to 24.22.3, which carries the Node.js security release of

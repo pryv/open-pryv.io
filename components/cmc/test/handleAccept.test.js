@@ -1235,4 +1235,111 @@ describe('[CMCHA] cmc/handleAccept', () => {
         { cmc: { role: 'counterparty', acceptEventId: 'evt-accept' }, delegation: LINEAGE });
     });
   });
+
+  describe('[CMCHA-VE] offer that requires a verified email', () => {
+    const EMAIL_PERMS = [{ streamId: 'fertility', level: 'read' }, { streamId: ':system:email', level: 'read' }];
+    const PRIOR_GRANT = {
+      id: 'acc-existing',
+      token: 'tok-e',
+      apiEndpoint: 'https://tok-e@recipient.example.com/',
+      clientData: { cmc: { role: 'counterparty', acceptEventId: 'evt-accept' } },
+    };
+
+    function emailOffer (request = {}) {
+      return {
+        ...VALID_OFFER,
+        content: {
+          ...VALID_OFFER.content,
+          request: { ...VALID_OFFER.content.request, permissions: EMAIL_PERMS, requireVerifiedEmail: true, ...request },
+        },
+      };
+    }
+
+    async function run ({ offer = emailOffer(), mall = fakeMall(), ...deps } = {}) {
+      const { fetch, calls } = fakeFetch([
+        { status: 200, body: { events: [offer] } },
+        { status: 201, body: { event: { id: 'r1' } } },
+      ]);
+      const r = await handleAccept({
+        userId: 'u1',
+        triggerEvent: { ...ACCEPT_TRIGGER, streamIds: [':_cmc:apps:my-app'] },
+        selfIdentity: { username: 'alice', host: 'recipient.example.com' },
+        deps: { mall, fetch, ...deps },
+      });
+      return { r, mall, calls };
+    }
+
+    function assertRefusedUntouched ({ r, mall, calls }) {
+      assert.deepEqual(r, { ok: false, reason: 'cmc-verified-email-required' });
+      assert.equal(mall.calls.streamsCreated.length, 0);
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.equal(calls.length, 1, 'only the offer was read');
+    }
+
+    it('[RVE6] proved: the accept proceeds, and the account asked about is the accepting one', async () => {
+      const asked = [];
+      const { r, mall } = await run({ primaryEmailProved: async (userId) => { asked.push(userId); return true; } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      assert.deepEqual(asked, ['u1', 'u1'], 'before anything is created, and once the grant exists');
+    });
+
+    it('[RVE7] not proved: refused without detail; nothing created, nothing delivered', async () => {
+      assertRefusedUntouched(await run({ primaryEmailProved: () => false }));
+    });
+
+    it('[RVE8] no check wired, or a check that fails: refused', async () => {
+      assertRefusedUntouched(await run());
+      assertRefusedUntouched(await run({ primaryEmailProved: async () => { throw new Error('store down'); } }));
+    });
+
+    it('[RVE9] an offer that breaks the rule (an older requester core) is refused, proved or not', async () => {
+      for (const request of [
+        { requireVerifiedEmail: 'yes' },
+        { permissions: [{ streamId: 'fertility', level: 'read' }] },
+        { allowUserChoice: true },
+      ]) {
+        const { r, mall, calls } = await run({ offer: emailOffer(request), primaryEmailProved: () => true });
+        assert.equal(r.reason, 'cmc-offer-invalid-permissions', JSON.stringify(request));
+        assert.ok(r.detail.errors.every((e) => e.includes('requireVerifiedEmail')), JSON.stringify(r.detail));
+        assert.equal(mall.calls.accessesCreated.length, 0);
+        assert.equal(calls.length, 1);
+      }
+    });
+
+    it('[RVEA] no longer proved once the grant exists: the grant is deleted and nothing is delivered', async () => {
+      let checks = 0;
+      const { r, mall, calls } = await run({ primaryEmailProved: () => ++checks === 1 });
+      assert.deepEqual(r, { ok: false, reason: 'cmc-verified-email-required' });
+      assert.equal(mall.calls.accessesCreated.length, 1);
+      assert.deepEqual(mall.calls.accessesDeleted, [{ userId: 'u1', id: 'acc-1' }]);
+      assert.equal(calls.length, 1);
+    });
+
+    it('[RVEB] an accept whose grant is looked up and not found is checked (a replay included: no trigger access)', async () => {
+      const mall = fakeMall();
+      mall.accesses.get = async () => [];
+      assertRefusedUntouched(await run({ mall, primaryEmailProved: () => false }));
+    });
+
+    it('[RVO1] a replay that finds the grant of this accept delivers it again without a check', async () => {
+      const mall = fakeMall();
+      mall.accesses.get = async () => [PRIOR_GRANT];
+      const { r, calls } = await run({ mall, primaryEmailProved: () => { throw new Error('must not be asked'); } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.dataGrantAccessId, 'acc-existing');
+      assert.equal(mall.calls.accessesCreated.length, 0);
+      assert.equal(calls.length, 2, 'offer read, accept delivered');
+    });
+
+    it('[RVO2] without the field, or with false, the address is not looked at', async () => {
+      for (const requireVerifiedEmail of [undefined, null, false]) {
+        const { r } = await run({
+          offer: emailOffer({ requireVerifiedEmail }),
+          primaryEmailProved: () => { throw new Error('must not be asked'); },
+        });
+        assert.equal(r.ok, true, JSON.stringify(r));
+      }
+    });
+  });
 });

@@ -25,7 +25,7 @@
  * on that status and resolves the data-grant only once the trigger reports
  * `completed`, so the transient-grant window is never observed.
  */
-import { CAPABILITY_REFUSAL_IDS } from 'cmc/src/errorIds.ts';
+import { CAPABILITY_REFUSAL_IDS, CmcErrorIds } from 'cmc/src/errorIds.ts';
 
 type ConsentFailure = { reason?: unknown; detail?: unknown };
 
@@ -62,9 +62,17 @@ export type AwaitConsentDeps<G> = {
  * carrying the peer's specific reason id so the OAuth2 accept route returns 400
  * invalid_grant rather than a bare 500. The peer's id rides in `error.data.id`;
  * `error.id` is only the generic Pryv error class.
+ * This core's own refusal of an offer that requires a verified email
+ * (`cmc-verified-email-required`) is the person's to correct: same typed error.
  * Any other failure reason (e.g. a delivery timeout) stays a generic throw.
  */
 export function buildConsentRejectionError (failure: ConsentFailure | undefined): Error {
+  if (failure?.reason === CmcErrorIds.VERIFIED_EMAIL_REQUIRED) {
+    const e = new Error('oauth2.createAccess: consent accept refused: ' + CmcErrorIds.VERIFIED_EMAIL_REQUIRED) as Error & { code?: string; cmcErrorId?: string };
+    e.code = 'cmc-accept-rejected';
+    e.cmcErrorId = CmcErrorIds.VERIFIED_EMAIL_REQUIRED;
+    return e;
+  }
   if (failure?.reason === 'cmc-handler-delivery-rejected' ||
       (typeof failure?.reason === 'string' && CAPABILITY_REFUSAL_IDS.has(failure.reason))) {
     const errObj = (failure?.detail as { body?: { error?: { id?: unknown; data?: { id?: unknown } } } } | undefined)?.body?.error;
