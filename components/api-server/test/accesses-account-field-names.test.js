@@ -143,6 +143,17 @@ describe('[AFNS] accesses: a bare account-field name does not create a stream', 
     assertCollision(res, 'email', ':system:email');
   });
 
+  it('[AFNCB] accesses.checkApp accepts the id when the stream exists, and gives its name', async function () {
+    const account = await newAccount();
+    const made = await coreRequest.post('/' + account.username + '/streams').set('Authorization', account.token)
+      .send({ id: 'email', name: 'Mail archive' });
+    assert.strictEqual(made.status, 201, made.text);
+    const res = await coreRequest.post('/' + account.username + '/accesses/check-app').set('Authorization', account.token)
+      .send({ requestingAppId: 'afncb-app', requestedPermissions: [{ streamId: 'email', level: 'read', defaultName: 'Email' }] });
+    assert.strictEqual(res.status, 200, res.text);
+    assert.deepStrictEqual(res.body.checkedPermissions, [{ streamId: 'email', level: 'read', name: 'Mail archive' }]);
+  });
+
   it('[AFNCA] a hidden built-in field counts too', async function () {
     const account = await newAccount();
     const res = await createAccess(account, [{ streamId: 'referer', level: 'read', defaultName: 'Referer' }]);

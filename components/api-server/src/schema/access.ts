@@ -199,7 +199,10 @@ function permissions (action: string): unknown {
   // must be one of the closed set. UPDATE and READ accept any name: a stored
   // access may hold one written before the set was closed, and an update
   // keeps the names the access already holds (accesses.update refuses a new
-  // unknown name in its own step, once the access is loaded).
+  // unknown name in its own step, once the access is loaded). Do not add the
+  // enum to UPDATE: the OAuth server writes a grant's stored permissions back
+  // through accesses.update at each re-authorization, and an enum here would
+  // make the consent fail for any grant holding such a name.
   const featurePermission = object({
     feature: action === Action.CREATE ? string({ enum: [...FEATURE_PERMISSION_NAMES] }) : string(),
     setting: featureSetting

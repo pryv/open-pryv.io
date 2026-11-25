@@ -9,24 +9,29 @@
   a personal token and from consent offers, stored, and had no effect. It is now refused where permissions are
   submitted: `accesses.create`, `accesses.update` and `accesses.checkApp` (`400 invalid-parameters-format`, the
   message names the entry and the known names, `data.feature` and `data.knownFeatures` give them too),
-  `POST /reg/access` (`400 invalid-parameters`), a `consent/request-cmc` offer written by the requester
-  (`cmc-invalid-event-content`), and the permissions an OAuth scope grammar returns (`invalid_scope`).
+  `POST /reg/access` (`400 invalid-parameters`), a `consent/request-cmc` offer written by the requester and the
+  `newPermissions` of a `consent/scope-request-cmc` or `consent/scope-update-cmc` written by the account's own
+  accesses (`cmc-invalid-event-content`), and the permissions an OAuth scope grammar returns (`invalid_scope`).
 - Stored data is not touched: an access or an offer that already holds an unknown name keeps working and is read
-  back as it is. Such an offer can still be accepted, and one a core of an older version delivers to the inbox is
-  still received. `accesses.update` keeps an unknown name the access already holds (its permissions can be written
-  back as read); it refuses a new one.
+  back as it is. Such an offer can still be accepted, and what a core of an older version delivers (an offer to the
+  inbox, a scope request or update through its relationship access) is still received. `accesses.update` keeps an
+  unknown name the access already holds (its permissions can be written back as read, and its setting can change);
+  it refuses a new one, and a name once dropped cannot be added back. An OAuth re-authorization keeps such a name on
+  the grant; a grant made anew after a change of subject mode leaves it out.
 - **BREAKING: `accesses.create`, `accesses.update` and `accesses.checkApp` refuse a permission that would create a
   stream named like an account field.** A permission such as `{ "streamId": "email", "level": "read",
   "defaultName": "Email" }` used to create an ordinary, empty stream `email` that looked right on the consent screen
   and never held the account's address. When the id is the name of an account field of the platform (hidden fields
   included), carries no prefix (or the `:local:` one), has a `defaultName` and no such stream exists, a personal
-  token now gets `400 invalid-operation` (`account-field-name-collision` message), with `data.param` (the id) and
-  `data.accountStreamId` (the account field's id, e.g. `:system:email`). Nothing is created, the other entries'
-  streams included.
+  token now gets `400 invalid-operation`, with `data.param` (the id) and `data.accountStreamId` (the account field's
+  id, e.g. `:system:email`). The error id is the generic `invalid-operation`: this refusal is recognised by
+  `data.accountStreamId` (present on it only) and by its message ("This stream id is the name of an account field,
+  without its prefix: ..."). Nothing is created, the other entries' streams included.
 - Not refused: the same id when the stream already exists (trashed included: it is untrashed, as before), a
   permission without `defaultName`, an access created by an app token (it creates no stream), and a stream created
   with `streams.create`. An application that really wants an ordinary stream with such an id needs the stream to
-  exist first, or another id.
+  exist first, or another id. Known limit: the name of the account root itself (`account`) is not an account field
+  and is not guarded.
 
 ### Consent offers can require a verified email address (#173)
 

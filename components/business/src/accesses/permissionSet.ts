@@ -107,6 +107,18 @@ function findUnknownFeature (perms: unknown, held?: ReadonlySet<string>): { inde
 }
 
 /**
+ * `perms` without its feature entries whose name is not in the closed set.
+ * For a server-side writer that creates a new access from stored entries
+ * (such an entry is inert, and the creation would refuse it).
+ */
+function withoutUnknownFeatures<T> (perms: T[]): T[] {
+  return perms.filter((p) => {
+    const feature = (p as { feature?: unknown } | null)?.feature;
+    return typeof feature !== 'string' || isKnownFeatureName(feature);
+  });
+}
+
+/**
  * Whether a raw permission array carries `{ feature, setting: 'forbidden' }`.
  * Pure: works on a stored access row as well as on an `AccessLogic`
  * (both expose `.permissions`). Anything that is not an array forbids nothing.
@@ -581,6 +593,7 @@ export {
   isKnownFeatureName,
   unknownFeatureMessage,
   findUnknownFeature,
+  withoutUnknownFeatures,
   isFeatureForbidden,
   isStreamPermission,
   isFeaturePermission,

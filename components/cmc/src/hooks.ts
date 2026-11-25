@@ -142,9 +142,14 @@ function createCmcContentValidationHook (deps: Deps): Middleware {
     }
 
     // An unknown feature permission name is refused on the author's own
-    // write, not on what a peer delivers to the inbox (an older core may
-    // still send one; the accept side reads offers tolerantly too).
-    const knownFeaturesOnly = !streamIds.includes(C.NS_INBOX);
+    // write, not on what a peer delivers (an older core may still send one;
+    // the accept side reads offers tolerantly too). A peer delivers an offer
+    // to the inbox, and a scope request or update through its relationship
+    // access.
+    const accessCmc = context?.access?.clientData?.cmc;
+    const fromPeer = streamIds.includes(C.NS_INBOX) ||
+      (accessCmc != null && C.RELATIONSHIP_ROLES.includes(accessCmc.role as string));
+    const knownFeaturesOnly = !fromPeer;
     const validation = validators.validate(type as string, event.content, { knownFeaturesOnly });
     if (!validation.valid) {
       return next(deps.errors.invalidOperation(

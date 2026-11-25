@@ -427,5 +427,21 @@ describe('[PSET] accesses permissionSet', () => {
       assert.equal(ps.findUnknownFeature('not an array'), null);
       assert.equal(ps.findUnknownFeature([null, 'x', { feature: 3 }]), null);
     });
+
+    it('[FPNK] `withoutUnknownFeatures` drops the feature entries with an unknown name only', () => {
+      const perms = [
+        { streamId: 'a', level: 'read' },
+        { feature: 'webhook', setting: 'forbidden' },
+        { feature: 'webhooks', setting: 'forbidden' },
+        { feature: 'forcedStreams', setting: 'forbidden' },
+        { streamId: 'b', level: 'none' },
+      ];
+      assert.deepEqual(ps.withoutUnknownFeatures(perms), [
+        { streamId: 'a', level: 'read' },
+        { feature: 'webhooks', setting: 'forbidden' },
+        { streamId: 'b', level: 'none' },
+      ]);
+      assert.equal(perms.length, 5, 'input left as it was');
+    });
   });
 });

@@ -318,11 +318,13 @@ function validateSystemAck (content: unknown): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateSystemScopeRequest (content: unknown): ValidationResult {
+// `opts.knownFeaturesOnly` as for `validateRequest`: set by the write hook
+// unless a peer writes the event through its relationship access.
+function validateSystemScopeRequest (content: unknown, opts?: ValidateOptions): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
-  const permCheck = isPermissionArray(content.newPermissions);
+  const permCheck = isPermissionArray(content.newPermissions, opts);
   if (!permCheck.ok) errors.push(`content.newPermissions: ${permCheck.reason}`);
 
   if (content.expires != null && typeof content.expires !== 'number') {
@@ -333,7 +335,7 @@ function validateSystemScopeRequest (content: unknown): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-function validateSystemScopeUpdate (content: unknown): ValidationResult {
+function validateSystemScopeUpdate (content: unknown, opts?: ValidateOptions): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -355,7 +357,7 @@ function validateSystemScopeUpdate (content: unknown): ValidationResult {
     errors.push('content.accept: must be a boolean if present');
   }
   if (hasNewPerms) {
-    const permCheck = isPermissionArray(content.newPermissions);
+    const permCheck = isPermissionArray(content.newPermissions, opts);
     if (!permCheck.ok) errors.push(`content.newPermissions: ${permCheck.reason}`);
   }
 

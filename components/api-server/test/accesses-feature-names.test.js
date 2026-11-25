@@ -137,6 +137,18 @@ describe('[FPNS] accesses: feature permission names', function () {
     const added = await coreRequest.put('/' + username + '/accesses/' + echoed.body.access.id).set('Authorization', token)
       .send({ permissions: [{ streamId: 'fpns', level: 'read' }, typo, { feature: 'selfrevoke', setting: 'forbidden' }] });
     assertUnknownFeature(added, 'selfrevoke');
+    // The setting of a held name may change
+    const flipped = await coreRequest.put('/' + username + '/accesses/' + echoed.body.access.id).set('Authorization', token)
+      .send({ permissions: [{ streamId: 'fpns', level: 'read' }, { feature: 'webhook', setting: 'allowed' }] });
+    assert.strictEqual(flipped.status, 200, flipped.text);
+    assert.ok(flipped.body.access.permissions.some((p) => p.feature === 'webhook' && p.setting === 'allowed'), 'flipped');
+    // Once dropped, the name cannot come back
+    const dropped = await coreRequest.put('/' + username + '/accesses/' + flipped.body.access.id).set('Authorization', token)
+      .send({ permissions: [{ streamId: 'fpns', level: 'read' }] });
+    assert.strictEqual(dropped.status, 200, dropped.text);
+    const readded = await coreRequest.put('/' + username + '/accesses/' + dropped.body.access.id).set('Authorization', token)
+      .send({ permissions: [{ streamId: 'fpns', level: 'read' }, typo] });
+    assertUnknownFeature(readded);
   });
 
   it('[FPNE] POST /reg/access with an unknown feature name is refused, with or without a consent sidecar', async function () {
