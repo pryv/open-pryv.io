@@ -135,4 +135,10 @@ describe('[CSID] auth-request consent sidecar', () => {
       assert.equal(r.reason, 'mandatory-refused');
     });
   });
+
+  it('[FPNH] an unknown feature permission name is refused', () => {
+    assert.throws(
+      () => resolveConsentSidecar([{ streamId: 'diary', level: 'read' }, { feature: 'webhook', setting: 'forbidden' }], {}),
+      (err) => err instanceof ConsentSidecarError && /unknown feature 'webhook'/.test(err.message));
+  });
 });

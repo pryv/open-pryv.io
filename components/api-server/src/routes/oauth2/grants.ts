@@ -21,7 +21,7 @@
 import type { ConsentTrigger } from '../consentPoll.ts';
 import type { Ctx, CmcOffer, DataGrant, GlueEnv } from './types.ts';
 import type { Permission } from 'business/src/types/public.ts';
-import { mergeStreamPermissions, PermissionMergeConflictError } from 'business/src/accesses/permissionSet.ts';
+import { mergeStreamPermissions, PermissionMergeConflictError, withoutUnknownFeatures } from 'business/src/accesses/permissionSet.ts';
 // Tree-aware consent guard: closes the hierarchical-masking gap that the
 // pure entry-subset check (checkConsentGrant, run at /accept) cannot see.
 import { assertGrantedWithinOffer, accessLogicResolver } from 'business/src/accesses/consentEffectiveGuard.ts';
@@ -294,6 +294,11 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     permissions: Array<Record<string, unknown>>, wantAlias: boolean, adopt: string | null = null): Promise<DataGrant> {
     let grant = current;
     if (grant == null) {
+      // A new grant made after a change of subject mode carries the former
+      // grant's restrictions, read back from storage: a feature name stored
+      // before the set was closed is dropped (inert, and accesses.create
+      // refuses it).
+      permissions = withoutUnknownFeatures(permissions);
       try {
         // The address alias is handed to accesses.create on this context only
         // (never a request parameter: the API refuses a client-set alias).

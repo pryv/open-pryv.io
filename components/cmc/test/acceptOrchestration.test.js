@@ -199,6 +199,18 @@ describe('[CMCAO] cmc/acceptOrchestration', () => {
         (err) => err.id === 'cmc-offer-empty-permissions'
       );
     });
+
+    it('[FPN7] an offer holding an unknown feature permission name is still read (written before the set was closed)', () => {
+      const offer = {
+        ...VALID_OFFER,
+        content: {
+          ...VALID_OFFER.content,
+          request: { ...VALID_OFFER.content.request, permissions: [...VALID_OFFER.content.request.permissions, { feature: 'webhook', setting: 'forbidden' }] },
+        },
+      };
+      const perms = permissionsFromOffer(offer);
+      assert.deepEqual(perms[perms.length - 1], { feature: 'webhook', setting: 'forbidden', mandatory: true });
+    });
   });
 
   describe('[CMCAO-DG] buildDataGrantPayload', () => {

@@ -38,6 +38,15 @@
 - Tests: `[CMCSA]` e2e `CSA05`-`CSA16` (`components/api-server/test/cmc-second-accept.test.js`), unit `CSA20`-`CSA47`
   in `components/cmc/test`; `[MR44]`, `[HMA11]`, `[HMA13]` updated to the new verdicts and fixtures.
 
+### Accesses: closed feature names, account-field name guard
+
+- `business/src/accesses/permissionSet.ts`: `FEATURE_PERMISSION_NAMES` (the closed set), `isKnownFeatureName`,
+  `unknownFeatureMessage`, `findUnknownFeature`, and the `knownFeaturesOnly` option of `normalizePermissions`
+  (strict at intake; `isFeaturePermission` and the default stay shape-only for stored data); `cmc` `validators.validate`
+  takes the same option (set by the write hook except on inbox deliveries); `accountStreamPermissions.ts`
+  `accountStreamIdForBareName`; `accesses.create` / `accesses.update` run the account-field collision check as a
+  pre-pass before any stream is created.
+
 ### Tests
 
 - `[CFE5]` no longer looks for a short secret (CI's PostgreSQL password, `pryv`) inside an answer whose host names
