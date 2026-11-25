@@ -564,6 +564,10 @@ describe('[OPUE] OAuth per-user resource addresses end to end', function () {
     assert.equal(del.body.addressAliasDeletion.alias, alias);
     assert.ok(del.body.relatedDeletions.some((d) => d.id === grant.id), JSON.stringify(del.body));
     assert.equal(await registryGrantOf(alice, tplId), null, 'the grant is gone');
+    const trail = await (await (await import('storages')).auditStorage.forUser(alice.userId)).getEvents({ query: [] });
+    const gone = trail.filter((e) => e.content?.action === 'accesses.deleted');
+    assert.deepEqual(gone.map((e) => [e.content.source.name, e.content.record.accessId, e.content.record.cause, typeof e.content.record.by]),
+      [['account', grant.id.split(':')[0], 'address-alias-deleted', 'string']], JSON.stringify(gone));
     assert.equal((await introspect(t.access_token)).body.active, false);
     const r = await coreRequest.post('/oauth2/token').type('form').send({ grant_type: 'refresh_token', refresh_token: t.refresh_token, client_id: tplId });
     assert.equal(r.status, 400, 'the refresh chain ended: ' + JSON.stringify(r.body));

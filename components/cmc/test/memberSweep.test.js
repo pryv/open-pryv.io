@@ -160,7 +160,7 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       assert.deepEqual((await ledger.listRecords({ mall }, 'group')).map((x) => x.state), ['deleted', 'deleted']);
     });
 
-    it('[MR44] verdicts: a 404 or a dead grant is absent, a 5xx or a network error a residual; the read-back settles an expired residual as absent and a deletion still listed as residual', async () => {
+    it('[MR44] verdicts on records without a grant key: a 404 is absent; a dead grant, a 5xx or a network error a residual, which the read-back does not settle; a deletion still listed is a residual', async () => {
       const mall = fakeMall();
       const rows = [];
       for (const id of ['c-404', 'c-401', 'c-503', 'c-net', 'c-listed']) rows.push(await seed(mall, { childAccessId: id }));
@@ -176,14 +176,14 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       const r = await revokeRecords({ userId: 'group', records: rows, deps: revokeDeps(mall, cores) });
       const by = Object.fromEntries(r.outcome.map((o) => [o.childAccessId, o]));
       assert.deepEqual(by['c-404'], { childAccessId: 'c-404', result: 'absent', reason: 'not-found' });
-      assert.deepEqual(by['c-401'], { childAccessId: 'c-401', result: 'absent', reason: 'grant-gone' });
-      assert.deepEqual(by['c-503'], { childAccessId: 'c-503', result: 'absent', reason: 'not-listed' }, 'not listed any more: absent');
+      assert.deepEqual(by['c-401'], { childAccessId: 'c-401', result: 'residual', reason: 'grant-gone' }, 'a dead grant is not proof that the child is gone');
+      assert.deepEqual(by['c-503'], { childAccessId: 'c-503', result: 'residual', reason: 'http-5xx' }, 'not listed by this grant proves nothing for a child of unknown grant');
       assert.deepEqual(by['c-net'], { childAccessId: 'c-net', result: 'residual', reason: 'network' });
       assert.deepEqual(by['c-listed'], { childAccessId: 'c-listed', result: 'residual', reason: 'still-listed' });
-      assert.deepEqual(r.residuals.map((x) => x.childAccessId).sort(), ['c-listed', 'c-net']);
+      assert.deepEqual(r.residuals.map((x) => x.childAccessId).sort(), ['c-401', 'c-503', 'c-listed', 'c-net']);
       assert.equal(JSON.stringify(r).includes('leak'), false, 'no peer body');
       const states = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
-      assert.deepEqual(states, { 'c-404': 'absent', 'c-401': 'absent', 'c-503': 'absent', 'c-net': 'residual', 'c-listed': 'residual' });
+      assert.deepEqual(states, { 'c-404': 'absent', 'c-401': 'residual', 'c-503': 'residual', 'c-net': 'residual', 'c-listed': 'residual' });
     });
 
     it('[MR44b] a refused destination leaves the child residual with reason refused (nothing can be concluded about it)', async () => {
@@ -208,6 +208,185 @@ describe('[CMCMR] cmc group accounts: offboarding', () => {
       r = await revokeRecords({ userId: 'group', records: [expired, done], deps: revokeDeps(mall2, cores) });
       assert.deepEqual(r.outcome, [{ childAccessId: 'old', result: 'absent', reason: 'expired' }]);
       assert.equal(cores.calls.length, 0);
+    });
+  });
+
+  describe('[CMCMR-KEY] a record names the grant that made its child', () => {
+    const KEY = ledger.grantKeyOf(GRANT);
+    const FORMER_KEY = ledger.grantKeyOf('https://former-tok@patient.example.com/');
+
+    it('[CSA20] a deletion refused 403 forbidden for a child the grant does not list stays residual: the refusal is never turned into absent, keyed or not', async () => {
+      const mall = fakeMall();
+      const keyed = await seed(mall, { childAccessId: 'c-keyed', grantKey: KEY });
+      const legacy = await seed(mall, { childAccessId: 'c-legacy' });
+      const cores = fakeCores({
+        deletes: {
+          'c-keyed': { status: 403, body: { error: { id: 'forbidden' } } },
+          'c-legacy': { status: 403, body: { error: { id: 'forbidden' } } },
+        },
+        remaining: { 'grant-tok': [] },
+      });
+      const r = await revokeRecords({ userId: 'group', records: [keyed, legacy], deps: revokeDeps(mall, cores) });
+      assert.deepEqual(r.outcome, [
+        { childAccessId: 'c-keyed', result: 'residual', reason: 'peer-rejected' },
+        { childAccessId: 'c-legacy', result: 'residual', reason: 'peer-rejected' },
+      ]);
+      const states = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
+      assert.deepEqual(states, { 'c-keyed': 'residual', 'c-legacy': 'residual' });
+      // Through the handler: the sweep fails residual, never completes.
+      mall.eventsMap.set('sweep-k', { id: 'sweep-k', type: C.ET_MEMBER_REVOKE, streamIds: [TEAM], content: { member: MEMBER, membershipAccessId: 'acc-membership', reason: 'revoke', status: 'pending', records: [] } });
+      const h = await handleMemberRevoke({ userId: 'group', triggerEvent: mall.eventsMap.get('sweep-k'), deps: revokeDeps(mall, cores) });
+      assert.equal(h.ok, false);
+      assert.equal(h.reason, CmcErrorIds.MEMBER_REVOKE_RESIDUAL);
+    });
+
+    it('[CSA21] a network failure and a child the grant no longer lists: absent for a child of that grant, still residual for a record without a key', async () => {
+      const mall = fakeMall();
+      const keyed = await seed(mall, { childAccessId: 'c-keyed', grantKey: KEY });
+      const legacy = await seed(mall, { childAccessId: 'c-legacy' });
+      const cores = fakeCores({ deletes: { 'c-keyed': new Error('ECONNRESET'), 'c-legacy': new Error('ECONNRESET') }, remaining: { 'grant-tok': [] } });
+      const r = await revokeRecords({ userId: 'group', records: [keyed, legacy], deps: revokeDeps(mall, cores) });
+      assert.deepEqual(r.outcome, [
+        { childAccessId: 'c-keyed', result: 'absent', reason: 'not-listed' },
+        { childAccessId: 'c-legacy', result: 'residual', reason: 'network' },
+      ]);
+      assert.deepEqual(r.residuals.map((x) => x.childAccessId), ['c-legacy']);
+    });
+
+    it('[CSA22] a record of another grant than the relationship\'s current one: no call, residual grant-replaced; past its expiry absent expired', async () => {
+      const mall = fakeMall();
+      const former = await seed(mall, { childAccessId: 'c-former', grantKey: FORMER_KEY });
+      const formerOld = await seed(mall, { childAccessId: 'c-former-old', grantKey: FORMER_KEY, expires: NOW - 1 });
+      const displaced = await seed(mall, { childAccessId: 'c-displaced', state: 'residual', residualReason: 'grant-replaced' });
+      const cores = fakeCores();
+      const r = await revokeRecords({ userId: 'group', records: [former, formerOld, displaced], deps: revokeDeps(mall, cores) });
+      assert.deepEqual(r.outcome, [
+        { childAccessId: 'c-former', result: 'residual', reason: 'grant-replaced' },
+        { childAccessId: 'c-former-old', result: 'absent', reason: 'expired' },
+        { childAccessId: 'c-displaced', result: 'residual', reason: 'grant-replaced' },
+      ]);
+      assert.equal(cores.calls.length, 0, 'nothing sent: the current grant can neither see nor delete them');
+      const rec = (await ledger.listRecords({ mall }, 'group')).find((x) => x.childAccessId === 'c-former');
+      assert.deepEqual([rec.state, rec.residualReason], ['residual', 'grant-replaced']);
+    });
+
+    it('[CSA23] the patient ends the relationship: the records of the ended grant are absent, those of a former grant stay residual grant-replaced, those without a key residual grant-unknown until their expiry', async () => {
+      const mall = fakeMall();
+      await seed(mall, { childAccessId: 'c-own', grantKey: KEY });
+      await seed(mall, { childAccessId: 'c-former', grantKey: FORMER_KEY });
+      await seed(mall, { childAccessId: 'c-legacy' });
+      await seed(mall, { childAccessId: 'c-legacy-old', expires: NOW - 1 });
+      const cores = fakeCores();
+      const sweep = createMemberSweep({ mall, fetch: cores.fetch, now: () => NOW, dispatch: async () => ({ status: 'completed' }), dispatchDeps: {} });
+      assert.equal(await sweep.relationshipEnded('group', 'acc-rel', REL), 4);
+      const by = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x]));
+      assert.deepEqual([by['c-own'].state, by['c-own'].absentReason], ['absent', 'relationship-ended-by-peer']);
+      assert.deepEqual([by['c-former'].state, by['c-former'].residualReason], ['residual', 'grant-replaced']);
+      assert.deepEqual([by['c-legacy'].state, by['c-legacy'].residualReason], ['residual', 'grant-unknown'], 'it may be another grant\'s');
+      assert.equal(by['c-legacy-old'].state, 'absent', 'past its expiry it is gone anyway');
+      assert.equal(cores.calls.length, 0);
+      // An older caller without the access: every record settled as before.
+      const mall2 = fakeMall();
+      await seed(mall2, { childAccessId: 'c-former', grantKey: FORMER_KEY });
+      const sweep2 = createMemberSweep({ mall: mall2, fetch: cores.fetch, now: () => NOW, dispatch: async () => ({ status: 'completed' }), dispatchDeps: {} });
+      await sweep2.relationshipEnded('group', 'acc-rel');
+      assert.equal((await ledger.listRecords({ mall: mall2 }, 'group'))[0].state, 'absent');
+    });
+
+    it('[CSA38] a record already known unreachable (grant-replaced, grant-unknown) stays residual when the relationship access is gone, never absent; past its expiry absent expired', async () => {
+      const mall = fakeMall({ accesses: [MEMBERSHIP] });
+      const replaced = await seed(mall, { childAccessId: 'c-replaced', grantKey: FORMER_KEY, state: 'residual', residualReason: 'grant-replaced' });
+      const unknown = await seed(mall, { childAccessId: 'c-unknown', state: 'residual', residualReason: 'grant-unknown' });
+      const old = await seed(mall, { childAccessId: 'c-old', grantKey: FORMER_KEY, state: 'residual', residualReason: 'grant-replaced', expires: NOW - 1 });
+      const plain = await seed(mall, { childAccessId: 'c-plain', grantKey: KEY });
+      const cores = fakeCores();
+      const r = await revokeRecords({ userId: 'group', records: [replaced, unknown, old, plain], deps: revokeDeps(mall, cores) });
+      assert.deepEqual(r.outcome, [
+        { childAccessId: 'c-replaced', result: 'residual', reason: 'grant-replaced' },
+        { childAccessId: 'c-unknown', result: 'residual', reason: 'grant-unknown' },
+        { childAccessId: 'c-old', result: 'absent', reason: 'expired' },
+        { childAccessId: 'c-plain', result: 'absent', reason: 'relationship-gone' },
+      ]);
+      assert.equal(cores.calls.length, 0);
+      const states = Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x.state]));
+      assert.deepEqual(states, { 'c-replaced': 'residual', 'c-unknown': 'residual', 'c-old': 'absent', 'c-plain': 'absent' });
+      // Through the membership sweep: it fails residual, never completes.
+      mall.eventsMap.set('sweep-u', { id: 'sweep-u', type: C.ET_MEMBER_REVOKE, streamIds: [TEAM], content: { member: MEMBER, membershipAccessId: 'acc-membership', reason: 'revoke', status: 'pending', records: [] } });
+      const h = await handleMemberRevoke({ userId: 'group', triggerEvent: mall.eventsMap.get('sweep-u'), deps: revokeDeps(mall, cores) });
+      assert.deepEqual([h.ok, h.reason], [false, CmcErrorIds.MEMBER_REVOKE_RESIDUAL]);
+    });
+
+    it('[CSA39] the periodic pass leaves unreachable residuals out of its bounded batch: the residuals a call can settle are swept whatever their number', async () => {
+      const mall = fakeMall();
+      for (let i = 0; i < 60; i++) await seed(mall, { childAccessId: 'c-rep-' + i, grantKey: FORMER_KEY, state: 'residual', residualReason: 'grant-replaced' });
+      await seed(mall, { childAccessId: 'c-down', grantKey: KEY, state: 'residual' });
+      const cores = fakeCores();
+      const sweep = createMemberSweep({ mall, fetch: cores.fetch, now: () => NOW, dispatch: async () => ({ status: 'completed' }), dispatchDeps: {} });
+      const updatesBefore = mall.calls.eventsUpdated.length;
+      const r = await sweep.runLedgerPass('group');
+      assert.equal(r.residuals, 1, JSON.stringify(r));
+      assert.deepEqual(cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path), ['/accesses/c-down']);
+      const left = (await ledger.listRecords({ mall }, 'group')).filter((x) => x.childAccessId.startsWith('c-rep-'));
+      assert.ok(left.every((x) => x.state === 'residual' && x.residualReason === 'grant-replaced'));
+      assert.equal(mall.calls.eventsUpdated.length - updatesBefore, 1, 'only the settled record is written');
+    });
+
+    it('[CSA34] a snapshot record the ledger no longer holds is checked through the grant before its expiry, and settled by expiry after; nothing is written to the ledger for it', async () => {
+      const mall = fakeMall();
+      const cores = fakeCores({
+        deletes: {
+          'gone-1': { status: 404, body: { error: { id: 'unknown-resource' } } },
+          'held-1': { status: 403, body: { error: { id: 'forbidden' } } },
+        },
+        remaining: { 'grant-tok': [] },
+      });
+      const trigger = {
+        id: 'sweep-s',
+        type: C.ET_MEMBER_REVOKE,
+        streamIds: [TEAM],
+        content: {
+          member: MEMBER,
+          membershipAccessId: 'acc-membership',
+          reason: 'revoke',
+          status: 'pending',
+          records: [
+            { relationshipAccessId: 'acc-rel', counterparty: PATIENT, childAccessId: 'gone-1', expires: NOW + 3600 },
+            { relationshipAccessId: 'acc-rel', counterparty: PATIENT, childAccessId: 'held-1', expires: NOW + 3600 },
+            { relationshipAccessId: 'acc-rel', counterparty: PATIENT, childAccessId: 'old-1', expires: NOW - 9 },
+          ],
+        },
+      };
+      mall.eventsMap.set('sweep-s', trigger);
+      const ledgerWritesBefore = mall.calls.eventsCreated.length;
+      const r = await handleMemberRevoke({ userId: 'group', triggerEvent: trigger, deps: revokeDeps(mall, cores) });
+      const by = Object.fromEntries(r.outcome.map((o) => [o.childAccessId, o]));
+      assert.deepEqual(by['old-1'], { childAccessId: 'old-1', result: 'absent', reason: 'not-in-ledger' });
+      assert.deepEqual(by['gone-1'], { childAccessId: 'gone-1', result: 'absent', reason: 'not-found' });
+      assert.deepEqual(by['held-1'], { childAccessId: 'held-1', result: 'residual', reason: 'peer-rejected' }, 'never reported absent unchecked');
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, CmcErrorIds.MEMBER_REVOKE_RESIDUAL);
+      assert.deepEqual(cores.calls.filter((c) => c.method === 'DELETE').map((c) => c.path).sort(), ['/accesses/gone-1', '/accesses/held-1']);
+      assert.equal(mall.calls.eventsCreated.length, ledgerWritesBefore, 'no ledger record written');
+      assert.deepEqual(await ledger.listRecords({ mall }, 'group'), []);
+    });
+
+    it('[CSA35] a grant that no longer authenticates (401, or 403 invalid-access-token) leaves the child residual grant-gone, keyed or not', async () => {
+      const mall = fakeMall();
+      const a = await seed(mall, { childAccessId: 'c-401', grantKey: KEY });
+      const b = await seed(mall, { childAccessId: 'c-403' });
+      const cores = fakeCores({
+        deletes: {
+          'c-401': { status: 401, body: { error: { id: 'invalid-access-token' } } },
+          'c-403': { status: 403, body: { error: { id: 'invalid-access-token' } } },
+        },
+        listFails: true,
+      });
+      const r = await revokeRecords({ userId: 'group', records: [a, b], deps: revokeDeps(mall, cores) });
+      assert.deepEqual(r.outcome, [
+        { childAccessId: 'c-401', result: 'residual', reason: 'grant-gone' },
+        { childAccessId: 'c-403', result: 'residual', reason: 'grant-gone' },
+      ]);
+      assert.deepEqual(r.residuals.map((x) => x.expires), [NOW + 3600, NOW + 3600], 'bounded by the expiry');
     });
   });
 

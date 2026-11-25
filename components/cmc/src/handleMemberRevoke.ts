@@ -15,13 +15,14 @@
  * its patient's core through the relationship grant:
  *
  *   - a child the patient core deletes is `deleted`; one it no longer has
- *     (404, or a grant whose token no longer authenticates because the
- *     relationship was revoked and the patient core cascaded) is `absent`;
- *     anything else (a 5xx, a network error, a timeout, an unexpected
- *     refusal) is a `residual`;
+ *     (404) is `absent`; anything else (a 5xx, a network error, a timeout, an
+ *     unexpected refusal, a grant whose token no longer authenticates) is a
+ *     `residual`; a child made through a former grant of the relationship
+ *     (its record names another grant) is not tried: `residual`,
+ *     `grant-replaced`;
  *   - after the pass the grant's accesses are read back with `includeExpired`
- *     so an expired residual is reported `absent` by expiry and a deletion
- *     the patient core did not apply is caught;
+ *     so a deletion the patient core did not apply is caught, and a residual
+ *     this grant is known to have made and no longer lists is `absent`;
  *   - the ledger is re-read at the end and records added meanwhile (a mint
  *     that raced the revoke) are swept in the same run;
  *   - the outcome per child and the residuals are stamped on the trigger;
@@ -75,10 +76,13 @@ async function deleteChildThroughGrant (grantApiEndpoint: string, childAccessId:
   if (r.reason === 'http-4xx') {
     const peerErrorId = peerErrorIdOf(r.body);
     if (r.status === 404 || peerErrorId === 'unknown-resource') return { result: 'absent', reason: 'not-found' };
-    // The grant no longer authenticates: the relationship was revoked and the
-    // patient core took the children with the grant.
+    // The grant no longer authenticates. A patient core of this release took
+    // the children with the grant; one without that cascade leaves them until
+    // their own expiry, and nothing on this side can tell the two apart (no
+    // call reaches the child any more). Not settled as gone: a residual,
+    // bounded by the child's expiry.
     if (r.status === 401 || (r.status === 403 && peerErrorId === 'invalid-access-token')) {
-      return { result: 'absent', reason: 'grant-gone', peerErrorId, httpStatus: r.status };
+      return { result: 'residual', reason: 'grant-gone', peerErrorId, httpStatus: r.status };
     }
     return { result: 'residual', reason: 'peer-rejected', peerErrorId, httpStatus: r.status };
   }
@@ -108,13 +112,30 @@ async function childrenStillOnGrant (grantApiEndpoint: string, deps: OutboundDep
  * state. Shared by the membership sweep (this handler) and the relationship
  * end (memberSweep.sweepRelationship). Records already settled (`deleted` or
  * `absent`) are skipped.
+ *
+ * A record names the grant that made its child (`grantKey`). A record of
+ * another grant than the relationship's current one is not sent to the
+ * patient's core at all (the current grant can neither see nor delete that
+ * child): it stays `residual` / `grant-replaced` until its expiry. A record
+ * without a key (written before the key existed) is tried through the
+ * current grant, and only a definite answer settles it.
+ *
+ * Rule for the read-back (the grant's own list): "not listed" is evidence of
+ * a deletion only for a child this grant is known to have made, and never
+ * overturns a refusal (`peer-rejected`: the patient's core said the child
+ * exists and is not this grant's).
+ *
+ * `track: false` (records the ledger no longer holds, from a sweep
+ * trigger's snapshot): the same verdicts, nothing written to the ledger.
  */
 async function revokeRecords (params: {
   userId: string;
   records: StoredLedgerRecord[];
   deps: RevokeDeps;
+  track?: boolean;
 }): Promise<{ outcome: Outcome[]; residuals: Residual[]; firstResidual?: ChildVerdict & { childAccessId: string }; retryAfterMs?: number }> {
   const { userId, records, deps } = params;
+  const track = params.track !== false;
   const now = deps.now ?? (() => Date.now() / 1000);
   const ledgerDeps = { mall: deps.mall, logger: deps.logger, now };
   const peerDeps: OutboundDeps = { fetch: deps.fetch, timeoutMs: deps.timeoutMs, logger: deps.logger };
@@ -145,37 +166,53 @@ async function revokeRecords (params: {
     return lookup;
   }
 
-  const verdicts = new Map<string, { record: StoredLedgerRecord; verdict: ChildVerdict; grant: string | null }>();
+  // `known`: the child is known to be the current grant's (its record carries
+  // that grant's key), so the grant's own list is evidence about it.
+  const verdicts = new Map<string, { record: StoredLedgerRecord; verdict: ChildVerdict; grant: string | null; known: boolean }>();
   for (const record of records) {
     if (record.state === 'deleted' || record.state === 'absent') continue;
     const lookup = await grantOf(record.relationshipAccessId);
     const grant = lookup.endpoint;
+    const key = grant != null ? ledger.grantKeyOf(grant) : null;
     let verdict: ChildVerdict;
     if (grant == null && lookup.why === 'unreadable') {
       verdict = { result: 'residual', reason: 'relationship-unreadable' };
+    } else if (typeof record.expires === 'number' && record.expires < now()) {
+      verdict = { result: 'absent', reason: 'expired' };
+    } else if (ledger.isUnreachableResidual(record)) {
+      // Already known to be a child of a former grant, or of an unknown grant
+      // of a relationship the patient ended (whatever became of the
+      // relationship since): the end of the relationship's current grant says
+      // nothing about it. No call; its expiry bounds it.
+      verdict = { result: 'residual', reason: record.residualReason };
     } else if (grant == null) {
       // The relationship ended on this side: its grant was revoked and the
       // patient core took the children with it (a core of an older release
       // leaves them until their own expiry; nothing can reach them any more).
       verdict = { result: 'absent', reason: 'relationship-gone' };
-    } else if (typeof record.expires === 'number' && record.expires < now()) {
-      verdict = { result: 'absent', reason: 'expired' };
+    } else if (ledger.isOfOtherGrant(record, key)) {
+      // Made through a former grant of the relationship: the current one can
+      // neither see nor delete it. No call; its expiry bounds it.
+      verdict = { result: 'residual', reason: ledger.GRANT_REPLACED };
     } else {
-      verdict = await deleteChildThroughGrant(grant, record.childAccessId, peerDeps);
+      verdict = await deleteChildThroughGrant(grant!, record.childAccessId, peerDeps);
     }
-    verdicts.set(record.eventId, { record, verdict, grant });
+    verdicts.set(track ? record.eventId : 'untracked:' + record.childAccessId, { record, verdict, grant, known: key != null && record.grantKey === key });
   }
 
-  // Read-back per grant: an expired residual is absent by expiry, a deletion
-  // the core did not apply is a residual.
+  // Read-back per grant: a deletion the core did not apply is a residual; a
+  // residual the grant no longer lists is absent, for a child this grant is
+  // known to have made only, and never after a refusal.
   const readBacks = new Map<string, Set<string> | null>();
   for (const [, v] of verdicts) {
-    if (v.grant == null || v.verdict.result === 'absent') continue;
+    if (v.grant == null || v.verdict.result === 'absent' || UNREACHABLE_REASONS.has(v.verdict.reason ?? '')) continue;
     if (!readBacks.has(v.grant)) readBacks.set(v.grant, await childrenStillOnGrant(v.grant, peerDeps));
     const still = readBacks.get(v.grant);
     if (still == null) continue;
     if (!still.has(v.record.childAccessId)) {
-      if (v.verdict.result === 'residual') v.verdict = { result: 'absent', reason: 'not-listed' };
+      if (v.verdict.result === 'residual' && v.known && v.verdict.reason !== 'peer-rejected' && v.verdict.reason !== 'grant-gone') {
+        v.verdict = { result: 'absent', reason: 'not-listed' };
+      }
     } else if (v.verdict.result === 'deleted') {
       v.verdict = { result: 'residual', reason: 'still-listed' };
     }
@@ -188,8 +225,13 @@ async function revokeRecords (params: {
       residuals.push({ counterparty: record.counterparty, childAccessId: record.childAccessId, expires: record.expires, reason: verdict.reason ?? 'unknown' });
       if (firstResidual == null) firstResidual = { ...verdict, childAccessId: record.childAccessId };
     }
+    if (!track) continue;
+    const unreachable = verdict.result === 'residual' && UNREACHABLE_REASONS.has(verdict.reason ?? '');
+    // Nothing changed: not written again (a write moves `stateChangedAt`).
+    if (unreachable && record.state === 'residual' && record.residualReason === verdict.reason) continue;
     try {
-      const applied = await ledger.setState(ledgerDeps, userId, record.eventId, verdict.result, record.childAccessId);
+      const patch = unreachable ? { residualReason: verdict.reason } : {};
+      const applied = await ledger.setState(ledgerDeps, userId, record.eventId, verdict.result, record.childAccessId, patch);
       if (!applied) {
         deps.logger?.info?.('cmc/handleMemberRevoke: the record was taken by a newer child meanwhile; verdict not applied', {
           eventId: record.eventId, childAccessId: record.childAccessId,
@@ -214,6 +256,27 @@ type MemberRevokeResult =
   | { ok: false; reason: string; detail?: { childAccessId?: string; peerErrorId?: string; httpStatus?: number; retryAfterMs?: number }; outcome: Outcome[]; residuals: Residual[] };
 
 const MAX_PASSES = 3;
+
+// Residual reasons no call can settle (memberLedger.isUnreachableResidual).
+const UNREACHABLE_REASONS: ReadonlySet<string> = new Set([ledger.GRANT_REPLACED, ledger.GRANT_UNKNOWN]);
+
+/** A sweep snapshot entry the ledger no longer holds, in the shape `revokeRecords` takes (never written). */
+function untrackedRecordOf (s: SweepRecordInput, membershipAccessId: string | null): StoredLedgerRecord {
+  return {
+    eventId: '',
+    membershipAccessId: membershipAccessId ?? '',
+    member: { username: 'unknown', host: 'unknown' },
+    relationshipAccessId: s.relationshipAccessId,
+    counterparty: s.counterparty,
+    scopeStreamId: '',
+    childAccessId: s.childAccessId,
+    childName: '',
+    expires: s.expires,
+    attribution: '',
+    state: 'live',
+    stateChangedAt: 0,
+  };
+}
 
 async function handleMemberRevoke (params: {
   userId: string;
@@ -281,13 +344,28 @@ async function handleMemberRevoke (params: {
     if (firstResidual == null) firstResidual = r.firstResidual;
     if (r.retryAfterMs != null) retryAfterMs = Math.max(retryAfterMs ?? 0, r.retryAfterMs);
   }
-  // Snapshot records the ledger no longer has (pruned between the write and
-  // a retry): reported absent so the trigger's record is complete.
-  for (const s of snapshot) {
-    if (kept.has(s.childAccessId)) continue;
-    if (!outcome.some((o) => o.childAccessId === s.childAccessId)) {
+  // Snapshot records the ledger no longer has, so the trigger's record is
+  // complete. Past its expiry the child is gone whatever happened to its
+  // record (pruned between the write and a retry): `absent`. Before it, the
+  // missing record proves nothing about the child: it is deleted through the
+  // relationship's grant like a record without a key, nothing written to the
+  // ledger, and only a definite answer settles it.
+  const unaccounted = snapshot.filter((s) => !kept.has(s.childAccessId) && !outcome.some((o) => o.childAccessId === s.childAccessId));
+  const nowS = (deps.now ?? (() => Date.now() / 1000))();
+  const toCheck: StoredLedgerRecord[] = [];
+  for (const s of unaccounted) {
+    if (typeof s.expires === 'number' && s.expires < nowS) {
       outcome.push({ childAccessId: s.childAccessId, result: 'absent', reason: 'not-in-ledger' });
+    } else if (typeof s.relationshipAccessId === 'string' && typeof s.childAccessId === 'string') {
+      toCheck.push(untrackedRecordOf(s, membershipAccessId));
     }
+  }
+  if (toCheck.length > 0) {
+    const r = await revokeRecords({ userId, records: toCheck, deps, track: false });
+    outcome.push(...r.outcome);
+    residuals.push(...r.residuals);
+    if (firstResidual == null) firstResidual = r.firstResidual;
+    if (r.retryAfterMs != null) retryAfterMs = Math.max(retryAfterMs ?? 0, r.retryAfterMs);
   }
 
   // The outcome on the trigger, whatever the status the dispatch stamps next.

@@ -38,7 +38,8 @@ import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
 import { bindableAddressAliases, consentAddressAliases } from '../../methods/helpers/addressAliases.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
-import { notifyScopedAccessChange, releaseAliasesIfUnused, deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
+import { notifyScopedAccessChange, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
+import { deleteAccessChainRecorded } from '../../methods/helpers/accessWriteAudit.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
 import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
@@ -505,10 +506,10 @@ export function createSessions (env: GlueEnv) {
 
   async function revokeAccessLocal ({ userId, username, accessId, clientId }: {
     userId: string; username: string; accessId: string; clientId: string;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const accessesRepository = accessesRepo(storageLayer, 'oauth2.revokeAccessLocal');
     const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
-    if (access == null) return;
+    if (access == null) return false;
     const user = { id: userId, username };
     await fromCallback((cb: (e: unknown, r?: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
     // The cache validates tokens on `expires` only, never `deleted`.
@@ -519,6 +520,7 @@ export function createSessions (env: GlueEnv) {
     // still carries it, released if this session was its last holder.
     if (typeof access.alias === 'string') await releaseAliasesIfUnused(user, [access.alias]);
     pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
+    return true;
   }
 
   // ---------------------------------------------------------------------
@@ -685,7 +687,7 @@ export function createSessions (env: GlueEnv) {
       // Expired, or made before the resource server's revoke epoch: deleted
       // as any session is (its index row ends, what it created goes with it),
       // which frees the slot for a new one.
-      await deleteAccessChain(user, { id: row.id });
+      await deleteAccessChainRecorded(user, { id: row.id }, { source: 'oauth2', cause: 'derived-session-replaced' });
       row = null;
     }
     if (row == null) {
@@ -722,7 +724,7 @@ export function createSessions (env: GlueEnv) {
         // follows the subject.
         const after = await liveSubjectRow(userId, username, subjectAccessId, subjectClientId);
         if (after == null) {
-          await deleteAccessChain(user, { id: minted.accessId });
+          await deleteAccessChainRecorded(user, { id: minted.accessId }, { source: 'oauth2', cause: 'subject-session-gone' });
           throw subjectInactive();
         }
         const fresh: DataGrant = {

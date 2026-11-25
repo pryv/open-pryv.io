@@ -254,6 +254,18 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       assert.equal((await gate({ content: { expireAfter: 3600 } })).target.expireAfter, 3600);
     });
 
+    it('[CSA36] without a scope asked, the trigger stream\'s own relationship is taken before a newer one under it; with none on the stream, the newest under it', async () => {
+      const sub = { ...RELATIONSHIP, id: 'acc-rel-sub', created: 200, clientData: { cmc: { ...RELATIONSHIP.clientData.cmc, scopeStreamId: TEAM + ':ward-3' } } };
+      let r = await gate({ mall: fakeMall({ accesses: [MEMBERSHIP, RELATIONSHIP, sub] }) });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.target.relationshipAccess.id, 'acc-rel', 'the trigger stream\'s own, although older');
+      const sub2 = { ...sub, id: 'acc-rel-sub2', created: 300, clientData: { cmc: { ...sub.clientData.cmc, scopeStreamId: TEAM + ':ward-4' } } };
+      r = await gate({ mall: fakeMall({ accesses: [MEMBERSHIP, sub, sub2] }) });
+      assert.equal(r.target.relationshipAccess.id, 'acc-rel-sub2', 'the newest under it');
+      r = await gate({ mall: fakeMall({ accesses: [MEMBERSHIP, RELATIONSHIP, sub] }), content: { scopeStreamId: TEAM + ':ward-3' } });
+      assert.equal(r.target.relationshipAccess.id, 'acc-rel-sub', 'an asked scope is exact');
+    });
+
     it('[HMA07] the config reader falls back to the defaults for anything unset or invalid', () => {
       const values = { 'cmc:memberAccess:defaultTtl': 10, 'cmc:memberAccess:maxTtl': -1, 'cmc:memberAccess:allowNameOnly': false };
       const o = memberAccessOptionsFromConfig({ get: (k) => values[k] });
@@ -296,7 +308,7 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
 
     it('[HMA11] a live record is reused: the child is read by id through the grant and its token re-read, nothing is created', async () => {
       const mall = fakeMall();
-      await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
+      await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', grantKey: ledger.grantKeyOf(GRANT_ENDPOINT), state: 'live', stateChangedAt: 1 });
       const core = fakePatientCore([{ status: 200, body: { access: CHILD } }]);
       const r = await mint(mall, core, {});
       assert.equal(r.ok, true, JSON.stringify(r));
@@ -357,7 +369,8 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
 
     it('[HMA13] a recorded child the patient deleted (404) is marked absent and a new one minted while the grant lasts', async () => {
       const mall = fakeMall();
-      await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', state: 'live', stateChangedAt: 1 });
+      // Made through the current grant (its key): a 404 through it is a verdict.
+      await ledger.writeRecord({ mall }, 'group', { membershipAccessId: 'acc-membership', member: MEMBER, relationshipAccessId: 'acc-rel', counterparty: PATIENT, scopeStreamId: TEAM, childAccessId: 'child-1', childName: 'n', expires: CHILD.expires, attribution: 'stamped', grantKey: ledger.grantKeyOf(GRANT_ENDPOINT), state: 'live', stateChangedAt: 1 });
       const core = fakePatientCore([{ status: 404, body: { error: { id: 'unknown-resource' } } }, created201({ id: 'child-2' })]);
       const r = await mint(mall, core, {});
       assert.equal(r.ok, true, JSON.stringify(r));
@@ -645,6 +658,165 @@ describe('[CMCMA] cmc group accounts: the member access mint', () => {
       const core = fakePatientCore([{ status: 404, body: {} }, created201()]);
       const r = await mint(mall, core, {}, { timeoutMs: 50 });
       assert.equal(r.ok, true, JSON.stringify(r));
+    });
+  });
+
+  describe('[CMCMA-GRANT] the record names the grant that made its child', () => {
+    const KEY = ledger.grantKeyOf(GRANT_ENDPOINT);
+    const FORMER_KEY = ledger.grantKeyOf('https://former-tok@patient.example.com/');
+    const BASE = childNameFor(MEMBER, 'acc-membership', 'acc-rel');
+    const FALLBACK = BASE + '-' + KEY.slice(0, 8);
+    const taken = { status: 400, body: { error: { id: 'item-already-exists', message: 'name' } } };
+    const PAIR_ID = ledger.pairEventIdOf('acc-membership', 'acc-rel');
+
+    async function seedRecord (mall, over = {}) {
+      return await ledger.writeRecord({ mall }, 'group', {
+        membershipAccessId: 'acc-membership',
+        member: MEMBER,
+        relationshipAccessId: 'acc-rel',
+        counterparty: PATIENT,
+        scopeStreamId: TEAM,
+        childAccessId: 'child-1',
+        childName: BASE,
+        expires: CHILD.expires,
+        attribution: 'stamped',
+        state: 'live',
+        stateChangedAt: 1,
+        ...over,
+      });
+    }
+    // A patient core whose grant does not list the name it refuses (held by an access another grant manages).
+    function coreHoldingNameElsewhere (over = {}) {
+      const core = fakePatientCore(({ method, path, body }) => {
+        if (method === 'GET' && path !== '/accesses') return over.readById ?? { status: 404, body: { error: { id: 'unknown-resource' } } };
+        if (method === 'GET') return over.list ?? { status: 200, body: { accesses: [] } };
+        if (method === 'POST') return body.name === BASE ? taken : created201({ id: 'child-2', name: body.name, clientData: { cmc: { role: 'member-child', viaAccessId: 'grant-2' } } });
+        if (method === 'DELETE') return { status: 200, body: {} };
+        return null;
+      });
+      return core;
+    }
+    const calls = (core) => core.calls.map((c) => c.method + ' ' + c.path);
+    const records = async (mall) => Object.fromEntries((await ledger.listRecords({ mall }, 'group')).map((x) => [x.childAccessId, x]));
+
+    it('[CSA24] a live record of a former grant is not read by id; the name held by an access the grant does not list: the old record is kept residual at a random id, the child minted under the fallback name, the pair\'s record names it with the current key', async () => {
+      const mall = fakeMall();
+      await seedRecord(mall, { grantKey: FORMER_KEY });
+      const core = coreHoldingNameElsewhere();
+      const r = await mint(mall, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(calls(core), ['POST /accesses', 'GET /accesses', 'POST /accesses'], 'no read by id through the current grant');
+      assert.deepEqual([core.calls[0].body.name, core.calls[2].body.name], [BASE, FALLBACK]);
+      assert.equal(r.memberAccess.name, FALLBACK);
+      const by = await records(mall);
+      assert.deepEqual([by['child-2'].eventId, by['child-2'].state, by['child-2'].grantKey, by['child-2'].viaAccessId], [PAIR_ID, 'live', KEY, 'grant-2']);
+      assert.notEqual(by['child-1'].eventId, PAIR_ID, 'the old one is kept at a random id');
+      assert.deepEqual([by['child-1'].state, by['child-1'].residualReason, by['child-1'].grantKey], ['residual', 'grant-replaced', FORMER_KEY]);
+      noTokenIn(mall.calls.eventsCreated, 'the ledger');
+    });
+
+    it('[CSA25] a record without a key: a 404 then a free name is a plain mint; a 404 then a name held elsewhere keeps a copy and falls back; a live listed namesake is still refused; an expired one is deleted and the name minted again', async () => {
+      // A free name: no earlier child of that name exists, the record is rewritten in place.
+      let mall = fakeMall();
+      await seedRecord(mall);
+      let core = fakePatientCore([{ status: 404, body: {} }, created201({ id: 'child-2', name: BASE })]);
+      let r = await mint(mall, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(calls(core), ['GET /accesses/child-1', 'POST /accesses']);
+      let all = await ledger.listRecords({ mall }, 'group');
+      assert.deepEqual(all.map((x) => [x.eventId, x.childAccessId, x.state, x.grantKey]), [[PAIR_ID, 'child-2', 'live', KEY]]);
+      // Held elsewhere: the old child is kept tracked, the new one takes the fallback name.
+      mall = fakeMall();
+      await seedRecord(mall);
+      core = coreHoldingNameElsewhere();
+      r = await mint(mall, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(calls(core), ['GET /accesses/child-1', 'POST /accesses', 'GET /accesses', 'POST /accesses']);
+      const by = await records(mall);
+      assert.deepEqual([by['child-1'].state, by['child-1'].residualReason], ['residual', 'grant-replaced']);
+      assert.deepEqual([by['child-2'].childName, by['child-2'].grantKey], [FALLBACK, KEY]);
+      // A live access of that name listed by the grant: refused, nothing deleted, the record untouched.
+      mall = fakeMall();
+      await seedRecord(mall);
+      core = fakePatientCore(({ method, path }) => {
+        if (method === 'GET' && path !== '/accesses') return { status: 404, body: {} };
+        if (method === 'GET') return { status: 200, body: { accesses: [{ id: 'live-1', name: BASE, expires: 2_000_000 }] } };
+        if (method === 'POST') return taken;
+        return null;
+      });
+      r = await mint(mall, core, {});
+      assert.equal(r.reason, CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED);
+      assert.deepEqual(core.calls.map((c) => c.method), ['GET', 'POST', 'GET']);
+      all = await ledger.listRecords({ mall }, 'group');
+      assert.deepEqual(all.map((x) => [x.childAccessId, x.state]), [['child-1', 'live']]);
+      // An expired namesake: deleted, the base name minted again.
+      mall = fakeMall();
+      await seedRecord(mall);
+      let posts = 0;
+      core = fakePatientCore(({ method, path }) => {
+        if (method === 'GET' && path !== '/accesses') return { status: 404, body: {} };
+        if (method === 'GET') return { status: 200, body: { accesses: [{ id: 'child-1', name: BASE, expires: 999_000 }] } };
+        if (method === 'POST') return ++posts === 1 ? taken : created201({ id: 'child-2', name: BASE });
+        if (method === 'DELETE') return { status: 200, body: {} };
+        return null;
+      });
+      r = await mint(mall, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(calls(core), ['GET /accesses/child-1', 'POST /accesses', 'GET /accesses', 'DELETE /accesses/child-1', 'POST /accesses']);
+      assert.equal(core.calls[4].body.name, BASE);
+    });
+
+    it('[CSA26] a record an earlier release settled absent while its expiry is ahead, and the name held elsewhere: re-opened as residual, the new child under the fallback name', async () => {
+      const mall = fakeMall();
+      await seedRecord(mall, { state: 'absent' });
+      const core = coreHoldingNameElsewhere();
+      const r = await mint(mall, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(calls(core), ['POST /accesses', 'GET /accesses', 'POST /accesses'], 'an absent record is not read by id');
+      const by = await records(mall);
+      assert.deepEqual([by['child-1'].state, by['child-1'].residualReason], ['residual', 'grant-replaced']);
+      assert.equal(by['child-2'].eventId, PAIR_ID);
+      // Past its expiry the old record is not re-opened.
+      const mall2 = fakeMall();
+      await seedRecord(mall2, { state: 'absent', expires: 1_000_000 - 1 });
+      const r2 = await mint(mall2, coreHoldingNameElsewhere(), {});
+      assert.equal(r2.ok, true, JSON.stringify(r2));
+      assert.deepEqual((await ledger.listRecords({ mall: mall2 }, 'group')).map((x) => x.childAccessId), ['child-2']);
+    });
+
+    it('[CSA27] a minted record carries the grant key and the grant id from the child\'s stamp (null for name-only), never the endpoint; a reused record without a key gains it; the next ask after a fallback starts with the fallback name', async () => {
+      let mall = fakeMall();
+      let r = await mint(mall, fakePatientCore([created201({ clientData: { cmc: { role: 'member-child', viaAccessId: 'grant-1' } } })]), {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      let rec = await ledger.findRecord({ mall }, 'group', 'acc-membership', 'acc-rel');
+      assert.deepEqual([rec.grantKey, rec.viaAccessId], [KEY, 'grant-1']);
+      noTokenIn(mall.calls.eventsCreated, 'the ledger');
+      assert.equal(/https?:\/\//.test(JSON.stringify(mall.calls.eventsCreated)), false, 'no endpoint in the record');
+      // Name-only: no stamp, no grant id.
+      mall = fakeMall();
+      const refusal = { status: 400, body: { error: { id: 'invalid-operation', data: { id: 'cmc-clientdata-cmc-forbidden' } } } };
+      r = await mint(mall, fakePatientCore([refusal, created201()]), {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      rec = await ledger.findRecord({ mall }, 'group', 'acc-membership', 'acc-rel');
+      assert.deepEqual([rec.attribution, rec.grantKey, rec.viaAccessId], ['name-only', KEY, null]);
+      // A reused record without a key: written once with it, then unchanged.
+      mall = fakeMall();
+      await seedRecord(mall);
+      r = await mint(mall, fakePatientCore([{ status: 200, body: { access: CHILD } }]), {});
+      assert.equal(r.mintOutcome, 'reused');
+      assert.equal(mall.calls.eventsUpdated.length, 1, 'the key is written');
+      assert.equal((await ledger.findRecord({ mall }, 'group', 'acc-membership', 'acc-rel')).grantKey, KEY);
+      r = await mint(mall, fakePatientCore([{ status: 200, body: { access: CHILD } }]), {});
+      assert.equal(r.mintOutcome, 'reused');
+      assert.equal(mall.calls.eventsUpdated.length, 1, 'then not written again');
+      // After a fallback, the next mint for the pair starts with the fallback name.
+      mall = fakeMall();
+      await seedRecord(mall, { childName: FALLBACK, grantKey: KEY });
+      const core = fakePatientCore([{ status: 404, body: {} }, created201({ id: 'child-3', name: FALLBACK })]);
+      r = await mint(mall, core, {});
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(calls(core), ['GET /accesses/child-1', 'POST /accesses']);
+      assert.equal(core.calls[1].body.name, FALLBACK);
     });
   });
 

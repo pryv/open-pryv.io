@@ -27,7 +27,7 @@ import { mergeStreamPermissions, PermissionMergeConflictError, withoutUnknownFea
 import { assertGrantedWithinOffer, accessLogicResolver } from 'business/src/accesses/consentEffectiveGuard.ts';
 import { sessionChainOf, REQUEST_NO_REACH } from 'oauth2/src/consentComposition.ts';
 // The teardown accesses.delete uses (webhooks, aliases, index, scrub, cache).
-import { deleteAccessChain } from '../../methods/helpers/accessDeletion.ts';
+import { deleteAccessChainRecorded } from '../../methods/helpers/accessWriteAudit.ts';
 // Wire ids carry a version serial; storage reads by the base id.
 import { parseAccessRef } from 'business/src/accesses/refs.ts';
 // Outcome-driven CMC consent poll: keys on the trigger's terminal status so a
@@ -77,6 +77,12 @@ type SessionHelpers = {
   setGrantClient: (userId: string, username: string, grantId: string, clientId: string) => Promise<void>;
   storedSessionPermissions: (permissions: Array<Record<string, unknown>>) => Array<Record<string, unknown>>;
 };
+
+/** The owner's access a consent runs under, for the audit record. */
+function askedBy (context: Ctx): { by?: string } {
+  const id = (context.access as { id?: unknown } | null | undefined)?.id;
+  return typeof id === 'string' ? { by: id } : {};
+}
 
 export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
   const { apiRead, apiWrite } = env;
@@ -225,7 +231,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       // the user acknowledged) may replace the grant; a concurrent consent
       // that changed the grant in between is refused.
       if (subjectChange == null) throw new Error('oauth2.createAccess: the grant\'s subject mode changed during the consent');
-      await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(current.id).base });
+      await deleteAccessChainRecorded({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(current.id).base },
+        { source: 'oauth2', cause: 'consent-subject-changed', ...askedBy(context) });
       current = null;
     }
     // A changed grant re-cuts its live sessions: accesses.update does it
@@ -355,7 +362,8 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
     const rivals = (all?.accesses ?? []).filter((a) => a?.alias === alias && a.id !== ours.id);
     const stillOwned = (await addressAliasesOfAccount(context.user.id)).includes(alias);
     if (stillOwned && !rivals.some((a) => before(a, ours))) return;
-    await deleteAccessChain({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(ours.id).base });
+    await deleteAccessChainRecorded({ id: context.user.id, username: context.user.username }, { id: parseAccessRef(ours.id).base },
+      { source: 'oauth2', cause: 'alias-race-lost', ...askedBy(context) });
     throw audienceMismatch();
   }
 
@@ -387,8 +395,9 @@ export function createGrants (env: GlueEnv, sessions: SessionHelpers) {
       (typeof grant.expires === 'number' && grant.expires <= Date.now() / 1000) ||
       await madeBeforeClientRevoke(grant, clientId))) {
       if (opts.repair !== false) {
-        await deleteAccessChain({ id: context.user.id, username: context.user.username },
-          { id: parseAccessRef(grant.id).base, keepAddressAliases: true });
+        await deleteAccessChainRecorded({ id: context.user.id, username: context.user.username },
+          { id: parseAccessRef(grant.id).base, keepAddressAliases: true },
+          { source: 'oauth2', cause: 'grant-expired-or-client-revoked', ...askedBy(context) });
       }
       grant = null;
     }

@@ -397,11 +397,22 @@ function readableEventsStreamForIterator (iterateSource: Iterator<EventRow>): No
   return Readable.from(iterateTransform);
 }
 
-UserDatabase.prototype.getAllActions = function (this: UserDatabaseInstance): EventRow[] {
+/**
+ * The database of a user's audit trail: adds what only the audit lists, the
+ * actions and accesses its records name. The user's own events use
+ * `UserDatabase`, without them.
+ */
+function AuditUserDatabase (this: UserDatabaseInstance, logger: LoggerFactory, params: { dbPath: string }): void {
+  UserDatabase.call(this, logger, params);
+}
+AuditUserDatabase.prototype = Object.create(UserDatabase.prototype);
+AuditUserDatabase.prototype.constructor = AuditUserDatabase;
+
+AuditUserDatabase.prototype.getAllActions = function (this: UserDatabaseInstance): EventRow[] {
   return this.eventQueries.getTerms.all('action-', 'action.'); // '.' follows '-'
 };
 
-UserDatabase.prototype.getAllAccesses = function (this: UserDatabaseInstance): EventRow[] {
+AuditUserDatabase.prototype.getAllAccesses = function (this: UserDatabaseInstance): EventRow[] {
   return this.eventQueries.getTerms.all('access-', 'access.');
 };
 
@@ -937,4 +948,4 @@ function pagingClause (limit: unknown, skip: unknown): SqlPart {
   return part;
 }
 
-export { UserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setCandidateProbeCap, _setSummaryChunkRows, _summaryCounters };
+export { UserDatabase, AuditUserDatabase, jsonConditionToSql, _setModifiedProbeCap, _setCandidateProbeCap, _setSummaryChunkRows, _summaryCounters };

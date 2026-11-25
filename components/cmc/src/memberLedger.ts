@@ -28,6 +28,13 @@
  * `expires` passed and whose state is not `live` is pruned by the periodic
  * pass.
  *
+ * A record also names the grant that made its child (`grantKey`, a digest of
+ * the grant endpoint): on the patient's core a child is read, listed and
+ * deleted only through the grant that created it, so a verdict reached
+ * through another grant of the same relationship (the patient accepted again
+ * since) says nothing about it. A child of a former grant is kept `residual`
+ * with `residualReason: 'grant-replaced'` until its expiry.
+ *
  * Lookup by pair: a record lives at an event id derived from its pair
  * (`pairEventIdOf`), so the mint's idempotency is one read by id, not a scan
  * of the ledger. The id is not one a client can create through the API
@@ -73,6 +80,24 @@ type LedgerRecord = {
   // the grant, an older one leaves them until their expiry, unreachable
   // either way).
   absentReason?: string;
+  // Which grant made the child: the first 16 hex characters of the SHA-256 of
+  // the grant endpoint the mint went through (`grantKeyOf`). On the patient's
+  // core only the grant that created a child can read, list or delete it, so
+  // a record made through an earlier grant of the relationship (the patient
+  // accepted again since) cannot be judged through the current one. A digest,
+  // never the endpoint or its token. Absent on records written before it
+  // existed ("legacy" records: nothing is concluded from a 404 or from "not
+  // listed" for them).
+  grantKey?: string;
+  // The grant's access id on the patient's core, as the created child's stamp
+  // names it (null for a `name-only` child). Evidence, not used for decisions.
+  viaAccessId?: string | null;
+  // Why a record is `residual` when the reason is known at write time:
+  // `grant-replaced` (the child was made through a grant the relationship no
+  // longer holds; only its own expiry, or the patient's core, ends it),
+  // `grant-unknown` (a record without a key whose relationship the patient
+  // ended: the end proves nothing about a child of another grant).
+  residualReason?: string;
 };
 
 /** A record as read back: the stored content plus the event that holds it. */
@@ -90,6 +115,44 @@ const PAIR_ID_PREFIX = 'cmcml_';
 
 function nowSeconds (deps: LedgerDeps): number {
   return (deps.now ?? (() => Date.now() / 1000))();
+}
+
+/**
+ * The key of a grant endpoint: the first 16 hex characters of its SHA-256.
+ * Names the exact credential (token included) without storing it; two
+ * endpoints of one account with different tokens get different keys.
+ */
+function grantKeyOf (grantApiEndpoint: string): string {
+  return createHash('sha256').update(grantApiEndpoint).digest('hex').slice(0, 16);
+}
+
+/**
+ * Whether a record names a child made through ANOTHER grant than the one of
+ * key `currentKey`: its own key differs, or it was displaced as
+ * `grant-replaced` (the current grant was seen not to manage it) without a
+ * key of its own. Such a child cannot be read, listed or deleted through the
+ * current grant.
+ */
+function isOfOtherGrant (record: Pick<LedgerRecord, 'grantKey' | 'residualReason'>, currentKey: string | null): boolean {
+  if (typeof record.grantKey === 'string' && record.grantKey.length > 0) {
+    return currentKey != null && record.grantKey !== currentKey;
+  }
+  return record.residualReason === GRANT_REPLACED;
+}
+
+const GRANT_REPLACED = 'grant-replaced';
+// A record without a key whose relationship the patient ended: which grant
+// made the child cannot be told (two grants could serve the relationship
+// before the replace rule), so it is not settled as gone.
+const GRANT_UNKNOWN = 'grant-unknown';
+
+/**
+ * A residual no call can settle: its child was made through a former grant
+ * (`grant-replaced`), or through an unknown one of a relationship the patient
+ * ended (`grant-unknown`). Only its expiry ends the record.
+ */
+function isUnreachableResidual (record: Pick<LedgerRecord, 'state' | 'residualReason'>): boolean {
+  return record.state === 'residual' && (record.residualReason === GRANT_REPLACED || record.residualReason === GRANT_UNKNOWN);
 }
 
 /** The event id of a pair's record. */
@@ -345,6 +408,30 @@ async function writeRecord (deps: LedgerDeps, userId: string, record: LedgerReco
   return displaced.created;
 }
 
+/**
+ * Copy a record to a random id as `residual` / `grant-replaced`, so the
+ * pair's id can take the record of a new child while the old child stays
+ * tracked (a child made through a former grant of the relationship, which
+ * the current grant cannot see). The copy keeps the old child's id, name,
+ * expiry and grant key; the periodic pass settles it by expiry and prunes it.
+ * Returns the copy's event id; throws when the write fails.
+ */
+async function displace (deps: LedgerDeps, userId: string, record: StoredLedgerRecord): Promise<string> {
+  const copy: LedgerRecord & { eventId?: string } = {
+    ...record,
+    state: 'residual',
+    residualReason: GRANT_REPLACED,
+    stateChangedAt: nowSeconds(deps),
+  };
+  delete copy.eventId;
+  delete copy.absentReason;
+  const outcome = await createRecordEvent(deps, userId, copy);
+  if (!('created' in outcome)) throw new Error('cmc/memberLedger: the ledger write returned no id');
+  // A record at a random id exists now: the next lookup by pair must scan.
+  forgetScan(deps, userId);
+  return outcome.created;
+}
+
 /** Delete one record event; best-effort (a leftover is pruned later). */
 async function deleteRecordEvent (deps: LedgerDeps, userId: string, eventId: string): Promise<boolean> {
   const del = deps.mall.events.delete;
@@ -427,5 +514,11 @@ export {
   pruneExpired,
   pairEventIdOf,
   forgetScan,
+  grantKeyOf,
+  isOfOtherGrant,
+  displace,
+  isUnreachableResidual,
+  GRANT_REPLACED,
+  GRANT_UNKNOWN,
 };
 export type { LedgerRecord, StoredLedgerRecord, LedgerState, LedgerDeps, LedgerMall, PruneOptions };

@@ -9,11 +9,11 @@ set -e
 #                                   so operators can bind-mount /app/var-pryv/... without shadowing)
 #   var-pryv/rqlite-data/         — Raft log + SQLite snapshot directory (created on first start)
 
-RQLITE_VERSION=10.6.0
+RQLITE_VERSION=10.7.5
 # Per-arch sha256 of the release tarballs, same values as the Dockerfile's:
 # update both when bumping RQLITE_VERSION (curl -fsSL <url> | sha256sum).
-RQLITE_SHA256_amd64=cd64c28d672a702a6aeceab17a977ef11f3250634bd8931fb162bce4f6a84a41
-RQLITE_SHA256_arm64=f03cdb26e60f394796363817820f78804d2aa88a85930f7a0836c4a0d19d35c6
+RQLITE_SHA256_amd64=08f93f72f72da681c37d014fecb61f209a92b8c3de8a683081b3ed93ebc49f80
+RQLITE_SHA256_arm64=8b9482fae0b3321b50eae04ec8fd1f0edebbece2c44169e1fb72bb443bd293a5
 
 # Detect OS / arch
 case "$(uname)" in
@@ -104,7 +104,7 @@ else
 
   mkdir -p "$RQLITE_BIN_DIR"
 
-  # macOS: upstream releases do not publish darwin-arm64 tarballs (as of v10.6.0
+  # macOS: upstream releases do not publish darwin-arm64 tarballs (as of v10.7.5
   # only linux-* assets ship). Fall back to Homebrew's native arm64 bottle,
   # which tracks the same upstream version, then symlink binaries in.
   if [[ "$RQLITE_OS" == "darwin" ]]; then

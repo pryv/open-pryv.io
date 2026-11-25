@@ -21,6 +21,10 @@
  *                        `revokeEventId` is the inbox arrival)
  *   'delegation-detach'  written by the delegation plugin on detach, with its
  *                        own `relId`; not written here
+ *   'replaced'           the person accepted again for the same counterparty
+ *                        and scope, and the newer grant ended this one
+ *                        (replacedGrants.ts); `replacedBy` names the newer
+ *                        accept and its grant: `{ acceptEventId, accessId }`
  *
  * `at` is in seconds. The field is server-owned (`ACCEPT_SERVER_OWNED_FIELDS`):
  * a client cannot write, change or erase it.
@@ -42,13 +46,16 @@
 import * as C from './constants.ts';
 import type { CmcClientData, CmcLogger, MallEventsLike } from './_types.ts';
 
-type WithdrawalBy = 'accesses.delete' | 'revoke-cmc' | 'peer-revoke';
+type WithdrawalBy = 'accesses.delete' | 'revoke-cmc' | 'peer-revoke' | 'replaced';
+
+type ReplacedBy = { acceptEventId: string | null; accessId: string };
 
 type Withdrawal = {
   at: number;
   by: WithdrawalBy;
   accessId: string;
   revokeEventId?: string;
+  replacedBy?: ReplacedBy;
 };
 
 type StampResult =
@@ -98,6 +105,8 @@ async function stampWithdrawalOnAccept (params: {
   by: WithdrawalBy;
   accessId: string;
   revokeEventId?: string | null;
+  /** With `by: 'replaced'`: the newer accept and grant. */
+  replacedBy?: ReplacedBy | null;
   /** The relationship access itself, to recognise a self-relationship by its token. */
   access?: { token?: string } | null;
   deps: {
@@ -139,6 +148,9 @@ async function stampWithdrawalOnAccept (params: {
     const at = Date.now() / 1000;
     const withdrawal: Withdrawal = { at, by, accessId };
     if (typeof revokeEventId === 'string' && revokeEventId.length > 0) withdrawal.revokeEventId = revokeEventId;
+    if (by === 'replaced' && params.replacedBy != null) {
+      withdrawal.replacedBy = { acceptEventId: params.replacedBy.acceptEventId ?? null, accessId: params.replacedBy.accessId };
+    }
     // Both checks run again on the event as stored at write time: a
     // withdrawal another writer recorded since the read above is kept, and so
     // is any update landed meanwhile.
@@ -167,4 +179,4 @@ async function stampWithdrawalOnAccept (params: {
 }
 
 export { stampWithdrawalOnAccept, isSelfRelationship };
-export type { Withdrawal, WithdrawalBy };
+export type { Withdrawal, WithdrawalBy, ReplacedBy };

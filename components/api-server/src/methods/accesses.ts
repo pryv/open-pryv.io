@@ -1176,6 +1176,8 @@ export default async function produceAccessesApiMethods (api: { register (...arg
    * access at the grant's next change or its expiry).
    */
   async function reconcileOAuthSessionsOfUpdatedAccess (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    // The update is written: its audit row names the access.
+    context.auditIntegrityPayload = { accessId: params.targetBase! };
     const updated = params.update?.permissions;
     const before = (params.targetAccess as { permissions?: unknown[] } | undefined)?.permissions ?? [];
     if (!Array.isArray(updated) || samePermissionKeys(before, updated)) return next();
@@ -1416,6 +1418,10 @@ export default async function produceAccessesApiMethods (api: { register (...arg
       return next(errors.unexpectedError(err));
     }
     if (outcome.relatedDeletions.length > 0) result.relatedDeletions = outcome.relatedDeletions;
+    context.auditIntegrityPayload = {
+      accessId: params.id,
+      ...(outcome.relatedDeletions.length > 0 ? { related: outcome.relatedDeletions.map((r: { id: string }) => r.id) } : {})
+    };
     params.relatedAccessesToDelete = outcome.relatedAccessesToDelete as AccessLike[];
     result.accessDeletion = { id: params.id };
     next();

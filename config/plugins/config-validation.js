@@ -934,6 +934,8 @@ function collectWarnings (config) {
   warnings.push(...describeErasureLedgerConfig(config.get('accountErasure:ledger')).warnings);
   const { describePgTimeLimits } = require('../../storages/engines/postgresql/src/timeLimits.ts');
   warnings.push(...describePgTimeLimits(config.get('storages:engines:postgresql')).warnings);
+  warnings.push(...auditEngineWarnings(config));
+  warnings.push(...auditFilterWarnings(config));
   warnings.push(...oauthWarnings(config));
   const { describeClientMetadataConfig } = require('../../components/oauth2/src/clientMetadataConfig.ts');
   warnings.push(...describeClientMetadataConfig(config.get('oauth:clientMetadataDocuments')).warnings);
@@ -941,6 +943,32 @@ function collectWarnings (config) {
   const { describePasswordCheckLimit } = require('../../components/business/src/auth/passwordCheckLimit.ts');
   warnings.push(...describePasswordCheckLimit(config.get('auth')).warnings);
   return warnings;
+}
+
+/**
+ * Audit records in PostgreSQL with the base storage in SQLite: the users index
+ * is not in the audit database, so the database cannot refuse a record of an
+ * erased account: the server does, from the moment the erasure has marked the
+ * account (with `audit.onUserDelete: keep` such records are kept anyway).
+ */
+function auditEngineWarnings (config) {
+  if (config.get('storages:audit:engine') !== 'postgresql' || config.get('storages:base:engine') === 'postgresql') return [];
+  if (config.get('audit:active') === false || config.get('audit:onUserDelete') === 'keep') return [];
+  return ["'storages.audit.engine: postgresql' with 'storages.base.engine: " + config.get('storages:base:engine') + "': " +
+    'an audit record written in the last moment of an account erasure, by a call still running, is not refused and can stay. ' +
+    "Set 'storages.audit.engine: sqlite' to have it refused."];
+}
+
+/** Audit filter entries that match no method: their records are not selected, nothing else says so. */
+function auditFilterWarnings (config) {
+  if (config.get('audit:active') === false) return [];
+  const { unknownFilterMethods } = require('../../components/audit/src/validation.ts');
+  return ['storage', 'syslog'].flatMap((target) => {
+    const unknown = unknownFilterMethods(config.get('audit:' + target + ':filter'));
+    if (unknown.length === 0) return [];
+    return ["'audit." + target + ".filter' names methods that do not exist: " + unknown.map((m) => JSON.stringify(m)).join(', ') +
+      '. They select nothing. Use a method id (as in the API reference), a group such as "events.all", or "all".'];
+  });
 }
 
 /** Below this, an `oauth.stateKey` or `sso.stateKey` gets a boot warning. */

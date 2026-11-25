@@ -32,8 +32,10 @@ import type { PlatformDB } from '../../../../../storages/interfaces/platformStor
  *
  * One implementation for the route and for the plugins (the CMC and
  * delegation teardowns delete through the mall accesses adapter, which calls
- * this): a consent withdrawn through any path leaves the same record as a
- * plain `accesses.delete`.
+ * this): a consent withdrawn through any path leaves the same deletion record
+ * in the accesses store as a plain `accesses.delete`. The audit record is the
+ * caller's: the row of the API call, or `deleteAccessChainRecorded`
+ * (accessWriteAudit.ts) for every other caller.
  */
 
 type AccessRow = {
@@ -311,6 +313,8 @@ async function deleteAccessChain (user: DeletionUser, params: {
   accessToDelete?: AccessRow | null;
   relatedAccessesToDelete?: AccessRow[] | null;
   keepAddressAliases?: boolean;
+  /** Told the ids as soon as their rows are deleted (a later side effect may still fail). */
+  onDeleted?: (ids: string[]) => void;
 }): Promise<DeletionOutcome> {
   const storageLayer = await getStorageLayer();
   const accessesRepository = storageLayer.accesses;
@@ -400,6 +404,7 @@ async function deleteAccessChain (user: DeletionUser, params: {
     cache.unsetAccessLogic(user.id, logic);
   }
   if (deleteErr != null) throw deleteErr;
+  params.onDeleted?.(idsToDelete.map((d) => d.id));
   for (const row of rowsToScrub) await scrubOrWarn(accessesRepository as unknown as ScrubRepository, user, row);
   // An access created through the deleted one (or through a deleted session
   // of it, or a session a refresh minted under it) between the find above and
@@ -417,6 +422,7 @@ async function deleteAccessChain (user: DeletionUser, params: {
         isDerivedOf(a, grantBaseId) || sessionIds.some((id) => isDerivedOf(a, id)) || derivedIds.some((id) => isManagedBy(a, id))));
     if (late.length > 0) {
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
+      params.onDeleted?.(late.map((a) => a.id));
       for (const a of late) {
         if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(user.id, { id: a.id, token: a.token });
         if (isOAuthSession(a) && typeof a.token === 'string') sessionTokens.push(a.token);

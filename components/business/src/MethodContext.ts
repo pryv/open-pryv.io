@@ -54,9 +54,11 @@ class MethodContext {
    */
   customAuthStepFn: CustomAuthFunction | null;
   mall: Mall | null;
-  /** Audit payload landed by api-server create steps (events/accesses) and
-   *  consumed by the audit component when recording the call. */
-  auditIntegrityPayload?: { key: string; integrity: string };
+  /** Audit payload landed by api-server steps (events and accesses created,
+   *  accesses updated or deleted) and consumed by the audit component when
+   *  recording the call. `accessId` / `related`: the access an update or a
+   *  deletion was about, and what was deleted with it. */
+  auditIntegrityPayload?: { key?: string; integrity?: string; accessId?: string; related?: string[] };
   /** Breach-scope audit enrichment (read methods): count of records returned,
    *  a flag when the streamed drain aborted mid-count, and the streams the read
    *  was SCOPED to (post-expansion resolved set). Landed by the events.get path

@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import { isDeepStrictEqual } from 'node:util';
 const require = createRequire(import.meta.url);
 
 /**
@@ -862,6 +863,8 @@ function isPersonalAccess (access: MethodContext['access']): boolean {
  *   - a type change to or from a CMC type.
  * Then, as on create: the CMC content is validated on the merged event, and a
  * counterparty's `content.from` is stamped from its access.
+ * A personal access is not restricted, but its update is validated as its
+ * create would be, when it changes the content, the type or the streams.
  * Personal accesses pass through unchanged.
  */
 // The group account's member records: the ask (`consent/member-access-cmc`)
@@ -898,14 +901,30 @@ function createEventDeleteGuardHook (deps: Deps): Middleware {
   };
 }
 
+/** Whether an update changes the event's content, type or streams. */
+function changesValidatedFields (oldEvent: Record<string, unknown>, newEvent: Record<string, unknown>): boolean {
+  if (oldEvent.type !== newEvent.type) return true;
+  if (!isDeepStrictEqual(oldEvent.content, newEvent.content)) return true;
+  const ids = (e: Record<string, unknown>) => (Array.isArray(e.streamIds) ? [...e.streamIds].sort() : []);
+  return !isDeepStrictEqual(ids(oldEvent), ids(newEvent));
+}
+
 function createEventUpdateGuardHook (deps: Deps): Middleware {
   const validateContent = createCmcContentValidationHook(deps);
   const stampFrom = createCounterpartyFromStampingHook(deps);
   return function cmcEventUpdateGuard (context, params, result, next) {
-    if (isPersonalAccess(context?.access)) return next();
     const oldEvent = context?.oldEvent;
     const newEvent = context?.newEvent;
     if (oldEvent == null || newEvent == null) return next();
+    // The person's own update is not restricted, but what it writes is
+    // judged as on create (strict for the person's own write). Only when it
+    // changes what the validation reads (content, type, streams): an update
+    // of anything else is not refused for stored content it does not touch
+    // (e.g. an offer written before a rule was tightened).
+    if (isPersonalAccess(context?.access)) {
+      if (!changesValidatedFields(oldEvent, newEvent)) return next();
+      return validateContent(context, params, result, next);
+    }
     const oldStreamIds: string[] = Array.isArray(oldEvent.streamIds) ? oldEvent.streamIds : [];
     const newStreamIds: string[] = Array.isArray(newEvent.streamIds) ? newEvent.streamIds : [];
     if (oldStreamIds.some(isProtectedStreamId) || newStreamIds.some(isProtectedStreamId)) {

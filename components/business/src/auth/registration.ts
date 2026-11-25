@@ -370,11 +370,20 @@ class Registration {
         }
       }
     } catch (err) {
+      // Each release stands alone, and the answer is what failed first.
+      const release = async (what: string, body: () => Promise<unknown>) => {
+        try {
+          await body();
+        } catch (releaseErr) {
+          getLogger('registration').error(what + ' not released after a failed registration', releaseErr);
+        }
+      };
       if (context.invitationClaimed === true) {
-        await this.platform.releaseInvitationToken(context.newUser.invitationToken as string, context.newUser.username);
+        await release('invitation token', () => this.platform.releaseInvitationToken(context.newUser.invitationToken as string, context.newUser.username));
       }
       if (context.externalIdClaim != null && context.externalIdLinked == null) {
-        await (await externalIdsService()).releaseRegistrationClaim(context.externalIdClaim);
+        const claim = context.externalIdClaim;
+        await release('external id claim', async () => (await externalIdsService()).releaseRegistrationClaim(claim));
       }
       return next(err);
     }

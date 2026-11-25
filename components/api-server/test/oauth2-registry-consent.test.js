@@ -99,6 +99,12 @@ function pkce () {
   return { verifier, challenge: crypto.createHash('sha256').update(verifier).digest('base64url') };
 }
 
+/** The audit records of the accesses the server deleted on the account of `userId`. */
+async function deletedRecords (userId) {
+  const db = await require('storages').auditStorage.forUser(userId);
+  return (await db.getEvents({ query: [] })).filter((e) => e.content?.action === 'accesses.deleted').map((e) => ({ source: e.content.source.name, ...e.content.record }));
+}
+
 describe('[OCMP] OAuth registry clients: composed re-consent, subject change, forbids', function () {
   this.timeout(60000);
 
@@ -874,6 +880,9 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     assert.equal((await accesses(who)).some((a) => baseOf(a.id) === baseOf(seeded.body.access.id)), false);
     assert.ok(granteds.some((r) => r.clientId === clientId &&
       JSON.stringify(r.subjectChange) === JSON.stringify({ from: 'pseudonym', to: 'account' })), JSON.stringify(granteds));
+    const gone = await deletedRecords(who.username);
+    assert.deepEqual(gone.map((r) => [r.source, r.accessId, r.cause, typeof r.by]),
+      [['oauth2', baseOf(seeded.body.access.id), 'consent-subject-changed', 'string']], JSON.stringify(gone));
   });
 
   it('[IPAU6] a consent leaves the record of its own writes, none for its lookups', async () => {
@@ -969,6 +978,9 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     const fresh = await grantOf(who);
     assert.notEqual(baseOf(fresh.id), baseOf(grant.id));
     assert.deepEqual(streamsOf(fresh.permissions), ['b:read']);
+    const gone = await deletedRecords(who.username);
+    assert.deepEqual(gone.map((r) => [r.source, r.accessId, r.cause, typeof r.by]),
+      [['oauth2', baseOf(grant.id), 'grant-expired-or-client-revoked', 'string']], JSON.stringify(gone));
   });
 
   it('[OCMP16] a session removed after a failed code exchange is tombstoned in the access index', async () => {

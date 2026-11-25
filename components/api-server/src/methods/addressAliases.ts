@@ -19,7 +19,7 @@ import { basicAccessAuthorizationCheck, getParamsValidation, requirePersonalAcce
 import * as methodsSchema from '../schema/accountMethods.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { parseAccessRef } from 'business/src/accesses/refs.ts';
-import { deleteAccessChain } from './helpers/accessDeletion.ts';
+import { deleteAccessChainRecorded } from './helpers/accessWriteAudit.ts';
 import type { AliasHolderRow } from './helpers/addressAliases.ts';
 import { MAX_ADDRESS_ALIASES, addressAliasesOfAccount, addressAliasHolders, holderOf, maxAliasesPerAccount } from './helpers/addressAliases.ts';
 
@@ -124,7 +124,8 @@ export default async function (api: Api) {
           const rows = (await addressAliasHolders(account)).get(alias) ?? [];
           const holder = holderOf(rows);
           if (holder == null) break;
-          const outcome = await deleteAccessChain(account, { id: parseAccessRef(holder.id).base });
+          const outcome = await deleteAccessChainRecorded(account, { id: parseAccessRef(holder.id).base },
+            { source: 'account', cause: 'address-alias-deleted', by: context.access!.id! });
           if (!outcome.deleted) break;
           relatedDeletions.push({ id: holder.id }, ...outcome.relatedDeletions);
         }

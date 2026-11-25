@@ -31,7 +31,6 @@ describe('[AUAB] aborted audit queries release their pooled client', function ()
   const SEEDED = 20000; // far beyond any socket buffer: the server is provably mid-cursor
 
   before(async function () {
-    if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
     await initTests();
     await initCore();
 

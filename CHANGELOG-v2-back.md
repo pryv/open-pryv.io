@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### CMC: one grant per relationship
+
+- New `components/cmc/src/replacedGrants.ts`: `endReplacedGrants` (accepter side, called by
+  `handleIncomingBackChannel` on the path bound to the writing grant once the stamp succeeded: older grants of the
+  same role, counterparty and scope deleted through the mall, accept marked `replaced`, a replaced membership swept;
+  a failed delete fails the delivery retryably, `cmc-back-channel-replace-failed`), `closeOutFormerPairing`
+  (requester side, called by `handleIncomingAccept` on a re-pairing: `sweepRelationship` with the access as read
+  before the heal, former invite stamped `revoked` + `replacedBy`), `isRePairing`, and the test seam
+  `setOlderPeerForTests`.
+- `handleIncomingAccept`: stamps `clientData.cmc.peerAcceptReceivedAt` (the accept's `created`, read by id on a
+  retry) and refuses an older accept (`cmc-incoming-accept-superseded`, in `NON_RETRYABLE_REASONS`); the
+  back-channel post is queued with `retryQueue.enqueueDelivery` on a retryable failure.
+- Member ledger records carry `grantKey` (first 16 hex characters of the SHA-256 of the grant endpoint) and
+  `viaAccessId`; `ledger.displace` keeps a former grant's record at a random id as `residual` / `grant-replaced`.
+  `revokeRecords` skips a record of another grant, only lets the read-back settle a residual for a child of the
+  sweeping grant, never after `peer-rejected`, and reports 401 as `residual` / `grant-gone`; snapshot records the
+  ledger no longer holds are checked through the grant (`track: false`). `memberSweep.relationshipEnded` takes the
+  ended access. `handleMemberAccess`: no read by id for a record of another grant, three-way namesake lookup,
+  fallback child name, the trigger stream's own relationship first.
+- `handleAccept`: a queued retry reads the stored trigger first and is refused (`CmcErrorIds.ACCEPT_WITHDRAWN`,
+  non-retryable) when it carries `withdrawal`, or when a newer grant of the same relationship exists
+  (`replacedGrants.newerGrantOf`); an own grant never paired is then deleted and its accept marked `replaced`.
+  `CmcErrorIds.INCOMING_ACCEPT_SUPERSEDED` and `ACCEPT_WITHDRAWN` are new catalogue entries.
+- `revokeRecords` settles a record already known unreachable (`residualReason` `grant-replaced` / `grant-unknown`)
+  before it looks at the relationship; the ledger pass leaves those out of its residual batch;
+  `relationshipEnded` leaves a keyless record `residual` / `grant-unknown` while its expiry is ahead. The
+  close-out runs right after the heal. An unreadable accept age on a stamped relationship is a retryable failure.
+  A terminal queued back-channel delivery drops the endpoint from its body.
+- `handleAccept` 3d: a paired own grant completes the replay without delivering (`acceptedResult`); the own grant
+  is judged and the relationship taken from the same read of the accesses (its stored stamps); the `replaced`
+  marker only after the delete succeeded (else `cmc-handler-replaced-grant-delete-failed`, retryable); a deleted
+  trigger refuses the replay. The delivery roll-back tests the back-channel on the grant as stored now
+  (`currentGrant`) before any roll-back.
+- Tests: `[CMCSA]` e2e `CSA05`-`CSA16` (`components/api-server/test/cmc-second-accept.test.js`), unit `CSA20`-`CSA47`
+  in `components/cmc/test`; `[MR44]`, `[HMA11]`, `[HMA13]` updated to the new verdicts and fixtures.
+
 ### Accesses: closed feature names, account-field name guard
 
 - `business/src/accesses/permissionSet.ts`: `FEATURE_PERMISSION_NAMES` (the closed set), `isKnownFeatureName`,
@@ -18,6 +54,17 @@
 - `[AUAB4]` (PostgreSQL audit engine) fills the audit read pool with one access per reader: the limit of one streamed
   audit read per access made it wait forever.
 
+### Bundled rqlite 10.7.5
+
+- `Dockerfile`, `storages/engines/rqlite/scripts/setup`: rqlite 10.7.5 and its per-arch sha256.
+- `.grype-image.yaml`: the five `x/net` 0.59.0 exceptions are removed (the 10.7.5 binary carries 0.63.0);
+  Grype reports nothing on `rqlited` for either architecture. The list is empty.
+
+- `DBrqlite.execute`: an answer with a top-level `error`, or without `results[0]`, throws
+  (`RqliteNoAnswerError`); `init` retries it until there is a leader (`initWaitMs`). Never sent again by
+  `execute`: what was answered may have been applied. A failed registration releases its invitation token
+  and its external id claim independently, and answers with the first failure. Default-level reads are unchanged. Tests `[RQNA*]`.
+
 ### CI supply chain
 
 - Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`
@@ -29,6 +76,15 @@
   draining, as batch and socket.io do (`localDelivery.ts`, `routes/reg/credentialHandoff.ts`,
   `routes/sso.ts`, `routes/oauth2.ts` `apiWrite`; `apiRead` stays unrecorded). `[IPAU0]` lists the only
   files that may dispatch without `methodCallback`. `resetAuditEnrichment` also serves `callBatch`.
+- `methods/helpers/accessWriteAudit.ts`: `recordAccessWrite`, and `deleteAccessChainRecorded` for every
+  deletion that is not the API route. The CMC and delegation writes are recorded once, where their accesses
+  adapter is wired (`cmcMall.ts`); nothing changes in the two components. `[ASDWD]` pins where a chain is
+  deleted and where access rows are written directly. `bin/oauth-client.js` initialises the audit for the
+  purge (a warning, never a refusal, when it cannot). `deleteAccessChain` gains `onDeleted`;
+  `revokeAccessLocal` tells whether there was a session to revoke. Tests `[ASDW*]` (`audit-access-writes`), and in
+  `oauth2-registry-consent`, `oauth2-e2e`, `oauth2-registry-purge`, `oauth2-per-user-audience`, `AuditFilter`,
+  `breachScopeReport`.
+- `unknownFilterMethods` (`audit/src/validation.ts`), boot warning `[CVAF*]`.
 - `UserAuditDatabasePG.createEvent`: `INSERT ... SELECT` from the locked `users_index` entry when
   `AuditStoragePG.refuseUnindexedUsers(true)` (set by `Audit.init` unless `keep`; without effect when the
   base storage is not PostgreSQL). `importAllEvents` is not guarded (restore).
@@ -37,6 +93,12 @@
   +95 us (18 to 20 %) with, the same on one account and on five (no contention on the locked entry), of
   which the lock is about 25 us and the guarded statement the rest.
 - `Audit.ts`: a refusal of an erased account is a `warn`, not a loss (`erasedAccountRefusal.ts`).
+- SQLite base with PostgreSQL audit: `refuseUnindexedUsers` answers false, so `Audit` checks the erased mark of
+  `userLocalDirectory` before a write (an account erasing itself in a batch always left its `callBatch` record
+  there). Boot warning for the pairing (`[CVAE*]`). New recipe `just test-sqlite-pg-audit` (with
+  `resolveTestAuditEngine`), in CI for the audit component; `[AUAB*]` now run on any PostgreSQL audit.
+- SQLite: `getAllActions` / `getAllAccesses` are on `AuditUserDatabase`, the class of the audit files only; the
+  users' own events files use `UserDatabase`, without them. `[AUSC*]` pins what the audit can reach.
 - `workerStop.ts` (API worker): the CMC loop drain and the telemetry flush share one signal hook, one bound
   and one re-raise; `emitter.shutdown` waits for a send in progress.
 - `bin/server` on SIGINT: exits once `workerStop` is done (`isStopping`, asked after every listener ran).

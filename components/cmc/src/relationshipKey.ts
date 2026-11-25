@@ -167,9 +167,12 @@ function selectRelationshipAccess (params: SelectParams): AccessLike | null {
     const exact = candidates.filter((a) => scopeOfAccess(a) === scopeStreamId);
     if (exact.length === 1) return exact[0];
     if (exact.length > 1) {
-      // Several grants serve the SAME relationship: the accepter mints a new
-      // data-grant on every accept, while the requester heals its single
-      // counterparty access in place. Taking the first one made every
+      // Several grants can serve the SAME relationship for a moment: the
+      // accepter mints a new data-grant on every accept, while the requester
+      // heals its single counterparty access in place; the older grant is
+      // ended when the requester's back-channel reaches the newer one
+      // (replacedGrants.ts), but lives on on an older core or from before
+      // that rule. Taking the first one made every
       // back-channel land on the oldest grant (clobbering its endpoint and
       // leaving each newer grant with none, so its revoke could never be
       // delivered) and routed outbound traffic through it. Newest first:

@@ -89,6 +89,12 @@ export type CmcClientData = {
   // and is therefore shared by every relationship of that app. See
   // relationshipKey.ts.
   scopeStreamId?: string | null;
+  // Requester side (the back-channel): the peer's accept trigger this
+  // relationship is paired with, and when that accept was received here (the
+  // accept event's `created`, this core's clock): an older accept arriving
+  // later (a retry) does not re-pair the relationship.
+  peerAcceptEventId?: string | null;
+  peerAcceptReceivedAt?: number | null;
 };
 
 /** Access as seen through the CMC mall view (mallAccessesAdapter output). */

@@ -18,6 +18,7 @@ const AuditFilter = require('./AuditFilter.ts').default;
 const { AuditAccessIds } = require('./MethodContextUtils.ts');
 const lossCounter = require('./lossCounter.ts');
 const { isErasedAccountRefusal } = require('./erasedAccountRefusal.ts') as typeof import('./erasedAccountRefusal.ts');
+const { userLocalDirectory } = require('storage');
 const util = require('util');
 const { createId: cuid } = require('@paralleldrive/cuid2');
 const timestamp = require('unix-timestamp');
@@ -99,6 +100,8 @@ class Audit {
 
   /** `audit.onUserDelete: keep`: the trail of an erased account stays open. */
   #keepsErasedTrails = false;
+  /** The storage cannot tell an erased account itself (see `init`). */
+  #checksErasedMark = false;
 
   /**
    * Requires to call async init() to use
@@ -122,7 +125,10 @@ class Audit {
     this.#keepsErasedTrails = config.get('audit:onUserDelete') === 'keep';
     // Read again at each `init`, as the erasure reads it at each erasure.
     const refuses = this._storage?.refuseUnindexedUsers?.(!this.#keepsErasedTrails);
-    if (refuses != null) logger.info('Audit records of accounts that are erased: ' + (refuses ? 'refused' : 'accepted'));
+    // Asked to refuse and unable to (PostgreSQL records, users index elsewhere):
+    // the mark the erasure sets on every worker is checked here instead.
+    this.#checksErasedMark = !this.#keepsErasedTrails && refuses === false;
+    if (refuses != null) logger.info('Audit records of accounts that are erased: ' + (refuses ? 'refused' : this.#checksErasedMark ? 'refused once the account is marked erased' : 'accepted'));
     this._syslog = await getSyslog();
     this.filter = new AuditFilter({
       syslogFilter: config.get('audit:syslog:filter'),
@@ -229,6 +235,7 @@ class Audit {
    */
   async #store (storage: AuditStorage, userId: string, event: AuditEventLike): Promise<void> {
     try {
+      if (this.#checksErasedMark && await userLocalDirectory.isErasedAndGone(userId)) throw new userLocalDirectory.ErasedUserError(userId);
       const userStorage = await storage.forUser(userId);
       await userStorage.createEvent(event);
     } catch (err) {

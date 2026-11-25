@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const { LRUCache: LRU } = require('lru-cache');
 
-const { UserDatabase } = require('./UserDatabase.ts');
+const { UserDatabase, AuditUserDatabase } = require('./UserDatabase.ts');
 const migrations = require('./migrations/index.ts');
 const { _internals } = require('../_internals.ts');
 
@@ -22,7 +22,12 @@ const CACHE_SIZE = 500;
 const VERSION = '1.0.0';
 
 interface UserDbLike { close: () => Promise<void> | void; init: () => Promise<void>; fileId?: string | null }
-interface SqliteStorageOptions { max?: number; [k: string]: unknown }
+interface SqliteStorageOptions {
+  max?: number;
+  /** The databases hold the users' own events, not their audit trails. */
+  userEvents?: boolean;
+  [k: string]: unknown;
+}
 
 class SqliteStorage {
   initialized: boolean = false;
@@ -159,7 +164,8 @@ class SqliteStorage {
 async function open (storage: SqliteStorage, userId: string, logger: Logger): Promise<UserDbLike> {
   logger.debug('open: ' + userId);
   const dbPath = await storage.dbgetPathForUser(userId);
-  const db = new UserDatabase(logger, { dbPath });
+  const Database = storage.options.userEvents === true ? UserDatabase : AuditUserDatabase;
+  const db = new Database(logger, { dbPath });
   await db.init();
   db.fileId = await fileIdentity(dbPath);
   storage.userDBsCache.set(userId, db);

@@ -53,11 +53,12 @@ if (process.env.STORAGE_ENGINE) {
   // shadows the override and the two sides split-brain.
   const { resolveTestFileEngine } = require('./resolveTestFileEngine.ts');
   const { resolveTestSeriesEngine } = require('./resolveTestSeriesEngine.ts');
+  const { resolveTestAuditEngine } = require('./resolveTestAuditEngine.ts');
   testConfig.storages = {
     base: { engine: eng },
     series: { engine: resolveTestSeriesEngine(eng) },
     file: { engine: resolveTestFileEngine() },
-    audit: { engine: eng === 'postgresql' ? 'postgresql' : 'sqlite' }
+    audit: { engine: resolveTestAuditEngine(eng) }
   };
   // CRITICAL: apply the engine override at MODULE LOAD time (not at
   // mochaHooks.beforeAll) so test files that capture

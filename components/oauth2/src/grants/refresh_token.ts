@@ -543,7 +543,8 @@ export async function handleRefreshToken (
       logServerError('refresh_token: registry token response failed', err);
       if (typeof deps.revokeAccessLocal === 'function') {
         try {
-          await deps.revokeAccessLocal({ userId: row.userId, username, accessId: access.accessId, clientId: row.clientId });
+          const revoked = await deps.revokeAccessLocal({ userId: row.userId, username, accessId: access.accessId, clientId: row.clientId });
+          if (revoked !== false) await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, accessId: access.accessId, reason: 'issuance failed' });
         } catch (revokeErr: unknown) {
           logServerError('refresh_token: revoke of the unanswered access failed', revokeErr);
         }

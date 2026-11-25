@@ -2,6 +2,59 @@
 
 ## Unreleased
 
+### Event types: an answer that is no list does not count as loaded
+
+- `service.eventTypes`: a JSON answer without a `types` object (an error page in JSON, the hierarchical file)
+  was taken for a loaded catalogue, so the core stopped refusing unknown event types although its catalogue
+  had never loaded. It is now a failed load: the core stays degraded, retries, and
+  `GET /system/event-types-status` says why. A deployment whose `service.eventTypes` points at such a file
+  must point it at a flat list (`flat.json` or `flat.min.json`).
+
+### Cross-account consent: a second accept on the same scope replaces the first
+
+- **One relationship per counterparty and scope stream.** When a person accepts a second invite on the same scope
+  stream from the same requester, the latest accept replaces the first instead of leaving two live grants. On the
+  person's core, the earlier grant is deleted (with the accesses made through it) once the requester's core has taken
+  the new one, and its `consent/accept-cmc` records `withdrawal.by: 'replaced'` with
+  `withdrawal.replacedBy: { acceptEventId, accessId }` of the newer accept. On the requester's core the earlier
+  invite reads `revoked` with `replacedBy: { inviteEventId }` (the same `backChannelAccessId` stays on both
+  invites), and the member accesses made through the earlier grant are deleted through it. No revoke notice is
+  exchanged for the earlier grant. Changing the terms of a relationship is therefore one new invite on the same scope.
+- A retry never restores the older consent. On the requester's core, an accept it received before a newer one for
+  the same relationship and retries later is refused with `cmc-incoming-accept-superseded`. On the person's core, a
+  queued retry of an accept is refused with `cmc-accept-withdrawn` (on the person's accept trigger, not retried)
+  when the person accepted again since for the same requester and scope, or when the consent ended meanwhile (its
+  accept carries `withdrawal`, or the person deleted it): nothing is minted or delivered again. A retry of an accept
+  the requester already took completes without a new delivery.
+- A retried accept delivery that the requester's core refuses for good (link invalidated, consumed or expired since,
+  destination refused) no longer deletes a consent grant the requester already paired: the working relationship is
+  kept. Before, any such refusal other than "consumed" or "already accepted" rolled the grant back.
+- The back-channel delivery that follows an accept is now retried by the retry loop when the person's core cannot be
+  reached, instead of being lost.
+- **Group accounts.** The offboarding record (`consent/member-revoke-cmc`) reports a member access `residual` rather
+  than `absent` when the patient's core did not confirm it gone: a refusal (`peer-rejected`) is no longer overturned
+  by the access being absent from the grant's list, a grant that no longer authenticates is `residual` /
+  `grant-gone`, an access made through an earlier grant of the patient is `residual` / `grant-replaced`, and an
+  access recorded before this release whose relationship the patient ended is `residual` / `grant-unknown` until its
+  expiry (each is bounded by the access's expiry), and an access the ledger no longer lists is checked before it is
+  reported.
+  A member asking again after the patient accepted twice gets an access through the current grant; when an access of
+  the earlier grant still holds the name, the new one is named `<name>-<8 hex characters>`.
+- **Group accounts.** Without `content.scopeStreamId`, `consent/member-access-cmc` now takes the relationship on the
+  trigger's stream first, and the newest one under it only when there is none.
+- A membership joined twice on the same team is handled the same way: the earlier membership access is deleted and
+  its member accesses swept when the newer one is completed.
+
+### CMC: a personal token's `events.update` of a CMC event is validated like its create
+
+- `events.update` by a personal token of a CMC event (`consent/request-cmc`, scope requests and updates, accepts, and
+  every other CMC type) skipped the CMC content validation, so an offer could be changed to hold content its create
+  would refuse (an unknown feature permission name, a malformed request). The merged event is now judged as the
+  create would judge it (`400`, `cmc-invalid-event-content`), when the update changes the content, the type or the
+  streams. An update that leaves them as they are (description, tags, trashed, the content sent back unchanged) is
+  not judged, so an event stored before a rule was tightened can still be edited otherwise. Not marked as breaking:
+  only writes the create already refuses are refused; app and shared accesses are unchanged.
+
 ### Accesses: feature permission names are a closed set; a bare account-field name no longer creates a stream
 
 - **BREAKING: an unknown feature permission name is refused.** The names are `selfRevoke`, `secretSharing`,
@@ -33,6 +86,29 @@
   exist first, or another id. Known limit: the name of the account root itself (`account`) is not an account field
   and is not guarded.
 
+### Bundled rqlite 10.7.5
+
+- The bundled rqlite is 10.7.5 (was 10.6.0; SQLite 3.54.1, built with the patched Go toolchain and `x/net`
+  0.63.0). No data-directory step from 10.5.1 or 10.6.0: upgrade the followers first and the leader last; a
+  node can go back to them on the same data directory (INSTALL.md, "Upgrading the bundled rqlite"). Native installs:
+  `storages/engines/rqlite/scripts/setup` pins 10.7.5 and never replaces an existing binary, so replace
+  `bin-ext/rqlited` yourself while the core is stopped.
+- rqlite security fixes: a malformed inter-node request from a host that reaches the Raft port without the
+  cluster's certificate could stop `rqlited` when Raft TLS is off (10.6.4, GHSA-f4f3-px5g-gm4x); a query can
+  no longer open another database file (10.6.3, GHSA-j62w-8865-2h7x). A core whose Raft port uses mutual TLS
+  and whose HTTP API listens on loopback, the defaults of a multi-core platform, exposes neither to the
+  network. The other rqlite advisories of these releases concern its authentication file, which a core
+  does not use.
+- **Multi-core: a platform write the cluster did not carry out is an error.** While the leader restarts, a
+  follower can answer a forwarded write with HTTP 200, an error and no result. The server took that for a
+  success, so the write (a unique name, a routing row, a token, a revocation) was lost without any sign. The
+  call now fails (500), as it does when the platform store is down. A process that starts while the cluster
+  elects its leader waits for it, up to 15 seconds; with no leader by then it does not start (before, it
+  could start with its first platform writes lost, or fail at once).
+- Multi-core: a request a follower forwards to the leader is sent once (10.6.0 sent it again after a
+  failure, so a write whose answer was lost could be applied twice), and a join that would change a
+  member's role is refused unless the member was removed first (the documented way).
+
 ### Account: addresses an account may try per hour (on by default)
 
 - `account.update` says whether another account holds an address (`item-already-exists` on `emails.add` or a changed
@@ -49,6 +125,26 @@
   left no record. They now leave the record the same call leaves over HTTP, success or refusal, without
   `source.ip` (no client connection made the call). The lookups the server makes for itself during
   these flows are not recorded.
+- **Access changes the server makes are in the audit trail.** An app or shared access created, changed
+  (permissions, expiry) or deleted outside an `accesses.*` call now leaves a record in the account's trail:
+  `accesses.created`, `accesses.changed` or `accesses.deleted` (type `audit-log/access`). `content.record`
+  names the access (`accessId`, `accessType`, `kind`), what was deleted with it (`related`), what changed
+  (`changed`), why (`cause`), the access of the account that asked where one is known (`by`), and
+  `content.source.name` the part of the server: `oauth2`, `cmc`, `delegation`, `account`, `operator-cli`.
+  Covers consent grants and their withdrawal, the collapse of an OAuth chain, sessions and accesses re-cut
+  or removed when their grant changes, grants withdrawn with an address alias, and
+  `bin/oauth-client.js purge-grants`. Not recorded this way: personal accesses (the sign-in is their
+  record), the issuance of OAuth sessions (`oauth.*` events name them), an access that ends by its expiry,
+  the removal of a session whose authorization code was never exchanged, one-off upgrade tools.
+  **Audit filters that list methods one by one do not include the three actions until you add them;
+  `accesses.all` does.** A session removed because its issuance failed now leaves `oauth.token.revoked`
+  (reason `issuance failed`). The breach-scope report lists these records without counting them as calls of
+  the access.
+- The audit rows of successful `accesses.update` and `accesses.delete` calls name the access
+  (`content.record.accessId`), and the accesses deleted with it (`related`). The id was only in the path,
+  which is not recorded (a refused call still does not name it).
+- `audit.storage.filter` / `audit.syslog.filter`: an entry that matches no method is reported at boot and by
+  `bin/check-config.js` (it selected nothing, silently).
 - Batch calls: the record of a call no longer carries the integrity reference (`content.record`) of an
   earlier create of the same batch.
 - **PostgreSQL audit storage: no record is left for an erased account.** With `audit.onUserDelete: erase`
@@ -58,8 +154,9 @@
   named in `stepsCompleted` of the erasure ledger). During a rolling restart a worker of an earlier
   version still writes without the refusal. On both
   engines a record refused for this reason is logged at `warn` and is not counted as lost. `keep` is
-  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies but
-  the refusal does not.
+  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies and a
+  record is refused from the moment the erasure has marked the account: one written in the last moment
+  before that can stay (the server warns about this pairing at boot).
   Cost: each audit record written to PostgreSQL now checks, in the same statement, that its account is
   still indexed, and holds that entry until the record is committed. Measured: about 0.1 ms per record
   under five concurrent writers, nothing measurable with one. With `keep` the check is off.
@@ -506,7 +603,7 @@ requests or forged UDP queries for random names became a stream of cluster-wide 
   without a Raft log entry per read (other reads of the name-to-core mapping stay `strong`). It
   fails, as before, while the cluster has no leader (rqlite's linearizable wait is 1 s by
   default). An external rqlited (`storages.engines.rqlite.external`) must support the
-  `linearizable` read level; the bundled version is 10.6.0. A read at `strong` or `linearizable`
+  `linearizable` read level; the bundled version is 10.7.5. A read at `strong` or `linearizable`
   that rqlite answers with no result (no leader yet) is now an error instead of "no such row".
 - **DNS response rate limit: `dns.responseRateLimit.perSecond` (default 20) and `slip` (default
   2).** Answers that need a platform lookup (a `<core>.<domain>` or `<username>.<domain>` name,

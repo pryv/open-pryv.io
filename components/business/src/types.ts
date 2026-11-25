@@ -119,6 +119,11 @@ function warnOnceUncompilable (name: string, err: Error): void {
   getLogger('event-types').warn(`Event type "${name}" has a schema that cannot be compiled, so every event of this type is refused: ${err.message}`);
 }
 
+function isCatalogue (value: unknown): boolean {
+  const types = value != null && typeof value === 'object' ? (value as { types?: unknown }).types : null;
+  return types != null && typeof types === 'object' && !Array.isArray(types);
+}
+
 // Applies a downloaded catalogue onto the current one, entry by entry: each
 // entry of a section (a type, an extras, classes or sets entry) replaces the
 // current one whole, and entries the download does not carry are kept. A deep
@@ -335,6 +340,11 @@ class TypeRepository {
       }
     } catch (err) {
       unavailableError(err);
+    }
+    // Any JSON object is a valid JSON Schema, an error page included: without a
+    // `types` list it is no catalogue, and must not count as a loaded one.
+    if (!isCatalogue(eventTypesDefinition)) {
+      return unavailableError(new Error('the answer is not an event types list (no "types" object)'));
     }
     const validator = this._validator;
     if (!validator.validateSchema(eventTypesDefinition)) { return invalidError(validator.lastReport); }

@@ -208,7 +208,7 @@ async function handleIncomingRevoke (params: {
         if (deleted.clientData?.cmc?.role === C.ROLE_MEMBER) {
           await deps.memberSweep.sweepMembership(userId, deleted, 'revoke');
         } else {
-          await deps.memberSweep.relationshipEnded(userId, accessId);
+          await deps.memberSweep.relationshipEnded(userId, accessId, deleted);
         }
       } catch (err: unknown) {
         // A membership: the periodic pass sweeps it as vanished. A

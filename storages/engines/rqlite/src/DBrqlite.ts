@@ -29,6 +29,14 @@ type RqliteResult = { columns?: string[]; values?: RqliteCell[][]; rows_affected
 // cached name→core routing read (getUserCore with purpose 'routing').
 type ReadLevel = 'none' | 'weak' | 'linearizable' | 'strong';
 
+/** A write rqlite did not carry out, or cannot tell about (no leader, leader unreachable). */
+class RqliteNoAnswerError extends Error {
+  constructor (message: string) {
+    super(message);
+    this.name = 'RqliteNoAnswerError';
+  }
+}
+
 /**
  * PlatformDB implementation backed by rqlite (distributed SQLite via Raft).
  * Same SQL as the local SQLite backend (DBsqlite.js) but accessed over HTTP.
@@ -37,6 +45,8 @@ type ReadLevel = 'none' | 'weak' | 'linearizable' | 'strong';
 class DBrqlite {
   url: string;
   closed: boolean;
+  /** How long `init` waits for a leader. */
+  initWaitMs: number = 15_000;
 
   constructor (url?: string) {
     this.url = url || 'http://localhost:4001';
@@ -44,15 +54,29 @@ class DBrqlite {
   }
 
   async init () {
-    await this.execute(
-      'CREATE TABLE IF NOT EXISTS keyValue (key TEXT PRIMARY KEY, value TEXT NOT NULL)'
-    );
+    // A cluster still electing its leader answers no write: wait for it, a
+    // process starting meanwhile must not fail at once.
+    const deadline = Date.now() + this.initWaitMs;
+    for (;;) {
+      try {
+        await this.execute(
+          'CREATE TABLE IF NOT EXISTS keyValue (key TEXT PRIMARY KEY, value TEXT NOT NULL)'
+        );
+        return;
+      } catch (err) {
+        if (!(err instanceof RqliteNoAnswerError) || Date.now() >= deadline) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
   }
 
   // --- Low-level HTTP methods --- //
 
   /**
    * Execute a write statement (INSERT, UPDATE, DELETE, CREATE).
+   * A follower that cannot reach its leader answers 200 with an error and no
+   * result: the write is not done (or not known to be), and that is an error
+   * here, never a success.
    * @param [params]
    */
   async execute (sql: string, params?: unknown[]): Promise<RqliteResult> {
@@ -63,13 +87,18 @@ class DBrqlite {
       body: JSON.stringify(body)
     });
     if (!res.ok) {
-      throw new Error(`rqlite execute failed (${res.status}): ${await res.text()}`);
+      const message = `rqlite execute failed (${res.status}): ${await res.text()}`;
+      throw res.status === 503 ? new RqliteNoAnswerError(message) : new Error(message);
     }
     const data = await res.json();
-    if (data.results?.[0]?.error) {
-      throw new Error(`rqlite SQL error: ${data.results[0].error}`);
+    const result = data.results?.[0];
+    if (result?.error) {
+      throw new Error(`rqlite SQL error: ${result.error}`);
     }
-    return data.results[0];
+    if (data.error != null || result == null) {
+      throw new RqliteNoAnswerError(`rqlite execute got no result: ${data.error ?? 'no leader yet?'}`);
+    }
+    return result;
   }
 
   /**
@@ -653,8 +682,13 @@ class DBrqlite {
     if (rows.length === 0) return null;
     const parsed = JSON.parse(rows[0].value);
     if (typeof parsed.expiresAt === 'number' && Date.now() > parsed.expiresAt) {
-      // Lazy expire: drop the row so the next call doesn't pay this cost.
-      await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+      // Lazy expire: drop the row so the next call doesn't pay this cost. A
+      // row that cannot be dropped now stays expired.
+      try {
+        await this.execute('DELETE FROM keyValue WHERE key = ?', [storeKey]);
+      } catch (err) {
+        if (!(err instanceof RqliteNoAnswerError)) throw err;
+      }
       return null;
     }
     return parsed;
