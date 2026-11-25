@@ -313,6 +313,8 @@ async function deleteAccessChain (user: DeletionUser, params: {
   accessToDelete?: AccessRow | null;
   relatedAccessesToDelete?: AccessRow[] | null;
   keepAddressAliases?: boolean;
+  /** Told the ids as soon as their rows are deleted (a later side effect may still fail). */
+  onDeleted?: (ids: string[]) => void;
 }): Promise<DeletionOutcome> {
   const storageLayer = await getStorageLayer();
   const accessesRepository = storageLayer.accesses;
@@ -402,6 +404,7 @@ async function deleteAccessChain (user: DeletionUser, params: {
     cache.unsetAccessLogic(user.id, logic);
   }
   if (deleteErr != null) throw deleteErr;
+  params.onDeleted?.(idsToDelete.map((d) => d.id));
   for (const row of rowsToScrub) await scrubOrWarn(accessesRepository as unknown as ScrubRepository, user, row);
   // An access created through the deleted one (or through a deleted session
   // of it, or a session a refresh minted under it) between the find above and
@@ -419,6 +422,7 @@ async function deleteAccessChain (user: DeletionUser, params: {
         isDerivedOf(a, grantBaseId) || sessionIds.some((id) => isDerivedOf(a, id)) || derivedIds.some((id) => isManagedBy(a, id))));
     if (late.length > 0) {
       await fromCallback((cb: NodeCallback) => { accessesRepository.delete(user, { $or: late.map((a) => ({ id: a.id })) }, cb); });
+      params.onDeleted?.(late.map((a) => a.id));
       for (const a of late) {
         if (typeof a.id === 'string' && typeof a.token === 'string') cache.unsetAccessLogic(user.id, { id: a.id, token: a.token });
         if (isOAuthSession(a) && typeof a.token === 'string') sessionTokens.push(a.token);

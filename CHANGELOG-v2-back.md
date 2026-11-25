@@ -34,7 +34,8 @@
   deletion that is not the API route. The CMC and delegation writes are recorded once, where their accesses
   adapter is wired (`cmcMall.ts`); nothing changes in the two components. `[ASDWD]` pins where a chain is
   deleted and where access rows are written directly. `bin/oauth-client.js` initialises the audit for the
-  purge (a warning, never a refusal, when it cannot). Tests `[ASDW*]` (`audit-access-writes`), and in
+  purge (a warning, never a refusal, when it cannot). `deleteAccessChain` gains `onDeleted`;
+  `revokeAccessLocal` tells whether there was a session to revoke. Tests `[ASDW*]` (`audit-access-writes`), and in
   `oauth2-registry-consent`, `oauth2-e2e`, `oauth2-registry-purge`, `oauth2-per-user-audience`, `AuditFilter`,
   `breachScopeReport`.
 - `unknownFilterMethods` (`audit/src/validation.ts`), boot warning `[CVAF*]`.
