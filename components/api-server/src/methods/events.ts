@@ -1314,7 +1314,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   }
   /**
    * Validates the event's content against its type (if known).
-   * Will try casting string content to number if appropriate.
+   * The content is checked as given: only series values are converted.
    *
    * @param context.newEvent contains the event data
    */

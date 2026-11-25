@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Event types: an answer that is no list does not count as loaded
+
+- `service.eventTypes`: a JSON answer without a `types` object (an error page in JSON, the hierarchical file)
+  was taken for a loaded catalogue, so the core stopped refusing unknown event types although its catalogue
+  had never loaded. It is now a failed load: the core stays degraded, retries, and
+  `GET /system/event-types-status` says why. A deployment whose `service.eventTypes` points at such a file
+  must point it at a flat list (`flat.json` or `flat.min.json`).
+
 ### Security: Node.js 24.22.3
 
 - The Docker image moves from Node 24.22.1 to 24.22.3, which carries the Node.js security release of
