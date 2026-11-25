@@ -86,6 +86,12 @@ export default function (api: { register: (...args: unknown[]) => void }) {
         onAccount: describeVerificationMail(config).enabled
       };
     }
+    // Consent offers that require a verified email: this core refuses to
+    // accept one while the account's primary address is not proved. Absent on
+    // an older core, which stores the offer's field and ignores it.
+    if (serviceInfo.features.cmcRequireVerifiedEmail === undefined) {
+      serviceInfo.features.cmcRequireVerifiedEmail = true;
+    }
     // Password reset by mail: whether `account.resetPassword` mails a link on
     // this core. The reset request answers the same either way, so this is how
     // an app tells "check your mailbox" from "ask the platform operator".

@@ -853,6 +853,10 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
     // subset via `consent/accept-cmc.grantedPermissions` (mandatory
     // entries still required).
     allowUserChoice?: boolean,
+    // true: the accept is refused while the accepting account's primary
+    // email address is not proved (see "Requiring a verified email").
+    // Default false.
+    requireVerifiedEmail?: boolean,
     features?:   { chat?: boolean, systemMessaging?: boolean },  // each defaults to true
     expiresAt?:  number | null,  // null: no expiry (open-link only)
     // true: the writer asks to JOIN the accepting account as a member of a
@@ -874,6 +878,18 @@ When the future OAuth2 / app-accounts work ships signed inter-platform notificat
   failure?: { reason, detail? }
 }
 ```
+
+#### Requiring a verified email
+
+With `request.requireVerifiedEmail: true` the accept works only while the primary email address of the accepting account is proved (the person followed the mailed link or gave the mailed code, or the operator vouched for it; an address merely typed at registration is not proved).
+
+- **What the offer must ask:** `{ streamId: ':system:email', level: 'read' }`, with `mandatory: true` when `allowUserChoice` is set. A membership offer cannot carry the requirement. A violation is refused at write (`cmc-invalid-event-content`) and, for an offer written on an older core, at accept (`cmc-offer-invalid-permissions`).
+- **Set it when the invite is created.** The link carries a copy of the offer made then; updating the request event does not change it.
+- **Who enforces it:** the core of the accepting account, when the grant is made. Not proved: the accept trigger ends `failed` with reason `cmc-verified-email-required` and no detail, nothing is granted, and the core sends nothing to the requester. It is not retried, and the link stays usable: a new accept works once the address is proved. A core that enforces it advertises `features.cmcRequireVerifiedEmail: true` in its service info; an older one stores the field and ignores it.
+- **Whose address:** the account the accept is written on. A delegate accepting for an account it manages needs that account's own address proved, not theirs.
+- **It is not a guarantee to you as the requester, even on a platform with the flag.** The condition is enforced on the accepter's side: it stops ordinary clients and guides the person, but a person determined to can answer the link with a grant they made by hand. What you act on is what the grant reads, each time you use the address: `GET /events?streams=[":system:email"]&types[]=email/string&types[]=verification/email`. The accepting core derives `verification/email` when it is read, so a grant given without a proved address reads `verified: false` (and a core too old to have the event returns none: treat it as not verified). The accept event records nothing about the proof.
+- **It is a condition of the accept, not of the relationship.** A later change of address, a scope update and a consent already given are not checked; read `verification/email` when you use the address.
+- **OAuth consents:** the first authorization on such an offer is checked the same way and answers `400 invalid_grant` when the address is not proved; a re-authorization on an existing grant is not checked.
 
 ### `consent/accept-cmc`
 
@@ -1625,6 +1641,7 @@ npm package.
 | `HANDLER_OFFER_MISSING_CAPABILITY_ID` | `cmc-handler-offer-missing-capability-id` | The offer event lacked the server-stamped `capabilityId`. |
 | `OFFER_EMPTY_PERMISSIONS` | `cmc-offer-empty-permissions` | The offer carried no `request.permissions` array. |
 | `OFFER_STREAM_NOT_OFFERABLE` | `cmc-offer-stream-not-offerable` | The offer asks a stream the plugin manages on the accepter's account (`:_cmc:inbox`, the `:_cmc:_internal` subtree, a chats / collectors leaf, the `:_cmc:apps` root). Refused at write too (`cmc-invalid-event-content`); the accepter's core applies the rule again on the offer it reads. `*` and the accepter's own `:_cmc:apps:<app>[:<path>]` streams are fine. |
+| `VERIFIED_EMAIL_REQUIRED` | `cmc-verified-email-required` | The offer requires a verified email (`request.requireVerifiedEmail`) and the accepting account's primary address is not proved. No detail, not retried, nothing sent to the requester; the link stays open and a new accept works once the address is proved. |
 | `INVALIDATE_LINK_SCOPE_MISMATCH` | `cmc-invalidate-link-scope-mismatch` | The `consent/invalidate-link-cmc` trigger was written on a stream that does not hold the invite it names (write it on the invite's stream or an ancestor; the stream is read from the server-written offer copy the capability holds, then from the invite event), or neither can be read. The link stays open. |
 | `HANDLER_WRONG_TYPE` | `cmc-handler-wrong-type` | Dispatch invoked a handler with a trigger whose `.type` doesn't match (defensive, should be unreachable). |
 | `HANDLER_THREW` | `cmc-handler-threw` | The handler threw an unexpected exception not classified above. |

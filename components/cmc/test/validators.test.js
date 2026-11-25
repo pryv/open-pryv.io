@@ -123,6 +123,54 @@ describe('[CMCVAL] cmc/validators', () => {
         request: { ...VALID_REQUEST.request, expiresAt: null },
       });
     });
+
+    describe('requireVerifiedEmail', () => {
+      const EMAIL_READ = { streamId: ':system:email', level: 'read' };
+      function withRequest (request) {
+        return { ...VALID_REQUEST, request: { ...VALID_REQUEST.request, permissions: [...VALID_PERMS, EMAIL_READ], ...request } };
+      }
+
+      it('[RVE1] rejects a value that is not a boolean', () => {
+        for (const requireVerifiedEmail of ['yes', 1, {}, []]) {
+          expectInvalid('consent/request-cmc', withRequest({ requireVerifiedEmail }), 'requireVerifiedEmail: must be a boolean');
+        }
+      });
+
+      it('[RVE2] rejects true when the offer does not ask to read the email', () => {
+        for (const permissions of [
+          VALID_PERMS,
+          [...VALID_PERMS, { streamId: ':system:email', level: 'contribute' }],
+          [...VALID_PERMS, { streamId: '*', level: 'read' }],
+        ]) {
+          expectInvalid('consent/request-cmc', withRequest({ requireVerifiedEmail: true, permissions }), 'must ask :system:email');
+        }
+      });
+
+      it('[RVE3] rejects true when the person may leave the email entry out', () => {
+        expectInvalid('consent/request-cmc', withRequest({ requireVerifiedEmail: true, allowUserChoice: true }), 'must be mandatory');
+      });
+
+      it('[RVE4] rejects true on a membership offer', () => {
+        expectInvalid('consent/request-cmc', withRequest({ requireVerifiedEmail: true, membership: true }), 'a membership offer cannot');
+      });
+
+      it('[RVE5] accepts a valid offer, and leaves any other offer alone', () => {
+        expectValid('consent/request-cmc', withRequest({ requireVerifiedEmail: true }));
+        // the store-prefixed spelling of the same stream
+        expectValid('consent/request-cmc', withRequest({
+          requireVerifiedEmail: true,
+          permissions: [...VALID_PERMS, { streamId: ':account::system:email', level: 'read' }],
+        }));
+        expectValid('consent/request-cmc', withRequest({
+          requireVerifiedEmail: true,
+          allowUserChoice: true,
+          permissions: [...VALID_PERMS, { ...EMAIL_READ, mandatory: true }],
+        }));
+        for (const requireVerifiedEmail of [false, null, undefined]) {
+          expectValid('consent/request-cmc', withRequest({ requireVerifiedEmail, permissions: VALID_PERMS, allowUserChoice: true }));
+        }
+      });
+    });
   });
 
   describe('[CMCVAL-ACC] consent/accept-cmc', () => {

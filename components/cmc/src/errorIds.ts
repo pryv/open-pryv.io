@@ -114,6 +114,12 @@ const CmcErrorIds = {
   // A `mandatory: true` offered entry is missing from the granted
   // subset (cherry-picking never extends to mandatory entries).
   MANDATORY_PERMISSION_REFUSED: 'cmc-mandatory-permission-refused',
+  // The offer requires a verified email address
+  // (`request.requireVerifiedEmail`) and the accepting account's primary
+  // address is not proved. Reported on the accept trigger without detail;
+  // nothing reaches the requester and the link stays open: a new accept
+  // works once the address is proved.
+  VERIFIED_EMAIL_REQUIRED: 'cmc-verified-email-required',
 
   // --- Handler routing ---
   // Dispatch invoked a handler with a trigger whose `.type` doesn't match.
