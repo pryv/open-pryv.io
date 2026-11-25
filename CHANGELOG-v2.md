@@ -45,6 +45,16 @@
 - A membership joined twice on the same team is handled the same way: the earlier membership access is deleted and
   its member accesses swept when the newer one is completed.
 
+### CMC: a personal token's `events.update` of a CMC event is validated like its create
+
+- `events.update` by a personal token of a CMC event (`consent/request-cmc`, scope requests and updates, accepts, and
+  every other CMC type) skipped the CMC content validation, so an offer could be changed to hold content its create
+  would refuse (an unknown feature permission name, a malformed request). The merged event is now judged as the
+  create would judge it (`400`, `cmc-invalid-event-content`), when the update changes the content, the type or the
+  streams. An update that leaves them as they are (description, tags, trashed, the content sent back unchanged) is
+  not judged, so an event stored before a rule was tightened can still be edited otherwise. Not marked as breaking:
+  only writes the create already refuses are refused; app and shared accesses are unchanged.
+
 ### Accesses: feature permission names are a closed set; a bare account-field name no longer creates a stream
 
 - **BREAKING: an unknown feature permission name is refused.** The names are `selfRevoke`, `secretSharing`,

@@ -720,8 +720,9 @@ describe('[DCHC] consent accepted by a delegate for the account it manages (in-p
     const patSettled = await settledTrigger(viaPat.id);
     assert.strictEqual((await kidAccess(patSettled.dataGrantAccessId)).clientData.delegation.relId, rel.relId);
 
-    // an update keeps the stamp (owner or delegate), and cannot add one
-    for (const [token, content] of [[kid.token, { ...patSettled, approvedBy: forged }], [rel.patToken, { note: 'no approvedBy' }]]) {
+    // an update keeps the stamp (owner or delegate), and cannot add one (the
+    // content stays a valid accept: an update is validated like the create)
+    for (const [token, content] of [[kid.token, { ...patSettled, approvedBy: forged }], [rel.patToken, { capabilityUrl: patSettled.capabilityUrl, note: 'no approvedBy' }]]) {
       const upd = await coreRequest.put(kid.eventsPath + '/' + viaPat.id).set('Authorization', token).send({ content });
       assert.strictEqual(upd.status, 200, JSON.stringify(upd.body));
       assert.deepStrictEqual(upd.body.event.content.approvedBy, expectedApprovedBy(), JSON.stringify(upd.body.event.content));

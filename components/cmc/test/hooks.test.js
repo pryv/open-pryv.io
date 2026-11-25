@@ -1426,7 +1426,8 @@ describe('[CMCHOOK] cmc/hooks', () => {
       assert.equal(err?.details?.id, 'cmc-protected-event-write');
       const back = await runMiddleware(mw, ctx(app, { streamIds: ['data'], type: 'message/chat-cmc' }, { streamIds: ['data'], type: 'note/txt' }), {}, {});
       assert.equal(back?.details?.id, 'cmc-protected-event-write');
-      const own = await runMiddleware(mw, ctx(personal, { streamIds: ['data'], type: 'note/txt' }, { streamIds: [':_cmc:inbox'], type: 'consent/request-cmc' }), {}, {});
+      const content = { to: null, request: { title: { en: 'T' }, description: { en: 'D' }, consent: { en: 'C' }, permissions: [{ streamId: 'data', level: 'read' }] } };
+      const own = await runMiddleware(mw, ctx(personal, { streamIds: ['data'], type: 'note/txt' }, { streamIds: [':_cmc:apps:my-app'], type: 'consent/request-cmc', content }), {}, {});
       assert.equal(own, undefined);
     });
 
@@ -1437,7 +1438,7 @@ describe('[CMCHOOK] cmc/hooks', () => {
         const err = await runMiddleware(mw, ctx(app, { streamIds: [':_cmc:apps:practice:team-a'], type }, { streamIds: [':_cmc:apps:practice:team-a'], type, content: { x: 1 } }), {}, {});
         assert.equal(err?.details?.id, 'cmc-protected-event-write', type);
         assert.equal(err?.details?.eventType, type);
-        const own = await runMiddleware(mw, ctx(personal, { streamIds: [':_cmc:apps:practice:team-a'], type }, { streamIds: [':_cmc:apps:practice:team-a'], type, content: { x: 1 } }), {}, {});
+        const own = await runMiddleware(mw, ctx(personal, { streamIds: [':_cmc:apps:practice:team-a'], type, content: { x: 1 } }, { streamIds: [':_cmc:apps:practice:team-a'], type, content: { x: 1 }, description: 'owner note' }), {}, {});
         assert.equal(own, undefined, 'the owner may');
       }
     });
@@ -1454,6 +1455,26 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const invalid = await runMiddleware(mw, ctx(app, { streamIds: [':_cmc:apps:my-app'], type: 'consent/request-cmc' },
         { streamIds: [':_cmc:apps:my-app'], type: 'consent/request-cmc', content: { to: 42 } }), {}, {});
       assert.equal(invalid?.details?.id, 'cmc-invalid-event-content');
+    });
+
+    it('[CMUV1] a personal update is validated as its create would be when it changes the content, type or streams; not otherwise', async () => {
+      const { factory } = fakeErrors();
+      const mw = createEventUpdateGuardHook({ errors: factory });
+      const offer = (permissions) => ({ to: null, request: { title: { en: 'T' }, description: { en: 'D' }, consent: { en: 'C' }, permissions } });
+      const valid = offer([{ streamId: 'data', level: 'read' }]);
+      const typo = offer([{ streamId: 'data', level: 'read' }, { feature: 'webhook', setting: 'forbidden' }]);
+      const apps = [':_cmc:apps:my-app'];
+      const type = 'consent/request-cmc';
+      const added = await runMiddleware(mw, ctx(personal, { streamIds: apps, type, content: valid }, { streamIds: apps, type, content: typo }), {}, {});
+      assert.equal(added?.details?.id, 'cmc-invalid-event-content', 'content changed: strict');
+      const broken = await runMiddleware(mw, ctx(personal, { streamIds: apps, type, content: valid }, { streamIds: apps, type, content: { to: 42 } }), {}, {});
+      assert.equal(broken?.details?.id, 'cmc-invalid-event-content', 'content changed: the whole schema');
+      const moved = await runMiddleware(mw, ctx(personal, { streamIds: ['data'], type, content: typo }, { streamIds: apps, type, content: typo }), {}, {});
+      assert.equal(moved?.details?.id, 'cmc-invalid-event-content', 'streams changed');
+      const untouched = await runMiddleware(mw, ctx(personal, { streamIds: apps, type, content: typo }, { streamIds: [...apps], type, content: structuredClone(typo), description: 'x', trashed: true }), {}, {});
+      assert.equal(untouched, undefined, 'stored content the update does not change is not judged');
+      const delivered = await runMiddleware(mw, ctx(personal, { streamIds: [':_cmc:inbox'], type, content: valid }, { streamIds: [':_cmc:inbox'], type, content: typo }), {}, {});
+      assert.equal(delivered, undefined, 'an inbox record is judged as a peer delivery');
     });
   });
 
