@@ -20,6 +20,14 @@
   draining, as batch and socket.io do (`localDelivery.ts`, `routes/reg/credentialHandoff.ts`,
   `routes/sso.ts`, `routes/oauth2.ts` `apiWrite`; `apiRead` stays unrecorded). `[IPAU0]` lists the only
   files that may dispatch without `methodCallback`. `resetAuditEnrichment` also serves `callBatch`.
+- `methods/helpers/accessWriteAudit.ts`: `recordAccessWrite`, and `deleteAccessChainRecorded` for every
+  deletion that is not the API route. The CMC and delegation writes are recorded once, where their accesses
+  adapter is wired (`cmcMall.ts`); nothing changes in the two components. `[ASDWD]` pins where a chain is
+  deleted and where access rows are written directly. `bin/oauth-client.js` initialises the audit for the
+  purge (a warning, never a refusal, when it cannot). Tests `[ASDW*]` (`audit-access-writes`), and in
+  `oauth2-registry-consent`, `oauth2-e2e`, `oauth2-registry-purge`, `oauth2-per-user-audience`, `AuditFilter`,
+  `breachScopeReport`.
+- `unknownFilterMethods` (`audit/src/validation.ts`), boot warning `[CVAF*]`.
 - `UserAuditDatabasePG.createEvent`: `INSERT ... SELECT` from the locked `users_index` entry when
   `AuditStoragePG.refuseUnindexedUsers(true)` (set by `Audit.init` unless `keep`; without effect when the
   base storage is not PostgreSQL). `importAllEvents` is not guarded (restore).
@@ -28,6 +36,12 @@
   +95 us (18 to 20 %) with, the same on one account and on five (no contention on the locked entry), of
   which the lock is about 25 us and the guarded statement the rest.
 - `Audit.ts`: a refusal of an erased account is a `warn`, not a loss (`erasedAccountRefusal.ts`).
+- SQLite base with PostgreSQL audit: `refuseUnindexedUsers` answers false, so `Audit` checks the erased mark of
+  `userLocalDirectory` before a write (an account erasing itself in a batch always left its `callBatch` record
+  there). Boot warning for the pairing (`[CVAE*]`). New recipe `just test-sqlite-pg-audit` (with
+  `resolveTestAuditEngine`), in CI for the audit component; `[AUAB*]` now run on any PostgreSQL audit.
+- SQLite: `getAllActions` / `getAllAccesses` are on `AuditUserDatabase`, the class of the audit files only; the
+  users' own events files use `UserDatabase`, without them. `[AUSC*]` pins what the audit can reach.
 - `workerStop.ts` (API worker): the CMC loop drain and the telemetry flush share one signal hook, one bound
   and one re-raise; `emitter.shutdown` waits for a send in progress.
 - `bin/server` on SIGINT: exits once `workerStop` is done (`isStopping`, asked after every listener ran).

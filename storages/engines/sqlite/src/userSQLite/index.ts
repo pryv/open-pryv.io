@@ -12,9 +12,10 @@ const { SqliteStorage } = require('./Storage.ts');
 
 const storages: Record<string, SqliteStorageType> = {};
 
+/** A storage of the users' own events. */
 async function getStorage (name: string): Promise<SqliteStorageType> {
   if (!storages[name]) {
-    storages[name] = new SqliteStorage(name);
+    storages[name] = new SqliteStorage(name, { userEvents: true });
     await storages[name].init();
   }
   return storages[name];

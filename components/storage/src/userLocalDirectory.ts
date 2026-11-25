@@ -19,7 +19,7 @@ const fsSync = require('fs');
 
 const { getConfig } = require('@pryv/boiler');
 
-export { init, ensureUserDirectory, ensureUserFile, getPathForUser, listUserIds, deleteUserDirectory, unmarkErased, hasErasedMarker, remarkErased, getBasePath, setBasePathTestOnly, isErased, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED, ERASED_MARKER };
+export { init, ensureUserDirectory, ensureUserFile, getPathForUser, listUserIds, deleteUserDirectory, unmarkErased, hasErasedMarker, remarkErased, getBasePath, setBasePathTestOnly, isErased, isErasedAndGone, ErasedUserError, clearErasedTestOnly, forgetErasedTestOnly, USER_ERASED, ERASED_MARKER };
 
 let config: ConfigLike;
 let basePath: string | undefined;
@@ -88,6 +88,15 @@ function isErased (userId: string): boolean {
 }
 
 /**
+ * Marked erased and without a directory: the mark of an id restored by
+ * another process stays in this one, its directory tells it is an account
+ * again.
+ */
+async function isErasedAndGone (userId: string): Promise<boolean> {
+  return erased.has(userId) && !(await exists(getPathForUser(userId)));
+}
+
+/**
  * The id is an account again (indexed by a restore or a registration): its
  * directory may hold files again. Removes the erased marker and this
  * process's mark. Called once the id is indexed, before the account's data
@@ -151,16 +160,9 @@ async function init () {
  */
 async function ensureUserDirectory (userId: string, extraPath = '') {
   const resultPath = getPathForUser(userId, extraPath);
-  if (erased.has(userId)) {
-    // An erased account's directory is never created again; one kept by the
-    // erasure (audit `keep` mode) stays usable.
-    try {
-      await fs.stat(getPathForUser(userId));
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') throw new ErasedUserError(userId);
-      throw err;
-    }
-  }
+  // An erased account's directory is never created again; one kept by the
+  // erasure (audit `keep` mode) stays usable.
+  if (await isErasedAndGone(userId)) throw new ErasedUserError(userId);
   await fs.mkdir(resultPath, { recursive: true });
   return resultPath;
 }

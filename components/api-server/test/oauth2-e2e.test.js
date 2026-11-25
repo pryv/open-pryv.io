@@ -730,6 +730,10 @@ describe('[OAUTH-E2E] OAuth 2.0 authorization-code flow (granular consent-offer 
       const newDeletions = (after.accessDeletions ?? []).filter((d) => !beforeDeleted.has(d.id));
       assert.ok(newDeletions.length >= 1,
         'the revoked session access must appear among access deletions');
+      // …and the account's trail names it.
+      const trail = await (await require('storages').auditStorage.forUser(username)).getEvents({ query: [] });
+      const revoked = trail.filter((e) => e.content?.action === 'oauth.token.revoked' && newDeletions.some((d) => d.id === e.content.record.accessId));
+      assert.deepEqual(revoked.map((e) => e.content.record.reason), ['issuance failed'], JSON.stringify(revoked));
     });
 
     it('[OE12] /accept with wrong userToken → 401', async function () {

@@ -54,6 +54,23 @@ describe('[AFLT] AuditFilter', () => {
         assert.fail('must throw an error');
       } catch (e) { assert.ok(e != null); }
     });
+    it('[AFLU] must name the entries that match no method, once each', () => {
+      const unknown = (include, exclude) => validation.unknownFilterMethods(buildFilter(include, exclude));
+      assert.deepStrictEqual(unknown(['all'], []), []);
+      assert.deepStrictEqual(unknown(['events.get', 'accesses.all', 'callBatch', 'oauth.token.revoked'], ['streams.all']), []);
+      assert.deepStrictEqual(unknown(['event.get', 'events.getone'], ['event.get']), ['event.get', 'events.getone']);
+      assert.deepStrictEqual(unknown(['a.all', 'something.all'], []), ['a.all', 'something.all'], 'a group is a whole name');
+      for (const malformed of [undefined, null, {}, { methods: null }, { methods: { include: 'all', exclude: [12] } }]) {
+        assert.deepStrictEqual(validation.unknownFilterMethods(malformed), [], JSON.stringify(malformed));
+      }
+    });
+    it('[ASDWE] the server access writes are recorded with their user, and belong to the group "accesses.all"', () => {
+      const { filter } = new AuditFilter({ syslogFilter: buildFilter([], ['all']), storageFilter: buildFilter(['accesses.all']) });
+      for (const action of ['accesses.created', 'accesses.changed', 'accesses.deleted']) {
+        assert.ok(apiMethods.WITH_USER_METHODS.includes(action), action);
+        assert.deepStrictEqual(filter.methods[action], { storage: true }, action);
+      }
+    });
   });
 
   describe('[AF02] initialization', () => {

@@ -544,6 +544,7 @@ export async function handleRefreshToken (
       if (typeof deps.revokeAccessLocal === 'function') {
         try {
           await deps.revokeAccessLocal({ userId: row.userId, username, accessId: access.accessId, clientId: row.clientId });
+          await audit('oauth.token.revoked', { clientId: row.clientId, userId: row.userId, accessId: access.accessId, reason: 'issuance failed' });
         } catch (revokeErr: unknown) {
           logServerError('refresh_token: revoke of the unanswered access failed', revokeErr);
         }

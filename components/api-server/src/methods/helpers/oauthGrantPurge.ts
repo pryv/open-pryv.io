@@ -18,8 +18,9 @@
  * consent.
  *
  * Deletion goes through `deleteAccessChain`, the teardown of
- * `accesses.delete`, so each row leaves a deletion record and the access
- * index is tombstoned. It does not run the route's post-delete hooks: the
+ * `accesses.delete`, so each row leaves a deletion record in the accesses
+ * store, the access index is tombstoned, and the account's audit trail holds
+ * an `accesses.deleted` record. It does not run the route's post-delete hooks: the
  * counterparty of a deleted CMC data-grant is not sent a revoke notice (its
  * reach through the grant ends all the same).
  */
@@ -31,7 +32,7 @@ import * as storages from 'storages';
 import * as oauthStorage from 'oauth2/src/storage.ts';
 import { parseAccessRef } from 'business/src/accesses/refs.ts';
 import type { PlatformDB } from '../../../../../storages/interfaces/platformStorage/PlatformDB.ts';
-import { deleteAccessChain } from './accessDeletion.ts';
+import { deleteAccessChainRecorded } from './accessWriteAudit.ts';
 import { REGISTRY_GRANT_PREFIX, REGISTRY_GRANT_DEVICE, SESSION_NAME_PREFIX } from '../../routes/oauth2/types.ts';
 
 type AccessRow = {
@@ -57,6 +58,7 @@ export type PurgeCounts = {
 };
 
 const dbFindOptions = { projection: { calls: 0, deleted: 0 } };
+const PURGED = { source: 'operator-cli', cause: 'client-purged' } as const;
 
 function isRegistryGrantOf (a: AccessRow, clientId: string): boolean {
   return a?.type === 'app' && (
@@ -105,13 +107,13 @@ export async function purgeClientGrants (clientId: string): Promise<PurgeCounts>
     };
     for (const grant of grants) {
       if (deleted.has(grant.id)) continue;
-      const outcome = await deleteAccessChain(user, { id: grant.id });
+      const outcome = await deleteAccessChainRecorded(user, { id: grant.id }, PURGED);
       remember(outcome, grant.id);
       if (outcome.deleted) counts.grants++;
     }
     // What is still minted for the client (no grant behind it).
     for (const a of (await find()).filter((r) => isMintedFor(r, clientId))) {
-      remember(await deleteAccessChain(user, { id: a.id }), a.id);
+      remember(await deleteAccessChainRecorded(user, { id: a.id }, PURGED), a.id);
     }
     counts.sessions += [...minted].filter((id) => deleted.has(id)).length;
     counts.accesses += deleted.size;

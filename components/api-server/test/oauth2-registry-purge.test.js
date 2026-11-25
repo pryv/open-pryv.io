@@ -70,6 +70,12 @@ async function runCli (fn, argv, ...deps) {
   }
 }
 
+/** The audit records of the accesses the server deleted on the account of `userId`. */
+async function deletedRecords (userId) {
+  const db = await require('storages').auditStorage.forUser(userId);
+  return (await db.getEvents({ query: [] })).filter((e) => e.content?.action === 'accesses.deleted').map((e) => ({ source: e.content.source.name, ...e.content.record }));
+}
+
 describe('[ORGP] OAuth registry clients: purge, vetting, ceilings, display', function () {
   this.timeout(60000);
 
@@ -217,6 +223,12 @@ describe('[ORGP] OAuth registry clients: purge, vetting, ceilings, display', fun
     // The sessions' chains end with them; the sweep ends the one left.
     assert.match(r.out, /other refresh tokens ended: {2}1/);
 
+    // Each account's trail names what went: one record per grant, with its chain.
+    const ofClient = (records) => records.filter((r) => r.cause === 'client-purged');
+    const purged = { alice: ofClient(await deletedRecords(alice.userId)), bob: ofClient(await deletedRecords(bob.userId)) };
+    assert.deepEqual([purged.alice.length, purged.bob.length], [1, 1], JSON.stringify(purged));
+    assert.ok(purged.alice.every((r) => r.source === 'operator-cli' && r.by == null));
+    assert.ok(purged.alice[0].related.includes(shared.body.access.id.split(':')[0]), JSON.stringify(purged.alice));
     for (const who of [alice, bob]) {
       const left = (await accessesOf(who)).filter((a) => a.name === 'oauth-grant:' + clientId || a.name === 'oauth:' + clientId);
       assert.deepEqual(left, [], who.username);
@@ -357,6 +369,8 @@ describe('[ORGP] OAuth registry clients: purge, vetting, ceilings, display', fun
       assert.match(child.stdout, /grants deleted: {8}1\n/);
       assert.match(child.stdout, /sessions deleted: {6}1\n/);
       assert.match(child.stdout, /accounts concerned: {4}1\n/);
+      assert.ok(!/audit could not be opened/.test(child.stderr), child.stderr);
+      assert.ok((await deletedRecords(alice.userId)).some((r) => r.cause === 'client-purged' && r.source === 'operator-cli'), 'recorded by the tool');
 
       assert.deepEqual((await introspect(t.token.access_token)).body, { active: false });
       const waited = await untilReadAnswers(alice, t.token.access_token, 403, 10000);

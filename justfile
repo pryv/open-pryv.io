@@ -141,6 +141,19 @@ test-sqlite component *params:
     if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
     STORAGE_ENGINE=sqlite NODE_ENV=test COMPONENT={{component}} scripts/components-run npx mocha "$@"
 
+# Same as `test-sqlite` but with the PostgreSQL AUDIT engine: the one pairing
+# where the audit records are in PostgreSQL and the users index is not. Run it
+# with `audit` and `api-server` before touching the audit storages or erasure.
+[positional-arguments]
+test-sqlite-pg-audit component *params:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shift
+    CA="$(scripts/backloop-ca-warm 2>/dev/null || true)"
+    if [ -n "$CA" ]; then export NODE_EXTRA_CA_CERTS="$CA"; fi
+    STORAGE_ENGINE=sqlite storages__audit__engine=postgresql NODE_ENV=test \
+        COMPONENT={{component}} scripts/components-run npx mocha "$@"
+
 # Same as `test` (PostgreSQL baseStorage) but with InfluxDB as the seriesStorage.
 # Needs a running influxd at storages.engines.influxdb.{host,port}
 # (bundled: storages/engines/influxdb/scripts/setup, then .../start).

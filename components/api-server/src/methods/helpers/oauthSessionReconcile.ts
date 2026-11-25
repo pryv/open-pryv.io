@@ -59,7 +59,8 @@ import { rescopeWebhooksOfAccess } from './webhookScopes.ts';
 import AccessLogic from 'business/src/accesses/AccessLogic.ts';
 import { mergeStreamPermissions, INHERITED_RESTRICTION_FEATURES } from 'business/src/accesses/permissionSet.ts';
 import { parseAccessRef, managingAccessBase } from 'business/src/accesses/refs.ts';
-import { deleteAccessChain, notifyScopedAccessChange } from './accessDeletion.ts';
+import { notifyScopedAccessChange } from './accessDeletion.ts';
+import { deleteAccessChainRecorded, recordAccessWrite } from './accessWriteAudit.ts';
 import { withSessionSelfRevoke, samePermissionKeys } from '../../routes/oauth2/types.ts';
 import { reindexAccessNonFatal } from 'platform/src/accessIndex.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
@@ -199,11 +200,13 @@ export async function reconcileSessionsOfGrant (user: SessionUser, grantId: stri
   let updated = 0;
   let deleted = 0;
   const logger = getLogger('accesses:oauth-reconcile');
+  const GRANT_CHANGED = { source: 'oauth2', cause: 'grant-changed', grantId: base } as const;
   const webhooksRepository = new WebhooksRepository(storageLayer.webhooks, storageLayer.events, storageLayer.accesses);
   // A rewritten row: cache bust, scoped notification, index, and the scopes
   // of its webhooks resolved again against the narrower permissions.
   async function afterRewrite (row: AccessRow, permissions: PermissionEntry[], modified: number): Promise<void> {
     if (typeof row.token === 'string') cache.unsetAccessLogic(user.id, { id: row.id, token: row.token });
+    await recordAccessWrite(user.id, 'accesses.changed', { ...GRANT_CHANGED, access: row, changed: ['permissions'] });
     notifyScopedAccessChange(user.username, { id: row.id, type: row.type, permissions: permissions as Array<{ streamId?: string }> }, 'update');
     await reindexAccessNonFatal(user.username, { id: row.id, type: row.type, expires: row.expires, modified });
     try {
@@ -223,7 +226,7 @@ export async function reconcileSessionsOfGrant (user: SessionUser, grantId: stri
       const chain = Array.isArray(recorded) ? recorded as PermissionEntry[] : current;
       const eff = await effectiveSessionPermissions(user.id, grant as AccessRow & Record<string, unknown>, chain);
       if (!eff.hasReach) {
-        await deleteAccessChain(user, { id: session.id });
+        await deleteAccessChainRecorded(user, { id: session.id }, GRANT_CHANGED);
         deleted++;
         sessionDeleted = true;
         continue;
@@ -252,7 +255,7 @@ export async function reconcileSessionsOfGrant (user: SessionUser, grantId: stri
       const current = child.permissions ?? [];
       const eff = await effectiveChildPermissions(user.id, grant as AccessRow & Record<string, unknown>, current, grantLogic);
       if (!eff.hasReach) {
-        await deleteAccessChain(user, { id: child.id });
+        await deleteAccessChainRecorded(user, { id: child.id }, GRANT_CHANGED);
         deleted++;
         continue;
       }

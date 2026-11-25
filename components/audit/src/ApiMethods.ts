@@ -174,7 +174,13 @@ const ALL_METHODS = [
   // An auto-deletion schedule reset by an administrator
   // (system.autoDeletion.reset, audited without a user): recorded in the
   // account's own trail.
-  'account.autoDeletion.resetByAdmin'
+  'account.autoDeletion.resetByAdmin',
+  // App and shared accesses the server itself creates, changes (permissions,
+  // expiry) or deletes, without an `accesses.*` call: recorded in the trail of
+  // the account that holds them (api-server methods/helpers/accessWriteAudit.ts).
+  'accesses.created',
+  'accesses.changed',
+  'accesses.deleted'
 ];
 
 const NOT_AUDITED_METHODS = [
@@ -234,7 +240,7 @@ const WITHOUT_USER_METHODS = [
   'oauth.token.exchange_refused',
   'oauth.client.metadata_fetched',
   'oauth.client.metadata_refused',
-  // SSO refusals resolve no user (no-account / unproved email / mint failure).
+  // SSO refusals resolve no user (no-account / unproved email).
   'sso.refused'
 ];
 

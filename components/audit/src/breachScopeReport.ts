@@ -46,6 +46,8 @@ export interface AuditRow {
 }
 
 const ERROR_TYPE = 'audit-log/pryv-api-error';
+/** The records of the writes the server makes to an access. */
+const ACCESS_WRITE_TYPE = 'audit-log/access';
 
 /** action -> class. Unmapped actions fall into `other`; the raw byAction
  * histogram is always primary (lossless), the class map is a rendering aid. */
@@ -223,7 +225,9 @@ export function buildReport (
   let maxScopedStreamCount = 0;
 
   for (const row of auditRows) {
-    totalCalls++;
+    // What the server did to the access is listed, not counted as a call of it.
+    const isCall = row.type !== ACCESS_WRITE_TYPE;
+    if (isCall) totalCalls++;
     const action = row.content?.action;
     const isError = row.type === ERROR_TYPE;
     if (isError) errorCalls++;
@@ -234,7 +238,7 @@ export function buildReport (
     if (isError) byAction[key].error++; else byAction[key].valid++;
 
     // time window bounds
-    if (typeof row.time === 'number') {
+    if (isCall && typeof row.time === 'number') {
       if (firstCallTs == null || row.time < firstCallTs) firstCallTs = row.time;
       if (lastCallTs == null || row.time > lastCallTs) lastCallTs = row.time;
     }
@@ -288,7 +292,7 @@ export function buildReport (
       }
       case 'delete': deleted.calls++; break;
       case 'auth-session': authCalls++; break;
-      default: otherCalls++; break;
+      default: if (isCall) otherCalls++; break;
     }
   }
 

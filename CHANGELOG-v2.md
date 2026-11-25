@@ -21,6 +21,25 @@
   left no record. They now leave the record the same call leaves over HTTP, success or refusal, without
   `source.ip` (no client connection made the call). The lookups the server makes for itself during
   these flows are not recorded.
+- **Access changes the server makes are in the audit trail.** An app or shared access created, changed
+  (permissions, expiry) or deleted outside an `accesses.*` call now leaves a record in the account's trail:
+  `accesses.created`, `accesses.changed` or `accesses.deleted` (type `audit-log/access`). `content.record`
+  names the access (`accessId`, `accessType`, `kind`), what was deleted with it (`related`), what changed
+  (`changed`), why (`cause`), the access of the account that asked where one is known (`by`), and
+  `content.source.name` the part of the server: `oauth2`, `cmc`, `delegation`, `account`, `operator-cli`.
+  Covers consent grants and their withdrawal, the collapse of an OAuth chain, sessions and accesses re-cut
+  or removed when their grant changes, grants withdrawn with an address alias, and
+  `bin/oauth-client.js purge-grants`. Not recorded this way: personal accesses (the sign-in is their
+  record), the issuance of OAuth sessions (`oauth.*` events name them), an access that ends by its expiry,
+  the removal of a session whose authorization code was never exchanged, one-off upgrade tools.
+  **Audit filters that list methods one by one do not include the three actions until you add them;
+  `accesses.all` does.** A session removed because its issuance failed now leaves `oauth.token.revoked`
+  (reason `issuance failed`). The breach-scope report lists these records without counting them as calls of
+  the access.
+- The audit rows of `accesses.update` and `accesses.delete` name the access (`content.record.accessId`), and
+  the accesses deleted with it (`related`). The id was only in the path, which is not recorded.
+- `audit.storage.filter` / `audit.syslog.filter`: an entry that matches no method is reported at boot and by
+  `bin/check-config.js` (it selected nothing, silently).
 - Batch calls: the record of a call no longer carries the integrity reference (`content.record`) of an
   earlier create of the same batch.
 - **PostgreSQL audit storage: no record is left for an erased account.** With `audit.onUserDelete: erase`
@@ -30,8 +49,9 @@
   named in `stepsCompleted` of the erasure ledger). During a rolling restart a worker of an earlier
   version still writes without the refusal. On both
   engines a record refused for this reason is logged at `warn` and is not counted as lost. `keep` is
-  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies but
-  the refusal does not.
+  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies and a
+  record is refused from the moment the erasure has marked the account: one written in the last moment
+  before that can stay (the server warns about this pairing at boot).
   Cost: each audit record written to PostgreSQL now checks, in the same statement, that its account is
   still indexed, and holds that entry until the record is committed. Measured: about 0.1 ms per record
   under five concurrent writers, nothing measurable with one. With `keep` the check is off.
