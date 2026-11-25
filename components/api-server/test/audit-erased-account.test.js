@@ -155,6 +155,22 @@ describe('[AGPE] audit records of an account erased meanwhile', function () {
     assert.strictEqual(lossCounter.snapshot().lost.total, before);
   });
 
+  it('[AGPE7] the records of an id restored by another process are stored, though this one still holds its mark', async function () {
+    if (auditStorage.seesUsersIndex !== false) this.skip(); // PostgreSQL audit on a SQLite base only
+    const { userLocalDirectory } = require('storage');
+    const { username } = await newUser();
+    const res = await erase(username);
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    require('node:fs').mkdirSync(userLocalDirectory.getPathForUser(username), { recursive: true });
+    try {
+      assert.strictEqual(userLocalDirectory.isErased(username), true);
+      await audit.eventForUser(username, row());
+      assert.strictEqual(await count(username), 1);
+    } finally {
+      require('node:fs').rmSync(userLocalDirectory.getPathForUser(username), { recursive: true, force: true });
+    }
+  });
+
   it('[AGPE5] an erasure recorded before the second deletion existed runs it when resumed', async function () {
     if (!isPg) this.skip();
     const { Deletion } = require('business/src/auth/deletion.ts');

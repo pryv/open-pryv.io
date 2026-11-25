@@ -30,8 +30,9 @@
   named in `stepsCompleted` of the erasure ledger). During a rolling restart a worker of an earlier
   version still writes without the refusal. On both
   engines a record refused for this reason is logged at `warn` and is not counted as lost. `keep` is
-  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies but
-  the refusal does not.
+  unchanged. With the audit on PostgreSQL and the base storage on SQLite, the second removal applies and a
+  record is refused from the moment the erasure has marked the account: one written in the last moment
+  before that can stay (the server warns about this pairing at boot).
   Cost: each audit record written to PostgreSQL now checks, in the same statement, that its account is
   still indexed, and holds that entry until the record is committed. Measured: about 0.1 ms per record
   under five concurrent writers, nothing measurable with one. With `keep` the check is off.

@@ -934,6 +934,7 @@ function collectWarnings (config) {
   warnings.push(...describeErasureLedgerConfig(config.get('accountErasure:ledger')).warnings);
   const { describePgTimeLimits } = require('../../storages/engines/postgresql/src/timeLimits.ts');
   warnings.push(...describePgTimeLimits(config.get('storages:engines:postgresql')).warnings);
+  warnings.push(...auditEngineWarnings(config));
   warnings.push(...oauthWarnings(config));
   const { describeClientMetadataConfig } = require('../../components/oauth2/src/clientMetadataConfig.ts');
   warnings.push(...describeClientMetadataConfig(config.get('oauth:clientMetadataDocuments')).warnings);
@@ -941,6 +942,20 @@ function collectWarnings (config) {
   const { describePasswordCheckLimit } = require('../../components/business/src/auth/passwordCheckLimit.ts');
   warnings.push(...describePasswordCheckLimit(config.get('auth')).warnings);
   return warnings;
+}
+
+/**
+ * Audit records in PostgreSQL with the base storage in SQLite: the users index
+ * is not in the audit database, so the database cannot refuse a record of an
+ * erased account: the server does, from the moment the erasure has marked the
+ * account (with `audit.onUserDelete: keep` such records are kept anyway).
+ */
+function auditEngineWarnings (config) {
+  if (config.get('storages:audit:engine') !== 'postgresql' || config.get('storages:base:engine') === 'postgresql') return [];
+  if (config.get('audit:active') === false || config.get('audit:onUserDelete') === 'keep') return [];
+  return ["'storages.audit.engine: postgresql' with 'storages.base.engine: " + config.get('storages:base:engine') + "': " +
+    'an audit record written in the last moment of an account erasure, by a call still running, is not refused and can stay. ' +
+    "Set 'storages.audit.engine: sqlite' to have it refused."];
 }
 
 /** Below this, an `oauth.stateKey` or `sso.stateKey` gets a boot warning. */

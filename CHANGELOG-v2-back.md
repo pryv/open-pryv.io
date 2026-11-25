@@ -28,6 +28,12 @@
   +95 us (18 to 20 %) with, the same on one account and on five (no contention on the locked entry), of
   which the lock is about 25 us and the guarded statement the rest.
 - `Audit.ts`: a refusal of an erased account is a `warn`, not a loss (`erasedAccountRefusal.ts`).
+- SQLite base with PostgreSQL audit: `refuseUnindexedUsers` answers false, so `Audit` checks the erased mark of
+  `userLocalDirectory` before a write (an account erasing itself in a batch always left its `callBatch` record
+  there). Boot warning for the pairing (`[CVAE*]`). New recipe `just test-sqlite-pg-audit` (with
+  `resolveTestAuditEngine`), in CI for the audit component; `[AUAB*]` now run on any PostgreSQL audit.
+- SQLite: `getAllActions` / `getAllAccesses` are on `AuditUserDatabase`, the class of the audit files only; the
+  users' own events files use `UserDatabase`, without them. `[AUSC*]` pins what the audit can reach.
 - `workerStop.ts` (API worker): the CMC loop drain and the telemetry flush share one signal hook, one bound
   and one re-raise; `emitter.shutdown` waits for a send in progress.
 - `bin/server` on SIGINT: exits once `workerStop` is done (`isStopping`, asked after every listener ran).

@@ -127,6 +127,17 @@ jobs:
           storages__engines__postgresql__user: pryv
           storages__engines__postgresql__password: pryv
           storages__engines__postgresql__database: pryv-node-test
+      - name: Run the audit suite on a SQLite base with the PostgreSQL AUDIT engine
+        # The one pairing where the audit records are in PostgreSQL and the
+        # users index is not.
+        run: just clean-test-data && just test-sqlite-pg-audit audit
+        env:
+          PGPASSWORD: pryv
+          storages__engines__postgresql__host: localhost
+          storages__engines__postgresql__port: 5432
+          storages__engines__postgresql__user: pryv
+          storages__engines__postgresql__password: pryv
+          storages__engines__postgresql__database: pryv-node-test
       - name: Run the SQLite engine suite
         # The step above runs with STORAGE_ENGINE=postgresql, and the component
         # runner skips a primary storage engine that does not match it, so
