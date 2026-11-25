@@ -545,7 +545,10 @@ describe('[EMLS] account emails (multiple)', function () {
         u.email = email;
         users.push(u);
       }
+      const lookupBudget = require('../src/routes/reg/emailLookupBudget.ts');
       for (let i = 0; i < 50; i++) {
+        // each address tried counts on the account's lookup budget
+        await lookupBudget.clear();
         const x = cuid() + `.${i}@race-legacy.example.com`;
         const results = await Promise.all(users.map((u) => updateAccount(u, { email: x })));
         const statuses = results.map((r) => r.status);

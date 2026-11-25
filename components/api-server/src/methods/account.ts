@@ -70,6 +70,7 @@ const { buildVerifyLink } = require('business/src/emails/verifyLink.ts');
 const { reservePasswordReset } = require('business/src/auth/passwordResetThrottle.ts');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
 const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
+const { reserveAccountEmailLookups } = require('../routes/reg/emailLookupBudget.ts') as typeof import('../routes/reg/emailLookupBudget.ts');
 const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrottle.ts') as typeof import('./helpers/accountAttemptThrottle.ts');
 const cache = require('cache').default;
 const timestamp = require('unix-timestamp');
@@ -136,6 +137,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     commonFns.getParamsValidation(methodsSchema.update.params),
     splitEmailsOperations,
     validateThatAllFieldsAreEditable,
+    countEmailLookups,
     refuseUnprovedLegacyEmail,
     updateDataOnPlatform,
     updateAccount,
@@ -170,6 +172,22 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       }
     }
     next();
+  }
+
+  // A new address, added or set through the legacy field, is refused when
+  // another account holds it: that answer is an email lookup, counted before
+  // anything is checked (see emailLookupBudget.ts). The account's own current
+  // address asks nothing.
+  async function countEmailLookups (context: MethodContext, params: { update: Record<string, unknown> }, _result: ResultBag, next: Next) {
+    try {
+      let addresses = Array.isArray(context.emailsOperations?.add) ? context.emailsOperations.add.length : 0;
+      if (Object.prototype.hasOwnProperty.call(params.update, 'email') &&
+          params.update.email !== await usersRepository.getOnePropertyValue(context.user.id, 'email')) addresses++;
+      if (addresses === 0) return next();
+      next(await reserveAccountEmailLookups(context.user.id as string, addresses) ?? undefined);
+    } catch (err) {
+      next(err);
+    }
   }
 
   // When registration requires a proved email, the legacy `update.email` field

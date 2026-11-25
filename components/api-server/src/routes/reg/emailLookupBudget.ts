@@ -61,9 +61,47 @@ function countEmailLookup (appliesTo: (req: Request) => boolean = () => true) {
   };
 }
 
+/**
+ * The same question asked by a signed-in account: `account.update` refuses an
+ * address another account holds. Counted per account, every address asked
+ * about, held or not (several in one call count each).
+ */
+const ACCOUNT_LOOKUPS_PER_WINDOW = 30;
+const ACCOUNT_WINDOW_MS = 60 * 60 * 1000;
+
+const accountEmailLookupBudget = createAddressBudget({
+  namespace: 'email-lookup-account/',
+  perWindow: ACCOUNT_LOOKUPS_PER_WINDOW,
+  windowMs: ACCOUNT_WINDOW_MS,
+  keyIsAddress: false
+});
+
+/** Count `addresses` addresses `userId` asks about: null when it may, else the 429 to answer. */
+async function reserveAccountEmailLookups (userId: string, addresses: number): Promise<Error | null> {
+  for (let i = 0; i < addresses; i++) {
+    const retryAfterSeconds = await accountEmailLookupBudget.reserve(userId);
+    if (retryAfterSeconds != null) {
+      return errors.tooManyAttempts(retryAfterSeconds, {
+        message: `Too many email addresses were tried on this account; retry in ${retryAfterSeconds} s.`,
+        data: { reason: 'account-email-lookups', retryAfterSeconds }
+      });
+    }
+  }
+  return null;
+}
+
 /** Drop the counters written by this process (tests). */
 async function clear (): Promise<void> {
   await emailLookupBudget.clear();
+  await accountEmailLookupBudget.clear();
 }
 
-export { countEmailLookup, reserveEmailLookup, clear, LOOKUPS_PER_WINDOW, WINDOW_MS };
+export {
+  countEmailLookup,
+  reserveEmailLookup,
+  reserveAccountEmailLookups,
+  clear,
+  LOOKUPS_PER_WINDOW,
+  WINDOW_MS,
+  ACCOUNT_LOOKUPS_PER_WINDOW
+};

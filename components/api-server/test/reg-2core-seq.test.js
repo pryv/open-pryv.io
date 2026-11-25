@@ -198,6 +198,20 @@ function usesPostgres () {
   return ['base', 'series', 'file', 'audit'].some((kind) => config.get('storages:' + kind + ':engine') === 'postgresql');
 }
 
+// FORCE also has to end a background worker of PostgreSQL itself (autovacuum),
+// which a role that is not a superuser may not: insufficient_privilege (42501)
+// until that worker is done.
+async function dropDatabase (client, name) {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await client.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    } catch (err) {
+      if (err.code !== '42501' || tries >= 10) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 // Drop (and with `create`, recreate empty) every core's own user data. An
 // empty database is all a core needs: it creates its schema on first connect.
 async function resetCoresData (create) {
@@ -213,7 +227,7 @@ async function resetCoresData (create) {
   try {
     for (const name of CORE_DATA_NAMES) {
       // Not in a transaction: CREATE DATABASE refuses to run inside one.
-      await client.query(`DROP DATABASE IF EXISTS "pryv-node-test-${name}" WITH (FORCE)`);
+      await dropDatabase(client, `pryv-node-test-${name}`);
       if (create) await client.query(`CREATE DATABASE "pryv-node-test-${name}"`);
     }
   } finally {

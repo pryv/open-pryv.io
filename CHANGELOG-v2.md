@@ -20,6 +20,13 @@
 - OAuth: the first authorization on such an offer is checked too, and answers `400 invalid_grant` when the address is
   not proved. Offers without the field are unchanged.
 
+### Account: addresses an account may try per hour (on by default)
+
+- `account.update` says whether another account holds an address (`item-already-exists` on `emails.add` or a changed
+  `email`). An account may ask about 30 addresses an hour, held or not (per core); past it the call answers
+  `429 too-many-attempts` with `data.reason: 'account-email-lookups'` and `retryAfterSeconds`. The public email lookups
+  already had a budget.
+
 ### Security: Node.js 24.22.3
 
 - The Docker image moves from Node 24.22.1 to 24.22.3, which carries the Node.js security release of
