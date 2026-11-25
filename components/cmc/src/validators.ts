@@ -58,11 +58,14 @@ function isLocalizableText (v: unknown): boolean {
   return true;
 }
 
-function isPermissionArray (v: unknown): { ok: boolean; reason?: string } {
+/** `knownFeaturesOnly`: refuse a feature permission whose name is not in the closed set. */
+type ValidateOptions = { knownFeaturesOnly?: boolean };
+
+function isPermissionArray (v: unknown, opts?: ValidateOptions): { ok: boolean; reason?: string } {
   if (!Array.isArray(v)) return { ok: false, reason: 'must be an array' };
   if (v.length === 0) return { ok: false, reason: 'must not be empty' };
   try {
-    permissionSet.normalizePermissions(v);
+    permissionSet.normalizePermissions(v, { knownFeaturesOnly: opts?.knownFeaturesOnly === true });
   } catch (e: unknown) {
     return { ok: false, reason: (e as Error).message };
   }
@@ -81,7 +84,13 @@ function checkLocalizable (errors: string[], path: string, v: unknown, optional 
 
 // --- Per-event-type validators ---
 
-function validateRequest (content: unknown): ValidationResult {
+/**
+ * With `opts.knownFeaturesOnly`, an unknown feature permission name in
+ * `request.permissions` is refused. The write hook sets it for the
+ * requester's own write; an offer a peer delivers to the inbox is judged
+ * without it (an older requester core may still send such a name).
+ */
+function validateRequest (content: unknown, opts?: ValidateOptions): ValidationResult {
   if (!isPlainObject(content)) return fail('content must be an object');
   const errors: string[] = [];
 
@@ -104,7 +113,7 @@ function validateRequest (content: unknown): ValidationResult {
     checkLocalizable(errors, 'content.request.description', r.description);
     checkLocalizable(errors, 'content.request.consent', r.consent);
 
-    const permCheck = isPermissionArray(r.permissions);
+    const permCheck = isPermissionArray(r.permissions, opts);
     if (!permCheck.ok) errors.push(`content.request.permissions: ${permCheck.reason}`);
     // A membership offer is judged by its own, stricter rule (the offer hook,
     // `cmc-membership-permissions-invalid`).
@@ -586,7 +595,7 @@ function validateBackChannel (raw: unknown): ValidationResult {
   return errors.length === 0 ? ok() : fail(...errors);
 }
 
-const VALIDATORS: { [k: string]: (content: unknown) => ValidationResult } = {
+const VALIDATORS: { [k: string]: (content: unknown, opts?: ValidateOptions) => ValidationResult } = {
   [C.ET_REQUEST]: validateRequest,
   [C.ET_ACCEPT]: validateAccept,
   [C.ET_REFUSE]: validateRefuse,
@@ -605,11 +614,11 @@ function isKnownEventType (eventType: string): boolean {
   return Object.prototype.hasOwnProperty.call(VALIDATORS, eventType);
 }
 
-function validate (eventType: string, content: unknown): ValidationResult {
+function validate (eventType: string, content: unknown, opts?: ValidateOptions): ValidationResult {
   if (!isKnownEventType(eventType)) {
     return fail(`unknown cmc event type: ${eventType}`);
   }
-  return VALIDATORS[eventType](content);
+  return VALIDATORS[eventType](content, opts);
 }
 
 export {

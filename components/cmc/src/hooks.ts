@@ -141,7 +141,11 @@ function createCmcContentValidationHook (deps: Deps): Middleware {
       return next();
     }
 
-    const validation = validators.validate(type as string, event.content);
+    // An unknown feature permission name is refused on the author's own
+    // write, not on what a peer delivers to the inbox (an older core may
+    // still send one; the accept side reads offers tolerantly too).
+    const knownFeaturesOnly = !streamIds.includes(C.NS_INBOX);
+    const validation = validators.validate(type as string, event.content, { knownFeaturesOnly });
     if (!validation.valid) {
       return next(deps.errors.invalidOperation(
         'CMC event content failed schema validation for ' + type,

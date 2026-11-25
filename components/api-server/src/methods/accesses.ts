@@ -18,6 +18,7 @@ const { fromCallback } = require('utils');
 const APIError = require('errors').APIError;
 const errors = require('errors').factory;
 const ErrorIds = require('errors').ErrorIds;
+const ErrorMessages = require('errors').ErrorMessages;
 
 const { ApiEndpoint } = require('utils');
 
@@ -28,7 +29,8 @@ const accessSchema = require('../schema/access.ts').default;
 const string = require('./helpers/string.ts');
 const { peerFetch } = require('business/src/outbound/peerFetch.ts');
 // Account/system-stream permission validation, shared with the consent accept.
-const { validateAccountStreamPermissions } = require('business/src/accesses/accountStreamPermissions.ts');
+const { validateAccountStreamPermissions, accountStreamIdForBareName } = require('business/src/accesses/accountStreamPermissions.ts');
+const { FEATURE_PERMISSION_NAMES, findUnknownFeature, unknownFeatureMessage } = require('business/src/accesses/permissionSet.ts');
 const { withoutInjectedPermissions } = require('business/src/accesses/injectedPermissions.ts');
 const { usageFromCalls } = require('business/src/accesses/methodClasses.ts') as typeof import('business/src/accesses/methodClasses.ts');
 
@@ -345,6 +347,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     'accesses.create',
     commonFns.basicAccessAuthorizationCheck,
     applyDefaultsForCreation,
+    refuseUnknownFeaturePermissions,
     commonFns.getParamsValidation(methodsSchema.create.params),
     canonicalizePermissionStreamIds,
     cmcAccessCreateForgePreventionHook,
@@ -352,6 +355,7 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     delegationAccessCreateLineageHook,
     dpopBindingCreateGuard,
     applyPrerequisitesForCreation, applyAccountStreamsValidation,
+    refuseAccountFieldNameCollision,
     createDataStructureFromPermissions,
     cleanupPermissions,
     createAccess,
@@ -362,6 +366,79 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   function applyDefaultsForCreation (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     params.type ??= 'shared';
     next();
+  }
+
+  /**
+   * Feature permission names are a closed set. At creation the schema refuses
+   * any other name too, but its `oneOf` failure does not say which entry is
+   * wrong: this step runs first and names it. Entries of another shape are left to the
+   * schema. `held`: names the access being updated already holds (kept).
+   */
+  function unknownFeaturePermissionError (permissions: unknown, held?: ReadonlySet<string>) {
+    const unknown = findUnknownFeature(permissions, held);
+    if (unknown == null) return null;
+    return errors.invalidParametersFormat(unknownFeatureMessage(unknown.feature),
+      { feature: unknown.feature, knownFeatures: [...FEATURE_PERMISSION_NAMES] });
+  }
+
+  function refuseUnknownFeaturePermissions (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
+    next(unknownFeaturePermissionError(params?.permissions));
+  }
+
+  /**
+   * A permission whose id is the bare name of an account field (`email` for
+   * `:system:email`), with a `defaultName` and no such stream, would create
+   * an ordinary empty stream that looks like the account field on the
+   * consent screen. Refused before any stream is created (the creation loop
+   * runs entry by entry). A trashed stream counts as existing (it is
+   * untrashed). Returns the error for the first such entry, or null.
+   */
+  async function accountFieldNameCollisionError (context: MethodContext, permissions: unknown) {
+    if (!Array.isArray(permissions)) return null;
+    for (const permission of permissions as StreamPermission[]) {
+      if (typeof permission?.streamId !== 'string' || permission.defaultName == null) continue;
+      const accountStreamId = accountStreamIdForBareName(permission.streamId);
+      if (accountStreamId == null) continue;
+      if (await context.streamForStreamId(permission.streamId, null) != null) continue;
+      return accountFieldNameCollision(permission.streamId, accountStreamId);
+    }
+    return null;
+  }
+
+  function accountFieldNameCollision (streamId: string, accountStreamId: string) {
+    return errors.invalidOperation(ErrorMessages[ErrorIds.AccountFieldNameCollision],
+      { param: streamId, accountStreamId });
+  }
+
+  async function collisionCheckOutcome (context: MethodContext, permissions: unknown) {
+    try {
+      return await accountFieldNameCollisionError(context, permissions);
+    } catch (err) {
+      return errors.unexpectedError(err);
+    }
+  }
+
+  // Personal callers only: they are the ones whose `defaultName` creates the stream.
+  async function refuseAccountFieldNameCollision (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
+    if (!context.access.isPersonal()) return next();
+    next(await collisionCheckOutcome(context, params.permissions));
+  }
+
+  async function refuseAccountFieldNameCollisionForUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    if (!context.access.isPersonal() || !Array.isArray(params.update?.permissions)) return next();
+    next(await collisionCheckOutcome(context, params.update.permissions));
+  }
+
+  // On update the closed set applies to the names the access does not
+  // already hold: an access stored with an unknown name (before the set was
+  // closed) can still be updated with its permissions as read back.
+  function refuseUnknownFeaturePermissionsForUpdate (context: MethodContext, params: AccessesUpdateParams, result: AccessesUpdateResult, next: MethodNext) {
+    if (!Array.isArray(params.update?.permissions)) return next();
+    const held = new Set<string>();
+    for (const p of (params.targetAccess?.permissions ?? []) as Array<{ feature?: unknown }>) {
+      if (typeof p?.feature === 'string') held.add(p.feature);
+    }
+    next(unknownFeaturePermissionError(params.update.permissions, held));
   }
 
   /**
@@ -762,12 +839,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     cmcAccessUpdateForgePreventionHook,
     delegationAccessUpdateForgePreventionHook,
     loadAccessForUpdate,
+    refuseUnknownFeaturePermissionsForUpdate,
     cmcAccessUpdateStampGuardHook,
     delegationAccessesUpdateGuardHook,
     delegationAccessesUpdateMarkerPreserveHook,
     dpopBindingUpdateGuard,
     oauthNameUpdateGuard,
     applyAccountStreamsValidationForUpdate,
+    refuseAccountFieldNameCollisionForUpdate,
     enforceUpdateChainRules,
     createDataStructureFromUpdatePermissions,
     cleanupUpdatePermissions,
@@ -1347,10 +1426,15 @@ export default async function produceAccessesApiMethods (api: { register (...arg
   api.register(
     'accesses.checkApp',
     commonFns.basicAccessAuthorizationCheck,
+    refuseUnknownFeaturePermissionsForCheckApp,
     commonFns.getParamsValidation(methodsSchema.checkApp.params),
     canonicalizePermissionStreamIdsForCheckApp,
     checkApp
   );
+
+  function refuseUnknownFeaturePermissionsForCheckApp (context: MethodContext, params: AccessesCheckAppParams, result: AccessesCheckAppResult, next: MethodNext) {
+    next(unknownFeaturePermissionError(params?.requestedPermissions));
+  }
 
   // Same rewrite (and duplicate refusal) as accesses.create: the stored access
   // carries canonical ids, so the match, `checkedPermissions` (sent back to
@@ -1511,6 +1595,9 @@ export default async function produceAccessesApiMethods (api: { register (...arg
           }
           // checkSimilar
           if (existingStream == null) {
+            // the stream the flow would create must not be named like an account field
+            const accountStreamId = accountStreamIdForBareName(permission.streamId);
+            if (accountStreamId != null) return done(accountFieldNameCollision(permission.streamId, accountStreamId));
             // new streams are created at "root" level so we check the children's name of root (id)
             const [storeId] = storeDataUtils.parseStoreIdAndStoreItemId(permission.streamId);
             const rootStreams = await mall.streams.get(context.user.id, {

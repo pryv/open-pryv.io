@@ -159,6 +159,7 @@ const ErrorIds = {
   DeniedStreamAccess: 'denied-stream-access',
   TooHighAccessForSystemStreams: 'too-high-access-for-account-stream',
   UnknownAccountStream: 'unknown-account-stream',
+  AccountFieldNameCollision: 'account-field-name-collision',
   ForbiddenMultipleAccountStreams: 'forbidden-multiple-account-streams-events',
   EmailRequired: 'email-required',
   PasswordRequired: 'password-required',

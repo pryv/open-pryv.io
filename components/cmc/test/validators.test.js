@@ -331,4 +331,19 @@ describe('[CMCVAL] cmc/validators', () => {
       expectInvalid('consent/scope-update-cmc', { accept: true }, 'scopeRequestEventId');
     });
   });
+
+  it('[FPN6] an offer naming an unknown feature permission is refused with `knownFeaturesOnly`, read as is without it', () => {
+    const offer = {
+      ...VALID_REQUEST,
+      request: { ...VALID_REQUEST.request, permissions: [...VALID_PERMS, { feature: 'webhook', setting: 'forbidden' }] },
+    };
+    const strict = V.validate('consent/request-cmc', offer, { knownFeaturesOnly: true });
+    assert.equal(strict.valid, false);
+    assert.ok(strict.errors.some((e) => e.startsWith('content.request.permissions: invalid permission at index 2: unknown feature \'webhook\'')),
+      strict.errors.join('; '));
+    assert.equal(V.validateRequest(offer, { knownFeaturesOnly: true }).valid, false);
+    expectValid('consent/request-cmc', offer);
+    const known = { ...VALID_REQUEST, request: { ...VALID_REQUEST.request, permissions: [...VALID_PERMS, { feature: 'webhooks', setting: 'forbidden' }] } };
+    assert.equal(V.validate('consent/request-cmc', known, { knownFeaturesOnly: true }).valid, true);
+  });
 });

@@ -26,6 +26,7 @@ const ErrorIds = require('errors').ErrorIds;
 const errors = require('errors').factory;
 const { reserveInvitationCheck } = require('./invitationCheckBudget.ts');
 const { resolveConsentSidecar } = require('business/src/accesses/consentSidecar.ts');
+const { findUnknownFeature, unknownFeatureMessage } = require('business/src/accesses/permissionSet.ts');
 const { checkAcceptedGrant } = require('./consentCheck.ts');
 const { checkForcedAcceptance } = require('./externalIdCheck.ts');
 const { parseCmcInvites, parseCmcInviteOutcomes } = require('./cmcInvites.ts');
@@ -309,12 +310,22 @@ export default function (expressApp: ExpressApp, app: AppLike) {
           error: { id: 'invalid-parameters', message: 'Missing or invalid requestedPermissions' }
         });
       }
+      // Feature permission names are a closed set: an unknown one is refused
+      // here, where the app sees it, rather than in the person's popup. The
+      // only permission check of a request without `consent` sidecar.
+      const unknownFeature = findUnknownFeature(requestedPermissions);
+      if (unknownFeature != null) {
+        return res.status(400).json({
+          error: { id: 'invalid-parameters', message: unknownFeatureMessage(unknownFeature.feature) }
+        });
+      }
 
       // The optional `consent` sidecar carries the per-entry annotations
       // (`mandatory`, `optIn`) beside the plain entries, and is resolved
       // here into the consent form the auth page and the ACCEPTED check
-      // both read. A request without it runs no new validation and is
-      // processed exactly as it was before consent forms existed.
+      // both read. A request without it runs no other validation (beyond
+      // the feature names above) and is processed as before consent forms
+      // existed.
       let consentForm;
       // `!= null`, not `!== undefined`: a client that serialises an absent
       // option as `null` degrades on an older core (which ignores the

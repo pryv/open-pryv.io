@@ -31,6 +31,7 @@ const ErrorMessages = {
   [ErrorIds.DeniedStreamAccess]: 'It is forbidden to access this stream.',
   [ErrorIds.TooHighAccessForSystemStreams]: "Account streams can only be granted at the 'read' or 'none' level: account fields are changed by the account owner only.",
   [ErrorIds.UnknownAccountStream]: "Unknown account stream: no account field with this id is defined on this platform. Built-in account fields use the ':_system:' prefix, platform-defined fields (such as the email, when present) use the ':system:' prefix.",
+  [ErrorIds.AccountFieldNameCollision]: "This stream id is the name of an account field, without its prefix: creating it would make an ordinary, empty stream, not give access to the account field. To request the account field, use the prefixed id given in 'accountStreamId'. To use an ordinary stream with this id, create it first with streams.create.",
   [ErrorIds.EmailRequired]: 'Email is required',
   [ErrorIds.PasswordRequired]: 'Password is required',
   [ErrorIds.InvalidPassword]: 'Password should have between 5 and 23 characters',

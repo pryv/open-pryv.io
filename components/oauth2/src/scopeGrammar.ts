@@ -219,7 +219,7 @@ function callParse (
   }
   let permissions: ExtPermission[];
   try {
-    permissions = normalizePermissions(raw, { consent: true });
+    permissions = normalizePermissions(raw, { consent: true, knownFeaturesOnly: true });
   } catch (err: unknown) {
     logServerError(`oauth extension ${ext.name}: scopeGrammar.parse produced invalid permissions`, err);
     return { ok: false, description: 'scope could not be parsed' };

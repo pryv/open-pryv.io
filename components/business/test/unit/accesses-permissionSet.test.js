@@ -372,4 +372,60 @@ describe('[PSET] accesses permissionSet', () => {
       assert.deepEqual([...ps.INHERITED_RESTRICTION_FEATURES], ['secretSharing', 'webhooks', 'accessCreation']);
     });
   });
+
+  describe('[PSET-F] feature permission names', () => {
+    const KNOWN = ['selfRevoke', 'secretSharing', 'webhooks', 'accessCreation', 'selfAudit'];
+
+    it('[FPN1] the set is exactly the five names; the inherited restrictions are among them', () => {
+      assert.deepEqual([...ps.FEATURE_PERMISSION_NAMES], KNOWN);
+      for (const name of ps.INHERITED_RESTRICTION_FEATURES) {
+        assert.ok(ps.FEATURE_PERMISSION_NAMES.includes(name), name);
+      }
+      for (const name of KNOWN) assert.equal(ps.isKnownFeatureName(name), true, name);
+      for (const name of ['webhook', 'forcedStreams', '', null, 3]) assert.equal(ps.isKnownFeatureName(name), false, String(name));
+    });
+
+    it('[FPN2] `knownFeaturesOnly` refuses an unknown name with its index and the known names, in consent form too', () => {
+      const input = [{ streamId: 'diary', level: 'read' }, { feature: 'webhook', setting: 'forbidden' }];
+      const expected = /invalid permission at index 1: unknown feature 'webhook' \(known features: selfRevoke, secretSharing, webhooks, accessCreation, selfAudit\)/;
+      assert.throws(() => ps.normalizePermissions(input, { knownFeaturesOnly: true }), expected);
+      assert.throws(() => ps.normalizePermissions(input, { consent: true, knownFeaturesOnly: true }), expected);
+      assert.throws(() => ps.normalizePermissions([{ feature: 'webhook', setting: 'allowed' }], { consent: true, knownFeaturesOnly: true }),
+        /unknown feature 'webhook'/);
+      for (const feature of KNOWN) {
+        for (const setting of ['forbidden', 'allowed']) {
+          assert.deepEqual(ps.normalizePermissions([{ feature, setting }], { knownFeaturesOnly: true }), [{ feature, setting }]);
+        }
+      }
+    });
+
+    it('[FPN3] without the option an unknown name passes and stays a feature entry, in a merge too', () => {
+      const stored = { feature: 'webhook', setting: 'forbidden' };
+      assert.deepEqual(ps.normalizePermissions([stored]), [stored]);
+      assert.deepEqual(ps.normalizePermissions([stored], { consent: true }), [{ ...stored, mandatory: true }]);
+      assert.equal(ps.isFeaturePermission(stored), true);
+      // A meet drops unclassified entries: a stored unknown name must stay classified as a feature.
+      const merged = ps.mergeStreamPermissions(
+        [{ streamId: 'diary', level: 'read' }, stored],
+        [{ streamId: 'diary', level: 'read' }],
+        'meet');
+      assert.deepEqual(merged.permissions, [{ streamId: 'diary', level: 'read' }, stored]);
+    });
+
+    it('[FPN4] `forcedStreams` is not a name that can be submitted', () => {
+      assert.throws(() => ps.normalizePermissions([{ feature: 'forcedStreams', setting: 'forbidden' }], { knownFeaturesOnly: true }),
+        /unknown feature 'forcedStreams'/);
+    });
+
+    it('[FPN5] the message builder and the finder name the entry; a held name is not reported', () => {
+      assert.equal(ps.unknownFeatureMessage('webhook'),
+        'Unknown feature permission "webhook". Known features: selfRevoke, secretSharing, webhooks, accessCreation, selfAudit.');
+      const perms = [{ streamId: 'a', level: 'read' }, { feature: 'selfAudit', setting: 'forbidden' }, { feature: 'webhook', setting: 'forbidden' }];
+      assert.deepEqual(ps.findUnknownFeature(perms), { index: 2, feature: 'webhook' });
+      assert.equal(ps.findUnknownFeature(perms, new Set(['webhook'])), null);
+      assert.equal(ps.findUnknownFeature(perms.slice(0, 2)), null);
+      assert.equal(ps.findUnknownFeature('not an array'), null);
+      assert.equal(ps.findUnknownFeature([null, 'x', { feature: 3 }]), null);
+    });
+  });
 });

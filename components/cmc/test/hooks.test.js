@@ -171,6 +171,26 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
     });
+
+    it('[FPNI] an unknown feature permission name is refused on the requester\'s own offer, not on an offer a peer delivers to the inbox', async () => {
+      const content = {
+        to: 'bob',
+        request: {
+          title: { en: 'Example' },
+          description: { en: 'symptom tracking' },
+          consent: { en: 'I agree' },
+          permissions: [{ streamId: 'fertility', level: 'read' }, { feature: 'webhook', setting: 'forbidden' }],
+        },
+      };
+      const { factory } = fakeErrors();
+      const mw = createCmcContentValidationHook({ errors: factory });
+      const own = await runMiddleware(mw, { newEvent: { streamIds: [':_cmc:apps:my-app'], type: 'consent/request-cmc', content } }, {}, {});
+      assert.ok(own instanceof Error, 'own write refused');
+      assert.equal(own.details.id, 'cmc-invalid-event-content');
+      assert.ok(own.details.errors.some((e) => e.includes('unknown feature \'webhook\'')), own.details.errors.join('; '));
+      const delivered = await runMiddleware(mw, { newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/request-cmc', content } }, {}, {});
+      assert.equal(delivered, undefined, 'peer delivery accepted');
+    });
   });
 
   describe('[CMCHOOK-ST] createStreamCreateReservedRootHook', () => {

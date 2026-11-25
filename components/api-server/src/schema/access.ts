@@ -166,7 +166,7 @@ function accessSchema (action: string): AccessSchemaShape {
 
 // Enum values come from the permission-lexicon single point so schema
 // validation can never drift from the business-layer semantics.
-const { PERMISSION_LEVEL_VALUES, FEATURE_SETTING_VALUES } =
+const { PERMISSION_LEVEL_VALUES, FEATURE_SETTING_VALUES, FEATURE_PERMISSION_NAMES } =
   require('business/src/accesses/permissionSet.ts');
 const permissionLevel = string({ enum: [...PERMISSION_LEVEL_VALUES] });
 const featureSetting = string({ enum: [...FEATURE_SETTING_VALUES] });
@@ -195,8 +195,13 @@ function permissions (action: string): unknown {
     streamPermission.properties.name = string();
   }
 
+  // A feature name given at creation (accesses.create, accesses.checkApp)
+  // must be one of the closed set. UPDATE and READ accept any name: a stored
+  // access may hold one written before the set was closed, and an update
+  // keeps the names the access already holds (accesses.update refuses a new
+  // unknown name in its own step, once the access is loaded).
   const featurePermission = object({
-    feature: string(),
+    feature: action === Action.CREATE ? string({ enum: [...FEATURE_PERMISSION_NAMES] }) : string(),
     setting: featureSetting
   }, {
     id: 'featurePermission',
