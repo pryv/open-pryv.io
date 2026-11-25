@@ -9,6 +9,16 @@
 - `[AUAB4]` (PostgreSQL audit engine) fills the audit read pool with one access per reader: the limit of one streamed
   audit read per access made it wait forever.
 
+### Bundled rqlite 10.7.5
+
+- `Dockerfile`, `storages/engines/rqlite/scripts/setup`: rqlite 10.7.5 and its per-arch sha256.
+- `.grype-image.yaml`: the five `x/net` 0.59.0 exceptions are removed (the 10.7.5 binary carries 0.63.0);
+  Grype reports nothing on `rqlited` for either architecture. The list is empty.
+
+- `DBrqlite.execute`: an answer with a top-level `error`, or without `results[0]`, throws
+  (`RqliteNoAnswerError`); `init` retries it until there is a leader (`initWaitMs`). Never sent again by
+  `execute`: what was answered may have been applied. Default-level reads are unchanged. Tests `[RQNA*]`.
+
 ### CI supply chain
 
 - Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`

@@ -82,3 +82,60 @@ describe('[RQRC] rqlite read consistency', () => {
     assert.deepEqual(await db.query('SELECT 1'), [], 'a default-level read keeps the boot-time tolerance');
   });
 });
+
+// A follower whose leader is unreachable answers a forwarded write with HTTP
+// 200, an error and no result.
+describe('[RQNA] rqlite writes without a result', () => {
+  const ANSWERS = [
+    { results: [], error: 'dial tcp 127.0.0.1:4002: connect: connection refused' },
+    { results: [], error: 'not leader' },
+    { results: [] },
+    { error: 'leadership lost' },
+    { results: [{ rows_affected: 1 }], error: 'leadership lost while committing log' },
+    {}
+  ];
+  let db, originalFetch, calls;
+
+  function answer (bodies) {
+    calls = 0;
+    global.fetch = async () => {
+      const body = bodies[Math.min(calls++, bodies.length - 1)];
+      return { ok: true, async json () { return body; }, async text () { return ''; } };
+    };
+  }
+
+  beforeEach(() => { db = new DBrqlite('http://localhost:4001'); originalFetch = global.fetch; });
+  afterEach(() => { global.fetch = originalFetch; });
+
+  it('[RQNA1] a write answered without a result, or with an error, is an error, and is not sent again', async () => {
+    for (const body of ANSWERS) {
+      answer([body]);
+      await assert.rejects(db.execute('DELETE FROM keyValue'), { name: 'RqliteNoAnswerError', message: /rqlite execute got no result/ }, JSON.stringify(body));
+      assert.equal(calls, 1);
+      await assert.rejects(db.setUserUniqueField('alice', 'email', 'alice@example.com'), /got no result/, JSON.stringify(body));
+    }
+  });
+
+  it('[RQNA2] an answered write passes, one that changed nothing included; an SQL error keeps its message', async () => {
+    answer([{ results: [{ time: 0.1 }] }]);
+    assert.deepEqual(await db.execute('CREATE TABLE t (a)'), { time: 0.1 });
+    answer([{ results: [{ rows_affected: 0 }] }]);
+    await db.deleteUserUniqueField('email', 'nobody');
+    answer([{ results: [{ error: 'near "x": syntax error' }] }]);
+    await assert.rejects(db.execute('x'), /^Error: rqlite SQL error: near "x"/);
+  });
+
+  it('[RQNA3] init waits for a leader, within its limit; another failure is not waited for', async () => {
+    answer([{ results: [], error: 'not leader' }, { results: [] }, { results: [{ time: 0.1 }] }]);
+    await db.init();
+    assert.equal(calls, 3);
+    db.initWaitMs = 300;
+    answer([{ results: [], error: 'not leader' }]);
+    await assert.rejects(db.init(), /got no result: not leader/);
+    assert.ok(calls >= 2 && calls <= 4, String(calls));
+    db.initWaitMs = 15_000;
+    answer([{ results: [{ error: 'disk I/O error' }] }]);
+    await assert.rejects(db.init(), /disk I\/O error/);
+    assert.equal(calls, 1);
+  });
+});

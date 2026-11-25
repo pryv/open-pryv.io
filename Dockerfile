@@ -37,9 +37,9 @@ RUN apt-get update && \
 # tampered or MITM-able download fails the build instead of landing silently.
 # Update both checksums when bumping RQLITE_VERSION (they are per-arch):
 #   curl -fsSL <url> | sha256sum
-ARG RQLITE_VERSION=10.6.0
-ARG RQLITE_SHA256_amd64=cd64c28d672a702a6aeceab17a977ef11f3250634bd8931fb162bce4f6a84a41
-ARG RQLITE_SHA256_arm64=f03cdb26e60f394796363817820f78804d2aa88a85930f7a0836c4a0d19d35c6
+ARG RQLITE_VERSION=10.7.5
+ARG RQLITE_SHA256_amd64=08f93f72f72da681c37d014fecb61f209a92b8c3de8a683081b3ed93ebc49f80
+ARG RQLITE_SHA256_arm64=8b9482fae0b3321b50eae04ec8fd1f0edebbece2c44169e1fb72bb443bd293a5
 RUN ARCH=$(dpkg --print-architecture) && \
     case "$ARCH" in \
       amd64) RQLITE_SHA256="$RQLITE_SHA256_amd64" ;; \
