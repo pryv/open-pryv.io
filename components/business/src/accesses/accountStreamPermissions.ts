@@ -66,4 +66,21 @@ function isUnknownSystemStream (streamId: string) {
             accountStreams.toFieldName(streamId) === streamId;
 }
 
-export { validateAccountStreamPermissions };
+/**
+ * The account stream id (prefixed) whose field name is `streamId` when
+ * `streamId` routes to the local store without a prefix (`email`,
+ * `:local:email`), else `null`. Every account field declared on this
+ * deployment counts, hidden ones included. Read from the current system
+ * streams at each call (tests reload them).
+ */
+function accountStreamIdForBareName (streamId: string): string | null {
+  if (typeof streamId !== 'string' || streamId === '*') return null;
+  const [storeId, itemId] = storeDataUtils.parseStoreIdAndStoreItemId(streamId);
+  if (storeId !== storeDataUtils.LocalStoreId) return null;
+  for (const accountStreamId of Object.keys(accountStreams.accountMap)) {
+    if (accountStreams.toFieldName(accountStreamId) === itemId) return accountStreamId;
+  }
+  return null;
+}
+
+export { validateAccountStreamPermissions, accountStreamIdForBareName };

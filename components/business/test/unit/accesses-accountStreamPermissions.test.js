@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 
 const assert = require('node:assert/strict');
 
-const { validateAccountStreamPermissions } = require('../../src/accesses/accountStreamPermissions.ts');
+const { validateAccountStreamPermissions, accountStreamIdForBareName } = require('../../src/accesses/accountStreamPermissions.ts');
 
 describe('[ACSP] account-stream permission validation', () => {
   before(async () => { await require('../../src/system-streams/index.ts').init(); });
@@ -47,5 +47,32 @@ describe('[ACSP] account-stream permission validation', () => {
     assert.equal(validateAccountStreamPermissions(permissions), null);
     // The spelling is stored canonical.
     assert.equal(permissions[1].streamId, ':_system:language');
+  });
+
+  it('[AFNC1] the bare name of a declared account field gives its account stream id; the answer follows the configuration', async () => {
+    const accountStreams = require('../../src/system-streams/index.ts');
+    assert.equal(accountStreamIdForBareName('email'), ':system:email');
+    assert.equal(accountStreamIdForBareName(':local:email'), ':system:email');
+    assert.equal(accountStreamIdForBareName('language'), ':_system:language');
+    assert.equal(accountStreamIdForBareName('referer'), ':_system:referer', 'hidden fields count');
+    assert.equal(accountStreamIdForBareName('storageUsed'), ':_system:storageUsed', 'parents count');
+    for (const id of [':system:email', ':_system:language', '*', 'diary', ':dummy:email', 'regionafnc']) {
+      assert.equal(accountStreamIdForBareName(id), null, id);
+    }
+    const nconf = require('nconf');
+    const systemStreamsConfig = require('../../../../config/plugins/systemStreams');
+    const store = new nconf.Provider();
+    store.use('memory');
+    store.set('NODE_ENV', 'test');
+    store.set('custom:systemStreams:account', [{ id: 'regionafnc', type: 'identifier/string', isShown: true }]);
+    systemStreamsConfig.load(store);
+    try {
+      await accountStreams.reloadForTests(store);
+      assert.equal(accountStreamIdForBareName('regionafnc'), ':system:regionafnc');
+      assert.equal(accountStreamIdForBareName('email'), null, 'no email field in this configuration');
+    } finally {
+      await accountStreams.reloadForTests();
+    }
+    assert.equal(accountStreamIdForBareName('email'), ':system:email');
   });
 });

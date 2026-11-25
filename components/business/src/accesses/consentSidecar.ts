@@ -125,7 +125,8 @@ export function resolveConsentSidecar (requestedPermissions: unknown, sidecar: u
     // an entry: the sidecar is the only source of those, so an inline pair
     // must not be reported as a contradiction on a field that does not
     // count here.
-    const plain = normalizePermissions(requestedPermissions);
+    // The request is a submission: an unknown feature name is refused here.
+    const plain = normalizePermissions(requestedPermissions, { knownFeaturesOnly: true });
     // Then the consent-form pass purely for its exclusion-mask guard: a
     // `level: 'none'` entry may not be offered, because dropping a mask
     // WIDENS access instead of narrowing it.

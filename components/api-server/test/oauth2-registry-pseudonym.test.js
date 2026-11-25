@@ -525,6 +525,48 @@ describe('[OPSE] pseudonymous OAuth subjects (alias on grants and sessions, alia
     assert.equal(info.status, 200, JSON.stringify(info.body));
   });
 
+  // A grant may hold a feature name stored before the set of names was closed.
+  async function addStoredUnknownFeature (grant) {
+    const { integrity } = require('business');
+    const user = { id: userId, username: who.username };
+    const row = await new Promise((resolve, reject) => storageLayer.accesses.findOne(user, { id: baseOf(grant.id) }, null,
+      (err, r) => (err != null ? reject(err) : resolve(r))));
+    const update = { permissions: [...row.permissions, { feature: 'webhook', setting: 'forbidden' }] };
+    if (integrity.accesses.isActive) update.integrity = integrity.accesses.hash({ ...row, ...update });
+    await new Promise((resolve, reject) => storageLayer.accesses.updateOne(user,
+      { id: baseOf(grant.id) }, update, (err) => (err != null ? reject(err) : resolve())));
+    const stored = await grantOf(grant.name.slice('oauth-grant:'.length));
+    assert.ok(stored.permissions.some((p) => p.feature === 'webhook'), 'premise: the grant holds the unknown name');
+    return stored;
+  }
+
+  it('[FPNL] a re-authorization of a grant holding an unknown feature name succeeds and keeps it', async () => {
+    const cid = await registry('Fpnl');
+    await consent(cid, 'read/health');
+    const before = await addStoredUnknownFeature(await grantOf(cid));
+    await runFlow('read/health read/diary', cid);
+    const after = await grantOf(cid);
+    assert.equal(baseOf(after.id), baseOf(before.id), 'the same grant');
+    assert.ok(after.permissions.some((p) => p.streamId === 'diary' && p.level === 'read'), JSON.stringify(after.permissions));
+    assert.ok(after.permissions.some((p) => p.feature === 'webhook' && p.setting === 'forbidden'), 'kept: ' + JSON.stringify(after.permissions));
+  });
+
+  it('[FPNM] a change of subject mode on a grant holding an unknown feature name makes the new grant without it', async () => {
+    const cid = await registry('Fpnm');
+    await runFlow('read/health ctx/user', cid);
+    const oldGrant = await addStoredUnknownFeature(await grantOf(cid));
+    const flow = await authorize('read/health ctx/user ctx/pseudo', cid);
+    const o = await offer(flow, true);
+    assert.deepEqual(o.subjectChange, { from: 'account', to: 'pseudonym' });
+    const granted = o.offer.permissions.map(({ currentlyGranted: _c, currentLevel: _l, ...p }) => p);
+    const t = await exchange(flow, await accept(flow, granted, { shownDigest: o.shownDigest, acknowledgeSubjectChange: true }));
+    const now = await grantOf(cid);
+    assert.notEqual(baseOf(now.id), baseOf(oldGrant.id));
+    assert.ok(!now.permissions.some((p) => p.feature === 'webhook'), JSON.stringify(now.permissions));
+    assert.ok(now.permissions.some((p) => p.feature === 'webhooks' && p.setting === 'forbidden'), 'the known restrictions stay');
+    assert.equal(t.user, now.alias);
+  });
+
   it('[OPSE15] refresh-token reuse whose teardown falls back to the bare delete still releases the alias, an expired child holding it included', async () => {
     const t = await runFlow('offline_access read/health', pairwiseClient);
     const grant = await grantOf(pairwiseClient);

@@ -2,23 +2,36 @@
 
 ## Unreleased
 
-### Consent offers can require a verified email address (#173)
+### Accesses: feature permission names are a closed set; a bare account-field name no longer creates a stream
 
-- **`request.requireVerifiedEmail: true` on a `consent/request-cmc` offer** (new, optional): the accept is refused
-  while the accepting account's primary email address is not proved. The accept trigger ends `failed` with the new
-  reason `cmc-verified-email-required` (no detail, not retried); nothing is granted, the core sends nothing to the
-  requester, and the link stays usable, so a new accept works once the address is proved.
-- The address is that of the account the accept is written on, also when a delegate accepts for an account it manages.
-- The offer must ask `:system:email` at `read`, `mandatory` when `allowUserChoice` is set; a membership offer cannot
-  carry the requirement. Refused at write (`cmc-invalid-event-content`) and again at accept
-  (`cmc-offer-invalid-permissions`).
-- A core that enforces it advertises `features.cmcRequireVerifiedEmail: true` in its service info; an earlier core
-  stores the field and ignores it. An earlier offer that carried the field in another shape is refused at accept.
-- **Not a guarantee to the requester, even with the flag.** It stops ordinary clients and guides the person. It is
-  enforced on the accepter's side, and a person determined to can answer a link with a grant made by hand. A requester
-  that acts on the address must read the `verification/email` event through the grant each time it uses the address.
-- OAuth: the first authorization on such an offer is checked too, and answers `400 invalid_grant` when the address is
-  not proved. Offers without the field are unchanged.
+- **BREAKING: an unknown feature permission name is refused.** The names are `selfRevoke`, `secretSharing`,
+  `webhooks`, `accessCreation` and `selfAudit`. Until now any other name (a typo such as `webhook`) was accepted from
+  a personal token and from consent offers, stored, and had no effect. It is now refused where permissions are
+  submitted: `accesses.create`, `accesses.update` and `accesses.checkApp` (`400 invalid-parameters-format`, the
+  message names the entry and the known names, `data.feature` and `data.knownFeatures` give them too),
+  `POST /reg/access` (`400 invalid-parameters`), a `consent/request-cmc` offer written by the requester and the
+  `newPermissions` of a `consent/scope-request-cmc` or `consent/scope-update-cmc` written by the account's own
+  accesses (`cmc-invalid-event-content`), and the permissions an OAuth scope grammar returns (`invalid_scope`).
+- Stored data is not touched: an access or an offer that already holds an unknown name keeps working and is read
+  back as it is. Such an offer can still be accepted, and what a core of an older version delivers (an offer to the
+  inbox, a scope request or update through its relationship access) is still received. `accesses.update` keeps an
+  unknown name the access already holds (its permissions can be written back as read, and its setting can change);
+  it refuses a new one, and a name once dropped cannot be added back. An OAuth re-authorization keeps such a name on
+  the grant; a grant made anew after a change of subject mode leaves it out.
+- **BREAKING: `accesses.create`, `accesses.update` and `accesses.checkApp` refuse a permission that would create a
+  stream named like an account field.** A permission such as `{ "streamId": "email", "level": "read",
+  "defaultName": "Email" }` used to create an ordinary, empty stream `email` that looked right on the consent screen
+  and never held the account's address. When the id is the name of an account field of the platform (hidden fields
+  included), carries no prefix (or the `:local:` one), has a `defaultName` and no such stream exists, a personal
+  token now gets `400 invalid-operation`, with `data.param` (the id) and `data.accountStreamId` (the account field's
+  id, e.g. `:system:email`). The error id is the generic `invalid-operation`: this refusal is recognised by
+  `data.accountStreamId` (present on it only) and by its message ("This stream id is the name of an account field,
+  without its prefix: ..."). Nothing is created, the other entries' streams included.
+- Not refused: the same id when the stream already exists (trashed included: it is untrashed, as before), a
+  permission without `defaultName`, an access created by an app token (it creates no stream), and a stream created
+  with `streams.create`. An application that really wants an ordinary stream with such an id needs the stream to
+  exist first, or another id. Known limit: the name of the account root itself (`account`) is not an account field
+  and is not guarded.
 
 ### Account: addresses an account may try per hour (on by default)
 
@@ -26,16 +39,6 @@
   `email`). An account may ask about 30 addresses an hour, held or not (per core); past it the call answers
   `429 too-many-attempts` with `data.reason: 'account-email-lookups'` and `retryAfterSeconds`. The public email lookups
   already had a budget.
-
-### Security: Node.js 24.22.3
-
-- The Docker image moves from Node 24.22.1 to 24.22.3, which carries the Node.js security release of
-  2026-11-10 (seven high-severity fixes, among them disclosure of process memory to an HTTP peer and an
-  uncaught exception a remote client can trigger in a TLS server, so a core that terminates TLS itself is
-  directly exposed). `engines.node` is now `>=24.22.3 <25.0.0`; the server warns at boot and
-  `bin/check-config.js` reports a problem on an older Node. Native installs: upgrade Node to 24.22.3 or
-  later and run `npm rebuild`; a host can take the Node upgrade before this release.
-- The rebuilt image also takes Debian's fixed glibc (CVE-2026-19499, CVE-2026-5435).
 
 ### Audit: in-process calls, erased accounts, telemetry at stop
 
@@ -812,6 +815,36 @@ call that would pass it; what an account already holds stays readable.
   declined or lapsed while the claimant's invite could not be withdrawn. An accept interrupted
   before it completed is checked the same way when it is repeated. Ordinary delegation invites are
   not affected.
+
+## 2.0.0-rc.88 - 2026-11-25
+
+### Consent offers can require a verified email address (#173)
+
+- **`request.requireVerifiedEmail: true` on a `consent/request-cmc` offer** (new, optional): the accept is refused
+  while the accepting account's primary email address is not proved. The accept trigger ends `failed` with the new
+  reason `cmc-verified-email-required` (no detail, not retried); nothing is granted, the core sends nothing to the
+  requester, and the link stays usable, so a new accept works once the address is proved.
+- The address is that of the account the accept is written on, also when a delegate accepts for an account it manages.
+- The offer must ask `:system:email` at `read`, `mandatory` when `allowUserChoice` is set; a membership offer cannot
+  carry the requirement. Refused at write (`cmc-invalid-event-content`) and again at accept
+  (`cmc-offer-invalid-permissions`).
+- A core that enforces it advertises `features.cmcRequireVerifiedEmail: true` in its service info; an earlier core
+  stores the field and ignores it. An earlier offer that carried the field in another shape is refused at accept.
+- **Not a guarantee to the requester, even with the flag.** It stops ordinary clients and guides the person. It is
+  enforced on the accepter's side, and a person determined to can answer a link with a grant made by hand. A requester
+  that acts on the address must read the `verification/email` event through the grant each time it uses the address.
+- OAuth: the first authorization on such an offer is checked too, and answers `400 invalid_grant` when the address is
+  not proved. Offers without the field are unchanged.
+
+### Security: Node.js 24.22.3
+
+- The Docker image moves from Node 24.22.1 to 24.22.3, which carries the Node.js security release of
+  2026-11-10 (seven high-severity fixes, among them disclosure of process memory to an HTTP peer and an
+  uncaught exception a remote client can trigger in a TLS server, so a core that terminates TLS itself is
+  directly exposed). `engines.node` is now `>=24.22.3 <25.0.0`; the server warns at boot and
+  `bin/check-config.js` reports a problem on an older Node. Native installs: upgrade Node to 24.22.3 or
+  later and run `npm rebuild`; a host can take the Node upgrade before this release.
+- The rebuilt image also takes Debian's fixed glibc (CVE-2026-19499, CVE-2026-5435).
 
 ## 2.0.0-rc.87 - 2026-11-18
 

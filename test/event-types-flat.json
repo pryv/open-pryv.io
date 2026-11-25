@@ -1,5 +1,5 @@
 {
-  "version": "1.3.3",
+  "version": "1.3.4",
   "types": {
     "absorbed-dose/gy": {
       "description": "Gray",
@@ -543,6 +543,10 @@
             "allowUserChoice": {
               "type": "boolean",
               "description": "Default false: the consent is ALL OR NOTHING (the user may only accept the whole permission set or deny). Set true to let the user cherry-pick entries on the consent screen (entries flagged `mandatory` stay locked)."
+            },
+            "requireVerifiedEmail": {
+              "type": "boolean",
+              "description": "Default false. Set true when accepting must take a proved email address: the accept is refused (`cmc-verified-email-required`) while the accepting account's primary address is not proved. The permissions must ask `:system:email` at `read`, flagged `mandatory` with `allowUserChoice`; not available to a membership request. Enforced by the accepting platform when its service info has `features.cmcRequireVerifiedEmail`; not a guarantee to the requester, which reads `verification/email` through the grant when it uses the address."
             },
             "accessType": {
               "type": "string",

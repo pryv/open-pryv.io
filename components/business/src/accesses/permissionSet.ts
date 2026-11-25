@@ -68,6 +68,57 @@ const FEATURE_SETTING_VALUES: readonly string[] = Object.freeze(['forbidden', 'a
 const INHERITED_RESTRICTION_FEATURES: readonly string[] = Object.freeze(['secretSharing', 'webhooks', 'accessCreation']);
 
 /**
+ * The feature permission names an access can be given: a closed set. Any
+ * other name is refused where permissions are submitted (see the
+ * `knownFeaturesOnly` option of `normalizePermissions`). Stored rows are read
+ * as they are: an unknown name stored before the set was closed stays a
+ * feature entry (`isFeaturePermission` checks the shape only) and has no
+ * effect.
+ */
+const FEATURE_PERMISSION_NAMES: readonly string[] =
+  Object.freeze(['selfRevoke', 'secretSharing', 'webhooks', 'accessCreation', 'selfAudit']);
+
+function isKnownFeatureName (name: unknown): boolean {
+  return typeof name === 'string' && FEATURE_PERMISSION_NAMES.includes(name);
+}
+
+/** The refusal sentence for an unknown feature permission name, shared by every entry point. */
+function unknownFeatureMessage (name: unknown): string {
+  return `Unknown feature permission "${String(name)}". Known features: ${FEATURE_PERMISSION_NAMES.join(', ')}.`;
+}
+
+/**
+ * The first entry of a submitted permissions value that is a feature
+ * permission (an object with a string `feature`) with an unknown name, or
+ * `null`. Names in `held` are not reported (an update keeps an unknown name
+ * the access already holds). Anything else (not an array, other shapes) is
+ * left to the caller's own validation.
+ */
+function findUnknownFeature (perms: unknown, held?: ReadonlySet<string>): { index: number; feature: string } | null {
+  if (!Array.isArray(perms)) return null;
+  for (const [index, p] of perms.entries()) {
+    if (p == null || typeof p !== 'object') continue;
+    const feature = (p as Record<string, unknown>).feature;
+    if (typeof feature !== 'string' || isKnownFeatureName(feature)) continue;
+    if (held != null && held.has(feature)) continue;
+    return { index, feature };
+  }
+  return null;
+}
+
+/**
+ * `perms` without its feature entries whose name is not in the closed set.
+ * For a server-side writer that creates a new access from stored entries
+ * (such an entry is inert, and the creation would refuse it).
+ */
+function withoutUnknownFeatures<T> (perms: T[]): T[] {
+  return perms.filter((p) => {
+    const feature = (p as { feature?: unknown } | null)?.feature;
+    return typeof feature !== 'string' || isKnownFeatureName(feature);
+  });
+}
+
+/**
  * Whether a raw permission array carries `{ feature, setting: 'forbidden' }`.
  * Pure: works on a stored access row as well as on an `AccessLogic`
  * (both expose `.permissions`). Anything that is not an array forbids nothing.
@@ -151,12 +202,18 @@ function copyConsentAnnotations (from: ConsentPermission, to: ConsentPermission,
  * `optIn: true`) are preserved on entries (offer/request context);
  * without it they are dropped (mint/grant context). In consent context a
  * forbidden feature entry is always `mandatory` (and refused with `optIn`).
+ *
+ * With `opts.knownFeaturesOnly`, a feature entry whose name is not in
+ * `FEATURE_PERMISSION_NAMES` throws: use it where permissions are SUBMITTED.
+ * Leave it off on stored data (offers re-read at accept, grants, merges),
+ * which may hold a name written before the set was closed.
  */
-function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): ConsentPermission[] {
+function normalizePermissions (perms: unknown, opts?: { consent?: boolean; knownFeaturesOnly?: boolean }): ConsentPermission[] {
   if (!Array.isArray(perms)) {
     throw new Error('permissions must be an array');
   }
   const keepAnnotations = opts?.consent === true;
+  const knownFeaturesOnly = opts?.knownFeaturesOnly === true;
   return perms.map((p, i) => {
     if (isStreamPermission(p)) {
       // Consent context: a permission set is validated by the "granted ⊆
@@ -179,6 +236,12 @@ function normalizePermissions (perms: unknown, opts?: { consent?: boolean }): Co
       return out;
     }
     if (isFeaturePermission(p)) {
+      if (knownFeaturesOnly && !isKnownFeatureName(p.feature)) {
+        throw new Error(
+          `invalid permission at index ${i}: unknown feature '${p.feature}' ` +
+          `(known features: ${FEATURE_PERMISSION_NAMES.join(', ')})`
+        );
+      }
       const out: ConsentPermission = { feature: p.feature, setting: p.setting };
       if (keepAnnotations && p.setting === 'forbidden') {
         // A restriction in a consent offer: unticking it would WIDEN what the
@@ -526,6 +589,11 @@ export {
   PERMISSION_LEVEL_VALUES,
   FEATURE_SETTING_VALUES,
   INHERITED_RESTRICTION_FEATURES,
+  FEATURE_PERMISSION_NAMES,
+  isKnownFeatureName,
+  unknownFeatureMessage,
+  findUnknownFeature,
+  withoutUnknownFeatures,
   isFeatureForbidden,
   isStreamPermission,
   isFeaturePermission,

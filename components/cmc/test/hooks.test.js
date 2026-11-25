@@ -171,6 +171,55 @@ describe('[CMCHOOK] cmc/hooks', () => {
       const err = await runMiddleware(mw, ctx, {}, {});
       assert.equal(err, undefined);
     });
+
+    it('[FPNI] an unknown feature permission name is refused on the requester\'s own offer, not on an offer a peer delivers to the inbox', async () => {
+      const content = {
+        to: 'bob',
+        request: {
+          title: { en: 'Example' },
+          description: { en: 'symptom tracking' },
+          consent: { en: 'I agree' },
+          permissions: [{ streamId: 'fertility', level: 'read' }, { feature: 'webhook', setting: 'forbidden' }],
+        },
+      };
+      const { factory } = fakeErrors();
+      const mw = createCmcContentValidationHook({ errors: factory });
+      const own = await runMiddleware(mw, { newEvent: { streamIds: [':_cmc:apps:my-app'], type: 'consent/request-cmc', content } }, {}, {});
+      assert.ok(own instanceof Error, 'own write refused');
+      assert.equal(own.details.id, 'cmc-invalid-event-content');
+      assert.ok(own.details.errors.some((e) => e.includes('unknown feature \'webhook\'')), own.details.errors.join('; '));
+      const delivered = await runMiddleware(mw, { newEvent: { streamIds: [':_cmc:inbox'], type: 'consent/request-cmc', content } }, {}, {});
+      assert.equal(delivered, undefined, 'peer delivery accepted');
+      // Any write naming the inbox is judged tolerantly here: the inbox write
+      // hook, with the same `streamIds.includes(:_cmc:inbox)` test, then refuses
+      // it unless the access is a relationship access (cmc-not-counterparty).
+      const both = await runMiddleware(mw, { newEvent: { streamIds: [':_cmc:apps:my-app', ':_cmc:inbox'], type: 'consent/request-cmc', content } }, {}, {});
+      assert.equal(both, undefined, 'an apps + inbox write is left to the inbox write hook');
+    });
+
+    it('[FPNJ] a scope request or update naming an unknown feature permission is refused on the person\'s own write, not from a peer\'s relationship access', async () => {
+      const permissions = [{ streamId: 'fertility', level: 'read' }, { feature: 'webhook', setting: 'forbidden' }];
+      const events = [
+        { type: 'consent/scope-update-cmc', content: { newPermissions: permissions } },
+        { type: 'consent/scope-request-cmc', content: { newPermissions: permissions } },
+      ];
+      for (const { type, content } of events) {
+        const { factory } = fakeErrors();
+        const mw = createCmcContentValidationHook({ errors: factory });
+        const streamIds = [':_cmc:apps:my-app:collectors:bob--example-com'];
+        const own = await runMiddleware(mw, { access: { type: 'personal' }, newEvent: { streamIds, type, content } }, {}, {});
+        assert.ok(own instanceof Error, type + ': own write refused');
+        assert.ok(own.details.errors.some((e) => e.startsWith('content.newPermissions: invalid permission at index 1: unknown feature \'webhook\'')),
+          own.details.errors.join('; '));
+        for (const role of ['counterparty', 'member']) {
+          const peer = await runMiddleware(mw, {
+            access: { type: 'shared', clientData: { cmc: { role } } },
+            newEvent: { streamIds, type, content },
+          }, {}, {});
+          assert.equal(peer, undefined, type + ': written by a ' + role + ' access');
+        }
+      }
+    });
   });
 
   describe('[CMCHOOK-ST] createStreamCreateReservedRootHook', () => {
