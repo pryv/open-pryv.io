@@ -257,7 +257,7 @@ A **two-core cluster is a trap for availability**: quorum is 2-of-2, so if *eith
 **Recommendations:**
 - Add cores **one at a time**, and confirm each is stable and reachable before adding the next.
 - **Extra cores join as non-voters by default** — pass `--bootstrap-as-voter` only when deliberately building a ≥3-voter HA cluster. A non-voter replicates everything and serves its users, but cannot drag the cluster down if it goes away.
-- Keep a recovery runbook ready: if you lose quorum, a surviving core can be forced back to a single-node cluster with an rqlite `peers.json` recovery file in its data directory (`storages.engines.rqlite` `dataDir`). See the rqlite recovery docs for the exact file format.
+- Keep a recovery runbook ready: if you lose quorum, a surviving core can be forced back to a single-node cluster with an rqlite recovery file, `raft/peers.json` inside its data directory (`storages.engines.rqlite` `dataDir`), which `rqlited` applies when it starts and then renames `raft/peers.info`. See the rqlite recovery docs for the exact file format.
 
 ### Presets — which role for which topology
 
@@ -276,7 +276,7 @@ Pick the preset that matches what you're building. The default join role is **no
 
 ### Changing a core's role (voter ⇄ non-voter)
 
-There is no in-place promotion/demotion. To change a core's role you remove it from the cluster, then rejoin it with the new role:
+The documented procedure, the one `node bin/bootstrap.js promote-core` starts, does not change a role in place: you remove the core from the cluster, then rejoin it with the new role. (rqlite itself can, since 10.6.0: `POST /promote` and `POST /demote` on the leader. Pryv's tools do not use these calls, which make none of the checks below and leave the core's `core.nonVoter` as it is: set it to match.)
 
 ```bash
 # On the leader: remove the core from the Raft configuration
