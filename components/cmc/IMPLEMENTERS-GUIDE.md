@@ -437,12 +437,16 @@ const requests = await doctorConnection.api([
 //   'accepted'                              single-use: content.acceptedBy = { username, host },
 //                                           content.acceptedAt, content.backChannelAccessId
 //   'refused'                               single-use: content.refusedBy, content.refusedAt, content.reason
-//   'revoked'                               single-use relationship withdrawn: content.revokedAt
+//   'revoked'                               single-use relationship withdrawn: content.revokedAt;
+//                                           replaced by a later invite the same party accepted on
+//                                           the same scope: also content.replacedBy = { inviteEventId }
 //   'invalidated'                           open-link closed, or single-use withdrawn before any
 //                                           accept (consent/invalidate-link-cmc): content.invalidatedAt
 // An open-link request stays 'pending' / 'delivered' while it accepts joiners;
 // who joined is listed by the relationship accesses (see "Inspecting accepters").
 ```
+
+**A second invite on the same scope, accepted by the same party, replaces the first.** One relationship is one (counterparty, scope stream) pair: your side keeps one access for it, healed to the new grant (same `backChannelAccessId`). The first invite then reads `revoked` with `replacedBy.inviteEventId` naming the second, which reads `accepted`; the member accesses made through the first grant are deleted through it, and the counterparty's core ends the first grant (its accept is marked `withdrawal.by: 'replaced'`). No revoke arrives for the first grant. To change the terms of a relationship (wider permissions, `accessType: 'app'`), send a new invite on the same scope: the person's accept replaces the old consent in one step. On a core of an earlier release, or for invites accepted before this rule, both invites can read `accepted` for one `backChannelAccessId`: the one with the latest `acceptedAt` is the live one. A retry never brings back the older consent, on either side: on the requester's core, an accept it received before the newer one and retries later is refused, `cmc-incoming-accept-superseded`; on the person's core, a queued retry of the older accept is refused before anything is minted or delivered, `cmc-accept-withdrawn` on the person's accept trigger (its grant, when the requester never paired it, is ended and the accept marked `withdrawal.by: 'replaced'`). The same `cmc-accept-withdrawn` refuses any queued retry of an accept whose consent ended meanwhile (its grant deleted or revoked) or whose accept event you deleted; a retry of an accept the requester already took completes without a new delivery, and a grant the requester already paired is never deleted by a later refusal of the link. The relationship stays on the newer grant.
 
 Subscribe to your trigger streams via the standard socket.io monitor to see status updates land in real time.
 
@@ -912,7 +916,21 @@ With `request.requireVerifiedEmail: true` the accept works only while the primar
   // ... above ...
   status: 'pending' | 'completed' | 'failed',
   dataGrantAccessId?: string,                 // composite-id of the data-grant the plugin created locally
-  failure?: { reason, detail? }
+  failure?: { reason, detail? },
+  // Server-owned, once the consent ended (first writer wins, never erased):
+  withdrawal?: {
+    at: number,                               // seconds
+    by: 'accesses.delete'                     // the grant was deleted through the API
+      | 'revoke-cmc'                          // the person wrote a consent/revoke-cmc (revokeEventId)
+      | 'peer-revoke'                         // the requester withdrew (revokeEventId: the inbox arrival)
+      | 'replaced'                            // the person accepted again for the same requester and scope:
+                                              // the newer grant ended this one (replacedBy)
+      | 'delegation-detach',                  // a delegate's grant dropped at detach (relId)
+    accessId?: string,
+    revokeEventId?: string,
+    replacedBy?: { acceptEventId: string | null, accessId: string },
+    relId?: string
+  }
 }
 
 // Server-stamped when the accept is written with a delegate token (account
@@ -1122,6 +1140,7 @@ A `consent/request-cmc` trigger is not dispatched like the others: its `status` 
   acceptedBy?:          { username, host },  acceptedAt?: number,  backChannelAccessId?: string,
   refusedBy?:           { username, host },  refusedAt?:  number,  reason?: object,
   revokedAt?:           number,
+  replacedBy?:          { inviteEventId: string | null },   // with 'revoked': a later invite replaced it
   invalidatedAt?:       number,
 }
 ```
@@ -1438,7 +1457,8 @@ The member writes a `consent/request-cmc` on a team stream **of the group accoun
   type: 'consent/member-access-cmc',
   content: {
     counterparty: { username: string, host: string },  // the patient, required
-    scopeStreamId?: string,      // the relationship's scope: the trigger's stream (default) or under it
+    scopeStreamId?: string,      // the relationship's scope: the trigger's stream or under it; default:
+                                 // the relationship on the trigger's stream, else the newest one under it
     permissions?: Array<{ streamId: string, level: string }>,
                                  // stream permissions only, each on a stream the group's invite
                                  // offered outside :_cmc:, level not above the offered one;
@@ -1449,7 +1469,7 @@ The member writes a `consent/request-cmc` on a team stream **of the group accoun
 }
 ```
 
-There is no `name`: the server names the access `cmc-member--<member slug>--<hash>`.
+There is no `name`: the server names the access `cmc-member--<member slug>--<hash>`, or `cmc-member--<member slug>--<hash>-<8 hex characters>` when the patient accepted the group's invite again and an access made through the former grant still holds the first name.
 
 **The answer** (synchronous):
 
@@ -1533,7 +1553,7 @@ Written by the server on the membership's team stream when a membership ends (cl
 | `detach` | the delegate administrator who approved it was detached and the owner did not keep it |
 | `account-deleted` | the group account is deleted (its accesses on patient cores are deleted through the grants before the erasure; no record is kept) |
 
-Each listed access is deleted on its patient's core through the grant and read back (`includeExpired`): `deleted`, `absent` (already gone, or expired) or `residual` (the patient's core could not be reached, or refused). A residual fails the record and is retried by the retry queue (6 attempts, about 30 minutes), then re-swept by the periodic ledger pass (fifty per pass) as long as the retry loop runs (`cmc:retryLoop:enabled`, `true` by default); the access's own expiry bounds a residual's life. When the group ends a patient relationship, the member accesses minted through it are deleted through the grant before the revoke is delivered (no record is written for that pass); when the patient withdraws, the patient's core deletes them with the grant (2.0.0-rc.52 and later).
+Each listed access is deleted on its patient's core through the grant and read back (`includeExpired`): `deleted`, `absent` (already gone, or expired) or `residual` (the patient's core could not be reached, or refused). A `residual` names why in `reason`; among them `grant-gone` (the grant no longer authenticates: a patient core that does not delete the accesses with the grant keeps them until their expiry, so this is not counted as gone) and `grant-replaced` (the access was made through an earlier grant of the patient, who accepted the group's invite again since: only the grant that made an access can delete it, and that one is no longer held; its expiry bounds it, and a patient core of this release ends it with the earlier grant), and `grant-unknown` (an access recorded before the group's core knew which grant made it, whose relationship the patient ended: it may be another grant's, so it is not counted as gone before its expiry). A residual fails the record and is retried by the retry queue (6 attempts, about 30 minutes), then re-swept by the periodic ledger pass (fifty per pass) as long as the retry loop runs (`cmc:retryLoop:enabled`, `true` by default); the access's own expiry bounds a residual's life. When the group ends a patient relationship, the member accesses minted through it are deleted through the grant before the revoke is delivered (no record is written for that pass); when the patient withdraws, the patient's core deletes them with the grant (2.0.0-rc.52 and later).
 
 The records live on the team stream. They are the owner's: an app or shared access, a membership access included, cannot update or delete a `consent/member-access-cmc` or `consent/member-revoke-cmc` event (403 `forbidden`, `cmc-protected-event-write`); the owner's personal token can. A member holding `contribute` there can still edit or delete the patient invite the mint reads its bound from (which blocks every member's asks for that patient with `cmc-member-access-relationship-not-found` until the group invites the patient again; the patient core's grant stays the real bound, so nothing widens), and a holder of `manage` who deletes the team stream with `mergeEventsWithParent: false` removes its records with it (the memberships covering the stream are swept as `narrowed` when the deletion goes through). The patient's own audit trail (the deletion records and the `member-child` stamps on the patient's core) does not depend on any of this.
 

@@ -52,6 +52,7 @@ const memberLedger = require('./memberLedger.ts');
 const handleMemberRevoke = require('./handleMemberRevoke.ts');
 const memberSweep = require('./memberSweep.ts');
 const accountWriteGuard = require('./accountWriteGuard.ts');
+const replacedGrants = require('./replacedGrants.ts');
 
 export {
   constants, slug, validators, hooks, provisioning,
@@ -63,7 +64,7 @@ export {
   mallAccessesAdapter, errorIds, capabilityResponseHook, credentialScrub,
   credentialStashHook, acceptServerOwnedFieldsHook, acceptWithdrawal,
   handleMemberAccess, memberAccessHooks, memberMintRegistry, memberLedger,
-  handleMemberRevoke, memberSweep,
+  handleMemberRevoke, memberSweep, replacedGrants,
 };
 // Group accounts: the mint's write-time gate and server-owned-fields hooks,
 // the registry (per-membership budgets + in-flight locks) and its config

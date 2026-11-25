@@ -34,9 +34,10 @@
  * No trigger is written for it (the relationship's own revoke is the
  * record); residuals are logged and bounded by the children's expiry.
  *
- * `relationshipEnded(userId, relationshipAccessId)` marks the records of a
- * relationship the PATIENT ended as absent: its grant is gone on the patient
- * core, which took the children with it.
+ * `relationshipEnded(userId, relationshipAccessId, endedAccess)` marks the
+ * records of a relationship the PATIENT ended as absent: its grant is gone on
+ * the patient core, which took the children with it. A record of a child
+ * made through another (former) grant of that relationship stays `residual`.
  *
  * `runLedgerPass(userId)` is the periodic pass: memberships that expired
  * (`expired`) or no longer exist (`vanished`) are swept, live records past
@@ -180,11 +181,39 @@ function createMemberSweep (deps: SweepDeps) {
     return { records: records.length, residuals: r.residuals.length };
   }
 
-  async function relationshipEnded (userId: string, relationshipAccessId: string): Promise<number> {
+  /**
+   * `endedAccess` is the relationship access as it was before its deletion:
+   * the grant endpoint on it says which grant the patient ended. A record of
+   * a child made through ANOTHER grant of the relationship (a former one the
+   * patient accepted before) is not covered by that end: it is left
+   * `residual` / `grant-replaced`, bounded by its expiry. A record without a
+   * key (written before it existed) is left `residual` / `grant-unknown`
+   * while its expiry is ahead: the child may be another grant's. Without the
+   * access (an older caller) every record is settled as before.
+   */
+  async function relationshipEnded (userId: string, relationshipAccessId: string, endedAccess?: CmcAccessLike | null): Promise<number> {
     const records = (await ledger.recordsOfRelationship(ledgerDeps, userId, relationshipAccessId))
       .filter((r) => r.state === 'live' || r.state === 'residual');
+    const endpoint = endedAccess?.clientData?.cmc?.counterparty?.apiEndpoint;
+    const endedKey = typeof endpoint === 'string' && endpoint.length > 0 ? ledger.grantKeyOf(endpoint) : null;
+    const t = now();
     for (const r of records) {
       try {
+        if (endedKey != null && ledger.isOfOtherGrant(r, endedKey)) {
+          if (r.state !== 'residual' || r.residualReason !== ledger.GRANT_REPLACED) {
+            await ledger.setState(ledgerDeps, userId, r.eventId, 'residual', r.childAccessId, { residualReason: ledger.GRANT_REPLACED });
+          }
+          continue;
+        }
+        // A record without a key (written before the key existed), expiry
+        // ahead: which grant made the child cannot be told (two grants could
+        // serve the relationship then), so the end of this one is no proof.
+        if (endedKey != null && typeof r.grantKey !== 'string' && typeof r.expires === 'number' && r.expires > t) {
+          if (r.state !== 'residual' || r.residualReason !== ledger.GRANT_UNKNOWN) {
+            await ledger.setState(ledgerDeps, userId, r.eventId, 'residual', r.childAccessId, { residualReason: ledger.GRANT_UNKNOWN });
+          }
+          continue;
+        }
         await ledger.setState(ledgerDeps, userId, r.eventId, 'absent', r.childAccessId, { absentReason: 'relationship-ended-by-peer' });
       } catch (_e) { /* best-effort */ }
     }
@@ -201,7 +230,10 @@ function createMemberSweep (deps: SweepDeps) {
     const residuals: StoredLedgerRecord[] = [];
     for (const r of records) {
       if (r.state === 'residual') {
-        if (typeof r.expires === 'number' && r.expires >= t) residuals.push(r);
+        // A child of a former grant needs no call (nothing reaches it): left
+        // to its expiry and the prune, out of the bounded batch, so it never
+        // starves the residuals a retry can settle.
+        if (typeof r.expires === 'number' && r.expires >= t && !ledger.isUnreachableResidual(r)) residuals.push(r);
         continue;
       }
       if (r.state !== 'live') continue;

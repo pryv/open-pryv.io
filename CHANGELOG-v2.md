@@ -10,6 +10,41 @@
   `GET /system/event-types-status` says why. A deployment whose `service.eventTypes` points at such a file
   must point it at a flat list (`flat.json` or `flat.min.json`).
 
+### Cross-account consent: a second accept on the same scope replaces the first
+
+- **One relationship per counterparty and scope stream.** When a person accepts a second invite on the same scope
+  stream from the same requester, the latest accept replaces the first instead of leaving two live grants. On the
+  person's core, the earlier grant is deleted (with the accesses made through it) once the requester's core has taken
+  the new one, and its `consent/accept-cmc` records `withdrawal.by: 'replaced'` with
+  `withdrawal.replacedBy: { acceptEventId, accessId }` of the newer accept. On the requester's core the earlier
+  invite reads `revoked` with `replacedBy: { inviteEventId }` (the same `backChannelAccessId` stays on both
+  invites), and the member accesses made through the earlier grant are deleted through it. No revoke notice is
+  exchanged for the earlier grant. Changing the terms of a relationship is therefore one new invite on the same scope.
+- A retry never restores the older consent. On the requester's core, an accept it received before a newer one for
+  the same relationship and retries later is refused with `cmc-incoming-accept-superseded`. On the person's core, a
+  queued retry of an accept is refused with `cmc-accept-withdrawn` (on the person's accept trigger, not retried)
+  when the person accepted again since for the same requester and scope, or when the consent ended meanwhile (its
+  accept carries `withdrawal`, or the person deleted it): nothing is minted or delivered again. A retry of an accept
+  the requester already took completes without a new delivery.
+- A retried accept delivery that the requester's core refuses for good (link invalidated, consumed or expired since,
+  destination refused) no longer deletes a consent grant the requester already paired: the working relationship is
+  kept. Before, any such refusal other than "consumed" or "already accepted" rolled the grant back.
+- The back-channel delivery that follows an accept is now retried by the retry loop when the person's core cannot be
+  reached, instead of being lost.
+- **Group accounts.** The offboarding record (`consent/member-revoke-cmc`) reports a member access `residual` rather
+  than `absent` when the patient's core did not confirm it gone: a refusal (`peer-rejected`) is no longer overturned
+  by the access being absent from the grant's list, a grant that no longer authenticates is `residual` /
+  `grant-gone`, an access made through an earlier grant of the patient is `residual` / `grant-replaced`, and an
+  access recorded before this release whose relationship the patient ended is `residual` / `grant-unknown` until its
+  expiry (each is bounded by the access's expiry), and an access the ledger no longer lists is checked before it is
+  reported.
+  A member asking again after the patient accepted twice gets an access through the current grant; when an access of
+  the earlier grant still holds the name, the new one is named `<name>-<8 hex characters>`.
+- **Group accounts.** Without `content.scopeStreamId`, `consent/member-access-cmc` now takes the relationship on the
+  trigger's stream first, and the newest one under it only when there is none.
+- A membership joined twice on the same team is handled the same way: the earlier membership access is deleted and
+  its member accesses swept when the newer one is completed.
+
 ### Consent offers can require a verified email address (#173)
 
 - **`request.requireVerifiedEmail: true` on a `consent/request-cmc` offer** (new, optional): the accept is refused

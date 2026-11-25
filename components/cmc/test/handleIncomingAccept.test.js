@@ -1051,4 +1051,221 @@ describe('[CMCIA] cmc/handleIncomingAccept', () => {
       assert.deepEqual(posted, []);
     });
   });
+
+  describe('[CMCIA-REPAIR] a second accept of the same account on the same scope replaces the first', () => {
+    const C = require('../src/constants.ts');
+    const { isRetryableReason } = require('../src/retryQueue.ts');
+    const SCOPE = ':_cmc:apps:my-app:campaign-2026';
+    const FORMER = 'https://former-tok@accepter.pryv.me/';
+    const GRANTED = 'https://granted-tok@accepter.pryv.me/';
+
+    // The requester side after invite 1 was accepted (relationship `acc-rel`,
+    // paired with grant FORMER), with invite 2 on the same scope pending.
+    function repairMall (opts = {}) {
+      const relationship = {
+        id: 'acc-rel',
+        created: 100,
+        apiEndpoint: 'https://back-tok@requester.example.com/',
+        permissions: [{ streamId: SCOPE + ':collectors:alice--pryv-me', level: 'contribute' }],
+        clientData: {
+          cmc: {
+            role: 'counterparty',
+            appCode: 'my-app',
+            scopeStreamId: SCOPE,
+            capabilityId: 'cap-1',
+            inviteEventId: opts.formerInvite ?? 'invite-1',
+            peerAcceptEventId: 'peer-accept-1',
+            ...(opts.pairedAt != null ? { peerAcceptReceivedAt: opts.pairedAt } : {}),
+            counterparty: { username: 'alice', host: 'pryv.me', apiEndpoint: opts.formerEndpoint ?? FORMER },
+          },
+        },
+      };
+      const capability = { id: 'cap-acc-2', clientData: { cmc: { kind: 'capability', capabilityId: 'cap-2', requestEventId: 'invite-2', capability: { mode: 'single-use', state: 'open' } } } };
+      const events = new Map([
+        ['invite-1', { id: 'invite-1', type: 'consent/request-cmc', streamIds: [SCOPE], content: { status: 'accepted', backChannelAccessId: 'acc-rel' } }],
+        ['invite-2', { id: 'invite-2', type: 'consent/request-cmc', streamIds: [SCOPE], content: { status: 'delivered' } }],
+        ['offer-2', { id: 'offer-2', type: 'consent/request-cmc', streamIds: [':_cmc:_internal:offer:cap-2'], content: { originStreamId: SCOPE, request: {} } }],
+        ...(opts.storedAccept != null ? [[opts.storedAccept.id, opts.storedAccept]] : []),
+      ]);
+      const calls = { accessesUpdated: [], accessesCreated: [], streamsCreated: [], eventsCreated: [], eventsUpdated: [] };
+      return {
+        calls,
+        relationship,
+        store: events,
+        accesses: {
+          async get () { return [relationship, capability]; },
+          async getOne (_u, { id }) { return [relationship, capability].find((a) => a.id === id) ?? null; },
+          async create (_u, params) { calls.accessesCreated.push(params); return { id: 'acc-new', apiEndpoint: 'https://new-back@requester.example.com/', ...params }; },
+          async update (_u, params) {
+            calls.accessesUpdated.push(params);
+            const acc = [relationship, capability].find((a) => a.id === params.id);
+            return acc != null ? { ...acc, ...params.update, id: acc.id, apiEndpoint: acc.apiEndpoint } : null;
+          },
+        },
+        events: {
+          async get (_u, params) {
+            const any = params?.streams?.[0]?.any;
+            return [...events.values()].filter((e) => !Array.isArray(any) || (e.streamIds ?? []).some((s) => any.includes(s)));
+          },
+          async getOne (_u, id) { return events.get(id) ?? null; },
+          async create (_u, params) { calls.eventsCreated.push(params); return { id: 'ev-' + calls.eventsCreated.length, ...params }; },
+          async update (_u, event) { calls.eventsUpdated.push(event.id); events.set(event.id, event); return event; },
+          async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
+        },
+        streams: { async create (_u, params) { calls.streamsCreated.push(params.id); return { id: params.id }; } },
+      };
+    }
+    function acceptOf (over = {}) {
+      return {
+        id: 'acc-evt-2',
+        type: 'consent/accept-cmc',
+        streamIds: [':_cmc:_internal:responses:cap-2'],
+        createdBy: 'cap-acc-2',
+        created: 2000,
+        content: { grantedAccess: { apiEndpoint: GRANTED }, from: { username: 'alice', host: 'pryv.me' }, capabilityId: 'cap-2', originalEventId: 'offer-2', acceptEventId: 'peer-accept-2' },
+        ...over,
+      };
+    }
+    // `seen` is read when the sweep runs (the order of the steps).
+    function sweepSpy (seen = () => null) {
+      const swept = [];
+      const at = [];
+      return { swept, at, async sweepRelationship (_u, access) { swept.push(structuredClone(access)); at.push(seen()); return { records: 0, residuals: 0 }; } };
+    }
+    function okFetch (posted, status = 201) {
+      return async (url, init) => {
+        posted.push({ url, body: JSON.parse(init.body) });
+        return { status, ok: status >= 200 && status < 300, headers: { get: () => null }, async json () { return {}; }, async text () { return '{}'; } };
+      };
+    }
+
+    it('[CSA28] a re-pairing (same account, another token): the former grant\'s member accesses swept through the FORMER endpoint, the former invite revoked with replacedBy, the new one accepted, the receipt time stamped', async () => {
+      const mall = repairMall();
+      const posted = [];
+      const memberSweep = sweepSpy(() => ({ posted: posted.length, invite2: mall.store.get('invite-2').content.status, healed: mall.calls.accessesUpdated.some((u) => u.id === 'acc-rel') }));
+      const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf(), selfIdentity: SELF, deps: { mall, fetch: okFetch(posted), memberSweep } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.rePaired, true);
+      assert.deepEqual(memberSweep.at, [{ posted: 0, invite2: 'delivered', healed: true }], 'swept right after the heal, before the invite stamp and the back-channel post');
+      assert.equal(r.backChannelAccessId, 'acc-rel', 'healed in place');
+      assert.deepEqual(memberSweep.swept.map((a) => [a.id, a.clientData.cmc.counterparty.apiEndpoint]), [['acc-rel', FORMER]]);
+      const invite1 = mall.store.get('invite-1').content;
+      assert.equal(invite1.status, 'revoked');
+      assert.deepEqual(invite1.replacedBy, { inviteEventId: 'invite-2' });
+      assert.equal(typeof invite1.revokedAt, 'number');
+      const invite2 = mall.store.get('invite-2').content;
+      assert.deepEqual([invite2.status, invite2.backChannelAccessId], ['accepted', 'acc-rel']);
+      const healed = mall.calls.accessesUpdated.find((u) => u.id === 'acc-rel').update.clientData.cmc;
+      assert.deepEqual([healed.counterparty.apiEndpoint, healed.inviteEventId, healed.peerAcceptEventId, healed.peerAcceptReceivedAt], [GRANTED, 'invite-2', 'peer-accept-2', 2000]);
+      assert.equal(posted.length, 1, 'the back-channel goes to the new grant');
+      assert.equal(r.backChannelDelivery, 'delivered');
+    });
+
+    it('[CSA29] the same accept delivered again (same token) closes nothing out; a former invite id equal to the new one is swept but not stamped', async () => {
+      let mall = repairMall({ formerEndpoint: GRANTED });
+      let memberSweep = sweepSpy();
+      let r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf(), selfIdentity: SELF, deps: { mall, fetch: okFetch([]), memberSweep } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.rePaired, undefined);
+      assert.deepEqual(memberSweep.swept, []);
+      assert.equal(mall.store.get('invite-1').content.status, 'accepted', 'untouched');
+      mall = repairMall({ formerInvite: 'invite-2' });
+      memberSweep = sweepSpy();
+      r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf(), selfIdentity: SELF, deps: { mall, fetch: okFetch([]), memberSweep } });
+      assert.equal(r.rePaired, true);
+      assert.equal(memberSweep.swept.length, 1);
+      assert.equal(mall.store.get('invite-1').content.status, 'accepted', 'not the former invite of this relationship');
+      assert.equal(mall.store.get('invite-2').content.status, 'accepted');
+      assert.equal(mall.store.get('invite-2').content.replacedBy, undefined);
+    });
+
+    it('[CSA30] an accept received before the one the relationship is paired with is refused before anything is written, also on a retry without `created`; without the stamp the relationship is healed as before', async () => {
+      for (const acceptEvent of [acceptOf(), acceptOf({ created: undefined })]) {
+        const mall = repairMall({ pairedAt: 3000, storedAccept: { ...acceptOf(), created: 2000 } });
+        const memberSweep = sweepSpy();
+        const posted = [];
+        const r = await handleIncomingAccept({ userId: 'u1', acceptEvent, selfIdentity: SELF, deps: { mall, fetch: okFetch(posted), memberSweep } });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'cmc-incoming-accept-superseded');
+        assert.deepEqual([mall.calls.accessesUpdated, mall.calls.accessesCreated, mall.calls.streamsCreated, mall.calls.eventsCreated, mall.calls.eventsUpdated], [[], [], [], [], []], 'nothing written');
+        assert.deepEqual([posted, memberSweep.swept], [[], []]);
+      }
+      assert.equal(isRetryableReason('cmc-incoming-accept-superseded'), false, 'never retried');
+      // The age cannot be read on a retry: never a pass on a stamped relationship, retried.
+      {
+        const mall = repairMall({ pairedAt: 3000 });
+        mall.events.getOne = async (_u, id) => { if (id === 'acc-evt-2') throw new Error('storage down'); return mall.store.get(id) ?? null; };
+        const posted = [];
+        const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf({ created: undefined }), selfIdentity: SELF, deps: { mall, fetch: okFetch(posted), memberSweep: sweepSpy() } });
+        assert.equal(r.ok, false);
+        assert.equal(r.reason, 'cmc-incoming-accept-age-unreadable');
+        assert.equal(isRetryableReason(r.reason, r.detail), true);
+        assert.deepEqual([mall.calls.accessesUpdated, posted], [[], []]);
+      }
+      // The duplicate-name heal path applies the same guard.
+      {
+        const mall = repairMall({ pairedAt: 3000 });
+        let gets = 0;
+        const get = mall.accesses.get;
+        mall.accesses.get = async (...a) => { if (++gets === 1) throw new Error('storage down'); return get(...a); };
+        mall.accesses.create = async (_u, params) => { mall.relationship.name = params.name; throw Object.assign(new Error('item-already-exists'), { id: 'item-already-exists' }); };
+        const posted = [];
+        const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf(), selfIdentity: SELF, deps: { mall, fetch: okFetch(posted), memberSweep: sweepSpy() } });
+        assert.equal(r.reason, 'cmc-incoming-accept-superseded');
+        assert.equal(mall.calls.accessesUpdated.some((u) => u.id === 'acc-rel'), false, 'not healed');
+        assert.equal(mall.store.get('invite-1').content.status, 'accepted');
+        assert.deepEqual(posted, []);
+      }
+      // The duplicate-name heal path with an unreadable age: retried, not healed.
+      {
+        const mall = repairMall({ pairedAt: 3000 });
+        let gets = 0;
+        const get = mall.accesses.get;
+        mall.accesses.get = async (...a) => { if (++gets === 1) throw new Error('storage down'); return get(...a); };
+        mall.accesses.create = async (_u, params) => { mall.relationship.name = params.name; throw Object.assign(new Error('item-already-exists'), { id: 'item-already-exists' }); };
+        mall.events.getOne = async (_u, id) => { if (id === 'acc-evt-2') throw new Error('storage down'); return mall.store.get(id) ?? null; };
+        const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf({ created: undefined }), selfIdentity: SELF, deps: { mall, fetch: okFetch([]), memberSweep: sweepSpy() } });
+        assert.equal(r.reason, 'cmc-incoming-accept-age-unreadable');
+        assert.equal(mall.calls.accessesUpdated.some((u) => u.id === 'acc-rel'), false, 'not healed');
+      }
+      // A later accept, or the same moment (the same accept delivered again), passes and moves the stamp; a relationship without one is healed as before.
+      for (const pairedAt of [1000, 2000, undefined]) {
+        const mall = repairMall({ pairedAt });
+        const r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf(), selfIdentity: SELF, deps: { mall, fetch: okFetch([]), memberSweep: sweepSpy() } });
+        assert.equal(r.ok, true, JSON.stringify(r));
+        assert.equal(mall.calls.accessesUpdated.find((u) => u.id === 'acc-rel').update.clientData.cmc.peerAcceptReceivedAt, 2000);
+      }
+    });
+
+    it('[CSA37] a back-channel delivery that fails retryably is queued for the retry loop; a 4xx is not; a success is reported delivered', async () => {
+      let mall = repairMall();
+      let r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf(), selfIdentity: SELF, deps: { mall, fetch: okFetch([], 503), memberSweep: sweepSpy() } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.backChannelDelivery, 'queued');
+      const queued = mall.calls.eventsCreated.filter((e) => (e.streamIds ?? []).includes(C.NS_INTERNAL_RETRIES));
+      assert.equal(queued.length, 1);
+      assert.equal(queued[0].type, C.ET_RETRY);
+      assert.deepEqual([queued[0].content.originalType, queued[0].content.originalEventId, queued[0].content.status], [C.ET_BACK_CHANNEL, 'acc-evt-2', 'pending']);
+      assert.deepEqual([queued[0].content.delivery.apiEndpoint, queued[0].content.delivery.path, queued[0].content.delivery.body.type], [GRANTED, 'events', C.ET_BACK_CHANNEL]);
+      assert.equal(queued[0].content.delivery.body.content.scopeStreamId, SCOPE);
+      // Once the record is terminal, neither the accepter's token nor this
+      // account's own back-channel credential stays at rest in it.
+      const retryQueue = require('../src/retryQueue.ts');
+      const updates = [];
+      const qmall = { events: { async update (_u, e) { updates.push(e); return e; }, async create () { return {}; }, async get () { return []; } } };
+      await retryQueue.processRetryEvent({
+        userId: 'u1',
+        retryEvent: { id: 'rq-1', type: C.ET_RETRY, time: Date.now() / 1000, ...queued[0], content: { ...queued[0].content, nextAttemptAfter: 0 } },
+        deps: { mall: qmall, dispatch: async () => ({}), dispatchDeps: { fetch: okFetch([], 400) } },
+      });
+      const terminal = updates.at(-1).content;
+      assert.equal(terminal.status, 'failed-permanent');
+      assert.equal(terminal.delivery.body.content.apiEndpoint, undefined);
+      assert.equal(/tok@/.test(JSON.stringify(terminal)), false, 'no credential left: ' + JSON.stringify(terminal.delivery));
+      mall = repairMall();
+      r = await handleIncomingAccept({ userId: 'u1', acceptEvent: acceptOf(), selfIdentity: SELF, deps: { mall, fetch: okFetch([], 400), memberSweep: sweepSpy() } });
+      assert.equal(r.backChannelDelivery, 'failed');
+      assert.equal(mall.calls.eventsCreated.filter((e) => (e.streamIds ?? []).includes(C.NS_INTERNAL_RETRIES)).length, 0);
+    });
+  });
 });

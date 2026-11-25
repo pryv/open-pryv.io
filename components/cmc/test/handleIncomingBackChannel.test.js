@@ -370,6 +370,146 @@ describe('[CMCBC] cmc/handleIncomingBackChannel', () => {
     assert.equal(r.dataGrantAccessId, 'a-grant');
   });
 
+  describe('[CMCBC-REPLACE] the back-channel of a newer grant ends the older grants of the same relationship', () => {
+    const { stampWithdrawalOnAccept } = require('../src/acceptWithdrawal.ts');
+    const { setOlderPeerForTests } = require('../src/replacedGrants.ts');
+    const { isRetryableReason } = require('../src/retryQueue.ts');
+    const { fakeUpdateWithMerge } = require('./_fake-assertions.cjs');
+    const SCOPE = ':_cmc:apps:practice:team-a';
+    const GROUP = { username: 'practice', host: 'group.example.com' };
+
+    function grant (id, created, cmc = {}) {
+      return {
+        id,
+        ...(created != null ? { created } : {}),
+        type: 'app',
+        clientData: { cmc: { role: 'counterparty', acceptEventId: 'accept-' + id, scopeStreamId: SCOPE, counterparty: { ...GROUP }, ...cmc } },
+      };
+    }
+    function replaceMall (accesses, opts = {}) {
+      const calls = { deleted: [], updated: [] };
+      const acceptEvents = new Map(accesses.map((a) => [a.clientData.cmc.acceptEventId, { id: a.clientData.cmc.acceptEventId, type: 'consent/accept-cmc', content: { status: 'completed' } }]));
+      return {
+        calls,
+        acceptEvents,
+        accesses: {
+          async get () { return accesses.filter((a) => !calls.deleted.includes(a.id)); },
+          async update (_u, params) { calls.updated.push(params.id); return { id: params.id, ...params.update }; },
+          async delete (_u, { id }) {
+            if ((opts.failDelete ?? []).includes(id)) throw new Error('storage down');
+            calls.deleted.push(id);
+            return { id, relatedDeletions: [] };
+          },
+        },
+        events: {
+          async getOne (_u, id) { return acceptEvents.get(id) ?? null; },
+          async update (_u, e) { acceptEvents.set(e.id, e); return e; },
+          async updateWithMerge (...a) { return fakeUpdateWithMerge(this, ...a); },
+        },
+      };
+    }
+    function delivery (writerId) {
+      return {
+        type: 'consent/back-channel-cmc',
+        streamIds: [':_cmc:inbox'],
+        ...(writerId != null ? { createdBy: writerId } : {}),
+        content: { from: GROUP, apiEndpoint: 'https://bc-tok@group.example.com/practice/', scopeStreamId: SCOPE, appCode: 'practice' },
+      };
+    }
+
+    it('[CSA31] only the older grants with the same role, counterparty and scope are deleted, their accept marked replaced naming the newer one; never a newer grant, another scope or counterparty, a scope-less access, a back-channel toward the peer, another role, the writer, an access without created', async () => {
+      const accesses = [
+        grant('g1', 100),
+        grant('g2', 200),
+        grant('g3', 300),
+        // Created at the same instant as the keeper: not older, kept.
+        grant('g-same', 200),
+        grant('g-scope', 50, { scopeStreamId: SCOPE + ':other' }),
+        grant('g-peer', 50, { counterparty: { username: 'other-group', host: 'group.example.com' } }),
+        grant('g-host', 50, { counterparty: { username: 'practice', host: 'other.example.com' } }),
+        grant('g-noscope', 50, { scopeStreamId: null }),
+        grant('g-bc', 50, { capabilityId: null }),
+        grant('g-member', 50, { role: 'member' }),
+        grant('g-nocreated', null),
+      ];
+      const mall = replaceMall(accesses);
+      const r = await handleIncomingBackChannel({ userId: 'u1', event: delivery('g2'), deps: { mall } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.equal(r.dataGrantAccessId, 'g2');
+      assert.deepEqual(r.replacedAccessIds, ['g1']);
+      assert.deepEqual(mall.calls.deleted, ['g1']);
+      assert.deepEqual(mall.calls.updated, ['g2'], 'the stamp lands on the writer');
+      const w = mall.acceptEvents.get('accept-g1').content.withdrawal;
+      assert.deepEqual([w.by, w.accessId, w.replacedBy], ['replaced', 'g1', { acceptEventId: 'accept-g2', accessId: 'g2' }]);
+      assert.equal(typeof w.at, 'number');
+      assert.equal(mall.acceptEvents.get('accept-g3').content.withdrawal, undefined);
+      // A membership joined twice: the older membership is deleted and swept.
+      const swept = [];
+      // A counterparty grant older than the member keeper is another role: kept.
+      const members = [grant('m1', 100, { role: 'member' }), grant('m2', 200, { role: 'member' }), grant('cp-old', 50)];
+      const mall2 = replaceMall(members);
+      const r2 = await handleIncomingBackChannel({
+        userId: 'g',
+        event: delivery('m2'),
+        deps: { mall: mall2, memberSweep: { async sweepMembership (_u, access, reason) { swept.push([access.id, reason]); return {}; } } },
+      });
+      assert.equal(r2.ok, true, JSON.stringify(r2));
+      assert.deepEqual(mall2.calls.deleted, ['m1']);
+      assert.deepEqual(swept, [['m1', 'revoke']]);
+      // A delivery written by a back-channel access toward the peer (own
+      // `capabilityId` key), even a newer one: it is no grant, it ends nothing.
+      const mall3 = replaceMall([grant('g1', 100), grant('bc-new', 500, { capabilityId: null })]);
+      const r3 = await handleIncomingBackChannel({ userId: 'u1', event: delivery('bc-new'), deps: { mall: mall3 } });
+      assert.equal(r3.ok, true, JSON.stringify(r3));
+      assert.deepEqual(mall3.calls.deleted, []);
+      // A keeper without a scope names no relationship: nothing is ended, not even another scope-less grant.
+      const mall4 = replaceMall([grant('n1', 100, { scopeStreamId: null }), grant('n2', 200, { scopeStreamId: null })]);
+      const r4 = await handleIncomingBackChannel({ userId: 'u1', event: delivery('n2'), deps: { mall: mall4 } });
+      assert.equal(r4.ok, true, JSON.stringify(r4));
+      assert.deepEqual(mall4.calls.deleted, []);
+    });
+
+    it('[CSA32] without a resolvable writer (the selector fallback) nothing is replaced; a delete that fails keeps the stamp and fails the delivery retryably; an older core (rule off) replaces nothing', async () => {
+      let mall = replaceMall([grant('g1', 100), grant('g2', 200, { backChannelApiEndpoint: null })]);
+      let r = await handleIncomingBackChannel({ userId: 'u1', event: delivery(null), deps: { mall } });
+      assert.equal(r.ok, true, JSON.stringify(r));
+      assert.deepEqual(mall.calls.deleted, [], 'a guess never deletes');
+      mall = replaceMall([grant('g0', 50), grant('g1', 100), grant('g2', 200)], { failDelete: ['g0'] });
+      r = await handleIncomingBackChannel({ userId: 'u1', event: delivery('g2'), deps: { mall } });
+      assert.equal(r.ok, false);
+      assert.equal(r.reason, 'cmc-back-channel-replace-failed');
+      assert.deepEqual(r.detail, { dataGrantAccessId: 'g2', failedAccessIds: ['g0'], endedAccessIds: ['g1'] });
+      assert.deepEqual(mall.calls.updated, ['g2'], 'the stamp stands');
+      assert.equal(isRetryableReason(r.reason, r.detail), true, 'queued, the retry ends what is left');
+      setOlderPeerForTests({ accepter: true });
+      try {
+        mall = replaceMall([grant('g1', 100), grant('g2', 200)]);
+        r = await handleIncomingBackChannel({ userId: 'u1', event: delivery('g2'), deps: { mall } });
+        assert.equal(r.ok, true);
+        assert.deepEqual(mall.calls.deleted, []);
+      } finally {
+        setOlderPeerForTests(null);
+      }
+    });
+
+    it('[CSA33] the withdrawal marker `replaced` is written once with replacedBy; an existing withdrawal is never overwritten', async () => {
+      const mall = replaceMall([grant('g1', 100)]);
+      const stamp = (by, replacedBy) => stampWithdrawalOnAccept({
+        userId: 'u1', relationshipCmc: grant('g1', 100).clientData.cmc, by, accessId: 'g1', replacedBy, deps: { mall },
+      });
+      let r = await stamp('replaced', { acceptEventId: 'accept-g2', accessId: 'g2' });
+      assert.deepEqual(r, { ok: true, written: true });
+      assert.deepEqual(mall.acceptEvents.get('accept-g1').content.withdrawal.replacedBy, { acceptEventId: 'accept-g2', accessId: 'g2' });
+      r = await stamp('accesses.delete');
+      assert.deepEqual(r, { ok: true, written: false, skipped: 'already-withdrawn' });
+      assert.equal(mall.acceptEvents.get('accept-g1').content.withdrawal.by, 'replaced');
+      // `replacedBy` only goes with `replaced`.
+      const mall2 = replaceMall([grant('g1', 100)]);
+      await stampWithdrawalOnAccept({ userId: 'u1', relationshipCmc: grant('g1', 100).clientData.cmc, by: 'accesses.delete', accessId: 'g1', replacedBy: { acceptEventId: 'x', accessId: 'y' }, deps: { mall: mall2 } });
+      assert.equal(mall2.acceptEvents.get('accept-g1').content.withdrawal.replacedBy, undefined);
+    });
+  });
+
   it('[BC07] rejects non-back-channel event types', async () => {
     const r = await handleIncomingBackChannel({
       userId: 'u1',

@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
-import type { CmcLogger, CmcAccessLike as AccessLike, MallAccessesLike, CmcClientData, CounterpartyRef } from './_types.ts';
+import type { CmcLogger, CmcAccessLike as AccessLike, MallAccessesLike, MallEventsLike, CmcClientData, CounterpartyRef } from './_types.ts';
+import type { MemberSweep } from './memberSweep.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -30,11 +31,18 @@ const require = createRequire(import.meta.url);
  * After this update, the accepter's chat / system handlers can resolve
  * a remote endpoint to POST to (the requester's back-channel URL on
  * the requester's side) — completing the bidirectional channel.
+ *
+ * The arrival is also the proof that the requester took this grant's
+ * accept: any older grant of the same relationship (same role, counterparty
+ * and scope; the person accepted twice) is then ended, see replacedGrants.ts.
  */
 
 const C = require('./constants.ts');
 const slugMod = require('./slug.ts');
 const relationshipKey = require('./relationshipKey.ts');
+// Through the module object, so a test standing for an older core can turn
+// the rule off at call time (replacedGrants.setOlderPeerForTests).
+const replacedGrants: typeof import('./replacedGrants.ts') = require('./replacedGrants.ts');
 
 type Counterparty = {
   username: string;
@@ -45,7 +53,7 @@ type Counterparty = {
 };
 type AccessClientData = { cmc?: CmcClientData; [k: string]: unknown };
 
-type MallLike = { accesses: MallAccessesLike };
+type MallLike = { accesses: MallAccessesLike; events?: MallEventsLike };
 
 type BackChannelEventContent = {
   from?: { username?: unknown; host?: unknown };
@@ -63,6 +71,8 @@ type IncomingBackChannelResult =
     ok: true;
     dataGrantAccessId: string;
     counterparty: { username: string; host: string };
+    // The older grants of the same relationship this delivery ended.
+    replacedAccessIds?: string[];
   }
   | {
     ok: false;
@@ -76,6 +86,9 @@ async function handleIncomingBackChannel (params: {
   deps: {
     mall: MallLike;
     logger?: CmcLogger;
+    notifyEventChanged?: (userId: string, event: { id?: string }) => void;
+    // A replaced membership is offboarded (its member accesses swept).
+    memberSweep?: Partial<Pick<MemberSweep, 'sweepMembership'>>;
   };
 }): Promise<IncomingBackChannelResult> {
   const { userId, event, deps } = params;
@@ -204,10 +217,35 @@ async function handleIncomingBackChannel (params: {
     };
   }
 
+  // The requester took THIS grant's accept (its back-channel arrived through
+  // it): the older grants of the same relationship are replaced and ended
+  // (replacedGrants.ts). Only when the delivery is bound to its writer: the
+  // selector fallback is a guess, and a guess never deletes anything.
+  let replacedAccessIds: string[] | undefined;
+  if (chosen === writer) {
+    const replaced = await replacedGrants.endReplacedGrants({
+      userId,
+      keeper: chosen,
+      accesses,
+      deps: { mall: deps.mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged, memberSweep: deps.memberSweep },
+    });
+    if (replaced.ended.length > 0) replacedAccessIds = replaced.ended;
+    if (replaced.failed.length > 0) {
+      // The stamp stands. Retryable: the dispatch queues this delivery and a
+      // retry stamps again (idempotent) and ends what is left.
+      return {
+        ok: false,
+        reason: 'cmc-back-channel-replace-failed',
+        detail: { dataGrantAccessId: chosen.id, failedAccessIds: replaced.failed.map((f) => f.accessId), endedAccessIds: replaced.ended },
+      };
+    }
+  }
+
   return {
     ok: true,
     dataGrantAccessId: chosen.id,
     counterparty: { username: fromUsername, host: fromHost },
+    ...(replacedAccessIds != null ? { replacedAccessIds } : {}),
   };
 }
 

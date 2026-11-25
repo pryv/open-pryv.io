@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 import type { CmcLogger, CmcAccessLike as AccessLike, MallLike } from './_types.ts';
 import type { Features } from './features.ts';
+import type { MemberSweep } from './memberSweep.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -61,6 +62,9 @@ const inviteState = require('./inviteState.ts');
 const relationshipKey = require('./relationshipKey.ts');
 const { CmcErrorIds } = require('./errorIds.ts');
 const { featuresFromOffer, resolveFeatures }: typeof import('./features.ts') = require('./features.ts');
+// Through the module object, so a test standing for an older core can turn
+// the close-out off at call time (replacedGrants.setOlderPeerForTests).
+const replacedGrants: typeof import('./replacedGrants.ts') = require('./replacedGrants.ts');
 const crypto = require('node:crypto');
 
 type Counterparty = { username: string; host: string };
@@ -73,6 +77,13 @@ type IncomingAcceptResult =
     anchorStreamIds: string[];
     appCode: string;
     counterparty: Counterparty;
+    // The accept re-paired an existing relationship to another grant of the
+    // same account: the former pairing was closed out.
+    rePaired?: boolean;
+    // What became of the back-channel delivery to the accepter: posted,
+    // queued for the retry loop, or failed for good (a 4xx, a refused
+    // destination). Absent when nothing was sent (no fetch wired).
+    backChannelDelivery?: 'delivered' | 'queued' | 'failed';
   }
   | {
     ok: false;
@@ -93,7 +104,7 @@ type SelfIdentity = { username: string; host: string };
  */
 async function handleIncomingAccept (params: {
   userId: string;
-  acceptEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[]; createdBy?: string };
+  acceptEvent: { id?: string; type: string; content: Record<string, unknown>; streamIds?: string[]; createdBy?: string; created?: number };
   selfIdentity: SelfIdentity;
   deps: {
     mall: MallLike;
@@ -101,6 +112,9 @@ async function handleIncomingAccept (params: {
     fetch?: (url: string, init?: RequestInit) => Promise<Response>;
     timeoutMs?: number;
     notifyEventChanged?: (userId: string, event: { id?: string }) => void;
+    // The member accesses made through a former grant are swept when an
+    // accept re-pairs the relationship (replacedGrants.closeOutFormerPairing).
+    memberSweep?: Partial<Pick<MemberSweep, 'sweepRelationship'>>;
   };
 }): Promise<IncomingAcceptResult> {
   const { userId, acceptEvent, selfIdentity, deps } = params;
@@ -236,6 +250,24 @@ async function handleIncomingAccept (params: {
   // before anything is written.
   if (existingForScope != null && !mayHealRelationship(existingForScope, grantedApiEndpoint, capabilityIdToConsume)) {
     return refuseForeignHeal(existingForScope, deps.logger);
+  }
+  // When this accept was received here (its `created`, this core's clock;
+  // read back by id for a retry, whose snapshot does not carry it). Stamped
+  // on the relationship: an accept received BEFORE the one the relationship
+  // is paired with (an older accept a retry delivers late) is refused before
+  // anything is written, or it would re-pair the relationship to a grant the
+  // accepter has just ended as replaced. A relationship without the stamp
+  // (paired before it existed) has no such guard.
+  // An age that could not be read (a storage error on a retry, the only case
+  // the guard exists for) is never taken as a pass on a stamped relationship:
+  // a retryable failure.
+  const age = await acceptCreatedAt({ userId, acceptEvent, mall });
+  if (age === 'unreadable' && existingForScope != null && receivedAtOf(existingForScope) != null) {
+    return { ok: false, reason: 'cmc-incoming-accept-age-unreadable', detail: { backChannelAccessId: existingForScope.id ?? null } };
+  }
+  const acceptReceivedAt = age === 'unreadable' ? null : age;
+  if (existingForScope != null && isSupersededAccept(existingForScope, acceptReceivedAt)) {
+    return refuseSupersededAccept(existingForScope, acceptEvent, deps.logger);
   }
 
   // The relationship's features, resolved against OUR copy of the offer: the
@@ -413,6 +445,9 @@ async function handleIncomingAccept (params: {
         peerAcceptEventId: typeof acceptEvent.content?.acceptEventId === 'string' && acceptEvent.content.acceptEventId.length > 0
           ? acceptEvent.content.acceptEventId
           : null,
+        // When that accept was received (see the guard above); an accept of
+        // unknown age keeps the relationship's previous value.
+        peerAcceptReceivedAt: acceptReceivedAt ?? receivedAtOf(existingForScope),
         // The resolved features: handleChat / handleSystem on this side, and
         // the inbound features gate, enforce them.
         features: negotiatedFeatures,
@@ -459,7 +494,9 @@ async function handleIncomingAccept (params: {
     }
   }
   // A relationship we already hold for this scope is healed in place.
+  // `healedFrom` keeps it as it was before: a re-pairing is closed out below.
   let access: AccessLike | null = null;
+  let healedFrom: AccessLike | null = null;
   if (existingForScope != null) {
     try {
       // `update` exists: the lookup that set existingForScope required it.
@@ -471,6 +508,7 @@ async function handleIncomingAccept (params: {
         },
       });
       access = updated ?? existingForScope;
+      healedFrom = existingForScope;
     } catch (err: unknown) {
       // Non-fatal: fall through to create, which has its own duplicate path.
       deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel reuse update failed', {
@@ -507,16 +545,26 @@ async function handleIncomingAccept (params: {
     if (!mayHealRelationship(existing, grantedApiEndpoint, capabilityIdToConsume)) {
       return refuseForeignHeal(existing, deps.logger);
     }
+    if (age === 'unreadable' && receivedAtOf(existing) != null) {
+      return { ok: false, reason: 'cmc-incoming-accept-age-unreadable', detail: { backChannelAccessId: existing.id ?? null } };
+    }
+    if (isSupersededAccept(existing, acceptReceivedAt)) {
+      return refuseSupersededAccept(existing, acceptEvent, deps.logger);
+    }
     if (typeof mall.accesses.update === 'function') {
       try {
         const updated = await mall.accesses.update(userId, {
           id: existing.id,
           update: {
             permissions: accessParams.permissions,
-            clientData: accessParams.clientData,
+            clientData: {
+              ...accessParams.clientData,
+              cmc: { ...accessParams.clientData.cmc, peerAcceptReceivedAt: acceptReceivedAt ?? receivedAtOf(existing) },
+            },
           },
         });
         access = updated ?? existing;
+        healedFrom = existing;
       } catch (uerr: unknown) {
         // Partial healing — at least surface the existing access id so the
         // chat/system handlers can still find it; permissions might be
@@ -531,6 +579,28 @@ async function handleIncomingAccept (params: {
     } else {
       access = existing;
     }
+  }
+
+  // A re-pairing: the same account accepted again (another invite on the
+  // same scope, a new grant) and the relationship was healed to the new
+  // grant. The latest accept replaces the former: the member accesses made
+  // through the former grant are swept through it, and the former invite is
+  // stamped `revoked` with `replacedBy`. The accepter's core ends the former
+  // grant itself when the back-channel below reaches the new one
+  // (replacedGrants.ts). The same accept delivered again (same grant) closes
+  // nothing out. Directly after the heal: once it is written, the former
+  // endpoint survives only in `healedFrom`, so a failure or a crash later in
+  // this handler must not come between them (a retry would find the
+  // relationship on the new endpoint, with nothing left to close out).
+  let rePaired = false;
+  if (healedFrom != null && replacedGrants.isRePairing(healedFrom, grantedApiEndpoint)) {
+    rePaired = true;
+    await replacedGrants.closeOutFormerPairing({
+      userId,
+      former: healedFrom,
+      newInviteEventId: inviteEventId,
+      deps: { mall, logger: deps.logger, notifyEventChanged: deps.notifyEventChanged, memberSweep: deps.memberSweep },
+    });
   }
 
   const capabilityMode = (capabilityAccess?.clientData as { cmc?: { capability?: { mode?: string } } } | undefined)?.cmc?.capability?.mode;
@@ -658,42 +728,82 @@ async function handleIncomingAccept (params: {
   // back to us. Best-effort — if delivery fails, the peer can't send
   // chat/system to us, but the data-grant for read access is intact and
   // the operator can retry.
+  //
+  // A delivery that fails retryably (the accepter's core down, a 5xx, a
+  // timeout, a 408 / 429) is queued as a delivery record and re-sent by the
+  // retry loop on the delivery schedule (retryQueue.ts): without it the
+  // accepter's grant never learns where to reach this side, and an older
+  // grant this accept replaces is never ended on the accepter's core. A 4xx
+  // (the accepter's answer) or a refused destination is logged.
+  let backChannelDelivery: 'delivered' | 'queued' | 'failed' | undefined;
   if (typeof deps.fetch === 'function' && access.apiEndpoint != null) {
     const outbound = require('./outbound.ts');
-    try {
-      await outbound.postToPeer({
-        apiEndpoint: grantedApiEndpoint,
-        path: 'events',
-        body: {
-          streamIds: [C.NS_INBOX],
-          type: C.ET_BACK_CHANNEL,
-          content: {
-            from: { username: selfIdentity.username, host: selfIdentity.host },
-            apiEndpoint: access.apiEndpoint,
-            // Left out for a relationship without chat: optional on receipt,
-            // and the published event-type schema types it as a string, so
-            // a null would be refused.
-            ...(chatStream != null ? { remoteChatStreamId: chatStream } : {}),
-            remoteCollectorStreamId: collectorStream,
-            appCode,
-            // Lets the accepter stamp the back-channel onto the grant for
-            // THIS relationship rather than guessing from (peer, appCode).
-            // Older accepters ignore it and fall back to deriving the scope
-            // from remoteChatStreamId.
-            scopeStreamId,
-          },
+    const delivery = {
+      apiEndpoint: grantedApiEndpoint,
+      path: 'events',
+      body: {
+        streamIds: [C.NS_INBOX],
+        type: C.ET_BACK_CHANNEL,
+        content: {
+          from: { username: selfIdentity.username, host: selfIdentity.host },
+          apiEndpoint: access.apiEndpoint,
+          // Left out for a relationship without chat: optional on receipt,
+          // and the published event-type schema types it as a string, so
+          // a null would be refused.
+          ...(chatStream != null ? { remoteChatStreamId: chatStream } : {}),
+          remoteCollectorStreamId: collectorStream,
+          appCode,
+          // Lets the accepter stamp the back-channel onto the grant for
+          // THIS relationship rather than guessing from (peer, appCode).
+          // Older accepters ignore it and fall back to deriving the scope
+          // from remoteChatStreamId.
+          scopeStreamId,
         },
-        deps: { fetch: deps.fetch, timeoutMs: deps.timeoutMs, logger: deps.logger },
-      });
+      },
+    };
+    // Without the token: this is the peer's data-grant endpoint, a live
+    // credential to their account, and a warn line goes to the operator's
+    // log stream and on to whatever aggregates it. The host is what
+    // identifies the failed delivery.
+    const peerHost = outbound.stripCredentials(grantedApiEndpoint);
+    let sent: { ok: boolean; reason?: string; status?: number; retryAfterMs?: number } | null = null;
+    try {
+      sent = await outbound.postToPeer({ ...delivery, deps: { fetch: deps.fetch, timeoutMs: deps.timeoutMs, logger: deps.logger } });
     } catch (err: unknown) {
+      // Only the endpoint parser throws (postToPeer reports its failures): a
+      // malformed endpoint cannot be retried.
       deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed (non-fatal)', {
-        // Without the token: this is the peer's data-grant endpoint, a live
-        // credential to their account, and a warn line goes to the operator's
-        // log stream and on to whatever aggregates it. The host is what
-        // identifies the failed delivery.
-        peerApiEndpoint: outbound.stripCredentials(grantedApiEndpoint),
+        peerApiEndpoint: peerHost,
         error: String((err as Error)?.message || err),
       });
+      backChannelDelivery = 'failed';
+    }
+    if (sent?.ok === true) {
+      backChannelDelivery = 'delivered';
+    } else if (sent != null && outbound.isRetryableFailure(sent) && typeof mall.events?.create === 'function') {
+      try {
+        const retryQueue = require('./retryQueue.ts');
+        await retryQueue.enqueueDelivery({
+          userId,
+          delivery,
+          originalEventId: typeof acceptEvent.id === 'string' ? acceptEvent.id : null,
+          originalType: C.ET_BACK_CHANNEL,
+          failureReason: 'cmc-back-channel-delivery-failed',
+          failureDetail: { peerReason: sent.reason, status: sent.status, ...(typeof sent.retryAfterMs === 'number' ? { retryAfterMs: sent.retryAfterMs } : {}) },
+          deps: { mall, logger: deps.logger },
+        });
+        backChannelDelivery = 'queued';
+      } catch (err: unknown) {
+        deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed and could not be queued', {
+          peerApiEndpoint: peerHost, reason: sent.reason, status: sent.status, error: String((err as Error)?.message || err),
+        });
+        backChannelDelivery = 'failed';
+      }
+    } else if (sent != null) {
+      deps.logger?.warn?.('cmc/handleIncomingAccept: back-channel info delivery failed and is not retried', {
+        peerApiEndpoint: peerHost, reason: sent.reason, status: sent.status,
+      });
+      backChannelDelivery = 'failed';
     }
   }
 
@@ -707,6 +817,8 @@ async function handleIncomingAccept (params: {
     // doesn't carry through the multiple if-chains. Coerce to string.
     appCode: appCode as string,
     counterparty,
+    ...(rePaired ? { rePaired } : {}),
+    ...(backChannelDelivery != null ? { backChannelDelivery } : {}),
   };
 }
 
@@ -736,6 +848,48 @@ function endpointIdentity (apiEndpoint: string): string | null {
   } catch (_e) {
     return null;
   }
+}
+
+/**
+ * When this core received the accept: its `created`. A retry re-dispatches a
+ * snapshot without it, so the stored event is read by id then. Null when
+ * neither is available (no id, no stored event), `'unreadable'` when the read
+ * failed.
+ */
+async function acceptCreatedAt (params: {
+  userId: string;
+  acceptEvent: { id?: string; created?: number };
+  mall: MallLike;
+}): Promise<number | null | 'unreadable'> {
+  const { userId, acceptEvent, mall } = params;
+  if (typeof acceptEvent.created === 'number' && Number.isFinite(acceptEvent.created)) return acceptEvent.created;
+  if (typeof acceptEvent.id !== 'string' || acceptEvent.id.length === 0 || mall.events?.getOne == null) return null;
+  try {
+    const stored = await mall.events.getOne(userId, acceptEvent.id);
+    const created = stored?.created;
+    return typeof created === 'number' && Number.isFinite(created) ? created : null;
+  } catch (_e) {
+    return 'unreadable';
+  }
+}
+
+/** The relationship's `peerAcceptReceivedAt`, or null. */
+function receivedAtOf (access: AccessLike | null | undefined): number | null {
+  const v = access?.clientData?.cmc?.peerAcceptReceivedAt;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** An accept received before the one `existing` is paired with. */
+function isSupersededAccept (existing: AccessLike, acceptReceivedAt: number | null): boolean {
+  const pairedAt = receivedAtOf(existing);
+  return pairedAt != null && acceptReceivedAt != null && acceptReceivedAt < pairedAt;
+}
+
+function refuseSupersededAccept (existing: AccessLike, acceptEvent: { id?: string }, logger?: CmcLogger): IncomingAcceptResult {
+  logger?.info?.('cmc/handleIncomingAccept: an accept older than the one the relationship is paired with was refused (a later accept replaced it)', {
+    accessId: existing.id ?? null, acceptEventId: acceptEvent.id ?? null,
+  });
+  return { ok: false, reason: CmcErrorIds.INCOMING_ACCEPT_SUPERSEDED, detail: { backChannelAccessId: existing.id ?? null } };
 }
 
 function refuseForeignHeal (existing: AccessLike, logger?: CmcLogger): IncomingAcceptResult {

@@ -30,6 +30,8 @@
  *      their path and every segment is a slug, so a prefix match on `:`
  *      segments is sound), and a relationship with the patient is held
  *      under that scope with a completed handshake (the grant endpoint);
+ *      without a scope asked, the trigger stream's own relationship, else
+ *      the newest one under it;
  *   3. the permissions asked are stream permissions, each on a data stream
  *      the group's invite to the patient offered (never a `:_cmc:*` stream)
  *      at a level not above the offered one. The accepted set may be
@@ -40,13 +42,24 @@
  * lock per (membership, relationship) (memberMintRegistry.ts), and hands
  * what it resolved to the handler, which then does not resolve it again.
  *
- * The mint itself (`handleMemberAccess`), through the grant endpoint, two
- * calls at most under one timeout overall:
+ * The mint itself (`handleMemberAccess`), through the grant endpoint, under
+ * one timeout overall for all its peer calls (two in the common case: the
+ * read by id and the create; a stale child, the name-only retry and the
+ * duplicate-name path below each add one or two lists, deletes or creates,
+ * all under the same deadline):
  *   - idempotency keyed by the ledger record of (membership, relationship),
  *     never by name: the recorded child is read BY ID through the grant;
  *     live with the permissions asked and not about to expire, it is reused
  *     and its token re-read; otherwise it is deleted and a new one minted;
  *     gone (deleted by the patient, or expired), a new one is minted;
+ *   - the record names the grant that made its child (`grantKey`). A child
+ *     of a former grant of the relationship (the patient accepted again
+ *     since) is not read through the current one (it would answer 404 for a
+ *     live child): a new one is minted. When the deterministic name is still
+ *     held by an access the current grant does not list (that former child),
+ *     the old record is kept as `residual` / `grant-replaced` at a random id
+ *     and the new child is named `<name>-<first 8 characters of the grant
+ *     key>`;
  *   - `accesses.create` with `clientData.cmc = { role: 'member-child',
  *     member }`, which the patient core completes from the grant. A patient
  *     core of an older release refuses any `clientData.cmc` with
@@ -56,9 +69,11 @@
  *   - the ledger record is written BEFORE the token is returned, then the
  *     membership is re-read: gone meanwhile (a sweep ran), the child is
  *     deleted and the trigger fails.
- * A duplicate-name refusal from the patient core is reported, never answered
- * with a delete: through the grant every member's children are visible and
- * deletable, and a name is the one thing another member could choose.
+ * A duplicate-name refusal from the patient core is never answered by
+ * deleting a LIVE access of that name: through the grant every member's
+ * children are visible and deletable. An expired one of that name is deleted
+ * and the create tried once more; one the grant does not list leads to the
+ * fallback name above; a live listed one is reported.
  *
  * The success payload travels on the dispatch result only; the stored
  * trigger gets `memberAccess` without the token, `member` and
@@ -229,13 +244,17 @@ async function resolveMintTarget (params: {
   if (candidates.length === 0) {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND, detail: { scopeStreamId: askedScope ?? triggerScope } };
   }
-  // The newest relationship whose handshake completed (it knows the grant).
+  // A relationship whose handshake completed (it knows the grant). Without a
+  // scope asked, the default is the trigger stream's own relationship, as
+  // documented; only when there is none, the newest one under it.
   const withEndpoint = candidates.filter((a) => typeof a.clientData?.cmc?.counterparty?.apiEndpoint === 'string');
   if (withEndpoint.length === 0) {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_RELATIONSHIP_NOT_FOUND, detail: { reason: 'handshake-incomplete', relationshipAccessId: candidates[0].id } };
   }
-  withEndpoint.sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
-  const relationshipAccess = withEndpoint[0];
+  const onTrigger = askedScope == null ? withEndpoint.filter((a) => relationshipKey.scopeOfAccess(a) === triggerScope) : [];
+  const pool = onTrigger.length > 0 ? onTrigger : withEndpoint;
+  pool.sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+  const relationshipAccess = pool[0];
   const relCmc = relationshipAccess.clientData!.cmc!;
   const grantApiEndpoint = relCmc.counterparty!.apiEndpoint as string;
   const scopeStreamId = relationshipKey.scopeOfAccess(relationshipAccess) as string;
@@ -430,6 +449,15 @@ function childCarries (child: PeerAccess, permissions: StreamPermissionLike[]): 
   return true;
 }
 
+/**
+ * The grant's access id as the patient core stamped it on the child
+ * (`clientData.cmc.viaAccessId`), or null (a `name-only` child, an older core).
+ */
+function viaAccessIdOf (child: PeerAccess | null | undefined): string | null {
+  const v = (child?.clientData as { cmc?: { viaAccessId?: unknown } } | undefined)?.cmc?.viaAccessId;
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
 /** Whether a peer's answer to a DELETE means the child is gone (2xx or 404). */
 function deletedOrGone (r: outbound.DeliverResult): boolean {
   return r.ok || (r.reason === 'http-4xx' && r.status === 404);
@@ -480,7 +508,7 @@ async function handleMemberAccess (params: {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_GRANT_NOT_DELEGABLE, detail: { relationshipAccessId } };
   }
 
-  // One timeout overall for the (at most) two peer calls.
+  // One timeout overall for every peer call of this ask.
   const timeoutMs = deps.timeoutMs ?? outbound.DEFAULT_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   const peerDeps = (): OutboundDeps => ({
@@ -526,9 +554,11 @@ async function handleMemberAccess (params: {
     }
   };
 
-  // The id of the expired access named `name` among those the grant manages,
-  // or null (none, a live one, or the list could not be read).
-  const expiredNamesake = async (name: string): Promise<string | null> => {
+  // The access named `name` among those the grant manages: an expired one
+  // (its id), a live one, or none listed (the name is held by an access this
+  // grant does not manage); null when the list could not be read.
+  type Namesake = { kind: 'expired'; id: string } | { kind: 'live' } | { kind: 'not-listed' };
+  const namesakeOf = async (name: string): Promise<Namesake | null> => {
     let r: outbound.DeliverResult;
     try {
       r = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'GET', path: 'accesses?includeExpired=true', deps: peerDeps() });
@@ -537,8 +567,12 @@ async function handleMemberAccess (params: {
     }
     if (!r.ok) return null;
     const list = (r.body as { accesses?: PeerAccess[] } | null)?.accesses;
-    const found = Array.isArray(list) ? list.find((a) => a?.name === name) : undefined;
-    return typeof found?.id === 'string' && typeof found.expires === 'number' && found.expires < now() ? found.id : null;
+    if (!Array.isArray(list)) return null;
+    const found = list.find((a) => a?.name === name);
+    if (found == null) return { kind: 'not-listed' };
+    return typeof found.id === 'string' && typeof found.expires === 'number' && found.expires < now()
+      ? { kind: 'expired', id: found.id }
+      : { kind: 'live' };
   };
 
   // A request admitted without a mint token takes one before anything is
@@ -552,8 +586,15 @@ async function handleMemberAccess (params: {
   };
 
   // (1) Idempotency: the pair's record, verified by id on the patient core.
+  // `grantKey` names the grant this ask goes through; `previousGone` says the
+  // record's child was proved gone during this ask (then a new child may
+  // take its record without keeping a copy of it).
+  const grantKey = ledger.grantKeyOf(t.grantApiEndpoint);
   const record: StoredLedgerRecord | null = await ledger.findRecord(ledgerDeps, userId, t.membershipAccess.id, relationshipAccessId);
-  if (record != null && record.state === 'live') {
+  let previousGone = false;
+  // A record made through a former grant of the relationship is not read by
+  // id: the current grant cannot see that child, and a 404 would say nothing.
+  if (record != null && record.state === 'live' && !ledger.isOfOtherGrant(record, grantKey)) {
     let read: outbound.DeliverResult;
     try {
       read = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'GET', path: 'accesses/' + encodeURIComponent(record.childAccessId), deps: peerDeps() });
@@ -566,7 +607,7 @@ async function handleMemberAccess (params: {
       const membershipExpires = t.membershipAccess.expires;
       const withinMembership = typeof membershipExpires !== 'number' || (typeof child?.expires === 'number' && child.expires <= membershipExpires);
       if (child?.id != null && typeof child.token === 'string' && remaining > REUSE_MIN_REMAINING_S && withinMembership && childCarries(child, t.permissions)) {
-        return await finish({ id: child.id, token: child.token, name: child.name ?? record.childName, expires: typeof child.expires === 'number' ? child.expires : record.expires, attribution: record.attribution }, 'reused');
+        return await finish({ id: child.id, token: child.token, name: child.name ?? record.childName, expires: typeof child.expires === 'number' ? child.expires : record.expires, attribution: record.attribution, viaAccessId: viaAccessIdOf(child) ?? record.viaAccessId ?? null }, 'reused');
       }
       // Stale: about to expire, past the membership, or not the permissions
       // asked. Deleted, then re-minted; a child not known gone is never
@@ -578,19 +619,40 @@ async function handleMemberAccess (params: {
         const del = await deleteChild(child.id);
         if (!deletedOrGone(del)) return peerFailure(del);
         await ledger.setState(ledgerDeps, userId, record.eventId, 'deleted', record.childAccessId);
+        previousGone = true;
       }
     } else if (read.reason === 'http-4xx' && read.status === 404) {
-      // Deleted by the patient, or expired: a new one is minted while the grant lasts.
-      await ledger.setState(ledgerDeps, userId, record.eventId, 'absent', record.childAccessId);
+      // A child this grant made, deleted by the patient or expired: absent,
+      // and a new one is minted while the grant lasts. A record without a key
+      // (written before it existed) stays undecided: the 404 may only mean
+      // that another grant made the child; the mint below decides.
+      if (record.grantKey === grantKey) {
+        await ledger.setState(ledgerDeps, userId, record.eventId, 'absent', record.childAccessId);
+        previousGone = true;
+      }
     } else {
       return peerFailure(read);
     }
   }
+  // The record names a child not known gone: a live one, a residual one, or
+  // one recorded absent without the current grant's key (an absent verdict
+  // reached through another grant, or by an earlier release, may be wrong),
+  // in each case with its expiry still ahead for a settled one.
+  const expiresAhead = record != null && typeof record.expires === 'number' && record.expires > now();
+  const previousOpen = record != null && !previousGone && (
+    record.state === 'live' ||
+    (record.state === 'residual' && expiresAhead) ||
+    (record.state === 'absent' && record.grantKey !== grantKey && expiresAhead));
 
-  // (2) Mint.
+  // (2) Mint. The deterministic name first, or straight the fallback name
+  // when the pair's record already names a child of that name.
   const refused = await mintAllowed();
   if (refused != null) return refused;
-  const name = childNameFor(member, t.membershipAccess.id, relationshipAccessId);
+  const baseName = childNameFor(member, t.membershipAccess.id, relationshipAccessId);
+  const fallbackName = baseName + '-' + grantKey.slice(0, 8);
+  let name = record?.childName === fallbackName ? fallbackName : baseName;
+  // Set when the name was found held by an access this grant does not list.
+  let nameHeldElsewhere = false;
   const body: Record<string, unknown> = {
     type: 'shared',
     name,
@@ -620,23 +682,46 @@ async function handleMemberAccess (params: {
       return unreachable();
     }
   }
-  if (!created.ok && created.reason === 'http-4xx' && peerErrorIdOf(created.body) === 'item-already-exists') {
-    // The deterministic name is taken. An EXPIRED child of that name (its
-    // record settled and pruned, the child left on the patient core until
-    // deleted) opens nothing: deleted, then the mint is tried once more. A
-    // live one may be a child this core minted for the pair and recorded
-    // where this process did not look (the next ask scans): never deleted.
-    ledger.forgetScan(ledgerDeps, userId);
-    const namesake = await expiredNamesake(name);
-    if (namesake != null) {
-      const del = await deleteChild(namesake);
-      if (!deletedOrGone(del)) return peerFailure(del);
-      try {
-        created = await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'POST', path: 'accesses', body, deps: peerDeps() });
-      } catch (_e) {
-        return unreachable();
-      }
+  // The deterministic name is taken (409). Looked up through the grant:
+  //   - an EXPIRED access of that name (its record settled and pruned, the
+  //     child left on the patient core until deleted) opens nothing:
+  //     deleted, then the mint is tried once more;
+  //   - a LIVE one may be a child this core minted for the pair and recorded
+  //     where this process did not look (the next ask scans): never deleted,
+  //     the ask fails;
+  //   - NONE listed: the name is held by an access this grant does not
+  //     manage, a child made through a former grant of the relationship. It
+  //     cannot be reached from here: the new child takes the fallback name,
+  //     and the old one stays tracked (a copy of its record, residual).
+  // One lookup per name, one fallback at most; a refusal after the expired
+  // namesake was deleted is reported.
+  const isNameTaken = (r: outbound.DeliverResult): boolean =>
+    !r.ok && r.reason === 'http-4xx' && peerErrorIdOf(r.body) === 'item-already-exists';
+  const createAs = async (childName: string): Promise<outbound.DeliverResult | null> => {
+    body.name = childName;
+    try {
+      return await outbound.requestPeer({ apiEndpoint: t.grantApiEndpoint, method: 'POST', path: 'accesses', body, deps: peerDeps() });
+    } catch (_e) {
+      return null;
     }
+  };
+  for (let lookups = 0; lookups < 2 && isNameTaken(created); lookups++) {
+    ledger.forgetScan(ledgerDeps, userId);
+    const namesake = await namesakeOf(name);
+    if (namesake?.kind === 'expired') {
+      const del = await deleteChild(namesake.id);
+      if (!deletedOrGone(del)) return peerFailure(del);
+      const next = await createAs(name);
+      if (next == null) return unreachable();
+      created = next;
+      break;
+    }
+    if (namesake?.kind !== 'not-listed' || name !== baseName) break;
+    nameHeldElsewhere = true;
+    name = fallbackName;
+    const next = await createAs(name);
+    if (next == null) return unreachable();
+    created = next;
   }
   if (!created.ok) return peerFailure(created);
   const child = ((created.body as { access?: PeerAccess } | null)?.access) ?? null;
@@ -644,26 +729,37 @@ async function handleMemberAccess (params: {
     return { ok: false, reason: CmcErrorIds.MEMBER_ACCESS_PEER_REJECTED, detail: { httpStatus: created.status } };
   }
   const expires = typeof child.expires === 'number' ? child.expires : now() + t.expireAfter;
-  return await finish({ id: child.id, token: child.token, name: child.name ?? name, expires, attribution }, 'minted');
+  // The record's previous child, not known gone, is kept tracked when the
+  // create does not prove it gone: the name was held elsewhere, or the child
+  // was created under another name than the previous one's (a free name says
+  // nothing about a child of another name).
+  const keepPrevious = previousOpen && (nameHeldElsewhere || record!.childName !== name);
+  return await finish({ id: child.id, token: child.token, name: child.name ?? name, expires, attribution, viaAccessId: viaAccessIdOf(child) }, 'minted', keepPrevious);
 
   /**
    * The ledger record first, then the membership re-read, then the token.
    */
-  async function finish (child: { id: string; token: string; name: string; expires: number; attribution: string }, mintOutcome: 'minted' | 'reused'): Promise<MemberAccessResult> {
+  async function finish (child: { id: string; token: string; name: string; expires: number; attribution: string; viaAccessId: string | null }, mintOutcome: 'minted' | 'reused', copyPrevious = false): Promise<MemberAccessResult> {
     // The record, before the token leaves. A record that cannot be written,
     // or whose pair was taken by another worker meanwhile (compare-and-set
     // on the child it names), means this child is untracked: deleted, and
     // the ask fails; the member asks again. A reuse whose record already
-    // says exactly this (at the pair's id) is not written again.
+    // says exactly this (at the pair's id, with the current grant's key) is
+    // not written again; a record without the key gets it (the read by id
+    // through the current grant proved which grant made the child).
+    // `copyPrevious`: the record's previous child is copied first, as
+    // `residual` / `grant-replaced` (ledger.displace); a copy that cannot be
+    // written leaves the new child untracked like a failed record write.
     let eventId: string | null = null;
     let writeError: unknown = null;
     const unchanged = mintOutcome === 'reused' && record != null && record.state === 'live' &&
-      record.childAccessId === child.id && record.expires === child.expires &&
+      record.childAccessId === child.id && record.expires === child.expires && record.grantKey === grantKey &&
       record.eventId === ledger.pairEventIdOf(t.membershipAccess.id, relationshipAccessId);
     if (unchanged) {
       eventId = record.eventId;
     } else {
       try {
+        if (copyPrevious && record != null) await ledger.displace(ledgerDeps, userId, record);
         eventId = await ledger.writeRecord(ledgerDeps, userId, {
           membershipAccessId: t.membershipAccess.id,
           member,
@@ -674,6 +770,8 @@ async function handleMemberAccess (params: {
           childName: child.name,
           expires: child.expires,
           attribution: child.attribution,
+          grantKey,
+          viaAccessId: child.viaAccessId,
           state: 'live',
           stateChangedAt: now(),
         }, record);

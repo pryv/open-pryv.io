@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### CMC: one grant per relationship
+
+- New `components/cmc/src/replacedGrants.ts`: `endReplacedGrants` (accepter side, called by
+  `handleIncomingBackChannel` on the path bound to the writing grant once the stamp succeeded: older grants of the
+  same role, counterparty and scope deleted through the mall, accept marked `replaced`, a replaced membership swept;
+  a failed delete fails the delivery retryably, `cmc-back-channel-replace-failed`), `closeOutFormerPairing`
+  (requester side, called by `handleIncomingAccept` on a re-pairing: `sweepRelationship` with the access as read
+  before the heal, former invite stamped `revoked` + `replacedBy`), `isRePairing`, and the test seam
+  `setOlderPeerForTests`.
+- `handleIncomingAccept`: stamps `clientData.cmc.peerAcceptReceivedAt` (the accept's `created`, read by id on a
+  retry) and refuses an older accept (`cmc-incoming-accept-superseded`, in `NON_RETRYABLE_REASONS`); the
+  back-channel post is queued with `retryQueue.enqueueDelivery` on a retryable failure.
+- Member ledger records carry `grantKey` (first 16 hex characters of the SHA-256 of the grant endpoint) and
+  `viaAccessId`; `ledger.displace` keeps a former grant's record at a random id as `residual` / `grant-replaced`.
+  `revokeRecords` skips a record of another grant, only lets the read-back settle a residual for a child of the
+  sweeping grant, never after `peer-rejected`, and reports 401 as `residual` / `grant-gone`; snapshot records the
+  ledger no longer holds are checked through the grant (`track: false`). `memberSweep.relationshipEnded` takes the
+  ended access. `handleMemberAccess`: no read by id for a record of another grant, three-way namesake lookup,
+  fallback child name, the trigger stream's own relationship first.
+- `handleAccept`: a queued retry reads the stored trigger first and is refused (`CmcErrorIds.ACCEPT_WITHDRAWN`,
+  non-retryable) when it carries `withdrawal`, or when a newer grant of the same relationship exists
+  (`replacedGrants.newerGrantOf`); an own grant never paired is then deleted and its accept marked `replaced`.
+  `CmcErrorIds.INCOMING_ACCEPT_SUPERSEDED` and `ACCEPT_WITHDRAWN` are new catalogue entries.
+- `revokeRecords` settles a record already known unreachable (`residualReason` `grant-replaced` / `grant-unknown`)
+  before it looks at the relationship; the ledger pass leaves those out of its residual batch;
+  `relationshipEnded` leaves a keyless record `residual` / `grant-unknown` while its expiry is ahead. The
+  close-out runs right after the heal. An unreadable accept age on a stamped relationship is a retryable failure.
+  A terminal queued back-channel delivery drops the endpoint from its body.
+- `handleAccept` 3d: a paired own grant completes the replay without delivering (`acceptedResult`); the own grant
+  is judged and the relationship taken from the same read of the accesses (its stored stamps); the `replaced`
+  marker only after the delete succeeded (else `cmc-handler-replaced-grant-delete-failed`, retryable); a deleted
+  trigger refuses the replay. The delivery roll-back tests the back-channel on the grant as stored now
+  (`currentGrant`) before any roll-back.
+- Tests: `[CMCSA]` e2e `CSA05`-`CSA16` (`components/api-server/test/cmc-second-accept.test.js`), unit `CSA20`-`CSA47`
+  in `components/cmc/test`; `[MR44]`, `[HMA11]`, `[HMA13]` updated to the new verdicts and fixtures.
+
 ### Tests
 
 - `[CFE5]` no longer looks for a short secret (CI's PostgreSQL password, `pryv`) inside an answer whose host names
