@@ -68,7 +68,19 @@ process.on('SIGINT', () => {
 // flags). `dryRun` runs the full wizard but writes nothing — it previews
 // every file it would produce. `force` overwrites an existing config +
 // launcher scripts without prompting.
-const OPTS = { dryRun: false, force: false, nonInteractive: false, configFrom: null };
+const OPTS = { dryRun: false, force: false, nonInteractive: false, configFrom: null, profile: null, diagnose: false, insidePaas: false };
+
+// Canned answer sets, one YAML file per profile (an implementer adds one by
+// dropping a file there). Same format as a --config-from file.
+const PROFILES_DIR = path.resolve(__dirname, 'init.profiles');
+
+function profileNames () {
+  try {
+    return fs.readdirSync(PROFILES_DIR).filter(f => f.endsWith('.yml')).map(f => f.slice(0, -4)).sort();
+  } catch (_) {
+    return [];
+  }
+}
 
 function printUsage () {
   process.stdout.write(`open-pryv.io init — single-core install wizard
@@ -88,26 +100,42 @@ Options:
   --non-interactive     Never prompt: every answer comes from --config-from and/or
                         PRYV_INIT_<KEY> env vars, else its default; a missing required
                         answer is a hard error. Implies a non-TTY run.
+  --profile=<name>      Canned answers for a common install (${profileNames().join(', ') || 'none found'}),
+                        read from bin/init.profiles/<name>.yml. A --config-from or
+                        PRYV_INIT_<KEY> answer wins over the profile; what the
+                        profile leaves out is prompted (or defaulted).
+  --diagnose            Check this host only: environment, ports, DNS delegation and
+                        UDP/53 (from the existing pryv-config.yml when there is one,
+                        else from the answers). Never prompts, writes nothing; exits 1
+                        when a problem is found.
+  --inside-paas         For a platform that runs the container and terminates TLS
+                        (Dokku, Heroku-style): forces dnsLess and TLS "none", skips the
+                        port bind tests, and leaves the PostgreSQL connection to the
+                        DATABASE_URL the platform sets (read at boot, never written).
   -h, --help            Show this help and exit.
 
 Answer keys use the env form PRYV_INIT_<KEY> (dots → underscores), e.g.
 PRYV_INIT_DNSLESS, PRYV_INIT_DB_ENGINE, PRYV_INIT_SERVICE_NAME. Run --dry-run
-once interactively: every prompt then shows its env name. A file answer wins
-over the env. Prefer the file for secrets (container env is visible to
-\`docker inspect\`). Invalid values and unused file keys are reported.
+once interactively: every prompt then shows its env name. Precedence: file,
+then env, then profile, then default, then prompt. Prefer the file for secrets
+(container env is visible to \`docker inspect\`). Invalid values and unused
+file keys are reported.
 `);
 }
 
 function parseArgs (argv) {
-  const opts = { help: false, dryRun: false, force: false, nonInteractive: false, configFrom: null };
+  const opts = { help: false, dryRun: false, force: false, nonInteractive: false, configFrom: null, profile: null, diagnose: false, insidePaas: false };
   for (const a of argv) {
     if (a === '-h' || a === '--help') opts.help = true;
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--force') opts.force = true;
     else if (a === '--non-interactive') opts.nonInteractive = true;
+    else if (a === '--diagnose') opts.diagnose = true;
+    else if (a === '--inside-paas') opts.insidePaas = true;
     else if (a.startsWith('--config-from=')) opts.configFrom = a.slice('--config-from='.length);
-    else if (a === '--config-from') {
-      process.stderr.write('init: --config-from needs a file: --config-from=<file>. Try --help.\n');
+    else if (a.startsWith('--profile=')) opts.profile = a.slice('--profile='.length);
+    else if (a === '--config-from' || a === '--profile') {
+      process.stderr.write(`init: ${a} needs a value: ${a}=<${a === '--profile' ? 'name' : 'file'}>. Try --help.\n`);
       process.exit(2);
     } else if (a.startsWith('-')) {
       process.stderr.write(`init: unknown option "${a}". Try --help.\n`);
@@ -124,23 +152,23 @@ function parseArgs (argv) {
  * map. Values are stringified so the ask*() helpers treat them like typed
  * input. Exits 2 on unreadable / malformed / non-mapping files.
  */
-function loadAnswersFile (file) {
+function loadAnswersFile (file, label = '--config-from file') {
   let raw;
   try {
     raw = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    process.stderr.write(`init: cannot read --config-from file "${file}": ${err.message}\n`);
+    process.stderr.write(`init: cannot read ${label} "${file}": ${err.message}\n`);
     process.exit(2);
   }
   let obj;
   try {
     obj = yaml.load(raw); // js-yaml parses JSON too
   } catch (err) {
-    process.stderr.write(`init: --config-from file "${file}" is not valid YAML/JSON: ${err.message}\n`);
+    process.stderr.write(`init: ${label} "${file}" is not valid YAML/JSON: ${err.message}\n`);
     process.exit(2);
   }
   if (obj == null || typeof obj !== 'object' || Array.isArray(obj)) {
-    process.stderr.write(`init: --config-from file "${file}" must be a mapping of answer keys to values.\n`);
+    process.stderr.write(`init: ${label} "${file}" must be a mapping of answer keys to values.\n`);
     process.exit(2);
   }
   // Flatten nested mappings into dotted keys (`db: { engine: x }` → `db.engine`);
@@ -150,7 +178,7 @@ function loadAnswersFile (file) {
     for (const [k, v] of Object.entries(o)) {
       const key = (prefix ? prefix + '.' + k : k).toLowerCase();
       if (Array.isArray(v)) {
-        process.stderr.write(`init: --config-from file "${file}": "${key}" is a list; answers must be scalar values.\n`);
+        process.stderr.write(`init: ${label} "${file}": "${key}" is a list; answers must be scalar values.\n`);
         process.exit(2);
       }
       if (v != null && typeof v === 'object') walk(key, v);
@@ -159,6 +187,16 @@ function loadAnswersFile (file) {
   };
   walk('', obj);
   return m;
+}
+
+/** Load the answers of --profile=<name>; exits 2 on an unknown name. */
+function loadProfile (name) {
+  const names = profileNames();
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || !names.includes(name)) {
+    process.stderr.write(`init: unknown profile "${name}". Available: ${names.join(', ') || 'none'} (files in ${PROFILES_DIR}).\n`);
+    process.exit(2);
+  }
+  return loadAnswersFile(path.join(PROFILES_DIR, name + '.yml'), `profile "${name}"`);
 }
 
 /** An expected operator error (bad or missing answer): printed without a stack, exit 2. */
@@ -207,23 +245,39 @@ function secureConfigFile (absPath) {
   }
 }
 
-// Programmatic answers (--config-from file → env → prompt). Every ask*()
-// takes a stable `key`; the env var form is PRYV_INIT_<KEY> with dots
+// Programmatic answers (--config-from file → env → --profile → prompt). Every
+// ask*() takes a stable `key`; the env var form is PRYV_INIT_<KEY> with dots
 // uppercased to underscores (e.g. key 'db.engine' → PRYV_INIT_DB_ENGINE).
 let ANSWERS = null; // Map<key,string> loaded from --config-from, or null
+let PROFILE = null; // Map<key,string> loaded from --profile, or null
 const CONSUMED = new Set(); // answer keys the wizard asked for (to report unused file keys)
 
 function envVarFor (key) {
   return 'PRYV_INIT_' + key.toUpperCase().replace(/[.]/g, '_');
 }
 
-/** Resolve a programmatic answer for `key`: config-from file, then env. */
+/** Resolve a programmatic answer for `key`: config-from file, then env, then profile. */
 function autoAnswer (key) {
   if (key == null) return undefined;
   CONSUMED.add(key);
   if (ANSWERS && ANSWERS.has(key)) return ANSWERS.get(key);
   const env = process.env[envVarFor(key)];
-  return env; // undefined when unset
+  if (env !== undefined) return env;
+  if (PROFILE && PROFILE.has(key)) return PROFILE.get(key);
+  return undefined;
+}
+
+/**
+ * A value a mode imposes (--inside-paas): no prompt, and a supplied answer
+ * that says otherwise is refused rather than silently ignored. `same(raw)`
+ * tells whether a supplied raw answer means the imposed value.
+ */
+function forcedAnswer (key, value, why, same) {
+  const supplied = autoAnswer(key);
+  if (supplied !== undefined && String(supplied).trim() !== '' && !same(String(supplied).trim().toLowerCase())) {
+    throw usageError(`init: "${key}" (${envVarFor(key)}) is "${supplied}", but ${why}.`);
+  }
+  return value;
 }
 
 /** Answers-file keys no prompt asked for: typos or keys for another path. */
@@ -492,7 +546,57 @@ function probeUdp53 (ip, domain, timeoutMs = 3000) {
   });
 }
 
+/**
+ * Try to bind <port> on all interfaces (proto 'udp' or 'tcp') and release it
+ * at once. Resolves 'free', 'in-use' (another process holds it), 'denied'
+ * (a privileged port and no right to bind it) or the error code.
+ */
+function probeBind (port, proto) {
+  return new Promise((resolve) => {
+    const done = (result, close) => {
+      try { close(); } catch (_) {}
+      resolve(result);
+    };
+    const onError = (err, close) => {
+      if (err.code === 'EADDRINUSE') return done('in-use', close);
+      if (err.code === 'EACCES' || err.code === 'EPERM') return done('denied', close);
+      return done(err.code || String(err), close);
+    };
+    if (proto === 'udp') {
+      const sock = require('dgram').createSocket('udp4');
+      const close = () => sock.close();
+      sock.once('error', (err) => onError(err, close));
+      sock.bind(port, '0.0.0.0', () => done('free', close));
+    } else {
+      const server = require('net').createServer();
+      const close = () => server.close();
+      server.once('error', (err) => onError(err, close));
+      server.listen(port, '0.0.0.0', () => done('free', close));
+    }
+  });
+}
+
+/** systemd-resolved hint, printed when port 53 is already taken on the host. */
+const SYSTEMD_RESOLVED_HINT = [
+  'Modern Linux distributions (Ubuntu 24+, Fedora 40+, recent Debian) run systemd-resolved,',
+  'which may hold port 53. To free it:',
+  '    sudo systemctl disable --now systemd-resolved',
+  '    sudo rm /etc/resolv.conf',
+  '    echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf',
+  'Then check with: sudo ss -tulnp | grep \':53 \''
+];
+
 function bar (n = 50) { return '─'.repeat(n); }
+
+/** `core.id` the generated config leaves at its default (the wizard does not set it). */
+function defaultCoreId () {
+  try {
+    const defaults = yaml.load(fs.readFileSync(path.resolve(__dirname, '../config/default-config.yml'), 'utf8'));
+    return (defaults && defaults.core && defaults.core.id) || 'single';
+  } catch (_) {
+    return 'single';
+  }
+}
 
 /**
  * Default `pryvio/open-pryv.io:<tag>` image string used in the generated
@@ -543,7 +647,7 @@ function section (yaml, title, doc, obj) {
  * coverage for the appendix is at `bin/test/init-appendix.test.js` (TODO
  * — currently exercised only by manual smoke tests).
  */
-function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite', fileEngine = 'filesystem', authUiUrl = 'https://account.example.com' }) {
+function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite', fileEngine = 'filesystem', authUiUrl = 'https://account.example.com', hasHostedSites = false }) {
   // Diskless platform storage — only meaningful for single-core dnsLess in
   // full PG mode; omitted entirely when the wizard already enabled it.
   const PLATFORM_DISKLESS_BLOCK = (dnsLess && platformEngine === 'rqlite')
@@ -813,7 +917,7 @@ ${dnsLess
 # # hostedSites: a reserved name that serves a static folder (e.g. an auth /
 # # account UI bundle) or proxies a fixed upstream, instead of a user account.
 # # ${dnsLess ? 'dnsLess: served under <publicUrl>/<name>/, same origin as the API (build the bundle with that base).' : 'Served on <name>.<dns.domain>, its own origin. Deploy the folder on every core listing it.'}
-# # The core refuses to boot when the folder has no index.html or a user holds the name.
+${hasHostedSites ? '# # The hostedSites: block above already holds the administration portal: add entries there.\n' : ''}# # The core refuses to boot when the folder has no index.html or a user holds the name.
 # # Site answers refuse to be framed (clickjacking); frameAncestors lists who may frame it
 # # (keywords quoted, 'none' only alone; x-frame-options cannot be set in headers).
 # # hsts: auto (default) sends Strict-Transport-Security only when this core terminates
@@ -1222,6 +1326,169 @@ function discoverHostPath (containerPath) {
   return null;
 }
 
+/**
+ * --diagnose: check this host for the install described by the existing
+ * config (or, without one, by the answers), without prompting or writing.
+ * Returns the exit code: 0 when no problem was found, 1 otherwise.
+ */
+async function runDiagnose ({ absConfigDir, absConfigPath, dataFolder }) {
+  OPTS.nonInteractive = true; // answers come from file / env / profile / defaults only
+  const problems = [];
+  const notes = [];
+  const ok = [];
+
+  console.log();
+  console.log('open-pryv.io install diagnostics (no prompt, nothing written)');
+  console.log(bar());
+
+  // What to check: the existing config wins over the answers.
+  let existing = null;
+  if (fs.existsSync(absConfigPath)) {
+    try {
+      existing = yaml.load(fs.readFileSync(absConfigPath, 'utf8')) || {};
+      console.log(`Reading ${absConfigPath}`);
+    } catch (err) {
+      problems.push(`${absConfigPath} cannot be read as YAML: ${err.message}`);
+    }
+  }
+  let dnsActive, dnsDomain, publicIp, dnsPort, httpPort, acmeHttp;
+  let topologyGiven = true;
+  if (existing) {
+    dnsActive = !!(existing.dns && existing.dns.active === true) && !(existing.dnsLess && existing.dnsLess.isActive === true);
+    dnsDomain = existing.dns && existing.dns.domain;
+    publicIp = existing.dns && existing.dns.publicIp;
+    dnsPort = (existing.dns && existing.dns.port) || 53;
+    httpPort = (existing.http && existing.http.port) || 3000;
+    acmeHttp = !!(existing.letsEncrypt && existing.letsEncrypt.enabled === true);
+  } else {
+    console.log(`No ${CONFIG_FILENAME} in ${absConfigDir}: checking the answers (file, env, profile, defaults).`);
+    topologyGiven = OPTS.insidePaas || autoAnswer('dnsless') !== undefined;
+    const dnsLess = OPTS.insidePaas ? true : await askYesNo('dnsLess', false, 'dnsless');
+    dnsActive = !dnsLess;
+    dnsDomain = dnsActive ? await ask('dns domain', '', 'dnsdomain') : null;
+    publicIp = dnsActive ? await ask('public IP', '', 'publicip') : null;
+    dnsPort = 53;
+    const tls = OPTS.insidePaas ? 'none' : await askChoice('tls', ['letsEncrypt', 'custom', 'none'], 0, 'tls.strategy');
+    httpPort = tls === 'none' ? 3000 : 443;
+    acmeHttp = tls === 'letsEncrypt';
+  }
+  console.log();
+
+  // Environment
+  console.log('▸ Environment');
+  if (!fs.existsSync(absConfigDir)) {
+    problems.push(`Config directory ${absConfigDir} does not exist (mount a writable host directory there).`);
+  } else if (!dirWritable(absConfigDir)) {
+    problems.push(`Config directory ${absConfigDir} is not writable.`);
+  } else {
+    ok.push(`Config directory writable: ${absConfigDir}`);
+  }
+  if (fs.existsSync(dataFolder)) {
+    if (dirWritable(dataFolder)) ok.push(`Data folder writable: ${dataFolder}`);
+    else problems.push(`Data folder ${dataFolder} exists but is not writable.`);
+  } else {
+    notes.push(`Data folder ${dataFolder} does not exist yet (run-pryv.sh creates it).`);
+  }
+  ok.push(`Node.js ${process.version}`);
+  ok.forEach(l => console.log(`  ✓ ${l}`));
+  ok.length = 0;
+
+  // Ports
+  console.log('▸ Ports');
+  if (OPTS.insidePaas) {
+    console.log('  ℹ --inside-paas: the platform binds the ports, bind tests skipped.');
+  } else {
+    if (__dirname === '/app/bin') {
+      console.log('  ℹ Inside a container the bind tests see the container\'s own ports; run it with');
+      console.log('    `--network host` to test the host\'s.');
+    }
+    const probes = [];
+    if (dnsActive) probes.push([dnsPort, 'udp'], [dnsPort, 'tcp']);
+    probes.push([httpPort, 'tcp']);
+    if (acmeHttp && httpPort !== 80) probes.push([80, 'tcp']);
+    let dnsTaken = false;
+    for (const [port, proto] of probes) {
+      const result = await probeBind(port, proto);
+      if (result === 'free') {
+        console.log(`  ✓ ${port}/${proto} is free`);
+      } else if (result === 'in-use') {
+        problems.push(`Port ${port}/${proto} is already in use on this host: the core cannot bind it.`);
+        if (port === dnsPort) dnsTaken = true;
+      } else if (result === 'denied') {
+        console.log(`  ℹ ${port}/${proto}: no right to bind a privileged port here; run --diagnose as root to test it.`);
+      } else {
+        console.log(`  ℹ ${port}/${proto}: could not be tested (${result}).`);
+      }
+    }
+    if (dnsTaken) SYSTEMD_RESOLVED_HINT.forEach(l => notes.push(l));
+  }
+
+  // DNS chain
+  console.log('▸ DNS');
+  if (!dnsActive) {
+    console.log('  ℹ dnsLess: no embedded DNS, nothing to check.');
+  } else if (!dnsDomain && !topologyGiven) {
+    console.log('  ℹ No config and no "dnsless" / "dnsdomain" answer: DNS not checked (pass --config-from,');
+    console.log('    PRYV_INIT_DNSLESS / PRYV_INIT_DNSDOMAIN or --profile to check a dns-active install).');
+  } else if (!dnsDomain) {
+    problems.push('dns-active but no domain: set dns.domain in the config, or the "dnsdomain" answer.');
+  } else {
+    console.log(`  Checking the delegation of ${dnsDomain} (best-effort, a few seconds)…`);
+    const delegation = await lookupDelegationAtParent(dnsDomain);
+    if (delegation === null) {
+      problems.push(`No NS delegation for ${dnsDomain} at its parent zone: Let's Encrypt DNS-01 cannot succeed until the parent delegates it to a nameserver resolving to this host${publicIp ? ` (${publicIp})` : ''}.`);
+    } else if (delegation === undefined) {
+      console.log(`  ℹ Could not verify the delegation of ${dnsDomain} (offline or filtered DNS).`);
+    } else {
+      console.log(`  ✓ NS delegation for ${dnsDomain}: ${delegation.ns.join(', ')}`);
+      const nsIps = new Set();
+      for (const h of delegation.ns) (await lookupA(h)).forEach(ip => nsIps.add(ip));
+      if (publicIp && nsIps.size && !nsIps.has(publicIp)) {
+        problems.push(`The delegation of ${dnsDomain} resolves to ${[...nsIps].join(', ')}, not to the public IP ${publicIp}.`);
+      } else if (publicIp && nsIps.has(publicIp)) {
+        console.log(`  ✓ The delegation resolves to the public IP (${publicIp})`);
+      }
+    }
+    if (publicIp) {
+      if (await probeUdp53(publicIp, dnsDomain)) {
+        console.log(`  ✓ A DNS listener answers on ${publicIp}:53/udp.`);
+      } else {
+        console.log(`  ℹ No answer on ${publicIp}:53/udp (normal before the core runs; afterwards check the firewall and the -p 53:53/udp mapping).`);
+      }
+    } else {
+      notes.push('No public IP known (dns.publicIp or the "publicip" answer): the UDP/53 reachability test was skipped.');
+    }
+  }
+
+  console.log();
+  if (notes.length) notes.forEach(n => console.log(`  ℹ ${n}`));
+  if (problems.length) {
+    console.log(`  ✗ ${problems.length} problem(s):`);
+    problems.forEach(p => console.log(`    - ${p}`));
+  } else {
+    console.log('  No problem found.');
+  }
+  console.log();
+  return problems.length ? 1 : 0;
+}
+
+/** Printed when this host joins an existing cluster: the wizard writes nothing then. */
+function printJoinProcedure () {
+  console.log('▸ Joining an existing cluster');
+  console.log('  A joining core takes its configuration from a bootstrap bundle issued by the core');
+  console.log('  that holds the cluster CA, not from this wizard: nothing is written here.');
+  console.log();
+  console.log('  1. On the core that holds the cluster CA, issue a bundle for this host:');
+  console.log('       node bin/bootstrap.js new-core --id <new-core-id> --ip <this host\'s public IP>');
+  console.log('     Move the bundle file and its passphrase to this host by two different channels.');
+  console.log('  2. On this host, start the core from the bundle:');
+  console.log('       node bin/master.js --bootstrap <bundle file> --bootstrap-passphrase-file <passphrase file>');
+  console.log('     (add --bootstrap-ack-trust-system-ca when the first core\'s API has a public certificate).');
+  console.log();
+  console.log('  Details, voter / non-voter roles and Docker forms: SINGLE-TO-MULTIPLE.md.');
+  console.log();
+}
+
 async function main () {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed.help) {
@@ -1233,7 +1500,11 @@ async function main () {
   OPTS.force = parsed.force;
   OPTS.nonInteractive = parsed.nonInteractive;
   OPTS.configFrom = parsed.configFrom;
+  OPTS.profile = parsed.profile;
+  OPTS.diagnose = parsed.diagnose;
+  OPTS.insidePaas = parsed.insidePaas;
   if (OPTS.configFrom) ANSWERS = loadAnswersFile(OPTS.configFrom);
+  if (OPTS.profile) PROFILE = loadProfile(OPTS.profile);
 
   // Local-dev escape hatch: skip /app/pryv when PRYV_CONFIG_DIR is set so
   // contributors can run the wizard outside docker without juggling mounts.
@@ -1243,6 +1514,19 @@ async function main () {
   const absConfigDir = localDevDir ? path.resolve(localDevDir) : CONTAINER_CONFIG_DIR;
   const hostConfigDir = localDevDir ? absConfigDir : discoverHostPath(CONTAINER_CONFIG_DIR);
 
+  // --diagnose: checks only. No prompt (so no TTY needed), no write, and an
+  // existing config is what it reads rather than a reason to refuse.
+  if (OPTS.diagnose) {
+    const code = await runDiagnose({
+      absConfigDir,
+      absConfigPath: path.join(absConfigDir, CONFIG_FILENAME),
+      dataFolder: path.join(absConfigDir, 'data')
+    });
+    rl.close();
+    process.exitCode = code;
+    return;
+  }
+
   // Refuse to run without an interactive TTY — UNLESS answers are being fed
   // programmatically (piped/scripted). Without `-it` on docker run, stdin is
   // closed and the very first prompt EOFs; surface that with the actual fix
@@ -1250,7 +1534,7 @@ async function main () {
   // scripted input modes) legitimately run non-TTY (CI, `answers | init`),
   // so the guard is skipped there; the EOF guard in ask() still fails fast
   // on under-fed input.
-  const inputIsPiped = OPTS.dryRun || OPTS.nonInteractive || OPTS.configFrom != null;
+  const inputIsPiped = OPTS.dryRun || OPTS.nonInteractive || OPTS.configFrom != null || OPTS.profile != null;
   if (!process.stdin.isTTY && !inputIsPiped) {
     console.error('init: no interactive TTY attached to stdin.');
     console.error('  The wizard needs to prompt you — re-run docker with `-it`:');
@@ -1333,13 +1617,38 @@ async function main () {
   // 1. dnsLess mode — default OFF (matches canonical Pryv URL shape +
   // multi-core deployments). dnsLess ON is the lighter single-host mode.
   console.log('▸ DNS topology');
-  console.log('  dnsLess OFF → each user gets a subdomain: https://alice.example.com/events');
-  console.log('                (canonical Pryv shape; needs embedded DNS + delegated zone +');
-  console.log('                 port 53 udp+tcp on the host + LE wildcard cert via DNS-01)');
-  console.log('  dnsLess ON  → users share one FQDN: https://example.com/<username>/events');
-  console.log('                (simpler single-host setup; no DNS server, HTTP-01 LE works)');
-  const dnsLess = await askYesNo('Enable dnsLess mode?', false, 'dnsless');
+  let dnsLess;
+  if (OPTS.insidePaas) {
+    const yes = ['y', 'yes', 'true', '1', 'on'];
+    dnsLess = forcedAnswer('dnsless', true, '--inside-paas forces dnsLess (the platform routes one host name to the container)', raw => yes.includes(raw));
+    console.log('  dnsLess ON (--inside-paas): users share one FQDN: https://example.com/<username>/events');
+  } else {
+    console.log('  dnsLess OFF → each user gets a subdomain: https://alice.example.com/events');
+    console.log('                (canonical Pryv shape; needs embedded DNS + delegated zone +');
+    console.log('                 port 53 udp+tcp on the host + LE wildcard cert via DNS-01)');
+    console.log('  dnsLess ON  → users share one FQDN: https://example.com/<username>/events');
+    console.log('                (simpler single-host setup; no DNS server, HTTP-01 LE works)');
+    dnsLess = await askYesNo('Enable dnsLess mode?', false, 'dnsless');
+  }
   console.log();
+
+  // 1b. Cluster gating. dnsLess is single-core by construction: no question.
+  // With subdomains, a host either starts a new platform (and becomes the
+  // holder of the cluster CA, so further cores can join later) or joins an
+  // existing one, whose configuration comes from a bootstrap bundle.
+  let clusterMode = 'single';
+  if (!dnsLess) {
+    console.log('▸ Cluster');
+    console.log('  new  → start a new platform; this core becomes the cluster CA holder, so cores can join later');
+    console.log('  join → add this host to an existing platform (configured from a bootstrap bundle)');
+    clusterMode = await askChoice('Starting a new platform or joining an existing cluster?', ['new', 'join'], 0, 'cluster.mode');
+    console.log();
+    if (clusterMode === 'join') {
+      printJoinProcedure();
+      rl.close();
+      return;
+    }
+  }
 
   // 2. Hostname / domain
   let publicUrl;
@@ -1386,11 +1695,29 @@ async function main () {
   console.log('▸ User-data storage engine');
   console.log('  sqlite     → one file per user; no extra service; cleaner GDPR Art.17 erasure');
   console.log('  postgresql → shared tables keyed by user_id; one DB to back up + administer');
-  const dbEngine = await askChoice('Choose:', ['sqlite', 'postgresql'], 0, 'db.engine');
+  // --inside-paas with a DATABASE_URL (e.g. `dokku postgres:link`): the core
+  // reads it at boot for every connection field the config leaves at its
+  // default, so the wizard offers postgresql first and writes no connection.
+  const paasDatabaseUrl = OPTS.insidePaas && process.env.DATABASE_URL ? process.env.DATABASE_URL : null;
+  if (paasDatabaseUrl) console.log('  (DATABASE_URL is set: postgresql is the default)');
+  const dbEngine = await askChoice('Choose:', ['sqlite', 'postgresql'], paasDatabaseUrl ? 1 : 0, 'db.engine');
   console.log();
 
   let pgConfig = null;
-  if (dbEngine === 'postgresql') {
+  let pgFromDatabaseUrl = false;
+  if (dbEngine === 'postgresql' && paasDatabaseUrl) {
+    // Validate only; never print or write the URL (it holds the password).
+    const { parseDatabaseUrl } = require('../storages/engines/postgresql/src/databaseUrl.ts');
+    try {
+      parseDatabaseUrl(paasDatabaseUrl);
+    } catch (err) {
+      throw usageError('init: ' + err.message);
+    }
+    pgFromDatabaseUrl = true;
+    console.log('▸ PostgreSQL connection');
+    console.log('  Taken from DATABASE_URL at boot (not written to the config).');
+    console.log();
+  } else if (dbEngine === 'postgresql') {
     console.log('▸ PostgreSQL connection');
     pgConfig = {
       host: await ask('  Host', 'localhost', 'db.host'),
@@ -1502,10 +1829,16 @@ async function main () {
 
   // 8. TLS strategy
   console.log('▸ TLS strategy');
-  console.log('  letsEncrypt → master serves HTTPS via embedded ACME (auto-renew, DNS-01 default)');
-  console.log('  custom      → bring your own cert files (mount them into the container)');
-  console.log('  none        → plain HTTP on :3000 (auth flows expect HTTPS — testing only)');
-  const tlsStrategy = await askChoice('Choose:', ['letsEncrypt', 'custom', 'none'], 0, 'tls.strategy');
+  let tlsStrategy;
+  if (OPTS.insidePaas) {
+    tlsStrategy = forcedAnswer('tls.strategy', 'none', '--inside-paas forces TLS "none" (the platform terminates TLS)', raw => raw === 'none' || raw === '3');
+    console.log('  none (--inside-paas): plain HTTP on :3000, the platform terminates TLS in front');
+  } else {
+    console.log('  letsEncrypt → master serves HTTPS via embedded ACME (auto-renew, DNS-01 default)');
+    console.log('  custom      → bring your own cert files (mount them into the container)');
+    console.log('  none        → plain HTTP on :3000 (auth flows expect HTTPS — testing only)');
+    tlsStrategy = await askChoice('Choose:', ['letsEncrypt', 'custom', 'none'], 0, 'tls.strategy');
+  }
   console.log();
 
   let leConfig = null;
@@ -1611,6 +1944,29 @@ async function main () {
     console.log();
   }
 
+  // 15. Administration portal: a hosted site on a reserved platform name.
+  // Written on new installs only (the name becomes a reserved username, so an
+  // existing platform adds it by hand after checking no account holds it).
+  const portalDefaults = require('../components/business/src/admin/portalDefaults.ts');
+  console.log('▸ Administration portal');
+  console.log('  pages  → expose the portal published on GitHub Pages (version matching this core)');
+  console.log('           through this core; nothing to deploy, needs outbound HTTPS to pryv.github.io');
+  console.log('  static → serve a portal build from a folder on this host (custom builds, air-gapped)');
+  console.log('  none   → no portal (setup and administration by the API and the command line)');
+  const portalMode = await askChoice('Expose the administration portal?', ['pages', 'static', 'none'], 0, 'portal.mode');
+  let portalSite = null;
+  let portalStatic = null;
+  if (portalMode !== 'none') {
+    portalSite = (await askNonEmpty('  Site name (a reserved name: no account may use it)', portalDefaults.PORTAL_DEFAULT_SITE, 'portal.site')).toLowerCase();
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(portalSite) || portalSite.length > 63) {
+      throw invalidAnswer('portal.site', portalSite, 'a DNS label (1-63 lowercase letters, digits or inner hyphens)');
+    }
+    if (portalMode === 'static') {
+      portalStatic = await askNonEmpty('  Folder holding the portal build (its index.html), inside the container', `${absConfigDir}/sites/${portalSite}`, 'portal.static');
+    }
+  }
+  console.log();
+
   // ── VALIDATION ────────────────────────────────────────────────
   console.log();
   console.log('Validating host environment');
@@ -1644,7 +2000,33 @@ async function main () {
     problems.push(`Public URL does not start with http: ${publicUrl}`);
   }
 
-  if (tlsStrategy === 'none') {
+  if (portalMode === 'static' && !fs.existsSync(path.join(portalStatic, 'index.html'))) {
+    warnings.push(`No index.html in ${portalStatic} yet: unpack the portal release there (the ${dnsLess ? 'prefixed/' : 'root/'} build) before starting, the core refuses to boot without it.`);
+  }
+  if (portalMode === 'pages' && dnsLess && portalSite !== portalDefaults.PORTAL_DEFAULT_SITE) {
+    warnings.push(`The published portal build for dnsLess is served under /${portalDefaults.PORTAL_DEFAULT_SITE}/; under /${portalSite}/ it needs a custom build (portal.mode static, or your own proxy).`);
+  }
+  // The portal entry, checked by the same validator as boot and check-config.
+  let portalHostedSites = null;
+  if (portalMode !== 'none') {
+    const entry = portalMode === 'pages'
+      ? { proxy: portalDefaults.portalPagesUrl({ dnsLess }) }
+      : { static: portalStatic };
+    entry.headers = { 'content-security-policy': portalDefaults.portalSiteCsp({ dnsLess, dnsDomain }) };
+    portalHostedSites = { [portalSite]: entry };
+    const { describeHostedSites } = require('../components/business/src/hostedSites.ts');
+    const report = describeHostedSites({
+      hostedSites: portalHostedSites,
+      domain: dnsDomain || null,
+      dnsLessActive: dnsLess,
+      publicUrl,
+      coreId: defaultCoreId()
+    });
+    report.problems.forEach(p => problems.push(`Administration portal: ${p}`));
+    report.warnings.forEach(w => warnings.push(`Administration portal: ${w}`));
+  }
+
+  if (tlsStrategy === 'none' && !OPTS.insidePaas) {
     warnings.push('TLS disabled — auth flows expect HTTPS. Use this only for internal LAN / load-balancer-terminated deployments.');
   }
   if (!dnsLess) {
@@ -1903,6 +2285,29 @@ async function main () {
     config.services = { email: emailConfig };
   }
 
+  if (portalHostedSites) {
+    config.hostedSites = portalHostedSites;
+    config.portal = { site: portalSite };
+  }
+
+  // New platform with subdomains: this core holds the cluster CA. The CA, the
+  // join-token store and this core's Raft node certificate live on the data
+  // volume (the defaults under /etc and /var/lib are not persisted in a
+  // container); the certificate files are created after the config is written.
+  let caHolder = null;
+  if (clusterMode === 'new') {
+    const clusterDir = `${dataFolder}/cluster`;
+    caHolder = { caDir: `${clusterDir}/ca`, tlsDir: `${clusterDir}/tls`, tokensPath: `${clusterDir}/bootstrap-tokens.json` };
+    config.cluster.ca = { path: caHolder.caDir };
+    config.cluster.tokens = { path: caHolder.tokensPath };
+    config.storages.engines.rqlite.tls = {
+      caFile: `${caHolder.tlsDir}/ca.crt`,
+      certFile: `${caHolder.tlsDir}/node.crt`,
+      keyFile: `${caHolder.tlsDir}/node.key`,
+      verifyClient: true
+    };
+  }
+
   if (!OPTS.dryRun) fs.mkdirSync(configDir, { recursive: true });
   // Emit YAML in logical sections with header dividers + per-section
   // docstrings instead of a flat alphabetised dump. The order below is
@@ -1987,10 +2392,15 @@ async function main () {
       'true, see the sso block in the appendix: add its keys here).'],
     { sso: config.sso });
 
-  yamlBody += section(yaml, 'Cluster sizing',
-    ['apiWorkers + hfsWorkers + previewsWorker each fork a worker process.',
-      'Tune for your CPU count; defaults are conservative.'],
-    { cluster: config.cluster });
+  const clusterDoc = ['apiWorkers + hfsWorkers + previewsWorker each fork a worker process.',
+    'Tune for your CPU count; defaults are conservative.'];
+  if (caHolder) {
+    clusterDoc.push('This core holds the cluster CA (ca.path: BACK IT UP, losing its private key',
+      'prevents adding cores) and the join-token store (tokens.path), both on the data volume.',
+      'storages.engines.rqlite.tls below is its Raft node certificate, issued by that CA.',
+      'Add a core: node bin/bootstrap.js new-core --id <id> --ip <ip> (SINGLE-TO-MULTIPLE.md).');
+  }
+  yamlBody += section(yaml, 'Cluster sizing', clusterDoc, { cluster: config.cluster });
 
   yamlBody += section(yaml, 'Storage engines',
     ['Per-area engine selection + per-engine connection params.',
@@ -2014,12 +2424,29 @@ async function main () {
       { services: config.services });
   }
 
+  if (config.hostedSites) {
+    const portalAddress = portalDefaults.portalUrl({ site: portalSite, dnsLess, publicUrl, dnsDomain });
+    yamlBody += section(yaml, 'Administration portal',
+      [`Served at ${portalAddress} (portal.site names the hosted site that is the portal).`,
+        portalMode === 'pages'
+          ? 'proxy: the portal build published on GitHub Pages for this core release; point it at'
+          : 'static: a portal build unpacked on this host (index.html required at boot).',
+        portalMode === 'pages'
+          ? 'your own host for a custom build, or use static: <folder> for an air-gapped platform.'
+          : 'Use proxy: <URL> instead to serve a published build.',
+        'The site name is reserved: no account may use it, on any core.',
+        'headers: the core adds this policy on top of the build\'s own (scripts from the site only,',
+        'API calls to this platform only).'],
+      { hostedSites: config.hostedSites, portal: config.portal });
+  }
+
   const appendix = buildOptionalAppendix({
     dnsLess,
     dataFolder,
     platformEngine,
     fileEngine,
-    authUiUrl
+    authUiUrl,
+    hasHostedSites: !!config.hostedSites
   });
   console.log();
   // Overwriting (--force): close the file before the new secrets go in
@@ -2027,6 +2454,40 @@ async function main () {
   if (emitFile(absConfigPath, yamlBody + appendix, 0o600)) {
     secureConfigFile(absConfigPath);
     console.log(`✓ Wrote ${absConfigPath}`);
+  }
+
+  // New platform: initialise this core as the cluster CA holder (what
+  // `bin/bootstrap.js init-ca-holder` does; its config merge is not needed,
+  // the keys are already in the file written above).
+  let caHolderResult = null;
+  if (caHolder) {
+    if (OPTS.dryRun) {
+      console.log(`  ○ DRY-RUN would initialise the cluster CA in ${caHolder.caDir} and this core's node certificate in ${caHolder.tlsDir}`);
+    } else {
+      const { initCaHolder } = require('../components/business/src/bootstrap/cliOps.ts');
+      try {
+        caHolderResult = await initCaHolder({
+          caDir: caHolder.caDir,
+          tlsDir: caHolder.tlsDir,
+          coreId: defaultCoreId(),
+          ip: dnsPublicIp || null,
+          hostname: `${defaultCoreId()}.${dnsDomain}`,
+          writeConfig: false
+        });
+      } catch (err) {
+        console.error(`✗ Could not initialise the cluster CA: ${err.message}`);
+        console.error(`  The config names files under ${caHolder.tlsDir} that do not exist yet: fix the cause and run`);
+        console.error('  the wizard again with --force, or issue them by hand with');
+        console.error(`    node bin/bootstrap.js init-ca-holder --ca-dir ${caHolder.caDir} --tls-dir ${caHolder.tlsDir} --no-write-config`);
+        throw err;
+      }
+      const expected = config.storages.engines.rqlite.tls;
+      const got = caHolderResult.tlsPaths;
+      if (got.caFile !== expected.caFile || got.certFile !== expected.certFile || got.keyFile !== expected.keyFile) {
+        throw new Error(`init: the node certificate files (${got.caFile}, ${got.certFile}, ${got.keyFile}) differ from the ones written to the config`);
+      }
+      console.log(`✓ Cluster CA ${caHolderResult.caCreated ? 'created' : 'kept'} in ${caHolder.caDir}, node certificate ${caHolderResult.tlsCreated ? 'issued' : 'kept'} in ${caHolder.tlsDir}`);
+    }
   }
 
   // ── OPTIONAL: run-pryv.sh launcher sibling to the config ──────
@@ -2272,9 +2733,30 @@ async function main () {
     console.log(`    node bin/master.js --config ${absConfigPath}`);
   }
   console.log();
+  if (OPTS.insidePaas) {
+    console.log('On the platform (--inside-paas): give the app this config, either by mounting');
+    console.log(`  ${absConfigPath} or as environment variables (./config-to-env.sh writes them),`);
+    console.log('  route its HTTP port 3000 behind the platform\'s TLS proxy, and persist the data folder.');
+    if (pgFromDatabaseUrl) console.log('  The PostgreSQL connection comes from the DATABASE_URL the platform sets.');
+    console.log();
+  }
   console.log('Smoke test:');
   console.log(`  curl ${publicUrl}/reg/service/info`);
   console.log();
+  if (portalHostedSites) {
+    console.log('Administration portal:');
+    console.log(`  ${portalDefaults.portalUrl({ site: portalSite, dnsLess, publicUrl, dnsDomain })}`);
+    if (portalMode === 'pages') {
+      console.log(`  (proxied from ${config.hostedSites[portalSite].proxy}; needs outbound HTTPS from the core)`);
+    }
+    console.log();
+  }
+  if (caHolder) {
+    console.log('Cluster CA (this core is the CA holder):');
+    console.log(`  BACK UP ${caHolder.caDir}: losing its private key prevents adding any further cores.`);
+    console.log('  To add a core later: node bin/bootstrap.js new-core --id <id> --ip <ip> (SINGLE-TO-MULTIPLE.md).');
+    console.log();
+  }
 
   if (OPTS.dryRun) {
     console.log(bar());

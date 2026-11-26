@@ -1,0 +1,14 @@
+# Profile "ci": a throwaway core for automated tests.
+#   PRYV_CONFIG_DIR=/tmp/pryv-ci node bin/init.js --profile=ci --non-interactive
+# Like "dev", without high-frequency series and without the portal (no outbound
+# dependency). Every answer is set, so no prompt is ever needed.
+dnsless: true
+publicurl: http://127.0.0.1:3000
+db.engine: sqlite
+service.name: Pryv CI
+secrets.autogenerate: true
+authui.url: https://account.pryv.me
+tls.strategy: none
+hfs.enabled: false
+email.enabled: false
+portal.mode: none

@@ -9,6 +9,17 @@
   document with and without the production base layer and requires the same value for every platform-scoped key and
   the same platform digest; `[CVLY2]` pins the base layer's top-level keys to `env`, `http`, `logs`.
 
+### Install wizard deltas: internals
+
+- `components/business/src/admin/portalDefaults.ts`: the default portal of this core release (Pages base, version,
+  contract, default site name) and the URL / CSP helpers `bin/init.js` writes the `hostedSites` entry from. Release
+  checklist: bump `PORTAL_VERSION` to the portal version published for the release, before the tag.
+- `bin/init.js` validates the portal entry with `describeHostedSites` (the boot validator) and initialises the
+  cluster CA holder in process through `cliOps.initCaHolder` (config merge off: the keys are in the generated file).
+- `[INWP]` tests in `components/api-server/test/init-wizard-cli.test.js`, with structure snapshots under
+  `test/fixtures/init-wizard/` (`UPDATE_INIT_SNAPSHOTS=1` rewrites them); `default-dnsless-before-portal.json` was
+  recorded with the wizard as it was before these steps.
+
 ### CI: cosign-installer 4.1.4, cosign held at 2.6.5
 
 - `.github/workflows/ci.yml`: `sigstore/cosign-installer` v3.9.1 -> v4.1.4 (pinned by commit), with

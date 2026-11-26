@@ -1,0 +1,14 @@
+# Profile "dev": a local development core on one host.
+#   PRYV_CONFIG_DIR=/tmp/pryv-dev node bin/init.js --profile=dev --non-interactive
+# Plain HTTP on :3000, SQLite, generated secrets, no mail, the published portal.
+# Same format as a --config-from file; a --config-from or PRYV_INIT_<KEY> answer
+# wins over these values.
+dnsless: true
+publicurl: http://127.0.0.1:3000
+db.engine: sqlite
+service.name: Pryv development
+secrets.autogenerate: true
+tls.strategy: none
+hfs.enabled: true
+email.enabled: false
+portal.mode: pages

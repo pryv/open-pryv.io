@@ -11,6 +11,33 @@
   without `--config`, a false drift alarm. Its platform digest now changes once, to the value the other cores report.
   Session and reset lifetimes do not change.
 
+### Install wizard: profiles, host checks, cluster start or join, PaaS mode, administration portal
+
+- **`init --profile=<name>`**: canned answers for a common install, from `bin/init.profiles/<name>.yml`: `dev`,
+  `ci`, `production-dnsless`, `production-subdomains`. Add a file there for your own. Precedence: `--config-from`
+  file, then `PRYV_INIT_<KEY>` variables, then the profile, then the default (or the prompt).
+  `init --profile=dev --non-interactive` writes a working local configuration without a single question.
+- **`init --diagnose`**: checks the host and writes nothing: config and data folders, whether the DNS and HTTP(S)
+  ports are free (with the systemd-resolved fix when port 53 is taken), the domain's NS delegation at its parent
+  zone and UDP/53 reachability. It reads the existing `pryv-config.yml`, or the answers when there is none. Exit 1
+  when a problem is found.
+- **New platform or joining a cluster** (subdomain topology; a dnsLess install is single-core and is not asked):
+  `new` (the default) also makes the core the holder of the cluster CA, as `bin/bootstrap.js init-ca-holder` does.
+  The CA, the join-token store and the core's Raft node certificate go under `data/cluster/`, and the config names
+  them (`cluster.ca.path`, `cluster.tokens.path`, `storages.engines.rqlite.tls`): back up `data/cluster/ca/`.
+  `join` writes nothing and prints the bootstrap-bundle procedure instead.
+- **`init --inside-paas`** (Dokku and similar): dnsLess and TLS `none` are imposed, the port tests of `--diagnose`
+  are skipped, and with a `DATABASE_URL` set PostgreSQL is offered first and no connection settings are written (the
+  core already reads `DATABASE_URL` at boot). The URL is checked, never printed nor written.
+- **Administration portal entry on new installs** (`portal.mode`: `pages` by default, `static` or `none`): `pages`
+  writes `hostedSites.admin` as a proxy to the portal build published on GitHub Pages for this core release, with a
+  Content-Security-Policy the core adds on the site, and `portal.site: admin`. The portal is then served at
+  `<publicUrl>/admin/` (dnsLess) or `https://admin.<domain>/`. `static` serves an unpacked build from a folder
+  (custom builds, air-gapped platforms). The name is a reserved username; `portal.site` picks another one. Nothing
+  changes for an existing configuration: the entry is written only by the wizard.
+- Unchanged: the answers of an existing scripted install give the same files as before, plus the portal entry
+  (answer `portal.mode: none` to leave it out), plus the cluster CA files on a new subdomain platform.
+
 ### Configuration, BREAKING: the mail switches are flat booleans
 
 - **BREAKING: `services.email.enabled` is a boolean, and each mail has its own `services.email.send...` switch.**

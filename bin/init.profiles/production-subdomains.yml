@@ -1,0 +1,12 @@
+# Profile "production-subdomains": the first core of a new platform with one
+# subdomain per user (https://<username>.<domain>/), embedded DNS, Let's Encrypt
+# wildcard certificate (production CA), generated secrets, this core as the
+# cluster CA holder, the published portal on admin.<domain>. Still asked (or given
+# by --config-from / PRYV_INIT_<KEY>): dnsdomain, publicip, db.engine, service.name
+# and the rest.
+dnsless: false
+cluster.mode: new
+secrets.autogenerate: true
+tls.strategy: letsEncrypt
+le.staging: false
+portal.mode: pages

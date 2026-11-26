@@ -1,0 +1,9 @@
+# Profile "production-dnsless": a production core on one host name, users under
+# https://<host>/<username>/. Let's Encrypt (production CA), generated secrets,
+# the published portal under /admin/. Still asked (or given by --config-from /
+# PRYV_INIT_<KEY>): publicurl, db.engine, service.name and the rest.
+dnsless: true
+secrets.autogenerate: true
+tls.strategy: letsEncrypt
+le.staging: false
+portal.mode: pages
