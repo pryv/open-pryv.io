@@ -134,6 +134,52 @@ describe('[UNXP] a platform read that got no answer (leader change)', function (
   });
 });
 
+describe('[UNXD] a data store error of another copy of @pryv/datastore wrapping a platform no-answer', function () {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const MARK = Symbol.for('@pryv/datastore:error');
+  let tmp, foreign;
+
+  function noAnswer () {
+    return Object.assign(new Error('rqlite query got no result at level default: not leader'), { name: 'RqliteNoAnswerError' });
+  }
+
+  before(function () {
+    // A second copy of the package, loaded from another path, as a store
+    // resolving its own node_modules would.
+    const pkgDir = path.dirname(require.resolve('@pryv/datastore/package.json'));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'unxd-'));
+    fs.cpSync(path.join(pkgDir, 'src'), path.join(tmp, 'src'), { recursive: true });
+    foreign = require(path.join(tmp, 'src', 'index.js'));
+  });
+
+  after(function () {
+    if (tmp != null) fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  function marked (err) {
+    err[MARK] = true;
+    return err;
+  }
+
+  it('[UNXD1] an unexpected-error wrapping it answers 503 api-unavailable with Retry-After, marked or not', function () {
+    for (const source of [marked(foreign.errors.unexpectedError('store lost', null, noAnswer())), foreign.errors.unexpectedError('store lost', null, noAnswer())]) {
+      const err = factory.unexpectedError(source);
+      assert.strictEqual(err.id, ErrorIds.ApiUnavailable);
+      assert.strictEqual(err.httpStatus, 503);
+      assert.strictEqual(err.httpHeaders?.['Retry-After'], '2');
+    }
+  });
+
+  it('[UNXD2] an unknown-resource wrapping it keeps its id: 404, no Retry-After', function () {
+    const err = factory.unexpectedError(marked(foreign.errors.unknownResource('stream', 's1', noAnswer())));
+    assert.strictEqual(err.id, ErrorIds.UnknownResource);
+    assert.strictEqual(err.httpStatus, 404);
+    assert.strictEqual(err.httpHeaders?.['Retry-After'], undefined);
+  });
+});
+
 describe('[UNSO] an operation the server or a data store does not support', function () {
   it('[UNSO1] answers 501 with the catalogue id unsupported-operation', function () {
     const err = factory.unsupportedOperation('streams.create');
