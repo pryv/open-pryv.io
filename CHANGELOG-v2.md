@@ -932,7 +932,7 @@ call that would pass it; what an account already holds stays readable.
   (inactivity) also cancels a claim not accepted yet. The setting rejects an invalid transfer with `auto-deletion-transfer-invalid`
   (`data.param`).
 - **Six new mails:** `account-transfer-named`, `-claim`, `-started`, `-cancelled`, `-lapsed`,
-  `-completed` (en, fr), switches `services.email.enabled.accountTransfer{Named,Claim,Started,
+  `-completed` (en, fr), switches `services.email.sendAccountTransfer{Named,Claim,Started,
   Cancelled,Lapsed,Completed}` and template keys `accountTransfer…Template` (variables in
   `default-config.yml`). The confirmation and reminder mails say "transferred to" for a transfer
   (new variables `ACTION_TRANSFER`, `BENEFICIARY`, `FALLBACK_DELETE`, `FALLBACK_KEEP`, ...).
