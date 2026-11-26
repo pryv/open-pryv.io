@@ -62,6 +62,36 @@
   (`PryvDataStoreError`) for older ones. An `unexpected-error` from a store, or an id the package does not define,
   is still answered `unexpected-error`.
 
+### Audit: the creation of an account is the first record of its trail
+
+- **An account created on a core now has a record of its creation in its own audit trail.** The creating call
+  (`auth.register`, `system.createUser`) is audited without a user, so a registration left nothing in the trail of
+  the account it made, and the first personal access had no record of its creation. The server now writes
+  `account.created` (type `audit-log/account`) in the new account's trail once the account exists, for a
+  registration (`POST /users`, `/reg/users`, the legacy `/reg/user`), `system.createUser` and
+  `delegations.createAccount`. `content.source.name` says how: `registration`, `system` or `delegation`.
+  `content.source.ip` is the client address, for a registration only (the account holder's own, as on the trail's
+  later call rows; left out when unknown); an administrator's or a delegate's address is never recorded.
+  `content.record` names the personal access made with the account (`accessId`, `accessType: 'personal'`) and the
+  record carries that access's stream, when one was made (not for `delegations.createAccount`, nor for
+  `system.createUser` without `appId`). Ids and fixed words only: no username, address, password, token, app id,
+  invitation or custom field. A registration forwarded to another core is recorded on the core that creates the
+  account, with the client address the landing core saw (left out when the landing core did not know it; never the
+  landing core's own address). The type is not in the event-type catalogue of this release (`service.eventTypes`
+  lists it from data-types 1.4.0). A refused registration leaves no record; a record that
+  cannot be written is counted as a lost audit record and does not fail the creation. Accounts created before this
+  release have no such record.
+- **Audit filters that list methods one by one do not include `account.created` until you add it; `account.all`
+  and `all` do.** The breach-scope report lists the record without counting it as a call of the access; the audit
+  summary counts it as a write.
+
+### Audit filter: a group must be a whole name
+
+- An `audit.syslog.filter` / `audit.storage.filter` entry `<group>.all` whose group is only the start of a method
+  family (`a.all`, `event.all`) or a method without a family (`callBatch.all`) selected nothing and only got a boot
+  warning. It now refuses the boot, like an aggregate naming no family (`something.all`). Write the whole group name
+  (`accesses.all`, `events.all`).
+
 ### Event types: an answer that is no list does not count as loaded
 
 - `service.eventTypes`: a JSON answer without a `types` object (an error page in JSON, the hierarchical file)

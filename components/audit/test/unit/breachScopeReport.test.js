@@ -136,6 +136,18 @@ describe('[BSRP] breachScopeReport (pure module)', () => {
     assert.deepStrictEqual(r.records, alone.records);
   });
 
+  it('[AACRB] lists the creation of the account with its first personal access, without counting it as a call', () => {
+    const created = { streamIds: ['access-' + BASE, 'action-account.created'], type: 'audit-log/account', time: 1001, content: { action: 'account.created', source: { name: 'registration', ip: '127.0.0.1' }, record: { accessId: BASE, accessType: 'personal' } } };
+    const access = { id: BASE, name: 'personal', type: 'personal', permissions: [] };
+    const alone = buildReport([readRow(), readRow()], access, { accessId: BASE, type: 'personal' }, meta());
+    const r = buildReport([created, readRow(), readRow()], access, { accessId: BASE, type: 'personal' }, meta());
+    assert.strictEqual(r.activity.totalCalls, 2);
+    assert.deepStrictEqual(r.activity.byAction['account.created'], { valid: 1, error: 0 }, JSON.stringify(r.activity));
+    assert.strictEqual(r.activity.firstCallTs, alone.activity.firstCallTs, 'the creation is not a call');
+    assert.deepStrictEqual(r.records, alone.records);
+    assert.match(renderMarkdown(r), /\| account\.created \| 1 \| 0 \|/);
+  });
+
   it('[BSR9] collects write integrity evidence and counts deletes/getOne', () => {
     const rows = [
       { streamIds: ['access-' + BASE, 'action-events.create'], type: 'audit-log/pryv-api', time: 1400, content: { action: 'events.create', record: { key: 'e1', integrity: 'sha:abc' } } },

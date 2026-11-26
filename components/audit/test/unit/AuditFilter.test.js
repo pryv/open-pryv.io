@@ -42,17 +42,27 @@ describe('[AFLT] AuditFilter', () => {
       try { validation.filter({ methods: { somethign: [], exclude: [] } }); assert.fail('must throw'); } catch (e) {}
       try { validation.filter({ methods: { include: [12], exclude: [] } }); assert.fail('must throw'); } catch (e) {}
     });
-    it('[GFCE] must throw an error when providing an unexisting method', () => {
-      try {
-        validation.filter(buildFilter(['doesntexist']));
-        assert.fail('must refuse an unexisting method');
-      } catch (e) { assert.ok(e != null); }
+    it('[GFCE] must accept a method id that matches nothing (the boot warns about it)', () => {
+      // An entry of another release must not stop a boot.
+      validation.filter(buildFilter(['doesntexist'], []));
+      validation.filter(buildFilter([], ['doesntexist']));
+      validation.filter(buildFilter(['events.get', 'doesntexist'], ['doesnteither']));
+      assert.deepStrictEqual(validation.unknownFilterMethods(buildFilter(['doesntexist'], ['doesnteither'])), ['doesntexist', 'doesnteither']);
     });
     it('[GY6E] must throw an error when providing an invalid aggregate method', () => {
-      try {
-        validation.filter(buildFilter(['something.all']));
-        assert.fail('must throw an error');
-      } catch (e) { assert.ok(e != null); }
+      assert.throws(() => validation.filter(buildFilter(['something.all'])), /invalid aggregate method provided: "something\.all"/);
+      assert.throws(() => validation.filter(buildFilter([], ['something.all'])), /invalid aggregate method provided: "something\.all"/);
+      assert.throws(() => validation.filter(buildFilter(['events.get', 'doesntexist', 'something.all'])), /invalid aggregate method provided: "something\.all"/,
+        'an aggregate after an unknown method is still checked');
+    });
+    it('[AFGW] must throw when an aggregate names a part of a group, not a whole group', () => {
+      // "a" and "event" begin method ids ("accesses.get", "events.get") but name no group.
+      for (const m of ['a.all', 'event.all', 'acc.all']) {
+        const message = new RegExp('invalid aggregate method provided: "' + m.replace(/\./g, '\\.') + '"');
+        assert.throws(() => validation.filter(buildFilter([m])), message, m);
+        assert.throws(() => validation.filter(buildFilter([], [m])), message, m);
+      }
+      validation.filter(buildFilter(['accesses.all', 'account.all', 'events.all'], ['streams.all']));
     });
     it('[AFLU] must name the entries that match no method, once each', () => {
       const unknown = (include, exclude) => validation.unknownFilterMethods(buildFilter(include, exclude));
@@ -70,6 +80,19 @@ describe('[AFLT] AuditFilter', () => {
         assert.ok(apiMethods.WITH_USER_METHODS.includes(action), action);
         assert.deepStrictEqual(filter.methods[action], { storage: true }, action);
       }
+    });
+    it('[AACRA] the account creation is recorded with its user, and belongs to "account.all" and "all", not to a list without it', () => {
+      assert.ok(apiMethods.ALL_METHODS.includes('account.created'));
+      assert.ok(!apiMethods.WITHOUT_USER_METHODS.includes('account.created'));
+      assert.ok(apiMethods.WITH_USER_METHODS.includes('account.created'));
+      const storageOnly = (include, exclude = []) => new AuditFilter({ syslogFilter: buildFilter([], ['all']), storageFilter: buildFilter(include, exclude) }).filter.methods['account.created'];
+      assert.deepStrictEqual(storageOnly(['account.all']), { storage: true });
+      assert.deepStrictEqual(storageOnly(['all']), { storage: true });
+      assert.strictEqual(storageOnly(['accesses.created', 'auth.login', 'account.update']), false, 'a one-by-one list without it');
+      assert.deepStrictEqual(storageOnly(['accesses.created', 'account.created']), { storage: true });
+      assert.strictEqual(storageOnly([], ['account.all']), false);
+      // The register call itself stays syslog-only.
+      assert.ok(apiMethods.WITHOUT_USER_METHODS.includes('auth.register'));
     });
   });
 
