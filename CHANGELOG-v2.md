@@ -59,9 +59,12 @@
   owner is a validated publisher (platform row `dev-publisher/<userId>`), or a metadata-document client under
   `allowList`; `nonValidated` otherwise (a metadata-document client under `any` included).
 - **`POST /oauth2/authorize/offer`** answers `client.validation = { level, publisher?: { name?, validated },
-  validatedAt? }` for every registry client (additive), and `client.origin: "developer"` for a developer's client.
+  validatedAt? }` for every registry client, and `client.origin: "developer"` for a developer's client. Additive,
+  and answered in every mode, `curated` included (an operator's client is `appValidated`).
 - **Access stamp**: `clientData.oauth.client` gains `validation: { level }` (the level at the consent on the grant,
-  at the minting or refresh on a session), and a developer's client is stamped `origin: "developer"`.
+  at the minting or refresh on a session), and a developer's client is stamped `origin: "developer"`. Additive and
+  written in every mode, `curated` included: existing grants are stamped again (with the level) at their next
+  consent, existing sessions at their next refresh.
 - **Policies**: `consent: refuse` redirects `/oauth2/authorize` back with `unauthorized_client`; at the consent,
   `403 access_denied` with `reason` `client-not-validated`, `client-testers-only` (`testers`: only the client's
   owner account for now) or `client-grant-limit` (`maxGrants`, an approximate count of the accounts reached), and
