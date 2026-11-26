@@ -53,6 +53,8 @@ const timestamp = require('unix-timestamp');
 const { normalizePasswordAttempts } = require('business/src/auth/passwordAttempts.ts');
 const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth/passwordIpThrottle.ts');
 const { createAccountAttemptThrottle } = require('./helpers/accountAttemptThrottle.ts') as typeof import('./helpers/accountAttemptThrottle.ts');
+const { recordMfaSignIn: recordMfaSignInStamp } = require('business/src/admin/sessions.ts') as typeof import('business/src/admin/sessions.ts');
+const { readAdminConfig } = require('business/src/admin/config.ts') as typeof import('business/src/admin/config.ts');
 
 const PROFILE_ID = 'private';
 
@@ -527,6 +529,22 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     }
   }
 
+  /**
+   * The sign-in that releases this token passed its second factor: stamp it
+   * on this core, where an administrator session may be opened from the token
+   * (see business/src/admin/sessions.ts). Best-effort, like recordLogin.
+   */
+  async function recordMfaSignIn (user: UserRef, token: unknown): Promise<void> {
+    if (typeof token !== 'string') return;
+    try {
+      await recordMfaSignInStamp(require('messages/src/cluster_kv.ts').clientFor(), {
+        token, userId: user.id, now: Date.now(), ttlMs: readAdminConfig(config).session.ttlMs
+      });
+    } catch (err) {
+      mfaLogger.warn(`mfa.verify: could not record the second factor of the sign-in of user "${user.username}"`, err);
+    }
+  }
+
   // ----------------------------------------------------------------------
   // mfa.verify — finishes a login-with-MFA flow; returns the real Pryv access token
   // ----------------------------------------------------------------------
@@ -598,6 +616,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         // earlier mistyped code cannot count toward a future delay.
         await clearThrottleIfAny(user);
         await recordLogin(user, session.context.token);
+        await recordMfaSignIn(user, session.context.token);
         // session.context.token is the real access token stashed by the login flow
         // (presence already checked above, before any side effect).
         result.token = session.context.token;
