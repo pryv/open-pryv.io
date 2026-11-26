@@ -622,7 +622,12 @@ jobs:
       #   --certificate-identity-regexp 'https://github.com/pryv/open-pryv.io/.*'
       #   --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - name: Install cosign
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+        uses: sigstore/cosign-installer@881c63bd87e38389154debd8331404ce7ca8a3ab # v4.1.4
+        # cosign 2.x on purpose: cosign 3 (the installer's default) writes the new
+        # bundle format to OCI referrers; held until a sign-with-3 / verify-with-2
+        # check shows pullers verifying with cosign 2 are not broken.
+        with:
+          cosign-release: 'v2.6.5'
       # Retry the keyless signature: the ambient-OIDC fetch from
       # token.actions.githubusercontent.com occasionally returns a non-JSON error
       # body, which cosign surfaces as "fetching ambient OIDC credentials: invalid

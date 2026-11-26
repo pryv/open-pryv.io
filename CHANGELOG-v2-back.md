@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### CI: cosign-installer 4.1.4, cosign held at 2.6.5
+
+- `.github/workflows/ci.yml`: `sigstore/cosign-installer` v3.9.1 -> v4.1.4 (pinned by commit), with
+  `cosign-release: v2.6.5` so the image signatures keep the cosign 2 format (installer 4 defaults to cosign 3, which
+  writes the new bundle format to OCI referrers). The verify command for pullers is unchanged.
+
 ### Mail switches: one reader
 
 - `components/business/src/emails/mailCapability.ts`: `mailSwitchKey`, `isMailKindSwitchedOn` /
