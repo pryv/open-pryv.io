@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
+
+- `api-server/src/methods/mfa.ts`: `mfa.confirm` accepts an enrolment session only and `mfa.verify` a login session
+  only, by strict equality on `context.kind`; a session without a kind is refused by both (`invalid-access-token`).
+  Every session is tagged when opened (`mfa.activate`: `enroll`, `auth.login`: `login`), so nothing a client holds
+  changes. Test `[MSKD1]`.
+
 ### Config layers: platform-wide keys only in `default-config.yml`
 
 - `config/production-config.yml` no longer carries the `auth` block (`sessionMaxAge`, `passwordResetRequestMaxAge`);
