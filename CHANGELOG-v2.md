@@ -70,6 +70,10 @@
   records the restore added to it from the backup. When the account had no trail before the restore (a new core, a
   remapped id, an account erased under `erase`) and the roll-back or the cleanup removes the account, the trail the
   restore created goes with it: it held the backup's records only, under an id that is no account of the core.
+- **A restore under another user id (`remapUserId`) onto the id of an erased account is refused** without
+  `--restore-erased`, as the restore of an account erased after its backup is: the erasure ledger is now read by the
+  target id too, so a backup is no longer merged into the kept trail of the erased account that held that id. With
+  `--restore-erased` the restore goes on and that id's erasure record is marked restored.
 - **The import of audit records skips the ids already there on SQLite too**, as it did on PostgreSQL: a restore onto
   an existing trail used to stop importing the backup's records at the first one already there (a warning, the
   rest not imported).

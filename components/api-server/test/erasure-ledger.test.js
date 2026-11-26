@@ -538,6 +538,32 @@ describe('[ERLG] erasure ledger', function () {
       }
     });
 
+    it('[ERLRT] a restore under another user id onto the id of an erased account is refused; --restore-erased marks that id restored', async function () {
+      // Mutation caught: the ledger read by the backed-up id only (the remap restores into the erased id unasked).
+      const u = await backedUpAccount();
+      const erased = await account('erlrt');
+      try {
+        await new Deletion(null, storageLayer, config).eraseAccount({ id: erased.id, username: erased.username }, { trigger: 'holder' });
+        assert.ok((await rowOf(erased)) != null, 'the erased id has its record');
+        await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'system' });
+        const o = await new RestoreOrchestrator().init();
+        const reader = createFilesystemBackupReader(u.dir);
+        await assert.rejects(o.restoreUser(u.id, reader, { overwrite: true, remapUserId: erased.id }),
+          new RegExp(`to be restored under the user id ${erased.id}, the id of an account erased on .*--restore-erased`));
+        assert.equal((await rowOf(erased)).restoredAt, undefined, 'the record is unchanged');
+        const report = await o.restoreUser(u.id, reader, { overwrite: true, remapUserId: erased.id, restoreErased: true });
+        await reader.close();
+        assert.deepEqual(report.restored.map((r) => r.userId), [erased.id], 'restored under the target id');
+        assert.deepEqual(report.restoredStampFailed ?? [], []);
+        const row = await rowOf(erased);
+        assert.ok(row.restoredAt >= row.deletedAt, 'the erased id is marked restored');
+      } finally {
+        await cleanUp({ id: erased.id, username: u.username });
+        await cleanUp(erased);
+        await cleanUp(u);
+      }
+    });
+
     it('[ERLR8] an erasure started after the backup and stopped unfinished refuses a plain restore; --restore-erased writes its record, marked restored', async function () {
       const u = await backedUpAccount();
       const fault = sinon.stub(Deletion.prototype, 'deleteAuditDataStorage').callsFake(function (context, params, result, next) { next(new Error('injected fault')); });

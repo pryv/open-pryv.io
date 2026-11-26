@@ -841,8 +841,15 @@ class RestoreOrchestrator {
       const snapshotMs = snapshotMsOf(manifest, userId);
       let ref: ErasedSinceRef | null = null;
       const entry = await readErasureRecord(ledger.kv, ledger.key, userId);
+      // A restore under another user id onto the id of an erased account (not
+      // restored since): that erasure stands too, whatever the backup's date,
+      // or the backup would be merged into the erased account's kept trail.
+      const remapped = targetUserId != null && targetUserId !== userId;
+      const targetEntry = remapped ? await readErasureRecord(ledger.kv, ledger.key, targetUserId) : null;
       if (entry != null && erasedAfter(entry, snapshotMs)) {
         ref = { userId, username, deletedAt: entry.deletedAt, trigger: entry.trigger, snapshotBefore: snapshotMs };
+      } else if (targetEntry != null && erasedAfter(targetEntry, null)) {
+        ref = { userId, username, deletedAt: targetEntry.deletedAt, trigger: targetEntry.trigger, snapshotBefore: snapshotMs, ledgerUserId: targetUserId };
       } else if (this.erasures != null) {
         const local = await this.erasures.get(targetUserId ?? userId);
         if (local != null && Date.now() - local.updatedAt >= this.staleErasureMs && (snapshotMs == null || local.startedAt > snapshotMs)) {
@@ -892,7 +899,7 @@ class RestoreOrchestrator {
             serverVersion: null,
             restoredAt: now
           });
-        } else if (!(await markRestored(ledger.kv, ledger.key, ref.userId, now))) {
+        } else if (!(await markRestored(ledger.kv, ledger.key, ref.ledgerUserId ?? ref.userId, now))) {
           throw new Error('its record is no longer in the ledger');
         }
       } catch (err: unknown) {
@@ -1611,6 +1618,9 @@ function snapshotMsOf (manifest: Manifest, userId: string): number | null {
 
 /** An erasure after the backup, for a log line or an error. */
 function erasedText (ref: ErasedSinceRef): string {
+  if (ref.ledgerUserId != null) {
+    return `to be restored under the user id ${ref.ledgerUserId}, the id of an account erased on ${new Date(ref.deletedAt).toISOString()} (trigger ${ref.trigger})`;
+  }
   const what = ref.unfinished != null
     ? `erased since: an erasure (trigger ${ref.trigger}) started ${new Date(ref.unfinished.startedAt).toISOString()} and stopped unfinished on this core, `
     : `erased on ${new Date(ref.deletedAt).toISOString()} (trigger ${ref.trigger}), `;
@@ -1765,6 +1775,8 @@ type ErasedSinceRef = {
   snapshotBefore: number | null;
   /** Set for an erasure that stopped unfinished on this core (no ledger record yet): its record as it was. */
   unfinished?: AccountErasureRow;
+  /** Set when the erased account is the one of the target id of a remapped restore: the id its ledger record is under. */
+  ledgerUserId?: string;
 };
 type ConflictRef = { userId: string; username: string; kind: 'username-taken' | 'userid-renamed' | 'other-core'; reason: string };
 /** The platform's name -> core rows and this core's identity (the Platform's methods the restore calls). */
