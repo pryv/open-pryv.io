@@ -48,6 +48,7 @@ import { composeShownOffer, subjectModeOf, streamIdsOf } from '../consentComposi
 import type { WrongCoreSession } from '../wrongCore.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import { metadataHostOf } from '../clientMetadata.ts';
+import { resolveClientValidation } from '../clientValidation.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
 import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername, issuerAccountRefusal } from '../audienceAccount.ts';
 import type { PerUserIssuerOf } from '../perUserIssuer.ts';
@@ -204,6 +205,8 @@ export function handleOffer (deps: OfferDeps) {
     const r = await resolveStateOffer(deps, verified.payload);
     if (!r.ok) return sendJson(res, r.status, { error: r.error, error_description: r.description });
     const c = r.client;
+    // Who vouches for the client (its badge), decided here, never by the UI.
+    const validation = await resolveClientValidation(deps.platform, deps.config, c);
     const answer: Record<string, unknown> = {
       // Operator-registered display fields only (a metadata-document
       // client's come from its document, the links only on its host).
@@ -224,6 +227,8 @@ export function handleOffer (deps: OfferDeps) {
         ...(c.origin === 'metadata-document' && typeof c.metadataUrl === 'string'
           ? { origin: c.origin, metadataUrl: c.metadataUrl, ...metadataHostOf(c.metadataUrl) }
           : {}),
+        ...(c.origin === 'developer' ? { origin: c.origin } : {}),
+        validation,
       },
       offer: { allowUserChoice: false, ...r.resolved.offer },
       scope: r.resolved.requested,

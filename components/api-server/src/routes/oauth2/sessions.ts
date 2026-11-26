@@ -48,7 +48,7 @@ import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionR
 import { reindexAccessNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
 import { getClient as getOAuthClient, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
-import { clientStamp } from 'oauth2/src/clientMetadataId.ts';
+import { validatedClientStamp } from 'oauth2/src/clientValidation.ts';
 import type { ClientStamp } from 'oauth2/src/clientMetadataId.ts';
 import * as storages from 'storages';
 import { isDeepStrictEqual } from 'node:util';
@@ -262,14 +262,15 @@ export function createSessions (env: GlueEnv) {
 
   // The display stamp of the client (`clientData.oauth.client`): a
   // metadata-document client's name, host and url, or the name an operator
-  // registered with `origin: 'operator'`, from its row as it stands; null
-  // when the row is gone. A snapshot: what the account app names the
-  // connected app by, the row key (`oauth:url~…`, `oauth:<clientId>`) being
-  // no name.
+  // registered with `origin: 'operator'` (`'developer'` for a developer's
+  // client), and the client's validation level at that moment, from its row
+  // as it stands; null when the row is gone. A snapshot: what the account app
+  // names the connected app by, the row key (`oauth:url~…`,
+  // `oauth:<clientId>`) being no name.
   async function clientStampOf (clientId: string): Promise<ClientStamp | null> {
     const platform = storages.platformDB as Parameters<typeof getOAuthClient>[0] | null | undefined;
     if (platform == null) return null;
-    return clientStamp(await getOAuthClient(platform, clientId));
+    return validatedClientStamp(platform, env.config, await getOAuthClient(platform, clientId));
   }
 
   // setGrantClient: stamp (again, at each consent) a client's grant with its

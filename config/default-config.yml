@@ -1297,10 +1297,11 @@ audit:
 # --- OAuth 2.0 authorization server ---
 # Configures the /oauth2/authorize + /oauth2/token endpoints and
 # /.well-known/oauth-authorization-server discovery doc.
-# clientRegistration.mode = "curated" is the only supported value;
-# operator-only app-account promotion via bin/oauth-client.js. The
-# RFC 7591 dynamic-registration HTTP endpoint is intentionally not
-# shipped; config validation rejects mode: open.
+# clientRegistration.mode is "curated" (the default: the operator registers
+# every client with bin/oauth-client.js) or "delegated" (Pryv accounts may
+# register registry clients too, under the policy below). The RFC 7591
+# anonymous dynamic-registration endpoint is intentionally not shipped; the
+# boot rejects mode: open.
 oauth:
   # URL of the consent page of your auth UI: GET /oauth2/authorize redirects the
   # user there (with `state` and `pryvApi` query parameters) to sign in and
@@ -1353,7 +1354,18 @@ oauth:
   # = faster revoke, more PlatformDB reads.
   clientRevokeCheckSeconds: 30     # seconds
   clientRegistration:
-    mode: curated                  # ONLY supported value; "open" is rejected
+    mode: curated                  # curated | delegated; "open" is rejected
+    # Who vouches for a client is shown on the consent screen as its level:
+    # appValidated (registered by the operator, or a developer's app whose
+    # review stands), publisherValidated (its developer is a validated
+    # publisher; a metadata-document client under allowList), nonValidated.
+    # What a client of each level may do (absent: consent allow, no template,
+    # no cap). Platform-wide: the same on every core.
+    # whoMayRegister: validatedPublishers   # delegated only: anyAccount | validatedPublishers
+    # levels:
+    #   nonValidated:       { consent: testers, scopeTemplate: '<scope>', maxGrants: 100 }   # allow | testers | refuse
+    #   publisherValidated: { consent: allow }
+    #   appValidated:       { consent: allow }
   # Hosts the consent screen may load a client's logo from (`logo_uri`, https
   # only; `host` or `host:port`). Registration refuses a logo elsewhere and the
   # consent offer leaves out a stored one that is not (any more) listed. Empty:

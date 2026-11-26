@@ -220,7 +220,7 @@ describe('[OCLI] operator CLI: registry clients', () => {
     assert.equal((await getClient(platform, 'Cli.legacy')).subjectType, 'public');
   });
 
-  it('[OCLI7] list: kind, status and subject type per client, "-" where none', async () => {
+  it('[OCLI7] list: kind, status, subject type ("-" where none), origin and validation level per client', async () => {
     const platform = fakePlatform();
     await run(cli.runCreateRegistry, platform, createArgs('Cli.pub', ['--subject-type', 'public']));
     await run(cli.runCreateRegistry, platform, createArgs('Cli.pw', ['--subject-type', 'pairwise']));
@@ -229,9 +229,9 @@ describe('[OCLI] operator CLI: registry clients', () => {
     const r = await run((p) => cli.runList(p, getClient), platform, ['list']);
     const lines = r.out.split('\n').sort();
     assert.deepEqual(lines, [
-      'Cli.pub  registry  active  public',
-      'Cli.pw  registry  suspended  pairwise',
-      'appacct  app-account  active  -',
+      'Cli.pub  registry  active  public  operator  appValidated',
+      'Cli.pw  registry  suspended  pairwise  operator  appValidated',
+      'appacct  app-account  active  -  operator  appValidated',
     ]);
   });
 

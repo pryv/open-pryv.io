@@ -579,6 +579,19 @@ if (!isMissingOrSentinel(get('access.defaultAuthUrl')) && isMissingOrSentinel(ge
   for (const w of report.warnings) warnings.push(w);
 }
 
+// oauth.clientRegistration: the same check as the boot (mode curated or
+// delegated, `open` refused; the level policies). Whether an OAuth extension
+// is installed is read from customExtensions.oauthExtension (this script does
+// not load it, nor check the scope templates against its grammar).
+{
+  const { describeClientRegistrationConfig } = require('../components/oauth2/src/clientValidation.ts');
+  const ext = get('customExtensions.oauthExtension');
+  const report = describeClientRegistrationConfig(get('oauth.clientRegistration'),
+    { extensionInstalled: typeof ext === 'string' && ext.trim() !== '' });
+  for (const p of report.problems) problems.push(p);
+  for (const w of report.warnings) warnings.push(w);
+}
+
 // services.mfa: the same check master.js runs at boot, on the merged
 // configuration: a partial block is judged by the configuration it produces.
 try {

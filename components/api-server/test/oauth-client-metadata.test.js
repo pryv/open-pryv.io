@@ -757,7 +757,8 @@ describe('[OCMDE] client metadata documents end to end', function () {
     const url = publish();
     const who = await newUser();
     const { token } = await connect(who, url);
-    const stamp = { name: 'Example agent', host: 'client.example', url, origin: 'metadata-document' };
+    // allowList: Publisher Validated, stamped with the level.
+    const stamp = { name: 'Example agent', host: 'client.example', url, origin: 'metadata-document', validation: { level: 'publisherValidated' } };
     const grant = (await accesses(who)).find((a) => a.name === 'oauth-grant:' + metadataClientKey(url));
     assert.deepEqual(grant.clientData.oauth.client, stamp);
     const session = await rowOf(who, token.access_token);

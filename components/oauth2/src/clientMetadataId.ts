@@ -140,8 +140,17 @@ export type MetadataClientStamp = { name?: string; host: string; url: string; or
  */
 export type OperatorClientStamp = { name?: string; origin: 'operator' };
 
+/**
+ * What an access minted for a registry client a developer registered
+ * carries: its registered name with `origin: 'developer'` (no host or url).
+ */
+export type DeveloperClientStamp = { name?: string; origin: 'developer' };
+
+/** The validation level at the moment of the stamp (see clientValidation.ts). */
+export type StampValidation = { validation?: { level: 'nonValidated' | 'publisherValidated' | 'appValidated' } };
+
 /** The display stamp of an access minted for an OAuth client. */
-export type ClientStamp = MetadataClientStamp | OperatorClientStamp;
+export type ClientStamp = (MetadataClientStamp | OperatorClientStamp | DeveloperClientStamp) & StampValidation;
 
 // The row's name as a plain string: `clientName`, else `name` (the first
 // language of a localized set).
@@ -181,5 +190,5 @@ export function clientStamp (row: StampSource | null | undefined): ClientStamp |
   if (row.origin === 'metadata-document') return metadataClientStamp(row);
   if (row.kind !== 'registry') return null;
   const name = plainClientName(row);
-  return { ...(name != null ? { name } : {}), origin: 'operator' };
+  return { ...(name != null ? { name } : {}), origin: row.origin === 'developer' ? 'developer' : 'operator' };
 }

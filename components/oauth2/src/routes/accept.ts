@@ -91,6 +91,8 @@ const { recordFirstConsent, METADATA_STALE } = require('../clientMetadata.ts');
 const { grantedScopeTokens, entryCeiling, grantTooLarge } = require('../scopeGrammar.ts');
 const { computeGrantState, toClientView } = require('../extension.ts');
 const { indexSession } = require('../sessionIndex.ts');
+const { resolveClientValidation, levelPolicy, consentPolicyRefusal, scopeTemplateRefusal, recordLevelGrant } = require('../clientValidation.ts');
+const { hasSigningKeys } = require('../signingKeys.ts');
 const { audit } = require('../audit.ts');
 const { logServerError, logServerWarning } = require('../serverLog.ts');
 // Permission-lexicon single point — the consent-grant rule (subset +
@@ -539,6 +541,33 @@ export function handleAccept (deps: AcceptDeps) {
       }
     }
 
+    // The operator's policy for a client of this level, decided again now
+    // that the account is known (the level may have changed since
+    // /authorize): refused, testers only, the scope template, the cap on the
+    // accounts reached. Nothing is written before.
+    let policyCounted = false;
+    let validationLevel: string | undefined;
+    if (stateClient != null) {
+      const validation = await resolveClientValidation(deps.platform, deps.config, stateClient);
+      validationLevel = validation.level;
+      const policy = levelPolicy(deps.config, validation.level);
+      const refused = await consentPolicyRefusal(deps.platform, stateClient, policy, session.userId);
+      const outsideTemplate = refused == null && synthesised != null
+        ? scopeTemplateRefusal(stateClient, validation.level, policy.scopeTemplate, payload.scope.join(' '),
+          { oidcEnabled: hasSigningKeys(deps.config) })
+        : null;
+      if (refused != null || outsideTemplate != null) {
+        const reason = refused?.reason ?? 'client-scope-template';
+        await audit('oauth.consent.refused', { clientId: payload.clientId, requestedScope: payload.scope, reason, validationLevel });
+        return sendJson(res, refused?.status ?? 400, {
+          error: refused?.error ?? 'invalid_scope',
+          error_description: refused?.description ?? outsideTemplate,
+          reason,
+        });
+      }
+      policyCounted = policy.maxGrants != null;
+    }
+
     // Mint the app access under the resolved user. The durable consent
     // record (CMC data-grant, or the registry client's grant) is created or
     // updated first through the API on the user's behalf; the session is
@@ -663,6 +692,15 @@ export function handleAccept (deps: AcceptDeps) {
     if (marked === 'gone') {
       return sendJson(res, 400, { error: 'invalid_request', error_description: METADATA_STALE });
     }
+    // The account counts against the client's cap (`maxGrants`), once. Never
+    // fails the consent: the count is approximate by design.
+    if (policyCounted) {
+      try {
+        await recordLevelGrant(deps.platform, payload.clientId, session.userId);
+      } catch (err: unknown) {
+        logServerError('accept: the account could not be counted against the client\'s maxGrants', err);
+      }
+    }
 
     // Mint code + persist with the access id so the grant can return the
     // access after PKCE verification (user is gone by then). The token is
@@ -712,6 +750,7 @@ export function handleAccept (deps: AcceptDeps) {
       accessId: access.accessId,
       ...(access.dataGrantAccessId != null ? { dataGrantAccessId: access.dataGrantAccessId } : {}),
       ...(subjectChange != null ? { subjectChange } : {}),
+      ...(validationLevel != null ? { validationLevel } : {}),
     });
 
     const sep = payload.redirectUri.indexOf('?') >= 0 ? '&' : '?';

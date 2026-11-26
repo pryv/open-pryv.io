@@ -43,6 +43,37 @@
 - Unchanged: the answers of an existing scripted install give the same files as before, plus the portal entry
   (answer `portal.mode: none` to leave it out), plus `core.id` and the cluster CA files on a new subdomain platform.
 
+### OAuth: registration modes, validation levels and badges
+
+- **`oauth.clientRegistration.mode: delegated`** next to `curated` (still the default, unchanged behaviour): Pryv
+  accounts may also register registry clients (`origin: developer`, owned by the account), under the operator's
+  policy. The registration by a developer comes with a later release (the developer API); this release carries the
+  mode, the policy and the badges. `mode: open` (anonymous RFC 7591 registration) and any other value are now refused
+  at boot and by `bin/check-config.js` (the documentation already said so; nothing enforced it). `delegated` needs an
+  OAuth extension. New keys: `oauth.clientRegistration.whoMayRegister` (`validatedPublishers` by default, or
+  `anyAccount`, which logs a warning) and `oauth.clientRegistration.levels.{nonValidated,publisherValidated,
+  appValidated}.{consent: allow | testers | refuse, scopeTemplate, maxGrants}`. Absent, everything is allowed as
+  before.
+- **Validation level of every registry client**, decided by the server: `appValidated` for a client the operator
+  registered, or a developer's client whose app review stands; `publisherValidated` for a developer's client whose
+  owner is a validated publisher (platform row `dev-publisher/<userId>`), or a metadata-document client under
+  `allowList`; `nonValidated` otherwise (a metadata-document client under `any` included).
+- **`POST /oauth2/authorize/offer`** answers `client.validation = { level, publisher?: { name?, validated },
+  validatedAt? }` for every registry client (additive), and `client.origin: "developer"` for a developer's client.
+- **Access stamp**: `clientData.oauth.client` gains `validation: { level }` (the level at the consent on the grant,
+  at the minting or refresh on a session), and a developer's client is stamped `origin: "developer"`.
+- **Policies**: `consent: refuse` redirects `/oauth2/authorize` back with `unauthorized_client`; at the consent,
+  `403 access_denied` with `reason` `client-not-validated`, `client-testers-only` (`testers`: only the client's
+  owner account for now) or `client-grant-limit` (`maxGrants`, an approximate count of the accounts reached), and
+  `400 invalid_scope` with `reason: client-scope-template` (`scopeTemplate`). `oauth.consent.granted` and
+  `oauth.consent.refused` audit rows carry `validationLevel`.
+- **Client rows** accept `origin: operator | metadata-document | developer` (absent reads as `operator`),
+  `owner: { userId }` (developer's clients only) and `validation.app = { at, by, digest }` (the app review: a change
+  of a reviewed field, vetted or display, drops the App Validated level).
+- **`bin/oauth-client.js`**: `show` and `list` print the origin, owner and level (`list` lines end with them);
+  `validate` / `unvalidate <clientId>` record or withdraw the app review of a developer's client; `purge-grants` and
+  `revoke` give back the accounts counted against `maxGrants`. See `docs/oauth2.md` § 2 and § 3b.
+
 ### Configuration, BREAKING: the mail switches are flat booleans
 
 - **BREAKING: `services.email.enabled` is a boolean, and each mail has its own `services.email.send...` switch.**

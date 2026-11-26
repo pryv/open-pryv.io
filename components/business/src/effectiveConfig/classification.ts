@@ -253,6 +253,7 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['oauth.dpop.keyRevokeCheckSeconds', P, p],
   ['oauth.clientRevokeCheckSeconds', P, p],
   ['oauth.clientRegistration.mode', P, p],
+  ['oauth.clientRegistration.**', P, p],
   ['oauth.logoHosts', P, p],
   ['oauth.stateKey', S, c],
   ['oauth.signingKeys', P, c],

@@ -34,6 +34,7 @@ import { handleIntrospect } from './introspection.ts';
 import { handleRevoke } from './revocation.ts';
 import { clientMetadataDocumentsOn } from './clientMetadataConfig.ts';
 import { checkClientMetadataTemplate } from './registryBootCheck.ts';
+import { checkClientRegistrationAtBoot } from './clientValidation.ts';
 import type { NextFunction, Request, Response } from 'express';
 import { concurrencyLimit } from 'utils';
 import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
@@ -258,6 +259,9 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
   setExtension(deps.extension ?? null, {
     hookTimeoutMs: Number(deps.config.get('oauth:extensionHookTimeoutMs')),
   });
+  // `oauth.clientRegistration`: a mode other than curated or delegated (`open`
+  // included), or a malformed level policy, throws here, so the boot fails.
+  checkClientRegistrationAtBoot(deps.config, deps.extension != null);
   // OpenID Connect signing keys: a malformed entry throws here, so the boot
   // fails rather than the first sign-in.
   loadSigningKeys(deps.config);

@@ -1847,6 +1847,8 @@ describe('[OXREG] OAuth2: registry clients and the OAuth extension', () => {
         name: { en: 'Health app', fr: 'App santé' },
         description: 'Reads your measurements.',
         logoUri: 'https://logos.example.com/app.png',
+        // Registered by the operator: App Validated.
+        validation: { level: 'appValidated' },
       });
       // Not (any more) on the list, or no list: no logo.
       assert.equal((await offerAs(fakeConfig({ 'oauth:logoHosts': ['other.example.com'] }))).logoUri, undefined);

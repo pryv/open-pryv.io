@@ -123,6 +123,7 @@ export type OAuthAuditPayload = {
   detail?: string; // oauth.client.metadata_refused: the server-side reason (never the document)
   suppressed?: number; // oauth.client.metadata_refused: refusals of the same host and reason not emitted in the minute before
   provisional?: boolean; // oauth.client.metadata_fetched: a row no consent has reached yet (a creation)
+  validationLevel?: string; // oauth.consent.granted / refused: the client's validation level (its badge) at that moment
 };
 
 /** The subset of AuditEventLike (components/audit/) we build here. */

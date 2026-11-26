@@ -19,7 +19,8 @@
  * writes the PlatformDB row only: this module validates it and forwards
  * it to storage. No App-account stream is written.
  *
- * Operator policy: `curated` registration mode only.
+ * Operator policy: `oauth.clientRegistration` (`curated` or `delegated`,
+ * see clientValidation.ts); anonymous registration is never offered.
  * Errors are mapped at endpoint edge via `errorMap.ts`, NOT
  * auto-derived.
  */
@@ -136,9 +137,7 @@ function checkedClientRow (client: OAuthClient, updatedAt: number): OAuthClient 
       ? 'a metadata-document client is stored under the key derived from its URL'
       : 'client ids starting with "url~" are reserved for metadata-document clients');
   }
-  if (client.origin != null && (client.origin !== 'metadata-document' || client.kind !== 'registry')) {
-    throw new Error('origin: only "metadata-document", on a registry client');
-  }
+  validateOriginAndOwner(client);
   if (!Array.isArray(client.redirectUris) || client.redirectUris.length === 0) {
     throw new Error('redirectUris required (at least one)');
   }
@@ -185,6 +184,44 @@ function checkedClientRow (client: OAuthClient, updatedAt: number): OAuthClient 
   }
   validateAuthAndLifetimes(validated);
   return validated;
+}
+
+/** An account id as a row may name it (an owner): the characters of a client id. */
+const OWNER_ID_RE = /^[A-Za-z0-9.~-]{1,64}$/;
+
+/**
+ * Who registered the row (`origin`), whose it is (`owner`) and its app
+ * review (`validation`). Absent `origin` reads as `operator` (rows written
+ * before it). `metadata-document` and `developer` are registry clients only;
+ * a developer's client names its owning account, and only such a client
+ * carries an app review (an operator's client is App Validated by rule).
+ */
+function validateOriginAndOwner (client: OAuthClient): void {
+  const origin = client.origin;
+  if (origin != null && origin !== 'operator' && origin !== 'metadata-document' && origin !== 'developer') {
+    throw new Error('origin must be one of operator, metadata-document, developer');
+  }
+  if ((origin === 'metadata-document' || origin === 'developer') && client.kind !== 'registry') {
+    throw new Error(`origin: "${origin}" only on a registry client`);
+  }
+  if (origin === 'developer') {
+    if (client.owner == null || typeof client.owner !== 'object' || typeof client.owner.userId !== 'string' ||
+        !OWNER_ID_RE.test(client.owner.userId)) {
+      throw new Error('owner: a developer\'s client names its owning account ({ userId })');
+    }
+  } else if (client.owner != null) {
+    throw new Error('owner: only on a developer\'s client (origin developer)');
+  }
+  if (client.validation != null) {
+    if (origin !== 'developer') throw new Error('validation: only on a developer\'s client (origin developer)');
+    const v = client.validation as Record<string, unknown>;
+    if (typeof v !== 'object' || Object.keys(v).some((k) => k !== 'app')) throw new Error('validation: only { app } is stored');
+    const app = v.app as Record<string, unknown> | undefined;
+    if (app != null && !(typeof app === 'object' && Number.isFinite(app.at) && typeof app.by === 'string' && app.by.length > 0 &&
+        app.by.length <= 128 && typeof app.digest === 'string' && /^[A-Za-z0-9_-]{43}$/.test(app.digest))) {
+      throw new Error('validation.app must be { at, by, digest }');
+    }
+  }
 }
 
 /**
@@ -583,7 +620,7 @@ export function changedVettedFields (before: OAuthClient, after: OAuthClient): s
 
 // An empty list is the same as none (a row written before a list field
 // existed has none at all, e.g. `launchTypes`).
-function vettedValue (v: unknown): unknown {
+export function vettedValue (v: unknown): unknown {
   return v == null || (Array.isArray(v) && v.length === 0) ? null : v;
 }
 

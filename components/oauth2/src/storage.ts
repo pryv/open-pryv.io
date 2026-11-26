@@ -238,10 +238,21 @@ export interface OAuthClient {
    * `metadata-document`: a client whose `client_id` is the https URL of its
    * client metadata document (`metadataUrl`), stored under a key derived from
    * it (`url~` + digest). Its identity and display fields come from the
-   * document, what it may be granted from the operator's template. Absent:
-   * a client registered by the operator.
+   * document, what it may be granted from the operator's template.
+   * `developer`: a registry client a Pryv account registered (`owner`), under
+   * `oauth.clientRegistration` mode `delegated`. `operator`, or absent (rows
+   * written before the field): a client registered by the operator.
    */
-  origin?: 'metadata-document';
+  origin?: 'operator' | 'metadata-document' | 'developer';
+  /** A developer's client: the account that owns it (its publisher). */
+  owner?: { userId: string };
+  /**
+   * A developer's client: its app review. `digest` covers the reviewed fields
+   * (clientValidation.ts `VALIDATION_DIGEST_FIELDS`); a row whose fields no
+   * longer match it is not App Validated. Absent on other clients (an
+   * operator's client is App Validated by rule).
+   */
+  validation?: { app?: { at: number; by: string; digest: string } };
   /** The client's id on the wire (a metadata-document client). */
   metadataUrl?: string;
   /** The document's cache state (a metadata-document client), ms since epoch. */

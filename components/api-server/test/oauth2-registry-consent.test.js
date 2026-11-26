@@ -759,11 +759,13 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
   });
 
   it('[OCMP22] the grant and its sessions name the operator-registered client (clientData.oauth.client), re-stamped at the next consent and refresh', async () => {
+    // An operator-registered client is App Validated, stamped with its level.
+    const APP_VALIDATED = { validation: { level: 'appValidated' } };
     const who = await newUser();
     // The shared client row has no name: the stamp says only where the client comes from.
     const first = await consentAndToken(who, 'offline_access read/a');
-    assert.deepEqual((await grantOf(who)).clientData.oauth.client, { origin: 'operator' });
-    assert.deepEqual((await holds(who, first.access_token)).clientData.oauth.client, { origin: 'operator' });
+    assert.deepEqual((await grantOf(who)).clientData.oauth.client, { origin: 'operator', ...APP_VALIDATED });
+    assert.deepEqual((await holds(who, first.access_token)).clientData.oauth.client, { origin: 'operator', ...APP_VALIDATED });
 
     const namedId = 'Nam.' + cuid().slice(-10);
     const row = {
@@ -779,21 +781,21 @@ describe('[OCMP] OAuth registry clients: composed re-consent, subject change, fo
     try {
       await oauth2.persistClient(platformDB, { ...row, name: { fr: 'Appli FR', en: 'App EN' } });
       const t = await consentAndToken(who, 'offline_access read/a', { cid: namedId });
-      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Appli FR', origin: 'operator' });
-      assert.deepEqual((await holds(who, t.access_token)).clientData.oauth.client, { name: 'Appli FR', origin: 'operator' });
+      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Appli FR', origin: 'operator', ...APP_VALIDATED });
+      assert.deepEqual((await holds(who, t.access_token)).clientData.oauth.client, { name: 'Appli FR', origin: 'operator', ...APP_VALIDATED });
       // The operator renames the client: the next refresh re-stamps the session, the next consent the grant.
       await oauth2.persistClient(platformDB, { ...row, clientName: 'Renamed' });
       const r = await refresh(t.refresh_token, namedId);
       assert.equal(r.status, 200, JSON.stringify(r.body));
-      assert.deepEqual((await holds(who, r.body.access_token)).clientData.oauth.client, { name: 'Renamed', origin: 'operator' });
-      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Appli FR', origin: 'operator' });
+      assert.deepEqual((await holds(who, r.body.access_token)).clientData.oauth.client, { name: 'Renamed', origin: 'operator', ...APP_VALIDATED });
+      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Appli FR', origin: 'operator', ...APP_VALIDATED });
       await consentAndToken(who, 'offline_access read/a', { cid: namedId });
-      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Renamed', origin: 'operator' });
+      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Renamed', origin: 'operator', ...APP_VALIDATED });
       // The owner cannot change it.
       const grant = await grantOf(who, namedId);
       const forged = await ownerUpdate(who, grant, { clientData: { ...grant.clientData, oauth: { ...grant.clientData.oauth, client: { name: 'Forged', origin: 'operator' } } } });
       assert.equal(forged.status, 403, JSON.stringify(forged.body));
-      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Renamed', origin: 'operator' });
+      assert.deepEqual((await grantOf(who, namedId)).clientData.oauth.client, { name: 'Renamed', origin: 'operator', ...APP_VALIDATED });
     } finally {
       try { await storage.deleteClient(platformDB, namedId); } catch (_) { /* best-effort */ }
     }

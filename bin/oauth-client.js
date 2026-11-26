@@ -29,6 +29,7 @@
 //   node bin/oauth-client.js list-revoked-keys
 //   node bin/oauth-client.js list-keys [<clientId>]
 //   node bin/oauth-client.js purge-grants <clientId> --yes
+//   node bin/oauth-client.js validate|unvalidate <clientId>
 
 const path = require('path');
 
@@ -131,6 +132,10 @@ async function run () {
         break;
       case 'purge-grants':
         await runPurgeGrants(platform, args, cliEnv.purgeClientGrants);
+        break;
+      case 'validate':
+      case 'unvalidate':
+        await runValidate(platform, args, getClient, persistClient);
         break;
       default:
         console.error('Unknown command: ' + args.command);
@@ -484,7 +489,11 @@ async function runPurgeGrants (platform, args, purgeClientGrants) {
       clientId + '" on this core; each user must consent again)');
   }
   const counts = await purgeClientGrants(clientId);
+  // The accounts counted against the client's maxGrants (platform-wide rows):
+  // given back, each account consenting again is counted again.
+  const released = await require('oauth2/src/clientValidation.ts').releaseLevelGrants(platform, clientId);
   console.log('OK   purged on this core: ' + clientId);
+  if (released > 0) console.log('     accounts released from maxGrants (platform-wide): ' + released);
   console.log('     grants deleted:        ' + counts.grants);
   console.log('     sessions deleted:      ' + counts.sessions);
   console.log('     accesses deleted:      ' + counts.accesses + ' (grants, sessions and what they created)');
@@ -527,6 +536,7 @@ async function runShow (platform, args, getClient, computeThumbprint) {
   }
   console.log(JSON.stringify(view, null, 2));
   if (client.origin === 'metadata-document') printMetadataClient(client);
+  await printValidation(platform, client);
   if (typeof client.previousSecretExpiresAt === 'number') {
     console.log('previous secret: ' + (client.previousSecretExpiresAt > Date.now()
       ? 'accepted until ' + new Date(client.previousSecretExpiresAt).toISOString()
@@ -578,6 +588,66 @@ async function runShow (platform, args, getClient, computeThumbprint) {
   }
 }
 
+// The client's level (its badge on the consent screen), computed as the core
+// computes it: a metadata-document client's from oauth.clientMetadataDocuments
+// (the config is read for those only), a developer's from its review and its
+// publisher's row.
+async function validationOf (platform, client) {
+  const { resolveClientValidation } = require('oauth2/src/clientValidation.ts');
+  const config = client.origin === 'metadata-document' ? await cliEnv.config() : null;
+  return resolveClientValidation(platform, config, client);
+}
+
+function originOf (client) {
+  return client.origin ?? 'operator';
+}
+
+async function printValidation (platform, client) {
+  const v = await validationOf(platform, client);
+  console.log('origin: ' + originOf(client) + (client.origin === 'developer' ? ' (owner ' + client.owner?.userId + ')' : ''));
+  let why;
+  if (client.origin === 'metadata-document') why = 'from oauth.clientMetadataDocuments.mode';
+  else if (client.origin !== 'developer') why = 'registered by the operator';
+  else if (v.level === 'appValidated') why = 'app review passed ' + new Date(v.validatedAt).toISOString();
+  else if (client.validation?.app != null) why = 'app review no longer matches its fields: validate it again';
+  else why = v.level === 'publisherValidated' ? 'its publisher is validated' : 'not reviewed';
+  console.log('validation level: ' + v.level + ' (' + why + ')');
+}
+
+// Operator app review of a developer's client: `validate` records it (the
+// digest of the reviewed fields as they stand), `unvalidate` withdraws it. A
+// later change of a reviewed field drops the App Validated level until the
+// next `validate`. An operator's own client is App Validated by rule; a
+// metadata-document client's level follows the configuration.
+async function runValidate (platform, args, getClient, persistClient) {
+  const command = args.command;
+  if (!args.positional[0]) throw new Error(command + ': <clientId> required');
+  const clientId = cliClientKey(args.positional[0]);
+  const existing = await getClient(platform, clientId);
+  if (existing == null) throw new Error(command + ': no client "' + clientId + '"');
+  if (existing.origin !== 'developer') {
+    throw new Error(command + ': "' + clientId + '" ' + (existing.origin === 'metadata-document'
+      ? 'is a metadata-document client: its level follows oauth.clientMetadataDocuments.mode (allowList: publisherValidated, any: nonValidated)'
+      : 'was registered by the operator: it is appValidated by rule'));
+  }
+  const { validationDigest } = require('oauth2/src/clientValidation.ts');
+  const status = existing.status ?? 'active';
+  let row;
+  if (command === 'validate') {
+    row = { ...existing, validation: { app: { at: Date.now(), by: 'operator', digest: validationDigest(existing) } } };
+  } else {
+    if (existing.validation?.app == null) {
+      console.log('OK   client ' + clientId + ' has no app review (unchanged)');
+      return;
+    }
+    row = { ...existing };
+    delete row.validation;
+  }
+  await persistClient(platform, withStatusChange(row, { from: status, to: status, reason: command }));
+  const v = await validationOf(platform, row);
+  console.log('OK   client ' + clientId + (command === 'validate' ? ' validated' : ' review withdrawn') + ': level ' + v.level);
+}
+
 // Compute a key's RFC 7638 thumbprint for display; never throw out of `show`.
 function safeThumbprint (computeThumbprint, jwk) {
   let key;
@@ -614,11 +684,13 @@ async function runList (platform, getClient, args = { flags: {}, flagsScalar: {}
     if (host != null && metadataHostOfRow(c) !== host.toLowerCase()) continue;
     const kind = c.kind ?? 'app-account';
     const subject = kind === 'registry' ? (c.subjectType ?? '-') : '-';
+    const level = (await validationOf(platform, c)).level;
     console.log(id + '  ' + kind + '  ' + (c.status ?? 'active') + '  ' + subject +
       (c.origin === 'metadata-document'
         ? '  ' + (c.metadata?.firstConsentAt == null && c.metadata?.operatorRefreshedAt == null ? 'provisional ' : '') +
           'metadata-document ' + c.metadataUrl
-        : ''));
+        : '  ' + originOf(c) + (c.origin === 'developer' ? ' owner:' + c.owner?.userId : '')) +
+      '  ' + level);
   }
 }
 
@@ -1324,6 +1396,8 @@ async function runRevoke (platform, args, removeClient) {
   const clientId = cliClientKey(raw);
   const existing = await oauthStorage().getClient(platform, clientId);
   await removeClient(platform, clientId);
+  // The accounts counted against the client's maxGrants: a new registration starts from none.
+  await require('oauth2/src/clientValidation.ts').releaseLevelGrants(platform, clientId);
   console.log('OK   client revoked: ' + clientId);
   console.log('     every code, refresh token, session and consent issued for this client before now is void.');
   if (existing?.origin === 'metadata-document') {
@@ -1680,6 +1754,7 @@ function printUsage (stream) {
     '      (--audience <url> | --any-audience) [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n' +
     '  node bin/oauth-client.js purge-grants <clientId> --yes\n' +
+    '  node bin/oauth-client.js validate|unvalidate <clientId>\n' +
     '  node bin/oauth-client.js list --origin metadata-document [--host <host>]\n' +
     '  node bin/oauth-client.js check-metadata <url>\n' +
     '  node bin/oauth-client.js refresh-metadata <url|key>\n' +
@@ -1701,6 +1776,13 @@ function printUsage (stream) {
     'A client suspended or under review gets no redirect from /authorize (HTML 400) and\n' +
     'is refused at the consent, /token, introspection and the data API.\n' +
     'Every change is kept in its statusLog.\n' +
+    'Validation level (the badge on the consent screen; show and list print it):\n' +
+    'appValidated for a client the operator registered; for a developer\'s client\n' +
+    '(origin developer), appValidated while its app review stands, else\n' +
+    'publisherValidated when its owner is a validated publisher, else nonValidated;\n' +
+    'for a metadata-document client, publisherValidated under allowList, else\n' +
+    'nonValidated. validate records the app review of a developer\'s client (a\n' +
+    'later change of a reviewed field drops it); unvalidate withdraws it.\n' +
     'purge-grants deletes, on THIS core, every grant of the client (CMC data-grants of\n' +
     'an app-account client included) with its sessions, what they created, their\n' +
     'aliases and refresh chains (each user consents again); run it on each core,\n' +
@@ -1865,6 +1947,7 @@ module.exports = {
   runRotateSecret,
   runRevoke,
   runPurgeGrants,
+  runValidate,
   runCheckMetadata,
   runRefreshMetadata,
   runTemplateFrom,

@@ -53,6 +53,7 @@ const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 const { resolveMetadataClient, metadataHostOf } = require('../clientMetadata.ts');
 const { clientMetadataDocumentsOn } = require('../clientMetadataConfig.ts');
 const { isMetadataClientKey } = require('../clientMetadataId.ts');
+const { resolveClientValidation, levelPolicy, consentPolicyRefusal, scopeTemplateRefusal } = require('../clientValidation.ts');
 
 /** An S256 code_challenge: base64url (no padding) of a SHA-256 digest. */
 const PKCE_S256_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -225,6 +226,17 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       return redirectError('invalid_target', `${requestedName} must be on this issuer's host`);
     }
 
+    // The operator's policy for a client of this level (`oauth.clientRegistration
+    // .levels`): `refuse` ends here; `testers` and `maxGrants` are decided at
+    // the consent, once the account is known.
+    const validation = await resolveClientValidation(deps.platform, deps.config, client);
+    const policy = levelPolicy(deps.config, validation.level);
+    const policyRefused = await consentPolicyRefusal(deps.platform, client, policy, null);
+    if (policyRefused != null) {
+      await audit('oauth.consent.refused', { clientId: client.clientId, reason: policyRefused.reason, validationLevel: validation.level });
+      return redirectError('unauthorized_client', policyRefused.description);
+    }
+
     if (isRegistryClient(client)) {
       return authorizeRegistryClient();
     }
@@ -321,6 +333,10 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       const resolved = resolveRequestedScope(client, isNonEmptyString(q.scope) ? String(q.scope) : '',
         { oidcEnabled: hasSigningKeys(deps.config) });
       if (!resolved.ok) return redirectError('invalid_scope', resolved.description);
+      // The scope template of the client's level, on top of its own maximum set.
+      const outsideTemplate = scopeTemplateRefusal(client, validation.level, policy.scopeTemplate,
+        isNonEmptyString(q.scope) ? String(q.scope) : '', { oidcEnabled: hasSigningKeys(deps.config) });
+      if (outsideTemplate != null) return redirectError('invalid_scope', outsideTemplate);
       // A nonce already used in an id_token for this client is refused here,
       // before the user is asked; the code exchange burns it (race-safe).
       const oidcNonce = resolved.coreTokens.includes('openid') && nonce != null ? nonce : undefined;
