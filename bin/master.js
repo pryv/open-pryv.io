@@ -379,6 +379,36 @@ if (cluster.isPrimary) {
       if (message != null) warn(`[mfa] ${message}`);
     }
 
+    // --- Platform setup ---
+    // A fresh platform gets its one-time setup code here, from the first core
+    // that boots (see components/business/src/admin/setupBoot.ts); an existing
+    // platform is recorded as already set up. Master only, before the workers
+    // serve. A failure never blocks the boot: the code can be replaced later.
+    try {
+      const storagesBarrel = require('../storages/index.ts');
+      const coreId = String(config.get('core:id') ?? 'single');
+      const { runSetupBoot } = require('../components/business/src/admin/setupBoot.ts');
+      await runSetupBoot({
+        db: storagesBarrel.platformDB,
+        config,
+        coreId,
+        joining: bootstrapArgs.enabled === true,
+        platformInUse: async () => {
+          const local = await storagesBarrel.usersLocalIndex.getAllByUsername();
+          if (Object.keys(local).length > 0) return true;
+          if ((await storagesBarrel.platformDB.listPlatformKvKeys('user-core/')).length > 0) return true;
+          const cores = await storagesBarrel.platformDB.getAllCoreInfos();
+          return cores.some((c) => c != null && c.id !== coreId);
+        },
+        configDir: setupCodeDir(process.argv.slice(2)),
+        log,
+        warn,
+        print: (text) => process.stdout.write(text)
+      });
+    } catch (e) {
+      warn(`[setup] setup step failed: ${e.message}`);
+    }
+
     // Keep master alive while workers run (tcp_pubsub sockets are unref'd)
     const keepAlive = setInterval(() => {}, 60000);
 
@@ -1005,6 +1035,16 @@ if (cluster.isPrimary) {
   } else {
     require('../components/api-server/bin/server');
   }
+}
+
+/**
+ * Where the one-time setup code file goes: the folder of the `--config` file
+ * when one is given, else the base config folder.
+ */
+function setupCodeDir (argv) {
+  const i = argv.indexOf('--config');
+  if (i >= 0 && argv[i + 1]) return path.dirname(path.resolve(argv[i + 1]));
+  return BASE_CONFIG_DIR;
 }
 
 // ---------------------------------------------------------------------------
