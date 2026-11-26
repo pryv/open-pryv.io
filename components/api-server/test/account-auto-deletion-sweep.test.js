@@ -851,8 +851,111 @@ describe('[ADSW] account auto-deletion sweep', function () {
       assert.ok(row != null, 'audit row of the erasure');
       assert.equal(row.createdBy, 'system');
       assert.equal(row.content.record.trigger, 'date');
-      assert.equal(row.content.record.username, u.username);
+      assert.equal(row.content.record.userId, u.id);
+      // Mutation caught: the sweep's whole record (username included) copied to the audit.
+      // (the fixture's id is its username: the id stays, the username field goes)
+      assert.ok(!('username' in row.content.record), 'no username in a record that outlives the account: ' + JSON.stringify(row.content.record));
+      assert.ok(s.lines.some((l) => l.msg.includes(`erasing account "${u.username}"`)), 'the operator log still names it');
     } finally {
+      await auditStorage.deleteUser(u.id);
+      await userLocalDirectory.deleteUserDirectory(u.id);
+    }
+  });
+
+  // Mutations caught: the sweep's record waited for without a bound (the
+  // erasure never starts); its late answer counted a second time.
+  it('[ADSW28] the sweep\'s erasure record whose write never answers: counted as lost once past the bound, the erasure goes on', async function () {
+    if (config.get('audit:active') !== true) this.skip();
+    const auditStorage = require('storages').auditStorage;
+    const userLocalDirectory = require('storage').userLocalDirectory;
+    const audit = require('audit').default;
+    const lossCounter = require('audit/src/lossCounter.ts');
+    const { erasureRecordWait } = require('business/src/auth/accountAudit.ts');
+    const originalForUser = auditStorage.forUser;
+    const original = audit.eventForUser;
+    const savedMs = erasureRecordWait.ms;
+    const u = await freshUser();
+    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    const s = await sweepFor([u]);
+    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+    let staging = false;
+    let answerLate = null;
+    auditStorage.forUser = async function (userId) {
+      if (staging && userId === u.id) return { createEvent: () => new Promise((resolve, reject) => { answerLate = reject; }) };
+      return await originalForUser.call(auditStorage, userId);
+    };
+    const stub = sinon.stub(audit, 'eventForUser').callsFake(async function (userId, event, methodId, ...rest) {
+      staging = methodId === 'account.autoDeletion.erase' && userId === u.id;
+      try {
+        return await original.call(audit, userId, event, methodId, ...rest);
+      } finally {
+        staging = false;
+      }
+    });
+    erasureRecordWait.ms = 300;
+    const before = lossCounter.snapshot().lost.total;
+    try {
+      await withInjectedConfig({ audit: { onUserDelete: 'keep' } }, async () => {
+        assert.equal((await s.run(T0 + 20 * DAY)).erased, 1);
+      });
+      assert.ok(answerLate != null, 'the staged write was reached');
+      assert.equal(await exists(u), false);
+      assert.strictEqual(lossCounter.snapshot().lost.total, before + 1, 'counted lost at the bound');
+      assert.ok(s.lines.some((l) => l.level === 'error' && l.msg.includes('erasure record of account') && l.msg.includes('not written')), 'logged');
+      answerLate(new Error('staged: a late failure'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.strictEqual(lossCounter.snapshot().lost.total, before + 1, 'the late answer is not counted again');
+    } finally {
+      erasureRecordWait.ms = savedMs;
+      stub.restore();
+      auditStorage.forUser = originalForUser;
+      await auditStorage.deleteUser(u.id);
+      await userLocalDirectory.deleteUserDirectory(u.id);
+    }
+  });
+
+  // Mutations caught: account.deleted written before `confirm` (a withdrawn
+  // erasure would leave it), the sweep's own record replaced by it, an
+  // address or an access kept for a sweep erasure.
+  it('[AADL6] a sweep erasure under `keep` writes account.autoDeletion.erase then account.deleted; a withdrawn one writes neither', async function () {
+    if (config.get('audit:active') !== true) this.skip();
+    const auditStorage = require('storages').auditStorage;
+    const userLocalDirectory = require('storage').userLocalDirectory;
+    const trail = async (u) => ((await (await auditStorage.forUser(u.id)).getEvents({ query: [], options: { limit: 1000 } })) ?? [])
+      .filter((e) => ['account.autoDeletion.erase', 'account.deleted'].includes(e.content?.action));
+    const u = await freshUser();
+    const withdrawn = await freshUser();
+    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    await state.setSetting(withdrawn.id, onDate(T0 + 20 * DAY), 'test');
+    const s = await sweepFor([u, withdrawn]);
+    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+    // The holder of `withdrawn` changes the schedule once its erasure is
+    // recorded as in progress: the erasure's `confirm` withdraws it.
+    const openRecord = Deletion.prototype.openErasureRecord;
+    const stub = sinon.stub(Deletion.prototype, 'openErasureRecord').callsFake(async function (context, ...rest) {
+      if (context.user.id === withdrawn.id) await state.setSetting(withdrawn.id, onDate(T0 + 400 * DAY), 'test');
+      return await openRecord.call(this, context, ...rest);
+    });
+    try {
+      await withInjectedConfig({ audit: { onUserDelete: 'keep' } }, async () => {
+        assert.equal((await s.run(T0 + 20 * DAY)).erased, 1);
+      });
+      stub.restore();
+      assert.equal(await exists(u), false);
+      assert.ok(await exists(withdrawn), 'not erased');
+      assert.ok(s.lines.some((l) => l.msg.includes('changed while being checked') && l.msg.includes(withdrawn.username)), JSON.stringify(s.lines));
+      const rows = await trail(u);
+      assert.deepEqual(rows.map((e) => e.content.action).sort(), ['account.autoDeletion.erase', 'account.deleted'], JSON.stringify(rows));
+      const erase = rows.find((e) => e.content.action === 'account.autoDeletion.erase');
+      const deleted = rows.find((e) => e.content.action === 'account.deleted');
+      assert.ok(erase.time <= deleted.time, 'the sweep\'s record first');
+      assert.equal(deleted.type, 'audit-log/account');
+      assert.deepEqual(deleted.streamIds, ['action-account.deleted']);
+      assert.deepEqual(deleted.content.source, { name: 'auto-deletion' });
+      assert.deepEqual(deleted.content.record, { trigger: 'date' });
+      assert.deepEqual(await trail(withdrawn), [], 'nothing for a withdrawn erasure');
+    } finally {
+      stub.restore();
       await auditStorage.deleteUser(u.id);
       await userLocalDirectory.deleteUserDirectory(u.id);
     }

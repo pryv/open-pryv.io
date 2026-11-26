@@ -25,7 +25,7 @@ const { isInMaintenance } = require('storages');
 const { Deletion } = require('business/src/auth/deletion.ts');
 const { startStorageUsedJob } = require('api-server/src/methods/helpers/storageUsedJob.ts');
 
-const ERASURE_STEPS = ['deleteUserFiles', 'deleteHFData', 'deleteAttachments', 'deleteAuditDataStorage', 'deleteUser', 'deleteAuditDataStorageAgain', 'deleteAuditData', 'dropHFDataAgain'];
+const ERASURE_STEPS = ['recordAccountDeleted', 'deleteUserFiles', 'deleteHFData', 'deleteAttachments', 'deleteAuditDataStorage', 'deleteUser', 'deleteAuditDataStorageAgain', 'deleteAuditData', 'dropHFDataAgain'];
 
 describe('[MNSC] maintenance scope on long legitimate work', function () {
   this.timeout(60000);

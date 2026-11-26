@@ -94,6 +94,21 @@ describe('[AFLT] AuditFilter', () => {
       // The register call itself stays syslog-only.
       assert.ok(apiMethods.WITHOUT_USER_METHODS.includes('auth.register'));
     });
+    // Mutation caught: an id declared without a user (it would reach syslog only).
+    it('[AADLA] the deletion and the restore of the account are recorded with their user, in "account.all" and "all", not in a list without them', () => {
+      for (const action of ['account.deleted', 'account.restored']) {
+        assert.ok(apiMethods.ALL_METHODS.includes(action), action);
+        assert.ok(!apiMethods.WITHOUT_USER_METHODS.includes(action), action);
+        assert.ok(apiMethods.WITH_USER_METHODS.includes(action), action);
+        const storageOnly = (include, exclude = []) => new AuditFilter({ syslogFilter: buildFilter([], ['all']), storageFilter: buildFilter(include, exclude) }).filter.methods[action];
+        assert.deepStrictEqual(storageOnly(['account.all']), { storage: true }, action);
+        assert.deepStrictEqual(storageOnly(['all']), { storage: true }, action);
+        assert.strictEqual(storageOnly(['accesses.created', 'auth.login', 'account.created']), false, action + ': a one-by-one list without it');
+        assert.deepStrictEqual(storageOnly(['account.created', action]), { storage: true }, action);
+      }
+      // The deletion call itself stays syslog-only.
+      assert.ok(apiMethods.WITHOUT_USER_METHODS.includes('auth.delete'));
+    });
   });
 
   describe('[AF02] initialization', () => {

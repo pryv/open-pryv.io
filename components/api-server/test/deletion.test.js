@@ -297,20 +297,17 @@ describe('[PGTD] DELETE /users/:username', () => {
         });
         it(`[${testIDs[i][9]}] should delete user audit events`, async function () {
           if (!isAuditActive) this.skip();
-          // SQLite regression-guard: per-user audit DB file lives inside the
-          // userLocalDirectory tree, so the filesystem wipe in deleteAuditData
-          // would by itself remove the file. The engine-agnostic
-          // auditStorage.deleteUser also runs (BEFORE the dir wipe); this
-          // assertion still passes for both code paths on SQLite.
-          // The audit database file itself: the tests above read the deleted
-          // user's events and streams, which creates their (empty) files and
-          // so the user directory again ([UDRM*] checks the directory).
+          // A file-backed audit (SQLite): its database file is gone. Only that
+          // file: the tests above read the deleted user's events and streams,
+          // which on a SQLite base storage creates their (empty) files and so
+          // the user directory again. The directory itself is [UDRM*]'s
+          // check, made before those reads. An audit that is not file-backed
+          // (PostgreSQL) is checked by its row count below.
           const auditStorage = require('storages').auditStorage;
-          const pathToUserAuditData = typeof auditStorage?.existingPathForUser === 'function'
-            ? auditStorage.existingPathForUser(userToDelete.attrs.id)
-            : require('storage').userLocalDirectory.getPathForUser(userToDelete.attrs.id);
-          const userFileExists = fs.existsSync(pathToUserAuditData);
-          assert.strictEqual(userFileExists, false);
+          if (typeof auditStorage?.existingPathForUser === 'function') {
+            const pathToUserAuditData = auditStorage.existingPathForUser(userToDelete.attrs.id);
+            assert.strictEqual(fs.existsSync(pathToUserAuditData), false);
+          }
           // Engine-agnostic check — every engine that declares
           // auditStorage must have zero rows / events for the deleted
           // user after auth.delete (the gap on PG where the shared

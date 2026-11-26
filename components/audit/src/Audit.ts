@@ -83,6 +83,17 @@ function buildCounted<T> (kind: LossKind, tracing: Tracing, spanName: string, bu
   }
 }
 
+/** Whether `write` settles within `ms` (it rejecting in time rejects this). */
+async function settlesWithin (write: Promise<void>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => { timer = setTimeout(resolve, ms, false); });
+  try {
+    return await Promise.race([write.then(() => true as const), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * A record that cannot be written is counted HERE (`lossCounter`), once per
  * record, and the error re-thrown: callers log it and never count.
@@ -195,7 +206,13 @@ class Audit {
     }
   }
 
-  async eventForUser (userId: string | undefined, event: AuditEventLike, _methodId?: string, kind: LossKind = 'event') {
+  /**
+   * `waitMs`: how long the storage write is waited for. Past it the record
+   * counts as lost (`storage-write-failed`) and the call throws, as a failed
+   * write does; the late answer of the write, whatever it is, is neither
+   * counted again nor thrown.
+   */
+  async eventForUser (userId: string | undefined, event: AuditEventLike, _methodId?: string, kind: LossKind = 'event', waitMs: number | null = null) {
     // What failed, should the write below throw; also the losses that do not.
     let reason: LossReason = 'invalid-record';
     let silentLoss: LossReason | null = null;
@@ -219,7 +236,13 @@ class Audit {
           }
         } else {
           reason = 'storage-write-failed';
-          await this.#store(this.storage, userId!, event);
+          const store = this.#store(this.storage, userId!, event);
+          if (waitMs == null) {
+            await store;
+          } else if (!await settlesWithin(store, waitMs)) {
+            store.catch((err: unknown) => logger.warn('An audit record write that had no answer in time failed later', err));
+            throw new Error(`Audit record not written: the audit storage did not answer within ${waitMs} ms`);
+          }
         }
       }
     } catch (err) {

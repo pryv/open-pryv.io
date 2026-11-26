@@ -9,6 +9,7 @@ import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
 import { parseAccessRef } from 'business/src/accesses/refs.ts';
 import { SYSTEM_USER_ACCESS_ID } from 'business/src/users/UserRepositoryOptions.ts';
+import { ACCOUNT_EVENT_TYPE } from 'business/src/auth/accountAudit.ts';
 import type { MethodNext } from '../_types.ts';
 
 /**
@@ -25,12 +26,14 @@ import type { MethodNext } from '../_types.ts';
  * Ids and fixed words only: no username, address, password, token, app id or
  * invitation, nothing about the administrator or the delegate who asked. The
  * client address is kept for a self-registration only: it is the account
- * holder's own, as on every later call row of the trail.
+ * holder's own, as on every later call row of the trail. The deletion and the
+ * restore of the account are recorded in the same type
+ * (business/src/auth/accountAudit.ts).
  */
 
 const logger = getLogger('account-creation-audit');
 
-export const ACCOUNT_EVENT_TYPE = 'audit-log/account';
+export { ACCOUNT_EVENT_TYPE };
 export const ACCOUNT_CREATED_ACTION = 'account.created';
 
 /** The part of the server that created the account. */

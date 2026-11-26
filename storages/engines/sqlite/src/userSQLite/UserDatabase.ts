@@ -47,6 +47,8 @@ type EventQueries = {
   getDeletedSince: SqliteStmt,
   getHistory: SqliteStmt,
   create: SqliteStmt,
+  /** Prepared on first use (imports only). */
+  createIfAbsent?: SqliteStmt,
   deleteByHeadId: SqliteStmt,
   deleteById: SqliteStmt
 };
@@ -216,8 +218,8 @@ function prepareGetAllQuery (db: SqliteDb, tableName: string): SqliteStmt {
   return db.prepare(`SELECT * FROM ${tableName}`);
 }
 
-function prepareCreateQuery (db: SqliteDb, tableName: string, columnNames: string[]): SqliteStmt {
-  return db.prepare(`INSERT INTO ${tableName} (${columnNames.join(', ')}) VALUES (@${columnNames.join(', @')})`);
+function prepareCreateQuery (db: SqliteDb, tableName: string, columnNames: string[], onConflict: string = ''): SqliteStmt {
+  return db.prepare(`INSERT INTO ${tableName} (${columnNames.join(', ')}) VALUES (@${columnNames.join(', @')})${onConflict !== '' ? ' ' + onConflict : ''}`);
 }
 
 UserDatabase.prototype.close = function (this: UserDatabaseInstance): void {
@@ -446,6 +448,16 @@ function insertRow (udb: UserDatabaseInstance, row: EventRow, streamIds: unknown
   }
   udb.db.transaction(() => {
     udb.eventQueries.create.run(row);
+    for (const term of terms) udb.eventQueries.addTerm.run(term);
+  })();
+}
+
+/** `insertRow`, except that a row whose id is already stored is skipped (only that conflict: any other constraint still throws). */
+function insertRowIfAbsent (udb: UserDatabaseInstance, row: EventRow, streamIds: unknown): void {
+  const terms = termsOf(streamIds);
+  const create = udb.eventQueries.createIfAbsent ??= prepareCreateQuery(udb.db, 'events', Object.keys(tableSchemas.events), 'ON CONFLICT (eventid) DO NOTHING');
+  udb.db.transaction(() => {
+    if (create.run(row).changes === 0) return;
     for (const term of terms) udb.eventQueries.addTerm.run(term);
   })();
 }
@@ -712,15 +724,31 @@ UserDatabase.prototype.exportAllEventsStreamed = async function * (this: UserDat
 };
 
 /**
- * Import raw event rows into the database.
+ * Import raw event rows into the database. A row whose id is already there
+ * makes the import throw (the restore of the account then fails and is
+ * cleaned up).
  */
 UserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {
+  await importRows(this, events, false);
+};
+
+/**
+ * Import raw audit rows. A row whose id is already there is skipped, the
+ * stored one kept (as the PostgreSQL engine does): a restore onto a trail
+ * kept after an erasure adds the backup's rows it lacks.
+ */
+AuditUserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {
+  await importRows(this, events, true);
+};
+
+async function importRows (udb: UserDatabaseInstance, events: EventRow[], skipExisting: boolean): Promise<void> {
   for (const event of events) {
     await concurrentSafeWrite.execute(() => {
-      insertRow(this, event, event.streamIds);
+      if (skipExisting) insertRowIfAbsent(udb, event, event.streamIds);
+      else insertRow(udb, event, event.streamIds);
     });
   }
-};
+}
 
 function prepareEventsDeleteQuery (params: GetParams): SqlPart & { usesFullText: boolean } {
   if (params.streams) { throw new Error(`Events DELETE with stream query not supported yet: ${JSON.stringify(params)}`); }

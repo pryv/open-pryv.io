@@ -148,6 +148,28 @@ describe('[BSRP] breachScopeReport (pure module)', () => {
     assert.match(renderMarkdown(r), /\| account\.created \| 1 \| 0 \|/);
   });
 
+  // Mutation caught: the type removed from the server records (the deletion counted as a call).
+  it('[AADLB] lists the holder\'s deletion of the account under the access that asked, without counting it as a call', () => {
+    const deleted = { streamIds: ['access-' + BASE, 'action-account.deleted'], type: 'audit-log/account', time: 1999, content: { action: 'account.deleted', source: { name: 'holder', ip: '127.0.0.1' }, record: { trigger: 'holder', accessId: BASE, accessType: 'personal' } } };
+    const access = { id: BASE, name: 'personal', type: 'personal', permissions: [] };
+    const alone = buildReport([readRow(), readRow()], access, { accessId: BASE, type: 'personal' }, meta());
+    const r = buildReport([readRow(), readRow(), deleted], access, { accessId: BASE, type: 'personal' }, meta());
+    assert.strictEqual(r.activity.totalCalls, 2);
+    assert.deepStrictEqual(r.activity.byAction['account.deleted'], { valid: 1, error: 0 }, JSON.stringify(r.activity));
+    assert.strictEqual(r.activity.lastCallTs, alone.activity.lastCallTs, 'the deletion is not a call');
+    assert.deepStrictEqual(r.records, alone.records);
+  });
+
+  // Mutation caught: a class mapped to an id no method has (`account.delete`, never a method).
+  it('[AADLE] every action the report classes is a declared method, or a method of v1 a migrated trail holds', () => {
+    const { ALL_METHODS } = require('audit/src/ApiMethods.ts');
+    const { ACTION_CLASS } = require('audit/src/breachScopeReport.ts');
+    // The followed slices of v1: the rows of an account migrated from v1 name them.
+    const V1_METHODS = ['followedSlices.get', 'followedSlices.create', 'followedSlices.update', 'followedSlices.delete'];
+    const undeclared = Object.keys(ACTION_CLASS).filter((a) => !ALL_METHODS.includes(a) && !V1_METHODS.includes(a));
+    assert.deepStrictEqual(undeclared, []);
+  });
+
   it('[BSR9] collects write integrity evidence and counts deletes/getOne', () => {
     const rows = [
       { streamIds: ['access-' + BASE, 'action-events.create'], type: 'audit-log/pryv-api', time: 1400, content: { action: 'events.create', record: { key: 'e1', integrity: 'sha:abc' } } },

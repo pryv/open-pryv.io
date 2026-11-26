@@ -10,6 +10,7 @@ import type { DeletionObjection } from './deletionTeardown.ts';
 import type { AccountErasureRow } from 'storages/interfaces/baseStorage/ErasuresLocalDB.ts';
 import { erasureLedgerConfig } from '../erasureLedger/config.ts';
 import { writeErasureRecord, ledgerKey } from '../erasureLedger/index.ts';
+import { recordAccountDeleted as writeAccountDeletedRecord } from './accountAudit.ts';
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
 const fs = require('fs');
@@ -55,7 +56,7 @@ type MethodContext = {
   erasureLost?: boolean;
 };
 type StepFn = (context: MethodContext, params: unknown, result: ResultBag, next: Next) => unknown;
-type StepName = 'runTeardownSteps' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditDataStorageAgain' | 'deleteAuditData' | 'dropHFDataAgain' | 'writeErasureLedger';
+type StepName = 'runTeardownSteps' | 'recordAccountDeleted' | 'deleteUserFiles' | 'deleteHFData' | 'deleteAttachments' | 'deleteAuditDataStorage' | 'deleteUser' | 'deleteAuditDataStorageAgain' | 'deleteAuditData' | 'dropHFDataAgain' | 'writeErasureLedger';
 
 // The series namespaces of `namespaces` whose name is not held by another
 // account (see MethodContext.foreignNames).
@@ -202,6 +203,35 @@ class Deletion {
     next();
   }
 
+  // The record of the deletion in the account's own trail, where that trail
+  // outlives the account (`audit.onUserDelete: keep`): before any data goes.
+  // Never fails the erasure (its proof is the ledger row); a record that
+  // cannot be written is logged and counted as lost by the audit. The client
+  // address and the access are kept for a deletion by the holder only.
+  async recordAccountDeleted (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+    try {
+      const trigger = this.#triggerOf(context);
+      const byHolder = trigger === 'holder' && context.deletionByAdmin !== true && context.access?.isPersonal?.() === true;
+      await writeAccountDeletedRecord(context.user.id, {
+        trigger,
+        ip: byHolder ? context.source?.ip : null,
+        accessId: byHolder ? context.access?.id : null
+      }, this.config);
+    } catch (err: unknown) {
+      this.logger.error(`the audit record of the deletion of account ${context.user.id} was not written`, err);
+    }
+    next();
+  }
+
+  // What decided the erasure: its record's (a resumed one recorded without
+  // its trigger is `unknown`), else this run's.
+  #triggerOf (context: MethodContext): string {
+    const record = context.erasure;
+    return record != null
+      ? (record.trigger ?? 'unknown')
+      : (context.erasureTrigger ?? (context.deletionByAdmin === true ? 'admin' : 'holder'));
+  }
+
   async deleteUserFiles (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const dirPaths = [
       this.config.get('storages:engines:filesystem:previewsDirPath') as string
@@ -258,9 +288,7 @@ class Deletion {
   // never read as such a rollback.
   async writeErasureLedger (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     const record = context.erasure;
-    const trigger = record != null
-      ? (record.trigger ?? 'unknown')
-      : (context.erasureTrigger ?? (context.deletionByAdmin === true ? 'admin' : 'holder'));
+    const trigger = this.#triggerOf(context);
     if (trigger === 'system' || context.erasureLost === true) {
       this.logger.info(`erasure ledger: nothing recorded for account ${context.user.id} (` +
         (trigger === 'system' ? 'rollback of an account creation' : 'the erasure is no longer this one') + ')');
@@ -408,6 +436,8 @@ class Deletion {
       // Before anything is erased: the plugins read this account's records to
       // reach the accounts it has relationships with.
       ...(teardown ? ['runTeardownSteps' as const] : []),
+      // After the teardown, before the first step that removes data.
+      'recordAccountDeleted',
       'deleteUserFiles',
       'deleteHFData',
       'deleteAttachments',

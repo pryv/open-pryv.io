@@ -408,6 +408,8 @@ async function runRestore (args) {
   const keptIds = new Set(report.restored.map((u) => u.userId));
   report.erasedRestored = (report.erasedRestored ?? []).filter((u) => keptIds.has(u.userId));
   report.restoredStampFailed = await orchestrator.stampRestored(report.erasedRestored);
+  // The record of the restore in each kept account's trail (never fails the restore).
+  await orchestrator.recordRestored(report.restored);
 
   // Post-restore cleanup — when integrity verification was requested, only clean up
   // the backup source on a fully green result (nothing failed AND nothing unverified);

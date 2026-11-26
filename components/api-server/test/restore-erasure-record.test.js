@@ -46,7 +46,7 @@ const { createFilesystemBackupReader } = require('storages/interfaces/backup/ind
 const CLI = path.resolve(__dirname, '../../../bin/backup.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 const STALE_MS = 16 * 60 * 1000;
-const ALL_STEPS = ['runTeardownSteps', 'deleteUserFiles', 'deleteHFData', 'deleteAttachments', 'deleteAuditDataStorage', 'deleteUser', 'deleteAuditDataStorageAgain', 'deleteAuditData', 'dropHFDataAgain'];
+const ALL_STEPS = ['runTeardownSteps', 'recordAccountDeleted', 'deleteUserFiles', 'deleteHFData', 'deleteAttachments', 'deleteAuditDataStorage', 'deleteUser', 'deleteAuditDataStorageAgain', 'deleteAuditData', 'dropHFDataAgain'];
 
 function runCli (args) {
   const env = { ...process.env, ...childStorageEngineEnv() };
