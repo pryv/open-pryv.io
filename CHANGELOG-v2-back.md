@@ -13,6 +13,30 @@
   Bump policy and history: `storages/interfaces/README.md`. `storages/README.md` rewritten from the loader (it named
   factories, files and config keys that no longer exist). Tests `[IFVA]` to `[IFVH]`.
 
+### Platform setup and administrators: internals
+
+- `components/business/src/admin/`: `permissions.ts` (the permission names, a public contract), `codes.ts`
+  (Crockford base32 codes, base64url tokens, SHA-256 keys, constant-time comparison), `store.ts` (the platform-store
+  keys), `setupState.ts`, `sessions.ts`, `roles.ts` (role rows, claim codes, the last-owner guard
+  `LastOwnerError`), `config.ts` (validation and derived URLs; the portal address comes from `portalDefaults.ts`),
+  `setupBoot.ts` (the master boot step), `setupChecks.ts` (the checks of the setup page), `capabilities.ts`.
+- Platform store: `PlatformDB.setPlatformKvIfAbsent` (first writer wins) on rqlite (`INSERT OR IGNORE`) and
+  PostgreSQL (`ON CONFLICT DO NOTHING`); `setup/state` and `admin-role/` rows carried by `bin/migrate-platform.js`.
+  Conformance `[PLKV13]`, `[ADKC]` (both engines), `[MPKV]`.
+- `mfa.verify` stamps the second factor of a sign-in in the home core's local key-value store
+  (`admin-mfa-sign-in/<sha256(token)>`, TTL `admin.session.ttlMinutes`): the personal access does not record it.
+- `middleware/src/adminAuth.ts`: the `/system` gate (admin key, administrator session, setup session) reading
+  `api-server/src/routes/system-permissions.ts` (one entry per route; `[SYPM]` fails on a route without one), the
+  origin rule, and the `ownCors` branch of `commonHeaders` for portal calls. `routes/system-setup.ts` +
+  `methods/systemAdmin.ts`: the routes; `routes/setup-page/`: the static setup page.
+- `auth.login`: the trusted-app check also passes for the setup page (app id `pryv-setup-page`, own origin, valid
+  setup session, setup pending); `auth.register` refuses while setup is pending unless a setup session is sent or
+  `setup.registrationWhilePending: open`.
+- `bin/master.js` runs the setup step in the master process; `bin/admin.js` is new; `bin/check-config.js` checks the
+  new keys; `bin/init.js` writes `setup.codeHash` and mirrors the keys in its appendix.
+- Tests: `[ADMS]` (routes, page, checks, setup-page sign-in), `[SYPM]`, `[ADMC]` (`bin/admin.js`), `[ADKC16]`
+  (last-owner guard), `[INWPL]`, `[INWPM]`, plus the business and middleware units.
+
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 
 - `api-server/src/methods/mfa.ts`: `mfa.confirm` accepts an enrolment session only and `mfa.verify` a login session
