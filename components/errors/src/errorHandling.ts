@@ -12,6 +12,7 @@ import type { APIError as APIErrorType } from './APIError.ts';
 import { APIError } from './APIError.ts';
 import { ErrorIds } from './ErrorIds.ts';
 import { isStatementCancelled, isAccountGoneRefusal, accountGoneRefusalOf } from './factory.ts';
+import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
 // Logged URLs never carry the access token (`?auth=`).
 import { redactUrl } from 'utils/src/redactUrl.ts';
 
@@ -112,6 +113,10 @@ errorHandling.logError = function (error: Error, req: ReqLike, logger: LoggerLik
       // A statement stopped by the database time limit: the operator's signal
       // for tuning it. Its text (truncated), never its parameters.
       logger.warn(logMsg, { ...metadata, statement: typeof inner.statementText === 'string' ? inner.statementText : undefined });
+    } else if (isPlatformNoAnswer(inner)) {
+      // The platform database did not answer: the operator's signal of a
+      // leader change that lasts, or of an unreachable platform database.
+      logger.warn(logMsg, metadata);
     } else if (isAccountGoneRefusal(inner)) {
       // The storage refused a write (or file) for an account it does not hold:
       // an account erased while the request ran, or a write under a wrong id

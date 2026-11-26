@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### rqlite reads without an answer
+
+- `DBrqlite.query`: at every level, HTTP 503, a top-level `error`, no `results[0]` (also a body without `results`,
+  which threw a `TypeError`) or a failed connection to `rqlited` throws `RqliteNoAnswerError` (message
+  `rqlite query got no result at level <level|default>: ...`); an answered result without rows stays `[]`; an SQL
+  error and another HTTP failure keep their plain `Error`. A no-answer is sent again every 100 ms for
+  `readWaitMs` (instance field, from `storages.engines.rqlite.readWaitMs`, default 3000, checked at construction;
+  0 = one attempt), then thrown; after a read that used its whole wait, later reads make one attempt until a read
+  at a level other than `none` is answered (private latch; a node-local read is answered without a leader). The
+  wait bounds the new attempts, not one in progress (no fetch timeout: a large read is not cut short). Limits:
+  requests already waiting when an outage starts each wait their full time (the first to time out sets the
+  latch), and the latch is per process (each API worker and the master). `setUserUniqueFieldIfNotExists` reads
+  back at `strong`; `bumpWindowedCounter` keeps `now + 1000` when its read-back gets no answer.
+  `RqliteNoAnswerError` is exported.
+- New `storages/interfaces/platformStorage/noAnswer.ts`: `isPlatformNoAnswer(err)` (by `name`, through
+  `innerError` / `cause`), used by `errors` (`unexpectedError` maps it to 503 `api-unavailable` with
+  `Retry-After: 2`, `logError` logs it at warn; the constants are exported), the api-server error middleware
+  (a raw no-answer passed to `next`, e.g. by `checkUserCore` or `routes/reg/legacy.ts`, goes through
+  `unexpectedError`), `ingressGuard.failIngress` (503 + `retry-after`, warn), `routes/reg/records.ts` (passes it to
+  `next`), `oauth2` (`guardRoute` answers 503 `temporarily_unavailable`; `revocation.otherCoreIds` rethrows it),
+  `dns-server` (`start` with the periodic refresh on: a first unanswered refresh is retried every second until it
+  succeeds, and meanwhile a lookup miss is SERVFAIL, `#runtimeRecordsLoaded`), `business` (`AcmeOrchestrator`
+  logs it as a retry). `Platform._readCoreUrlsAtInit` (called by `init`): on a multi-core core a no-answer of the
+  first core URL read is left to the 30 s timer; any other failure, or a single core, stops the boot.
+- Config: `readWaitMs` in `default-config.yml`, the engine manifest, the effective-config classification, the
+  `bin/init.js` appendix and `INSTALL.md`.
+- `Platform.selectCoreForRegistration`: a hosting asked for and served by no available core throws
+  `invalid-parameters-format` (`data.reason` `hosting-unknown` / `hosting-unavailable`) instead of returning this
+  core; `null` or `''` keeps the fallback. Hostings compare through the new `hostingKeyOf` (`core.hosting ||
+  'default'`, `DEFAULT_HOSTING`), shared with `auth.hostings`; without a `hostings` configuration, `default`
+  counts as no hosting asked.
+- `errors.factory.unsupportedOperation` answers `ErrorIds.UnsupportedOperation` (501); the `@pryv/datastore` error
+  factory is this one (`mall/src/helpers/storeDataUtils.ts`), so data-store refusals carry it too.
+- Tests: `[RQNR1-8]`, `[RQRC6]` (default level now rejects), `[RQSI1]`, `[UNXP1-4]`, `[UNSO1]`, `[PUCC8]`,
+  `[PCUR-03]`, `[DNNA1-4]`, `[ORNA1]`, `[ACML3]`, `[IGNA1]`, `[PNAH1-3]`, `[MCHR1-2]`, `[MC05C]` / `[MC06A]`
+  (refusal instead of the fallback), `[MC05E-H]`, `[JUWH]` (id).
+
 ### CMC: one grant per relationship
 
 - New `components/cmc/src/replacedGrants.ts`: `endReplacedGrants` (accepter side, called by
@@ -63,7 +100,7 @@
 - `DBrqlite.execute`: an answer with a top-level `error`, or without `results[0]`, throws
   (`RqliteNoAnswerError`); `init` retries it until there is a leader (`initWaitMs`). Never sent again by
   `execute`: what was answered may have been applied. A failed registration releases its invitation token
-  and its external id claim independently, and answers with the first failure. Default-level reads are unchanged. Tests `[RQNA*]`.
+  and its external id claim independently, and answers with the first failure. Reads: see "rqlite reads without an answer". Tests `[RQNA*]`.
 
 ### CI supply chain
 

@@ -36,8 +36,12 @@ import { clientMetadataDocumentsOn } from './clientMetadataConfig.ts';
 import { checkClientMetadataTemplate } from './registryBootCheck.ts';
 import type { NextFunction, Request, Response } from 'express';
 import { concurrencyLimit } from 'utils';
+import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
 const require = createRequire(import.meta.url);
 const { isCapacityRefusal } = concurrencyLimit;
+
+/** Seconds a client waits before retrying when the platform database did not answer (as the API's 503). */
+const PLATFORM_NO_ANSWER_RETRY_AFTER_SECONDS = 2;
 
 const { buildDiscoveryDocument, buildOpenIdConfiguration, handleJsonDocument } = require('./wellKnown.ts');
 const { setExtension, getExtension, extensionGeneration } = require('./extension.ts');
@@ -64,22 +68,29 @@ type RouteHandler = (req: Request, res: Response, next: NextFunction) => Promise
  * the server trail and the client gets a generic `server_error` (500), or, if
  * the response was already started, the response is ended as it stands. A
  * check refused because the server's password-check slots are busy answers
- * 503 `temporarily_unavailable` with `Retry-After` instead.
+ * 503 `temporarily_unavailable` with `Retry-After` instead, and so does a
+ * platform database that did not answer (a leader change): nothing was decided.
  */
 export function guardRoute (handler: RouteHandler): (req: Request, res: Response, next: NextFunction) => Promise<void> {
   return async function guardedRoute (req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       await handler(req, res, next);
     } catch (err: unknown) {
-      if (isCapacityRefusal(err) && !res.headersSent) {
-        // The server's password-check slots are busy: the client's credentials
-        // were not checked, so the answer is "retry later", never invalid_client.
+      const busy = isCapacityRefusal(err);
+      if ((busy || isPlatformNoAnswer(err)) && !res.headersSent) {
+        // The server's password-check slots are busy, or the platform database
+        // did not answer: the client's request was not decided, so the answer
+        // is "retry later", never invalid_client nor invalid_grant.
+        if (!busy) logServerError('OAuth2 route: the platform database did not answer: ' + (req?.method ?? '') + ' ' + (req?.path ?? ''), err);
         try {
           res.statusCode = 503;
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
           res.setHeader('Cache-Control', 'no-store');
-          res.setHeader('Retry-After', String(err.retryAfterSeconds));
-          res.end(JSON.stringify({ error: 'temporarily_unavailable', error_description: 'the server is busy; retry later' }));
+          res.setHeader('Retry-After', String(busy ? err.retryAfterSeconds : PLATFORM_NO_ANSWER_RETRY_AFTER_SECONDS));
+          res.end(JSON.stringify({
+            error: 'temporarily_unavailable',
+            error_description: busy ? 'the server is busy; retry later' : 'the platform database did not answer; retry later'
+          }));
         } catch (sendErr: unknown) {
           logServerError('OAuth2 route: could not send the error response', sendErr);
         }

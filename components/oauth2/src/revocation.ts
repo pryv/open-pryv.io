@@ -34,6 +34,7 @@
 
 import type { Request, Response } from 'express';
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
+import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
 import * as storage from './storage.ts';
 import { getClient } from './clientRegistry.ts';
 import { authenticateClient } from './clientSecret.ts';
@@ -175,6 +176,9 @@ async function otherCoreIds (platform: PlatformDB, self: string): Promise<string
     const cores = await platform.getAllCoreInfos();
     return (cores ?? []).map((c) => c?.id).filter((id): id is string => typeof id === 'string' && id.length > 0 && id !== self);
   } catch (err: unknown) {
+    // No answer from the platform database (a leader change): the revocation
+    // is not answered as done; the client gets 503 and retries.
+    if (isPlatformNoAnswer(err)) throw err;
     logServerError('revoke: listing the cores failed (only this core\'s refresh tokens are found)', err);
     return [];
   }

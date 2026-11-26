@@ -11,6 +11,12 @@ import { APIError } from './APIError.ts';
 import { ErrorIds } from './ErrorIds.ts';
 import { ErrorMessages } from './ErrorMessages.ts';
 import { isCapacityRefusal } from 'utils/src/concurrencyLimit.ts';
+import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
+
+/** Seconds a client waits before retrying a platform read that got no answer (a leader change). */
+const PLATFORM_NO_ANSWER_RETRY_AFTER_SECONDS = 2;
+const PLATFORM_NO_ANSWER_MESSAGE = 'The platform database did not answer (a leader change is likely in progress). Retry shortly.';
+export { PLATFORM_NO_ANSWER_RETRY_AFTER_SECONDS, PLATFORM_NO_ANSWER_MESSAGE };
 
 /** PostgreSQL's SQLSTATE for a statement cancelled (here: by statement_timeout). */
 const STATEMENT_CANCELLED_CODE = '57014';
@@ -105,7 +111,7 @@ export { factory };
 export type { ErrorFactory };
 
 factory.unsupportedOperation = (message: string) => {
-  return new APIError(ErrorIds.ApiUnavailable, message, {
+  return new APIError(ErrorIds.UnsupportedOperation, message, {
     httpStatus: 501
   });
 };
@@ -304,6 +310,21 @@ factory.unexpectedError = function (sourceError: unknown, message?: string) {
   // method, which may wrap again): keep the answer as it is.
   if (sourceError instanceof APIError && isStatementCancelled(sourceError.innerError)) {
     return sourceError;
+  }
+  // A platform statement that got no answer, also after the engine's own
+  // wait for a read (a leader change, the platform database unreachable). A
+  // read decided nothing: a retry is correct. A write may have been applied:
+  // the caller's own compensation (release, roll-back) applies, and a retry
+  // may then find it done.
+  if (sourceError instanceof APIError && sourceError.id === ErrorIds.ApiUnavailable &&
+      isPlatformNoAnswer(sourceError.innerError)) {
+    return sourceError;
+  }
+  if (isPlatformNoAnswer(sourceError)) {
+    const err = new APIError(ErrorIds.ApiUnavailable, PLATFORM_NO_ANSWER_MESSAGE,
+      { httpStatus: 503, innerError: sourceError as Error });
+    err.httpHeaders = { 'Retry-After': String(PLATFORM_NO_ANSWER_RETRY_AFTER_SECONDS) };
+    return err;
   }
   // The account was erased while the request ran: the storage refused to
   // write (or open) for it. As for any request naming an unknown account.

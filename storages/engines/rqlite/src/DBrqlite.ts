@@ -22,14 +22,23 @@ type Row = Record<string, string>;
 // rqlite speaks JSON — cell values are JSON scalars.
 type RqliteCell = string | number | boolean | null;
 type RqliteResult = { columns?: string[]; values?: RqliteCell[][]; rows_affected?: number; error?: string };
-// rqlite read-consistency levels (see rqlite docs). Omitted → `weak`
-// (node-local, can be stale during an election); `strong` is confirmed
-// through Raft and used for routing-/uniqueness-critical reads; `linearizable`
-// gives the same up-to-date guarantee without a Raft log entry and serves the
-// cached name→core routing read (getUserCore with purpose 'routing').
+// rqlite read-consistency levels (see rqlite docs). Omitted → `weak`: served
+// by the leader (a follower forwards it), which can be stale for a short
+// while after a leader change; only `none` reads node-local state. `strong`
+// is confirmed through Raft and used for routing-/uniqueness-critical reads;
+// `linearizable` gives the same up-to-date guarantee without a Raft log entry
+// and serves the cached name→core routing read (getUserCore with purpose
+// 'routing'). At every level, no answer is an error, never "no row".
 type ReadLevel = 'none' | 'weak' | 'linearizable' | 'strong';
 
-/** A write rqlite did not carry out, or cannot tell about (no leader, leader unreachable). */
+/** Pause between two attempts of a read that got no answer. */
+const READ_RETRY_MS = 100;
+
+/**
+ * A statement rqlite did not answer: no leader, leader unreachable, HTTP 503,
+ * or the local rqlited not reachable (reads). A write was not carried out, or
+ * cannot be told about; a read has no result, which is not "no row".
+ */
 class RqliteNoAnswerError extends Error {
   constructor (message: string) {
     super(message);
@@ -47,10 +56,27 @@ class DBrqlite {
   closed: boolean;
   /** How long `init` waits for a leader. */
   initWaitMs: number = 15_000;
+  /**
+   * How long a read that gets no answer is sent again (every 100 ms) before
+   * it fails; 0 = one attempt. Covers a leader change.
+   */
+  readWaitMs: number = 3000;
+  /**
+   * Set when a read used its whole wait without an answer: later reads make
+   * one attempt only, until a read is answered again (a long outage fails fast).
+   */
+  #readsFailFast: boolean = false;
 
-  constructor (url?: string) {
+  constructor (url?: string, options?: { readWaitMs?: number }) {
     this.url = url || 'http://localhost:4001';
     this.closed = false;
+    if (options?.readWaitMs != null) {
+      const readWaitMs = options.readWaitMs;
+      if (typeof readWaitMs !== 'number' || !Number.isFinite(readWaitMs) || readWaitMs < 0) {
+        throw new Error(`storages.engines.rqlite.readWaitMs must be a number of milliseconds, 0 or more (got ${JSON.stringify(readWaitMs)})`);
+      }
+      this.readWaitMs = readWaitMs;
+    }
   }
 
   async init () {
@@ -106,39 +132,71 @@ class DBrqlite {
    * @param [params]
    * @param [level] rqlite read-consistency level. Omitted → rqlite's
    *   default (`weak`), served by the leader (a follower forwards it, one
-   *   network round trip per query; only `none` reads node-local state),
-   *   which can serve stale/empty rows during a leader election. Routing- and
-   *   uniqueness-critical reads pass `'strong'` so the read is confirmed
-   *   through Raft and waits for a committed leader instead of
-   *   mis-resolving (or reporting "unknown") during an election window.
+   *   network round trip per query; only `none` reads node-local state).
+   *   Routing- and uniqueness-critical reads pass `'strong'` so the read is
+   *   confirmed through Raft.
+   *
+   * At every level, an answer without a result (no leader, leader
+   * unreachable: an empty `results`, a top-level `error`, HTTP 503) or no
+   * connection to rqlited is `RqliteNoAnswerError`, never "no row": a taken
+   * name would read as free, a held certificate as missing. Reads are
+   * idempotent, so such a read is sent again every 100 ms for `readWaitMs`
+   * (a leader change), then fails. The wait bounds the new attempts, not an
+   * attempt in progress: an attempt is not cut short (a large read, such as an
+   * export, may take longer than the wait), so the last one can end later.
+   * An SQL error or another HTTP failure is not sent again.
    */
   async query (sql: string, params?: unknown[], level?: ReadLevel): Promise<Row[]> {
+    const wait = this.#readsFailFast ? 0 : this.readWaitMs;
+    const deadline = Date.now() + wait;
+    for (;;) {
+      try {
+        const rows = await this.#queryOnce(sql, params, level);
+        // A node-local read (`none`) is answered without a leader: it says
+        // nothing about the outage.
+        if (level !== 'none') this.#readsFailFast = false;
+        return rows;
+      } catch (err) {
+        if (!(err instanceof RqliteNoAnswerError)) throw err;
+        if (Date.now() + READ_RETRY_MS > deadline) {
+          if (wait > 0) this.#readsFailFast = true;
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, READ_RETRY_MS));
+      }
+    }
+  }
+
+  async #queryOnce (sql: string, params: unknown[] | undefined, level: ReadLevel | undefined): Promise<Row[]> {
     const body = params ? [[sql, ...params]] : [[sql]];
     const url = this.url + '/db/query?timings' + (level ? `&level=${level}` : '');
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
+    const noAnswer = (detail: string) =>
+      new RqliteNoAnswerError(`rqlite query got no result at level ${level ?? 'default'}: ${detail}`);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    } catch (err) {
+      // rqlited not reachable (refused, reset, not listening yet): nothing was
+      // read. Only reads are classed so; a write may have been applied.
+      const cause = (err as { cause?: { code?: string } }).cause;
+      throw noAnswer(`connection failed (${cause?.code ?? (err as Error).message})`);
+    }
     if (!res.ok) {
-      throw new Error(`rqlite query failed (${res.status}): ${await res.text()}`);
+      const text = await res.text();
+      if (res.status === 503) throw noAnswer(`HTTP 503: ${text}`);
+      throw new Error(`rqlite query failed (${res.status}): ${text}`);
     }
     const data = await res.json();
-    if (data.results?.[0]?.error) {
-      throw new Error(`rqlite SQL error: ${data.results[0].error}`);
+    const result = data?.results?.[0];
+    if (result?.error) {
+      throw new Error(`rqlite SQL error: ${result.error}`);
     }
-    const result = data.results[0];
-    // rqlite returns an empty `results` array during cluster election
-    // (before a leader is established) — guard so we don't crash with
-    // "Cannot read properties of undefined (reading 'columns')" on
-    // api-server worker boot when the cluster is still warming up. A read
-    // that must be up to date (`strong`, `linearizable`) fails instead: "no
-    // answer" is not "no row" (a taken name would read as free).
-    if (!result) {
-      if (level === 'strong' || level === 'linearizable') {
-        throw new Error(`rqlite query returned no result at level ${level} (no leader yet?)`);
-      }
-      return [];
+    if (data?.error != null || result == null) {
+      throw noAnswer(data?.error ?? 'no leader yet?');
     }
     if (!result.columns || !result.values) return [];
     // Convert columnar format to row objects
@@ -163,14 +221,16 @@ class DBrqlite {
 
   async setUserUniqueFieldIfNotExists (username: string, field: string, value: string) {
     const key = getUserUniqueKey(field, value);
-    // Atomic: INSERT OR IGNORE, then check
+    // Atomic: INSERT OR IGNORE, then check (read back at 'strong', like
+    // setUserCoreIfNotExists and claimCoreRow).
     await this.execute(
       'INSERT OR IGNORE INTO keyValue (key, value) VALUES (?, ?)',
       [key, username]
     );
     const rows = await this.query(
       'SELECT value FROM keyValue WHERE key = ?',
-      [key]
+      [key],
+      'strong'
     );
     if (rows.length === 0) return false;
     return rows[0].value === username;
@@ -732,7 +792,14 @@ class DBrqlite {
       [storeKey, fresh, now, now, max]
     );
     if ((result?.rows_affected ?? 0) > 0) return null;
-    const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
+    // The budget was refused by an answered write; only the window end is
+    // unknown when the read-back gets no answer.
+    let rows: Row[] = [];
+    try {
+      rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [storeKey]);
+    } catch (err) {
+      if (!(err instanceof RqliteNoAnswerError)) throw err;
+    }
     const windowEndsAt = rows.length > 0 ? Number(JSON.parse(rows[0].value).windowEndsAt) : NaN;
     return Number.isFinite(windowEndsAt) ? windowEndsAt : now + 1000;
   }
@@ -895,4 +962,4 @@ function getAccessStateKey (key: string) {
   return 'access-state/' + key;
 }
 
-export { DBrqlite };
+export { DBrqlite, RqliteNoAnswerError };

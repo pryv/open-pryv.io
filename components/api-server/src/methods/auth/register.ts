@@ -14,6 +14,7 @@ const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const { getPlatform } = require('platform');
+const { hostingKeyOf } = require('platform/src/Platform.ts');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const { ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
@@ -361,7 +362,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       const hostingCores: Record<string, Array<{ id: string; [k: string]: unknown }>> = {};
       for (const core of allCores) {
         if (core.available === false) continue;
-        const h = core.hosting || 'default';
+        const h = hostingKeyOf(core);
         if (!hostingCores[h]) hostingCores[h] = [];
         hostingCores[h].push(core);
       }

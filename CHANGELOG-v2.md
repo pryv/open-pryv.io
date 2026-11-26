@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Multi-core: a platform read without an answer is no longer "not found"
+
+- **During a platform leader change, reads wait, then answer 503.** While the rqlite leader changes, a
+  platform read (core list, DNS records, invitation tokens, OAuth clients and codes, access states,
+  certificates, mail templates, the read-back of a unique name) could get no answer and was then taken for
+  "no row": a valid invitation or OAuth code read as invalid, a reserved name as taken, a held certificate as
+  missing, a revoked client as not revoked, a core as unknown. Such a read is now sent again every 100 ms for
+  3 seconds (a leader change usually takes 1 to 2 seconds; the wait bounds the new attempts, an attempt in
+  progress is not cut short); still without an answer, the call answers **503 `api-unavailable` with
+  `Retry-After: 2`** instead of acting on an absence: API methods, the routing of `/{username}/*` requests,
+  the `/reg/*` routes and the adapter ingress alike. The same holds when the core cannot reach its local
+  `rqlited`. The OAuth endpoints answer 503 `temporarily_unavailable` with `Retry-After` in that case, and
+  `POST /oauth2/revoke` no longer answers 200 when it could not read the core list. The embedded DNS answers
+  SERVFAIL (no SOA, nothing a resolver keeps as a negative answer) and its periodic refresh keeps the records
+  it holds; a DNS server that starts without an answer retries every second and answers SERVFAIL, not
+  NXDOMAIN, for a name it cannot place until it has read its records. After one read waited the full time in
+  vain, the next reads of that process fail at once until one is answered again, so a long outage does not hold
+  every request for 3 seconds; requests already waiting when the outage starts each wait their full time, and
+  each server process (API worker, master) waits once.
+- A platform write the cluster did not carry out (see "Bundled rqlite 10.7.5" below) also answers 503
+  `api-unavailable` with `Retry-After: 2` (was 500).
+- New configuration key `storages.engines.rqlite.readWaitMs` (default 3000; 0 = one attempt): how long a read
+  without an answer is sent again before it fails.
+
+### Multi-core: a registration for a hosting no core serves is refused
+
+- `POST /users` (and `/reg/user`) with a `hosting` that no available core serves created the account on the
+  core that received the request, whatever its hosting (cores of different hostings may fall under different
+  rules). It is now refused with **400 `invalid-parameters-format`**, `data: { param: 'hosting', reason }`,
+  `reason` being `hosting-unknown` (no core has this hosting) or `hosting-unavailable` (its cores take no new
+  account), before anything is reserved. A registration without a hosting is placed as before. Hostings are
+  the keys `auth.hostings` (`GET /reg/hostings`) lists: a core without `core:hosting` is the hosting `default`,
+  and without a `hostings` configuration the only key listed, `default`, stands for any core (so the key
+  lib-js picks for `hosting: 'auto'` keeps working).
+
+### Errors: changed id, `unsupported-operation` (501) instead of `api-unavailable`
+
+- **Changed id.** An operation a data store does not support (e.g. creating a stream in a store without streams, changing or
+  deleting a read-only account event) answered HTTP 501 with the id `api-unavailable`. The id is now
+  `unsupported-operation`, as the error catalogue lists it; the status stays 501. A client that keys on
+  `api-unavailable` with a 501 should accept `unsupported-operation`.
+
 ### Event types: an answer that is no list does not count as loaded
 
 - `service.eventTypes`: a JSON answer without a `types` object (an error page in JSON, the hierarchical file)
@@ -102,7 +144,7 @@
 - **Multi-core: a platform write the cluster did not carry out is an error.** While the leader restarts, a
   follower can answer a forwarded write with HTTP 200, an error and no result. The server took that for a
   success, so the write (a unique name, a routing row, a token, a revocation) was lost without any sign. The
-  call now fails (500), as it does when the platform store is down. A process that starts while the cluster
+  call now fails (503, see "a platform read without an answer" above), and is not sent again. A process that starts while the cluster
   elects its leader waits for it, up to 15 seconds; with no leader by then it does not start (before, it
   could start with its first platform writes lost, or fail at once).
 - Multi-core: a request a follower forwards to the leader is sent once (10.6.0 sent it again after a

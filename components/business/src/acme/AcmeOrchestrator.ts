@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
 const require = createRequire(import.meta.url);
 /**
  * Runtime orchestrator for the Let's Encrypt integration. One of these is
@@ -192,10 +193,10 @@ class AcmeOrchestrator {
   }
 
   // A follower core whose tick falls while the platform DB leader restarts
-  // gets `503 leader not found`: expected, and the next tick heals it.
+  // gets no answer (`503 leader not found`): expected, and the next tick heals it.
   #logMaterializeError (phase: string, err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/\(503\).*leader not found/i.test(msg)) {
+    if (isPlatformNoAnswer(err) || /\(503\).*leader not found/i.test(msg)) {
       this.#log(`${phase}: platform DB leader unavailable (restarting?), retrying on the next tick`);
       return;
     }

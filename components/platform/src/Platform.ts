@@ -23,6 +23,7 @@ const { ErrorMessages } = require('errors/src/ErrorMessages.ts');
 const getPlatformDB = require('./getPlatformDB.ts').default;
 const { PiiHasher, DEFAULT_ALGORITHM: DEFAULT_PII_ALGORITHM, CASE_INSENSITIVE_FIELDS } = require('./PiiHasher.ts');
 const { anyCaseLikeMatches } = require('storages/interfaces/platformStorage/anyCase.ts') as typeof import('../../../storages/interfaces/platformStorage/anyCase.ts');
+const { isPlatformNoAnswer } = require('storages/interfaces/platformStorage/noAnswer.ts') as typeof import('../../../storages/interfaces/platformStorage/noAnswer.ts');
 
 const platformCheckIntegrity = require('./platformCheckIntegrity.ts').default;
 
@@ -61,6 +62,13 @@ const INVITATION_CONSUMER_DELETED = '(deleted)';
 
 /** How often a multi-core core re-reads the other cores' URLs (as the embedded DNS does). */
 const CORE_URL_REFRESH_INTERVAL_MS = 30_000;
+
+/** The hosting key of a core with no `core:hosting` (as `auth.hostings` lists it). */
+const DEFAULT_HOSTING = 'default';
+/** The hosting key of a core, as `auth.hostings` lists it and registration compares it. */
+function hostingKeyOf (info: { hosting?: string | null }): string {
+  return info.hosting || DEFAULT_HOSTING;
+}
 /**
  * How often the api-server re-reads the platform names its username-rewriter
  * skips (the embedded DNS re-reads its runtime records at the same pace).
@@ -183,10 +191,7 @@ class Platform {
     // Load all known core URLs into the in-memory cache so
     // `coreIdToUrl()` can answer synchronously even when explicit
     // `core.url` overrides are in play (DNSless multi-core).
-    await this._refreshCoreUrlCache();
-    // A core that joins or moves later writes its row; refresh periodically so
-    // the running cores learn its URL without a restart (multi-core only).
-    if (!this.isSingleCore) this.startCoreUrlRefresh();
+    await this._readCoreUrlsAtInit();
     // The names an account may not take, for the checks that do not re-read
     // them first (auth.usernameCheck); a failure leaves the next refresh to it.
     await this.refreshPlatformNames().catch((err: Error) => logger.warn('could not read the platform names: ' + err.message));
@@ -698,6 +703,27 @@ class Platform {
       });
     }, intervalMs);
     this.#coreUrlRefreshTimer.unref?.();
+  }
+
+  /**
+   * The first read of the core URLs, at `init`. A core that joins or moves
+   * later writes its row; a multi-core core refreshes periodically so it
+   * learns its URL without a restart. There, a first read the platform
+   * database does not answer is left to that timer (30 s); any other failure,
+   * and any failure on a single core (no timer), stops the boot.
+   */
+  async _readCoreUrlsAtInit (): Promise<void> {
+    if (this.isSingleCore) {
+      await this._refreshCoreUrlCache();
+      return;
+    }
+    try {
+      await this._refreshCoreUrlCache();
+    } catch (err) {
+      if (!isPlatformNoAnswer(err)) throw err;
+      logger.warn('could not read the core URLs, no answer from the platform database (the periodic refresh retries): ' + (err as Error).message);
+    }
+    this.startCoreUrlRefresh();
   }
 
   stopCoreUrlRefresh (): void {
@@ -1391,7 +1417,14 @@ class Platform {
   /**
    * Select a core for a new registration.
    * Single-core: returns self. Multi-core: least-users among available cores in the given hosting.
-   * @param [hosting] - hosting key (null = any)
+   * A hosting asked for that no available core serves refuses the registration
+   * (cores of different hostings may fall under different rules: the account
+   * is never placed under another one); with none asked, any available core,
+   * else this one. Hostings are keyed as `auth.hostings` lists them
+   * (`hostingKeyOf`: a core without `core:hosting` is the hosting `default`);
+   * without a `hostings` configuration that listing offers `default` alone,
+   * which then stands for any core.
+   * @param [hosting] - hosting key (null or '' = any)
    */
   async selectCoreForRegistration (hosting: string | null): Promise<string> {
     if (this.isSingleCore) return this.coreId;
@@ -1399,10 +1432,18 @@ class Platform {
     // Get all registered cores, filter by hosting + availability
     const allCores = await this.#db.getAllCoreInfos();
     let candidates = allCores.filter((c: CoreInfo) => c.available !== false);
-    if (hosting != null) {
-      candidates = candidates.filter((c: CoreInfo) => c.hosting === hosting);
+    const hostingsListed = (this.#config.get('hostings') as { regions?: unknown } | undefined)?.regions != null;
+    const hostingAsked = hosting != null && hosting !== '' && (hostingsListed || hosting !== DEFAULT_HOSTING);
+    if (hostingAsked) {
+      candidates = candidates.filter((c: CoreInfo) => hostingKeyOf(c) === hosting);
+      if (candidates.length === 0) {
+        const known = allCores.some((c: CoreInfo) => hostingKeyOf(c) === hosting);
+        throw errors.invalidParametersFormat(known
+          ? 'No core of the requested hosting accepts new accounts (see auth.hostings).'
+          : 'Unknown hosting (see auth.hostings).', { param: 'hosting', reason: known ? 'hosting-unavailable' : 'hosting-unknown' });
+      }
     }
-    if (candidates.length === 0) return this.coreId; // fallback to self
+    if (candidates.length === 0) return this.coreId; // no hosting asked: fallback to self
     if (candidates.length === 1) return candidates[0].id;
 
     // Count users per core
@@ -2069,7 +2110,7 @@ function parseJsonString (raw: string): string {
 
 const platform = new Platform();
 export default platform;
-export { platform, Platform };
+export { platform, Platform, hostingKeyOf, DEFAULT_HOSTING };
 export type { PlatformOperation, UniqueValueIndex };
 
 // Local type aliases for shapes that aren't formally exported by an interface.

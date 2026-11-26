@@ -166,6 +166,25 @@ for (const hashed of [false, true]) {
       assert.equal(await platform.getUserCoreForRouting('gina'), 'core-a');
     });
 
+    it('[PUCC8] a read the platform database did not answer is never cached as a miss; concurrent callers share the rejection', async () => {
+      const { platform, db } = makePlatform({ hashed });
+      const noAnswer = Object.assign(new Error('rqlite query got no result at level linearizable: not leader'), { name: 'RqliteNoAnswerError' });
+      let release;
+      db.holdReads = new Promise((resolve) => { release = resolve; });
+      const realGet = db.getUserCore;
+      db.getUserCore = async (...args) => { await realGet(...args); throw noAnswer; };
+      const both = [platform.getUserCoreForRouting('hana'), platform.getUserCoreForRouting('hana')];
+      await wait(10);
+      release();
+      db.holdReads = null;
+      for (const p of both) await assert.rejects(p, { name: 'RqliteNoAnswerError' });
+      assert.equal(db.reads, 1, 'one read for both callers');
+      assert.equal(platform.peekUserCoreForRouting('hana'), undefined, 'nothing cached, neither a miss nor a hit');
+      db.getUserCore = realGet;
+      assert.equal(await platform.getUserCoreForRouting('hana'), null, 'the next call reads again');
+      assert.equal(db.reads, 2);
+    });
+
     it('[PUCC7] a name longer than any username is read every time, never cached', async () => {
       const { platform, db } = makePlatform({ hashed });
       const long = 'x'.repeat(101);
