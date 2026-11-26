@@ -1,6 +1,6 @@
 # Security Audit Report: open-pryv.io
 
-**Report revision:** 26 (2026-11-18), covering releases 2.0.0-rc.40 to 2.0.0-rc.87.
+**Report revision:** 27 (2026-11-26), covering releases 2.0.0-rc.40 to 2.0.0-rc.90.
 **Refresh:** this report is revised with every release that carries a security fix, once that
 release is deployed on the platforms the maintainers operate (section 7 has the procedure and the
 revision table).
@@ -58,8 +58,10 @@ mode and of backup restore, made in November 2026, added the one fixed in 2.0.0-
 review of the OAuth2 client revoke, made in November 2026 alongside the work on client metadata
 documents, added the one fixed in 2.0.0-rc.74, and a review of how the SQLite storage engine builds
 its queries and matches stream ids, made in November 2026 alongside the planned move of that engine
-to bound values, added those fixed in 2.0.0-rc.85; they were fixed under the same rules (tests that
-fail without the fix, independent review before merge).
+to bound values, added those fixed in 2.0.0-rc.85, and the independent review of the fix of a
+consent issue reported through the public issue tracker, made in November 2026, added the one fixed
+in 2.0.0-rc.90; they were fixed under the same rules (tests that fail without the fix, independent
+review before merge).
 
 **How.** A staged, read-first code review (section 2): inventory, then focused review stages, each
 candidate finding re-examined by a second reviewer whose task was to refute it, then fixes with
@@ -69,17 +71,17 @@ tests on both storage engines and an independent review before every merge.
 observations triaged at the end (section 4.2). Every finding has a released fix, and every fix is
 deployed on the platforms the maintainers operate.
 
-The review and its follow-ups recorded 73 findings, each rated and described individually in
+The review and its follow-ups recorded 74 findings, each rated and described individually in
 section 4 and counted below; the further lower-severity fixes listed under each release, and the
 items reported through the public issue tracker, are described but not counted:
 
 | Severity | Fixed | Open | Accepted |
 |---|---|---|---|
 | Critical | 6 | 0 | 0 |
-| High | 23 | 0 | 0 |
+| High | 24 | 0 | 0 |
 | Medium | 40 | 0 | 0 |
 | Low | 4 | 0 | 0 |
-| **Total** | **73** | **0** | **0** |
+| **Total** | **74** | **0** | **0** |
 
 Six of the fixed findings have a second, longer-term step planned for a later major version
 (section 5); the second step of a seventh, the 2.0.0-rc.51 backup finding, shipped in
@@ -142,6 +144,9 @@ its applicability is stated with it.
 | 2.0.0-rc.85 | 2026-11-17 | 1 High, 2 Medium (SQLite storage engine), lower-severity fixes; operator action: none beyond the upgrade for the fixes; before upgrading a SQLite core, look for access permissions on lower-cased `:_audit:action-` ids and for stream ids holding whitespace or equal to `..` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-17) |
 | 2.0.0-rc.86 | 2026-11-17 | no new finding; completion steps of earlier findings (every file of a backup run authenticated and runs signed, planned in section 5 since the first revision; cache invalidation between the processes of a core), lower-severity fixes (among them a `custom.dataStores` entry named after a built-in store, which came within reach of `*` permissions); operator action: a backup written by this release restores with this release or later, keep the backup directory for the backup only, sign backups taken with a recipient public key (`--signing-key`, `--signing-pubkey`); on a multi-core platform a new core joins with a bootstrap bundle only on this release or later; a `custom.dataStores` entry named `local`, `account` or `_audit` is no longer loaded without `override: true` (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-17) |
 | 2.0.0-rc.87 | 2026-11-18 | no new finding; two items of the limits work planned in section 5 since the first revision (a time limit on the PostgreSQL work of API requests, on by default; a bound on the password checks running at once in each API worker), lower-severity fix reported through the public issue tracker (the session of a composed OAuth2 re-consent holds the request only); operator action: behind a PostgreSQL connection pooler, let it pass the two new connection parameters or set both keys to `0` and the limits on the database role, leave 2 more connections per pool in `max_connections`; clients handle the new `429` and `503` answers of password checks (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-18) |
+| 2.0.0-rc.88 | 2026-11-25 | runtime update, not an audit finding: Node.js 24.22.3 for the Node.js security release of 2026-11-10 (seven high-severity fixes, among them disclosure of process memory to an HTTP peer and an uncaught exception a remote client can trigger in a TLS server, so a core that terminates TLS itself, the default, was directly exposed), with Debian's fixed glibc in the image; the CI actions are pinned to commits; no finding (new: a consent offer can require a verified email address); operator action: pull the new image, or upgrade Node.js to 24.22.3 and run `npm rebuild` on a native install | yes (2026-11-25) |
+| 2.0.0-rc.89 | 2026-11-26 | none (not an audit release: the erasure ledger, a durable record of each erased account, and a restore that refuses an account erased after its backup was taken); operator action: set the same `accountErasure.ledger.retentionDays` on every core, at least as long as the longest backup retention; scripts that check the exit code of `bin/backup.js --restore` handle the new codes `3` and `4` (see `CHANGELOG-v2.md`), pull the new image, or `npm install` on a native install | yes (with rc.90) |
+| 2.0.0-rc.90 | 2026-11-26 | 1 High, lower-severity fixes (two rated Medium and not counted: a second consent accept on the same scope left the first working; platform writes lost during a leader change), completion steps of earlier findings, and most of the limits and token work planned in section 5 since the first revision (per-account, per-access and per-connection limits; cached routing lookups with a DNS response rate limit; a floor on chosen tokens; keyed store hashes; signed webhook calls; the authenticated at-rest envelope written; feature permission names a closed set); dependency update, not an audit finding: rqlite 10.7.5 (GHSA-f4f3-px5g-gm4x, GHSA-j62w-8865-2h7x, `x/net` 0.63.0); operator action: every core of a platform on 2.0.0-rc.86 or later before deploying this release on any of them, and every process of a core on this release together; deploy an auth page that takes 10-symbol registration codes first; a production core refuses the published development admin key and files-read secret (run `bin/check-config.js` before); upgrade the rqlite followers first and the leader last, native installs replace `bin-ext/rqlited`; audit filters that list methods one by one add the new record names; clients handle the new `429`, `400` and `503` answers (see that release below), pull the new image, or `npm install` on a native install | yes (2026-11-26) |
 
 Each release contains the previous ones: upgrading to the latest release applies every fix. The
 upgrade notes of each release still apply (read them in `CHANGELOG-v2.md` for every release you
@@ -421,6 +426,9 @@ defect, planned work, or accepted. Items accepted as they are, with the reason:
   `bin/check-config.js` reports the problem. From 2.0.0-rc.43, set `auth.trustedApps`, the reset and
   verification page URLs and `services.email` in your own override if you relied on the production
   layer (see the rc.43 notes).
+- **Completed in 2.0.0-rc.90:** a production core also refuses to boot with the admin key and the
+  files-read secret of this repository's development and test configurations (see that release
+  below).
 
 ### Fixed in 2.0.0-rc.41 (deployed)
 
@@ -1153,8 +1161,9 @@ The completion steps of two 2.0.0-rc.52 findings are described with them above. 
   whatever its shape, with bounded cost; credential keys inside a text are matched for every name
   masked as an object property, whatever their case.
 - **Container image:** based on Debian 13 instead of Debian 12, whose remaining critical and high
-  operating-system package advisories had no fix; the bundled rqlite is 10.6.0, built with a
-  patched toolchain, and the native install script checks the rqlite archive's checksum. Every
+  operating-system package advisories had no fix; the bundled rqlite is 10.6.0 (10.7.5 since
+  2.0.0-rc.90), built with a patched toolchain, and the native install script checks the rqlite
+  archive's checksum. Every
   release image is now scanned in CI before it is published, and a critical advisory that has a
   fix stops the release (see section 5).
 - **Operator action:** as for the earlier log items, logs written by earlier releases may hold
@@ -1879,13 +1888,14 @@ them, found the following in earlier releases.
   follow-ups of access, delegation and stream changes) writes nothing for an account that no longer
   exists or whose erasure has started; the write is dropped and logged without its content. Known
   residue on SQLite with `audit.onUserDelete: keep`: late reads can re-open empty databases (no
-  row) in the kept directory.
+  row) in the kept directory. Closed in 2.0.0-rc.90 (see that release below).
 - **Operator action:** records left by earlier erasures are not removed automatically. On
   PostgreSQL,
   `SELECT user_id, id FROM events WHERE type = 'cmc-internal/retry-cmc' AND user_id NOT IN (SELECT user_id FROM users_index) AND user_id NOT IN (SELECT user_id FROM account_erasures);`
-  lists them; delete those rows (the requester can also invalidate its invite). On SQLite with
-  `audit.onUserDelete: keep`, the files of an erased account's directory other than its `audit-*`
-  files are leftovers and may be removed.
+  lists them; delete those rows (the requester can also invalidate its invite). Since 2.0.0-rc.90,
+  `node bin/reconcile-user-cores.js --cmc-retries` lists them and, with `--apply`, deletes them,
+  replacing this query. On SQLite with `audit.onUserDelete: keep`, the files of an erased account's
+  directory other than its `audit-*` files are leftovers and may be removed.
 
 #### Lower-severity fixes in 2.0.0-rc.72
 
@@ -2304,8 +2314,8 @@ lower-severity items listed last.
   unverified; a run of an earlier release appended after a run of this one is refused. The server
   now reads at-rest envelopes (TLS and ACME keys, authenticator secrets, observability credentials,
   transfer identities) that carry authenticated data naming their purpose and row, with the tag
-  length pinned; it starts writing them in a later release, once every core can read them. The
-  bootstrap bundle is authenticated with its version, salt and nonce from this release on.
+  length pinned; it writes them since 2.0.0-rc.90, once every core can read them. The bootstrap
+  bundle is authenticated with its version, salt and nonce from this release on.
 - **Operator action:** none for existing backups, which restore as before. Keep the backup
   directory for the backup only: a file the backup did not write is refused at restore (files that
   operating systems and storage appliances create by themselves are ignored with a notice), and a
@@ -2315,8 +2325,8 @@ lower-severity items listed last.
   full backup into a new directory. A backup written by this release is restored with this release
   or later; after going back to an earlier release, start a new chain in a new directory. On a
   multi-core platform, a new core must run this release or later to read a bootstrap bundle, and
-  every core must have run this release before the later release that starts writing the new at-rest
-  envelope is deployed.
+  every core must run this release or later before 2.0.0-rc.90, which writes the new at-rest
+  envelope, is deployed on any of them.
 
 #### Cache invalidation between the processes of a core
 
@@ -2406,8 +2416,9 @@ request; each was reviewed independently before merge.
   account deletion, the background jobs and `system.checkPlatformIntegrity` are not limited; the
   limits apply to the API, HFS and previews workers of the clustered server.
 - **Residual:** the limit bounds how long one request occupies a connection, not how many slow
-  requests one account sends in a row (a per-account cap on requests in flight stays planned,
-  section 5). The single-process entry points and the SQLite engine have no statement time limit.
+  requests one account sends in a row (a per-account cap on requests in flight, planned in section 5
+  at this release, ships in 2.0.0-rc.90). The single-process entry points and the SQLite engine have
+  no statement time limit.
 - **Operator action:** behind a connection pooler (for example PgBouncer), check before upgrading
   that it passes both connection parameters, or set both keys to `0` and set the limits on the
   database role instead. Leave room for 2 more connections per pool of each worker in
@@ -2456,6 +2467,367 @@ request; each was reviewed independently before merge.
   list the streams already held outside the request apart (they carry no `requested` flag); a scope
   grammar extension's `echo` must name tokens of the session's permissions only.
 
+### Fixed in 2.0.0-rc.90 (deployed)
+
+2.0.0-rc.90 carries one counted finding, found by the independent review of the fix of a consent
+issue reported through the public issue tracker (open-pryv.io#171, listed with the lower-severity
+fixes). It also ships most of the limits and token work planned in section 5 since the first
+revision, the write step of the at-rest envelope read since 2.0.0-rc.86, completion steps of
+earlier findings and lower-severity fixes; two of these are rated Medium but are not counted, as
+they were found outside the review. 2.0.0-rc.88 (a Node.js runtime update) and 2.0.0-rc.89 (the
+erasure ledger) appear in the release table only.
+
+#### A consent accept could take over another counterparty's relationship
+
+- **Severity:** High (where the consent plugin is used; the caller needs a consent link of the same
+  scope as an existing relationship). Affected: 2.0.0-rc.89 and earlier releases.
+- **What could happen:** when an accept reached the requester's account for a counterparty and a
+  scope that already had a relationship, the requester's core updated that relationship with the
+  endpoint the accept carried, without checking that the accept came from the account the
+  relationship was made with. A party holding a link of that scope could so point another
+  counterparty's relationship at an endpoint of its choosing: the credential the requester hands
+  its counterparty through the relationship went to that endpoint, and the requester's later reads
+  through the relationship read from it instead of from the counterparty.
+- **What changed:** an accept that resolves to an existing relationship (same counterparty, same
+  scope) updates it only when its granted endpoint is the one recorded on the relationship (scheme,
+  host and path; the token may differ); a relationship recorded without an endpoint is updated only
+  through the capability it was made with. Otherwise the accept fails with
+  `cmc-incoming-accept-counterparty-endpoint-mismatch`, is not retried, and the relationship is
+  left as it was. The counterparty username of an accept is compared in lowercase.
+- **Operator action:** none beyond the upgrade. Behaviour change for integrations: a counterparty
+  whose account moved to another host or path can no longer re-accept onto the existing
+  relationship; the relationship is revoked and made again.
+
+#### A second accept on the same scope left the first consent working
+
+- **Severity:** Medium (consent plugin; not counted: found outside the review). Affected:
+  2.0.0-rc.89 and earlier releases.
+- **What could happen:** when a person accepted a second invite from the same requester on the
+  same scope stream, both grants stayed live. Withdrawing one consent left the other working, with
+  the accesses made through it, and in group accounts a member access made through the earlier
+  grant could outlive the membership or the consent it came from, while the offboarding record
+  could report it gone.
+- **What changed:** one relationship per counterparty and scope stream: the latest accept replaces
+  the first. On the person's core the earlier grant is deleted, with the accesses made through it,
+  once the requester's core has taken the new one (its accept records `withdrawal.by: 'replaced'`);
+  on the requester's core the earlier invite reads `revoked` with `replacedBy`, and the member
+  accesses made through the earlier grant are deleted. A retry never restores the older consent
+  (`cmc-incoming-accept-superseded`, `cmc-accept-withdrawn`), and a retried accept delivery that
+  the requester's core refuses for good no longer deletes a grant it already paired. A membership
+  joined twice on the same team is handled the same way. The offboarding record
+  (`consent/member-revoke-cmc`) reports a member access `residual`, with a reason, whenever the
+  patient's core did not confirm it gone, instead of `absent`.
+- **Residual:** a member access recorded before this release whose relationship the patient ended
+  is reported `residual` until its expiry, which bounds it.
+- **Operator action:** none beyond the upgrade. Integrations that read consent records handle
+  `withdrawal.by: 'replaced'`, the invite's `replacedBy` and the two new refusal reasons; changing
+  the terms of a relationship is one new invite on the same scope.
+
+#### Multi-core: platform writes could be lost, and reads taken for absent, during a leader change
+
+- **Severity:** Medium (multi-core platforms; not counted: found during the rqlite update below).
+- **What could happen:** while the platform database's leader restarted, a follower could answer a
+  forwarded write with a success status, an error and no result; the server took it for a success,
+  so the write (a unique name, a routing row, a token, a revocation) was lost without any sign. A
+  read that got no answer during a leader change was taken for "no row": a revoked OAuth client
+  could read as not revoked, a held certificate as missing, a core as unknown, a valid invitation
+  or code as invalid, a reserved name as taken.
+- **What changed:** a write the cluster did not carry out fails (`503 api-unavailable`,
+  `Retry-After: 2`) and is not sent again. A read without an answer, or a core that cannot reach
+  its local `rqlited`, is retried every 100 ms for up to `storages.engines.rqlite.readWaitMs`
+  (3000 ms by default), then fails the same way instead of acting on an absence: API methods, the
+  routing of `/{username}/*` requests, the `/reg/*` routes and the adapter ingress alike; the OAuth
+  endpoints answer `503 temporarily_unavailable`, and the embedded DNS answers SERVFAIL, never
+  NXDOMAIN, and keeps the records it holds. A process that starts while the cluster elects its
+  leader waits for it, up to 15 seconds, and does not start without one.
+- **Residual:** after one read waited the full time in vain, the next reads of that process fail at
+  once until one is answered again; requests already waiting when an outage starts each wait their
+  full time.
+- **Operator action:** none beyond the upgrade; clients retry a `503` after its `Retry-After`.
+
+#### Bundled rqlite 10.7.5
+
+- Dependency update, not an audit finding: the bundled rqlite is 10.7.5 (was 10.6.0; SQLite
+  3.54.1, built with the patched Go toolchain and `x/net` 0.63.0). Its security fixes: a malformed
+  inter-node request from a host that reaches the Raft port without the cluster's certificate could
+  stop `rqlited` when Raft TLS is off (GHSA-f4f3-px5g-gm4x); a query could open another database
+  file (GHSA-j62w-8865-2h7x). A core whose Raft port uses mutual TLS and whose HTTP API listens on
+  loopback, the defaults of a multi-core platform, exposed neither to the network. The other rqlite
+  advisories of these releases concern its authentication file, which a core does not use. A write
+  a follower forwards to the leader is sent once (10.6.0 sent it again after a failure, so a write
+  whose answer was lost could be applied twice). The `x/net` advisories accepted in the image scan
+  until this release (section 5) are fixed; the scan reports none on `rqlited`.
+- **Operator action:** no data-directory step; upgrade the followers first and the leader last (a
+  node can go back to 10.5.1 or 10.6.0 on the same data directory). Native installs replace
+  `bin-ext/rqlited` while the core is stopped (`INSTALL.md`, "Upgrading the bundled rqlite"): the
+  setup script never replaces an existing binary. An external rqlited
+  (`storages.engines.rqlite.external`) must support the `linearizable` read level.
+
+#### Per-account, per-access and per-connection limits
+
+- **Planned in section 5** since the first revision (resource quotas); not a counted finding.
+- **What could happen:** with a valid credential, one token or one account could take a worker's
+  whole capacity: any number of calls running at once, of socket.io connections, of calls in flight
+  on one connection and of subscription scopes; parameters nested deep enough to reach recursive
+  code and fail there; a stream tree of any depth or size; any number of stream ids per event, of
+  webhooks and of webhook scopes (each webhook is an outbound call per change); a client that
+  stopped reading a response held its database cursor for as long as it kept the connection open;
+  and the mails a caller can trigger had per-address budgets only.
+- **What changed:** each ceiling below applies per API worker process, is configurable, is on by
+  default (`0` turns it off) and sits far above normal use:
+  - calls in progress: 64 per account and 32 per access (`limits.requests.maxInflightPerUser`,
+    `maxInflightPerAccess`), then `429 too-many-requests` with `Retry-After: 1`;
+  - parameters: a nesting depth of 64 and 10000 keys per object (`limits.json.*`), then `400`;
+  - socket.io: 20 connections per access and 100 per account, 16 calls in progress per connection,
+    100 scoped subscriptions per connection (`socketIO.*`);
+  - streams: 32 levels deep and 10000 per account in its own store (`limits.streams.*`), 100
+    stream ids per event (`limits.events.maxStreamIds`);
+  - webhooks: 10 per access, 100 per account and 20 scopes per webhook (`webhooks.maxPerAccess`,
+    `maxPerUser`, `maxScopes`);
+  - a connection with no traffic either way for 120 s is closed (`http.responseIdleTimeoutMs`),
+    and one access runs one streamed audit read at a time, a second one waiting at most 30 s
+    (`limits.audit.*`);
+  - mail: 10 registration codes per client address an hour, verification mails to 10 distinct
+    addresses per account a day, and a breaker of 500 caller-triggered mails an hour per core,
+    counted apart for registration and account mails (`account.emailVerification.*`,
+    `services.email.maxPerHour`); an account may ask `account.update` about 30 addresses an hour
+    (whether another account holds them), then `429`.
+- **Residual:** the ceilings are counted per API worker, so a core with several workers allows a
+  multiple of them; the stream caps are soft (creates running at once can pass them by a few
+  streams). What an account stores has no quota yet (section 5).
+- **Operator action:** where clients fire many calls at once, hold many sockets on one token, or
+  run accounts beyond the defaults (more than 10000 streams or 32 levels, more than 100 stream ids
+  on an event, a call silent for more than 120 s), raise the matching key; keep
+  `http.responseIdleTimeoutMs` above the slowest call. Behind a shared address (a clinic or campus
+  NAT), or with `http.trustedProxies` not set behind a proxy, raise
+  `account.emailVerification.registrationCodesPerIpPerHour`. Webhooks already stored keep working.
+
+#### Multi-core: cached routing lookups and a DNS response rate limit
+
+- **Planned in section 5** since the first revision (resource quotas); not a counted finding.
+- **What could happen:** which core hosts a username was read from the platform database, at its
+  most expensive consistency level, for every `/{username}/*` request and every embedded-DNS query,
+  so a stream of requests, or of forged UDP queries for random names, needing no credential became
+  a stream of cluster-wide reads (availability).
+- **What changed:** each process caches the routing answer (a found account for 30 s, an unknown
+  name for 5 s, `cluster.userCoreCache.*`; uniqueness checks never use the cache), read at
+  `linearizable` rather than `strong`; the embedded DNS answers core information from the core list
+  it refreshes every 30 s. UDP answers that need a platform lookup are limited to 20 a second per
+  client network (`dns.responseRateLimit.perSecond`; past it they are dropped, every second one sent
+  truncated so that a real resolver retries over TCP), UDP lookups of unknown names to 100 a second
+  for the whole server (`missesPerSecond`), and an HTTP client whose lookups found no account more
+  than 60 times in a minute gets `429` for names not already cached
+  (`limits.routing.unknownNamesPerClientPerMinute`).
+- **Residual:** an account moved to another core can still be routed to its former core for up to
+  30 s, and a name just registered can be unknown for up to 5 s; during a flood of unknown names,
+  an account the DNS has not resolved in the last 30 s gets the truncated answer and is resolved
+  over TCP.
+- **Operator action:** where the embedded DNS serves UDP, watch the warnings naming
+  `dns.responseRateLimit` after the upgrade and raise `perSecond` if a resolver network reaches it.
+
+#### Tokens, codes and store keys
+
+- **Planned in section 5** since the first revision (token hardening); not a counted finding.
+- **What changed:**
+  - a token chosen for a new access (`accesses.create`, and an app's `token` in `POST /reg/access`)
+    must be at least 16 characters after slugification; existing accesses keep their tokens;
+  - the access, personal (session) and password-reset tokens the server generates are drawn from
+    `node:crypto` directly, instead of an id library that would fall back to a non-cryptographic
+    source where the platform lacks one (same shape as before);
+  - the registration code mailed by `POST /reg/email-challenge` has 10 symbols (about 50 bits)
+    instead of 8; the attempt budgets are unchanged;
+  - every store key built from a client address or an email (the password, reset, access-request
+    and email budgets, the registration challenges, the verification-mail slots) is an HMAC-SHA256
+    under a key derived from `auth.adminAccessKey`, instead of a plain SHA-256 that a listing of the
+    store reverses by enumerating addresses or running a mailing list through it;
+  - node certificates issued when a core joins a multi-core platform state their purpose (an end
+    entity, TLS server and client authentication), a newly created cluster CA may sign end-entity
+    certificates only, and the names and address given for a node certificate are checked.
+- **Residual:** tokens are still stored and looked up as they are (hashed token storage stays
+  planned, section 5); existing CAs and node certificates are unchanged.
+- **Operator action:** deploy an auth page that accepts 10-symbol codes before, or with, this
+  release (app-web-user-account from its release that takes them, or a custom registration page).
+  What is in flight at the upgrade is not found under the new store keys: the budgets start again,
+  a pending registration code must be requested again, and during a rolling upgrade of a multi-core
+  platform cores on different versions count an address separately. Integrations that choose short
+  tokens omit `token` or choose a longer one.
+
+#### Signed webhook calls
+
+- **Planned in section 5** since the first revision (token hardening); not a counted finding.
+- **What changed:** a receiver can check that a webhook call comes from the platform without a
+  secret in the webhook URL. `webhooks.create` returns a `secret` once; each call of a webhook with
+  a secret carries `Pryv-Signature: t=<unix seconds>,v1=<hex>`, the HMAC-SHA256 under the secret of
+  `t`, a `.` and the exact bytes of the body, computed afresh for every call, retries included;
+  `webhooks.rotateSecret` replaces the secret, under the access rules of `webhooks.update` (refused
+  to a delegate that may not read the webhook URL in full). The messages that tell the server's
+  processes about a webhook now carry its id only, no secret and no URL.
+- **Residual:** webhooks created before this release send unsigned calls (`signed: false`) until
+  their secret is rotated; the secret is stored with the webhook (the server reads it on every call)
+  and travels in server backups.
+- **Operator action:** with `migrations:autoRunOnStart: false`, run the migrations before serving
+  (on PostgreSQL, webhook creation and deletion fail until the new column exists). Receivers verify
+  the signature on the raw body with a constant-time comparison and refuse a `t` more than 300 s
+  away from their clock.
+
+#### Keys stored encrypted at rest: the authenticated envelope is written
+
+- **Planned in section 5** (token hardening); completes the read step of 2.0.0-rc.86; not a counted
+  finding.
+- **What changed:** keys stored encrypted at rest (among them TLS and ACME account keys,
+  authenticator secrets and observability credentials) are written in the envelope that
+  2.0.0-rc.86 started reading: bound to the row that holds it, with the tag length pinned, and the
+  TLS and ACME keys under a key derived for that purpose from `letsEncrypt.atRestKey` (the
+  configured value is unchanged).
+- **Residual:** rows written by earlier releases (envelope version 1) stay readable and are
+  rewritten in the new envelope only when they are written again (the ACME account key at the next
+  account check): version 1 is still read (section 5).
+- **Operator action:** every core of a platform must run 2.0.0-rc.86 or later before this release
+  is deployed on any of them. Going back to a release before 2.0.0-rc.86 once this one has run is
+  not possible without restoring those rows; 2.0.0-rc.86 to 2.0.0-rc.89 read the new envelope.
+
+#### Feature permission names are a closed set
+
+- **Planned in section 5** since the first revision; not a counted finding.
+- **What changed (BREAKING):** an unknown feature permission name is refused where permissions are
+  submitted (`accesses.create`, `accesses.update`, `accesses.checkApp`, `POST /reg/access`, consent
+  offers and the scope requests or updates written by the account's own accesses, and the
+  permissions an OAuth scope grammar returns); the names are `selfRevoke`, `secretSharing`,
+  `webhooks`, `accessCreation` and `selfAudit`. Until now a typo such as `webhook` was stored and
+  restricted nothing. Stored data is not touched: an access or an offer that already holds an
+  unknown name keeps working. With the same release, a personal token's `events.update` of a
+  consent event is validated as its create would be, so an offer can no longer be changed to hold
+  content its create refuses; and a permission that would create an ordinary stream named like an
+  account field (for example `email` with a `defaultName`, which looked right on a consent screen
+  and never held the account's address) is refused with `400 invalid-operation`, recognised by
+  `data.accountStreamId`.
+- **Operator action:** none beyond the upgrade; integrations that build permissions or consent
+  offers check the feature names and stream ids they send.
+
+#### Production refuses the published development secrets
+
+- **Completes** the 2.0.0-rc.40 finding "Placeholder secrets passed boot validation" (High; not
+  counted again).
+- **What could happen:** a production core accepted `auth.adminAccessKey`
+  `dev-only-admin-access-key` and `auth.filesReadTokenSecret` `dev-only-files-read-token-secret` or
+  `libjs-test-files-secret`, values shipped in this repository's development and test
+  configurations and as good as public; only the published `platform.piiHmacKey` was refused.
+- **What changed (BREAKING):** a production core (`NODE_ENV=production`, the Docker image) refuses
+  to boot with them; `bin/check-config.js` reports them.
+- **Operator action:** before upgrading, run `bin/check-config.js` on every core's configuration,
+  and set long random values of your own (`openssl rand -hex 32`). A new
+  `auth.filesReadTokenSecret` invalidates the attachment read tokens already handed out.
+
+#### Erased accounts: nothing re-created or stored by late work
+
+- **Closes** the residue noted with the 2.0.0-rc.72 finding "An account erased during a consent
+  operation kept a record holding a peer's capability token" (Low; not counted again).
+- **What could happen:** work still running for an account while it was erased (a long request, a
+  consent dispatch reading a peer) could re-open empty databases in the directory kept for the
+  audit (SQLite with `audit.onUserDelete: keep`) or store rows for the erased account
+  (PostgreSQL), and with the audit on PostgreSQL a call still running could leave one audit record
+  under the erased id.
+- **What changed:** on SQLite with `keep`, the erasure leaves a marker file in the kept directory
+  (`erased.json`, no username), and no new file is created there while it is present (a restore of
+  the account removes it); a late attachment no longer re-creates an erased account's directory in
+  erase mode either. On PostgreSQL, the database refuses a new row in the account tables for a user
+  id the users index does not hold (one trigger per table, installed at boot and by a migration),
+  and the erasure removes the index entry before the data. With the audit on PostgreSQL and
+  `erase` (the default), a record for an erased account is refused and the erasure removes audit
+  records a second time once the account is gone. A request whose account is erased while it runs
+  answers `404 unknown-resource`. `bin/reconcile-user-cores.js --cmc-retries` lists, and with
+  `--apply` deletes, the consent retry records that earlier releases could leave under erased ids
+  (PostgreSQL).
+- **Residual:** on SQLite with `keep`, an open that passed the check just before the marker was
+  written can still create one empty file (no row in it); on PostgreSQL, series points, attachment
+  content stored in the database and the audit table under `keep` are not guarded; with the audit
+  on PostgreSQL and the base storage on SQLite, a record written in the last moment before the
+  erasure marks the account can stay (the server warns about this pairing at boot).
+- **Operator action:** every process of a core must run this release: a process of an earlier
+  release on the same database fails registrations, and a rollback needs the guard removed first
+  (the SQL is in `CHANGELOG-v2.md`). A data-only `pg_restore` into an existing schema runs with
+  `--disable-triggers`. On a core that never ran with `keep` and whose base and audit storage are
+  both PostgreSQL, remove once the audit records left by earlier releases (query in
+  `CHANGELOG-v2.md`). On PostgreSQL cores that erased accounts before 2.0.0-rc.72, run
+  `bin/reconcile-user-cores.js --cmc-retries` (never as part of an upgrade), then `--apply` if the
+  list holds erased ids only. Directories kept by earlier erasures carry no marker: empty databases
+  next to their audit files hold no row and may be removed.
+
+#### Lower-severity fixes in 2.0.0-rc.90
+
+- Reported through the public issue tracker, not counted: an accept written to a consent
+  capability's responses stream was tied to a capability by the `capabilityId` of its content,
+  which the accepter writes. An accept leaving it out skipped the capability lookup, so a
+  single-use link stayed open and could be used again, the invite was not stamped accepted, and an
+  invite id chosen by the accepter was kept on the requester's inbox mirror; an accept could also
+  have its anchor streams placed under another app scope of the account (open-pryv.io#171). The
+  capability is now taken from the responses stream the accept was written to, an accept naming
+  another capability is refused (`cmc-incoming-accept-capability-mismatch`; nothing is created and
+  the link is not consumed), and the scope comes from this side's own copy of the offer.
+- **An access reading itself got the credentials of the URLs in its `clientData`:**
+  `GET /access-info`, and `GET /accesses/{id}` by a non-personal access on its own id, returned
+  `clientData` as stored, and it can hold endpoints written there by another account (a consent
+  counterparty's back-channel), whose tokens are not the holder's to read. The user part of every
+  URL in it is now removed, as `accesses.get` does where it withholds an access's credentials; the
+  access's own `token` and `apiEndpoint` are still returned.
+- **Access requests:** `POST /reg/access` stored the `returnURL` as sent, and auth pages navigate to
+  it once the user decides. It is now checked at creation (BREAKING): an absolute URL with no
+  control character and no `user:password@` part, whose scheme is not `javascript:`, `data:`,
+  `vbscript:` or `blob:`; anything else is refused with `400`. The new optional key
+  `access.returnOrigins` binds app ids to the origins their requests may return to. This is
+  redirect hygiene, not client authentication: whoever creates a request can still read its
+  outcome by polling.
+- **Sessions:** the periodic re-validation of open socket.io connections extended their personal
+  session, so a socket left open without calls kept it alive; the session now expires after
+  `auth.sessionMaxAge` like an idle browser tab, the socket is disconnected at the next
+  re-validation, and an expired session is no longer extended by any request.
+  `oauth.clientRevokeCheckSeconds` and `caching.accessMaxAgeSeconds` above 300 are used as 300:
+  they bound how long a revoked or narrowed access keeps working where no invalidation arrives.
+- **Auto-deletion:** a change of an account's deletion schedule made while the sweep checked that
+  account (the holder moving the date later) could be ignored or written over, and the account
+  erased. The sweep now never writes its schedule over a newer one, reads the setting and the
+  schedule again right before an erasure and once the erasure is recorded as in progress, and a
+  change made meanwhile stops that account's pass.
+- **Audit completeness:** the API calls the server makes in-process for a flow (local deliveries,
+  credential hand-offs, third-party sign-in, OAuth consent writes) and the access changes it makes
+  outside an `accesses.*` call now leave audit records (`accesses.created`, `accesses.changed`,
+  `accesses.deleted`); the creation of an account is the first record of its trail
+  (`account.created`); lost audit records are counted (`GET /system/audit-status`, the telemetry
+  counter `audit.records.lost`); in a batch, an audit write failure no longer changes a call's
+  answer; two socket.io calls running at once on one connection could swap their method id in the
+  audit trail; an audit filter group that is only the start of a name now refuses the boot.
+- **Event types:** an answer of `service.eventTypes` without a `types` list (an error page in JSON)
+  was taken for a loaded catalogue, and the core stopped refusing unknown event types; it is now a
+  failed load (the core stays degraded and retries).
+- **Registration:** on a multi-core platform, a registration naming a hosting that no available core
+  serves created the account on the core that received it, whatever its hosting (cores of different
+  hostings may fall under different rules); it is now refused with `400`.
+- **Mail:** new key `services.email.mergeLanguage`; with `handlebars`, Mandrill HTML-escapes the
+  variables of `{{VAR}}` templates (names, links, an administrator's reason). Unset, the Mandrill
+  account default (Mailchimp tags, whose escaping Mandrill does not document) applies as before, and
+  a core with `method: mandrill` logs a boot warning.
+- **OAuth:** the session pre-minted for an authorization code that expired unexchanged is removed
+  like any other: the breach-scope index (`GET /system/accesses/:accessId`) marks it deleted (it was
+  left there as a live access), and its alias stops routing.
+- Not security fixes, listed for operators: an operator who fronts a core with nginx keeps it
+  patched against the flaws disclosed on 2026-11-18 (fixed in nginx 1.30.7 and 1.31.9;
+  `docs/nginx-ingress-sample.conf` enables HTTP/2); a core serving TLS itself, the default, runs no
+  nginx. An operation a data store does not support answers `unsupported-operation` (501) instead
+  of `api-unavailable`.
+- New in this release, not findings: `GET /system/admin/config/effective` (admin key) answers the
+  configuration a core runs with, every secret redacted (with fingerprints keyed by
+  `auth.filesReadTokenSecret`, none when that secret is a placeholder or a published value);
+  `access.openedOnlyByAuthPage` (off by default) lets only the auth page open a pending access
+  request.
+- **Operator action:** audit filters that list methods one by one add `account.created`,
+  `accesses.created`, `accesses.changed` and `accesses.deleted` (`accesses.all`, `account.all` and
+  `all` include them); alert on `lost.total` above zero and on the `Failed to audit a batched call`
+  log line; a `service.eventTypes` pointing at the hierarchical file must point at a flat list
+  (`flat.json`); on Mandrill, convert the templates to `{{VAR}}` and set `handlebars`, or set
+  `mailchimp`; set `access.returnOrigins` identically on every core where wanted, and turn
+  `access.openedOnlyByAuthPage` on only once the auth page sends `?authPage=1`; a client that only
+  listens on a socket with a personal token makes a call from time to time.
+
 ---
 
 ## 5. Known residual risks and planned work
@@ -2465,21 +2837,22 @@ request; each was reviewed independently before merge.
 reverse proxy in front of every core. Deploy one, follow the operator rate-limiting guide, and list
 it in `http.trustedProxies`.
 
-**Resource quotas.** Some resources have no per-account or per-connection bound yet (connections,
-requests in flight, streams, webhooks, storage). These are planned as a limits-hardening batch; a
-reverse proxy mitigates most of them meanwhile. Since 2.0.0-rc.87 a PostgreSQL statement issued
-while serving an API request has a time limit and password checks run a bounded number at a time
-per API worker (section 4); the time limit bounds how long one request occupies a connection, not
-how many slow requests an account sends. With the SQLite engine, statements have no time limit.
+**Resource quotas.** Since 2.0.0-rc.90, calls in progress, socket.io connections and calls,
+parameter shapes, stream trees, webhooks, idle connections, streamed audit reads, caller-triggered
+mails and routing lookups are bounded per account, per access, per connection or per client
+(section 4); each bound is counted per API worker. What an account stores (events, attachments,
+accesses) has no quota yet; this is planned with the rest of the limits-hardening work, and a
+reverse proxy mitigates it meanwhile. Since 2.0.0-rc.87 a PostgreSQL statement issued while
+serving an API request has a time limit and password checks run a bounded number at a time per API
+worker (section 4). With the SQLite engine, statements have no time limit.
 
-**Container image.** Since 2.0.0-rc.55 the image is based on Debian 13 and bundles rqlite 10.6.0,
-and every release image is scanned in CI before it is published: a critical advisory that has a
-fix stops the release. The image still carries operating-system package advisories for which the
-distribution has published no fix, and a few advisories of a networking library inside the rqlite
-binary that concern HTTP/2, which the core's rqlite HTTP API (loopback, without TLS) never
-negotiates; these are accepted, each with its reason, until an rqlite release carries the fixed
-library. `npm` / `npx` were removed from the image in rc.50. The rqlite ports listen on loopback
-(HTTP) and behind mutual TLS (Raft).
+**Container image.** Since 2.0.0-rc.55 the image is based on Debian 13, and every release image is
+scanned in CI before it is published: a critical advisory that has a fix stops the release. It
+bundles rqlite 10.7.5 since 2.0.0-rc.90 (10.6.0 from 2.0.0-rc.55), which carries the fixed version
+of the networking library whose HTTP/2 advisories were accepted until then. The image still carries
+operating-system package advisories for which the distribution has published no fix; these are
+accepted, each with its reason. `npm` / `npx` were removed from the image in rc.50. The rqlite
+ports listen on loopback (HTTP) and behind mutual TLS (Raft).
 
 **Backups.** A plaintext backup's file list detects corruption, not tampering; a backup read
 without `--signing-pubkey` is authenticated against anyone without its data key only. A signed
@@ -2497,18 +2870,17 @@ and on the destination's clock being within a minute of the host's.
 - A core-to-core credential distinct from the admin key.
 - Use-time clipping of a child access to its managing access, which also narrows children created
   before rc.43 (today `bin/access-scope-audit.js` reports them).
-- Feature permission names as a closed list (an unknown name is accepted today and restricts
-  nothing).
 - HF series keyed by account id instead of username. Until then, a username change moves the
   account's series under the new name (since 2.0.0-rc.66; `bin/gather-former-series.js` gathers
   those that changes made with earlier releases left under a former name).
 - Access requests: a second secret held by the requester, so that the poll key alone no longer
   retrieves the delivered token.
 - Delegation teardown across cores: a peer check of the delegate's identity.
-- Token hardening: a minimum length for caller-chosen access tokens and hashed token storage;
-  authenticated data on the encryption envelopes of keys stored at rest (read since 2.0.0-rc.86,
-  written from a later release; the new envelope binds an authenticator secret to its purpose, not
-  to its account); signed webhook deliveries.
+- Token hardening: hashed token storage (the minimum length for caller-chosen access tokens and
+  signed webhook calls ship in 2.0.0-rc.90). Keys stored at rest are written with authenticated
+  data since 2.0.0-rc.90 (read since 2.0.0-rc.86); envelopes written by earlier releases (version 1)
+  are still read, and a row moves to the new envelope only when it is written again. The new
+  envelope binds an authenticator secret to its purpose, not to its account.
 
 **Access deletion records.** A deleted access leaves a deletion record (its name, permissions and
 timestamps) that is kept until the account is erased by default; API answers never return its
@@ -2572,3 +2944,4 @@ This report is updated with every release that carries a security fix:
 | 24 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.85 | Adds 2.0.0-rc.85 (review of how the SQLite storage engine builds its queries and matches stream ids): 1 High and 2 Medium findings, all on the SQLite engine, and lower-severity fixes; the planned move of the SQLite engine to bound values ships (removed from section 5, section 4.1 updated). Deployed on the maintainers' platforms (2026-11-17). |
 | 25 | 2026-11-17 | 2.0.0-rc.40 to 2.0.0-rc.86 | Adds 2.0.0-rc.86: no new finding, counts unchanged; the second step of the 2.0.0-rc.51 backup finding ships (every file of a backup run authenticated, signed runs; removed from section 5, which gains the backup residual risks; six findings keep a planned second step), the 2.0.0-rc.43 cache item is completed (cache invalidation between the processes of a core), and lower-severity fixes, among them a custom data store named after a built-in store that came within reach of `*` permissions (section 4.1 qualified). Deployed on the maintainers' platforms (2026-11-17). |
 | 26 | 2026-11-18 | 2.0.0-rc.40 to 2.0.0-rc.87 | Adds 2.0.0-rc.87: no new finding, counts unchanged; two items of the limits work planned in section 5 ship (a time limit on the PostgreSQL work of API requests, a bound on the password checks running at once), and the resource-quotas paragraph of section 5 is updated (the per-account cap on requests in flight stays planned); one lower-severity fix reported through the public issue tracker (the session of a composed OAuth2 re-consent holds the request only). Deployed on the maintainers' platforms (2026-11-18). |
+| 27 | 2026-11-26 | 2.0.0-rc.40 to 2.0.0-rc.90 | Release table adds 2.0.0-rc.88 (Node.js 24.22.3 runtime update, CI actions pinned) and 2.0.0-rc.89 (the erasure ledger, not an audit release); section 4 adds 2.0.0-rc.90: 1 High finding (a consent accept could take over another counterparty's relationship), counts 74 (24 High); two lower-severity fixes rated Medium and not counted (a second consent accept on the same scope left the first working; platform writes lost during a leader change); the limits and token work planned in section 5 ships (per-account, per-access and per-connection limits, cached routing lookups with a DNS response rate limit, a floor on chosen tokens, keyed store hashes, signed webhook calls, feature permission names a closed set), and the at-rest envelope is written; completion steps of the 2.0.0-rc.40 placeholder-secret and 2.0.0-rc.72 erasure items; rqlite 10.7.5 (dependency update); section 5 updated (resource quotas, container image, token hardening; the feature-name item removed). Deployed on the maintainers' platforms (2.0.0-rc.88 on 2026-11-25, 2.0.0-rc.90 with 2.0.0-rc.89 on 2026-11-26). |
