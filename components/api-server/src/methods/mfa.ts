@@ -432,8 +432,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const session = await sessionStore().get(params.mfaToken);
         if (!session || !sessionOfPathUser(session, context)) return next(invalidSessionError());
         // An enrolment session only (F4): a login token must not regenerate
-        // recovery codes / re-persist a profile via confirm.
-        if (session.context.kind && session.context.kind !== 'enroll') {
+        // recovery codes / re-persist a profile via confirm. Strict: a session
+        // without a kind is refused too (every session is tagged when opened).
+        if (session.context.kind !== 'enroll') {
           return next(errors.invalidAccessToken('This MFA token is not valid for enrolment confirmation.'));
         }
         const user = session.context.user;
@@ -537,7 +538,8 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
         const session = await sessionStore().get(params.mfaToken);
         if (!session || !sessionOfPathUser(session, context)) return next(invalidSessionError());
         // A login session only (F4): an enrolment token must not release a token.
-        if (session.context.kind && session.context.kind !== 'login') {
+        // Strict, as in mfa.confirm.
+        if (session.context.kind !== 'login') {
           return next(errors.invalidAccessToken('This MFA token is not valid for login verification.'));
         }
         const user = session.context.user;

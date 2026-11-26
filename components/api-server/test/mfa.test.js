@@ -2367,6 +2367,23 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
         assert.strictEqual(ok.body.recoveryCodes.length, 10);
       });
+
+      it('[MSKD1] a session without a kind is refused by confirm and by verify', async function () {
+        const act = await activateTotp();
+        const store = getMFASessionStore(totpTestConfig.services.mfa);
+        const enrol = await store.get(act.body.mfaToken);
+        assert.strictEqual(enrol.context.kind, 'enroll', 'precondition: activation opens an enrolment session');
+        const untagged = await store.create(enrol.profile, { user: enrol.context.user, token: 'not-released' });
+        const code = totpCodeFor(act.body.secret, 0);
+        for (const path of ['confirm', 'verify']) {
+          const res = await coreRequest.post(`/${username}/mfa/${path}`).set('Authorization', untagged).send({ code });
+          assert.strictEqual(res.body.error?.id, 'invalid-access-token', `${path}: ${JSON.stringify(res.body)}`);
+          assert.strictEqual(res.body.token, undefined);
+          assert.strictEqual(res.body.recoveryCodes, undefined);
+        }
+        const ok = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken).send({ code });
+        assert.strictEqual(ok.status, 200, JSON.stringify(ok.body));
+      });
     });
 
     // ------------------------------------------------------------------
