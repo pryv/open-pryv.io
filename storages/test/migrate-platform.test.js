@@ -137,4 +137,40 @@ describe('[MPKV] bin/migrate-platform.js: every platform row family', function (
     assert.match(text, /would migrate +1 {2}platform rows \(other keys\)$/m);
     assert.match(text, /15 record\(s\) would be migrated/);
   });
+
+  it('[MPK4] a fresh target is accepted; the engine\'s own schema marker is neither counted nor copied', async () => {
+    const { SchemaMigrationsRqlite } = require('../engines/rqlite/src/SchemaMigrations.ts');
+    await new SchemaMigrationsRqlite(rq).setVersion(7);
+    const marker = await rq.getPlatformKv('migrations/version');
+    await pg.setPlatformKv('oauth-client/cl-' + suffix, '{}');
+    // rqlite target holding only its marker: accepted, marker kept.
+    await migrate(pg, rq, { dryRun: false, force: false, log: quiet().log });
+    assert.strictEqual(await rq.getPlatformKv('oauth-client/cl-' + suffix), '{}');
+    assert.strictEqual(await rq.getPlatformKv('migrations/version'), marker);
+    // rqlite source: its marker does not land in the other engine.
+    await pg.deleteAll();
+    await migrate(rq, pg, { dryRun: false, force: false, log: quiet().log });
+    assert.strictEqual(await pg.getPlatformKv('migrations/version'), null);
+    assert.strictEqual(await pg.getPlatformKv('oauth-client/cl-' + suffix), '{}');
+  });
+
+  it('[MPK5] a target holding any platform row is refused without --force, accepted with it', async () => {
+    await rq.setPlatformKv('oauth-client/fresh-' + suffix, '"from source"');
+    await pg.setPlatformKv('oauth-client/x-' + suffix, '"already there"');
+    await pg.setPlatformKv('tls-acme-account', '{}');
+    await assert.rejects(
+      () => migrate(rq, pg, { dryRun: false, force: false, log: quiet().log }),
+      (err) => {
+        assert.match(err.message, /target already holds 2 platform row\(s\) \(oauth-client\/ 1, tls-acme-account 1\)/);
+        assert.ok(!err.message.includes('x-' + suffix), 'no key in the message');
+        assert.ok(!err.message.includes('already there'), 'no value in the message');
+        return true;
+      });
+    assert.strictEqual(await pg.getPlatformKv('oauth-client/fresh-' + suffix), null, 'nothing written');
+    // A dry run never refuses.
+    await migrate(rq, pg, { dryRun: true, force: false, log: quiet().log });
+    await migrate(rq, pg, { dryRun: false, force: true, log: quiet().log });
+    assert.strictEqual(await pg.getPlatformKv('oauth-client/fresh-' + suffix), '"from source"');
+    assert.strictEqual(await pg.getPlatformKv('oauth-client/x-' + suffix), '"already there"');
+  });
 });

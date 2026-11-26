@@ -125,7 +125,10 @@ With the account transfer (below), the administrator reset of 2.0.0-rc.90 also h
   `GET /system/accesses/:accessId`, the external-id namespaces and ids, and the send budgets and throttles were
   gone. The tool now copies every row of the platform table, keys and values exactly as stored, expired TTL rows
   included (the periodic sweeps of the new engine remove them), and reports a count per row family
-  (`platform rows oauth-client/`, `platform rows ext-id/`, ...). `--dry-run` and `--force` behave as before.
+  (`platform rows oauth-client/`, `platform rows ext-id/`, ...). Without `--force`, it now refuses a target that
+  holds any platform row (it only looked at user fields), names the families found with their counts, and still
+  accepts a target that holds only the schema marker its engine writes for itself (that marker is not copied
+  either); `--dry-run` never refuses, as before.
 
 ## 2.0.0-rc.90 - 2026-11-26
 

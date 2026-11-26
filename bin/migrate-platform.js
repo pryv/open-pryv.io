@@ -107,15 +107,26 @@ async function buildPlatformDB (engine, config) {
 async function migrate (source, target, { dryRun, force, log = console.log }) {
   const verb = dryRun ? 'would migrate' : 'migrating';
 
-  // Refuse to write into a non-empty target unless forced — a stale
-  // half-populated target silently winning over fresh source rows is the
-  // failure mode to avoid.
-  const targetUserRows = await target.exportAll();
-  if (targetUserRows.length > 0 && !force && !dryRun) {
-    throw new Error(
-      `target already holds ${targetUserRows.length} user-field record(s) — ` +
-      'wipe it or re-run with --force to overwrite record-by-record.'
-    );
+  // Refuse to write into a non-empty target unless forced: rows of any family
+  // already there (a stale half-populated target, an engine in use) would be
+  // mixed with or overwritten by the source rows. The rows an engine writes
+  // for itself do not count. The message gives counts per family only (a
+  // key may carry a token).
+  if (!force && !dryRun) {
+    const held = new Map();
+    for (const { key } of await target.listAllPlatformKvEntries()) {
+      if (ENGINE_OWNED_KEYS.includes(key)) continue;
+      const family = familyOf(key);
+      held.set(family, (held.get(family) || 0) + 1);
+    }
+    if (held.size > 0) {
+      const count = [...held.values()].reduce((a, b) => a + b, 0);
+      const families = [...held.keys()].sort().map((f) => `${f} ${held.get(f)}`).join(', ');
+      throw new Error(
+        `target already holds ${count} platform row(s) (${families}); ` +
+        'wipe it or re-run with --force to overwrite record-by-record.'
+      );
+    }
   }
 
   let total = 0;
@@ -192,7 +203,7 @@ async function migrate (source, target, { dryRun, force, log = console.log }) {
   // sweeps remove what has expired.
   const generic = new Map();
   for (const row of await source.listAllPlatformKvEntries()) {
-    if (isTypedFamily(row.key)) continue;
+    if (isTypedFamily(row.key) || ENGINE_OWNED_KEYS.includes(row.key)) continue;
     const family = familyOf(row.key);
     if (!generic.has(family)) generic.set(family, []);
     generic.get(family).push(row);
@@ -215,13 +226,20 @@ const TYPED_PREFIXES = ['user-unique/', 'user-indexed/', 'user-core/', 'core-inf
   'tls-cert/', 'observability/', 'mail-template/', 'invitation/'];
 const TYPED_KEYS = ['tls-acme-account'];
 
+// Rows an engine writes for itself, never copied nor counted: the rqlite
+// engine's schema-migration marker (each engine tracks its own schema; the
+// PostgreSQL one keeps it in a table of its own, outside platform_kv).
+const ENGINE_OWNED_KEYS = ['migrations/version'];
+
 function isTypedFamily (key) {
   return TYPED_KEYS.includes(key) || TYPED_PREFIXES.some((p) => key.startsWith(p));
 }
 
 // The report groups rows by their first key segment; keys without one are
-// counted together (a key is never printed, it may carry a token).
+// counted together (a key is never printed, it may carry a token), except
+// the fixed typed keys, which are names.
 function familyOf (key) {
+  if (TYPED_KEYS.includes(key)) return key;
   const slash = key.indexOf('/');
   return slash > 0 ? key.slice(0, slash + 1) : '(other keys)';
 }
