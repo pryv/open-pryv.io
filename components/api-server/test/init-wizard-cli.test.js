@@ -449,11 +449,25 @@ describe('[INWP] bin/init.js profiles, diagnostics, cluster gating, PaaS mode an
       const ca = new crypto.X509Certificate(fs.readFileSync(path.join(clusterDir, 'ca', 'ca.crt')));
       const node = new crypto.X509Certificate(fs.readFileSync(tls.certFile));
       assert.ok(node.verify(ca.publicKey), 'node certificate signed by the cluster CA');
-      assert.match(node.subjectAltName, /single\.example\.invalid/);
+      assert.match(node.subjectAltName, /DNS:core\.example\.invalid/);
       assert.match(node.subjectAltName, /192\.0\.2\.10/);
       assert.match(res.output, /BACK UP .*cluster\/ca/);
       const check = checkConfig(configDir);
       assert.strictEqual(check.status, 0, check.output);
+    });
+
+    it('[INWPK] with subdomains, the URL the core derives for itself is the host the wizard announces and the first boot publishes', () => {
+      const res = runWizard(configDir, [], DNS_ACTIVE_ANSWERS + 'cluster.mode: new\n');
+      assert.strictEqual(res.status, 0, res.output);
+      const config = readConfig(configDir);
+      // What boot derives (the plugin reads the operator's layers: this file).
+      const get = (key) => key.split(':').reduce((o, k) => (o == null ? undefined : o[k]), config);
+      const { deriveCoreIdentity } = createRequire(import.meta.url)(path.join(REPO_ROOT, 'config/plugins/core-identity.js'));
+      const { coreUrl } = deriveCoreIdentity(get);
+      // master.js publishes `A core.<domain>` (and NS core.<domain>) on first boot.
+      assert.strictEqual(coreUrl, 'https://core.example.invalid');
+      assert.match(res.output, /curl https:\/\/core\.example\.invalid\/reg\/service\/info/);
+      assert.strictEqual(checkConfig(configDir).status, 0);
     });
 
     it('[INWPC] --dry-run on a new platform creates no CA', () => {

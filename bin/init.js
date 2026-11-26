@@ -588,7 +588,13 @@ const SYSTEMD_RESOLVED_HINT = [
 
 function bar (n = 50) { return '─'.repeat(n); }
 
-/** `core.id` the generated config leaves at its default (the wizard does not set it). */
+/**
+ * `core.id` written for the subdomain topology: the core's URL is derived as
+ * https://<core.id>.<dns.domain>, and the first boot publishes core.<domain>.
+ */
+const SUBDOMAIN_CORE_ID = 'core';
+
+/** `core.id` a dnsLess config leaves at its default (the wizard does not set it there). */
 function defaultCoreId () {
   try {
     const defaults = yaml.load(fs.readFileSync(path.resolve(__dirname, '../config/default-config.yml'), 'utf8'));
@@ -1663,7 +1669,7 @@ async function main () {
     publicUrl = publicUrl.replace(/\/+$/, '');
   } else {
     dnsDomain = await askNonEmpty('Root domain to serve (e.g. example.com — will serve *.example.com)', undefined, 'dnsdomain');
-    publicUrl = `https://core.${dnsDomain}`;
+    publicUrl = `https://${SUBDOMAIN_CORE_ID}.${dnsDomain}`;
 
     // Public IPv4 address — fed into `dns.publicIp` so master.js can seed
     // the apex SOA/NS records + the `core.<domain>` A record on first boot.
@@ -2020,7 +2026,7 @@ async function main () {
       domain: dnsDomain || null,
       dnsLessActive: dnsLess,
       publicUrl,
-      coreId: defaultCoreId()
+      coreId: dnsLess ? defaultCoreId() : SUBDOMAIN_CORE_ID
     });
     report.problems.forEach(p => problems.push(`Administration portal: ${p}`));
     report.warnings.forEach(w => warnings.push(`Administration portal: ${w}`));
@@ -2239,6 +2245,11 @@ async function main () {
     // the embedded DNS server can't answer authoritatively for the zone
     // and DNS-01 issuance fails before contacting Let's Encrypt.
     config.dns = { active: true, domain: dnsDomain, port: 53, publicIp: dnsPublicIp };
+    // With a domain the core derives its own URL as https://<core.id>.<domain>
+    // (config/plugins/core-identity.js), and master.js publishes the A record
+    // and the primary NS as core.<domain>: the id must be `core` for the URL
+    // the core advertises (OAuth issuer, certificates, peers) to resolve.
+    config.core = { id: SUBDOMAIN_CORE_ID };
   }
 
   // platform.piiMode hashed (default since 2.0.0-rc.3) — every install gets
@@ -2341,8 +2352,10 @@ async function main () {
         'Operator-edited records under dns.records.root or via bin/dns-records.js win;',
         'the bootstrap only fills what is empty.',
         'dnsLess.isActive MUST stay false here — it switches the API to',
-        'path-based routing and disables the per-user subdomain handling.'],
-      { dns: config.dns, dnsLess: config.dnsLess });
+        'path-based routing and disables the per-user subdomain handling.',
+        `core.id ${SUBDOMAIN_CORE_ID}: this core is https://${SUBDOMAIN_CORE_ID}.<domain>, the host the A record names.`,
+        'Never change it on a running platform: accounts are mapped to their core by this id.'],
+      { dns: config.dns, dnsLess: config.dnsLess, core: config.core });
   }
 
   const httpDoc = ['Workers bind on `port`.',
@@ -2469,9 +2482,9 @@ async function main () {
         caHolderResult = await initCaHolder({
           caDir: caHolder.caDir,
           tlsDir: caHolder.tlsDir,
-          coreId: defaultCoreId(),
+          coreId: config.core.id,
           ip: dnsPublicIp || null,
-          hostname: `${defaultCoreId()}.${dnsDomain}`,
+          hostname: `${config.core.id}.${dnsDomain}`,
           writeConfig: false
         });
       } catch (err) {

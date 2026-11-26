@@ -35,8 +35,13 @@
   `<publicUrl>/admin/` (dnsLess) or `https://admin.<domain>/`. `static` serves an unpacked build from a folder
   (custom builds, air-gapped platforms). The name is a reserved username; `portal.site` picks another one. Nothing
   changes for an existing configuration: the entry is written only by the wizard.
+- **Fix: a subdomain install now writes `core.id: core`.** Before, the id stayed at its default `single`, so the core
+  derived its own URL as `https://single.<domain>` (used for the OAuth issuer, certificates and calls between
+  cores) while the wizard announced, and the first boot published in DNS, `core.<domain>`. Existing platforms: do
+  not change `core.id` on a running core (accounts are mapped to their core by this id); this only affects new
+  installs.
 - Unchanged: the answers of an existing scripted install give the same files as before, plus the portal entry
-  (answer `portal.mode: none` to leave it out), plus the cluster CA files on a new subdomain platform.
+  (answer `portal.mode: none` to leave it out), plus `core.id` and the cluster CA files on a new subdomain platform.
 
 ### Configuration, BREAKING: the mail switches are flat booleans
 
