@@ -44,6 +44,24 @@
   `unsupported-operation`, as the error catalogue lists it; the status stays 501. A client that keys on
   `api-unavailable` with a 501 should accept `unsupported-operation`.
 
+### OAuth: the session of an authorization code that expired unexchanged is removed like any other
+
+- The periodic sweep removes the session pre-minted at `/oauth2/authorize/accept` when its authorization code
+  expired without being exchanged. It now removes it as a failed code exchange does: the breach-scope index
+  (`GET /system/accesses/:accessId`) keeps the access marked deleted (it was left there as a live access), the
+  session's alias stops routing when no other access of the account holds it, and the account's socket clients
+  get the accesses-changed notification. Still not recorded in the account's audit trail.
+
+### Data stores: the error ids of a store that resolves its own `@pryv/datastore`
+
+- A custom data store that resolves its own copy of `@pryv/datastore` (its own `node_modules`) throws that copy's
+  errors, which the core answered `unexpected-error` (500). They are now answered as with the core's copy:
+  `unknown-resource` (404), `item-already-exists` (409), `invalid-item-id` and `invalid-request-structure` (400),
+  and an unsupported operation as the core's copy answers it, `unsupported-operation` (501). The core recognises them by the mark
+  `Symbol.for('@pryv/datastore:error')` of newer copies of the package, or by their class name
+  (`PryvDataStoreError`) for older ones. An `unexpected-error` from a store, or an id the package does not define,
+  is still answered `unexpected-error`.
+
 ### Event types: an answer that is no list does not count as loaded
 
 - `service.eventTypes`: a JSON answer without a `types` object (an error page in JSON, the hierarchical file)

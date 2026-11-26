@@ -51,6 +51,52 @@ function accountGoneRefusalOf (err: unknown): { code: string; message?: string; 
 export { isAccountGoneRefusal, accountGoneRefusalOf };
 
 /**
+ * The mark copies of `@pryv/datastore` after 1.1.0 set on their errors: a
+ * registered symbol, so that copies loaded from different paths agree.
+ */
+const DATA_STORE_ERROR_BRAND = Symbol.for('@pryv/datastore:error');
+
+type DataStoreErrorLike = Error & { id: string; data?: unknown; innerError?: unknown };
+
+/**
+ * An error a data store built with its own copy of `@pryv/datastore` threw.
+ * The core's copy makes API errors (its factories are replaced by these
+ * ones), another copy makes its own error class, recognised by its mark, or
+ * by its name for a copy older than the mark.
+ */
+function isDataStoreError (err: unknown): err is DataStoreErrorLike {
+  if (!(err instanceof Error) || err instanceof APIError) return false;
+  if (typeof (err as { id?: unknown }).id !== 'string') return false;
+  return (err as unknown as Record<symbol, unknown>)[DATA_STORE_ERROR_BRAND] === true || err.name === 'PryvDataStoreError';
+}
+
+/**
+ * The API error the core's copy of `@pryv/datastore` would have made for the
+ * same call, or null for an unexpected error or an id the package does not
+ * define (answered as any other error).
+ */
+function fromDataStoreError (err: DataStoreErrorLike): APIErrorT | null {
+  const data = (err.data != null && typeof err.data === 'object') ? err.data as Record<string, unknown> : {};
+  const inner = err.innerError instanceof Error ? err.innerError : undefined;
+  // Copies older than the mark never set the message: the id says what it is.
+  const message = err.message || err.id;
+  switch (err.id) {
+    case ErrorIds.UnknownResource:
+      return factory.unknownResource(data.resourceType as string | undefined, data.id as string | undefined, inner);
+    case ErrorIds.ItemAlreadyExists:
+      return factory.itemAlreadyExists(data.resourceType as string, (data.conflictingKeys ?? {}) as Record<string, unknown>, inner);
+    case ErrorIds.InvalidItemId:
+      return factory.invalidItemId(message);
+    case ErrorIds.InvalidRequestStructure:
+      return factory.invalidRequestStructure(message, err.data, inner);
+    case ErrorIds.UnsupportedOperation:
+      return factory.unsupportedOperation(message);
+    default:
+      return null;
+  }
+}
+
+/**
  * The full factory contract — one entry per error producer below.
  * Keeping the interface next to the assignments means a signature change
  * in either place is a compile error.
@@ -299,6 +345,12 @@ factory.payloadTooLarge = function (message: string, data?: unknown) {
 };
 
 factory.unexpectedError = function (sourceError: unknown, message?: string) {
+  // A data store's error made with another copy of `@pryv/datastore` than the
+  // core's: the answer its id stands for, as with the core's copy.
+  if (isDataStoreError(sourceError)) {
+    const fromStore = fromDataStoreError(sourceError);
+    if (fromStore != null) return fromStore;
+  }
   // A database statement stopped by the server's time limit (PostgreSQL
   // SQLSTATE 57014): a limit doing its job, not a fault. It was rolled back,
   // so a retry is correct; no delay is known, so no Retry-After.

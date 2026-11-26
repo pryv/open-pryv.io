@@ -32,8 +32,8 @@ export type OrphanSweepDeps = {
   platform: PlatformDB;
   /** `core:id` of the core running the sweep. */
   coreId: string;
-  /** Delete an access from this core's storage. */
-  revokeLocal: (params: { userId: string; username: string; accessId: string; clientId: string }) => Promise<void>;
+  /** Delete an access from this core's storage; true when it was there to delete. */
+  revokeLocal: (params: { userId: string; username: string; accessId: string; clientId: string }) => Promise<boolean>;
   /** Canonical username for a user id on this core, or null when absent (code rows carry the id only). */
   resolveUsername: UsernameResolver;
   /** Legacy HTTP self-revoke; injectable for tests. */
@@ -59,8 +59,8 @@ export async function revokeExpiredCodeOrphans (deps: OrphanSweepDeps): Promise<
       // A user gone since /accept took the access with their storage.
       const username = await deps.resolveUsername(v.userId);
       if (username == null) continue;
-      await deps.revokeLocal({ userId: v.userId, username, accessId: v.accessId, clientId: v.clientId });
-      revoked++;
+      // An access already gone (deleted by its owner, or by an earlier tick) is not counted.
+      if (await deps.revokeLocal({ userId: v.userId, username, accessId: v.accessId, clientId: v.clientId }) === true) revoked++;
     } catch {
       // best-effort, see header
     }
