@@ -62,6 +62,13 @@
   `components/business/test/unit/erasureLedger.test.js` (`[ERLU]`, row logic over an in-memory store),
   `[2CEL1]` in `reg-2core-seq.test.js` (erased on core A, found and refused from core B).
 
+### Event types catalogue 1.3.4
+
+- The vendored catalogue (test fixture `test/event-types-flat.json` and runtime seed
+  `components/business/src/types/event-types.default.json`) is the published 1.3.4:
+  `consent/request-cmc` describes `requireVerifiedEmail`. Description only; a core downloads the live
+  catalogue at boot anyway.
+
 ## 2.0.0-rc.88 - 2026-11-25
 
 ### CI supply chain
