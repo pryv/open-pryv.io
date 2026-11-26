@@ -159,9 +159,8 @@ logs:
     level: warn
 services:
   email:
-    enabled:
-      welcome: false
-      resetPassword: false
+    sendWelcome: false
+    sendResetPassword: false
 storages:
   base:
     engine: $ENGINE

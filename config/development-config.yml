@@ -28,9 +28,8 @@ platform:
 serviceInfoUrl: file://test/service-info.json
 services:
   email:
-    enabled:
-      welcome: false
-      resetPassword: false
+    sendWelcome: false
+    sendResetPassword: false
   register:
     url: http://127.0.0.1:8080
     key: test-system-key

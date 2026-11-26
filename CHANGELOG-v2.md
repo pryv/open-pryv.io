@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Configuration, BREAKING: the mail switches are flat booleans
+
+- **BREAKING: `services.email.enabled` is a boolean, and each mail has its own `services.email.send...` switch.**
+  The switches that lived under `services.email.enabled` (`welcome`, `resetPassword`, `verifyEmail`, `mfaChange`,
+  `externalIdReleased`, the three `accountDeletion...` and the six `accountTransfer...`) are now keys of
+  `services.email` itself, named `send` + the former name: `sendWelcome`, `sendResetPassword`, `sendVerifyEmail`,
+  and so on. All default to `true`, as before. `services.email.enabled: false` still turns every mail off, whatever
+  the `send...` keys say; `true` (the default) leaves each mail to its own switch.
+- **A core whose configuration still holds the former shape does not start.** If `services.email.enabled` is an
+  object in any configuration source (the override file, a host or bootstrap file, an environment variable such as
+  `services__email__enabled__welcome`), the core stops at boot and names every key found with its replacement. It is
+  refused rather than read, so that a mail you switched off is never sent again because of the upgrade.
+  `bin/check-config.js` reports the same before you deploy.
+- A switch that is set to something other than `true` or `false` (an empty `enabled:`, a quoted `'false'`) is
+  refused at boot as well; it used to count as "on".
+- Nothing changes for a deployment that never set `services.email.enabled`, or set it to `true` or `false`.
+- Migration guide (before/after example, the 14 keys, environment variables, the boot message):
+  [MIGRATION-services-email-enabled.md](./MIGRATION-services-email-enabled.md).
+
 ### Event types: an answer that is no list does not count as loaded
 
 - `service.eventTypes`: a JSON answer without a `types` object (an error page in JSON, the hierarchical file)

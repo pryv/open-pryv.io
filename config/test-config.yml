@@ -4,7 +4,7 @@ auth:
   trustedApps: pryv-test@http://test.pryv.local, pryv-test-no-cors@*, *@https://*.rec.la*, *@https://*.backloop.dev*
   filesReadTokenSecret: 'some_token'
   # Required by config-validation REQUIRED_WHEN when a test override sets
-  # `services.email.enabled = true` (e.g. [G1VN], [HZCU] in account-seq).
+  # `services.email.sendResetPassword = true` (e.g. [G1VN], [HZCU] in account).
   # The URL itself doesn't matter for tests — they mock the SMTP transport.
   passwordResetPageURL: 'http://test.pryv.local/reset-password'
   # The feature ships on by default; the test config keeps it OFF explicitly so
@@ -37,12 +37,11 @@ logs:
 serviceInfoUrl: file://test/service-info.json
 services:
   email:
-    enabled:
-      welcome: false
-      resetPassword: false
-      verifyEmail: false
-      mfaChange: false
-      externalIdReleased: false
+    sendWelcome: false
+    sendResetPassword: false
+    sendVerifyEmail: false
+    sendMfaChange: false
+    sendExternalIdReleased: false
     method: mandrill
     url: https://mandrillapp.local/api/1.0/messages/send-template.json
     key: "doesnt-matter-in-test"

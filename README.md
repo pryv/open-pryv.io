@@ -76,7 +76,9 @@ Transactional emails ship with two delivery paths — pick one via `services.ema
 ```yaml
 services:
   email:
-    enabled: { welcome: true, resetPassword: true }
+    enabled: true             # false: no mail at all
+    sendWelcome: true         # one switch per mail (sendResetPassword, sendVerifyEmail, ...), all on by default
+    sendResetPassword: true
     method: in-process
     defaultLang: en
     from: { name: 'Pryv Lab', address: 'no-reply@example.com' }

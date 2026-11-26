@@ -653,21 +653,24 @@ function buildOptionalAppendix ({ dnsLess, dataFolder, platformEngine = 'rqlite'
 # # container. The 'in-process' method renders + sends from the api-server.
 # services:
 #   email:
-#     enabled:
-#       welcome: true
-#       resetPassword: true
-#       # On by default. Needs auth.emailVerificationPageURL (asked by the
-#       # wizard) and a working mail setup; set false to turn it off.
-#       verifyEmail: true
-#       # Notice to the account's address when its MFA is enrolled, replaced,
-#       # turned off or recovered.
-#       mfaChange: true
-#       # The account auto-deletion mails (accountDeletionScheduled,
-#       # accountDeletionReminder, accountDeletionBlocked) and the account
-#       # transfer mails (accountTransferNamed, accountTransferClaim,
-#       # accountTransferStarted, accountTransferCancelled,
-#       # accountTransferLapsed, accountTransferCompleted) are on by default;
-#       # a transfer needs the named and claim mails to reach its beneficiary.
+#     # Whole-feature switch (a boolean): false sends no mail at all.
+#     enabled: true
+#     # One switch per mail, all on by default.
+#     sendWelcome: true
+#     sendResetPassword: true
+#     # On by default. Needs auth.emailVerificationPageURL (asked by the
+#     # wizard) and a working mail setup; set false to turn it off.
+#     sendVerifyEmail: true
+#     # Notice to the account's address when its MFA is enrolled, replaced,
+#     # turned off or recovered.
+#     sendMfaChange: true
+#     # The account auto-deletion mails (sendAccountDeletionScheduled,
+#     # sendAccountDeletionReminder, sendAccountDeletionBlocked) and the
+#     # account transfer mails (sendAccountTransferNamed,
+#     # sendAccountTransferClaim, sendAccountTransferStarted,
+#     # sendAccountTransferCancelled, sendAccountTransferLapsed,
+#     # sendAccountTransferCompleted) are on by default; a transfer needs the
+#     # named and claim mails to reach its beneficiary.
 #     method: in-process
 #     from:
 #       name: 'My Pryv'
@@ -1588,7 +1591,10 @@ async function main () {
   let emailConfig = null;
   if (emailEnabled) {
     emailConfig = {
-      enabled: { resetPassword: true, welcome: true, verifyEmail: true },
+      enabled: true,
+      sendResetPassword: true,
+      sendWelcome: true,
+      sendVerifyEmail: true,
       method: 'microservice',
       url: await ask('  service-mail URL', 'http://service-mail:9000/sendmail/', 'email.url'),
       key: await askNonEmpty('  Shared secret with service-mail', undefined, 'email.key')
