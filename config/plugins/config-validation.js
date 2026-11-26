@@ -35,17 +35,14 @@ const REQUIRED_SERVICE_FIELDS = ['name', 'serial', 'home', 'support', 'terms', '
 // be there.
 const STATE_KEY_HINT = 'set it on this core to a random value of at least 32 characters (e.g. `openssl rand -base64 32`)';
 const REQUIRED_WHEN = [
-  // `services.email.enabled` is an object `{ welcome, resetPassword }`
-  // in the default config — mirror the gating logic from
-  // `methods/account.ts:174` exactly so the boot-time check tracks the
-  // runtime behaviour.
+  // Required while the password-reset mail is switched on
+  // (`services.email.enabled` and `services.email.sendResetPassword`), with
+  // the same predicate as the send site, so the boot check tracks the runtime.
   {
     path: 'auth:passwordResetPageURL',
     when: c => {
-      const enabled = c.get('services:email:enabled');
-      if (enabled === false) return false;
-      if (enabled != null && typeof enabled === 'object' && enabled.resetPassword === false) return false;
-      return true;
+      const { isMailKindSwitchedOnInConfig } = require('../../components/business/src/emails/mailCapability.ts');
+      return isMailKindSwitchedOnInConfig(c, 'resetPassword');
     }
   },
   // `auth.emailVerificationPageURL` backs the verify-email link.
@@ -510,6 +507,28 @@ function checkMergeLanguage (config, problems) {
   }
 }
 
+// The mail switches: `services.email.enabled` and each
+// `services.email.send<Kind>` are booleans. The former object form of
+// `enabled` (one sub-key per mail) is refused in EVERY scope, not only in the
+// resolved value: a scope holding it under a higher `enabled: true` would be
+// hidden by the resolution, and a mail switched off there would be sent.
+function emailSwitchLayers (config) {
+  const stores = config.store?.stores;
+  if (stores == null) return [{ scope: 'config', info: '', email: config.get('services:email') }];
+  return Object.entries(stores).map(([scope, store]) => ({
+    scope,
+    info: store.type === 'file' ? 'From file: ' + store.file : 'Type: ' + store.type,
+    email: store.get('services:email')
+  }));
+}
+
+function checkEmailSwitches (config, problems) {
+  const { describeEmailSwitches } = require('../../components/business/src/emails/mailCapability.ts');
+  for (const p of describeEmailSwitches(emailSwitchLayers(config))) {
+    problems.push({ message: p.message, path: p.key.split('.'), payload: { scope: p.scope, info: p.info } });
+  }
+}
+
 // MFA settings that cannot work refuse the boot here, where the message is
 // clear; the login-path normalizer stays non-throwing so a typo never bricks
 // logins.
@@ -752,6 +771,7 @@ async function validate (config) {
   checkSsoConfig(config, problems);
   checkEmailVerificationGate(config, problems);
   checkMergeLanguage(config, problems);
+  checkEmailSwitches(config, problems);
   checkMfaConfig(config, problems);
   checkHostedSites(config, problems);
   checkAdapterRoutes(config, problems);
@@ -916,7 +936,7 @@ function collectWarnings (config) {
     warnings.push('email verification is on by default but ' + why +
       ': verification mails are not sent and account email addresses cannot be proved. ' +
       'Set the missing keys (the page is the /verify-email route of your auth UI), or set ' +
-      "'services.email.enabled.verifyEmail: false' to turn the feature off explicitly.");
+      "'services.email.sendVerifyEmail: false' to turn the feature off explicitly.");
   }
   const { describeMergeLanguage } = require('../../components/business/src/emails/mailCapability.ts');
   warnings.push(...describeMergeLanguage(config).warnings);
@@ -1100,6 +1120,7 @@ module.exports = {
   checkSsoConfig,
   checkEmailVerificationGate,
   checkMergeLanguage,
+  checkEmailSwitches,
   checkMfaConfig,
   checkPasswordCheckLimit,
   checkHostedSites,

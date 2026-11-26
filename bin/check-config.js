@@ -218,30 +218,44 @@ checkStateKey('sso.stateKey',
   }
 }
 
-// auth.passwordResetPageURL — required unless services.email.enabled.resetPassword === false
+// The layers highest first, named like boot's scopes.
+const layers = [['override-file', fileConfig], ['bootstrap-file', bootstrapConfig], ['env', envConfig],
+  ['base', baseLayer], ['default-file', defaultConfig]];
+
+// services.email.enabled and services.email.send<Kind>: booleans, and the
+// former object form of `enabled` refused in every layer (the same check as
+// checkEmailSwitches in config/plugins/config-validation.js, one predicate).
 {
-  const emailEnabled = get('services.email.enabled');
-  let resetPasswordNeeded = true;
-  if (emailEnabled === false) resetPasswordNeeded = false;
-  if (emailEnabled && typeof emailEnabled === 'object' && emailEnabled.resetPassword === false) resetPasswordNeeded = false;
-  if (resetPasswordNeeded && isMissingOrSentinel(get('auth.passwordResetPageURL'))) {
-    problems.push('auth.passwordResetPageURL missing or unset (required unless services.email.enabled.resetPassword is false)');
+  const { describeEmailSwitches } = require('../components/business/src/emails/mailCapability.ts');
+  const layerInfo = { 'override-file': absPath, 'bootstrap-file': bootstrapPath, base: baseLayerPath, 'default-file': 'config/default-config.yml' };
+  const switchLayers = layers.filter(([, layer]) => layer != null).map(([scope, layer]) => ({
+    scope,
+    info: layerInfo[scope] != null ? 'From file: ' + layerInfo[scope] : '',
+    email: get('services.email', layer)
+  }));
+  for (const p of describeEmailSwitches(switchLayers)) problems.push(p.message);
+}
+
+// auth.passwordResetPageURL: required while the password-reset mail is
+// switched on (services.email.enabled and services.email.sendResetPassword)
+{
+  const { isMailKindSwitchedOnInConfig } = require('../components/business/src/emails/mailCapability.ts');
+  if (isMailKindSwitchedOnInConfig(configReader, 'resetPassword') && isMissingOrSentinel(get('auth.passwordResetPageURL'))) {
+    problems.push('auth.passwordResetPageURL missing or unset (required unless services.email.sendResetPassword is false)');
   }
 }
 
 // auth.emailVerificationPageURL, with boot's own predicate
 // (describeVerificationMail): a PROBLEM only when the operator set
-// `services.email.enabled.verifyEmail` themselves (mirrors REQUIRED_WHEN in
+// `services.email.sendVerifyEmail` themselves (mirrors REQUIRED_WHEN in
 // config/plugins/config-validation.js). When the key is inherited from the
 // shipped default (true), a missing page URL turns the feature off with a
 // warning at every boot instead. Whether it is inherited is decided like
 // boot's getScopeAndValue: the first layer, highest first, where the key
-// resolves. A plain `services.email.enabled: true` holds no `verifyEmail`, so
-// the key resolves in the defaults and is inherited, as at boot.
+// resolves. A plain `services.email.enabled: true` holds no `sendVerifyEmail`,
+// so the key resolves in the defaults and is inherited, as at boot.
 {
   const { describeVerificationMail } = require('../components/business/src/emails/mailCapability.ts');
-  const layers = [['override-file', fileConfig], ['bootstrap-file', bootstrapConfig], ['env', envConfig],
-    ['base', baseLayer], ['default-file', defaultConfig]];
   const scopedReader = {
     get: configReader.get,
     getScopeAndValue: (key) => {
@@ -256,9 +270,9 @@ checkStateKey('sso.stateKey',
   const status = describeVerificationMail(scopedReader);
   if (status.reason === 'missing-page-url') {
     if (status.explicit) {
-      problems.push('auth.emailVerificationPageURL missing or unset (required when services.email.enabled.verifyEmail is true)');
+      problems.push('auth.emailVerificationPageURL missing or unset (required when services.email.sendVerifyEmail is true)');
     } else {
-      warnings.push('auth.emailVerificationPageURL missing or unset: email verification is on by default and stays off (with a warning at every boot) until this URL is set. Set it to the /verify-email page of your auth UI, or set services.email.enabled.verifyEmail: false.');
+      warnings.push('auth.emailVerificationPageURL missing or unset: email verification is on by default and stays off (with a warning at every boot) until this URL is set. Set it to the /verify-email page of your auth UI, or set services.email.sendVerifyEmail: false.');
     }
   }
 }
