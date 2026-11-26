@@ -879,6 +879,16 @@ class DBrqlite {
     );
   }
 
+  // INSERT OR IGNORE is one write, linearized through Raft: of N concurrent
+  // callers exactly one changes a row.
+  async setPlatformKvIfAbsent (key: string, value: string): Promise<boolean> {
+    const result = await this.execute(
+      'INSERT OR IGNORE INTO keyValue (key, value) VALUES (?, ?)',
+      [key, value]
+    );
+    return (result?.rows_affected ?? 0) > 0;
+  }
+
   async getPlatformKv (key: string): Promise<string | null> {
     const rows = await this.query('SELECT value FROM keyValue WHERE key = ?', [key]);
     return rows.length === 0 ? null : rows[0].value;

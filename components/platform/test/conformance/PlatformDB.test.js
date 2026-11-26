@@ -1166,6 +1166,18 @@ export default function conformanceTests (getDB) {
         assert.deepStrictEqual(JSON.parse(byKey.get('access-state/plkv-as/' + suffix)), { value: { v: 1 }, expiresAt: 1000 });
       });
 
+      it('[PLKV13] setPlatformKvIfAbsent writes a missing key only; of concurrent writers exactly one wins', async () => {
+        const key = 'plkv-ifabsent/' + cuid();
+        assert.strictEqual(await db.setPlatformKvIfAbsent(key, 'first'), true);
+        assert.strictEqual(await db.setPlatformKvIfAbsent(key, 'second'), false);
+        assert.strictEqual(await db.getPlatformKv(key), 'first');
+        const raced = 'plkv-ifabsent/' + cuid();
+        const values = ['a', 'b', 'c', 'd', 'e'];
+        const results = await Promise.all(values.map((v) => db.setPlatformKvIfAbsent(raced, v)));
+        assert.strictEqual(results.filter(Boolean).length, 1);
+        assert.strictEqual(await db.getPlatformKv(raced), values[results.indexOf(true)]);
+      });
+
       it('[PLKV09] platform-kv keyspace isolated from access-state / user-core', async () => {
         const suffix = cuid();
         const kvKey = 'iso-plkv/' + suffix;

@@ -294,6 +294,13 @@ export interface PlatformDB {
   // above. Callers own their key-prefix conventions (e.g.
   // `oauth-client/<id>`); the engine treats keys as opaque strings.
   setPlatformKv (key: string, value: string): Promise<void>;
+  /**
+   * ATOMIC insert-if-absent: write the value ONLY when no row holds the key,
+   * in one linearized statement. True when this call wrote it, false when a
+   * row already existed (left untouched). Concurrent callers of the same key:
+   * exactly ONE gets true. For first-writer-wins indefinite state.
+   */
+  setPlatformKvIfAbsent (key: string, value: string): Promise<boolean>;
   getPlatformKv (key: string): Promise<string | null>;
   deletePlatformKv (key: string): Promise<void>;
   listPlatformKvKeys (prefix: string): Promise<string[]>;
@@ -465,6 +472,8 @@ const PlatformDB: PlatformDB = {
   // --- Generic cluster-wide key-value --- //
 
   async setPlatformKv (key: string, value: string): Promise<void> { throw new Error('Not implemented'); },
+
+  async setPlatformKvIfAbsent (key: string, value: string): Promise<boolean> { throw new Error('Not implemented'); },
 
   async getPlatformKv (key: string): Promise<string | null> { throw new Error('Not implemented'); },
 
