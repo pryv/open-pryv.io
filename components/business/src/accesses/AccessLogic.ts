@@ -311,6 +311,11 @@ class AccessLogic {
   _loadFeaturePermission (perm: FeaturePermission, featurePermissionsMap: Record<string, FeaturePermission>, streamByStoreForced: Record<string, string[]>) {
     // here we might want to check if permission is higher
     featurePermissionsMap[perm.feature] = perm;
+    // `forcedStreams` cannot be written through the API (the access schema
+    // refuses it), but accesses migrated from v1 hold it: the v1 1.7.0
+    // migration turned tag permissions into `{ feature: 'forcedStreams',
+    // streams: [...] }`. Reading it keeps their narrowing of events.get;
+    // dropping this read would widen those accesses.
     if (perm.feature === 'forcedStreams') { // load them by store
       const forced = perm as FeaturePermission & { streams?: string[] };
       // Mirror getForbiddenGetEventsStreamIds(): group each stream by its
