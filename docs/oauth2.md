@@ -1114,8 +1114,8 @@ developer or metadata-document), `/oauth2/authorize/offer` answers
 `client.validation = { level, publisher?: { name?, validated }, validatedAt? }`:
 `level` is `appValidated`, `publisherValidated` or `nonValidated` (§ 2,
 `clientRegistration`), decided by the server only; `publisher` names the
-owning account's publisher for a developer's client (`name` its display name
-when it has one); `validatedAt` (ms since epoch) is when its app review was
+owning account's publisher for a developer's client (`name` its display name,
+only once the publisher is validated); `validatedAt` (ms since epoch) is when its app review was
 passed. A developer's client also answers `client.origin: "developer"`. A
 consent UI shows the level as a badge ("App Validated", "Publisher
 Validated", "Non-Validated") and, for a Non-Validated client, a caution; a
@@ -1449,13 +1449,19 @@ any value other than the two below.
 
 - **`mode: curated`** (the default): the operator registers every client with
   the CLI (§ 3, § 3b). An upgraded platform with an unchanged configuration
-  behaves exactly as before.
+  behaves exactly as before. A client a developer registered (`origin:
+  developer`, left from a `delegated` period) is **not served** while the mode
+  is `curated`: `/oauth2/authorize` redirects back with `unauthorized_client`,
+  the consent answers `403 access_denied` (`reason:
+  developer-clients-not-served`) and its refresh is refused, all with
+  "applications registered by developers are not served on this platform".
+  Its row and grants are kept: switching back to `delegated` serves it again.
 - **`mode: delegated`**: Pryv accounts may also register registry clients
   (`origin: developer`, owned by the registering account), under the
   operator's policy below. The core refuses to boot with it when no OAuth
   extension is installed (such clients are registry clients). The
-  registration by a developer comes with the developer API; until then a
-  developer's client row is written by the operator's tools.
+  registration by a developer comes with the developer API; no command of
+  this release creates a developer's client.
 - **`whoMayRegister`** (`delegated` only): `validatedPublishers` (the default:
   only accounts whose publisher the operator validated) or `anyAccount` (the
   boot logs a warning). Set under `curated`, it is reported as not used.
@@ -1473,44 +1479,77 @@ vouches for it, and the consent screen shows it as a badge:
 | `origin: developer`, its app review passed and no reviewed field changed since | `appValidated` | App Validated |
 | `origin: developer`, its owner is a validated publisher | `publisherValidated` | Publisher Validated |
 | `origin: developer`, otherwise | `nonValidated` | Non-Validated |
-| metadata-document client (§ 1f), `oauth.clientMetadataDocuments.mode: allowList` | `publisherValidated` | Publisher Validated |
-| metadata-document client, `mode: any` | `nonValidated` | Non-Validated |
+| metadata-document client (§ 1f), `oauth.clientMetadataDocuments.mode: allowList`, its host on `allowedHosts` and not on `deniedHosts` | `publisherValidated` | Publisher Validated |
+| metadata-document client, otherwise (`mode: any`, or a host no longer listed) | `nonValidated` | Non-Validated |
 
 An app review (`bin/oauth-client.js validate`, § 3b) stores the digest of the
-reviewed fields: the vetted fields of § 3b (redirect URIs, keys, scope,
-audiences, grant types, roles, lifetimes) and the display identity
-(`clientName`, `name`, `description`, `logoUri`, `clientUri`, `policyUri`,
-`tosUri`). A row whose reviewed fields no longer match is not App Validated
-until reviewed again. A publisher is the account that owns the client; its
-decision is the platform row `dev-publisher/<userId>` (`status: validated`
-makes it Publisher Validated; absent, pending or suspended: not validated).
+reviewed fields with the review version (`validation.app.v`, 1 today; a
+review without one is version 1). Version 1 covers the vetted fields of § 3b
+(redirect URIs, keys, scope, audiences, grant types, roles, lifetimes), the
+display identity (`clientName`, `name`, `description`, `logoUri`,
+`clientUri`, `policyUri`, `tosUri`), and what else changes what the app does
+or who stands behind it: `allowInsecureRedirect`, `subjectType`,
+`maxEntries`, `dpopBoundAccessTokens`, `tokenResponseExtras`,
+`applicationType`, `kind`, `cmcOffers` and the owner. Not covered: the
+regions (where it is served), the status and its trail, the secrets (a
+rotation keeps the badge), contacts and `softwareId`. A row whose reviewed
+fields no longer match is not App Validated until reviewed again. A later
+release may cover more fields under a new version: a review is always
+compared with the list of its own version, so no reviewed app is downgraded
+by an upgrade. A publisher is the account that owns the client; its decision
+is the platform row `dev-publisher/<userId>` (`status: validated` makes it
+Publisher Validated; absent, pending or suspended: not validated; its display
+name, at most 128 characters without control or bidirectional-formatting
+characters, is answered only once validated).
 
 **`levels.<level>`** is what a client of that level may do (absent: as
 before, everything allowed):
 
-- `consent: allow` (the default), `refuse` (`/oauth2/authorize` redirects
-  back with `unauthorized_client`, "this application is not validated on this
-  platform", and the consent answers `403 access_denied`, `reason:
-  client-not-validated`), or `testers` (only the client's own testers may
-  consent: for now its owner account; anyone else gets `403 access_denied`,
-  `reason: client-testers-only`; an operator's client has no testers).
+- `consent: allow` (the default), `refuse`, or `testers`.
+  - `refuse`: `/oauth2/authorize` redirects back with `unauthorized_client`,
+    "this application is not validated on this platform", the consent
+    answers `403 access_denied` (`reason: client-not-validated`), and **the
+    refresh of grants already given is refused too** (`400
+    unauthorized_client`, same text; the refresh token is not consumed, so it
+    works again if the level or the policy changes back). An `unvalidate`
+    that drops a client into a refused level stops it at its next refresh.
+  - `testers`: only the client's own testers may consent: for now its owner
+    account; anyone else gets `403 access_denied`, `reason:
+    client-testers-only`. A client without an owner (an operator's or a
+    metadata-document client) has no testers: nobody may consent to it.
+    `check-config` and the boot warn when `appValidated` is `testers` or
+    `refuse` (the operator's own clients would be locked out).
+  - `testers`, `scopeTemplate` and `maxGrants` gate new consents only: grants
+    already given keep their reach. To stop a client at once use `suspend`,
+    to end its grants `purge-grants` (§ 3b).
 - `scopeTemplate`: a scope string in the extension's grammar, the maximum
-  scope set of a client of that level on top of its own registered one; a
-  request outside it is refused (`invalid_scope` at `/oauth2/authorize`, `400
-  invalid_scope`, `reason: client-scope-template`, at the consent). The boot
-  checks each template against the grammar and reports one it refuses.
-- `maxGrants`: how many accounts a client of that level may reach. Each
-  account that consents while the cap applies is counted once per client
-  (a platform row `oauth-level-grant/<clientId>/<userId>`, no credential); a
-  new account past the cap gets `403 access_denied`, `reason:
-  client-grant-limit`. **Approximate by design:** two consents racing on two
-  cores can both pass at the cap, and an account's own revocation of its grant
-  does not give its unit back; `purge-grants` and `revoke` do (§ 3b).
+  scope set of a client of that level on top of its own registered one. The
+  template is parsed once per level, and the permissions the request resolved
+  to for the client (what the consent shows and grants) must fit it; else the
+  request is refused (`invalid_scope` at `/oauth2/authorize`, `400
+  invalid_scope`, `reason: client-scope-template`, at the consent; both
+  audited as `oauth.consent.refused`). The core tokens `openid` and
+  `offline_access` are not in the grammar: a template does not withhold them
+  (a Non-Validated client registered for the refresh grant still gets refresh
+  tokens). The boot checks each template against the grammar and reports one
+  it refuses (every client of that level is then refused).
+- `maxGrants` (1 to 100 000): how many accounts a client of that level may
+  reach. Each account is counted once per client (a platform row
+  `oauth-level-grant/<clientId>/<userId>`, no credential), reserved before the
+  consent is written and released if writing it fails; a new account past the
+  cap gets `403 access_denied`, `reason: client-grant-limit`. **Approximate by
+  design:** accounts consenting at the same moment at the cap (on one core or
+  several) may all be refused (never more than the cap let through on one
+  store), and an account's own revocation of its grant does not give its unit
+  back; `purge-grants` and `revoke` do (§ 3b).
 
-The level is decided again at the consent (it may have changed since
-`/oauth2/authorize`). Platform-wide: keep the block identical on every core.
-App-account clients are registered by the operator and are App Validated;
-their consent screen (a CMC offer in the state) carries no badge.
+The level is decided again at the consent and at each refresh (it may have
+changed since `/oauth2/authorize`). A block with a problem is refused at
+boot; read anywhere else it fails closed (every level refused). Platform-wide:
+keep the block identical on every core. App-account clients are registered
+by the operator and are App Validated (`refuse`, `testers` and `maxGrants`
+apply to them, `scopeTemplate` does not: their scope is a CMC offer); their
+consent screen (a CMC offer in the state) carries no badge.
 
 ### `logoHosts`
 
@@ -1861,7 +1900,8 @@ node bin/oauth-client.js suspend <clientId>
 node bin/oauth-client.js resume  <clientId>
 node bin/oauth-client.js update  <clientId> [flags] [--approve]
 node bin/oauth-client.js purge-grants <clientId> --yes
-node bin/oauth-client.js validate|unvalidate <clientId>
+node bin/oauth-client.js validate <clientId> --digest <review digest>
+node bin/oauth-client.js unvalidate <clientId>
 ```
 
 Flags:
@@ -2030,15 +2070,19 @@ identity record. App-account clients have no review step.
 client a developer registered (`origin: developer`):
 
 ```bash
-node bin/oauth-client.js validate <clientId>     # record its app review: App Validated
-node bin/oauth-client.js unvalidate <clientId>   # withdraw it
+node bin/oauth-client.js show <clientId>                       # review it; prints its review digest
+node bin/oauth-client.js validate <clientId> --digest <digest>   # record the review: App Validated
+node bin/oauth-client.js unvalidate <clientId>                 # withdraw it
 ```
 
-`validate` stores `validation.app = { at, by: "operator", digest }`, the
-digest of the reviewed fields as they stand; any later change of one of them
-(an `update` included) drops the App Validated level until the next
-`validate`. Both are kept in the `statusLog` (reasons `validate`,
-`unvalidate`). They refuse an operator's client (App Validated by rule) and a
+`validate` approves the row as `show` printed it: `--digest` is required and
+must still be the row's review digest (a change in between is refused, so
+nothing is approved unseen; a digest starting with `--` may follow the client
+id without the flag). It stores `validation.app = { v, at, by, digest }`
+(`by`: the OS user the CLI runs as, `operator` when unset, as in the
+`statusLog`); any later change of a reviewed field (an `update` included)
+drops the App Validated level until the next `validate`. Both are kept in the
+`statusLog` (reasons `validate`, `unvalidate`); no audit row is written yet. They refuse an operator's client (App Validated by rule) and a
 metadata-document client (its level follows
 `oauth.clientMetadataDocuments.mode`). `purge-grants` and `revoke` also give
 back the accounts the client counted against `maxGrants`.
@@ -2228,8 +2272,8 @@ metadata-document client. Registry clients emit the same events. `oauth.consent.
 `validationLevel`, the client's level at the consent (§ 2, `clientRegistration`).
 A consent refused by the policy of the client's level is an
 `oauth.consent.refused` with `validationLevel` and `reason`
-`client-not-validated`, `client-testers-only`, `client-scope-template` or
-`client-grant-limit`.
+`client-not-validated`, `client-testers-only`, `client-scope-template`,
+`client-grant-limit` or `developer-clients-not-served`.
 
 `oauth.code.reused` in particular should page: per RFC 6749 a code is
 single-use, so a reuse means either a broken client or a stolen code.

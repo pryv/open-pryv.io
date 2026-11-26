@@ -52,12 +52,15 @@
   at boot and by `bin/check-config.js` (the documentation already said so; nothing enforced it). `delegated` needs an
   OAuth extension. New keys: `oauth.clientRegistration.whoMayRegister` (`validatedPublishers` by default, or
   `anyAccount`, which logs a warning) and `oauth.clientRegistration.levels.{nonValidated,publisherValidated,
-  appValidated}.{consent: allow | testers | refuse, scopeTemplate, maxGrants}`. Absent, everything is allowed as
-  before.
+  appValidated}.{consent: allow | testers | refuse, scopeTemplate, maxGrants (1 to 100 000)}`. Absent, everything is
+  allowed as before; a block with a problem is refused at boot and read anywhere else as "every level refused".
+  While the mode is `curated`, a client a developer registered is not served (authorize, consent and refresh
+  refused, `developer-clients-not-served`); its row and grants are kept.
 - **Validation level of every registry client**, decided by the server: `appValidated` for a client the operator
   registered, or a developer's client whose app review stands; `publisherValidated` for a developer's client whose
-  owner is a validated publisher (platform row `dev-publisher/<userId>`), or a metadata-document client under
-  `allowList`; `nonValidated` otherwise (a metadata-document client under `any` included).
+  owner is a validated publisher (platform row `dev-publisher/<userId>`; its display name is answered only once
+  validated), or a metadata-document client under `allowList` whose host is listed and not denied; `nonValidated`
+  otherwise (a metadata-document client under `any` included).
 - **`POST /oauth2/authorize/offer`** answers `client.validation = { level, publisher?: { name?, validated },
   validatedAt? }` for every registry client, and `client.origin: "developer"` for a developer's client. Additive,
   and answered in every mode, `curated` included (an operator's client is `appValidated`).
@@ -65,17 +68,25 @@
   at the minting or refresh on a session), and a developer's client is stamped `origin: "developer"`. Additive and
   written in every mode, `curated` included: existing grants are stamped again (with the level) at their next
   consent, existing sessions at their next refresh.
-- **Policies**: `consent: refuse` redirects `/oauth2/authorize` back with `unauthorized_client`; at the consent,
-  `403 access_denied` with `reason` `client-not-validated`, `client-testers-only` (`testers`: only the client's
-  owner account for now) or `client-grant-limit` (`maxGrants`, an approximate count of the accounts reached), and
-  `400 invalid_scope` with `reason: client-scope-template` (`scopeTemplate`). `oauth.consent.granted` and
-  `oauth.consent.refused` audit rows carry `validationLevel`.
+- **Policies**: `consent: refuse` redirects `/oauth2/authorize` back with `unauthorized_client`, refuses the
+  consent (`403 access_denied`, `reason: client-not-validated`) and **also refuses the refresh of grants already
+  given** (`400 unauthorized_client`; the refresh token is kept, an `unvalidate` into a refused level included). At
+  the consent, `403 access_denied` with `reason` `client-testers-only` (`testers`: only the client's owner account
+  for now; a client without an owner has no testers) or `client-grant-limit` (`maxGrants`: an approximate count of
+  the accounts reached, reserved before the consent is written), and `400 invalid_scope` with `reason:
+  client-scope-template` (`scopeTemplate`: the permissions the request resolved to must fit the level's template;
+  `openid` and `offline_access` are not restricted by it). `testers`, `scopeTemplate` and `maxGrants` gate new
+  consents only. `oauth.consent.granted` and `oauth.consent.refused` audit rows carry `validationLevel`.
 - **Client rows** accept `origin: operator | metadata-document | developer` (absent reads as `operator`),
-  `owner: { userId }` (developer's clients only) and `validation.app = { at, by, digest }` (the app review: a change
-  of a reviewed field, vetted or display, drops the App Validated level).
-- **`bin/oauth-client.js`**: `show` and `list` print the origin, owner and level (`list` lines end with them);
-  `validate` / `unvalidate <clientId>` record or withdraw the app review of a developer's client; `purge-grants` and
-  `revoke` give back the accounts counted against `maxGrants`. See `docs/oauth2.md` § 2 and § 3b.
+  `owner: { userId }` (developer's clients only) and `validation.app = { v, at, by, digest }`: the app review,
+  versioned. Version 1 covers the vetted fields, the display identity, `allowInsecureRedirect`, `subjectType`,
+  `maxEntries`, `dpopBoundAccessTokens`, `tokenResponseExtras`, `applicationType`, `kind`, `cmcOffers` and the owner;
+  a change of any of them drops the App Validated level.
+- **`bin/oauth-client.js`**: `show` and `list` print the origin, owner and level, and `show` the review digest of a
+  developer's client. **Possible break for scripts parsing `list`:** every line ends with two more columns (the
+  origin, `owner:<userId>` for a developer's client, and the level). `validate <clientId> --digest <digest>` records
+  the app review of the row `show` printed (refused when it changed since), `unvalidate <clientId>` withdraws it;
+  `purge-grants` and `revoke` give back the accounts counted against `maxGrants`. See `docs/oauth2.md` § 2 and § 3b.
 
 ### Configuration, BREAKING: the mail switches are flat booleans
 

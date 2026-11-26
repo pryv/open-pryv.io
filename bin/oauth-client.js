@@ -29,7 +29,8 @@
 //   node bin/oauth-client.js list-revoked-keys
 //   node bin/oauth-client.js list-keys [<clientId>]
 //   node bin/oauth-client.js purge-grants <clientId> --yes
-//   node bin/oauth-client.js validate|unvalidate <clientId>
+//   node bin/oauth-client.js validate <clientId> --digest <review digest>
+//   node bin/oauth-client.js unvalidate <clientId>
 
 const path = require('path');
 
@@ -476,7 +477,7 @@ function dropUnservableLogo (row) {
 /** A status change appended to the row's trail (bounded, oldest out). */
 function withStatusChange (row, change) {
   const { MAX_STATUS_LOG } = require('oauth2/src/clientRegistry.ts');
-  const log = [...(Array.isArray(row.statusLog) ? row.statusLog : []), { at: Date.now(), by: process.env.USER ?? 'operator', ...change }];
+  const log = [...(Array.isArray(row.statusLog) ? row.statusLog : []), { at: Date.now(), by: cliActor(), ...change }];
   return { ...row, statusLog: log.slice(-MAX_STATUS_LOG) };
 }
 
@@ -612,6 +613,15 @@ async function printValidation (platform, client) {
   else if (client.validation?.app != null) why = 'app review no longer matches its fields: validate it again';
   else why = v.level === 'publisherValidated' ? 'its publisher is validated' : 'not reviewed';
   console.log('validation level: ' + v.level + ' (' + why + ')');
+  if (client.origin === 'developer') {
+    const { validationDigest } = require('oauth2/src/clientValidation.ts');
+    console.log('review digest:    ' + validationDigest(client) + '  (validate ' + client.clientId + ' --digest <this> approves the row as shown)');
+  }
+}
+
+// The identity the CLI acts under, as written in a row's statusLog.
+function cliActor () {
+  return process.env.USER ?? 'operator';
 }
 
 // Operator app review of a developer's client: `validate` records it (the
@@ -630,11 +640,22 @@ async function runValidate (platform, args, getClient, persistClient) {
       ? 'is a metadata-document client: its level follows oauth.clientMetadataDocuments.mode (allowList: publisherValidated, any: nonValidated)'
       : 'was registered by the operator: it is appValidated by rule'));
   }
-  const { validationDigest } = require('oauth2/src/clientValidation.ts');
+  const { validationDigest, VALIDATION_DIGEST_VERSION } = require('oauth2/src/clientValidation.ts');
   const status = existing.status ?? 'active';
   let row;
   if (command === 'validate') {
-    row = { ...existing, validation: { app: { at: Date.now(), by: 'operator', digest: validationDigest(existing) } } };
+    // The operator approves the row it reviewed: the digest `show` printed
+    // must still be the row's (a change in between is refused, not approved unseen).
+    const current = validationDigest(existing);
+    // (A digest starting with "--" reads as a flag: it may also follow the client id alone.)
+    const given = typeof args.flagsScalar?.digest === 'string' ? args.flagsScalar.digest : args.positional[1];
+    if (typeof given !== 'string' || given.length === 0) {
+      throw new Error('validate: --digest <digest> required: review the client with show ' + clientId + ', then pass the review digest it prints');
+    }
+    if (given !== current) {
+      throw new Error('validate: the client "' + clientId + '" changed since the review digest given (now ' + current + '): review it again with show');
+    }
+    row = { ...existing, validation: { app: { v: VALIDATION_DIGEST_VERSION, at: Date.now(), by: cliActor(), digest: current } } };
   } else {
     if (existing.validation?.app == null) {
       console.log('OK   client ' + clientId + ' has no app review (unchanged)');
@@ -1754,7 +1775,8 @@ function printUsage (stream) {
     '      (--audience <url> | --any-audience) [flags]\n' +
     '  node bin/oauth-client.js suspend|resume <clientId>\n' +
     '  node bin/oauth-client.js purge-grants <clientId> --yes\n' +
-    '  node bin/oauth-client.js validate|unvalidate <clientId>\n' +
+    '  node bin/oauth-client.js validate <clientId> --digest <review digest from show>\n' +
+    '  node bin/oauth-client.js unvalidate <clientId>\n' +
     '  node bin/oauth-client.js list --origin metadata-document [--host <host>]\n' +
     '  node bin/oauth-client.js check-metadata <url>\n' +
     '  node bin/oauth-client.js refresh-metadata <url|key>\n' +
@@ -1781,8 +1803,10 @@ function printUsage (stream) {
     '(origin developer), appValidated while its app review stands, else\n' +
     'publisherValidated when its owner is a validated publisher, else nonValidated;\n' +
     'for a metadata-document client, publisherValidated under allowList, else\n' +
-    'nonValidated. validate records the app review of a developer\'s client (a\n' +
-    'later change of a reviewed field drops it); unvalidate withdraws it.\n' +
+    'nonValidated. validate records the app review of a developer\'s client as\n' +
+    'show printed it (--digest: refused if the row changed since; a later change of\n' +
+    'a reviewed field drops it); unvalidate withdraws it. A developer\'s client is\n' +
+    'served only while oauth.clientRegistration.mode is delegated.\n' +
     'purge-grants deletes, on THIS core, every grant of the client (CMC data-grants of\n' +
     'an app-account client included) with its sessions, what they created, their\n' +
     'aliases and refresh chains (each user consents again); run it on each core,\n' +

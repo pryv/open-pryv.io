@@ -77,6 +77,7 @@ const storage = require('../storage.ts');
 const { audit } = require('../audit.ts');
 const { logServerError } = require('../serverLog.ts');
 const { getClient, isRegistryClient, clientUnavailable } = require('../clientRegistry.ts');
+const { clientPolicy } = require('../clientValidation.ts');
 const { authenticateClient } = require('../clientSecret.ts');
 const { tokenEndpointAudiences, issuerFromConfig } = require('../issuer.ts');
 const { prepareRegistryResponse } = require('../responseHooks.ts');
@@ -234,6 +235,14 @@ export async function handleRefreshToken (
   const unavailable = client != null ? clientUnavailable(client, deps.config) : null;
   if (unavailable != null) {
     return { ok: false, status: 400, error: 'unauthorized_client', description: unavailable.description };
+  }
+  // The operator's policy for the client's level (`consent: refuse`, an
+  // `unvalidate` included) and a developer's client while the mode is
+  // curated: no refresh either. Refused without touching the token, like a
+  // suspension (reversible).
+  if (client != null) {
+    const { refused } = await clientPolicy(deps.platform, deps.config, client);
+    if (refused != null) return { ok: false, status: 400, error: 'unauthorized_client', description: refused.description };
   }
   const auth = await authenticateClient({
     client,

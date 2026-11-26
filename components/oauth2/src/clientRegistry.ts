@@ -214,14 +214,42 @@ function validateOriginAndOwner (client: OAuthClient): void {
   }
   if (client.validation != null) {
     if (origin !== 'developer') throw new Error('validation: only on a developer\'s client (origin developer)');
-    const v = client.validation as Record<string, unknown>;
-    if (typeof v !== 'object' || Object.keys(v).some((k) => k !== 'app')) throw new Error('validation: only { app } is stored');
-    const app = v.app as Record<string, unknown> | undefined;
-    if (app != null && !(typeof app === 'object' && Number.isFinite(app.at) && typeof app.by === 'string' && app.by.length > 0 &&
-        app.by.length <= 128 && typeof app.digest === 'string' && /^[A-Za-z0-9_-]{43}$/.test(app.digest))) {
-      throw new Error('validation.app must be { at, by, digest }');
+    const v = client.validation as unknown;
+    if (!isPlainRecord(v) || Object.keys(v).some((k) => k !== 'app')) throw new Error('validation: only { app } is stored');
+    const app = v.app;
+    if (app != null && !(isPlainRecord(app) && Number.isFinite(app.at) && typeof app.by === 'string' && app.by.length > 0 &&
+        app.by.length <= 128 && typeof app.digest === 'string' && /^[A-Za-z0-9_-]{43}$/.test(app.digest) &&
+        (app.v == null || (Number.isInteger(app.v) && (app.v as number) >= 1)))) {
+      throw new Error('validation.app must be { v, at, by, digest }');
     }
   }
+}
+
+function isPlainRecord (v: unknown): v is Record<string, unknown> {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * Persist a client a developer registered: the one write path the developer
+ * API may use. It sets `origin: developer` and `owner` itself, refuses to
+ * overwrite a row of another origin or another owner, and carries the app
+ * review over from the stored row only (never from the caller: a developer
+ * cannot choose its level). The review then stands only if no reviewed field
+ * changed.
+ */
+export async function persistDeveloperClient (platform: PlatformDB, ownerUserId: string, client: OAuthClient): Promise<void> {
+  if (typeof ownerUserId !== 'string' || ownerUserId.length === 0) throw new Error('persistDeveloperClient: ownerUserId required');
+  const existing = await storage.getClient(platform, client?.clientId) as OAuthClient | null;
+  if (existing != null && (existing.origin !== 'developer' || existing.owner?.userId !== ownerUserId)) {
+    throw new Error('persistDeveloperClient: client id "' + client.clientId + '" belongs to another origin or owner');
+  }
+  const { origin: _o, owner: _w, validation: _v, ...fields } = client;
+  await persistClient(platform, {
+    ...fields,
+    origin: 'developer',
+    owner: { userId: ownerUserId },
+    ...(existing?.validation != null ? { validation: existing.validation } : {}),
+  } as OAuthClient);
 }
 
 /**

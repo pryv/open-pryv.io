@@ -357,6 +357,11 @@ function maxSet (ext: OAuthExtension, client: OAuthClient): { ok: true; permissi
   return { ok: true, permissions: parsed.offer.permissions };
 }
 
+/** Whether every permission of a resolved offer is covered by a maximum set (same rule as the registered scope). */
+export function permissionsWithin (permissions: ExtPermission[], max: ExtPermission[]): boolean {
+  return permissions.every((p) => coveredBy(p, max));
+}
+
 function coveredBy (p: ExtPermission, max: ExtPermission[]): boolean {
   if (isStreamPermission(p)) {
     // Same stream in any spelling (`a` and `:local:a`).

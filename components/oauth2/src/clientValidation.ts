@@ -13,34 +13,40 @@
  *   the CLI) or `delegated` (Pryv accounts may also register registry clients,
  *   under the policy below; the registration itself comes with the developer
  *   API). `open` (anonymous RFC 7591 registration) is refused, as any other
- *   value.
+ *   value. While the mode is `curated`, a client a developer registered
+ *   (`origin: developer`, left from a `delegated` period) is not served: its
+ *   row is kept, `/oauth2/authorize`, the consent and refresh refuse it.
  * - `whoMayRegister` (`delegated` only): `validatedPublishers` (the default)
  *   or `anyAccount`.
  * - `levels.<level>`: `{ consent: allow | testers | refuse, scopeTemplate?,
  *   maxGrants? }` for each of `nonValidated`, `publisherValidated`,
- *   `appValidated`. Absent: `allow`, no template, no cap.
+ *   `appValidated`. Absent: `allow`, no template, no cap. `refuse` also stops
+ *   the refresh of grants already given.
  *
  * The level of a client (its badge) is computed by the server, never stored
  * as such: a client the operator registered is App Validated; a client a
  * developer registered is App Validated while its app review stands (the
- * digest of its vetted fields unchanged), else Publisher Validated when its
+ * digest of its reviewed fields unchanged), else Publisher Validated when its
  * owner is a validated publisher, else Non-Validated; a metadata-document
- * client is Publisher Validated under `allowList`, Non-Validated under `any`.
+ * client is Publisher Validated when its host is on `allowedHosts` (mode
+ * `allowList`) and not denied, else Non-Validated.
  *
  * `maxGrants` counts, per client, the accounts that consented while the cap
- * applied (one platform row per account and client). The count is
- * approximate by design: two consents racing on two cores may both pass at
- * the cap, and an account's own revocation of its grant does not give its
- * unit back (the operator's `purge-grants` and `revoke` do).
+ * applied (one platform row per account and client), reserved before the
+ * consent is written. The count is approximate by design: consents racing
+ * at the cap (on one core or several) may all be refused, an account's own
+ * revocation of its grant does not give its unit back (the operator's
+ * `purge-grants` and `revoke` do).
  */
 
 import crypto from 'node:crypto';
 
 import type { PlatformDB } from '../../../storages/interfaces/platformStorage/PlatformDB.ts';
 import type { OAuthClient } from './storage.ts';
-import { VETTED_FIELDS, vettedValue } from './clientRegistry.ts';
-import { canonicalJson, resolveRequestedScope, checkMaxSet } from './scopeGrammar.ts';
-import { clientMetadataSettings } from './clientMetadataConfig.ts';
+import type { ExtPermission } from './extension.ts';
+import { VETTED_FIELDS, vettedValue, localizedTextProblem } from './clientRegistry.ts';
+import { canonicalJson, checkMaxSet, permissionsWithin } from './scopeGrammar.ts';
+import { clientMetadataSettings, hostListed } from './clientMetadataConfig.ts';
 import type { ClientStamp } from './clientMetadataId.ts';
 import { clientStamp } from './clientMetadataId.ts';
 import { logServerWarning } from './serverLog.ts';
@@ -56,8 +62,8 @@ export const VALIDATION_LEVELS: readonly ValidationLevel[] = Object.freeze(['non
 const CONSENT_POLICIES: readonly string[] = ['allow', 'testers', 'refuse'];
 const TOP_KEYS = ['mode', 'whoMayRegister', 'levels'];
 const LEVEL_KEYS = ['consent', 'scopeTemplate', 'maxGrants'];
-/** Upper bound of `maxGrants`. */
-export const MAX_GRANTS_LIMIT = 10_000_000;
+/** Upper bound of `maxGrants` (the count lists the client's rows). */
+export const MAX_GRANTS_LIMIT = 100_000;
 
 export type LevelPolicy = {
   consent: ConsentPolicy;
@@ -74,6 +80,7 @@ export type ClientRegistrationSettings = {
 };
 
 const ALLOW: LevelPolicy = Object.freeze({ consent: 'allow', scopeTemplate: null, maxGrants: null }) as LevelPolicy;
+const REFUSE: LevelPolicy = Object.freeze({ consent: 'refuse', scopeTemplate: null, maxGrants: null }) as LevelPolicy;
 
 export const DEFAULT_CLIENT_REGISTRATION_SETTINGS: Readonly<ClientRegistrationSettings> = Object.freeze({
   mode: 'curated',
@@ -153,6 +160,10 @@ export function describeClientRegistrationConfig (raw: unknown, opts: { extensio
         if (policy.consent != null && !CONSENT_POLICIES.includes(policy.consent as string)) {
           problems.push(`${lat}.consent is ${JSON.stringify(policy.consent)}: allow, testers or refuse is expected`);
         }
+        if (name === 'appValidated' && (policy.consent === 'refuse' || policy.consent === 'testers')) {
+          warnings.push(`'${lat}.consent' is ${policy.consent}: it applies to the clients the operator registered too ` +
+            '(they are App Validated and have no testers), so none of them can be used.');
+        }
         if (policy.scopeTemplate != null) {
           const tokens = scopeTokens(policy.scopeTemplate);
           if (tokens == null || tokens.length === 0) {
@@ -170,25 +181,33 @@ export function describeClientRegistrationConfig (raw: unknown, opts: { extensio
 }
 
 let memo: { key: string; settings: ClientRegistrationSettings } | null = null;
+let failClosedReported = '';
 
 /**
  * The settings in force, with the defaults. A block with problems (the boot
- * refuses it) reads as the defaults.
+ * refuses it) fails closed: mode `curated`, every level refused, reported
+ * once on the server trail.
  */
 export function clientRegistrationSettings (config: ConfigReader | null | undefined): ClientRegistrationSettings {
   const raw = config?.get('oauth:clientRegistration');
   let key: string;
   try { key = JSON.stringify(raw ?? null); } catch { key = ''; }
   if (memo != null && memo.key === key && key !== '') return memo.settings;
-  const settings = buildSettings(raw);
+  const settings = buildSettings(raw, key);
   memo = { key, settings };
   return settings;
 }
 
-function buildSettings (raw: unknown): ClientRegistrationSettings {
+function buildSettings (raw: unknown, key: string): ClientRegistrationSettings {
   const d = DEFAULT_CLIENT_REGISTRATION_SETTINGS;
-  if (!isPlainObject(raw) || describeClientRegistrationConfig(raw).problems.length > 0) {
-    return { mode: d.mode, whoMayRegister: d.whoMayRegister, levels: { ...d.levels } };
+  if (raw == null) return { mode: d.mode, whoMayRegister: d.whoMayRegister, levels: { ...d.levels } };
+  const problems = describeClientRegistrationConfig(raw).problems;
+  if (!isPlainObject(raw) || problems.length > 0) {
+    if (failClosedReported !== key) {
+      failClosedReported = key;
+      logServerWarning('oauth.clientRegistration has problems (' + problems.join('; ') + '): every client is refused until it is fixed');
+    }
+    return { mode: 'curated', whoMayRegister: d.whoMayRegister, levels: { nonValidated: REFUSE, publisherValidated: REFUSE, appValidated: REFUSE } };
   }
   const levels = { ...d.levels };
   const rawLevels = isPlainObject(raw.levels) ? raw.levels : {};
@@ -230,12 +249,7 @@ export function checkClientRegistrationAtBoot (config: ConfigReader, extensionIn
   for (const level of VALIDATION_LEVELS) {
     const template = settings.levels[level].scopeTemplate;
     if (template == null) continue;
-    let max: ReturnType<typeof checkMaxSet>;
-    try {
-      max = checkMaxSet(templateProbe(level, template, null));
-    } catch (err) {
-      max = { ok: false, description: 'could not be checked: ' + (err as Error).message };
-    }
+    const max = templateMaxSet(level, template);
     if (!max.ok) {
       logServerWarning(`oauth.clientRegistration.levels.${level}.scopeTemplate: ${max.description}; /oauth2/authorize will refuse ` +
         'every client of that level (invalid_scope) until the template is fixed');
@@ -243,28 +257,39 @@ export function checkClientRegistrationAtBoot (config: ConfigReader, extensionIn
   }
 }
 
-// A client row with the template as its maximum scope set, under an id of
-// its own (the grammar memoises the maximum set by client id).
-function templateProbe (level: ValidationLevel, template: string[], client: OAuthClient | null): OAuthClient {
-  const digest = crypto.createHash('sha256').update(template.join(' ')).digest('hex').slice(0, 16);
-  return {
-    ...(client ?? { redirectUris: ['https://client.invalid/cb'], grantTypes: ['authorization_code'], kind: 'registry' }),
+/**
+ * The maximum permission set of a level's template, parsed once with a
+ * neutral client (no field of any requesting client), memoised by the
+ * grammar under an id that names the template.
+ */
+function templateMaxSet (level: ValidationLevel, template: string[]): { ok: true; permissions: ExtPermission[] } | { ok: false; description: string } {
+  const digest = crypto.createHash('sha256').update(template.join(' ')).digest('hex').slice(0, 32);
+  const probe = {
     clientId: 'level-template-' + level + '-' + digest,
+    kind: 'registry',
+    redirectUris: ['https://client.invalid/cb'],
+    grantTypes: ['authorization_code'],
     scope: template,
     updatedAt: 0,
   } as OAuthClient;
+  try {
+    return checkMaxSet(probe);
+  } catch (err) {
+    return { ok: false, description: 'could not be checked: ' + (err as Error).message };
+  }
 }
 
 /**
- * Whether a requested scope fits the template of the client's level: null
- * when it does (or there is no template), else the refusal description.
+ * Whether the permissions a request resolved to (for the real client, as the
+ * consent shows and grants them) fit the template of the client's level:
+ * null when they do (or there is no template), else the refusal description.
+ * A template the grammar refuses refuses everything (fail closed).
  */
-export function scopeTemplateRefusal (client: OAuthClient, level: ValidationLevel, template: string[] | null,
-  scopeString: string, opts: { oidcEnabled?: boolean } = {}): string | null {
+export function scopeTemplateRefusal (level: ValidationLevel, template: string[] | null, permissions: ExtPermission[]): string | null {
   if (template == null) return null;
-  const fits = resolveRequestedScope(templateProbe(level, template, client), scopeString, opts);
-  if (fits.ok) return null;
-  return 'this application is not validated on this platform: it may not request this scope yet';
+  const max = templateMaxSet(level, template);
+  if (max.ok && permissionsWithin(permissions, max.permissions)) return null;
+  return NOT_VALIDATED + ': it may not request this scope yet';
 }
 
 // --- The fields an app review vouches for --- //
@@ -276,25 +301,67 @@ export function scopeTemplateRefusal (client: OAuthClient, level: ValidationLeve
  */
 export const DISPLAY_IDENTITY_FIELDS = ['clientName', 'name', 'description', 'logoUri', 'clientUri', 'policyUri', 'tosUri'] as const;
 
-/** The fields the digest of an app review covers: the vetted fields and the display identity. */
-export const VALIDATION_DIGEST_FIELDS: readonly string[] = Object.freeze([...VETTED_FIELDS, ...DISPLAY_IDENTITY_FIELDS]);
+/**
+ * The fields an app review covers, by review version (`validation.app.v`; a
+ * review stored without one is version 1). A later version may add fields:
+ * a review keeps being compared with the list it was made under, so a
+ * longer list never downgrades the apps already reviewed.
+ *
+ * Version 1: the vetted fields (`VETTED_FIELDS`), the display identity, and
+ * what else changes what the app does or who stands behind it: plain-http
+ * redirects, the subject type, the entry ceiling, DPoP binding, the token
+ * response extras, the application type, the kind, the consent offers and the
+ * owning account. Left out on purpose: `regions` (where it is served, not
+ * what it does), `status` / `statusLog` (the operator's own trail),
+ * `updatedAt` / `registeredAt` / `registeredBy`, the secrets (a rotation must
+ * not drop the badge), `contacts`, `softwareId` and the metadata cache state.
+ */
+const DIGEST_FIELD_LISTS: Readonly<Record<number, readonly string[]>> = Object.freeze({
+  1: Object.freeze([
+    ...VETTED_FIELDS, ...DISPLAY_IDENTITY_FIELDS,
+    'allowInsecureRedirect', 'subjectType', 'maxEntries', 'dpopBoundAccessTokens', 'tokenResponseExtras', 'applicationType',
+    'kind', 'cmcOffers', 'owner',
+  ]),
+});
 
-/** Digest of the reviewed fields of a client row (base64url SHA-256). */
-export function validationDigest (client: OAuthClient): string {
+/** The review version `validate` writes. */
+export const VALIDATION_DIGEST_VERSION = 1;
+
+/** The fields the current review version covers. */
+export const VALIDATION_DIGEST_FIELDS: readonly string[] = DIGEST_FIELD_LISTS[VALIDATION_DIGEST_VERSION];
+
+/** Digest of the reviewed fields of a client row (base64url SHA-256) for a review version, or null for an unknown version. */
+export function validationDigest (client: OAuthClient, version: number = VALIDATION_DIGEST_VERSION): string | null {
+  const fields = DIGEST_FIELD_LISTS[version];
+  if (fields == null) return null;
   const row = client as unknown as Record<string, unknown>;
-  const pairs = VALIDATION_DIGEST_FIELDS.map((k) => [k, vettedValue(row[k])]);
+  const pairs = fields.map((k) => [k, vettedValue(row[k])]);
   return crypto.createHash('sha256').update(canonicalJson(pairs)).digest('base64url');
+}
+
+/** Whether a row's stored app review still matches the row. */
+export function reviewStands (client: OAuthClient): boolean {
+  const app = client.validation?.app;
+  if (app == null || typeof app.digest !== 'string') return false;
+  const digest = validationDigest(client, Number.isInteger(app.v) ? app.v as number : 1);
+  return digest != null && digest === app.digest;
 }
 
 // --- Publishers --- //
 
 const PREFIX_PUBLISHER = 'dev-publisher/';
 const PUBLISHER_STATUSES = ['none', 'pending', 'validated', 'suspended'];
+const MAX_PUBLISHER_NAME = 128;
 
 /** The decision about a publisher (an account that owns apps), as the platform store holds it. */
 export type PublisherRow = { status: 'none' | 'pending' | 'validated' | 'suspended'; displayName?: string };
 
-/** The publisher row of an account, or null (absent or unreadable: not validated). */
+function displayNameProblem (v: unknown): string | null {
+  if (typeof v !== 'string') return 'must be a string';
+  return localizedTextProblem(v, MAX_PUBLISHER_NAME, false);
+}
+
+/** The publisher row of an account, or null (absent or unreadable: not validated). A display name breaking the rules is dropped. */
 export async function getPublisher (platform: PlatformDB, userId: string): Promise<PublisherRow | null> {
   if (typeof userId !== 'string' || userId.length === 0 || typeof platform?.getPlatformKv !== 'function') return null;
   const raw = await platform.getPlatformKv(PREFIX_PUBLISHER + userId);
@@ -304,7 +371,7 @@ export async function getPublisher (platform: PlatformDB, userId: string): Promi
   if (!isPlainObject(v) || !PUBLISHER_STATUSES.includes(v.status as string)) return null;
   return {
     status: v.status as PublisherRow['status'],
-    ...(typeof v.displayName === 'string' && v.displayName.length > 0 ? { displayName: v.displayName } : {}),
+    ...(v.displayName != null && displayNameProblem(v.displayName) == null ? { displayName: v.displayName as string } : {}),
   };
 }
 
@@ -312,6 +379,10 @@ export async function getPublisher (platform: PlatformDB, userId: string): Promi
 export async function setPublisher (platform: PlatformDB, userId: string, row: PublisherRow): Promise<void> {
   if (typeof userId !== 'string' || userId.length === 0) throw new Error('setPublisher: userId required');
   if (!PUBLISHER_STATUSES.includes(row?.status)) throw new Error('setPublisher: status must be one of ' + PUBLISHER_STATUSES.join(', '));
+  if (row.displayName != null) {
+    const problem = displayNameProblem(row.displayName);
+    if (problem != null) throw new Error('setPublisher: displayName ' + problem);
+  }
   await platform.setPlatformKv(PREFIX_PUBLISHER + userId, JSON.stringify(row));
 }
 
@@ -320,31 +391,42 @@ export async function setPublisher (platform: PlatformDB, userId: string, row: P
 /** What the consent screen is told about who vouches for the client. */
 export type ClientValidation = {
   level: ValidationLevel;
-  /** A developer's client: its publisher (the owning account). */
+  /** A developer's client: its publisher (the owning account); `name` only once validated. */
   publisher?: { name?: string; validated: boolean };
   /** App Validated by review: when the review was passed (ms since epoch). */
   validatedAt?: number;
 };
 
+// A metadata-document client's host is vouched for when listed (and not denied).
+function metadataHostVouched (client: OAuthClient, config: ConfigReader | null): boolean {
+  if (config == null) return false;
+  const settings = clientMetadataSettings(config);
+  if (settings.mode !== 'allowList') return false;
+  let u: URL;
+  try { u = new URL(String(client.metadataUrl)); } catch { return false; }
+  return hostListed(u.hostname, u.port, settings.allowedHosts, 'allow') && !hostListed(u.hostname, u.port, settings.deniedHosts, 'deny');
+}
+
 /**
  * The level of a client (see the module comment). `publisher`: the owner's
  * publisher row, for a developer's client. `config` is read for a
- * metadata-document client only (`oauth:clientMetadataDocuments` mode).
+ * metadata-document client only (`oauth:clientMetadataDocuments`; without
+ * it, such a client is Non-Validated).
  */
 export function clientValidationLevel (client: OAuthClient, publisher: PublisherRow | null, config: ConfigReader | null): ClientValidation {
   if (client.origin === 'metadata-document') {
-    const mode = config != null ? clientMetadataSettings(config).mode : 'any';
-    return { level: mode === 'allowList' ? 'publisherValidated' : 'nonValidated' };
+    return { level: metadataHostVouched(client, config) ? 'publisherValidated' : 'nonValidated' };
   }
   if (client.origin === 'developer') {
+    const validated = publisher?.status === 'validated';
     const pub = publisher != null
-      ? { publisher: { ...(publisher.displayName != null ? { name: publisher.displayName } : {}), validated: publisher.status === 'validated' } }
+      ? { publisher: { ...(validated && publisher.displayName != null ? { name: publisher.displayName } : {}), validated } }
       : {};
-    const app = client.validation?.app;
-    if (app != null && typeof app.digest === 'string' && app.digest === validationDigest(client)) {
-      return { level: 'appValidated', ...pub, ...(Number.isFinite(app.at) ? { validatedAt: app.at } : {}) };
+    if (reviewStands(client)) {
+      const at = client.validation?.app?.at;
+      return { level: 'appValidated', ...pub, ...(Number.isFinite(at) ? { validatedAt: at } : {}) };
     }
-    if (publisher?.status === 'validated') return { level: 'publisherValidated', ...pub };
+    if (validated) return { level: 'publisherValidated', ...pub };
     return { level: 'nonValidated', ...pub };
   }
   // Registered by the operator (the CLI): the operator vouches for it.
@@ -370,41 +452,48 @@ export async function validatedClientStamp (platform: PlatformDB, config: Config
   return { ...stamp, validation: { level } };
 }
 
-// --- Consent policy --- //
+// --- Serving and consent policy --- //
 
 export type PolicyRefusal = { status: number; error: string; description: string; reason: string };
 
 export const NOT_VALIDATED = 'this application is not validated on this platform';
+export const DEVELOPER_CLIENTS_NOT_SERVED = 'applications registered by developers are not served on this platform';
 
 /**
- * The refusal of a consent by the policy of the client's level, or null.
- * `userId`: the account consenting (null at /oauth2/authorize, where
- * `testers` and `maxGrants` cannot be decided yet).
+ * Whether the client may be served at all, before any account is known:
+ * refused while the mode is `curated` for a developer's client, and when its
+ * level's policy is `refuse`. Applies at /oauth2/authorize, the consent and
+ * refresh.
  */
-export async function consentPolicyRefusal (platform: PlatformDB, client: OAuthClient, policy: LevelPolicy,
-  userId: string | null): Promise<PolicyRefusal | null> {
+export function servingRefusal (client: OAuthClient, policy: LevelPolicy, config: ConfigReader | null): PolicyRefusal | null {
+  if (client.origin === 'developer' && clientRegistrationSettings(config).mode !== 'delegated') {
+    return { status: 403, error: 'access_denied', description: DEVELOPER_CLIENTS_NOT_SERVED, reason: 'developer-clients-not-served' };
+  }
   if (policy.consent === 'refuse') {
     return { status: 403, error: 'access_denied', description: NOT_VALIDATED, reason: 'client-not-validated' };
   }
-  if (userId == null) return null;
-  if (policy.consent === 'testers') {
-    // Testers: the owning account (the app team's tester list comes with the
-    // developer space).
-    const owner = client.origin === 'developer' ? client.owner?.userId : undefined;
-    if (owner !== userId) {
-      return { status: 403, error: 'access_denied', description: NOT_VALIDATED + ': only its testers may use it', reason: 'client-testers-only' };
-    }
-  }
-  if (policy.maxGrants != null && !(await hasLevelGrant(platform, client.clientId, userId)) &&
-      (await countLevelGrants(platform, client.clientId)) >= policy.maxGrants) {
-    return {
-      status: 403,
-      error: 'access_denied',
-      description: NOT_VALIDATED + ': it has reached the number of accounts it may reach until it is validated',
-      reason: 'client-grant-limit',
-    };
-  }
   return null;
+}
+
+/** The level, policy and serving refusal of a client, in one read. */
+export async function clientPolicy (platform: PlatformDB, config: ConfigReader | null, client: OAuthClient):
+Promise<{ validation: ClientValidation; policy: LevelPolicy; refused: PolicyRefusal | null }> {
+  const validation = await resolveClientValidation(platform, config, client);
+  const policy = levelPolicy(config, validation.level);
+  return { validation, policy, refused: servingRefusal(client, policy, config) };
+}
+
+/**
+ * The refusal of a consent by the account rule of the client's level
+ * (`testers`), or null. The `maxGrants` cap is `reserveLevelGrant`.
+ */
+export function testersRefusal (client: OAuthClient, policy: LevelPolicy, userId: string): PolicyRefusal | null {
+  if (policy.consent !== 'testers') return null;
+  // Testers: the owning account (the app team's tester list comes with the
+  // developer space).
+  const owner = client.origin === 'developer' ? client.owner?.userId : undefined;
+  if (owner === userId) return null;
+  return { status: 403, error: 'access_denied', description: NOT_VALIDATED + ': only its testers may use it', reason: 'client-testers-only' };
 }
 
 // --- The grant count of `maxGrants` --- //
@@ -428,6 +517,37 @@ export async function recordLevelGrant (platform: PlatformDB, clientId: string, 
   await platform.setPlatformKv(levelGrantKey(clientId, userId), JSON.stringify({ at: Date.now() }));
 }
 
+/** Give back one account's unit (its reservation, when the consent failed). */
+export async function releaseLevelGrant (platform: PlatformDB, clientId: string, userId: string): Promise<void> {
+  await platform.deletePlatformKv(levelGrantKey(clientId, userId));
+}
+
+/**
+ * Reserve the account's unit under the cap, before the consent is written:
+ * an account already counted passes; otherwise its row is written first, then
+ * the rows counted, and past the cap the row is removed and the consent
+ * refused (accounts racing at the cap may all be refused: the safe side).
+ * `reserved`: a new row was written (to release if the consent fails).
+ */
+export async function reserveLevelGrant (platform: PlatformDB, clientId: string, userId: string, max: number):
+Promise<{ refused: PolicyRefusal | null; reserved: boolean }> {
+  if (await hasLevelGrant(platform, clientId, userId)) return { refused: null, reserved: false };
+  await recordLevelGrant(platform, clientId, userId);
+  if ((await countLevelGrants(platform, clientId)) > max) {
+    await releaseLevelGrant(platform, clientId, userId);
+    return {
+      refused: {
+        status: 403,
+        error: 'access_denied',
+        description: NOT_VALIDATED + ': it has reached the number of accounts it may reach until it is validated',
+        reason: 'client-grant-limit',
+      },
+      reserved: false,
+    };
+  }
+  return { refused: null, reserved: true };
+}
+
 /** Give back every unit of a client (its grants purged or the client revoked). Returns the count released. */
 export async function releaseLevelGrants (platform: PlatformDB, clientId: string): Promise<number> {
   if (typeof platform?.listPlatformKvKeys !== 'function') return 0;
@@ -439,4 +559,5 @@ export async function releaseLevelGrants (platform: PlatformDB, clientId: string
 /** Test-only: forget the memoised settings. */
 export function _resetForTests (): void {
   memo = null;
+  failClosedReported = '';
 }

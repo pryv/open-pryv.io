@@ -252,7 +252,7 @@ export interface OAuthClient {
    * longer match it is not App Validated. Absent on other clients (an
    * operator's client is App Validated by rule).
    */
-  validation?: { app?: { at: number; by: string; digest: string } };
+  validation?: { app?: { v?: number; at: number; by: string; digest: string } };
   /** The client's id on the wire (a metadata-document client). */
   metadataUrl?: string;
   /** The document's cache state (a metadata-document client), ms since epoch. */

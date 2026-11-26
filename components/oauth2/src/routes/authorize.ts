@@ -53,7 +53,7 @@ const { resolveOffer, OfferResolveError } = require('../offerResolver.ts');
 const { resolveMetadataClient, metadataHostOf } = require('../clientMetadata.ts');
 const { clientMetadataDocumentsOn } = require('../clientMetadataConfig.ts');
 const { isMetadataClientKey } = require('../clientMetadataId.ts');
-const { resolveClientValidation, levelPolicy, consentPolicyRefusal, scopeTemplateRefusal } = require('../clientValidation.ts');
+const { clientPolicy, scopeTemplateRefusal } = require('../clientValidation.ts');
 
 /** An S256 code_challenge: base64url (no padding) of a SHA-256 digest. */
 const PKCE_S256_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -227,11 +227,10 @@ export function handleAuthorize (deps: AuthorizeDeps) {
     }
 
     // The operator's policy for a client of this level (`oauth.clientRegistration
-    // .levels`): `refuse` ends here; `testers` and `maxGrants` are decided at
-    // the consent, once the account is known.
-    const validation = await resolveClientValidation(deps.platform, deps.config, client);
-    const policy = levelPolicy(deps.config, validation.level);
-    const policyRefused = await consentPolicyRefusal(deps.platform, client, policy, null);
+    // .levels`), and a developer's client while the mode is curated: refused
+    // here; `testers` and `maxGrants` are decided at the consent, once the
+    // account is known.
+    const { validation, policy, refused: policyRefused } = await clientPolicy(deps.platform, deps.config, client);
     if (policyRefused != null) {
       await audit('oauth.consent.refused', { clientId: client.clientId, reason: policyRefused.reason, validationLevel: validation.level });
       return redirectError('unauthorized_client', policyRefused.description);
@@ -333,10 +332,15 @@ export function handleAuthorize (deps: AuthorizeDeps) {
       const resolved = resolveRequestedScope(client, isNonEmptyString(q.scope) ? String(q.scope) : '',
         { oidcEnabled: hasSigningKeys(deps.config) });
       if (!resolved.ok) return redirectError('invalid_scope', resolved.description);
-      // The scope template of the client's level, on top of its own maximum set.
-      const outsideTemplate = scopeTemplateRefusal(client, validation.level, policy.scopeTemplate,
-        isNonEmptyString(q.scope) ? String(q.scope) : '', { oidcEnabled: hasSigningKeys(deps.config) });
-      if (outsideTemplate != null) return redirectError('invalid_scope', outsideTemplate);
+      // The scope template of the client's level, on top of its own maximum
+      // set: checked on the permissions resolved for this client.
+      const outsideTemplate = scopeTemplateRefusal(validation.level, policy.scopeTemplate, resolved.offer.permissions);
+      if (outsideTemplate != null) {
+        await audit('oauth.consent.refused', {
+          clientId: client.clientId, requestedScope: resolved.requested, reason: 'client-scope-template', validationLevel: validation.level,
+        });
+        return redirectError('invalid_scope', outsideTemplate);
+      }
       // A nonce already used in an id_token for this client is refused here,
       // before the user is asked; the code exchange burns it (race-safe).
       const oidcNonce = resolved.coreTokens.includes('openid') && nonce != null ? nonce : undefined;

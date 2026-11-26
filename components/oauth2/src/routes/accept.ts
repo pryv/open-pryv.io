@@ -72,6 +72,7 @@ import type { ResolvedScope } from '../scopeGrammar.ts';
 import type { OAuthClient } from '../storage.ts';
 import type { CurrentGrant, Composition, SubjectChange } from '../consentComposition.ts';
 import type { WrongCoreSession } from '../wrongCore.ts';
+import type { PolicyRefusal } from '../clientValidation.ts';
 import { isWrongCoreSession, wrongCoreBody, auditWrongCore } from '../wrongCore.ts';
 import type { PlatformRoutedLabel } from '../audienceAccount.ts';
 import { consentAudienceRefusal, consentAudienceAnswer, auditAudienceRefusal, addressAliasOfAudience, audienceNamesUsername, issuerAccountRefusal, AUDIENCE_ACCOUNT_MISMATCH } from '../audienceAccount.ts';
@@ -91,8 +92,7 @@ const { recordFirstConsent, METADATA_STALE } = require('../clientMetadata.ts');
 const { grantedScopeTokens, entryCeiling, grantTooLarge } = require('../scopeGrammar.ts');
 const { computeGrantState, toClientView } = require('../extension.ts');
 const { indexSession } = require('../sessionIndex.ts');
-const { resolveClientValidation, levelPolicy, consentPolicyRefusal, scopeTemplateRefusal, recordLevelGrant } = require('../clientValidation.ts');
-const { hasSigningKeys } = require('../signingKeys.ts');
+const { clientPolicy, testersRefusal, scopeTemplateRefusal, reserveLevelGrant, releaseLevelGrant } = require('../clientValidation.ts');
 const { audit } = require('../audit.ts');
 const { logServerError, logServerWarning } = require('../serverLog.ts');
 // Permission-lexicon single point — the consent-grant rule (subset +
@@ -545,28 +545,44 @@ export function handleAccept (deps: AcceptDeps) {
     // that the account is known (the level may have changed since
     // /authorize): refused, testers only, the scope template, the cap on the
     // accounts reached. Nothing is written before.
-    let policyCounted = false;
+    // The account's unit under `maxGrants` is reserved last, just before the
+    // consent is written, and released if writing it fails.
+    let reservedUnit = false;
     let validationLevel: string | undefined;
     if (stateClient != null) {
-      const validation = await resolveClientValidation(deps.platform, deps.config, stateClient);
+      const { validation, policy, refused: served } = await clientPolicy(deps.platform, deps.config, stateClient);
       validationLevel = validation.level;
-      const policy = levelPolicy(deps.config, validation.level);
-      const refused = await consentPolicyRefusal(deps.platform, stateClient, policy, session.userId);
+      const refused = served ?? testersRefusal(stateClient, policy, session.userId);
+      // The template is checked on the permissions resolved for this client
+      // (the ones the consent shows and grants).
       const outsideTemplate = refused == null && synthesised != null
-        ? scopeTemplateRefusal(stateClient, validation.level, policy.scopeTemplate, payload.scope.join(' '),
-          { oidcEnabled: hasSigningKeys(deps.config) })
+        ? scopeTemplateRefusal(validation.level, policy.scopeTemplate, synthesised.offer.permissions)
         : null;
-      if (refused != null || outsideTemplate != null) {
-        const reason = refused?.reason ?? 'client-scope-template';
+      let capped: PolicyRefusal | null = null;
+      if (refused == null && outsideTemplate == null && policy.maxGrants != null) {
+        const r = await reserveLevelGrant(deps.platform, payload.clientId, session.userId, policy.maxGrants);
+        capped = r.refused;
+        reservedUnit = r.reserved;
+      }
+      const denied = refused ?? capped;
+      if (denied != null || outsideTemplate != null) {
+        const reason = denied?.reason ?? 'client-scope-template';
         await audit('oauth.consent.refused', { clientId: payload.clientId, requestedScope: payload.scope, reason, validationLevel });
-        return sendJson(res, refused?.status ?? 400, {
-          error: refused?.error ?? 'invalid_scope',
-          error_description: refused?.description ?? outsideTemplate,
+        return sendJson(res, denied?.status ?? 400, {
+          error: denied?.error ?? 'invalid_scope',
+          error_description: denied?.description ?? outsideTemplate,
           reason,
         });
       }
-      policyCounted = policy.maxGrants != null;
     }
+    const releaseUnit = async (): Promise<void> => {
+      if (!reservedUnit) return;
+      try {
+        await releaseLevelGrant(deps.platform, payload.clientId, session.userId);
+      } catch (err: unknown) {
+        logServerError('accept: the account\'s maxGrants unit could not be released after a failed consent', err);
+      }
+    };
 
     // Mint the app access under the resolved user. The durable consent
     // record (CMC data-grant, or the registry client's grant) is created or
@@ -599,6 +615,7 @@ export function handleAccept (deps: AcceptDeps) {
         ...(synthesised != null && payload.audience != null ? { audience: payload.audience } : {}),
       });
     } catch (err: unknown) {
+      await releaseUnit();
       // The effective-permission guard (hierarchical consent masking) runs
       // inside createAccess, where the user's stream tree is available. It
       // is a consent-downgrade violation, not a server fault → 400.
@@ -687,19 +704,12 @@ export function handleAccept (deps: AcceptDeps) {
       marked = await recordFirstConsent(deps.platform, payload.clientId);
     } catch (err: unknown) {
       logServerError('accept: the first consent of a client metadata document could not be recorded', err);
+      await releaseUnit();
       return sendJson(res, 500, { error: 'server_error', error_description: 'failed to record the consent' });
     }
     if (marked === 'gone') {
+      await releaseUnit();
       return sendJson(res, 400, { error: 'invalid_request', error_description: METADATA_STALE });
-    }
-    // The account counts against the client's cap (`maxGrants`), once. Never
-    // fails the consent: the count is approximate by design.
-    if (policyCounted) {
-      try {
-        await recordLevelGrant(deps.platform, payload.clientId, session.userId);
-      } catch (err: unknown) {
-        logServerError('accept: the account could not be counted against the client\'s maxGrants', err);
-      }
     }
 
     // Mint code + persist with the access id so the grant can return the
