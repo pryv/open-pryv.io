@@ -20,6 +20,7 @@ import type { PlatformDB } from '../../../../storages/interfaces/platformStorage
  * | `setup-session/<sha256(token)>`     | access state       | 2 h                  |
  * | `admin-claim/<sha256(code)>`        | access state       | 15 min (max 24 h)    |
  * | `admin-session/<sha256(token)>`     | access state       | admin.session.ttlMinutes |
+ * | `admin-session-ended/<sha256(token)>` | access state     | 24 h 5 min (end marker) |
  * | `setup-attempts/<coreId>`           | windowed counter   | 15 min               |
  * | `admin-claim-attempts/<userId>`     | windowed counter   | 15 min               |
  */
@@ -35,6 +36,7 @@ export const KEYS = Object.freeze({
   setupSessionPrefix: 'setup-session/',
   claimCodePrefix: 'admin-claim/',
   adminSessionPrefix: 'admin-session/',
+  adminSessionEndedPrefix: 'admin-session-ended/',
   setupAttemptsPrefix: 'setup-attempts/',
   claimAttemptsPrefix: 'admin-claim-attempts/'
 });

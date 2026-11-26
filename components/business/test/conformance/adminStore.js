@@ -205,5 +205,19 @@ export default function adminStoreConformance (getDB) {
       await assert.rejects(roles.mintClaimCode(db, { role: 'operator', scope: 'platform', mintedBy: 'admin-key', now: Date.now() }), /unknown role/);
       await assert.rejects(roles.mintClaimCode(db, { role: 'owner', scope: 'core:x', mintedBy: 'admin-key', now: Date.now() }), /unknown scope/);
     });
+
+    it('[ADKC15] an ended admin session stays ended: a row written back after the end (a racing renewal) is refused, renewing it fails', async () => {
+      const now = Date.now();
+      await roles.grantRole(db, 'cusend', { role: 'owner', scope: 'platform', grantedBy: 'setup', via: 'setup', now });
+      const opened = await sessions.createAdminSession(db, { userId: 'cusend', homeCore: 'core-a', mfaAt: now, now, ttlMs: HOUR });
+      await sessions.endAdminSession(db, opened.token);
+      const { hashToken } = require('business/src/admin/codes.ts');
+      const { KEYS } = require('business/src/admin/store.ts');
+      await db.setAccessState(KEYS.adminSessionPrefix + hashToken(opened.token), { userId: 'cusend', homeCore: 'core-a', mfaAt: now, createdAt: now }, now + HOUR);
+      assert.equal(await sessions.readAdminSession(db, opened.token), null);
+      assert.equal(await sessions.resolveAdminSession(db, opened.token, Date.now()), null);
+      assert.equal(await sessions.renewAdminSession(db, opened.token, { now: Date.now(), ttlMs: HOUR }), null);
+      assert.ok(!(await dump()).includes(opened.token), 'no plain token stored');
+    });
   });
 }

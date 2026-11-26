@@ -27,9 +27,13 @@ import type { AdminPermission } from './permissions.ts';
  *   setting its `sessionsRevokedAt`) ends the sessions everywhere on the next
  *   request. No write per request: the portal does the idle lock.
  *
- * Renewal and step-up rewrite the row with a consume-then-set, so a session
- * ended meanwhile is not brought back (a logout racing a renewal by
- * milliseconds can still lose: the renewal wins).
+ * Ending a session wins over a renewal racing it. Renewal and step-up
+ * rewrite the row (consume, then set), so a logout landing between the two
+ * would find no row to delete and the renewal would bring the session back.
+ * Ending therefore first writes a marker `admin-session-ended/<sha256>` that
+ * outlives any renewal (24 h and 5 min, past the longest session), then
+ * deletes the row: a renewal refuses a marked session before and after its
+ * write (deleting what it wrote), and every read refuses it too.
  *
  * "MFA passed in this sign-in" is not recorded on the personal access. The
  * home core stamps it at `mfa.verify` in its core-local key-value store
@@ -94,6 +98,18 @@ export async function createAdminSession (db: AdminStore, opts: {
   return { token, expiresAt };
 }
 
+/** How long the end marker of a session lives: past the longest session a renewal can make. */
+export const ENDED_SESSION_MARK_MS = (24 * 60 + 5) * 60 * 1000;
+
+function endedKeyOf (token: unknown): string | null {
+  return keyOf(KEYS.adminSessionEndedPrefix, token);
+}
+
+async function isEnded (db: AdminStore, token: unknown): Promise<boolean> {
+  const key = endedKeyOf(token);
+  return key == null || (await db.getAccessState(key)) != null;
+}
+
 export async function readAdminSession (db: AdminStore, token: unknown): Promise<AdminSession | null> {
   const key = keyOf(KEYS.adminSessionPrefix, token);
   if (key == null) return null;
@@ -101,28 +117,42 @@ export async function readAdminSession (db: AdminStore, token: unknown): Promise
   if (entry == null || !isPlainObject(entry.value)) return null;
   const v = entry.value as AdminSessionRow;
   if (typeof v.userId !== 'string') return null;
+  if (await isEnded(db, token)) return null;
   return { userId: v.userId, homeCore: v.homeCore, mfaAt: v.mfaAt ?? null, createdAt: v.createdAt, expiresAt: entry.expiresAt };
 }
 
 /**
  * Extend a session to `now + ttlMs` (and record a fresh second factor when
- * `mfaAt` is given). Answers the new expiry, or null when the session is gone.
+ * `mfaAt` is given). Answers the new expiry, or null when the session is gone
+ * or was ended, even by an end racing this renewal.
  */
 export async function renewAdminSession (db: AdminStore, token: unknown, opts: { now: number; ttlMs: number; mfaAt?: number }): Promise<number | null> {
   const key = keyOf(KEYS.adminSessionPrefix, token);
   if (key == null || !(opts.ttlMs > 0)) return null;
+  if (await isEnded(db, token)) return null;
   const entry = await db.consumeAccessState(key);
   if (entry == null || !isPlainObject(entry.value)) return null;
   const row = { ...(entry.value as AdminSessionRow) };
   if (opts.mfaAt != null) row.mfaAt = opts.mfaAt;
   const expiresAt = opts.now + opts.ttlMs;
   await db.setAccessState(key, row, expiresAt);
+  // An end that landed after the check above found no row to delete, or
+  // deleted the row before this write: what was written goes.
+  if (await isEnded(db, token)) {
+    await db.deleteAccessState(key);
+    return null;
+  }
   return expiresAt;
 }
 
-export async function endAdminSession (db: AdminStore, token: unknown): Promise<void> {
+/** End a session: marked ended first (so a racing renewal cannot bring it back), then deleted. */
+export async function endAdminSession (db: AdminStore, token: unknown, opts: { now?: number } = {}): Promise<void> {
   const key = keyOf(KEYS.adminSessionPrefix, token);
-  if (key != null) await db.deleteAccessState(key);
+  const endedKey = endedKeyOf(token);
+  if (key == null || endedKey == null) return;
+  const now = opts.now ?? Date.now();
+  await db.setAccessState(endedKey, { endedAt: now }, now + ENDED_SESSION_MARK_MS);
+  await db.deleteAccessState(key);
 }
 
 /**
