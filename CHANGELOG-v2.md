@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Configuration: the same platform digest with or without `--config`
+
+- `auth.sessionMaxAge` (14 days) and `auth.passwordResetRequestMaxAge` (1 hour) are now set in `default-config.yml`
+  instead of `production-config.yml`, with the same values. A core started with `--config` (which skips
+  `production-config.yml`) used to leave both unset: the storage engines applied the same lifetimes, but
+  `GET /system/admin/config/effective?digest=true` gave that core a different platform digest from a core started
+  without `--config`, a false drift alarm. Its platform digest now changes once, to the value the other cores report.
+  Session and reset lifetimes do not change.
+
 ### Configuration, BREAKING: the mail switches are flat booleans
 
 - **BREAKING: `services.email.enabled` is a boolean, and each mail has its own `services.email.send...` switch.**

@@ -383,6 +383,21 @@ describe('[CFGU] effective configuration document', function () {
     assert.equal(stableStringify({ b: 1, a: [2, { d: 1, c: undefined }] }), '{"a":[2,{"d":1}],"b":1}');
   });
 
+  it('[CFCA] a core started with or without `--config` (production base layer or none) has the same platform digest', function () {
+    const prodBase = yaml.load(fs.readFileSync(path.resolve(here, '../../../../config/production-config.yml'), 'utf8'));
+    const override = { 'override-file': { dns: { domain: 'example.com' }, auth: { trustedApps: '*@https://app.example.com' } } };
+    const withBase = build(Object.assign({ base: prodBase }, override));
+    const withoutBase = build(override);
+    const platformDiff = Object.keys(withBase.keys)
+      .filter((k) => withBase.keys[k].scope === 'platform')
+      .filter((k) => JSON.stringify(withBase.keys[k].value) !== JSON.stringify(withoutBase.keys[k]?.value));
+    assert.deepEqual(platformDiff, [], 'production-config.yml sets platform-wide keys: move their values to default-config.yml');
+    assert.equal(withBase.configMeta.digests.platform, withoutBase.configMeta.digests.platform);
+    // the lifetimes the storage engines would otherwise fall back to are explicit
+    assert.equal(withoutBase.keys['auth.sessionMaxAge'].value, 14 * 24 * 60 * 60 * 1000);
+    assert.equal(withoutBase.keys['auth.passwordResetRequestMaxAge'].value, 60 * 60 * 1000);
+  });
+
   it('[CFC9] functions, class instances, cycles, depth and long strings are redacted', function () {
     const cycle = { a: 1 };
     cycle.self = cycle;

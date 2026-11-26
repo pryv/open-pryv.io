@@ -231,6 +231,12 @@ auth:
   # alias: accesses issued under it keep working, and nobody else can take it.
   # Sign-in accepts a former username too. 0 disables the change.
   usernameChangeLimit: 2
+  # Lifetime of a personal sign-in session (auth.login), in milliseconds: 14
+  # days. Each use of the session extends it by this much.
+  sessionMaxAge: 1209600000
+  # Lifetime of a password-reset request (the token mailed by
+  # account.requestPasswordReset), in milliseconds: 1 hour.
+  passwordResetRequestMaxAge: 3600000
 
 # === Third-party sign-in (Pryv as an OpenID Connect relying party) ===
 # Inert unless a provider is configured: no routes mount and no network calls

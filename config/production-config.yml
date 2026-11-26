@@ -8,9 +8,8 @@ http:
   ip: 127.0.0.1
   port: 9000
   trustedProxies: ['loopback']   # see default-config.yml
-auth:
-  sessionMaxAge: 1209600000
-  passwordResetRequestMaxAge: 3600000
+# Core-scoped keys only: a platform-wide key set here would give a core started
+# with `--config` (which skips this layer) a different platform digest.
 logs:
   console:
     active: true

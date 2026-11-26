@@ -241,7 +241,7 @@ describe('[CVLY] production base layer is deployment-neutral', function () {
   it('[CVLY2] production-config.yml carries no secret, origin, page URL, mail or registry setting', () => {
     const yaml = require('js-yaml');
     const doc = yaml.load(fs.readFileSync(path.join(REPO_ROOT, 'config/production-config.yml'), 'utf8'));
-    assert.deepStrictEqual(Object.keys(doc).sort(), ['auth', 'env', 'http', 'logs']);
-    assert.deepStrictEqual(Object.keys(doc.auth).sort(), ['passwordResetRequestMaxAge', 'sessionMaxAge']);
+    // no `auth` either: its session lifetimes are platform-wide and live in default-config.yml
+    assert.deepStrictEqual(Object.keys(doc).sort(), ['env', 'http', 'logs']);
   });
 });

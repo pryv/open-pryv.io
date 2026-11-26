@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Config layers: platform-wide keys only in `default-config.yml`
+
+- `config/production-config.yml` no longer carries the `auth` block (`sessionMaxAge`, `passwordResetRequestMaxAge`);
+  both are in `config/default-config.yml` with the same values. `[CFCA]` (business, effective config) builds the
+  document with and without the production base layer and requires the same value for every platform-scoped key and
+  the same platform digest; `[CVLY2]` pins the base layer's top-level keys to `env`, `http`, `logs`.
+
 ### CI: cosign-installer 4.1.4, cosign held at 2.6.5
 
 - `.github/workflows/ci.yml`: `sigstore/cosign-installer` v3.9.1 -> v4.1.4 (pinned by commit), with
