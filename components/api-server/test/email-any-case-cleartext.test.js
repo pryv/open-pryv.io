@@ -259,7 +259,7 @@ describe('[EMCI] email compared in any case in cleartext piiMode', function () {
     nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json').times(2)
       .reply(200, (uri, body) => { captured.push(body); return {}; });
     const request = () => withInjectedConfig({
-      services: { email: { enabled: { resetPassword: true } } },
+      services: { email: { sendResetPassword: true } },
       auth: { passwordResetPageURL: 'https://app.example.com/reset-password' }
     }, async () => await coreRequest.post('/' + u.username + '/account/request-password-reset').send({ appId: TRUSTED_APP }));
 

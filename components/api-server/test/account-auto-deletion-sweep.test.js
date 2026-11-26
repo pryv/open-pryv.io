@@ -39,7 +39,7 @@ const PASSWORD = 'acsw-password-123';
 const DELEGATE_KIND = { delegation: { kind: 'delegate-pat', relId: 'acsw-rel', delegate: { username: 'acsw-parent', hostSlug: 'core' } } };
 const BASE_CONFIG = {
   'user-account': { delete: ['adminToken', 'personalToken'] },
-  services: { email: { enabled: { accountDeletionScheduled: false, accountDeletionReminder: false, accountDeletionBlocked: false } } }
+  services: { email: { sendAccountDeletionScheduled: false, sendAccountDeletionReminder: false, sendAccountDeletionBlocked: false } }
 };
 
 // Accounts the guard below objects to.
@@ -870,7 +870,7 @@ describe('[ADSW] account auto-deletion sweep', function () {
     const MANDRILL = 'https://mandrillapp.local';
     const MANDRILL_PATH = '/api/1.0/messages/send-template.json';
     const MAIL_ON = {
-      services: { email: { enabled: { accountDeletionScheduled: true, accountDeletionReminder: true, accountDeletionBlocked: true } } },
+      services: { email: { sendAccountDeletionScheduled: true, sendAccountDeletionReminder: true, sendAccountDeletionBlocked: true } },
       service: { account: 'https://account.acsw.example.com/' }
     };
 
@@ -947,7 +947,7 @@ describe('[ADSW] account auto-deletion sweep', function () {
         const res = await coreRequest.put(`/${confirmed.username}/account/auto-deletion`).set('Authorization', confirmed.token).send({ mode: 'date', date, password: PASSWORD });
         assert.equal(res.status, 200, JSON.stringify(res.body));
         assert.equal(typeof (await state.getBookkeeping(confirmed.id)).firstNoticeAt, 'number');
-        await withInjectedConfig({ services: { email: { enabled: { accountDeletionScheduled: false } } } }, async () => {
+        await withInjectedConfig({ services: { email: { sendAccountDeletionScheduled: false } } }, async () => {
           const res2 = await coreRequest.put(`/${unconfirmed.username}/account/auto-deletion`).set('Authorization', unconfirmed.token).send({ mode: 'date', date, password: PASSWORD });
           assert.equal(res2.status, 200, JSON.stringify(res2.body));
         });
@@ -1010,7 +1010,7 @@ describe('[ADSW] account auto-deletion sweep', function () {
     });
 
     it('[ACRM5] reminders switched off: nothing is sent and the account is not erased', async function () {
-      await withInjectedConfig({ ...MAIL_ON, services: { email: { enabled: { accountDeletionReminder: false } } } }, async () => {
+      await withInjectedConfig({ ...MAIL_ON, services: { email: { sendAccountDeletionReminder: false } } }, async () => {
         const u = await freshUser();
         await state.setSetting(u.id, inactivity(100), 'test');
         const s = await realMailSweep([u]);

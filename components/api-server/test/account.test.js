@@ -501,7 +501,7 @@ describe('[ACCO] account', function () {
       let resetToken;
       const newPassword = 'Dr0ws$4p';
 
-      settings.services.email.enabled = true;
+      settings.services.email.sendResetPassword = true;
 
       // setup mail server mock
 
@@ -572,6 +572,8 @@ describe('[ACCO] account', function () {
     it('[HV0V] must not trigger a reset email if mailing is deactivated', function (done) {
       this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
       const settings = structuredClone(helpers.dependencies.settings);
+      // The reset mail itself is on: only the whole-feature switch stops it.
+      settings.services.email.sendResetPassword = true;
       settings.services.email.enabled = false;
       testResetMailNotSent(settings, done);
     });
@@ -579,20 +581,19 @@ describe('[ACCO] account', function () {
     it('[VZ1W] must not trigger a reset email if reset mail is deactivated', function (done) {
       this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
       const settings = structuredClone(helpers.dependencies.settings);
-      settings.services.email.enabled = {
-        resetPassword: false
-      };
+      settings.services.email.enabled = true;
+      settings.services.email.sendResetPassword = false;
       testResetMailNotSent(settings, done);
     });
 
     function testResetMailNotSent (settings, callback) {
       let mailSent = false;
 
-      // setup mail server mock
+      // setup mail server mock (the same endpoint [G1VN] receives the mail on)
       helpers.instanceTestSetup.set(settings, {
-        context: settings.services.email.mandrill,
+        context: settings.services.email,
         execute: function () {
-          require('nock')(this.context.url).post(this.context.sendMessagePath)
+          require('nock')(this.context.url).post('')
             .reply(200, function () {
               this.context.testNotifier.emit('password-reset-token');
             }.bind(this));
@@ -601,7 +602,6 @@ describe('[ACCO] account', function () {
       // fetch reset token from server process
       server.on('password-reset-token', function () {
         mailSent = true;
-        return callback(new Error('Reset email should not be sent!'));
       });
 
       async.series([
@@ -616,9 +616,16 @@ describe('[ACCO] account', function () {
                 status: 200,
                 schema: methodsSchema.requestPasswordReset.result
               });
-              assert.strictEqual(mailSent, false);
               stepDone();
             });
+        },
+        // The mock's notice reaches this process after the answer: give it time.
+        function waitForMail (stepDone) {
+          setTimeout(stepDone, 500);
+        },
+        function checkNoMail (stepDone) {
+          if (mailSent) return stepDone(new Error('Reset email should not be sent!'));
+          stepDone();
         }
       ], callback);
     }
@@ -714,7 +721,7 @@ describe('[ACCO] account', function () {
       it('[HZCU] must fail if the new password does not comply (smoke test; see "/change-password" tests)', function (done) {
         this.timeout(SERVER_RESTART_TEST_TIMEOUT_MS);
         const settings = _.merge(structuredClone(helpers.dependencies.settings), helpers.passwordRules.settingsOverride);
-        settings.services.email.enabled = true;
+        settings.services.email.sendResetPassword = true;
 
         let resetToken;
         const badPassword = helpers.passwordRules.passwords.badTooShort;

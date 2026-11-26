@@ -149,8 +149,8 @@ describe('[VMPL] verification-mail status', () => {
     assert.strictEqual(res.reason, null);
   });
 
-  it('[VMPL2] verifyEmail:false reports disabled, ahead of any other gap', () => {
-    const map = Object.assign({}, live, { 'services:email:enabled': { verifyEmail: false } });
+  it('[VMPL2] sendVerifyEmail:false reports disabled, ahead of any other gap', () => {
+    const map = Object.assign({}, live, { 'services:email:sendVerifyEmail': false });
     delete map['auth:emailVerificationPageURL'];
     const res = describeVerificationMail(fakeConfig(map));
     assert.strictEqual(res.enabled, false);

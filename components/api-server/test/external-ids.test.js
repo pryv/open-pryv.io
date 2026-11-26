@@ -300,7 +300,7 @@ describe('[XID] external ids (namespaces, claims, lookup)', function () {
     });
 
     it('[XIDAR3] with mail on, the holder is told (label and reason, no value); a failed send still releases', async function () {
-      const restore = injectTestConfigSnapshot({ services: { email: { enabled: { externalIdReleased: true } } } });
+      const restore = injectTestConfigSnapshot({ services: { email: { sendExternalIdReleased: true } } });
       try {
         const holder = await userWithEmail();
         const v = blinded();

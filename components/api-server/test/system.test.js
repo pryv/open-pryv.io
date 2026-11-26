@@ -209,9 +209,7 @@ describe('[SYER] system (ex-register)', function () {
       });
       it('[FUTR] must create a new user with the sent data, sending a welcome email', async function () {
         const settings = structuredClone(helpers.dependencies.settings);
-        settings.services.email.enabled = {
-          welcome: true
-        };
+        settings.services.email.sendWelcome = true;
         // This child server's IPC channel leads to the test runner, not to a
         // cluster master: the mail breaker's counter would wait for its 5 s
         // store timeout (then let the mail go) before sending.
@@ -282,23 +280,27 @@ describe('[SYER] system (ex-register)', function () {
 
     it('[0G7C] must not send a welcome email if mailing is deactivated', function (done) {
       const settings = structuredClone(helpers.dependencies.settings);
+      // The welcome mail itself is on: only the whole-feature switch stops it.
+      settings.services.email.sendWelcome = true;
       settings.services.email.enabled = false;
       testWelcomeMailNotSent(settings, done);
     });
     it('[TWBF] must not send a welcome email if welcome mail is deactivated', function (done) {
       const settings = structuredClone(helpers.dependencies.settings);
-      settings.services.email.enabled = {
-        welcome: false
-      };
+      settings.services.email.enabled = true;
+      settings.services.email.sendWelcome = false;
       testWelcomeMailNotSent(settings, done);
     });
 
     function testWelcomeMailNotSent (settings, callback) {
-      // setup mail server mock
+      // As in [FUTR]: no breaker wait before a send.
+      settings.services.email.maxPerHour = 0;
+      let mailSent = false;
+      // setup mail server mock (the endpoint [FUTR] receives the mail on)
       helpers.instanceTestSetup.set(settings, {
         context: settings.services.email,
         execute: function () {
-          require('nock')(this.context.url).post(this.context.sendMessagePath)
+          require('nock')(this.context.url).post('')
             .reply(200, function () {
               this.context.testNotifier.emit('mail-sent2');
             }.bind(this));
@@ -306,9 +308,8 @@ describe('[SYER] system (ex-register)', function () {
       });
 
       // fetch notification from server process
-      server.once('mail-sent2', function () {
-        return callback(new Error('Welcome email should not be sent!'));
-      });
+      const onMail = function () { mailSent = true; };
+      server.once('mail-sent2', onMail);
 
       async.series([
         server.ensureStarted.bind(server, settings),
@@ -323,6 +324,15 @@ describe('[SYER] system (ex-register)', function () {
 
             stepDone();
           });
+        },
+        // The welcome mail goes out after the answer: give it the time [FUTR] gives it.
+        function waitForMail (stepDone) {
+          globalThis.setTimeout(stepDone, 1000);
+        },
+        function checkNoMail (stepDone) {
+          server.removeListener('mail-sent2', onMail);
+          if (mailSent) return stepDone(new Error('Welcome email should not be sent!'));
+          stepDone();
         }
       ], callback);
     }

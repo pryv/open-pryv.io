@@ -47,22 +47,22 @@ const ACCOUNT_APP = 'https://account.adcl.example.com/';
 const ADDRESS = '198.51.100.47';
 const DEFAULT_PER_IP = { maxFailures: 30, windowSeconds: 900 };
 const MAILS_OFF = {
-  accountDeletionScheduled: false,
-  accountDeletionReminder: false,
-  accountDeletionBlocked: false,
-  accountTransferNamed: true,
-  accountTransferClaim: true,
-  accountTransferStarted: false,
-  accountTransferCancelled: false,
-  accountTransferLapsed: false,
-  accountTransferCompleted: false
+  sendAccountDeletionScheduled: false,
+  sendAccountDeletionReminder: false,
+  sendAccountDeletionBlocked: false,
+  sendAccountTransferNamed: true,
+  sendAccountTransferClaim: true,
+  sendAccountTransferStarted: false,
+  sendAccountTransferCancelled: false,
+  sendAccountTransferLapsed: false,
+  sendAccountTransferCompleted: false
 };
 const BASE_CONFIG = {
   'user-account': { delete: ['adminToken', 'personalToken'] },
   service: { account: ACCOUNT_APP },
-  services: { email: { enabled: MAILS_OFF } }
+  services: { email: { ...MAILS_OFF } }
 };
-const MAIL_ON = { services: { email: { enabled: { ...MAILS_OFF, accountDeletionScheduled: true, accountTransferCancelled: true } } } };
+const MAIL_ON = { services: { email: { ...MAILS_OFF, sendAccountDeletionScheduled: true, sendAccountTransferCancelled: true } } };
 const PRESET = { account: { autoDeletion: { inactivity: { defaultDays: 365 } } } };
 const MANDRILL = 'https://mandrillapp.local';
 const MANDRILL_PATH = '/api/1.0/messages/send-template.json';

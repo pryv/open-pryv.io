@@ -39,7 +39,7 @@ const { notifyMfaChange } = require('api-server/src/methods/helpers/mfaChange.ts
 const { notifyExternalIdReleased } = require('api-server/src/methods/helpers/externalIdRelease.ts');
 
 const TRUSTED_APP = 'pryv-test-no-cors';
-const MAIL_ON = { welcome: true, resetPassword: true, verifyEmail: true, mfaChange: true, externalIdReleased: true };
+const MAIL_ON = { sendWelcome: true, sendResetPassword: true, sendVerifyEmail: true, sendMfaChange: true, sendExternalIdReleased: true };
 const REJECT_REPLY = '550 5.1.2 Recipient address rejected: Domain not found';
 const DEFER_REPLY = '450 4.7.1 Recipient address rejected: Greylisted, try again later';
 
@@ -152,7 +152,7 @@ describe('[MLFL] failed mail sends are logged once, at the right level', functio
     return {
       services: {
         email: Object.assign({
-          enabled: MAIL_ON,
+          ...MAIL_ON,
           method: 'in-process',
           smtp: transport,
           welcomeTemplate: template,

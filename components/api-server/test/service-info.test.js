@@ -175,7 +175,7 @@ describe('[SINF] Service', () => {
         onAccount: false
       });
       // Flag on: the test config has the page URL and a complete mail setup.
-      await withInjectedConfig({ services: { email: { enabled: { verifyEmail: true } } } }, async () => {
+      await withInjectedConfig({ services: { email: { sendVerifyEmail: true } } }, async () => {
         const on = await coreRequest.get(path);
         assert.deepStrictEqual(on.body.features.emailVerification, {
           atRegistration: false,
@@ -184,7 +184,7 @@ describe('[SINF] Service', () => {
       });
       // Flag on but no landing page: the holder could not act on the link.
       await withInjectedConfig({
-        services: { email: { enabled: { verifyEmail: true } } },
+        services: { email: { sendVerifyEmail: true } },
         auth: { emailVerificationPageURL: '' }
       }, async () => {
         const noUrl = await coreRequest.get(path);
@@ -211,7 +211,7 @@ describe('[SINF] Service', () => {
       const get = async () => (await coreRequest.get('/' + username + '/service/info')).body.features.passwordResetByEmail;
       // Test config ships resetPassword switched off.
       assert.strictEqual(await get(), false);
-      await withInjectedConfig({ services: { email: { enabled: { resetPassword: true } } } }, async () => {
+      await withInjectedConfig({ services: { email: { sendResetPassword: true } } }, async () => {
         assert.strictEqual(await get(), true);
       });
       // Switched on, but the whole mail feature off.
@@ -220,13 +220,13 @@ describe('[SINF] Service', () => {
       });
       // Switched on, in-process delivery with no SMTP host: the send is skipped.
       await withInjectedConfig({
-        services: { email: { enabled: { resetPassword: true }, method: 'in-process', smtp: { host: '' } } }
+        services: { email: { sendResetPassword: true, method: 'in-process', smtp: { host: '' } } }
       }, async () => {
         assert.strictEqual(await get(), false);
       });
       // Same, with an SMTP host: mail is configured.
       await withInjectedConfig({
-        services: { email: { enabled: { resetPassword: true }, method: 'in-process', smtp: { host: 'smtp.example.com' } } }
+        services: { email: { sendResetPassword: true, method: 'in-process', smtp: { host: 'smtp.example.com' } } }
       }, async () => {
         assert.strictEqual(await get(), true);
       });

@@ -49,8 +49,10 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
   }
 
   const allHappy = {
-    'services:email:enabled': { welcome: true, resetPassword: true, verifyEmail: true },
-    'services:email:resetPassword': true,
+    'services:email:enabled': true,
+    'services:email:sendWelcome': true,
+    'services:email:sendResetPassword': true,
+    'services:email:sendVerifyEmail': true,
     'auth:passwordResetPageURL': 'https://example.com/reset',
     'auth:emailVerificationPageURL': 'https://example.com/verify',
     'auth:adminAccessKey': 'some-real-admin-key',
@@ -89,11 +91,11 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
     const problems = [];
     checkRequiredWhen(fakeConfig({
       ...allHappy,
-      'services:email:enabled': { welcome: true, resetPassword: false },
+      'services:email:sendResetPassword': false,
       'auth:passwordResetPageURL': undefined
     }), problems);
     const p = problems.find((p) => p.payload && p.payload.path === 'auth:passwordResetPageURL');
-    assert.ok(!p, 'expected NO problem when services.email.enabled.resetPassword === false');
+    assert.ok(!p, 'expected NO problem when services.email.sendResetPassword === false');
   });
 
   it('[CV-REQ-4B] emailVerificationPageURL missing while verify-email is enabled → problem', () => {
@@ -110,11 +112,11 @@ describe('[CV-REQ] config-validation REQUIRED_WHEN', () => {
     const problems = [];
     checkRequiredWhen(fakeConfig({
       ...allHappy,
-      'services:email:enabled': { welcome: true, resetPassword: true, verifyEmail: false },
+      'services:email:sendVerifyEmail': false,
       'auth:emailVerificationPageURL': undefined
     }), problems);
     const p = problems.find((p) => p.payload && p.payload.path === 'auth:emailVerificationPageURL');
-    assert.ok(!p, 'expected NO problem when services.email.enabled.verifyEmail === false');
+    assert.ok(!p, 'expected NO problem when services.email.sendVerifyEmail === false');
   });
 
   it('[CV-REQ-05] adminAccessKey always required — empty string flagged', () => {
@@ -255,8 +257,8 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
   }
 
   it('[CV-DEF-01] verifyEmail ships ON', () => {
-    assert.strictEqual(defaults.services.email.enabled.verifyEmail, true,
-      'services.email.enabled.verifyEmail must ship true: the feature is general ' +
+    assert.strictEqual(defaults.services.email.sendVerifyEmail, true,
+      'services.email.sendVerifyEmail must ship true: the feature is general ' +
       'availability. The page URL is only required when an operator sets this key ' +
       'explicitly, so a config that never mentions it still boots');
   });
@@ -298,7 +300,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
     }
 
     const GATE_VALUES = {
-      services: { email: { enabled: { verifyEmail: true }, method: 'mandrill', mergeLanguage: 'mailchimp', url: 'https://mail.example.com/send', key: 'k' } },
+      services: { email: { sendVerifyEmail: true, method: 'mandrill', mergeLanguage: 'mailchimp', url: 'https://mail.example.com/send', key: 'k' } },
       auth: {}
     };
 
@@ -329,7 +331,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
 
     it('[CV-GA3] an explicitly-off platform is neither a problem nor a warning', () => {
       const config = scopedConfig({
-        services: { email: { enabled: { verifyEmail: false }, method: 'mandrill', mergeLanguage: 'mailchimp', url: 'u', key: 'k' } },
+        services: { email: { sendVerifyEmail: false, method: 'mandrill', mergeLanguage: 'mailchimp', url: 'u', key: 'k' } },
         auth: {}
       }, 'override-file');
       const problems = [];
@@ -342,7 +344,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
 
     it('[CV-GA4] a default-on platform with an incomplete mail setup says which keys are missing', () => {
       const config = scopedConfig({
-        services: { email: { enabled: { verifyEmail: true }, method: 'in-process' } },
+        services: { email: { sendVerifyEmail: true, method: 'in-process' } },
         auth: { emailVerificationPageURL: 'https://app.example.com/verify-email' }
       }, 'default-file');
       const warnings = collectWarnings(config);
@@ -353,7 +355,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
 
     it('[CV-GA5] in-process mail with no SMTP host is one warning naming every enabled mail class', () => {
       const config = scopedConfig({
-        services: { email: { enabled: { welcome: true, resetPassword: true, verifyEmail: false, mfaChange: true }, method: 'in-process', smtp: { host: null } } },
+        services: { email: { sendWelcome: true, sendResetPassword: true, sendVerifyEmail: false, sendMfaChange: true, method: 'in-process', smtp: { host: null } } },
         auth: {}
       }, 'default-file');
       const warnings = collectWarnings(config);
@@ -364,7 +366,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
 
     it('[CV-GA7] a placeholder SMTP host is shown in the warning', () => {
       const config = scopedConfig({
-        services: { email: { enabled: { verifyEmail: false }, method: 'in-process', smtp: { host: 'REPLACE ME' } } },
+        services: { email: { sendVerifyEmail: false, method: 'in-process', smtp: { host: 'REPLACE ME' } } },
         auth: {}
       }, 'default-file');
       const warnings = collectWarnings(config);
@@ -389,7 +391,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
 
     it('[CV-GA9] services.email.mergeLanguage: an unknown value refuses the boot; mandrill without it warns once', () => {
       const { checkMergeLanguage } = require('../../../config/plugins/config-validation.js');
-      const mandrill = { enabled: { verifyEmail: false }, method: 'mandrill', url: 'u', key: 'k' };
+      const mandrill = { sendVerifyEmail: false, method: 'mandrill', url: 'u', key: 'k' };
       for (const bad of ['Handlebars', 'mustache', 3, true]) {
         const problems = [];
         checkMergeLanguage(scopedConfig({ services: { email: { ...mandrill, mergeLanguage: bad } }, auth: {} }, 'override-file'), problems);
@@ -407,7 +409,7 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
       for (const email of [
         { ...mandrill, mergeLanguage: 'handlebars' },
         { ...mandrill, enabled: false },
-        { enabled: { verifyEmail: false }, method: 'microservice', url: 'u', key: 'k' }
+        { sendVerifyEmail: false, method: 'microservice', url: 'u', key: 'k' }
       ]) {
         assert.deepStrictEqual(collectWarnings(scopedConfig({ services: { email }, auth: {} }, 'override-file')), [], JSON.stringify(email));
       }
@@ -416,13 +418,138 @@ describe('[CV-DEF] shipped default-config keeps optional keys optional', () => {
     it('[CV-GA6] no mail warning when mail is off or the SMTP host is set', () => {
       for (const email of [
         { enabled: false, method: 'in-process' },
-        { enabled: { welcome: false, resetPassword: false, verifyEmail: false, mfaChange: false, externalIdReleased: false, accountDeletionScheduled: false, accountDeletionReminder: false, accountDeletionBlocked: false, accountTransferNamed: false, accountTransferClaim: false, accountTransferStarted: false, accountTransferCancelled: false, accountTransferLapsed: false, accountTransferCompleted: false }, method: 'in-process' },
-        { enabled: { verifyEmail: false }, method: 'in-process', smtp: { host: 'smtp.example.com' } }
+        { sendWelcome: false, sendResetPassword: false, sendVerifyEmail: false, sendMfaChange: false, sendExternalIdReleased: false, sendAccountDeletionScheduled: false, sendAccountDeletionReminder: false, sendAccountDeletionBlocked: false, sendAccountTransferNamed: false, sendAccountTransferClaim: false, sendAccountTransferStarted: false, sendAccountTransferCancelled: false, sendAccountTransferLapsed: false, sendAccountTransferCompleted: false, method: 'in-process' },
+        { sendVerifyEmail: false, method: 'in-process', smtp: { host: 'smtp.example.com' } }
       ]) {
         const warnings = collectWarnings(scopedConfig({ services: { email }, auth: {} }, 'default-file'));
         assert.deepStrictEqual(warnings, [], JSON.stringify(email));
       }
     });
+  });
+});
+
+describe('[EMFLB] config-validation mail switches', () => {
+  let checkEmailSwitches, checkRequiredWhen, validate;
+
+  before(async function () {
+    this.timeout(30000);
+    await initTests();
+    await initCore();
+    ({ checkEmailSwitches, checkRequiredWhen, validate } = require('../../../config/plugins/config-validation.js'));
+  });
+
+  const nested = (values) => (key) => key.split(':').reduce((node, seg) => (node == null ? undefined : node[seg]), values);
+
+  /**
+   * A boiler-shaped config: `scopes` highest first, each `[name, values, file?]`.
+   * `get` resolves like boiler: the first scope holding a non-object value wins.
+   */
+  function layeredConfig (scopes) {
+    const stores = {};
+    for (const [name, values, file] of scopes) {
+      stores[name] = file != null ? { type: 'file', file, get: nested(values) } : { type: 'literal', get: nested(values) };
+    }
+    return {
+      store: { stores },
+      get: (key) => {
+        if (key == null) return {};
+        for (const [, values] of scopes) {
+          const v = nested(values)(key);
+          if (v !== undefined) return v;
+        }
+        return undefined;
+      },
+      getScopeAndValue: () => null
+    };
+  }
+
+  function run (config) {
+    const problems = [];
+    checkEmailSwitches(config, problems);
+    return problems;
+  }
+
+  it('[EMFL4] the object form in the override file: one problem naming each key found and its replacement, nothing else', () => {
+    const problems = run(layeredConfig([
+      ['override-file', { services: { email: { enabled: { welcome: false, resetPassword: true, verifyEmail: 'no', welcom: false } } } }, '/etc/pryv/override.yml'],
+      ['default-file', { services: { email: { enabled: true, sendWelcome: true, sendMfaChange: true } } }, 'config/default-config.yml']
+    ]));
+    assert.strictEqual(problems.length, 1, JSON.stringify(problems));
+    const [p] = problems;
+    assert.deepStrictEqual(p.path, ['services', 'email', 'enabled']);
+    assert.deepStrictEqual(p.payload, { scope: 'override-file', info: 'From file: /etc/pryv/override.yml' });
+    const lines = p.message.split('\n');
+    assert.match(lines[0], /^services\.email\.enabled must be true or false\. .*Found in override-file \(From file: \/etc\/pryv\/override\.yml\):$/);
+    assert.deepStrictEqual(lines.slice(1, -1), [
+      '  services.email.enabled.welcome: false  ->  services.email.sendWelcome: false',
+      '  services.email.enabled.resetPassword: true  ->  services.email.sendResetPassword: true',
+      '  services.email.enabled.verifyEmail: <not a boolean>  ->  services.email.sendVerifyEmail: true or false',
+      '  services.email.enabled.welcom: not a mail switch, remove it'
+    ]);
+    assert.match(lines[lines.length - 1], /^Move each line to its new key, then set services\.email\.enabled to true or remove it/);
+    assert.ok(!/mfaChange|MfaChange/.test(p.message), 'a key not set in that scope is not listed');
+    const empty = run(layeredConfig([['override-file', { services: { email: { enabled: {} } } }]]));
+    assert.strictEqual(empty.length, 1);
+    assert.strictEqual(empty[0].message.split('\n').length, 2, empty[0].message);
+    assert.match(empty[0].message, /Found in override-file \(Type: literal\), as an empty object\./);
+  });
+
+  it('[EMFL5] the object form in a lower scope, under a higher enabled: true, is still refused (every scope is read)', () => {
+    const config = layeredConfig([
+      ['env', { services: { email: { enabled: true } } }],
+      ['override-file', { services: { email: { enabled: { welcome: false } } } }, '/etc/pryv/override.yml'],
+      ['test', { services: { email: { enabled: { mfaChange: false } } } }]
+    ]);
+    assert.strictEqual(config.get('services:email:enabled'), true, 'the resolved value hides the objects');
+    const problems = run(config);
+    assert.deepStrictEqual(problems.map((p) => p.payload.scope), ['override-file', 'test'], JSON.stringify(problems));
+    // In the environment, both sides are written as variables.
+    const env = run(layeredConfig([['env', { services: { email: { enabled: { welcome: false } } } }]]));
+    assert.match(env[0].message, /Found in env \(Type: literal\):\n {2}services__email__enabled__welcome=false {2}-> {2}services__email__sendWelcome=false\n/);
+    // The whole validation reports it too.
+    return validate(config).then((all) => {
+      assert.ok(all.some((p) => p.path.join(':') === 'services:email:enabled'), JSON.stringify(all.map((p) => p.path)));
+    });
+  });
+
+  it('[EMFL6] enabled: true, enabled: false, unset and flat switches are no problem', () => {
+    for (const email of [{ enabled: true }, { enabled: false }, {}, { enabled: true, sendWelcome: false, sendResetPassword: true }]) {
+      assert.deepStrictEqual(run(layeredConfig([['override-file', { services: { email } }]])), [], JSON.stringify(email));
+    }
+    assert.deepStrictEqual(run(layeredConfig([['override-file', {}]])), [], 'no services.email at all');
+    // A config without scopes (a unit-test fake) is read through get.
+    assert.deepStrictEqual(run({ get: nested({ services: { email: { enabled: true } } }) }), []);
+    assert.strictEqual(run({ get: nested({ services: { email: { enabled: { welcome: false } } } }) }).length, 1);
+  });
+
+  it('[EMFL7] a non-boolean enabled or send<Kind> (empty value, quoted false) is refused; a hidden lower one is not', () => {
+    const problems = run(layeredConfig([
+      ['override-file', { services: { email: { enabled: null, sendWelcome: 'false', sendWelcom: 'x' } } }, '/etc/pryv/override.yml'],
+      ['default-file', { services: { email: { enabled: true, sendWelcome: true } } }]
+    ]));
+    assert.deepStrictEqual(problems.map((p) => p.path.join('.')), ['services.email.enabled', 'services.email.sendWelcome'], JSON.stringify(problems));
+    assert.match(problems[0].message, /^services\.email\.enabled must be true or false, found an empty value in override-file \(From file: \/etc\/pryv\/override\.yml\)/);
+    assert.match(problems[1].message, /^services\.email\.sendWelcome must be true or false, found the string "false" in override-file/);
+    assert.deepStrictEqual(run(layeredConfig([
+      ['override-file', { services: { email: { sendWelcome: false } } }],
+      ['default-file', { services: { email: { sendWelcome: 'x' } } }]
+    ])), [], 'a lower value hidden by a boolean is not the running value');
+  });
+
+  it('[EMFL8] auth.passwordResetPageURL: required by default, not with sendResetPassword: false, not with enabled: false', () => {
+    const fs = require('node:fs');
+    const yaml = require('js-yaml');
+    const defaults = yaml.load(fs.readFileSync(new URL('../../../config/default-config.yml', import.meta.url), 'utf8'));
+    const missing = (email) => {
+      const config = { get: nested({ services: { email: { ...defaults.services.email, ...email } }, auth: { adminAccessKey: 'some-real-admin-key', filesReadTokenSecret: 'some-real-secret' } }) };
+      const problems = [];
+      checkRequiredWhen(config, problems);
+      return problems.some((p) => p.payload && p.payload.path === 'auth:passwordResetPageURL');
+    };
+    assert.strictEqual(missing({}), true, 'the shipped defaults send the reset mail: the page is required');
+    assert.strictEqual(missing({ sendResetPassword: false }), false);
+    assert.strictEqual(missing({ enabled: false, sendResetPassword: true }), false);
+    assert.strictEqual(missing({ sendWelcome: false }), true, 'another class switched off changes nothing');
   });
 });
 
@@ -668,8 +795,10 @@ describe('[CVWS] config-validation weak secrets', () => {
     return { get: (key) => map[key] };
   }
   const allHappy = {
-    'services:email:enabled': { welcome: true, resetPassword: true, verifyEmail: true },
-    'services:email:resetPassword': true,
+    'services:email:enabled': true,
+    'services:email:sendWelcome': true,
+    'services:email:sendResetPassword': true,
+    'services:email:sendVerifyEmail': true,
     'auth:passwordResetPageURL': 'https://example.com/reset',
     'auth:emailVerificationPageURL': 'https://example.com/verify',
     'auth:adminAccessKey': 'some-real-admin-key',

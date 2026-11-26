@@ -46,7 +46,7 @@ describe('[RSLK] password-reset link', function () {
     nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json')
       .reply(200, (uri, body) => { captured.push(body); return {}; });
     await withInjectedConfig({
-      services: { email: { enabled: { resetPassword: true }, ...email } },
+      services: { email: { sendResetPassword: true, ...email } },
       auth: { passwordResetPageURL: pageURL }
     }, async () => {
       const res = await coreRequest.post('/' + username + '/account/request-password-reset')
@@ -96,7 +96,7 @@ describe('[RSLK] password-reset link', function () {
     nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json').times(2)
       .reply(200, (uri, body) => { captured.push(body); return {}; });
     const request = () => withInjectedConfig({
-      services: { email: { enabled: { resetPassword: true } } },
+      services: { email: { sendResetPassword: true } },
       auth: { passwordResetPageURL: 'https://app.example.com/reset-password' }
     }, async () => await coreRequest.post('/' + username + '/account/request-password-reset').send({ appId: TRUSTED_APP }));
     const withoutMeta = (body) => { const { meta, ...rest } = body; return rest; };
@@ -136,7 +136,7 @@ describe('[RSLK] password-reset link', function () {
     const undo = await prepare(platform, email, username);
     try {
       const res = await withInjectedConfig({
-        services: { email: { enabled: { resetPassword: true } } },
+        services: { email: { sendResetPassword: true } },
         auth: { passwordResetPageURL: 'https://app.example.com/reset-password' }
       }, async () => await coreRequest.post('/' + username + '/account/request-password-reset').send({ appId: TRUSTED_APP }));
       return { res, captured, email };
