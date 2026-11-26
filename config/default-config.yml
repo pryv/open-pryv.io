@@ -143,6 +143,12 @@ storages:
                                       # A boot that exceeds it fails and is retried by the supervisor;
                                       # raise it on nodes with a large platform dataset or slow disks.
                                       # Applies to the managed process and to `external: true`.
+      readWaitMs: 3000                # how long a platform read that gets no answer (a leader change, rqlited
+                                      # not reachable) is sent again, every 100 ms, before it fails: the API then
+                                      # answers 503 api-unavailable with Retry-After, the DNS SERVFAIL. Once a read
+                                      # has waited this long in vain, the next ones fail at once until one is
+                                      # answered again. 0 = one attempt. The wait bounds the new attempts,
+                                      # not one in progress (a large read is not cut short).
       logFile: null                   # null = the spawned rqlited writes to the master's own stdout/stderr.
                                       # A path (relative to service-core root) = rqlited appends its output
                                       # there instead (rotate with copytruncate). Never piped through the

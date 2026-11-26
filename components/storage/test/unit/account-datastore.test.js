@@ -225,7 +225,7 @@ describe('[ACDS] Account DataStore adapter', () => {
       await assert.rejects(
         () => accountStore.events.delete(userId, 'email'),
         (err) => {
-          assert.strictEqual(err.id, 'api-unavailable');
+          assert.strictEqual(err.id, 'unsupported-operation');
           return true;
         }
       );
@@ -479,7 +479,7 @@ describe('[ACDS] Account DataStore adapter', () => {
       await mockStorage.setAccountField(userId, 'email', 'a@b.com', 'test', 1000);
       await assert.rejects(
         () => events.update(userId, { id: 'emailVerification', content: { verified: false } }),
-        (err) => { assert.strictEqual(err.id, 'api-unavailable'); return true; }
+        (err) => { assert.strictEqual(err.id, 'unsupported-operation'); return true; }
       );
       assert.ok(!('emailVerification' in await mockStorage.getAccountFields(userId)));
     });

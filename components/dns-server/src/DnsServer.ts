@@ -27,6 +27,7 @@ import { validateRequest, isIgnorableUdpSource } from './wire.ts';
 import type { WireResult, WireHeader } from './wire.ts';
 import { validateDnsRecord, isEncodableAnswer, normalizeStoredRecord } from './recordValidation.ts';
 import type { EncodableAnswer } from './recordValidation.ts';
+import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
 import { ResponseRateLimiter, LookupMissBudget, readRrlConfig, networkOf } from './responseRateLimit.ts';
 const require = createRequire(import.meta.url);
 
@@ -42,6 +43,9 @@ const { hostedSiteNames } = require('business/src/hostedSites.ts');
  * Set via opts.platformRefreshIntervalMs (tests use a shorter value).
  */
 const DEFAULT_PLATFORM_REFRESH_INTERVAL_MS = 30000;
+
+/** Retry interval of a first platform refresh that got no answer at start. */
+const START_RETRY_INTERVAL_MS = 1000;
 
 /**
  * Subdomains that are part of the open-pryv.io distribution surface: every
@@ -128,6 +132,10 @@ class DnsServer {
   #staticEntries: Map<string, DnsRecordEntry> = new Map();   // working map: config entries + runtime entries
   #configKeys: Set<string>;          // Set of subdomain keys that came from YAML config (immutable)
   #platformRefreshTimer: NodeJS.Timeout | null = null;
+  /** Retries the first platform refresh when the start got no answer (cleared on success). */
+  #startRetryTimer: NodeJS.Timeout | null = null;
+  /** False while the runtime records were never read (start without an answer): a miss is then SERVFAIL. */
+  #runtimeRecordsLoaded: boolean = true;
   #platformRefreshIntervalMs: number;
   #tcpIdleTimeoutMs: number;
   #tcpMaxConnections: number;
@@ -220,8 +228,22 @@ class DnsServer {
 
     // Load runtime DNS records from PlatformDB and start periodic
     // refresh. Multi-core: Core B picks up records created on Core A
-    // via PlatformDB replication.
-    await this.refreshFromPlatform();
+    // via PlatformDB replication. With the periodic refresh on, a first read
+    // the platform database does not answer is retried every second until it
+    // is answered; meanwhile a name the lookups do not find is SERVFAIL, never
+    // NXDOMAIN (it may be a runtime record not loaded yet). Another failure,
+    // or no refresh, fails the start.
+    try {
+      await this.refreshFromPlatform();
+    } catch (err) {
+      if (!(this.#platformRefreshIntervalMs > 0 && isPlatformNoAnswer(err))) throw err;
+      this.#logger.warn('DNS platform refresh at start got no answer (retried every second): ' + (err as Error).message);
+      this.#runtimeRecordsLoaded = false;
+      this.#startRetryTimer = setInterval(() => {
+        this.refreshFromPlatform().catch(() => {});
+      }, START_RETRY_INTERVAL_MS);
+      this.#startRetryTimer.unref?.();
+    }
     if (this.#platformRefreshIntervalMs > 0) {
       this.#platformRefreshTimer = setInterval(() => {
         this.refreshFromPlatform().catch((err: Error) => {
@@ -295,6 +317,14 @@ class DnsServer {
         this.#staticEntries.delete(key);
       }
     }
+    // The runtime records are known: a name nobody holds is NXDOMAIN again.
+    this.#runtimeRecordsLoaded = true;
+    this.#stopStartRetry();
+  }
+
+  #stopStartRetry (): void {
+    if (this.#startRetryTimer != null) clearInterval(this.#startRetryTimer);
+    this.#startRetryTimer = null;
   }
 
   /**
@@ -319,6 +349,7 @@ class DnsServer {
       clearInterval(this.#platformRefreshTimer);
       this.#platformRefreshTimer = null;
     }
+    this.#stopStartRetry();
     if (this.#warnTimer) {
       clearTimeout(this.#warnTimer);
       this.#warnTimer = null;
@@ -715,6 +746,12 @@ class DnsServer {
             (await this.#answerUsername(response, qname, qtype, prefix));
         } finally {
           if (metered) this.#missBudget.done(found, admittedAt);
+        }
+        if (!found && !this.#runtimeRecordsLoaded) {
+          // The runtime records were never read: the name may be one of them.
+          response.answers = [];
+          response.authorities = [];
+          response.header.rcode = RCODE_SERVFAIL;
         }
       }
     } catch (err: unknown) {

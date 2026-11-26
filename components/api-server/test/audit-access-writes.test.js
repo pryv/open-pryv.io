@@ -306,9 +306,9 @@ describe('[ASDW] audit records of the accesses the server writes', function () {
     // The API route (its own row) and the recorded form.
     assert.deepStrictEqual(count(/\bdeleteAccessChain\(/g), { 'methods/accesses.ts': 1, 'methods/helpers/accessWriteAudit.ts': 1 });
     // Storage-direct writes of access rows. accessDeletion: under the two
-    // above; oauthSessionReconcile: recorded; sessions.ts and revoke.ts: the
-    // `oauth.*` events and records of their callers; usage statistics, sign-in
-    // and password reset: personal accesses or counters.
+    // above; oauthSessionReconcile: recorded; sessions.ts, oauthSessionRemoval
+    // and revoke.ts: the `oauth.*` events and records of their callers; usage
+    // statistics, sign-in and password reset: personal accesses or counters.
     assert.deepStrictEqual(count(/\b(?:accessesRepository|storageLayer\.accesses|accesses)\.(?:insertOne|updateOne|delete|removeOne|findOneAndUpdate|updateMany)\(/g), STORAGE_WRITES);
   });
 
@@ -316,7 +316,8 @@ describe('[ASDW] audit records of the accesses the server writes', function () {
     'methods/accesses.ts': 2,
     'methods/helpers/accessDeletion.ts': 3,
     'methods/helpers/oauthSessionReconcile.ts': 2,
+    'methods/helpers/oauthSessionRemoval.ts': 1,
     'routes/oauth2/revoke.ts': 1,
-    'routes/oauth2/sessions.ts': 6
+    'routes/oauth2/sessions.ts': 5
   };
 });

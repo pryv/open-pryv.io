@@ -14,6 +14,7 @@ const errors = require('errors').factory;
 const methodsSchema = require('api-server/src/schema/authMethods.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const { getPlatform } = require('platform');
+const { hostingKeyOf } = require('platform/src/Platform.ts');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const { ready } = require('@pryv/boiler');
 const { getStorageLayer } = require('storage');
@@ -23,6 +24,7 @@ const policy = require('business/src/emails/registrationPolicy.ts');
 const mailing = require('./../helpers/mailing.ts');
 const { reserveEmailLookup } = require('../../routes/reg/emailLookupBudget.ts');
 const mailBudgets = require('../helpers/mailBudgets.ts');
+const { recordAccountCreatedStep } = require('../helpers/accountCreationAudit.ts');
 
 type RegisterParams = { username?: string; password?: string; email?: string; [k: string]: unknown };
 type EmailChallengeParams = { email: string; language?: string };
@@ -81,6 +83,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     registration.forwardIfCrossCore.bind(registration),
     registration.validateOnPlatform.bind(registration),
     registration.createUser.bind(registration),
+    // The first record of the new account's trail (none when another core
+    // created it).
+    recordAccountCreatedStep('registration'),
     registration.buildResponse.bind(registration),
     registration.sendWelcomeMail.bind(registration));
 
@@ -361,7 +366,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
       const hostingCores: Record<string, Array<{ id: string; [k: string]: unknown }>> = {};
       for (const core of allCores) {
         if (core.available === false) continue;
-        const h = core.hosting || 'default';
+        const h = hostingKeyOf(core);
         if (!hostingCores[h]) hostingCores[h] = [];
         hostingCores[h].push(core);
       }

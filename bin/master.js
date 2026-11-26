@@ -404,16 +404,13 @@ if (cluster.isPrimary) {
         platform: platformDB,
         coreId: String(config.get('core:id') ?? 'single'),
         resolveUsername: async (userId) => (await storagesBarrel.usersLocalIndex.getUsername(userId)) ?? null,
-        revokeLocal: async ({ userId, username, accessId, clientId }) => {
-          const accesses = storagesBarrel.storageLayer.accesses;
-          const user = { id: userId, username };
-          // Only the client's OAuth session access: a row must not reach any other access.
-          const access = await new Promise((resolve, reject) =>
-            accesses.findOne(user, { id: accessId }, null, (err, a) => (err != null ? reject(err) : resolve(a))));
-          if (access == null || access.type !== 'app' || access.name !== 'oauth:' + clientId) return;
-          // Never delivered to a client, so no cached access logic to invalidate.
-          await new Promise((resolve, reject) =>
-            accesses.delete(user, { id: accessId }, (err) => (err != null ? reject(err) : resolve())));
+        // The removal the code exchange makes of the same session (only the
+        // client's OAuth session access; breach-scope index tombstone, alias
+        // release, notification). Required here so a load failure is a failed
+        // revoke of this tick, never an exception thrown in the timer.
+        revokeLocal: async (params) => {
+          const { revokeOAuthSessionLocal } = require('../components/api-server/src/methods/helpers/oauthSessionRemoval.ts');
+          return await revokeOAuthSessionLocal(storagesBarrel.storageLayer, params);
         }
       })
         .then((revoked) => {

@@ -127,6 +127,32 @@ describe('[PCUR] core URL cache and platform names refresh', () => {
     assert.strictEqual(reads, readsAtStop, 'no read after stop');
   });
 
+  it('[PCUR-03] the first core URL read at init: a no-answer on a multi-core core is left to the timer; another failure, or a single core, stops the boot', async () => {
+    const noAnswer = Object.assign(new Error('rqlite query got no result at level default: not leader'), { name: 'RqliteNoAnswerError' });
+    let failure = noAnswer;
+    let reads = 0;
+    const db = { async getAllCoreInfos () { reads++; if (failure != null) throw failure; return [{ id: 'core-b', url: 'https://api-b.other.example/' }]; } };
+    const values = { 'core:id': 'core-a', 'dns:domain': 'example.com', 'core:isSingleCore': false };
+    const p = new Platform();
+    p._setDependenciesForTests(db, null, { get: (key) => values[key] });
+    try {
+      await p._readCoreUrlsAtInit();
+      assert.strictEqual(p.coreIdToUrl('core-b'), 'https://core-b.example.com/', 'not read yet: derived');
+      p.startCoreUrlRefresh(10); // the timer the init started, at test pace
+      failure = null;
+      await until(() => p.coreIdToUrl('core-b') === 'https://api-b.other.example/');
+    } finally {
+      p.stopCoreUrlRefresh();
+    }
+    failure = new Error('malformed row');
+    await assert.rejects(() => p._readCoreUrlsAtInit(), /malformed row/);
+    p.stopCoreUrlRefresh();
+    values['core:isSingleCore'] = true;
+    failure = noAnswer;
+    await assert.rejects(() => p._readCoreUrlsAtInit(), { name: 'RqliteNoAnswerError' });
+    assert.ok(reads >= 4);
+  });
+
   it('[PCUR-02] a failed refresh keeps the previous URLs', async () => {
     let fail = false;
     const db = {

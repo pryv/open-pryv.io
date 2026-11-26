@@ -18,6 +18,7 @@ import * as extension from '../src/extension.ts';
 import * as scopeGrammar from '../src/scopeGrammar.ts';
 import { handleIntrospect } from '../src/introspection.ts';
 import { handleRevoke } from '../src/revocation.ts';
+import { guardRoute } from '../src/routes.ts';
 import { buildDiscoveryDocument } from '../src/wellKnown.ts';
 import { persistClient, getClient } from '../src/clientRegistry.ts';
 import { mintSecret } from '../src/clientSecret.ts';
@@ -334,6 +335,23 @@ describe('[OXINT] OAuth2: token introspection and revocation', () => {
     const failing = await revoke(platform2, { token: 'refresh-1', hint: 'refresh_token', deps: { revokeSession: async () => { throw new Error('down'); } } });
     assert.equal(failing.res.statusCode, 200);
     assert.equal(await getRefresh(platform2, CORE_ID, 'refresh-1'), null);
+  });
+
+  it('[ORNA1] the core list unanswered (platform leader change): 503 temporarily_unavailable with Retry-After, never 200; another failure keeps 200', async () => {
+    const platform = await seeded();
+    platform.getAllCoreInfos = async () => {
+      throw Object.assign(new Error('rqlite query got no result at level default: not leader'), { name: 'RqliteNoAnswerError' });
+    };
+    const res = fakeRes();
+    await guardRoute(handleRevoke({ config: fakeConfig(), platform, revokeSession: async () => true }))({
+      headers: {}, body: { token: 'unknown-refresh', client_id: 'reg-app', token_type_hint: 'refresh_token' },
+    }, res, () => {});
+    assert.equal(res.statusCode, 503);
+    assert.equal(res.headers['retry-after'], '2');
+    assert.equal(res.body.error, 'temporarily_unavailable');
+    platform.getAllCoreInfos = async () => { throw new Error('boom'); };
+    const { res: degraded } = await revoke(platform, { token: 'unknown-refresh', hint: 'refresh_token' });
+    assert.equal(degraded.statusCode, 200);
   });
 
   it('[ORVK3] an unknown token, or another client\'s, answers 200 and touches nothing', async () => {

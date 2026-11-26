@@ -70,13 +70,17 @@ describe('[AUDT] Audit', function () {
   // finish first, or a late one lands in the spy counts of the next test. A
   // streamed result starts its audit on the response 'close', a tick after the
   // client may have read it: repeat until no new call shows up.
-  async function resetSpies () {
+  async function settleAudit () {
     let seen;
     do {
       seen = eventForUserSpy.callCount;
       await Promise.allSettled(eventForUserSpy.returnValues);
       await new Promise((resolve) => setImmediate(resolve));
     } while (eventForUserSpy.callCount !== seen);
+  }
+
+  async function resetSpies () {
+    await settleAudit();
     sysLogSpy.resetHistory();
     storageSpy.resetHistory();
     eventForUserSpy.resetHistory();
@@ -192,23 +196,37 @@ describe('[AUDT] Audit', function () {
       });
     });
     describe('[AT04] when making a call that has no userId', function () {
+      let newUsername;
       before(async function () {
         await resetSpies();
+        newUsername = cuid().substring(2, 26);
         res = await coreRequest
           .post('/users')
           .send({
-            username: cuid().substring(2, 26),
+            username: newUsername,
             password: cuid(),
             appId: 'whatever',
             email: cuid(),
             insurancenumber: '123'
           });
+        // the call row is written after the answer
+        await settleAudit();
       });
 
-      it('[JU8F] validates the response', function () {
+      // The registration call itself has no user: syslog only. The server's
+      // own record of the creation (`account.created`) goes to the new
+      // account's trail, and to syslog like any audited action.
+      it('[JU8F] validates the response', async function () {
         assert.strictEqual(res.status, 201, '[JU8F] must return 201');
-        assert.strictEqual(sysLogSpy.calledOnce, true, '[KPPH] must log it in syslog');
-        assert.strictEqual(storageSpy.callCount, 0, '[EI1U] must not log it to storage');
+        const newUserId = await (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(newUsername);
+        assert.ok(newUserId != null, 'the account exists');
+        const actions = (spy) => spy.getCalls().map((c) => c.args[1]?.content?.action).sort();
+        assert.deepStrictEqual(actions(eventForUserSpy), ['account.created', 'auth.register'], 'two audit records');
+        assert.deepStrictEqual(actions(sysLogSpy), ['account.created', 'auth.register'], '[KPPH] must log both in syslog');
+        assert.strictEqual(storageSpy.callCount, 1, '[EI1U] only the creation record is stored');
+        assert.strictEqual(storageSpy.firstCall.args[0], newUserId, '[EI1U] in the new account\'s trail');
+        const created = eventForUserSpy.getCalls().find((c) => c.args[1]?.content?.action === 'account.created');
+        assert.strictEqual(created.args[0], newUserId);
       });
     });
   });

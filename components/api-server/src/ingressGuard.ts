@@ -7,6 +7,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Logger } from '@pryv/boiler';
 import { redactUrl } from 'utils/src/redactUrl.ts';
+import { isPlatformNoAnswer } from 'storages/interfaces/platformStorage/noAnswer.ts';
+import { PLATFORM_NO_ANSWER_MESSAGE, PLATFORM_NO_ANSWER_RETRY_AFTER_SECONDS } from 'errors/src/factory.ts';
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => unknown;
 
@@ -17,19 +19,26 @@ type Handler = (req: IncomingMessage, res: ServerResponse) => unknown;
  * value) or a rejection of its async branches.
  */
 export function failIngress (req: IncomingMessage, res: ServerResponse, err: unknown, logger: Logger, tag = '[ingress]'): void {
-  logger.error(`${tag} ${req.method} ${redactUrl(req.url ?? '')}: ${err instanceof Error ? err.message : String(err)}`);
+  // The platform database did not answer (a leader change): 503 with
+  // Retry-After, as the API answers it, logged at warn.
+  const noAnswer = isPlatformNoAnswer(err);
+  const line = `${tag} ${req.method} ${redactUrl(req.url ?? '')}: ${err instanceof Error ? err.message : String(err)}`;
+  if (noAnswer) logger.warn(line); else logger.error(line);
   if (res.headersSent || res.destroyed) {
     res.destroy();
     return;
   }
   try {
     for (const name of res.getHeaderNames()) res.removeHeader(name);
-    const body = JSON.stringify({ error: { id: 'unexpected-error', message: 'Unexpected error' } });
-    res.writeHead(500, {
+    const body = JSON.stringify(noAnswer
+      ? { error: { id: 'api-unavailable', message: PLATFORM_NO_ANSWER_MESSAGE } }
+      : { error: { id: 'unexpected-error', message: 'Unexpected error' } });
+    res.writeHead(noAnswer ? 503 : 500, {
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(body),
       'x-content-type-options': 'nosniff',
-      'cache-control': 'no-store'
+      'cache-control': 'no-store',
+      ...(noAnswer ? { 'retry-after': String(PLATFORM_NO_ANSWER_RETRY_AFTER_SECONDS) } : {})
     });
     res.end(body);
   } catch (e) {

@@ -21,6 +21,96 @@
 - Migration guide (before/after example, the 14 keys, environment variables, the boot message):
   [MIGRATION-services-email-enabled.md](./MIGRATION-services-email-enabled.md).
 
+### Multi-core: a platform read without an answer is no longer "not found"
+
+- **During a platform leader change, reads wait, then answer 503.** While the rqlite leader changes, a
+  platform read (core list, DNS records, invitation tokens, OAuth clients and codes, access states,
+  certificates, mail templates, the read-back of a unique name) could get no answer and was then taken for
+  "no row": a valid invitation or OAuth code read as invalid, a reserved name as taken, a held certificate as
+  missing, a revoked client as not revoked, a core as unknown. Such a read is now sent again every 100 ms for
+  3 seconds (a leader change usually takes 1 to 2 seconds; the wait bounds the new attempts, an attempt in
+  progress is not cut short); still without an answer, the call answers **503 `api-unavailable` with
+  `Retry-After: 2`** instead of acting on an absence: API methods, the routing of `/{username}/*` requests,
+  the `/reg/*` routes and the adapter ingress alike. The same holds when the core cannot reach its local
+  `rqlited`. The OAuth endpoints answer 503 `temporarily_unavailable` with `Retry-After` in that case, and
+  `POST /oauth2/revoke` no longer answers 200 when it could not read the core list. The embedded DNS answers
+  SERVFAIL (no SOA, nothing a resolver keeps as a negative answer) and its periodic refresh keeps the records
+  it holds; a DNS server that starts without an answer retries every second and answers SERVFAIL, not
+  NXDOMAIN, for a name it cannot place until it has read its records. After one read waited the full time in
+  vain, the next reads of that process fail at once until one is answered again, so a long outage does not hold
+  every request for 3 seconds; requests already waiting when the outage starts each wait their full time, and
+  each server process (API worker, master) waits once.
+- A platform write the cluster did not carry out (see "Bundled rqlite 10.7.5" below) also answers 503
+  `api-unavailable` with `Retry-After: 2` (was 500).
+- New configuration key `storages.engines.rqlite.readWaitMs` (default 3000; 0 = one attempt): how long a read
+  without an answer is sent again before it fails.
+
+### Multi-core: a registration for a hosting no core serves is refused
+
+- `POST /users` (and `/reg/user`) with a `hosting` that no available core serves created the account on the
+  core that received the request, whatever its hosting (cores of different hostings may fall under different
+  rules). It is now refused with **400 `invalid-parameters-format`**, `data: { param: 'hosting', reason }`,
+  `reason` being `hosting-unknown` (no core has this hosting) or `hosting-unavailable` (its cores take no new
+  account), before anything is reserved. A registration without a hosting is placed as before. Hostings are
+  the keys `auth.hostings` (`GET /reg/hostings`) lists: a core without `core:hosting` is the hosting `default`,
+  and without a `hostings` configuration the only key listed, `default`, stands for any core (so the key
+  lib-js picks for `hosting: 'auto'` keeps working).
+
+### Errors: changed id, `unsupported-operation` (501) instead of `api-unavailable`
+
+- **Changed id.** An operation a data store does not support (e.g. creating a stream in a store without streams, changing or
+  deleting a read-only account event) answered HTTP 501 with the id `api-unavailable`. The id is now
+  `unsupported-operation`, as the error catalogue lists it; the status stays 501. A client that keys on
+  `api-unavailable` with a 501 should accept `unsupported-operation`.
+
+### OAuth: the session of an authorization code that expired unexchanged is removed like any other
+
+- The periodic sweep removes the session pre-minted at `/oauth2/authorize/accept` when its authorization code
+  expired without being exchanged. It now removes it as a failed code exchange does: the breach-scope index
+  (`GET /system/accesses/:accessId`) keeps the access marked deleted (it was left there as a live access), the
+  session's alias stops routing when no other access of the account holds it, and the account's socket clients
+  get the accesses-changed notification. Still not recorded in the account's audit trail.
+
+### Data stores: the error ids of a store that resolves its own `@pryv/datastore`
+
+- A custom data store that resolves its own copy of `@pryv/datastore` (its own `node_modules`) throws that copy's
+  errors, which the core answered `unexpected-error` (500). They are now answered as with the core's copy:
+  `unknown-resource` (404), `item-already-exists` (409), `invalid-item-id` and `invalid-request-structure` (400),
+  and an unsupported operation as the core's copy answers it, `unsupported-operation` (501). The core recognises them by the mark
+  `Symbol.for('@pryv/datastore:error')` of newer copies of the package, or by their class name
+  (`PryvDataStoreError`) for older ones. An `unexpected-error` from a store, or an id the package does not define,
+  is still answered `unexpected-error`.
+
+### Audit: the creation of an account is the first record of its trail
+
+- **An account created on a core now has a record of its creation in its own audit trail.** The creating call
+  (`auth.register`, `system.createUser`) is audited without a user, so a registration left nothing in the trail of
+  the account it made, and the first personal access had no record of its creation. The server now writes
+  `account.created` (type `audit-log/account`) in the new account's trail once the account exists, for a
+  registration (`POST /users`, `/reg/users`, the legacy `/reg/user`), `system.createUser` and
+  `delegations.createAccount`. `content.source.name` says how: `registration`, `system` or `delegation`.
+  `content.source.ip` is the client address, for a registration only (the account holder's own, as on the trail's
+  later call rows; left out when unknown); an administrator's or a delegate's address is never recorded.
+  `content.record` names the personal access made with the account (`accessId`, `accessType: 'personal'`) and the
+  record carries that access's stream, when one was made (not for `delegations.createAccount`, nor for
+  `system.createUser` without `appId`). Ids and fixed words only: no username, address, password, token, app id,
+  invitation or custom field. A registration forwarded to another core is recorded on the core that creates the
+  account, with the client address the landing core saw (left out when the landing core did not know it; never the
+  landing core's own address). The type is not in the event-type catalogue of this release (`service.eventTypes`
+  lists it from data-types 1.4.0). A refused registration leaves no record; a record that
+  cannot be written is counted as a lost audit record and does not fail the creation. Accounts created before this
+  release have no such record.
+- **Audit filters that list methods one by one do not include `account.created` until you add it; `account.all`
+  and `all` do.** The breach-scope report lists the record without counting it as a call of the access; the audit
+  summary counts it as a write.
+
+### Audit filter: a group must be a whole name
+
+- An `audit.syslog.filter` / `audit.storage.filter` entry `<group>.all` whose group is only the start of a method
+  family (`a.all`, `event.all`) or a method without a family (`callBatch.all`) selected nothing and only got a boot
+  warning. It now refuses the boot, like an aggregate naming no family (`something.all`). Write the whole group name
+  (`accesses.all`, `events.all`).
+
 ### Event types: an answer that is no list does not count as loaded
 
 - `service.eventTypes`: a JSON answer without a `types` object (an error page in JSON, the hierarchical file)
@@ -121,7 +211,7 @@
 - **Multi-core: a platform write the cluster did not carry out is an error.** While the leader restarts, a
   follower can answer a forwarded write with HTTP 200, an error and no result. The server took that for a
   success, so the write (a unique name, a routing row, a token, a revocation) was lost without any sign. The
-  call now fails (500), as it does when the platform store is down. A process that starts while the cluster
+  call now fails (503, see "a platform read without an answer" above), and is not sent again. A process that starts while the cluster
   elects its leader waits for it, up to 15 seconds; with no leader by then it does not start (before, it
   could start with its first platform writes lost, or fail at once).
 - Multi-core: a request a follower forwards to the leader is sent once (10.6.0 sent it again after a
@@ -721,7 +811,7 @@ call that would pass it; what an account already holds stays readable.
   TLS and ACME keys under a key derived for that purpose from `letsEncrypt.atRestKey` (the
   configured value is unchanged). A core before 2.0.0-rc.86 cannot read these rows, and going back
   to such a release after this one has run is not possible without restoring them; going back to
-  2.0.0-rc.86 or 2.0.0-rc.87 stays possible (they read the new envelope). Rows already
+  2.0.0-rc.86 to 2.0.0-rc.89 stays possible (they read the new envelope). Rows already
   stored stay readable and are rewritten in the new envelope when written again (the ACME account
   key once, at the next account check).
 

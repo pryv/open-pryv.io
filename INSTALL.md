@@ -167,6 +167,7 @@ storages:
       dataDir: /path/to/data/rqlite-data
       binPath: /path/to/rqlited        # default: bin-ext/rqlited
       readyTimeoutMs: 30000            # boot budget for rqlited's HTTP API; raise on slow nodes
+      readWaitMs: 3000                 # a read without answer (leader change) is retried this long, then 503
       logFile: null                    # null: rqlited writes to the master's stdout/stderr; or a file it appends to
 ```
 

@@ -15,7 +15,8 @@ const { guardIngress } = require('../../src/ingressGuard.ts');
 describe('[INGG] raw ingress guard', function () {
   let server, port, handler;
   const errors = [];
-  const logger = { error: (msg) => errors.push(msg) };
+  const warnings = [];
+  const logger = { error: (msg) => errors.push(msg), warn: (msg) => warnings.push(msg) };
 
   before(async function () {
     server = http.createServer(guardIngress((req, res) => handler(req, res), logger));
@@ -23,12 +24,25 @@ describe('[INGG] raw ingress guard', function () {
     port = server.address().port;
   });
   after(function () { server.close(); });
-  beforeEach(function () { errors.length = 0; });
+  beforeEach(function () { errors.length = 0; warnings.length = 0; });
 
   async function get () {
     const res = await fetch(`http://127.0.0.1:${port}/x?auth=secret`);
-    return { status: res.status, body: await res.text() };
+    return { status: res.status, body: await res.text(), retryAfter: res.headers.get('retry-after') };
   }
+
+  it('[IGNA1] a platform read without an answer is 503 api-unavailable with Retry-After, logged at warn', async function () {
+    handler = async () => {
+      throw Object.assign(new Error('rqlite query got no result at level linearizable: not leader'), { name: 'RqliteNoAnswerError' });
+    };
+    const res = await get();
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.retryAfter, '2');
+    assert.strictEqual(JSON.parse(res.body).error.id, 'api-unavailable');
+    assert.ok(!res.body.includes('rqlite'));
+    assert.strictEqual(errors.length, 0);
+    assert.strictEqual(warnings.length, 1);
+  });
 
   it('[ING1] a synchronous throw (a refused header value) is answered 500 and logged', async function () {
     handler = (req, res) => {
@@ -57,6 +71,6 @@ describe('[INGG] raw ingress guard', function () {
     };
     await assert.rejects(get());
     handler = (req, res) => res.end('fine');
-    assert.deepStrictEqual(await get(), { status: 200, body: 'fine' });
+    assert.deepStrictEqual(await get(), { status: 200, body: 'fine', retryAfter: null });
   });
 });
