@@ -196,8 +196,14 @@ export function isMailKindSwitchedOn (email: unknown, kind: MailKind): boolean {
   return switchesAllow(settings.enabled, settings[mailSwitchKey(kind)]);
 }
 
-/** Same rule as `isMailKindSwitchedOn`, read key by key from a config. */
+/**
+ * Same rule as `isMailKindSwitchedOn`, read key by key from a config. A
+ * `services.email` that is set but not an object (YAML `email:` left empty)
+ * is off, as it is for `isMailKindSwitchedOn`.
+ */
 export function isMailKindSwitchedOnInConfig (config: ConfigReader, kind: MailKind): boolean {
+  const email = config.get('services:email');
+  if (email !== undefined && (email === null || typeof email !== 'object')) return false;
   return switchesAllow(config.get('services:email:enabled'), config.get('services:email:' + mailSwitchKey(kind)));
 }
 

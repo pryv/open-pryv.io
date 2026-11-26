@@ -85,7 +85,7 @@ describe('[CONFIG-RDY] @pryv/boiler ready()', () => {
     // depend on it, and so does per-worker storage isolation via
     // config.set() at test boot. Pin the contract.
     const config = await ready();
-    const key = 'plan-70-ready-test:scratch';
+    const key = 'boiler-ready-test:scratch';
     config.set(key, 'first');
     assert.strictEqual(config.get(key), 'first');
     config.set(key, 'second');

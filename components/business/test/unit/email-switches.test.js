@@ -68,6 +68,9 @@ describe('[EMFL] mail switches', function () {
       assert.equal(isMailKindSwitchedOn({ [mailSwitchKey(kind)]: 'false' }, kind), false, kind);
       assert.equal(isMailKindSwitchedOn({ [mailSwitchKey(kind)]: null }, kind), false, kind);
       assert.equal(isMailKindSwitchedOnInConfig(configOf({ services: { email: { enabled: { [kind]: true } } } }), kind), false, kind);
+      // An empty `email:` (YAML null): both helpers say off.
+      assert.equal(isMailKindSwitchedOnInConfig(configOf({ services: { email: null } }), kind), false, kind);
+      assert.equal(isMailKindSwitchedOn(null, kind), false, kind);
     }
   });
 });

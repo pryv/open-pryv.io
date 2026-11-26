@@ -215,7 +215,7 @@ describe('[SINF] Service', () => {
         assert.strictEqual(await get(), true);
       });
       // Switched on, but the whole mail feature off.
-      await withInjectedConfig({ services: { email: { enabled: false } } }, async () => {
+      await withInjectedConfig({ services: { email: { enabled: false, sendResetPassword: true } } }, async () => {
         assert.strictEqual(await get(), false);
       });
       // Switched on, in-process delivery with no SMTP host: the send is skipped.

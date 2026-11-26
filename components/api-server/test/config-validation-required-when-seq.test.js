@@ -7,7 +7,7 @@
 
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-/* global initTests, initCore, assert */
+/* global initTests, initCore, assert, injectTestConfigSnapshot */
 
 /**
  * [CV-REQ] — boot-time feature-gated required-keys check.
@@ -550,6 +550,29 @@ describe('[EMFLB] config-validation mail switches', () => {
     assert.strictEqual(missing({ sendResetPassword: false }), false);
     assert.strictEqual(missing({ enabled: false, sendResetPassword: true }), false);
     assert.strictEqual(missing({ sendWelcome: false }), true, 'another class switched off changes nothing');
+  });
+
+  it('[EMFL10] on the real boiler config: the object form in the test scope, under enabled: true in memory, is refused', async () => {
+    const { getConfig } = require('@pryv/boiler');
+    const config = await getConfig();
+    const memory = config.store.stores.memory;
+    const key = 'services:email:enabled';
+    const before = memory.get(key);
+    const restore = injectTestConfigSnapshot({ services: { email: { enabled: { welcome: false } } } });
+    try {
+      const inTest = run(config).filter((p) => p.path.join(':') === key);
+      assert.deepStrictEqual(inTest.map((p) => p.payload.scope), ['test'], JSON.stringify(inTest));
+      // A boolean in a higher scope (only the memory store, not config.set, which writes every writable store).
+      memory.set(key, true);
+      assert.strictEqual(config.get(key), true, 'the resolved value hides the object');
+      const hidden = run(config).filter((p) => p.path.join(':') === key);
+      assert.deepStrictEqual(hidden.map((p) => p.payload.scope), ['test'], JSON.stringify(hidden));
+      assert.match(hidden[0].message, /services\.email\.enabled\.welcome: false {2}-> {2}services\.email\.sendWelcome: false/);
+    } finally {
+      if (before === undefined) memory.clear(key); else memory.set(key, before);
+      restore();
+    }
+    assert.deepStrictEqual(run(config).filter((p) => p.path.join(':') === key), [], 'restored');
   });
 });
 
