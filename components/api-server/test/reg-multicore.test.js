@@ -262,6 +262,44 @@ describe('[RGMC] register: multi-core', function () {
       assert.ok(!res.body.core, 'forward path must not include legacy redirect shape');
     });
 
+    it('[MCHR1] a hosting no core serves refuses the registration: no forward, no account, nothing reserved', async function () {
+      const username = 'mchr1' + cuid.slug().toLowerCase();
+      const res = await request.post('/users').send({
+        appId: 'test-app',
+        username,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        hosting: 'mchr1-nowhere',
+        insurancenumber: charlatan.Number.number(3)
+      });
+      assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+      assert.strictEqual(res.body.error.id, 'invalid-parameters-format');
+      assert.deepStrictEqual(res.body.error.data, { param: 'hosting', reason: 'hosting-unknown' });
+      assert.strictEqual(forwardCalls.length, 0);
+      assert.strictEqual(await platform.getUserCore(username), null);
+      const { getUsersRepository } = require('business/src/users/index.ts');
+      assert.ok(await (await getUsersRepository()).getUserIdForUsername(username) == null, 'no account');
+    });
+
+    it('[MCHR2] the hosting key auth.hostings lists (no hostings configured: `default`) is accepted and placed by load', async function () {
+      const listed = await request.get('/reg/hostings');
+      assert.strictEqual(listed.status, 200);
+      const key = Object.keys(listed.body.regions.default.zones.default.hostings)[0];
+      assert.strictEqual(key, 'default');
+      const username = 'mchr2' + cuid.slug().toLowerCase();
+      forwardHandler = async () => ({ ok: true, status: 201, json: async () => ({ username, apiEndpoint: 'https://tok@' + username + '.' + DOMAIN + '/' }) });
+      const res = await request.post('/users').send({
+        appId: 'test-app',
+        username,
+        email: charlatan.Internet.email(),
+        password: 'testpassword',
+        hosting: key,
+        insurancenumber: charlatan.Number.number(3)
+      });
+      assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+      assert.strictEqual(forwardCalls.length, 1, 'placed on the least loaded core');
+    });
+
     it('[MC01B] does NOT leak user-core row when forward fails — atomic', async function () {
       const username = 'mc01b' + cuid.slug().toLowerCase();
       forwardHandler = async () => { throw new Error('target unreachable'); };
@@ -970,11 +1008,43 @@ describe('[RGMC] register: multi-core', function () {
       assert.strictEqual(selected, cc, 'should pick core in target hosting');
     });
 
-    it('[MC05C] must fall back to self when no candidates match hosting', async function () {
+    it('[MC05C] refuses a hosting no core serves, never falling back to this core', async function () {
       await seedCore('mc05c-b', { hosting: 'mc05c-east' });
 
-      const selected = await platform.selectCoreForRegistration('mc05c-nonexistent');
-      assert.strictEqual(selected, CORE_A, 'should fall back to self');
+      await assert.rejects(platform.selectCoreForRegistration('mc05c-nonexistent'),
+        { id: 'invalid-parameters-format', httpStatus: 400, data: { param: 'hosting', reason: 'hosting-unknown' } });
+    });
+
+    it('[MC05E] refuses a hosting whose cores are all unavailable', async function () {
+      await seedCore('mc05e-b', { hosting: 'mc05e-h', available: false });
+
+      await assert.rejects(platform.selectCoreForRegistration('mc05e-h'),
+        { id: 'invalid-parameters-format', data: { param: 'hosting', reason: 'hosting-unavailable' } });
+    });
+
+    it('[MC05G] cores without core:hosting are the hosting `default` (hostings configured): selected by load', async function () {
+      await setupMultiCore(CORE_A, { hostings: { regions: { r: { zones: { z: { hostings: { default: { name: 'Default' } } } } } } } });
+      await seedCore('mc05g-b', { hosting: null });
+      await seedCore('mc05g-c', {});
+      await platform.setUserCore('mc05gu1', 'mc05g-b');
+      assert.strictEqual(await platform.selectCoreForRegistration('default'), 'mc05g-c');
+    });
+
+    it('[MC05H] no hostings configured: `default` (the only key listed) stands for any core', async function () {
+      await seedCore('mc05h-b', { hosting: 'mc05h-elsewhere' });
+      for (const info of await getPlatformDB().getAllCoreInfos()) {
+        if (info.id !== 'mc05h-b') await getPlatformDB().setCoreInfo(info.id, { ...info, available: false });
+      }
+      assert.strictEqual(await platform.selectCoreForRegistration('default'), 'mc05h-b');
+    });
+
+    it('[MC05F] without a hosting asked, any available core (this one by default) is kept', async function () {
+      // Every other core unavailable: this core is the only candidate.
+      for (const info of await getPlatformDB().getAllCoreInfos()) {
+        if (info.id !== CORE_A) await getPlatformDB().setCoreInfo(info.id, { ...info, available: false });
+      }
+      assert.strictEqual(await platform.selectCoreForRegistration(null), CORE_A);
+      assert.strictEqual(await platform.selectCoreForRegistration(''), CORE_A);
     });
 
     it('[MC05D] single-core always returns self', async function () {
@@ -1009,8 +1079,10 @@ describe('[RGMC] register: multi-core', function () {
         available: false
       });
 
-      const selected = await platform.selectCoreForRegistration(MC06_HOSTING);
-      assert.strictEqual(selected, CORE_A,
+      // Its only core unavailable, the hosting takes no account (never this
+      // core of another hosting).
+      await assert.rejects(platform.selectCoreForRegistration(MC06_HOSTING),
+        { id: 'invalid-parameters-format', data: { param: 'hosting', reason: 'hosting-unavailable' } },
         'should not select unavailable core');
     });
 

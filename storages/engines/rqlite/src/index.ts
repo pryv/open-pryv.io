@@ -22,8 +22,8 @@ let _getLogger: GetLoggerFn | null = null;
 /**
  * Initialize the rqlite engine.
  */
-function init (config: { url?: string }, getLogger?: GetLoggerFn): void {
-  platformDB = new DBrqlite(config.url);
+function init (config: { url?: string, readWaitMs?: number }, getLogger?: GetLoggerFn): void {
+  platformDB = new DBrqlite(config.url, { readWaitMs: config.readWaitMs });
   if (getLogger) _getLogger = getLogger;
 }
 

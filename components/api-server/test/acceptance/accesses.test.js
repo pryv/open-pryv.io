@@ -621,7 +621,7 @@ describe('[AC01] accesses', () => {
               .send(attrs);
             assert.strictEqual(res.status, 501);
             assert.ok(res.body.error);
-            assert.strictEqual(res.body.error.id, 'api-unavailable');
+            assert.strictEqual(res.body.error.id, 'unsupported-operation');
             assert.strictEqual(res.body.error.message, 'streams.create');
           });
         });

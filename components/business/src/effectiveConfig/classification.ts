@@ -76,6 +76,7 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['storages.engines.rqlite.binPath', P, c],
   ['storages.engines.rqlite.external', P, c],
   ['storages.engines.rqlite.readyTimeoutMs', P, c],
+  ['storages.engines.rqlite.readWaitMs', P, c],
   ['storages.engines.rqlite.logFile', P, c],
   ['storages.engines.rqlite.tls.**', P, c],
   ['storages.engines.s3.endpoint', U, c],

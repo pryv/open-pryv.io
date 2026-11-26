@@ -326,6 +326,12 @@ describe('[ACMEORCH] AcmeOrchestrator', function () {
       assert.deepEqual(logs, ['initial materialize: platform DB leader unavailable (restarting?), retrying on the next tick']);
     });
 
+    it('[ACML3] a platform read that got no answer is logged as a retry, not an error', async () => {
+      const err = Object.assign(new Error('rqlite query got no result at level default: HTTP 503: leader not found'), { name: 'RqliteNoAnswerError' });
+      const logs = await firstMaterializeLog(err);
+      assert.deepEqual(logs, ['initial materialize: platform DB leader unavailable (restarting?), retrying on the next tick']);
+    });
+
     it('[ACML2] any other failure is still logged as an error with its message', async () => {
       const logs = await firstMaterializeLog(new Error('rqlite query failed (500): boom'));
       assert.deepEqual(logs, ['initial materialize error: rqlite query failed (500): boom']);

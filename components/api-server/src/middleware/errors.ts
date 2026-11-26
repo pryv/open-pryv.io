@@ -15,6 +15,7 @@ const errorHandling = errors.errorHandling;
 const commonMeta = require('../methods/helpers/setCommonMeta.ts');
 const { getConfigSync } = require('@pryv/boiler');
 const { isCapacityRefusal } = require('utils').concurrencyLimit;
+const { isPlatformNoAnswer } = require('storages/interfaces/platformStorage/noAnswer.ts');
 
 export default produceHandleErrorMiddleware;
 export { produceHandleErrorMiddleware };
@@ -39,9 +40,10 @@ function produceHandleErrorMiddleware (logging: { getLogger: (name: string) => L
     if (!(error instanceof APIError) && error.status) {
       // it should be coming from Express' bodyParser: just wrap the error
       error = errorsFactory.invalidRequestStructure(error.message);
-    } else if (!(error instanceof APIError) && (isCapacityRefusal(error) || errors.isStatementCancelled(error))) {
-      // A route outside the method chain hit the password-check ceiling, or a
-      // database statement it ran was stopped by the server's time limit.
+    } else if (!(error instanceof APIError) && (isCapacityRefusal(error) || errors.isStatementCancelled(error) || isPlatformNoAnswer(error))) {
+      // A route outside the method chain hit the password-check ceiling, a
+      // database statement it ran was stopped by the server's time limit, or
+      // the platform database did not answer it (a leader change): 429 / 503.
       error = errorsFactory.unexpectedError(error);
     }
     if (req.context != null) {

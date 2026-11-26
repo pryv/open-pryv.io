@@ -30,7 +30,10 @@ describe('[RQSI] rqlite checkStoreIntegrity', () => {
 
   it('[RQSI1] an empty answer to the PRAGMA rejects instead of reporting a corruption', async () => {
     stubFetch([]);
-    const db = new DBrqlite('http://rqlite.invalid:4001');
+    const db = new DBrqlite('http://rqlite.invalid:4001', { readWaitMs: 0 });
+    await assert.rejects(db.checkStoreIntegrity(), { name: 'RqliteNoAnswerError', message: /no result at level none/ });
+    // Answered, but no row: the PRAGMA did not run.
+    global.fetch = async () => ({ ok: true, json: async () => ({ results: [{ columns: ['integrity_check'] }] }) });
     await assert.rejects(db.checkStoreIntegrity(), /no row/);
   });
 

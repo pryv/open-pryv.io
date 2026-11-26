@@ -1132,6 +1132,15 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #     rqlite:
 # #       readyTimeoutMs: 60000
 
+# # storages.engines.rqlite.readWaitMs: how long a platform read that gets no
+# # answer (a leader change, rqlited not reachable) is sent again before it
+# # fails (default 3000 ms; 0 = one attempt). The API then answers 503
+# # api-unavailable with Retry-After, the embedded DNS SERVFAIL.
+# # storages:
+# #   engines:
+# #     rqlite:
+# #       readWaitMs: 3000
+
 # # storages.engines.rqlite.logFile: by default the embedded rqlited writes
 # # to the master's own output; set a path to have it append there instead.
 # # storages.platform.integrityCheckIntervalMs: the master re-checks this

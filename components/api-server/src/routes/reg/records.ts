@@ -28,6 +28,7 @@ const { getPlatform } = require('platform');
 const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
 const errors = require('errors').factory;
 const isAdminKey = require('middleware/src/isAdminKey.ts').default;
+const { isPlatformNoAnswer } = require('storages/interfaces/platformStorage/noAnswer.ts');
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { getLogger } = require('@pryv/boiler');
@@ -111,6 +112,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       }
       await platform.setDnsRecord(subdomain, records);
     } catch (err) {
+      // The platform database did not answer: 503 with Retry-After (error middleware).
+      if (isPlatformNoAnswer(err)) return next(err);
       const message = err instanceof Error ? err.message : String(err);
       return res.status(500).json({
         error: { id: 'unexpected-error', message: 'Failed to persist DNS record: ' + message }
@@ -143,6 +146,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       }
       await platform.deleteDnsRecord(subdomain);
     } catch (err) {
+      if (isPlatformNoAnswer(err)) return next(err);
       const message = err instanceof Error ? err.message : String(err);
       return res.status(500).json({
         error: { id: 'unexpected-error', message: 'Failed to delete DNS record: ' + message }

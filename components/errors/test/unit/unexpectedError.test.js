@@ -97,6 +97,53 @@ describe('[UNXS] a statement stopped by the database time limit', function () {
   });
 });
 
+describe('[UNXP] a platform read that got no answer (leader change)', function () {
+  function noAnswer () {
+    return Object.assign(new Error('rqlite query got no result at level default: not leader'), { name: 'RqliteNoAnswerError' });
+  }
+
+  it('[UNXP1] answers 503 api-unavailable with Retry-After: 2, the source kept as innerError, its text not public', function () {
+    const source = noAnswer();
+    const err = factory.unexpectedError(source);
+    assert.strictEqual(err.id, ErrorIds.ApiUnavailable);
+    assert.strictEqual(err.httpStatus, 503);
+    assert.strictEqual(err.httpHeaders?.['Retry-After'], '2');
+    assert.strictEqual(err.innerError, source);
+    assert.ok(!JSON.stringify(errorHandling.getPublicErrorData(err)).includes('rqlite'));
+  });
+
+  it('[UNXP2] wrapped (innerError, cause) it maps the same; mapped once, it is kept as it is', function () {
+    const wrapped = factory.unexpectedError(Object.assign(new Error('Error from data store "local"'), { innerError: noAnswer() }));
+    assert.strictEqual(wrapped.httpStatus, 503);
+    assert.strictEqual(factory.unexpectedError(new Error('x', { cause: noAnswer() })).httpStatus, 503);
+    const once = factory.unexpectedError(noAnswer());
+    assert.strictEqual(factory.unexpectedError(once), once);
+  });
+
+  it('[UNXP3] is logged at warn, never at error level', function () {
+    const err = factory.unexpectedError(noAnswer());
+    const logged = { debug: [], info: [], warn: [], error: [] };
+    const logger = Object.fromEntries(Object.keys(logged).map((level) => [level, (msg, meta) => logged[level].push({ msg, meta })]));
+    errorHandling.logError(err, { url: '/alice/events', method: 'GET' }, logger);
+    assert.strictEqual(logged.warn.length, 1);
+    assert.strictEqual(logged.error.length + logged.info.length, 0);
+  });
+
+  it('[UNXP4] another error named otherwise stays a 500', function () {
+    assert.strictEqual(factory.unexpectedError(new Error('rqlite query failed (500): boom')).httpStatus, 500);
+  });
+});
+
+describe('[UNSO] an operation the server or a data store does not support', function () {
+  it('[UNSO1] answers 501 with the catalogue id unsupported-operation', function () {
+    const err = factory.unsupportedOperation('streams.create');
+    assert.strictEqual(err.id, 'unsupported-operation');
+    assert.strictEqual(err.id, ErrorIds.UnsupportedOperation);
+    assert.strictEqual(err.httpStatus, 501);
+    assert.strictEqual(err.message, 'streams.create');
+  });
+});
+
 describe('[PGUG] a storage refusal for an account erased while the request ran', function () {
   function refused (code) {
     const err = new Error(code === 'PU001' ? 'user id "u1" is not in the users index: row refused' : 'user directory erased: u1');
