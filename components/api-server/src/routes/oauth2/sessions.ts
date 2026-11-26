@@ -20,7 +20,9 @@
  * user, permission shape all server-controlled).
  *
  * Also: the code-exchange read-back (`resolveAccess`), the orphan removal
- * (`revokeAccessLocal`), the DPoP binding (`bindAccessDpop`), the user id /
+ * (`revokeAccessLocal`, shared with the master's sweep as
+ * `revokeOAuthSessionLocal` in methods/helpers/oauthSessionRemoval.ts), the
+ * DPoP binding (`bindAccessDpop`), the user id /
  * username resolution and the subject a registry client sees.
  */
 
@@ -38,10 +40,12 @@ import { isAddressAliasShape } from 'business/src/users/aliasShape.ts';
 import { bindableAddressAliases, consentAddressAliases } from '../../methods/helpers/addressAliases.ts';
 import { canonicalStreamId } from 'mall/src/helpers/storeDataUtils.ts';
 import { withSessionSelfRevoke, accessesRepo, samePermissionKeys, SESSION_NAME_PREFIX, DERIVED_DEVICE_PREFIX } from './types.ts';
-import { notifyScopedAccessChange, releaseAliasesIfUnused } from '../../methods/helpers/accessDeletion.ts';
+import { notifyScopedAccessChange } from '../../methods/helpers/accessDeletion.ts';
+import { findOAuthSessionAccessIn, revokeOAuthSessionLocal } from '../../methods/helpers/oauthSessionRemoval.ts';
+import type { SessionRef } from '../../methods/helpers/oauthSessionRemoval.ts';
 import { deleteAccessChainRecorded } from '../../methods/helpers/accessWriteAudit.ts';
 import { effectiveSessionPermissions } from '../../methods/helpers/oauthSessionReconcile.ts';
-import { reindexAccessNonFatal, tombstoneAccessesNonFatal } from 'platform/src/accessIndex.ts';
+import { reindexAccessNonFatal } from 'platform/src/accessIndex.ts';
 import { getExtension, frozenGrantState } from 'oauth2/src/extension.ts';
 import { getClient as getOAuthClient, issuedBeforeClientRevoke } from 'oauth2/src/storage.ts';
 import { clientStamp } from 'oauth2/src/clientMetadataId.ts';
@@ -480,14 +484,8 @@ export function createSessions (env: GlueEnv) {
   // core), and deletes it when the exchange fails after the code was
   // consumed. Storage-direct on this core, which is the issuing core.
   // ---------------------------------------------------------------------
-  // Only an OAuth session access of that client qualifies: a code row names an
-  // access by id, and must not be able to reach any other access of the user.
   async function findOAuthSessionAccess (userId: string, username: string, accessId: string, clientId: string): Promise<DataGrant | null> {
-    const accessesRepository = accessesRepo(storageLayer, 'oauth2');
-    const access = await fromCallback((cb: (e: unknown, r: DataGrant | null) => void) =>
-      accessesRepository.findOne({ id: userId, username }, { id: accessId }, null, cb));
-    if (access == null || access.type !== 'app' || access.name !== 'oauth:' + clientId) return null;
-    return access;
+    return await findOAuthSessionAccessIn(storageLayer, userId, username, accessId, clientId);
   }
 
   async function resolveAccess ({ userId, username, accessId, clientId }: {
@@ -504,23 +502,8 @@ export function createSessions (env: GlueEnv) {
     };
   }
 
-  async function revokeAccessLocal ({ userId, username, accessId, clientId }: {
-    userId: string; username: string; accessId: string; clientId: string;
-  }): Promise<boolean> {
-    const accessesRepository = accessesRepo(storageLayer, 'oauth2.revokeAccessLocal');
-    const access = await findOAuthSessionAccess(userId, username, accessId, clientId);
-    if (access == null) return false;
-    const user = { id: userId, username };
-    await fromCallback((cb: (e: unknown, r?: unknown) => void) => accessesRepository.delete(user, { id: accessId }, cb));
-    // The cache validates tokens on `expires` only, never `deleted`.
-    cache.unsetUserData(userId);
-    // The mint indexed it: the breach-scope index keeps it as deleted.
-    await tombstoneAccessesNonFatal(username, [access as Parameters<typeof tombstoneAccessesNonFatal>[1][number]], Date.now() / 1000);
-    // Its alias is the grant's: kept while the grant (or another session)
-    // still carries it, released if this session was its last holder.
-    if (typeof access.alias === 'string') await releaseAliasesIfUnused(user, [access.alias]);
-    pubsub.notifications.emit(username, USERNAME_BASED_ACCESSES_CHANGED);
-    return true;
+  async function revokeAccessLocal (params: SessionRef): Promise<boolean> {
+    return await revokeOAuthSessionLocal(storageLayer, params);
   }
 
   // ---------------------------------------------------------------------

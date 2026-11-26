@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### OAuth: one removal for an unexchanged session
+
+- New `components/api-server/src/methods/helpers/oauthSessionRemoval.ts`: `revokeOAuthSessionLocal(storageLayer,
+  { userId, username, accessId, clientId })`, the former body of `revokeAccessLocal` in `routes/oauth2/sessions.ts`
+  (find the client's OAuth session access, delete it, bust the user's cache, tombstone the breach-scope index row,
+  release the alias if this session was its last holder, notify), which now calls it. `bin/master.js`'s
+  expired-code orphan sweep calls it instead of its own find and bare delete (required inside the call, so a load
+  failure is a failed revoke of the tick; the module does not load the OAuth glue). From the master, the cache bust
+  and the notification reach the workers over the pub/sub broker.
+- A failed alias release after the delete no longer fails the removal: it is logged
+  (`oauth2:session-removal`, with the first 16 hex characters of the alias's SHA-256), since nothing retries it.
+- `revokeExpiredCodeOrphans`: `revokeLocal` returns whether the access was there; the `[oauth-orphan-revoke]` count
+  leaves out accesses already gone.
+
+### Errors: data store errors of another copy of `@pryv/datastore`
+
+- `factory.unexpectedError` maps an error of another copy of `@pryv/datastore` (marked with
+  `Symbol.for('@pryv/datastore:error')`, or named `PryvDataStoreError`, with a string `id`) to the API error the
+  core's own copy would have made, through the same factory functions. Every path that converts a non-API error
+  goes through it (the mall's `throwAPIError`, `API.ts`, `MethodContext`).
+
 ### CMC: one grant per relationship
 
 - New `components/cmc/src/replacedGrants.ts`: `endReplacedGrants` (accepter side, called by
