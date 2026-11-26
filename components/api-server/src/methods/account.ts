@@ -10,7 +10,7 @@ import type { MethodContext as BaseMethodContext } from 'business/src/MethodCont
 
 const require = createRequire(import.meta.url);
 const { fromCallback } = require('utils');
-const { describeVerificationMail } = require('business/src/emails/mailCapability.ts');
+const { describeVerificationMail, isMailKindSwitchedOn } = require('business/src/emails/mailCapability.ts');
 
 /** The user business object loaded from the users repository — the slice
  *  this pipeline touches. */
@@ -469,11 +469,7 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   async function sendPasswordResetMail (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
     // Skip this step if reset mail is deactivated.
     const emailSettings = getEmail();
-    const isMailActivated = emailSettings.enabled;
-    if (isMailActivated === false ||
-            (isMailActivated != null && isMailActivated.resetPassword === false)) {
-      return next();
-    }
+    if (!isMailKindSwitchedOn(emailSettings, 'resetPassword')) return next();
     // Invariant: addUserBusinessToContext ran earlier in this chain.
     const account = context.userBusiness!;
     // An address the platform reserves for another account (it changed hands,

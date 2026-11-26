@@ -8,7 +8,7 @@ import { getLogger } from '@pryv/boiler';
 import type { ConfigLike } from '@pryv/boiler';
 import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
-import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { describeMailCapability, isMailKindSwitchedOn } from 'business/src/emails/mailCapability.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { isStoredEmailHeldElsewhere } from 'business/src/emails/heldAddress.ts';
 import { sendmail, isLoggedMailFailure } from './mailing.ts';
@@ -25,7 +25,6 @@ const logger = getLogger('methods:mfa');
 
 type UserRef = { id: string; username: string };
 type EmailSettings = Parameters<typeof sendmail>[0] & {
-  enabled?: unknown;
   mfaChangeTemplate?: string;
 };
 
@@ -57,8 +56,7 @@ export function notifyMfaChange (config: ConfigLike, user: UserRef, change: MfaC
 async function sendMfaChangeNotice (config: ConfigLike, user: UserRef, change: MfaChange): Promise<void> {
   const emailSettings = config.get('services:email') as EmailSettings | null | undefined;
   if (emailSettings == null || !describeMailCapability(config).ok) return;
-  const enabled = emailSettings.enabled;
-  if (enabled != null && typeof enabled === 'object' && (enabled as { mfaChange?: unknown }).mfaChange === false) return;
+  if (!isMailKindSwitchedOn(emailSettings, 'mfaChange')) return;
   const account = await (await getUsersRepository()).getUserByUsername(user.username);
   const email = account?.email;
   if (typeof email !== 'string' || email === '') return;
