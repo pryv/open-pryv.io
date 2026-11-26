@@ -792,7 +792,7 @@ call that would pass it; what an account already holds stays readable.
   TLS and ACME keys under a key derived for that purpose from `letsEncrypt.atRestKey` (the
   configured value is unchanged). A core before 2.0.0-rc.86 cannot read these rows, and going back
   to such a release after this one has run is not possible without restoring them; going back to
-  2.0.0-rc.86 or 2.0.0-rc.87 stays possible (they read the new envelope). Rows already
+  2.0.0-rc.86 to 2.0.0-rc.89 stays possible (they read the new envelope). Rows already
   stored stay readable and are rewritten in the new envelope when written again (the ACME account
   key once, at the next account check).
 
