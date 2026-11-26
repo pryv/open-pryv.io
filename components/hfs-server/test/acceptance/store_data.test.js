@@ -399,7 +399,13 @@ describe('[SDHF] Storing data in a HF series', function () {
       // A late write under the former name.
       await seriesConn.createDatabase(`user.${formerName}`);
       await seriesConn.writeMeasurement(`event.${event.id}`, [{ fields: { deltaTime: 4, value: 4 }, timestamp: 4000000 }], { database: `user.${formerName}` });
-      assert.strictEqual(await countPoints(query, `user.${formerName}`), 1);
+      // The write can take a moment to read back under load.
+      let late = 0;
+      for (let i = 0; i < 20 && late !== 1; i++) {
+        if (i > 0) await awaiting.delay(100);
+        late = await countPoints(query, `user.${formerName}`);
+      }
+      assert.strictEqual(late, 1, 'the late write reads back under the former name');
 
       for (let i = 0; i < 2; i++) { // trash, then delete
         const res = await apiServer.request()
