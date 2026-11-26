@@ -15,8 +15,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * [MPKV] bin/migrate-platform.js copies every platform row family between the
  * rqlite and PostgreSQL engines, values unchanged: OAuth clients and grants,
  * revocation lists, the erasure ledger, the access index, external-id
- * namespaces and holds, TTL state (expired rows included) and windowed
- * counters, plus any family it has no typed copy for. Both engines are the
+ * namespaces and holds, the setup state and administrator roles, TTL state
+ * (expired rows included) and windowed counters, plus any family it has no
+ * typed copy for. Both engines are the
  * real ones, wiped before and after (as the PlatformDB conformance suites do).
  */
 
@@ -74,6 +75,9 @@ describe('[MPKV] bin/migrate-platform.js: every platform row family', function (
     // A family this tool has no typed copy for, values with quotes and non-ASCII.
     await db.setPlatformKv('some-future-family/k-' + suffix, 'a "quoted" value, é, ✓');
     await db.setPlatformKv('lone-key-' + suffix, '{"not":"re-encoded" }');
+    // Setup state and administrator roles (platform KV, no TTL).
+    await db.setPlatformKv('setup/state', JSON.stringify({ state: 'ready', createdAt: now, createdBy: 'core-a', via: 'fresh', readyAt: now, readyBy: 'u-' + suffix }));
+    await db.setPlatformKv('admin-role/u-' + suffix, JSON.stringify({ grants: [{ role: 'owner', scope: 'platform', grantedAt: now, grantedBy: 'setup', via: 'setup' }], updatedAt: now }));
     // Typed families keep working alongside.
     await db.setUserUniqueField('user-' + suffix, 'email', suffix + '@example.com');
     await db.setUserCore('user-' + suffix, 'core-a');
@@ -91,10 +95,15 @@ describe('[MPKV] bin/migrate-platform.js: every platform row family', function (
   it('[MPK1] rqlite -> postgresql -> rqlite keeps every row, values unchanged', async () => {
     await seed(rq);
     const source = await allRows(rq);
-    assert.strictEqual(source.length, 15);
+    assert.strictEqual(source.length, 17);
 
     await migrate(rq, pg, { dryRun: false, force: false, log: quiet().log });
     assert.deepStrictEqual(await allRows(pg), source);
+    // The setup state and role rows read back through the administration module.
+    const { readSetupState } = require('business/src/admin/setupState.ts');
+    const { readRoleRow } = require('business/src/admin/roles.ts');
+    assert.strictEqual((await readSetupState(pg)).state, 'ready');
+    assert.strictEqual((await readRoleRow(pg, 'u-' + suffix)).grants[0].role, 'owner');
     // Read back through the typed paths the features use.
     assert.strictEqual(await pg.getCoreRow('ext-id/', 'nt/tok-' + suffix), 'core-a');
     assert.notStrictEqual(await pg.getAccessState('oauth-rt/core-a/rt-' + suffix), null);
@@ -129,13 +138,15 @@ describe('[MPKV] bin/migrate-platform.js: every platform row family', function (
       'ext-id/': 1,
       'access-state/': 2,
       'counter/': 1,
-      'some-future-family/': 1
+      'some-future-family/': 1,
+      'setup/': 1,
+      'admin-role/': 1
     };
     for (const [family, count] of Object.entries(expected)) {
       assert.match(text, new RegExp('would migrate +' + count + ' {2}platform rows ' + family + '$', 'm'), family);
     }
     assert.match(text, /would migrate +1 {2}platform rows \(other keys\)$/m);
-    assert.match(text, /15 record\(s\) would be migrated/);
+    assert.match(text, /17 record\(s\) would be migrated/);
   });
 
   it('[MPK4] a fresh target is accepted; the engine\'s own schema marker is neither counted nor copied', async () => {

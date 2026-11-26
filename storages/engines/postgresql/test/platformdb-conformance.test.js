@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const helpers = require('../../../test/helpers');
 const conformanceTests = require('platform/test/conformance/PlatformDB.test').default;
+const adminStoreConformance = require('business/test/conformance/adminStore.js').default;
 
 // Exercises the PostgreSQL PlatformDB implementation directly (platform_kv
 // table), independently of which platform engine the running config selects
@@ -19,6 +20,13 @@ describe('[PGPF] PostgreSQL PlatformDB conformance', function () {
     if (process.env.STORAGE_ENGINE !== 'postgresql') return this.skip();
   });
   conformanceTests(async () => {
+    await helpers.dependencies.init();
+    const { DBpostgresql } = require('../src/DBpostgresql.ts');
+    const db = new DBpostgresql();
+    await db.init();
+    return db;
+  });
+  adminStoreConformance(async () => {
     await helpers.dependencies.init();
     const { DBpostgresql } = require('../src/DBpostgresql.ts');
     const db = new DBpostgresql();

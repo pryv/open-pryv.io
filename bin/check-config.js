@@ -501,6 +501,15 @@ try {
   warnings.push(`hostedSites could not be checked here (${err.message}); master.js still checks it at boot.`);
 }
 
+// Setup and administration keys (portal.site names a configured hosted site,
+// setup.*, auth.adminAccessKeyScope, admin.session.*): the boot-time rule.
+try {
+  const { describeAdminConfig } = require('../components/business/src/admin/config.ts');
+  for (const p of describeAdminConfig(configReader).problems) problems.push(p.message);
+} catch (err) {
+  warnings.push(`the setup and administration keys could not be checked here (${err.message}); boot still checks them.`);
+}
+
 // adapterRoutes: shape only (the `adapter` account check needs the database;
 // master.js runs it at boot).
 try {
