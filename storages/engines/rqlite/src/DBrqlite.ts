@@ -908,6 +908,11 @@ class DBrqlite {
     );
     return rows.map((r) => ({ key: r.key, value: r.value }));
   }
+
+  async listAllPlatformKvEntries (): Promise<Array<{ key: string, value: string }>> {
+    const rows = await this.query('SELECT key, value FROM keyValue', undefined, 'strong');
+    return rows.map((r) => ({ key: r.key, value: r.value }));
+  }
 }
 
 // SQL LIKE pattern escape — `_` and `%` are wildcards; defend at the boundary

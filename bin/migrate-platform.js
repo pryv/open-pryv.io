@@ -13,12 +13,13 @@
 //   - Adopt the single-core diskless shape:  rqlite -> postgresql
 //   - Go multi-core from a diskless deploy:  postgresql -> rqlite
 //
-// Copies every platform record group through the PlatformDB interface:
-// user unique/indexed fields, user-core map, core infos, DNS records,
-// ACME account, TLS certificates, observability values, mail templates,
-// invitation tokens. Access-request states are ephemeral (TTL-bounded
-// polling state) and are intentionally NOT migrated — run the migration
-// with the master process stopped and they are irrelevant.
+// Copies every platform row through the PlatformDB interface: user
+// unique/indexed fields, user-core map, core infos, DNS records, ACME
+// account, TLS certificates, observability values, mail templates and
+// invitation tokens through their typed methods; then every other row as
+// stored (OAuth clients and grants, revocation lists, erasure ledger,
+// access index, external-id namespaces and holds, TTL state, windowed
+// counters, and any family added later).
 //
 // Requirements:
 //   - Stop the master process first (no concurrent platform writes).
@@ -34,48 +35,50 @@
 
 const path = require('path');
 
-if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
-  printUsage(process.stdout);
-  process.exit(0);
-}
-
-require('@pryv/boiler').init({
-  appName: 'migrate-platform',
-  baseFilesDir: path.resolve(__dirname, '../'),
-  baseConfigDir: path.resolve(__dirname, '../config/'),
-  extraConfigs: [{
-    scope: 'default-paths',
-    file: path.resolve(__dirname, '../config/plugins/paths-config.js')
-  }, {
-    pluginAsync: require('../config/plugins/systemStreams')
-  }, {
-    plugin: require('../config/plugins/core-identity')
-  }]
-});
-
 const ENGINES = ['rqlite', 'postgresql'];
 
-(async () => {
-  try {
-    const args = parseArgs(process.argv.slice(2));
-    if (!ENGINES.includes(args.from) || !ENGINES.includes(args.to) || args.from === args.to) {
-      printUsage(process.stderr);
+function main () {
+  if (process.argv.slice(2).some(a => a === '--help' || a === '-h')) {
+    printUsage(process.stdout);
+    process.exit(0);
+  }
+
+  require('@pryv/boiler').init({
+    appName: 'migrate-platform',
+    baseFilesDir: path.resolve(__dirname, '../'),
+    baseConfigDir: path.resolve(__dirname, '../config/'),
+    extraConfigs: [{
+      scope: 'default-paths',
+      file: path.resolve(__dirname, '../config/plugins/paths-config.js')
+    }, {
+      pluginAsync: require('../config/plugins/systemStreams')
+    }, {
+      plugin: require('../config/plugins/core-identity')
+    }]
+  });
+
+  (async () => {
+    try {
+      const args = parseArgs(process.argv.slice(2));
+      if (!ENGINES.includes(args.from) || !ENGINES.includes(args.to) || args.from === args.to) {
+        printUsage(process.stderr);
+        process.exit(1);
+      }
+
+      const { getConfig } = require('@pryv/boiler');
+      const config = await getConfig();
+
+      const source = await buildPlatformDB(args.from, config);
+      const target = await buildPlatformDB(args.to, config);
+
+      await migrate(source, target, args);
+      process.exit(0);
+    } catch (err) {
+      console.error('migrate-platform failed: ' + (err && err.message ? err.message : err));
       process.exit(1);
     }
-
-    const { getConfig } = require('@pryv/boiler');
-    const config = await getConfig();
-
-    const source = await buildPlatformDB(args.from, config);
-    const target = await buildPlatformDB(args.to, config);
-
-    await migrate(source, target, args);
-    process.exit(0);
-  } catch (err) {
-    console.error('migrate-platform failed: ' + (err && err.message ? err.message : err));
-    process.exit(1);
-  }
-})();
+  })();
+}
 
 async function buildPlatformDB (engine, config) {
   if (engine === 'rqlite') {
@@ -101,7 +104,7 @@ async function buildPlatformDB (engine, config) {
   return db;
 }
 
-async function migrate (source, target, { dryRun, force }) {
+async function migrate (source, target, { dryRun, force, log = console.log }) {
   const verb = dryRun ? 'would migrate' : 'migrating';
 
   // Refuse to write into a non-empty target unless forced — a stale
@@ -117,7 +120,7 @@ async function migrate (source, target, { dryRun, force }) {
 
   let total = 0;
   const report = (group, count) => {
-    console.log(`${verb} ${String(count).padStart(5)}  ${group}`);
+    log(`${verb} ${String(count).padStart(5)}  ${group}`);
     total += count;
   };
 
@@ -161,7 +164,7 @@ async function migrate (source, target, { dryRun, force }) {
   for (const row of await source.getAllMailTemplates()) {
     const { ok, problems } = validateMailTemplate(row);
     if (ok) mailTemplates.push(row);
-    else console.log(`skipping mail template ${describe(row)}: ${problems.join('; ')}`);
+    else log(`skipping mail template ${describe(row)}: ${problems.join('; ')}`);
   }
   if (!dryRun) for (const { type, lang, part, pug } of mailTemplates) await target.setMailTemplate(type, lang, part, pug);
   report('mail templates', mailTemplates.length);
@@ -175,11 +178,58 @@ async function migrate (source, target, { dryRun, force }) {
   }
   report('invitation tokens', invitations.length);
 
-  console.log(`${dryRun ? 'DRY RUN — ' : ''}${total} record(s) ${dryRun ? 'would be migrated' : 'migrated'}.`);
+  // Every other row, copied as stored (key and value unchanged), whatever
+  // family it belongs to: OAuth clients and revocation lists, the erasure
+  // ledger, the access index, external-id namespaces and holds (the
+  // `claimCoreRow` families live in the same table), and any family added
+  // later. Listing the whole table instead of known prefixes is what keeps a
+  // new family from being left behind.
+  // TTL state (`access-state/`) is copied too, expired rows included: it holds
+  // durable grants (OAuth refresh tokens), single-use and replay markers that
+  // must stay spent, and expired OAuth codes the orphan sweep still reads to
+  // revoke the access minted for them. Windowed counters (`counter/`) are
+  // copied so a send budget is not reset by the switch. The target's own
+  // sweeps remove what has expired.
+  const generic = new Map();
+  for (const row of await source.listAllPlatformKvEntries()) {
+    if (isTypedFamily(row.key)) continue;
+    const family = familyOf(row.key);
+    if (!generic.has(family)) generic.set(family, []);
+    generic.get(family).push(row);
+  }
+  for (const family of [...generic.keys()].sort()) {
+    const rows = generic.get(family);
+    if (!dryRun) for (const { key, value } of rows) await target.setPlatformKv(key, value);
+    report('platform rows ' + family, rows.length);
+  }
+
+  log(`${dryRun ? 'DRY RUN: ' : ''}${total} record(s) ${dryRun ? 'would be migrated' : 'migrated'}.`);
   if (!dryRun) {
-    console.log('Done. Flip `storages.platform.engine` in your config and restart the master process.');
+    log('Done. Flip `storages.platform.engine` in your config and restart the master process.');
   }
 }
+
+// Families copied above through their typed methods (mail templates are
+// filtered there, so they must not be copied again as raw rows).
+const TYPED_PREFIXES = ['user-unique/', 'user-indexed/', 'user-core/', 'core-info/', 'dns-record/',
+  'tls-cert/', 'observability/', 'mail-template/', 'invitation/'];
+const TYPED_KEYS = ['tls-acme-account'];
+
+function isTypedFamily (key) {
+  return TYPED_KEYS.includes(key) || TYPED_PREFIXES.some((p) => key.startsWith(p));
+}
+
+// The report groups rows by their first key segment; keys without one are
+// counted together (a key is never printed, it may carry a token).
+function familyOf (key) {
+  const slash = key.indexOf('/');
+  return slash > 0 ? key.slice(0, slash + 1) : '(other keys)';
+}
+
+module.exports = { migrate };
+
+// Run as a command; required (tests), it only exports `migrate`.
+if (require.main === module) main();
 
 function parseArgs (argv) {
   const out = { from: null, to: null, dryRun: false, force: false };
@@ -201,8 +251,9 @@ function printUsage (stream) {
     '\n' +
     'Copies all platform data (user fields, user-core map, core infos, DNS\n' +
     'records, ACME account, TLS certificates, observability values, mail\n' +
-    'templates, invitation tokens) from one platform engine to the other.\n' +
-    'Access-request states (ephemeral) are not migrated.\n' +
+    'templates, invitation tokens, and every other platform row as stored:\n' +
+    'OAuth clients and grants, erasure ledger, access index, external ids,\n' +
+    'TTL state, counters) from one platform engine to the other.\n' +
     '\n' +
     'Stop the master process first; keep the source engine\'s backing store\n' +
     'reachable (rqlited / PostgreSQL). Run before flipping\n' +

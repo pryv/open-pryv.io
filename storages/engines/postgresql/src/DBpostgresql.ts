@@ -648,6 +648,11 @@ class DBpostgresql {
     const rows = await this.#getWithPrefix(prefix);
     return rows.map((r) => ({ key: r.key, value: r.value }));
   }
+
+  async listAllPlatformKvEntries (): Promise<Array<{ key: string, value: string }>> {
+    const res = await this.db.query('SELECT key, value FROM platform_kv');
+    return (res.rows as Row[]).map((r) => ({ key: r.key, value: r.value }));
+  }
 }
 
 // `_` and `%` are SQL LIKE wildcards: rejected in the caller's prefix (same
