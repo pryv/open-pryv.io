@@ -366,6 +366,11 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     assert.equal(mine.username, user.username);
     assert.equal((await coreRequest.get('/system/admin/roles').set(asSession(token))).status, 200);
     assert.equal((await coreRequest.delete('/system/admin/roles/nobody-here').set('authorization', adminKey)).status, 404);
+    const last = await coreRequest.delete('/system/admin/roles/' + user.userId).set('authorization', adminKey);
+    assert.equal(last.status, 400, 'the last owner: ' + JSON.stringify(last.body));
+    assert.equal(last.body.error.data.id, 'last-owner');
+    assert.notEqual(await roles.readRoleRow(db, user.userId), null, 'kept');
+    await roles.grantRole(db, 'adms-other-owner', { role: 'owner', scope: 'platform', grantedBy: 'test', via: 'grant', now: Date.now() });
     const revoked = await coreRequest.delete('/system/admin/roles/' + user.userId).set('authorization', adminKey);
     assert.equal(revoked.status, 200, JSON.stringify(revoked.body));
     assert.equal((await coreRequest.get('/system/admin/session').set(asSession(token))).status, 404);
@@ -452,5 +457,74 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     } finally {
       if (audit != null) audit.eventForUser = original;
     }
+  });
+
+  // --------------------- built-in setup page ----------------- //
+
+  const PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+
+  it('[ADMS19] GET /system/setup/: the page, its script and style while pending, with the strict CSP and no-store; no inline script, no external resource; 404 once ready', async () => {
+    await pending();
+    const page = await coreRequest.get('/system/setup/');
+    assert.equal(page.status, 200);
+    assert.match(page.headers['content-type'], /^text\/html/);
+    assert.equal(page.headers['content-security-policy'], PAGE_CSP);
+    assert.equal(page.headers['cache-control'], 'no-store');
+    assert.equal(page.headers['x-content-type-options'], 'nosniff');
+    assert.equal(page.headers['x-frame-options'], 'DENY');
+    const html = page.text;
+    assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), 'no inline script');
+    assert.ok(!/\son[a-z]+\s*=/i.test(html), 'no inline event handler');
+    assert.ok(!/<style/i.test(html) && !/\sstyle\s*=/i.test(html), 'no inline style');
+    assert.ok(!/(src|href)\s*=\s*"(https?:)?\/\//i.test(html), 'no external resource');
+    for (const [file, type] of [['setup.js', /^text\/javascript/], ['setup.css', /^text\/css/]]) {
+      const res = await coreRequest.get('/system/setup/' + file);
+      assert.equal(res.status, 200, file);
+      assert.match(res.headers['content-type'], type);
+      assert.equal(res.headers['content-security-policy'], PAGE_CSP);
+      assert.equal(res.headers['cache-control'], 'no-store');
+    }
+    const bare = await coreRequest.get('/system/setup').redirects(0);
+    assert.equal(bare.status, 301);
+    assert.equal(bare.headers.location, 'setup/');
+    await setup.markReady(db, { by: 'admin-key', now: Date.now() });
+    for (const p of ['/system/setup/', '/system/setup/setup.js', '/system/setup/setup.css']) {
+      assert.equal((await coreRequest.get(p)).status, 404, p);
+    }
+  });
+
+  it('[ADMS20] GET /system/setup/checks: the checks summary for the setup session or the admin key, nothing secret in it; 404 otherwise', async () => {
+    const { token } = await openSetupSession();
+    assert.equal((await coreRequest.get('/system/setup/checks')).status, 404);
+    const res = await coreRequest.get('/system/setup/checks').set(asSetup(token));
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.headers['cache-control'], 'no-store');
+    const ids = res.body.checks.map((c) => c.id);
+    for (const id of ['config', 'topology', 'certificates', 'migrations', 'mfa', 'portal']) assert.ok(ids.includes(id), id);
+    for (const c of res.body.checks) assert.ok(['ok', 'info', 'warn', 'blocking'].includes(c.status), c.id);
+    assert.ok(!JSON.stringify(res.body).includes(adminKey), 'no admin key in the checks');
+    assert.equal((await coreRequest.get('/system/setup/checks').set('authorization', adminKey)).status, 200);
+  });
+
+  it('[ADMS21] the setup page signs in with its app id from the core\'s own origin with a setup session only', async () => {
+    const { token } = await openSetupSession();
+    const user = await freshUser();
+    const own = 'http://' + coreRequest.get('/').url.split('/')[2];
+    const login = (headers) => {
+      let r = coreRequest.post('/' + user.username + '/auth/login');
+      for (const [k, v] of Object.entries(headers)) r = r.set(k, v);
+      return r.send({ username: user.username, password: PASSWORD, appId: 'pryv-setup-page' });
+    };
+    assert.equal((await login({ origin: own })).status, 401, 'no setup session: the app id is not trusted');
+    assert.equal((await login({ origin: 'https://evil.example.net', ...asSetup(token) })).status, 401, 'a foreign origin');
+    assert.equal((await login({ origin: own, ...asSetup('A'.repeat(43)) })).status, 401, 'an unknown setup session');
+    const ok = await login({ origin: own, ...asSetup(token) });
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(typeof ok.body.token, 'string');
+    // the page's flow: that token makes the account the first administrator
+    assert.equal((await coreRequest.post('/system/setup/first-admin').set(asSetup(token)).set('origin', own)
+      .send({ username: user.username, personalToken: ok.body.token })).status, 200);
+    await setup.markReady(db, { by: 'admin-key', now: Date.now() });
+    assert.equal((await login({ origin: own, ...asSetup(token) })).status, 401, 'once ready');
   });
 });

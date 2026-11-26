@@ -4,8 +4,14 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
+import * as nodeFs from 'node:fs';
+import * as nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as storages from 'storages';
+import type { AdminStore } from 'business/src/admin/store.ts';
 import type { PryvRequest } from './_types.ts';
 import type { Application, Response, NextFunction } from 'express';
+import { readSetupState } from 'business/src/admin/setupState.ts';
 import type { AdminSubject } from 'middleware/src/adminAuth.ts';
 import type { AdminPersonal } from '../methods/systemAdmin.ts';
 import { factory as errors } from 'errors';
@@ -20,7 +26,9 @@ import { platform } from 'platform';
  * Setup, administrator sessions, roles and claim codes. The /system gate
  * (system-permissions.ts) authenticated the caller first.
  *
+ *   GET    /system/setup/                    public, the built-in setup page (pending only)
  *   GET    /system/setup/status              public
+ *   GET    /system/setup/checks              setup session, admin key (setup:read)
  *   POST   /system/setup/session { code }    public, 10 tries per 15 min per core
  *   POST   /system/setup/first-admin         setup session + { username, personalToken }
  *   POST   /system/setup/finish              setup session or admin key
@@ -49,6 +57,36 @@ type AppLike = {
 type AdminRequest = PryvRequest & { adminSubject?: AdminSubject };
 
 const TOKEN_MAX_LENGTH = 512;
+
+/**
+ * Headers of the built-in setup page: its own script and style only, calls
+ * to its own origin only, never framed, never cached. `same-origin` keeps
+ * the `Origin` header of the page's own calls (a `no-referrer` policy would
+ * turn it into `null`).
+ */
+export const SETUP_PAGE_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+const SETUP_PAGE_HEADERS = Object.freeze({
+  'Content-Security-Policy': SETUP_PAGE_CSP,
+  'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'same-origin',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin'
+});
+
+type SetupPageFile = { name: string; type: string; body: Buffer };
+
+/** The page's files, read once (they ship with the release). */
+function loadSetupPage (): { index: SetupPageFile; script: SetupPageFile; style: SetupPageFile } {
+  const dir = nodePath.join(nodePath.dirname(fileURLToPath(import.meta.url)), 'setup-page');
+  const read = (name: string, type: string): SetupPageFile => ({ name, type, body: nodeFs.readFileSync(nodePath.join(dir, name)) });
+  return {
+    index: read('index.html', 'text/html; charset=utf-8'),
+    script: read('setup.js', 'text/javascript; charset=utf-8'),
+    style: read('setup.css', 'text/css; charset=utf-8')
+  };
+}
 
 function bareToken (raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
@@ -125,8 +163,32 @@ export default function systemSetup (expressApp: Application, app: AppLike) {
 
   const body = (req: AdminRequest): Record<string, unknown> => (req.body != null && typeof req.body === 'object' ? req.body : {});
 
+  // --------------------- built-in setup page ----------------- //
+  // Static files of this release, served while setup is pending only (404
+  // after), on every host and the bare IP like the rest of /system.
+  async function servePageFile (req: AdminRequest, res: Response, next: NextFunction, file: SetupPageFile) {
+    try {
+      const state = await readSetupState(storages.platformDB as AdminStore);
+      if (state?.state !== 'pending') return next(errors.unknownResource());
+      // `/system/setup` without its slash: the page's relative links need it.
+      if (file.name === 'index.html' && !req.path.endsWith('/')) return res.redirect(301, 'setup/');
+      res.set(SETUP_PAGE_HEADERS);
+      res.type(file.type).status(200).send(file.body);
+    } catch (err) {
+      next(err);
+    }
+  }
+  const page = loadSetupPage();
+  expressApp.get(Paths.System + '/setup/', (req: AdminRequest, res: Response, next: NextFunction) => servePageFile(req, res, next, page.index));
+  expressApp.get(Paths.System + '/setup/setup.js', (req: AdminRequest, res: Response, next: NextFunction) => servePageFile(req, res, next, page.script));
+  expressApp.get(Paths.System + '/setup/setup.css', (req: AdminRequest, res: Response, next: NextFunction) => servePageFile(req, res, next, page.style));
+
   // --------------------- setup ----------------- //
   expressApp.get(Paths.System + '/setup/status', setMethodId('system.setup.getStatus'), (req: AdminRequest, res: Response, next: NextFunction) => {
+    res.set('Cache-Control', 'no-store');
+    call(req, res, next, {}, 200);
+  });
+  expressApp.get(Paths.System + '/setup/checks', setMethodId('system.setup.getChecks'), (req: AdminRequest, res: Response, next: NextFunction) => {
     res.set('Cache-Control', 'no-store');
     call(req, res, next, {}, 200);
   });

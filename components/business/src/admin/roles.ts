@@ -101,9 +101,52 @@ export async function listRoleRows (db: AdminStore): Promise<Array<{ userId: str
   return out;
 }
 
-/** Add a grant (replacing one of the same role and scope). Answers the row written. */
+/**
+ * Refused: the change would leave the platform without a lasting `owner`
+ * grant (one at scope `platform` with no expiry). `bin/admin.js --force`
+ * passes `force` to do it anyway; recovery is then the admin key and a claim
+ * code.
+ */
+export class LastOwnerError extends Error {
+  readonly id = 'last-owner';
+  constructor () {
+    super('This is the last lasting owner grant of the platform: grant the owner role to another account first.');
+    this.name = 'LastOwnerError';
+  }
+}
+
+/** Whether a grant keeps the platform owned: `owner` at scope `platform`, no expiry. */
+function isLastingOwnerGrant (g: RoleGrant): boolean {
+  return isPlainObject(g) && g.role === ROLE_OWNER && g.scope === SCOPE_PLATFORM && g.expiresAt == null;
+}
+
+/** The accounts holding a lasting owner grant. */
+export async function lastingOwners (db: AdminStore): Promise<string[]> {
+  return (await listRoleRows(db))
+    .filter(({ row }) => row.grants.some(isLastingOwnerGrant))
+    .map(({ userId }) => userId);
+}
+
+/**
+ * Throws LastOwnerError when `userId` holds a lasting owner grant now, would
+ * not after the change (`grantsAfter`), and no other account holds one. A
+ * platform with no lasting owner at all (one that predates setup) is not
+ * blocked: there is nothing to protect.
+ */
+async function checkLastOwner (db: AdminStore, userId: string, before: RoleGrant[], after: RoleGrant[]): Promise<void> {
+  if (!before.some(isLastingOwnerGrant)) return;
+  if (after.some(isLastingOwnerGrant)) return;
+  const others = (await lastingOwners(db)).filter((id) => id !== userId);
+  if (others.length === 0) throw new LastOwnerError();
+}
+
+/**
+ * Add a grant (replacing one of the same role and scope). Answers the row
+ * written. Replacing the last lasting owner grant by one that expires throws
+ * LastOwnerError unless `force`.
+ */
 export async function grantRole (db: AdminStore, userId: string, opts: {
-  role: Role; scope: string; grantedBy: string; via: GrantVia; now: number; expiresAt?: number | null;
+  role: Role; scope: string; grantedBy: string; via: GrantVia; now: number; expiresAt?: number | null; force?: boolean;
 }): Promise<RoleRow> {
   if (!isRole(opts.role)) throw new Error('unknown role');
   if (!isScope(opts.scope)) throw new Error('unknown scope');
@@ -113,6 +156,7 @@ export async function grantRole (db: AdminStore, userId: string, opts: {
   const current = await readRoleRow(db, userId);
   const grants = (current?.grants ?? []).filter((g) => !(g.role === grant.role && g.scope === grant.scope));
   grants.push(grant);
+  if (opts.force !== true) await checkLastOwner(db, userId, current?.grants ?? [], grants);
   const row: RoleRow = { ...(current ?? {}), grants, updatedAt: opts.now };
   await db.setPlatformKv(roleKey(userId), JSON.stringify(row));
   return row;
@@ -121,14 +165,17 @@ export async function grantRole (db: AdminStore, userId: string, opts: {
 /**
  * Remove grants: all of them (the row is deleted) when no role is given, else
  * those of that role (and scope, when given). True when something was removed.
+ * Removing the last lasting owner grant of the platform throws LastOwnerError
+ * unless `force`.
  */
-export async function revokeRole (db: AdminStore, userId: string, opts: { role?: string; scope?: string; now: number }): Promise<boolean> {
+export async function revokeRole (db: AdminStore, userId: string, opts: { role?: string; scope?: string; now: number; force?: boolean }): Promise<boolean> {
   const current = await readRoleRow(db, userId);
   if (current == null) return false;
   const keep = opts.role == null
     ? []
     : current.grants.filter((g) => !(g.role === opts.role && (opts.scope == null || g.scope === opts.scope)));
   if (keep.length === current.grants.length) return false;
+  if (opts.force !== true) await checkLastOwner(db, userId, current.grants, keep);
   if (keep.length === 0) {
     await db.deletePlatformKv(roleKey(userId));
   } else {

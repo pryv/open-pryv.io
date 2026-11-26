@@ -115,13 +115,29 @@ function originOf (url: unknown): string | null {
   }
 }
 
-/** The origins a portal call is accepted from (the request's own origin included). */
-export function allowedPortalOrigins (config: ConfigReader, req?: Request): Set<string> {
+/**
+ * The origins of this core itself: the request's own origin (scheme and
+ * `Host`), `core.url` and, in dnsLess, `dnsLess.publicUrl`. What the
+ * built-in setup page is served from.
+ */
+export function ownOrigins (config: ConfigReader, req?: Request): Set<string> {
   const out = new Set<string>();
   const add = (o: string | null) => { if (o != null) out.add(o.toLowerCase()); };
   if (req != null && typeof req.headers.host === 'string') add(originOf(`${req.protocol}://${req.headers.host}`));
   add(originOf(config.get('core:url')));
   if (config.get('dnsLess:isActive') === true) add(originOf(config.get('dnsLess:publicUrl')));
+  return out;
+}
+
+/** Whether `origin` (an `Origin` header value) is one of this core's own origins. */
+export function isOwnOrigin (config: ConfigReader, req: Request, origin: unknown): boolean {
+  return typeof origin === 'string' && origin !== '' && ownOrigins(config, req).has(origin.toLowerCase());
+}
+
+/** The origins a portal call is accepted from (the request's own origin included). */
+export function allowedPortalOrigins (config: ConfigReader, req?: Request): Set<string> {
+  const out = ownOrigins(config, req);
+  const add = (o: string | null) => { if (o != null) out.add(o.toLowerCase()); };
   try {
     add(originOf(portalUrl(config)));
     for (const o of readAdminConfig(config).portal.allowedOrigins) add(originOf(o));

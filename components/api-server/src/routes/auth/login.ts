@@ -13,6 +13,8 @@ const middleware = require('middleware');
 const { setMethodId } = require('middleware');
 const methodCallback = require('../methodCallback.ts').default;
 const Paths = require('../Paths.ts');
+const { getConfigSync } = require('@pryv/boiler');
+const { parseAdminAuthorization, isOwnOrigin } = require('middleware/src/adminAuth.ts');
 
 /**
  * Auth routes.
@@ -55,6 +57,15 @@ export default function (expressApp: ExpressApp, app: AppLike) {
       // some browsers provide origin, some provide only referer
       origin: req.headers.origin || req.headers.referer || ''
     };
+    // The built-in setup page signs the first administrator in: a setup
+    // session sent from this core's own origin (see auth.login).
+    const credential = parseAdminAuthorization(req.headers.authorization);
+    if (credential.kind === 'setup') {
+      Object.assign(req.context as object, {
+        setupSessionToken: credential.token,
+        setupPageOrigin: isOwnOrigin(getConfigSync(), req, req.headers.origin)
+      });
+    }
     api.call(req.context, params, methodCallback(res, next, 200));
   });
   expressApp.post(Paths.Auth + '/logout', setMethodId('auth.logout'), loadAccessMiddleware, function routeLogout (req: PryvRequest, res: Response, next: NextFunction) {

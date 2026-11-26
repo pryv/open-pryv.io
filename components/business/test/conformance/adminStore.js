@@ -169,8 +169,30 @@ export default function adminStoreConformance (getDB) {
       assert.equal(await sessions.renewAdminSession(db, again.token, { now: Date.now(), ttlMs: HOUR }), null, 'an ended session is not renewed');
       // deleting the role row ends every session
       const third = await sessions.createAdminSession(db, { userId, homeCore: 'core-a', mfaAt: null, now: Date.now() + 10, ttlMs: HOUR });
-      assert.equal(await roles.revokeRole(db, userId, { now: Date.now() }), true);
+      assert.equal(await roles.revokeRole(db, userId, { now: Date.now(), force: true }), true);
       assert.equal(await sessions.resolveAdminSession(db, third.token, Date.now()), null);
+    });
+
+    it('[ADKC16] the last lasting owner grant cannot be revoked nor made to expire, unless forced', async () => {
+      const now = Date.now();
+      const grant = (userId, extra = {}) => roles.grantRole(db, userId, { role: 'owner', scope: 'platform', grantedBy: 'setup', via: 'setup', now, ...extra });
+      await grant('cuown1');
+      await assert.rejects(roles.revokeRole(db, 'cuown1', { now }), (err) => err instanceof roles.LastOwnerError && err.id === 'last-owner');
+      await assert.rejects(roles.revokeRole(db, 'cuown1', { role: 'owner', scope: 'platform', now }), roles.LastOwnerError);
+      await assert.rejects(grant('cuown1', { expiresAt: now + HOUR }), roles.LastOwnerError, 'an expiring grant replacing the last lasting one');
+      assert.notEqual(await roles.readRoleRow(db, 'cuown1'), null, 'nothing written');
+      // an owner whose grant expires does not count
+      await grant('cuown2', { expiresAt: now + HOUR });
+      await assert.rejects(roles.revokeRole(db, 'cuown1', { now }), roles.LastOwnerError);
+      // a second lasting owner: either can go, not both
+      await grant('cuown3');
+      assert.equal(await roles.revokeRole(db, 'cuown1', { now }), true);
+      await assert.rejects(roles.revokeRole(db, 'cuown3', { now }), roles.LastOwnerError);
+      assert.deepEqual(await roles.lastingOwners(db), ['cuown3']);
+      // an expiring owner can always go; force removes the last one
+      assert.equal(await roles.revokeRole(db, 'cuown2', { now }), true);
+      assert.equal(await roles.revokeRole(db, 'cuown3', { now, force: true }), true);
+      assert.deepEqual(await roles.lastingOwners(db), []);
     });
 
     it('[ADKC12] claim code: claimed once, the grant written for the account; no plain code stored', async () => {

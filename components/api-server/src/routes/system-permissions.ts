@@ -72,7 +72,11 @@ export const SYSTEM_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
   { method: 'POST', path: '/system/delegation/invite', methodId: null, rule: { auth: 'admin', permission: 'delegation:write', breakGlass: true, accepts: KEY_ONLY } },
   { method: 'POST', path: '/system/delegation/create-account', methodId: null, rule: { auth: 'admin', permission: 'delegation:write', breakGlass: true, accepts: KEY_ONLY } },
   // --- setup --- //
+  { method: 'GET', path: '/system/setup/', methodId: null, rule: { auth: 'public' } },
+  { method: 'GET', path: '/system/setup/setup.js', methodId: null, rule: { auth: 'public' } },
+  { method: 'GET', path: '/system/setup/setup.css', methodId: null, rule: { auth: 'public' } },
   { method: 'GET', path: '/system/setup/status', methodId: 'system.setup.getStatus', rule: { auth: 'public' } },
+  { method: 'GET', path: '/system/setup/checks', methodId: 'system.setup.getChecks', rule: { auth: 'admin', permission: 'setup:read', breakGlass: true, accepts: WITH_SETUP } },
   { method: 'POST', path: '/system/setup/session', methodId: 'system.setup.createSession', rule: { auth: 'public' } },
   { method: 'POST', path: '/system/setup/first-admin', methodId: 'system.setup.createFirstAdmin', rule: { auth: 'admin', permission: 'roles:grant', accepts: SETUP_ONLY } },
   { method: 'POST', path: '/system/setup/finish', methodId: 'system.setup.setReady', rule: { auth: 'admin', permission: 'setup:write', accepts: ['key', 'setup'] } },

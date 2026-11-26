@@ -1094,7 +1094,8 @@ hostedSites: {}
 #                                             # site is HTTPS-only, never
 
 # === PLATFORM-WIDE: administration portal ===
-# The portal is a hosted site (above); `site` names which one (null: no portal configured).
+# The portal is a hosted site (above); `site` names which one (null: no portal configured;
+# the install wizard writes the entry under the name `admin`).
 # Its origin is derived from the name and the topology (<publicUrl>/<site>/ in dnsLess,
 # https://<site>.<dns.domain>/ otherwise). Calls authenticated with a setup or admin session
 # that carry an Origin are accepted from the core's own origin, the portal's, and

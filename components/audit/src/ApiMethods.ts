@@ -113,6 +113,7 @@ const ALL_METHODS = [
   // key, a setup or admin session, or a personal token): no account of this
   // core in the call's context.
   'system.setup.getStatus',
+  'system.setup.getChecks',
   'system.setup.createSession',
   'system.setup.createFirstAdmin',
   'system.setup.setReady',
@@ -252,8 +253,9 @@ const NOT_AUDITED_METHODS = [
   // the unauthenticated lookup, like auth.cores
   'auth.extIdCores',
   // reads of the setup state, an administrator's own session, the role rows
-  // and the portal context
+  // and the portal context, the setup checks summary
   'system.setup.getStatus',
+  'system.setup.getChecks',
   'system.adminSession.get',
   'system.roles.list',
   'system.portalContext.get'

@@ -18,11 +18,12 @@ import {
 import type { LocalKv } from 'business/src/admin/sessions.ts';
 import {
   ROLE_OWNER, SCOPE_PLATFORM, isRole, isScope, grantRole, readRoleRow, listRoleRows, revokeRole, activeGrants,
-  permissionsOf, mintClaimCode, claimRole, countClaimAttempt, CLAIM_TTL_MAX_MS
+  permissionsOf, mintClaimCode, claimRole, countClaimAttempt, CLAIM_TTL_MAX_MS, LastOwnerError
 } from 'business/src/admin/roles.ts';
 import type { RoleRow } from 'business/src/admin/roles.ts';
 import { readAdminConfig, adminMfaRequired, portalUrl, setupPageUrl } from 'business/src/admin/config.ts';
 import { offeredCapabilities } from 'business/src/admin/capabilities.ts';
+import { setupChecks } from 'business/src/admin/setupChecks.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
@@ -177,6 +178,27 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         setupPageUrl: setupPageUrl(config),
         portalUrl: portalUrl(config)
       };
+    }));
+
+  systemAPI.register('system.setup.getChecks',
+    auditAs('subject'),
+    wrap(async (_context, _params, result) => {
+      let certificates: Array<{ hostname?: string; expiresAt?: number }> | null = null;
+      try {
+        const db = storages.platformDB as { listCertificates?: () => Promise<Array<{ hostname?: string; expiresAt?: number }>> };
+        certificates = typeof db.listCertificates === 'function' ? await db.listCertificates() : [];
+      } catch (err) {
+        logger.warn('setup checks: certificates not readable: ' + (err as Error).message);
+      }
+      let pendingMigrations: number | null = null;
+      try {
+        const { createMigrationRunner, summarizeStatus } = await import('storages/interfaces/migrations/index.ts');
+        const runner = await createMigrationRunner({ logger: getLogger('migrations') });
+        pendingMigrations = summarizeStatus(await runner.status()).pending;
+      } catch (err) {
+        logger.warn('setup checks: migration status not readable: ' + (err as Error).message);
+      }
+      result.checks = setupChecks({ config, certificates, pendingMigrations, now: Date.now() });
     }));
 
   systemAPI.register('system.setup.createSession',
@@ -378,7 +400,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (typeof userId !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(userId)) return errors.unknownResource('role');
       if (role != null && typeof role !== 'string') return errors.invalidParametersFormat('`role` must be a string.');
       if (scope != null && typeof scope !== 'string') return errors.invalidParametersFormat('`scope` must be a string.');
-      const revoked = await revokeRole(store(), userId, { role: role as string | undefined, scope: scope as string | undefined, now: Date.now() });
+      let revoked: boolean;
+      try {
+        revoked = await revokeRole(store(), userId, { role: role as string | undefined, scope: scope as string | undefined, now: Date.now() });
+      } catch (err) {
+        if (err instanceof LastOwnerError) return errors.invalidOperation(err.message, { id: err.id });
+        throw err;
+      }
       if (!revoked) return errors.unknownResource('role', userId);
       result.revoked = true;
       await auditAdminAct(context.adminSubject?.userId, 'admin.role.deleted', { target: userId, role: role ?? null, scope: scope ?? null });

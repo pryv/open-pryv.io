@@ -7,11 +7,13 @@
 
 import { hostedSiteNames } from '../hostedSites.ts';
 import { isSha256Hex } from './codes.ts';
+import { portalUrl as portalAddress } from './portalDefaults.ts';
 
 /**
  * Configuration of setup and administration:
  *
- *   portal.site                     PLATFORM-WIDE  hosted site serving the portal (null: none)
+ *   portal.site                     PLATFORM-WIDE  hosted site serving the portal (null: none; the
+ *                                                  install wizard names it PORTAL_DEFAULT_SITE, `admin`)
  *   portal.cors.allowedOrigins      PLATFORM-WIDE  extra origins of a portal hosted outside the platform
  *   setup.codeTtlHours              PLATFORM-WIDE  lifetime of a setup code (24)
  *   setup.codeHash                  BOOTSTRAP      SHA-256 of an operator-supplied setup code (null)
@@ -177,16 +179,19 @@ function trimSlash (url: string): string {
   return url.replace(/\/+$/, '');
 }
 
-/** The portal's address on this platform (derived from `portal.site` and the topology), or null. */
+/**
+ * The portal's address on this platform (derived from `portal.site` and the
+ * topology, by the same rule the install wizard prints), or null.
+ */
 export function portalUrl (config: ConfigReader): string | null {
   const { site } = describeAdminConfig(config).value.portal;
   if (site == null) return null;
   const publicUrl = config.get('dnsLess:publicUrl');
   if (config.get('dnsLess:isActive') === true && typeof publicUrl === 'string' && publicUrl !== '') {
-    return trimSlash(publicUrl) + '/' + site + '/';
+    return portalAddress({ site, dnsLess: true, publicUrl });
   }
   const domain = config.get('dns:domain');
-  if (typeof domain === 'string' && domain !== '') return `https://${site}.${domain}/`;
+  if (typeof domain === 'string' && domain !== '') return portalAddress({ site, dnsLess: false, dnsDomain: domain });
   return null;
 }
 
