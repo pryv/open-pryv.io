@@ -343,81 +343,11 @@ decides. It is now checked when the request is created (it cannot be changed aft
 - This is redirect hygiene, not client authentication: whoever creates a request can still read its
   outcome by polling. Apps that need their redirect bound to the client use the OAuth2 flow.
 
-### Erasure ledger: a durable record of each erased account (on by default)
+### Erasure ledger: transfer and unfinished-registration triggers
 
-Requested by an operator: a way to prove, after the account is gone, that an account was erased, and
-to keep a restore from bringing an erased account back unnoticed.
-
-- **Every account erasure writes one record** in the platform database (replicated to every core),
-  once all the data is gone: keyed hashes (HMAC-SHA256) of the user id and of the username, when the
-  erasure started and ended, what decided it (`trigger`: `holder` and `admin` for `DELETE /users/:username`
-  with the personal token or the admin key, `date`, `inactivity`, `transfer-fallback` for the
-  auto-deletion, `unfinished-registration`, `ledger-replay`), the core, the steps done, the
-  `audit.onUserDelete` mode, the attempts and the server version. No username, email, address, access
-  id or content. Nothing is written for the rollback of an account creation that failed, an account
-  transfer, or `DELETE /system/users/:username?onlyReg=true` (they erase no account). An unfinished
-  erasure recorded by an earlier version without a trigger gets the trigger `unknown` when completed.
-  A later erasure of the same id replaces the record: after a restore marked it restored, as a new
-  record; otherwise (an account a storage restore brought back, erased again by `bin/erasures.js
-  --replay`) keeping the first erasure's date and trigger in `firstDeletedAt` / `firstTrigger`.
-- **A record that cannot be written fails the erasure**: the data is gone, the call answers an error,
-  and the erasure is completed (this last step only) by the next auto-deletion sweep pass once the
-  erasure has been idle 15 minutes (passes run every 6 hours by default), as for any erasure that stops
-  half way. An erasure never looks finished without its record.
-- **One log line per record** (`account erased`, with `userIdHash`, `trigger`, `coreId`): a log shipper
-  keeps a second copy.
-- **New admin routes** (admin key in `Authorization`, any core answers):
-  - `GET /system/admin/erasures?since=<ms>&limit=<1..1000, default 200>&after=<cursor>`: the records
-    erased since a time, oldest first, `{ erasures: [{ userIdHash, deletedAt, trigger, coreId, ... }], next }`;
-    pass `next` as `after` for the next page (`null` on the last one). The order is by erasure date,
-    and a record can arrive after later ones were listed (merged from a backup, written by a core whose
-    clock lags, an erasure completed by a later sweep pass): a forwarder polling with `since` must
-    overlap its window (e.g. `since` = its last poll minus a day) and drop the `userIdHash` +
-    `deletedAt` pairs it already holds.
-  - `POST /system/admin/erasures/lookup` with `{ "userId": "..." }` or `{ "username": "..." }` (any
-    case): `{ erased, erasures, keyId, otherKeyRecords }`. A POST, so that the id or name stays out of
-    URLs and access logs. A name used again by a later account answers "an account of this name was
-    erased at T". The name is the one the account held when erased: its aliases are not matched.
-    `otherKeyRecords` counts the records written under another key, which no lookup can match: when it
-    is not 0, `erased: false` is not a proof.
-- **New configuration** (platform-wide: the same values on every core):
-  `accountErasure.ledger.enabled` (default `true`), `accountErasure.ledger.retentionDays` (default
-  `1825`, five years; `0` keeps the records forever; the sweep removes older records; a value under 365
-  gets a boot warning), and `accountErasure.ledger.hmacKey` (base64 of 32 bytes; empty: derived from
-  `auth.adminAccessKey`).
-  - **Retention is the shortest one set on any core**: every core's sweep purges the shared ledger with
-    its own `retentionDays`, so one core set to 30 days removes the records of all. Set the same value
-    everywhere, and keep it at least as long as your longest backup retention: a record purged while a
-    backup taken before its erasure still exists lets that backup bring the account back unnoticed.
-  - **A key change disarms the ledger for the records written before it**, unless the old key is kept:
-    those records stay listed (each carries a `keyId`) but are no longer matched by an id or a name, so
-    the lookup does not find them, a restore no longer refuses those accounts and `bin/erasures.js
-    --replay` no longer finds them. With the key derived (empty `hmacKey`), rotating `auth.adminAccessKey`
-    is such a change: set `hmacKey` first. Every core must use the same key. The restore, the lookup,
-    `--check` and `--replay` warn with the count of records under another key. Destroying the key makes
-    the records anonymous. Both hashes are pseudonymous personal data while the key exists: the record is
-  kept for the proof of erasure (accountability), minimised and time-limited; add one line for it to
-  your record of processing activities.
-- **Behaviour change of `bin/backup.js --restore`:** an account erased after the backup was taken is
-  **not restored**: the ledger records its erasure (and no restore since), or an erasure of it started
-  on this core after the backup and stopped unfinished (until now a plain restore withdrew such an
-  erasure). A whole restore lists it under "Erased after this backup" and restores the others (exit
-  code `3` when it restores nothing else); a `--user` restore of it fails, naming the override.
-  **`--restore-erased`** restores it anyway and marks its record `restoredAt` (the record is kept; for
-  an erasure that never completed, its record is written, already marked restored), once
-  `--verify-integrity`, if given, kept the account: an account rolled back stays recorded as erased.
-  When a record cannot be marked, the restore lists it and exits `4` (`--replay` would erase that
-  account). A restore that cannot read the ledger (its key cannot be built) is refused, unless
-  `--restore-erased`. A chain is dated per account by the newest run that holds it.
-- **Platform backups carry the ledger**, and a restore merges it into the live one (a newer erasure
-  wins, nothing is removed): a platform database rebuilt from a backup keeps the proof of the erasures
-  made before it.
-- **New tool `bin/erasures.js`**: `--list [--since <ms | ISO date>] [--limit <n>]`, `--check <userId |
-  username>`, and `--replay [--apply]` for a core whose storage was restored from a snapshot or a
-  database dump taken before some erasures: it looks up every account of this core in the ledger,
-  lists by id those recorded as erased and not restored since (a dry run by default), and with
-  `--apply` erases them again, with the trigger `ledger-replay`. Check the list before `--apply`: an
-  account restored by a restore that could not mark its record is in it.
+- The erasure ledger records (2.0.0-rc.89) take two more `trigger` values: `transfer-fallback` (for
+  the auto-deletion, with `date` and `inactivity`) and `unfinished-registration`. Nothing is written
+  for an account transfer (it erases no account).
 - Wording: the record a core keeps while an erasure runs is "the record of the erasure in progress";
   "erasure ledger" now names this durable record only.
 
@@ -912,6 +842,84 @@ call that would pass it; what an account already holds stays readable.
   declined or lapsed while the claimant's invite could not be withdrawn. An accept interrupted
   before it completed is checked the same way when it is repeated. Ordinary delegation invites are
   not affected.
+
+## 2.0.0-rc.89 - 2026-11-26
+
+### Erasure ledger: a durable record of each erased account (on by default)
+
+Requested by an operator: a way to prove, after the account is gone, that an account was erased, and
+to keep a restore from bringing an erased account back unnoticed.
+
+- **Every account erasure writes one record** in the platform database (replicated to every core),
+  once all the data is gone: keyed hashes (HMAC-SHA256) of the user id and of the username, when the
+  erasure started and ended, what decided it (`trigger`: `holder` and `admin` for `DELETE /users/:username`
+  with the personal token or the admin key, `date` and `inactivity` for the auto-deletion,
+  `ledger-replay`), the core, the steps done, the `audit.onUserDelete` mode, the attempts and the server
+  version. No username, email, address, access id or content. Nothing is written for the rollback of an
+  account creation that failed, or `DELETE /system/users/:username?onlyReg=true` (they erase no
+  account). An unfinished
+  erasure recorded by an earlier version without a trigger gets the trigger `unknown` when completed.
+  A later erasure of the same id replaces the record: after a restore marked it restored, as a new
+  record; otherwise (an account a storage restore brought back, erased again by `bin/erasures.js
+  --replay`) keeping the first erasure's date and trigger in `firstDeletedAt` / `firstTrigger`.
+- **A record that cannot be written fails the erasure**: the data is gone, the call answers an error,
+  and the erasure is completed (this last step only) by the next auto-deletion sweep pass once the
+  erasure has been idle 15 minutes (passes run every 6 hours by default), as for any erasure that stops
+  half way. An erasure never looks finished without its record.
+- **One log line per record** (`account erased`, with `userIdHash`, `trigger`, `coreId`): a log shipper
+  keeps a second copy.
+- **New admin routes** (admin key in `Authorization`, any core answers):
+  - `GET /system/admin/erasures?since=<ms>&limit=<1..1000, default 200>&after=<cursor>`: the records
+    erased since a time, oldest first, `{ erasures: [{ userIdHash, deletedAt, trigger, coreId, ... }], next }`;
+    pass `next` as `after` for the next page (`null` on the last one). The order is by erasure date,
+    and a record can arrive after later ones were listed (merged from a backup, written by a core whose
+    clock lags, an erasure completed by a later sweep pass): a forwarder polling with `since` must
+    overlap its window (e.g. `since` = its last poll minus a day) and drop the `userIdHash` +
+    `deletedAt` pairs it already holds.
+  - `POST /system/admin/erasures/lookup` with `{ "userId": "..." }` or `{ "username": "..." }` (any
+    case): `{ erased, erasures, keyId, otherKeyRecords }`. A POST, so that the id or name stays out of
+    URLs and access logs. A name used again by a later account answers "an account of this name was
+    erased at T". The name is the one the account held when erased: its aliases are not matched.
+    `otherKeyRecords` counts the records written under another key, which no lookup can match: when it
+    is not 0, `erased: false` is not a proof.
+- **New configuration** (platform-wide: the same values on every core):
+  `accountErasure.ledger.enabled` (default `true`), `accountErasure.ledger.retentionDays` (default
+  `1825`, five years; `0` keeps the records forever; the sweep removes older records; a value under 365
+  gets a boot warning), and `accountErasure.ledger.hmacKey` (base64 of 32 bytes; empty: derived from
+  `auth.adminAccessKey`).
+  - **Retention is the shortest one set on any core**: every core's sweep purges the shared ledger with
+    its own `retentionDays`, so one core set to 30 days removes the records of all. Set the same value
+    everywhere, and keep it at least as long as your longest backup retention: a record purged while a
+    backup taken before its erasure still exists lets that backup bring the account back unnoticed.
+  - **A key change disarms the ledger for the records written before it**, unless the old key is kept:
+    those records stay listed (each carries a `keyId`) but are no longer matched by an id or a name, so
+    the lookup does not find them, a restore no longer refuses those accounts and `bin/erasures.js
+    --replay` no longer finds them. With the key derived (empty `hmacKey`), rotating `auth.adminAccessKey`
+    is such a change: set `hmacKey` first. Every core must use the same key. The restore, the lookup,
+    `--check` and `--replay` warn with the count of records under another key. Destroying the key makes
+    the records anonymous. Both hashes are pseudonymous personal data while the key exists: the record is
+  kept for the proof of erasure (accountability), minimised and time-limited; add one line for it to
+  your record of processing activities.
+- **Behaviour change of `bin/backup.js --restore`:** an account erased after the backup was taken is
+  **not restored**: the ledger records its erasure (and no restore since), or an erasure of it started
+  on this core after the backup and stopped unfinished (until now a plain restore withdrew such an
+  erasure). A whole restore lists it under "Erased after this backup" and restores the others (exit
+  code `3` when it restores nothing else); a `--user` restore of it fails, naming the override.
+  **`--restore-erased`** restores it anyway and marks its record `restoredAt` (the record is kept; for
+  an erasure that never completed, its record is written, already marked restored), once
+  `--verify-integrity`, if given, kept the account: an account rolled back stays recorded as erased.
+  When a record cannot be marked, the restore lists it and exits `4` (`--replay` would erase that
+  account). A restore that cannot read the ledger (its key cannot be built) is refused, unless
+  `--restore-erased`. A chain is dated per account by the newest run that holds it.
+- **Platform backups carry the ledger**, and a restore merges it into the live one (a newer erasure
+  wins, nothing is removed): a platform database rebuilt from a backup keeps the proof of the erasures
+  made before it.
+- **New tool `bin/erasures.js`**: `--list [--since <ms | ISO date>] [--limit <n>]`, `--check <userId |
+  username>`, and `--replay [--apply]` for a core whose storage was restored from a snapshot or a
+  database dump taken before some erasures: it looks up every account of this core in the ledger,
+  lists by id those recorded as erased and not restored since (a dry run by default), and with
+  `--apply` erases them again, with the trigger `ledger-replay`. Check the list before `--apply`: an
+  account restored by a restore that could not mark its record is in it.
 
 ## 2.0.0-rc.88 - 2026-11-25
 

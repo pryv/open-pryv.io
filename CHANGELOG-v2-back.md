@@ -65,11 +65,6 @@
   `execute`: what was answered may have been applied. A failed registration releases its invitation token
   and its external id claim independently, and answers with the first failure. Default-level reads are unchanged. Tests `[RQNA*]`.
 
-### CI supply chain
-
-- Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`
-  (weekly, GitHub Actions only). The jobs, which also run for a release tag, no longer restore an npm cache.
-
 ### Audit: in-process calls, erased accounts, telemetry at stop
 
 - `methods/helpers/auditedCall.ts` `callAudited`: runs an API method in-process and records it after
@@ -162,65 +157,11 @@
   `tools/backup-roundtrip` (which runs its legs with `NODE_ENV=production`) draws its admin key and
   files-read secret per run. Tests `[CVWS4]`, `[CKPK5]`.
 
-### Erasure ledger
+### Erasure ledger: wording
 
-- `components/business/src/erasureLedger/index.ts`: platform KV rows `account-erasure/<userIdHash>`
-  (`v: 1`, `keyId`, `usernameHash`, `startedAt`, `deletedAt`, `trigger`, `coreId`, `stepsCompleted`,
-  `auditMode`, `attempts`, `serverVersion`, optional `restoredAt`). `userIdHash` = hex
-  HMAC-SHA256(key, `'user-id:' + userId`), `usernameHash` the same over `'username:' + lowercased
-  name`. Key: `accountErasure.ledger.hmacKey` (base64, 32 bytes) or `deriveKey(auth.adminAccessKey,
-  'erasure-ledger-v1')` (HKDF, as `storeKeyHash.ts`); not `platform.piiHmacKey`, whose rotation tool
-  re-keys from plaintext a ledger row no longer has. `keyId` = first 8 hex of HMAC(key, `'key-id'`).
-  Listing reads the prefix whole and orders by (`deletedAt`, `userIdHash`); the cursor is that pair.
-  A secondary key ordered by `deletedAt` is the follow-up past about 100,000 rows (not built).
-  `mergeErasureLedgerRows`: a backup row is written when absent, replaces a live one only with a
-  later `deletedAt`, or adds a later `restoredAt` to the same erasure; never removes.
-  `components/business/src/erasureLedger/config.ts`: defaults and the boot check (config-validation
-  and `bin/check-config.js`, which also hints when the key is derived from the admin key).
-- `deletion.ts`: new recorded step `writeErasureLedger`, last of `erasureSteps` (after
-  `dropHFDataAgain`, before `closeErasureRecord`), so `auth.delete` and `eraseAccount` both run it, and
-  a resumed erasure skips it once recorded done. Skipped for `trigger === 'system'` and an erasure that
-  lost its record. A failed write answers the step's error: the record of the erasure in progress
-  stays and the sweep's completion pass runs this step again.
-- Retention: `purgeErasureLedger(config)` runs after each auto-deletion sweep pass (on every core's
-  designated loop worker; the deletes are idempotent).
-- Admin methods `system.erasures.list` / `system.erasures.get` (declared WITHOUT_USER: audited to
-  syslog only), routes in `routes/system.ts`.
-- Backup: `BackupOrchestrator._backupPlatform` also exports the `account-erasure/` rows (`exportAll`
-  carries only `user-unique/` and `user-indexed/`, on both platform engines, so a platform rebuilt from
-  a backup lost every other row). `RestoreOrchestrator._readPlatform` sets them apart,
-  `_mergeErasureLedger` merges them before the accounts are checked (and from `_writePlatform` for a
-  platform-only restore). `_erasedSinceBackup` refuses an account whose row has `deletedAt` after the
-  backup's data of it and no later `restoredAt`; `restoreErased` (`--restore-erased`) restores and
-  stamps `restoredAt` after the platform rows and aliases. Report fields `erasedSince`,
-  `erasedRestored`. The account is dated by `snapshotBeforeByUser[userId]`, a new field of the merged
-  chain manifest (`FilesystemBackupReader.readManifest`: the `snapshotBefore` of the newest run listing
-  the account), else the manifest's `snapshotBefore`, else `backupTimestamp`; unknown: refused.
-- Review follow-ups: `writeErasureLedger` takes the trigger from the record of the erasure in
-  progress whenever there is one (`null` -> `unknown`), so a resumed legacy erasure is not read as a
-  creation rollback. `writeErasureRecord` keeps an existing row of the same erasure (same `startedAt`,
-  same key, not restored: the step ran twice) and carries `firstDeletedAt` / `firstTrigger` when it
-  replaces a row no restore marked. `_erasedSinceBackup` fails closed (`_erasureLedger()` returns
-  `{ error }` when the key cannot be built: the restore throws unless `restoreErased`), warns when the
-  ledger holds rows of another `keyId` (`otherKeyRecordCount` / `otherKeyWarning`), and also refuses an
-  account whose record of an erasure in progress (of the target id) is stale and started after the
-  snapshot; with the override, `stampRestored` writes that erasure's ledger row already carrying
-  `restoredAt`. `stampRestored` (public, returns the refs it could not mark, report field
-  `restoredStampFailed`) runs in the orchestrator unless `deferRestoredStamp`; `bin/backup.js` defers
-  it until after `--verify-integrity` and marks only the accounts the restore kept (exit code 4 when a
-  mark failed). Lookup answer: `keyId`, `otherKeyRecords`. `bin/erasures.js`: `--list` reads the
-  ledger once, `--check` / `--replay` warn on other-key rows, `--replay` lists ids with date and
-  trigger. `since=` (empty) is refused. `accountErasure:ledger:hmacKey` is not added to
-  `SECRET_PATHS` in config-validation: that list only drives the weak-secret check of the keys
-  `REQUIRED_WHEN` lists (it is no secret registry: no redaction nor cross-core fingerprint reads it),
-  and the key already has its own format check.
-- `bin/erasures.js` (`--list`, `--check`, `--replay [--apply]`); `bin/backup.js --restore-erased`,
-  restore exit codes 3 and 4.
+- The derived ledger key (`deriveKey(auth.adminAccessKey, 'erasure-ledger-v1')`) is HKDF, as `storeKeyHash.ts`.
 - Log and help wording: "record of the erasure in progress" for the per-core `account_erasures` row
   (`users/repository.ts`, `bin/reconcile-user-cores.js`, INSTALL.md).
-- Tests: `components/api-server/test/erasure-ledger.test.js` (`[ERLG]`, `[ERLA]`, `[ERLR]`, `[ERLT]`),
-  `components/business/test/unit/erasureLedger.test.js` (`[ERLU]`, row logic over an in-memory store),
-  `[2CEL1]` in `reg-2core-seq.test.js` (erased on core A, found and refused from core B).
 
 ### Erased accounts: SQLite keep-mode marker, PostgreSQL unindexed-user insert trigger
 
@@ -493,6 +434,106 @@
 - Account store `deleteUser` clears the account fields and password history through its lazy storage
   accessor: it did nothing in a process that had not read an account field yet, so a failed first
   registration in a fresh worker left its account fields (email included) behind.
+
+### Password reset and notices: auto-deletion notices, transfer claim mails
+
+- `sendAutoDeletionMail`: the held-address check covers the stored-email branch only (`to == null`); a
+  refused notice keeps `ownerToldAt` unset (`tellOwnerStarted`, retried at each pass) and `logRefused` logs it once.
+- Checked, not guarded: the transfer claim mails go to the beneficiary's address.
+
+### Account transfer: the sweep, the record, the links
+
+- The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim
+  window instead of erasing (not counted in `maxDeletionsPerPass`); while a window is open a pass
+  completes the transfer once the claimant controls the account, cancels it on account use before a
+  claim (`inactivity`), lifts the failed-claim lock, re-sends the claim mail at +30 / +60 days, and
+  applies the fallback at its end (erasure trigger `transfer-fallback`). The life of a transfer is a
+  second key-value row next to the schedule (`TransferRecord`, key `transfer`), so a change of
+  schedule never loses it; a closed record is kept as the record.
+- The claim and decline links are derived (HMAC-SHA256 of kind, account id and a per-transfer salt
+  under a key derived from `account.autoDeletion.transfer.identitySecretsKey`, else from
+  `auth.adminAccessKey`, purpose `account-transfer-link-v1`); only the salt is stored, so a re-sent
+  link is the same and a database dump holds none. Rotating the source key invalidates the links in
+  flight.
+- The delegation methods register the owner's side of the handshake for the transfer
+  (`api-server/src/methods/helpers/transferDelegation.ts`: invite, state, withdraw); without
+  delegation on the core, transfers are not offered.
+- The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
+  `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
+
+## 2.0.0-rc.89 - 2026-11-26
+
+### Erasure ledger
+
+- `components/business/src/erasureLedger/index.ts`: platform KV rows `account-erasure/<userIdHash>`
+  (`v: 1`, `keyId`, `usernameHash`, `startedAt`, `deletedAt`, `trigger`, `coreId`, `stepsCompleted`,
+  `auditMode`, `attempts`, `serverVersion`, optional `restoredAt`). `userIdHash` = hex
+  HMAC-SHA256(key, `'user-id:' + userId`), `usernameHash` the same over `'username:' + lowercased
+  name`. Key: `accountErasure.ledger.hmacKey` (base64, 32 bytes) or `deriveKey(auth.adminAccessKey,
+  'erasure-ledger-v1')` (HKDF); not `platform.piiHmacKey`, whose rotation tool
+  re-keys from plaintext a ledger row no longer has. `keyId` = first 8 hex of HMAC(key, `'key-id'`).
+  Listing reads the prefix whole and orders by (`deletedAt`, `userIdHash`); the cursor is that pair.
+  A secondary key ordered by `deletedAt` is the follow-up past about 100,000 rows (not built).
+  `mergeErasureLedgerRows`: a backup row is written when absent, replaces a live one only with a
+  later `deletedAt`, or adds a later `restoredAt` to the same erasure; never removes.
+  `components/business/src/erasureLedger/config.ts`: defaults and the boot check (config-validation
+  and `bin/check-config.js`, which also hints when the key is derived from the admin key).
+- `deletion.ts`: new recorded step `writeErasureLedger`, last of `erasureSteps` (after
+  `dropHFDataAgain`, before `closeErasureRecord`), so `auth.delete` and `eraseAccount` both run it, and
+  a resumed erasure skips it once recorded done. Skipped for `trigger === 'system'` and an erasure that
+  lost its record. A failed write answers the step's error: the record of the erasure in progress
+  stays and the sweep's completion pass runs this step again.
+- Retention: `purgeErasureLedger(config)` runs after each auto-deletion sweep pass (on every core's
+  designated loop worker; the deletes are idempotent).
+- Admin methods `system.erasures.list` / `system.erasures.get` (declared WITHOUT_USER: audited to
+  syslog only), routes in `routes/system.ts`.
+- Backup: `BackupOrchestrator._backupPlatform` also exports the `account-erasure/` rows (`exportAll`
+  carries only `user-unique/` and `user-indexed/`, on both platform engines, so a platform rebuilt from
+  a backup lost every other row). `RestoreOrchestrator._readPlatform` sets them apart,
+  `_mergeErasureLedger` merges them before the accounts are checked (and from `_writePlatform` for a
+  platform-only restore). `_erasedSinceBackup` refuses an account whose row has `deletedAt` after the
+  backup's data of it and no later `restoredAt`; `restoreErased` (`--restore-erased`) restores and
+  stamps `restoredAt` after the platform rows and aliases. Report fields `erasedSince`,
+  `erasedRestored`. The account is dated by `snapshotBeforeByUser[userId]`, a new field of the merged
+  chain manifest (`FilesystemBackupReader.readManifest`: the `snapshotBefore` of the newest run listing
+  the account), else the manifest's `snapshotBefore`, else `backupTimestamp`; unknown: refused.
+- Review follow-ups: `writeErasureLedger` takes the trigger from the record of the erasure in
+  progress whenever there is one (`null` -> `unknown`), so a resumed legacy erasure is not read as a
+  creation rollback. `writeErasureRecord` keeps an existing row of the same erasure (same `startedAt`,
+  same key, not restored: the step ran twice) and carries `firstDeletedAt` / `firstTrigger` when it
+  replaces a row no restore marked. `_erasedSinceBackup` fails closed (`_erasureLedger()` returns
+  `{ error }` when the key cannot be built: the restore throws unless `restoreErased`), warns when the
+  ledger holds rows of another `keyId` (`otherKeyRecordCount` / `otherKeyWarning`), and also refuses an
+  account whose record of an erasure in progress (of the target id) is stale and started after the
+  snapshot; with the override, `stampRestored` writes that erasure's ledger row already carrying
+  `restoredAt`. `stampRestored` (public, returns the refs it could not mark, report field
+  `restoredStampFailed`) runs in the orchestrator unless `deferRestoredStamp`; `bin/backup.js` defers
+  it until after `--verify-integrity` and marks only the accounts the restore kept (exit code 4 when a
+  mark failed). Lookup answer: `keyId`, `otherKeyRecords`. `bin/erasures.js`: `--list` reads the
+  ledger once, `--check` / `--replay` warn on other-key rows, `--replay` lists ids with date and
+  trigger. `since=` (empty) is refused. `accountErasure:ledger:hmacKey` is not added to
+  `SECRET_PATHS` in config-validation: that list only drives the weak-secret check of the keys
+  `REQUIRED_WHEN` lists (it is no secret registry: no redaction nor cross-core fingerprint reads it),
+  and the key already has its own format check.
+- `bin/erasures.js` (`--list`, `--check`, `--replay [--apply]`); `bin/backup.js --restore-erased`,
+  restore exit codes 3 and 4.
+- Tests: `components/api-server/test/erasure-ledger.test.js` (`[ERLG]`, `[ERLA]`, `[ERLR]`, `[ERLT]`),
+  `components/business/test/unit/erasureLedger.test.js` (`[ERLU]`, row logic over an in-memory store),
+  `[2CEL1]` in `reg-2core-seq.test.js` (erased on core A, found and refused from core B).
+
+### Event types catalogue 1.3.4
+
+- The vendored catalogue (test fixture `test/event-types-flat.json` and runtime seed
+  `components/business/src/types/event-types.default.json`) is the published 1.3.4:
+  `consent/request-cmc` describes `requireVerifiedEmail`. Description only; a core downloads the live
+  catalogue at boot anyway.
+
+## 2.0.0-rc.88 - 2026-11-25
+
+### CI supply chain
+
+- Every GitHub Action is pinned to a commit (version in a comment), kept current by `dependabot.yml`
+  (weekly, GitHub Actions only). The jobs, which also run for a release tag, no longer restore an npm cache.
 
 ### PostgreSQL time limits: per-batch cursor, maintenance pool, guarded clients
 
@@ -1470,14 +1511,12 @@
     user schedule `no-email` unless `acknowledgedNoReminders`; the preset does not apply;
     `account.setAutoDeletion` asks for `acknowledgeNoReminders`). A lookup error throws (the get/set
     method fails, the sweep skips the account for the pass): an account is not judged on a guess.
-  - `sendAutoDeletionMail`, stored-email branch only (`to == null`), before the switch checks:
+  - `sendAutoDeletionMail`, before the switch checks:
     `facts.emailHeld`, or the address found held at the send (`isStoredEmailHeldElsewhere`) ->
-    `'rejected'`, not `'off'`: a notice not given, never recorded as given (`tellOwnerStarted` keeps
-    `ownerToldAt` unset and retries at each pass, `logRefused` logs once); a lookup error is
-    `'failed'` (retried at the next pass).
+    `'rejected'`, not `'off'`: a notice not given, never recorded as given (retried at each pass);
+    a lookup error is `'failed'` (retried at the next pass).
 - Checked, not guarded: the verification and registration-challenge mails go to the address being
-  proved, the transfer claim mails to the beneficiary's address, the welcome mail to the address
-  just registered. No other sender mails a credential to the stored email (`sendmail(` callers).
+  proved, the welcome mail to the address just registered. No other sender mails a credential to the stored email (`sendmail(` callers).
 - Tests `[RSLK3-6]` (held: no mail, same status and body; absent row: sent; lookup error: fails, no
   mail; cleartext mode, another spelling held: no mail), `[MSN4]`, `[ACST15D]` (view `no-email`,
   acknowledgement asked, no mail, no notice recorded, facts not notifiable, `'rejected'`),
@@ -1661,26 +1700,6 @@
   unowned after a settle delay, on a fresh read of both (`--settle <seconds>`, default 10; `0` keeps
   the former single snapshot); rows that came alive meanwhile are kept and counted in the summary
   (`inFlight`). The tool no longer needs the API stopped.
-
-### Account transfer: the sweep, the record, the links
-
-- The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim
-  window instead of erasing (not counted in `maxDeletionsPerPass`); while a window is open a pass
-  completes the transfer once the claimant controls the account, cancels it on account use before a
-  claim (`inactivity`), lifts the failed-claim lock, re-sends the claim mail at +30 / +60 days, and
-  applies the fallback at its end (erasure trigger `transfer-fallback`). The life of a transfer is a
-  second key-value row next to the schedule (`TransferRecord`, key `transfer`), so a change of
-  schedule never loses it; a closed record is kept as the record.
-- The claim and decline links are derived (HMAC-SHA256 of kind, account id and a per-transfer salt
-  under a key derived from `account.autoDeletion.transfer.identitySecretsKey`, else from
-  `auth.adminAccessKey`, purpose `account-transfer-link-v1`); only the salt is stored, so a re-sent
-  link is the same and a database dump holds none. Rotating the source key invalidates the links in
-  flight.
-- The delegation methods register the owner's side of the handshake for the transfer
-  (`api-server/src/methods/helpers/transferDelegation.ts`: invite, state, withdraw); without
-  delegation on the core, transfers are not offered.
-- The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
-  `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
 
 ### Accesses: last sign-in time
 
