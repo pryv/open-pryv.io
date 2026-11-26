@@ -7,6 +7,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
+const adminAuth = require('./adminAuth.ts').default;
 const checkUserCore = require('./checkUserCore.ts').default;
 const commonHeaders = require('./commonHeaders.ts').default;
 const contentType = require('./contentType.ts');
@@ -25,6 +26,7 @@ const setMinimalMethodContext = require('./setMinimalMethodContext.ts').default;
 const subdomainToPath = require('./subdomainToPath.ts').default;
 
 export {
+  adminAuth,
   checkUserCore,
   commonHeaders,
   contentType,

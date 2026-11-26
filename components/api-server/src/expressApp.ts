@@ -16,6 +16,7 @@ const { platformRoutedLabels } = require('./platformLabels.ts');
 const { configureTrustedProxies, expressTrustProxy } = require('middleware/src/clientIp.ts');
 const { effectiveMaxSizeMb } = require('./middleware/uploads.ts');
 const { isOAuthSurface, corsMiddleware: oauthCorsMiddleware } = require('oauth2/src/cors.ts');
+const { isPortalCorsRequest } = require('middleware/src/adminAuth.ts');
 // ------------------------------------------------------------ express app init
 // Creates and returns an express application with a standard set of middleware.
 // `version` should be the version string you want to show to API clients.
@@ -29,8 +30,12 @@ async function expressAppInit (logging: { getLogger: (name: string) => unknown }
   app.set('trust proxy', expressTrustProxy);
   app.set('query parser', middleware.queryParser);
   // The OAuth surface answers CORS with its own policy (any origin, no
-  // credentials), preflight included.
-  const commonHeadersMiddleware = await middleware.commonHeaders({ ownCors: (req: Request) => isOAuthSurface(req.path) });
+  // credentials), preflight included. A /system call with an Origin that is
+  // not authenticated by the admin key (a portal call) gets CORS from the
+  // /system gate, for the platform's portal origins only.
+  const commonHeadersMiddleware = await middleware.commonHeaders({
+    ownCors: (req: Request) => isOAuthSurface(req.path) || isPortalCorsRequest(config, req)
+  });
   const requestTraceMiddleware = middleware.requestTrace(app, logging);
   // register common middleware
   app.disable('x-powered-by');

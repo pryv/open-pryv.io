@@ -109,6 +109,34 @@ const ALL_METHODS = [
   'system.erasures.get',
   // The effective configuration of the core (admin key), secrets redacted.
   'system.getEffectiveConfig',
+  // Platform setup, administrator sessions, roles and claim codes (the admin
+  // key, a setup or admin session, or a personal token): no account of this
+  // core in the call's context.
+  'system.setup.getStatus',
+  'system.setup.createSession',
+  'system.setup.createFirstAdmin',
+  'system.setup.setReady',
+  'system.setup.replaceCode',
+  'system.adminSession.create',
+  'system.adminSession.get',
+  'system.adminSession.delete',
+  'system.adminSession.updateExpiry',
+  'system.adminSession.verifyStepUp',
+  'system.claimCodes.create',
+  'system.roles.claim',
+  'system.roles.list',
+  'system.roles.delete',
+  'system.portalContext.get',
+  // Those acts recorded in the acting administrator's own trail (emitted
+  // directly via audit.eventForUser() when the account is on the core).
+  'admin.role.created',
+  'admin.role.claimed',
+  'admin.role.deleted',
+  'admin.claimCode.created',
+  'admin.setupCode.replaced',
+  'admin.session.created',
+  'admin.session.deleted',
+  'admin.session.updatedSecondFactor',
   'auth.hostings',
   // External ids of the account (personal token), and the core lookup by id.
   'account.externalIds.claim',
@@ -222,7 +250,13 @@ const NOT_AUDITED_METHODS = [
   // the holder answer of the forced accept check: a read, one per probe
   'system.extIdHolds',
   // the unauthenticated lookup, like auth.cores
-  'auth.extIdCores'
+  'auth.extIdCores',
+  // reads of the setup state, an administrator's own session, the role rows
+  // and the portal context
+  'system.setup.getStatus',
+  'system.adminSession.get',
+  'system.roles.list',
+  'system.portalContext.get'
 ];
 
 const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m));
@@ -242,6 +276,17 @@ const WITHOUT_USER_METHODS = [
   'system.erasures.list',
   'system.erasures.get',
   'system.getEffectiveConfig',
+  'system.setup.createSession',
+  'system.setup.createFirstAdmin',
+  'system.setup.setReady',
+  'system.setup.replaceCode',
+  'system.adminSession.create',
+  'system.adminSession.delete',
+  'system.adminSession.updateExpiry',
+  'system.adminSession.verifyStepUp',
+  'system.claimCodes.create',
+  'system.roles.claim',
+  'system.roles.delete',
   'mfa.recover',
   // OAuth events with no resolvable user at emit time (pre-consent /authorize,
   // /refuse, or reuse of an already-consumed code/refresh where the user is

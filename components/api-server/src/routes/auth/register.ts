@@ -16,6 +16,17 @@ const { setMinimalMethodContext, setMethodId } = require('middleware');
 const { getConfigSync } = require('@pryv/boiler');
 const { REGISTRATION_FORWARD_HEADER, verifyRegistrationForward } = require('business/src/auth/registrationForward.ts');
 const { countEmailLookup } = require('../reg/emailLookupBudget.ts');
+const { parseAdminAuthorization } = require('middleware/src/adminAuth.ts');
+
+/**
+ * A setup session sent with a registration (`Authorization: SetupSession
+ * <token>`): registration while the platform setup is pending (see
+ * auth.register).
+ */
+function setSetupSession (req: PryvRequest): void {
+  const credential = parseAdminAuthorization(req.headers.authorization);
+  if (credential.kind === 'setup') (req.context as { setupSessionToken?: string }).setupSessionToken = credential.token;
+}
 
 /**
  * Routes for users
@@ -25,6 +36,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   // POST /users: create a new user
   const registerHandler = function (req: PryvRequest, res: Response, next: NextFunction) {
     (req.context as { host?: string }).host = req.headers.host;
+    setSetupSession(req);
     // Forwarded by another core: accepted only with a valid signature, which
     // also vouches for the client address the landing core saw.
     const forwardHeader = req.headers[REGISTRATION_FORWARD_HEADER];
@@ -60,6 +72,7 @@ export default function (expressApp: ExpressApp, app: AppLike) {
   });
   expressApp.post(path.join(regPath, '/user'), setMinimalMethodContext, setMethodId('auth.register'), function (req: PryvRequest, res: Response, next: NextFunction) {
     (req.context as { host?: string }).host = req.headers.host;
+    setSetupSession(req);
     if (req.body) { req.body.appId = req.body.appid; }
     api.call(req.context, req.body, methodCallback(res, next, 201));
   });

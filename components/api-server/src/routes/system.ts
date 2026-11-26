@@ -15,7 +15,8 @@ const Paths = require('./Paths.ts');
 const methodCallback = require('./methodCallback.ts').default;
 const contentType = require('middleware').contentType;
 const { getLogger } = require('@pryv/boiler');
-const { setMinimalMethodContext, setMethodId, isAdminKey } = require('middleware');
+const { setMinimalMethodContext, setMethodId, adminAuth } = require('middleware');
+const { routeMatcher } = require('./system-permissions.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { coreIdProblem } = require('platform/src/coreIdentity.ts');
 const { validateMailTemplate } = require('mail/src/templateValidator.ts');
@@ -30,16 +31,25 @@ function errMessage (err: unknown): string {
 export default function system (expressApp: Application, app: { systemAPI: { call: (...args: unknown[]) => unknown }; config: { get: (key: string) => unknown } }) {
   const systemAPI = app.systemAPI;
   const config = app.config;
-  const adminAccessKey = config.get('auth:adminAccessKey');
   const logger = getLogger('routes:system');
   /**
-   * Handle common parameters.
-   *
-   * Bootstrap ack uses a one-time join token instead of the admin key, so it
-   * needs to be excluded from the admin-key gate. Everything else under
-   * /system/* still requires `auth.adminAccessKey`.
+   * The gate of every /system/* route (middleware/src/adminAuth.ts): the admin
+   * key, an administrator session or a setup session, checked against the
+   * route's entry in system-permissions.ts; the routes with their own
+   * credential (bootstrap ack, personal-token routes) or none go through. Any
+   * refusal answers 404.
    */
-  expressApp.all(Paths.System + '/*', setMinimalMethodContext, checkAuth);
+  const matchRoute = routeMatcher();
+  expressApp.all(Paths.System + '/*', setMinimalMethodContext, adminAuth({
+    rule: (method: string, path: string) => matchRoute(method, path)?.rule ?? null,
+    config,
+    store: () => require('storages').platformDB,
+    onRefused: (req: PryvRequest, reason: string) => {
+      // No headers nor body in the log: a near-miss admin key or a client's
+      // own token sent here by mistake would land in it.
+      logger.warn('Unauthorized attempt to access system route', { url: redactUrl(req.url), ip: req.ip, reason });
+    }
+  }));
   expressApp.post(Paths.System + '/create-user', contentType.json, setMethodId('system.createUser'), createUser);
   function createUser (req: PryvRequest, res: Response, next: NextFunction) {
     const params = Object.assign({}, req.body);
@@ -332,7 +342,7 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // --------------------- bootstrap ack ----------------- //
   // POST /system/admin/cores/ack — called by a freshly bootstrapped core.
   // Auth is the one-time join token in the request body, NOT the admin key
-  // (see bypass in checkAuth below). The handler verifies the token via
+  // (the gate lets it through, see system-permissions.ts). The handler verifies the token via
   // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
   // Refusals share one 401 body; their reason is logged here.
   expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, async (req: PryvRequest, res: Response, next: NextFunction) => {
@@ -656,24 +666,6 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   expressApp.get(Paths.System + '/check-platform-integrity', setMethodId('system.checkPlatformIntegrity'), function (req: PryvRequest, res: Response, next: NextFunction) {
     systemAPI.call(req.context, {}, methodCallback(res, next, 200));
   });
-  // Checks if `req` contains valid authorization to access the system routes.
-  //
-  function checkAuth (req: PryvRequest, res: Response, next: NextFunction) {
-    // Bootstrap ack uses one-time join token instead of adminAccessKey.
-    // The handler itself verifies the token; admit the request unconditionally.
-    if (req.method === 'POST' && req.path === Paths.System + '/admin/cores/ack') {
-      return next();
-    }
-    if (!isAdminKey(req.headers.authorization, adminAccessKey)) {
-      // No headers nor body in the log: a near-miss admin key or a client's
-      // own token sent here by mistake would land in it.
-      logger.warn('Unauthorized attempt to access system route', {
-        url: redactUrl(req.url),
-        ip: req.ip
-      });
-      // return "not found" to avoid encouraging retries
-      return next(errors.unknownResource());
-    }
-    next();
-  }
+  // Setup, administrator sessions, roles and claim codes.
+  require('./system-setup.ts').default(expressApp, app);
 }

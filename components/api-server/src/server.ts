@@ -233,6 +233,7 @@ class Server {
    */
   async registerApiMethods () {
     await require('./methods/system.ts').default(app.systemAPI, app.api);
+    await require('./methods/systemAdmin.ts').default(app.systemAPI);
     await require('./methods/utility.ts').default(app.api);
     await require('./methods/auth/login.ts').default(app.api);
     await require('./methods/auth/register.ts').default(app.api);

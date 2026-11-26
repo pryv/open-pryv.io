@@ -230,6 +230,7 @@ const http = require('node:http');
 
   // Register API methods directly on the Application instance
   await require('api-server/src/methods/system.ts').default(app.systemAPI, app.api);
+  await require('api-server/src/methods/systemAdmin.ts').default(app.systemAPI);
   await require('api-server/src/methods/utility.ts').default(app.api);
   await require('api-server/src/methods/auth/login.ts').default(app.api);
   await require('api-server/src/methods/auth/register.ts').default(app.api);
