@@ -77,10 +77,12 @@ function blockedSubstitutions (blocked: Notice['bookkeeping']['blocked']): Recor
  * Audit row of an erasure in the account's own trail, written before the
  * erasure starts. Only where the trail outlives the account
  * (`audit.onUserDelete: keep`); otherwise it would go with the account and
- * the WARN log lines are the record.
+ * the WARN log lines are the record. Without the username: the record
+ * outlives the account (the log lines name it, for the operator).
  */
 async function auditErasure (config: ConfigLike, account: SweepAccount, record: ErasureRecord): Promise<void> {
   if (config.get('audit:active') !== true || config.get('audit:onUserDelete') !== 'keep') return;
+  const { username: _username, ...kept } = record;
   const auditSingleton = (await import('audit')).default;
   const C = auditSingleton.CONSTANTS;
   const now = timestamp.now();
@@ -95,7 +97,7 @@ async function auditErasure (config: ConfigLike, account: SweepAccount, record: 
     modified: now,
     trashed: false,
     type: 'audit-log/account-auto-deletion',
-    content: { action: ERASURE_AUDIT_ACTION, source: { name: 'system' }, record }
+    content: { action: ERASURE_AUDIT_ACTION, source: { name: 'system' }, record: kept }
   }, ERASURE_AUDIT_ACTION);
 }
 

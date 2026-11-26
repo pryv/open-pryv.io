@@ -49,7 +49,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Synthetic rows of the route and tool tests: erased "in 2096", after any
 // row a real erasure of the test run writes.
 const FUTURE = 4e12;
-const STEPS_BEFORE_LEDGER = ['runTeardownSteps', 'deleteUserFiles', 'deleteHFData', 'deleteAttachments', 'deleteAuditDataStorage', 'deleteUser', 'deleteAuditDataStorageAgain', 'deleteAuditData', 'dropHFDataAgain'];
+const STEPS_BEFORE_LEDGER = ['runTeardownSteps', 'recordAccountDeleted', 'deleteUserFiles', 'deleteHFData', 'deleteAttachments', 'deleteAuditDataStorage', 'deleteUser', 'deleteAuditDataStorageAgain', 'deleteAuditData', 'dropHFDataAgain'];
 
 function runCli (cli, args) {
   const env = { ...process.env, ...childStorageEngineEnv() };

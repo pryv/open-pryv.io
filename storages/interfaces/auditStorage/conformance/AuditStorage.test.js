@@ -172,6 +172,20 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
           assert.ok(count >= 2);
         });
 
+        // Mutation caught: a plain INSERT (the SQLite engine's before), which
+        // throws on the first id already there and imports none of the rest.
+        it('[AARSB] importAllEvents() skips a row whose id is already stored, keeps the stored one and imports the others', async () => {
+          const rows = await userDb.exportAllEvents();
+          const stored = rows[0];
+          const countBefore = await userDb.countEvents();
+          const fresh = Object.assign({}, stored, { eventid: 'aarsb-new-' + Date.now() });
+          const sameId = Object.assign({}, stored, { description: 'aarsb overwritten?' });
+          await userDb.importAllEvents([sameId, fresh]);
+          assert.strictEqual(await userDb.countEvents(), countBefore + 1, 'the new row imported, the existing id skipped');
+          const after = (await userDb.exportAllEvents()).find((r) => r.eventid === stored.eventid);
+          assert.strictEqual(after.description ?? null, stored.description ?? null, 'the stored row is kept as it was');
+        });
+
         it('[SQ15] importAllEvents() with empty array must be a no-op', async () => {
           const countBefore = await userDb.countEvents();
           await userDb.importAllEvents([]);

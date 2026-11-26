@@ -158,6 +158,7 @@ export interface UserAuditDatabase {
    * array form, and consumers feature-detect this method.
    */
   exportAllEventsStreamed? (): AsyncIterable<AuditExportRow>;
+  /** Rows whose id is already stored are skipped (the stored row is kept); the others are inserted. */
   importAllEvents (events: AuditExportRow[]): Promise<void>;
 }
 

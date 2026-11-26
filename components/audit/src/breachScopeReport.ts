@@ -48,14 +48,15 @@ export interface AuditRow {
 const ERROR_TYPE = 'audit-log/pryv-api-error';
 /**
  * The records the server writes itself, never calls of the access whose
- * stream they carry: what it did to an access, and the creation of the
- * account with its first personal access.
+ * stream they carry: what it did to an access, the creation of the account
+ * with its first personal access, its deletion by the holder through a
+ * personal access.
  */
 const SERVER_RECORD_TYPES = new Set(['audit-log/access', 'audit-log/account']);
 
 /** action -> class. Unmapped actions fall into `other`; the raw byAction
  * histogram is always primary (lossless), the class map is a rendering aid. */
-const ACTION_CLASS: Record<string, string> = {
+export const ACTION_CLASS: Readonly<Record<string, string>> = {
   'events.get': 'read-data',
   'events.getOne': 'read-data',
   'events.getAttachment': 'read-attachment',
@@ -85,7 +86,6 @@ const ACTION_CLASS: Record<string, string> = {
   'accesses.delete': 'delete',
   'webhooks.delete': 'delete',
   'followedSlices.delete': 'delete',
-  'account.delete': 'delete',
   'auth.login': 'auth-session',
   'auth.logout': 'auth-session',
   'mfa.activate': 'auth-session',

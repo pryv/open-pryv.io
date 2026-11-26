@@ -185,7 +185,17 @@ const ALL_METHODS = [
   // delegations.createAccount): recorded by the server in the new account's
   // own trail, once it exists (api-server
   // methods/helpers/accountCreationAudit.ts).
-  'account.created'
+  'account.created',
+  // An account erased, by any path (auth.delete, the auto-deletion sweep,
+  // bin/erasures.js --replay, a creation rolled back): recorded by the server
+  // in the account's own trail before its data goes, only where the trail
+  // outlives the account (`audit.onUserDelete: keep`; business
+  // src/auth/accountAudit.ts, the erasure step recordAccountDeleted).
+  'account.deleted',
+  // An account restored from a backup (bin/backup.js --restore): recorded in
+  // the restored account's trail once the restore keeps it (business
+  // src/auth/accountAudit.ts, RestoreOrchestrator.recordRestored).
+  'account.restored'
 ];
 
 const NOT_AUDITED_METHODS = [

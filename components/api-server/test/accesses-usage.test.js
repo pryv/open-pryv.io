@@ -246,9 +246,20 @@ describe('[AUG] accesses usage for the owner', function () {
     assert.equal(usage.other, 3);
   });
 
-  it('[AUG8] every declared method classifies, none falls to `other`', function () {
-    const others = ALL_METHODS.filter((m) => classifyMethod(m) === 'other');
+  it('[AUG8] every declared method classifies, none falls to `other` but those listed on purpose', function () {
+    // A record the server writes about the account, neither a read nor a
+    // write of it ([AADLC]): the shared rules stay as the account app has them.
+    const ON_PURPOSE = ['account.restored'];
+    const others = ALL_METHODS.filter((m) => classifyMethod(m) === 'other' && !ON_PURPOSE.includes(m));
     assert.deepEqual(others, [], 'classify these on purpose: ' + others.join(', '));
+  });
+
+  // Mutation caught: a change of the shared rules made here only (the account
+  // app and the docs carry the same set).
+  it('[AADLC] the deletion of the account counts as a write, its restore as other', function () {
+    assert.equal(classifyMethod('account.deleted'), 'write');
+    assert.equal(classifyMethod('account.restored'), 'other');
+    assert.equal(classifyMethod('account.created'), 'write');
   });
 
   it('[AUGC] the shared method-class fixture', function () {

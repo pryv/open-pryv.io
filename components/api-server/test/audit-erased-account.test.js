@@ -113,7 +113,7 @@ describe('[AGPE] audit records of an account erased meanwhile', function () {
     assert.strictEqual(await count(username), 0);
   });
 
-  it('[AGPE3] under `keep` the trail stays open: the earlier record and a late one are there', async function () {
+  it('[AGPE3] under `keep` the trail stays open: the earlier record, the deletion\'s and a late one are there', async function () {
     const { username } = await newUser();
     const restore = require('test-helpers').injectTestConfigSnapshot({ audit: { onUserDelete: 'keep' } });
     try {
@@ -121,7 +121,8 @@ describe('[AGPE] audit records of an account erased meanwhile', function () {
       const res = await erase(username);
       assert.strictEqual(res.status, 200, JSON.stringify(res.body));
       await audit.eventForUser(username, row());
-      assert.strictEqual(await count(username), 2);
+      const actions = (await (await auditStorage.forUser(username)).getEvents({ query: [] })).map((e) => e.content?.action).sort();
+      assert.deepStrictEqual(actions, ['account.deleted', 'mfa.recovered', 'mfa.recovered']);
     } finally {
       restore();
       await audit.reloadConfig();

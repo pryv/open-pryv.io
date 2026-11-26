@@ -25,6 +25,58 @@
 - Migration guide (before/after example, the 14 keys, environment variables, the boot message, rolling back):
   [MIGRATION-services-email-enabled.md](./MIGRATION-services-email-enabled.md).
 
+### Audit: the deletion and the restore of an account are recorded in its trail
+
+- **With `audit.onUserDelete: keep`, the trail kept after an account's erasure now ends with a record of the
+  deletion.** The server writes `account.deleted` (type `audit-log/account`) in the account's own trail before it
+  removes any of the account's data, whatever erases the account: its holder or an administrator
+  (`DELETE /users/:username`), the auto-deletion sweep, the completion of an unfinished erasure,
+  `bin/erasures.js --replay`, the repair of an unfinished registration (`bin/reconcile-user-cores.js`), the
+  roll-back of an account whose creation failed. `content.source.name` says who: `holder`, `admin`,
+  `auto-deletion`, `ledger-replay` or `system` (`unknown` for an erasure recorded without its cause).
+  `content.record.trigger` is the word the erasure ledger keeps (`holder`, `admin`, `date`, `inactivity`,
+  `transfer-fallback`, `ledger-replay`, `unfinished-registration`, `system`, `unknown`). For a deletion by the
+  holder the record also holds the client address (`content.source.ip`, left out when unknown) and the personal
+  access that asked (`content.record.accessId`, and that access's stream), as `account.created` does for a
+  registration; an administrator's address is never recorded. Ids and fixed words only: no username, no address of
+  the account, no text. The sweep's own record (`account.autoDeletion.erase`) is still written, before it. With
+  `audit.onUserDelete: erase` (the default) nothing is written: the trail goes with the account. A record that
+  cannot be written is counted as a lost audit record and does not stop the erasure. The trail of an erased account
+  stays open under `keep`, so the record of a call that was in flight can follow it.
+- Under `keep`, the roll-back of an account whose creation failed (a delegated account) leaves a trail too, as
+  before: it now reads `account.created` then `account.deleted`, for an account that was never usable.
+- **The sweep's `account.autoDeletion.erase` record no longer holds the username** (`content.record.username`): it is
+  written only under `keep`, where it outlives the account. The account's id, the trigger, the schedule and the
+  notices stay; the log lines of the sweep still name the account for the operator.
+- **A restored account has a record of its restore.** `bin/backup.js --restore` writes `account.restored` (type
+  `audit-log/account`) in the trail of each account it restores and keeps, after the records the backup held (an
+  account rolled back by `--verify-integrity` gets none). `content.source.name` is `backup`;
+  `content.record.backupDate` is the date (UTC, `YYYY-MM-DD`) of the backup's data for that account, left out when
+  the backup does not say; `content.record.target` is `new`, or `existing` when the restore replaced an account of
+  the core (`--overwrite`); `content.record.afterErasure` is `completed` when the account had been erased after the
+  backup (`--restore-erased`), `unfinished` when the restore withdrew an erasure that had stopped, and absent
+  otherwise. Accounts loaded from a v1 migration archive get the record too (they are restored from a backup). A
+  subject's own restore through the API (`pryv-account-backup`) is a series of calls, each audited as a call: it
+  writes no `account.restored`. A record that cannot be written does not fail the restore.
+- **With `audit.onUserDelete: keep`, a restore keeps the audit trail it finds.** A restore with `--overwrite`, the
+  roll-back of a restore (`--verify-integrity`) and the cleanup of a restore that failed no longer remove the
+  account's audit trail: the records written since the backup, and those of an erasure (`account.deleted`), stay,
+  and the backup's records the trail lacks are added. A restore of a kept trail therefore reads `account.deleted`,
+  then `account.restored`. With `erase` (the default) nothing changes: an overwrite replaces the trail with the
+  backup's. A roll-back under `keep` leaves the records the restore added from the backup (they are the account's
+  own, earlier records).
+- **The import of audit records skips the ids already there on SQLite too**, as it did on PostgreSQL: a restore onto
+  an existing trail used to stop importing the backup's records at the first one already there (a warning, the
+  rest not imported).
+- **Audit filters that list methods one by one do not include `account.deleted` and `account.restored` until you add
+  them; `account.all` and `all` do.** The breach-scope report lists both without counting them as calls (a holder's
+  deletion under the personal access that asked); the audit summary counts `account.deleted` as a write and
+  `account.restored` as other.
+- The erasure ledger's `stepsCompleted` and the record of an erasure in progress list one more step,
+  `recordAccountDeleted` (listed whether or not a record was written).
+- The type's description in the event-type catalogue covers the three actions, and drops the username of
+  `account.autoDeletion.erase`, from data-types 1.4.0.
+
 ### Account auto-deletion reset and erasure ledger: the account transfer parts
 
 With the account transfer (below), the administrator reset of 2.0.0-rc.90 also handles a transfer:
