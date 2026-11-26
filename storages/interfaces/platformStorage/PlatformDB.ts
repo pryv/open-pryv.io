@@ -299,6 +299,12 @@ export interface PlatformDB {
   listPlatformKvKeys (prefix: string): Promise<string[]>;
   /** Keys AND values under a prefix, in one read (same prefix rules as listPlatformKvKeys). */
   listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>>;
+  /**
+   * Every stored row of every family (typed ones included), keys and values
+   * exactly as stored: what `setPlatformKv` writes back unchanged. Full scan:
+   * tools only (engine migration).
+   */
+  listAllPlatformKvEntries (): Promise<Array<{ key: string, value: string }>>;
 
   // --- Invitation tokens ------------------------------------------
   createInvitationToken (token: string, info: InvitationTokenInfo): Promise<void>;
@@ -467,6 +473,8 @@ const PlatformDB: PlatformDB = {
   async listPlatformKvKeys (prefix: string): Promise<string[]> { throw new Error('Not implemented'); },
 
   async listPlatformKvEntries (prefix: string): Promise<Array<{ key: string, value: string }>> { throw new Error('Not implemented'); },
+
+  async listAllPlatformKvEntries (): Promise<Array<{ key: string, value: string }>> { throw new Error('Not implemented'); },
 
   // --- Invitation tokens --- //
 

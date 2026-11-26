@@ -173,6 +173,20 @@ With the account transfer (below), the administrator reset of 2.0.0-rc.90 also h
   before it completed is checked the same way when it is repeated. Ordinary delegation invites are
   not affected.
 
+### Operators: `bin/migrate-platform.js` copies every platform row
+
+- Moving the platform data between rqlite and PostgreSQL (`bin/migrate-platform.js`) copied the user fields,
+  user-core map, core infos, DNS records, ACME account, certificates, observability values, mail templates and
+  invitation tokens, but no other platform row. After an engine switch, the OAuth clients, their revocation lists
+  and the OAuth grants (refresh tokens, sessions, pending codes), the erasure ledger, the access index used by
+  `GET /system/accesses/:accessId`, the external-id namespaces and ids, and the send budgets and throttles were
+  gone. The tool now copies every row of the platform table, keys and values exactly as stored, expired TTL rows
+  included (the periodic sweeps of the new engine remove them), and reports a count per row family
+  (`platform rows oauth-client/`, `platform rows ext-id/`, ...). Without `--force`, it now refuses a target that
+  holds any platform row (it only looked at user fields), names the families found with their counts, and still
+  accepts a target that holds only the schema marker its engine writes for itself (that marker is not copied
+  either); `--dry-run` never refuses, as before.
+
 ## 2.0.0-rc.90 - 2026-11-26
 
 ### Multi-core: a platform read without an answer is no longer "not found"

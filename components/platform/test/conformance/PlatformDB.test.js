@@ -1150,6 +1150,22 @@ export default function conformanceTests (getDB) {
         await assert.rejects(() => db.listPlatformKvEntries(''));
       });
 
+      it('[PLKV12] listAllPlatformKvEntries returns every row of every family as stored', async () => {
+        const suffix = cuid();
+        await db.setPlatformKv('plkv-all/' + suffix, '{"a" : 1}');
+        await db.setPlatformKv('plkv-lone-' + suffix, 'x');
+        await db.setUserCore('plkv-user-' + suffix, 'core-a');
+        await db.claimCoreRow('plkv-rows/', suffix, 'core-b');
+        await db.setAccessState('plkv-as/' + suffix, { v: 1 }, 1000);
+        const all = await db.listAllPlatformKvEntries();
+        const byKey = new Map(all.map((r) => [r.key, r.value]));
+        assert.strictEqual(byKey.get('plkv-all/' + suffix), '{"a" : 1}');
+        assert.strictEqual(byKey.get('plkv-lone-' + suffix), 'x');
+        assert.strictEqual(byKey.get('user-core/plkv-user-' + suffix), 'core-a');
+        assert.strictEqual(byKey.get('plkv-rows/' + suffix), 'core-b');
+        assert.deepStrictEqual(JSON.parse(byKey.get('access-state/plkv-as/' + suffix)), { value: { v: 1 }, expiresAt: 1000 });
+      });
+
       it('[PLKV09] platform-kv keyspace isolated from access-state / user-core', async () => {
         const suffix = cuid();
         const kvKey = 'iso-plkv/' + suffix;
