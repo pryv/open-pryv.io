@@ -32,7 +32,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const MAIL_HOST = 'https://mandrillapp.local';
 const MAIL_PATH = '/api/1.0/messages/send-template.json';
 const TRUSTED_APP = 'pryv-test-no-cors';
-const MAIL_ON = { welcome: true, resetPassword: false, verifyEmail: true };
+const MAIL_ON = { sendWelcome: true, sendResetPassword: false, sendVerifyEmail: true };
 
 describe('[WELC] welcome mail verification link', function () {
   useNock();
@@ -49,7 +49,7 @@ describe('[WELC] welcome mail verification link', function () {
     restoreConfig = injectTestConfigSnapshot({
       dnsLess: { isActive: true },
       custom: { systemStreams: null },
-      services: { email: { enabled: MAIL_ON } },
+      services: { email: MAIL_ON },
       account: { emailVerification: { requireAtRegistration: false, registrationCodeResendCooldownMs: 0 } }
     });
     fixtures = databaseFixture(await produceStorageConnection());
@@ -193,7 +193,7 @@ describe('[WELC] welcome mail verification link', function () {
   });
 
   it('[WEL03] with the verification mail off: no link, no token minted', async function () {
-    const restore = injectTestConfigSnapshot({ services: { email: { enabled: { welcome: true, resetPassword: false, verifyEmail: false } } } });
+    const restore = injectTestConfigSnapshot({ services: { email: { sendWelcome: true, sendResetPassword: false, sendVerifyEmail: false } } });
     try {
       const body = registerBody();
       const res = await request.post('/users').send(body);

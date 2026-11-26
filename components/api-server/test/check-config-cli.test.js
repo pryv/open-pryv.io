@@ -92,12 +92,43 @@ describe('[CKCF] bin/check-config.js email verification', function () {
     const res = runCheck(BASE + `
 services:
   email:
-    enabled:
-      verifyEmail: true
+    sendVerifyEmail: true
 `);
     assert.strictEqual(res.status, 1, res.stdout + res.stderr);
     assert.match(res.stderr,
-      /required when services\.email\.enabled\.verifyEmail is true/);
+      /required when services\.email\.sendVerifyEmail is true/);
+  });
+
+  it('[EMFL9] the former object form of services.email.enabled is a problem, with the boot message; in the environment too', () => {
+    const res = runCheck(BASE + `
+services:
+  email:
+    enabled:
+      welcome: false
+      resetPassword: true
+`);
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /services\.email\.enabled must be true or false\. The per-mail switches moved out of it/);
+    assert.match(res.stderr, /Found in override-file \(From file: .*check-config-.*\.yml\):/);
+    assert.match(res.stderr, /services\.email\.enabled\.welcome: false {2}-> {2}services\.email\.sendWelcome: false/);
+    assert.match(res.stderr, /services\.email\.enabled\.resetPassword: true {2}-> {2}services\.email\.sendResetPassword: true/);
+    // A higher `enabled: true` does not hide the object in a lower layer.
+    const env = runCheck(BASE + `
+services:
+  email:
+    enabled: true
+`, null, { services__email__enabled__welcome: 'false' });
+    assert.strictEqual(env.status, 1, env.stdout + env.stderr);
+    assert.match(env.stderr, /Found in env:\n {2}services__email__enabled__welcome=false {2}-> {2}services__email__sendWelcome=false/);
+    // The flat shape is clean.
+    const flat = runCheck(BASE + `
+services:
+  email:
+    enabled: true
+    sendWelcome: false
+`);
+    assert.strictEqual(flat.status, 0, flat.stdout + flat.stderr);
+    assert.doesNotMatch(flat.stdout + flat.stderr, /services\.email\.enabled must be/);
   });
 
   it('[CKCF3] a config that supplies the page URL is clean', () => {
@@ -168,7 +199,7 @@ account:
     assert.match(noMail.stdout, /defaultDays' is set but mail is not configured/);
   });
 
-  it('[CKCF7] a plain services.email.enabled: true inherits verifyEmail: a missing page URL is a warning, as at boot', () => {
+  it('[CKCF7] a plain services.email.enabled: true inherits sendVerifyEmail: a missing page URL is a warning, as at boot', () => {
     const res = runCheck(BASE + `
 services:
   email:
@@ -176,7 +207,7 @@ services:
 `);
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);
     assert.match(res.stdout, /emailVerificationPageURL missing or unset: email verification is on by default/);
-    assert.doesNotMatch(res.stdout + res.stderr, /required when services\.email\.enabled\.verifyEmail is true/);
+    assert.doesNotMatch(res.stdout + res.stderr, /required when services\.email\.sendVerifyEmail is true/);
   });
 
   it('[CKCF6] letsEncrypt.email is optional, but a placeholder in it is a problem', () => {

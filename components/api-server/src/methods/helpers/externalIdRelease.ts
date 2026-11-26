@@ -8,7 +8,7 @@ import { getLogger } from '@pryv/boiler';
 import type { ConfigLike } from '@pryv/boiler';
 import { createId as cuid } from '@paralleldrive/cuid2';
 import timestamp from 'unix-timestamp';
-import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { describeMailCapability, isMailKindSwitchedOn } from 'business/src/emails/mailCapability.ts';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { sendmail, isLoggedMailFailure } from './mailing.ts';
 
@@ -23,7 +23,6 @@ const logger = getLogger('methods:externalIds');
 
 type UserRef = { id: string; username: string };
 type EmailSettings = Parameters<typeof sendmail>[0] & {
-  enabled?: unknown;
   externalIdReleasedTemplate?: string;
 };
 type SendFn = typeof sendmail;
@@ -42,8 +41,7 @@ export async function notifyExternalIdReleased (
   try {
     const emailSettings = config.get('services:email') as EmailSettings | null | undefined;
     if (emailSettings == null || !describeMailCapability(config).ok) return 'audit-only';
-    const enabled = emailSettings.enabled;
-    if (enabled != null && typeof enabled === 'object' && (enabled as { externalIdReleased?: unknown }).externalIdReleased === false) return 'audit-only';
+    if (!isMailKindSwitchedOn(emailSettings, 'externalIdReleased')) return 'audit-only';
     const account = await (await getUsersRepository()).getUserByUsername(user.username);
     const email = account?.email;
     if (typeof email !== 'string' || email === '') return 'audit-only';

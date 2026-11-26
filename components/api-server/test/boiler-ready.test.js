@@ -63,8 +63,8 @@ describe('[CONFIG-RDY] @pryv/boiler ready()', () => {
   });
 
   it('[RDY-04] resolved config carries the test-config passwordResetPageURL', async () => {
-    // Added to test-config.yml in plan 70 §2A so any test that
-    // overrides services.email.enabled to truthy carries a value the
+    // In test-config.yml so any test that switches the password-reset mail
+    // on (services.email.sendResetPassword) carries a value the
     // REQUIRED_WHEN validator accepts. The URL is a placeholder
     // (test.pryv.local) — its presence not its content is what matters.
     const config = await ready();
@@ -81,12 +81,11 @@ describe('[CONFIG-RDY] @pryv/boiler ready()', () => {
 
   it('[RDY-06] re-reading via .get() after ready() resolves picks up runtime config.set() calls', async () => {
     // Config-set semantics: a value mutated AFTER ready() resolves
-    // is reflected in the next .get() call. This is what plan 70 §2C
-    // depends on for the lazy-getter sweep — and what plan 61 will
-    // depend on for per-worker storage isolation via config.set() at
-    // test boot. Pin the contract.
+    // is reflected in the next .get() call. The lazy config getters
+    // depend on it, and so does per-worker storage isolation via
+    // config.set() at test boot. Pin the contract.
     const config = await ready();
-    const key = 'plan-70-ready-test:scratch';
+    const key = 'boiler-ready-test:scratch';
     config.set(key, 'first');
     assert.strictEqual(config.get(key), 'first');
     config.set(key, 'second');

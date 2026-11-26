@@ -8,7 +8,8 @@ import { getLogger } from '@pryv/boiler';
 import type { ConfigLike } from '@pryv/boiler';
 import { getStorageLayer, getUserAccountStorage } from 'storage';
 import { store as delegationStore, STATUS as DELEGATION_STATUS } from 'delegation';
-import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { describeMailCapability, isMailKindSwitchedOn } from 'business/src/emails/mailCapability.ts';
+import type { MailKind } from 'business/src/emails/mailCapability.ts';
 import { isStoredEmailHeldElsewhere, isEmailHeldByAnother } from 'business/src/emails/heldAddress.ts';
 import type { EmailRowsIndex } from 'business/src/emails/heldAddress.ts';
 import { getPlatform } from 'platform';
@@ -43,7 +44,6 @@ type AccessRow = {
   clientData?: { cmc?: { role?: unknown } | null; delegation?: { kind?: unknown } | null } | null;
 };
 type EmailSettings = Parameters<typeof sendmail>[0] & {
-  enabled?: unknown;
   defaultLang?: string;
 };
 
@@ -235,8 +235,9 @@ export function confirmationSubstitutions (config: ConfigLike, user: UserRef, sc
 }
 
 /**
- * The auto-deletion mails: the switch under `services.email.enabled`, the
- * template key under `services.email` and the default template name.
+ * The auto-deletion mails: the mail class (its switch is
+ * `services.email.send<Class>`, see `mailSwitchKey`), the template key under
+ * `services.email` and the default template name.
  */
 export const AUTO_DELETION_MAILS = Object.freeze({
   scheduled: { flag: 'accountDeletionScheduled', templateKey: 'accountDeletionScheduledTemplate', template: 'account-deletion-scheduled' },
@@ -248,7 +249,7 @@ export const AUTO_DELETION_MAILS = Object.freeze({
   transferCancelled: { flag: 'accountTransferCancelled', templateKey: 'accountTransferCancelledTemplate', template: 'account-transfer-cancelled' },
   transferLapsed: { flag: 'accountTransferLapsed', templateKey: 'accountTransferLapsedTemplate', template: 'account-transfer-lapsed' },
   transferCompleted: { flag: 'accountTransferCompleted', templateKey: 'accountTransferCompletedTemplate', template: 'account-transfer-completed' }
-});
+} satisfies Record<string, { flag: MailKind; templateKey: string; template: string }>);
 export type AutoDeletionMail = keyof typeof AUTO_DELETION_MAILS;
 export type MailOutcome = 'sent' | 'off' | 'rejected' | 'failed';
 
@@ -274,8 +275,7 @@ export async function sendAutoDeletionMail (config: ConfigLike, kind: AutoDeleti
     if (to == null && facts.emailHeld === true) return 'rejected';
     if (to == null && (!facts.notifiable || facts.email == null)) return 'off';
     if (to != null && (facts.mail === 'not-configured' || to.email === '')) return 'off';
-    const enabled = emailSettings.enabled;
-    if (enabled != null && typeof enabled === 'object' && (enabled as Record<string, unknown>)[mail.flag] === false) return 'off';
+    if (!isMailKindSwitchedOn(emailSettings, mail.flag)) return 'off';
     if (to == null && await isStoredEmailHeldElsewhere(user.username, facts.email, `auto-deletion ${kind} mail`, logger)) return 'rejected';
     const lang = facts.language || emailSettings.defaultLang || 'en';
     const configured = (emailSettings as Record<string, unknown>)[mail.templateKey];

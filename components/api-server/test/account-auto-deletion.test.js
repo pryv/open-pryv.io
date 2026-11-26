@@ -31,7 +31,7 @@ const DELEGATE_KIND = { delegation: { kind: 'delegate-pat', relId: 'acst-rel', d
 // confirmation mail unless a test turns it on.
 const BASE_CONFIG = {
   'user-account': { delete: ['adminToken', 'personalToken'] },
-  services: { email: { enabled: { accountDeletionScheduled: false } } }
+  services: { email: { sendAccountDeletionScheduled: false } }
 };
 
 describe('[ACST] account auto-deletion setting', function () {
@@ -405,7 +405,7 @@ describe('[ACST] account auto-deletion setting', function () {
     useNock();
     const MANDRILL = 'https://mandrillapp.local';
     const MANDRILL_PATH = '/api/1.0/messages/send-template.json';
-    const MAIL_ON = { services: { email: { enabled: { accountDeletionScheduled: true } } }, service: { account: 'https://account.acst.example.com/' } };
+    const MAIL_ON = { services: { email: { sendAccountDeletionScheduled: true } }, service: { account: 'https://account.acst.example.com/' } };
 
     afterEach(function () {
       nock.cleanAll();

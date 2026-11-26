@@ -29,7 +29,7 @@ const { produceStorageConnection } = require('api-server/test/test-helpers');
 const { pubsub } = require('messages');
 
 const TRUSTED_APP = 'pryv-test-no-cors';
-const MAIL_ON = { welcome: true, resetPassword: true, verifyEmail: false, mfaChange: false };
+const MAIL_ON = { sendWelcome: true, sendResetPassword: true, sendVerifyEmail: false, sendMfaChange: false };
 
 describe('[MLNC] mail not configured', function () {
   this.timeout(30000);
@@ -103,7 +103,7 @@ describe('[MLNC] mail not configured', function () {
   }
 
   function mailConfig (smtp) {
-    return { services: { email: { enabled: MAIL_ON, method: 'in-process', smtp, welcomeTemplate, resetPasswordTemplate: welcomeTemplate } } };
+    return { services: { email: { ...MAIL_ON, method: 'in-process', smtp, welcomeTemplate, resetPasswordTemplate: welcomeTemplate } } };
   }
 
   async function closedPort () {

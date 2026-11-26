@@ -417,63 +417,66 @@ services:
   #       Back-compat default — existing deployments keep working unchanged.
   #   - 'in-process': run the `mail` component inside the api-server workers.
   #       Templates live in PlatformDB (cluster-wide), SMTP creds stay local YAML.
-  # `enabled.*` are independent kill-switches for each message class. When
-  # both are false, mailing is off regardless of `method`.
+  # `enabled` is the whole-feature switch, a boolean: false sends no mail of
+  # any kind, whatever the `send...` keys say; true (the default) leaves each
+  # message class to its own `send<Class>` switch below (booleans, all on by
+  # default). The former object form (`enabled: { welcome: false, ... }`)
+  # refuses the boot: see MIGRATION-services-email-enabled.md.
   email:
-    enabled:
-      welcome: true
-      resetPassword: true
-      # Email verification for addresses added to an account (verification
-      # link mailed to the address). Needs `auth.emailVerificationPageURL` (the
-      # /verify-email page of your auth UI) and a working `services.email`
-      # setup; when either is missing and this key is left at its default the
-      # feature stays off and the core logs a warning at boot (it does not
-      # refuse to boot). Setting this key to true EXPLICITLY makes the page URL
-      # required at boot. Set false to turn the feature off silently.
-      verifyEmail: true
-      # Notice to the account's email when its MFA is enrolled, replaced,
-      # turned off or removed with a recovery code. Best-effort: sent only when
-      # mail is configured, and a delivery failure never fails the MFA call.
-      mfaChange: true
-      # Notice to the account's email when an administrator releases an
-      # external id it held (POST /system/admin/ext-id/release). Best-effort
-      # like mfaChange: the release is never rolled back by a failed send.
-      externalIdReleased: true
-      # Confirmation to the account's email each time its holder changes the
-      # account's auto-deletion setting (account.autoDeletion), clearing
-      # included. Best-effort: a failed send never fails the change. Off, the
-      # first reminder becomes the first notice of a schedule.
-      accountDeletionScheduled: true
-      # Reminders before an auto-deletion (account.autoDeletion.reminders).
-      # An account is never deleted less than reminders.minNoticeDays after
-      # its first notice: off, an account under the operator preset gets no
-      # notice and is therefore never deleted.
-      accountDeletionReminder: true
-      # Notice, sent once, that an account due for auto-deletion could not be
-      # deleted: a deletion guard refused it (e.g. it manages a delegated
-      # account that would be left without any way in) or could not be
-      # checked, or the holder's own schedule needs self-deletion, which
-      # user-account.delete no longer allows. The sweep tries again at every
-      # pass, silently.
-      accountDeletionBlocked: true
-      # Account transfer to a beneficiary (account.autoDeletion with action
-      # transfer). Off, a transfer cannot reach its beneficiary: keep the
-      # named and claim mails on wherever transfers are offered.
-      #  - accountTransferNamed: to the beneficiary when named, if the holder
-      #    chose to tell them at setup (with a decline link);
-      #  - accountTransferClaim: to the beneficiary when the claim window
-      #    opens (the claim link), sent again 30 and 60 days later;
-      #  - accountTransferStarted / Lapsed: to the holder when the window
-      #    opens / ends without a claim and the account is kept;
-      #  - accountTransferCancelled / Completed: to the holder and the
-      #    beneficiary when the transfer is cancelled (account used, declined,
-      #    changed) / when the claimant controls the account.
-      accountTransferNamed: true
-      accountTransferClaim: true
-      accountTransferStarted: true
-      accountTransferCancelled: true
-      accountTransferLapsed: true
-      accountTransferCompleted: true
+    enabled: true
+    sendWelcome: true
+    sendResetPassword: true
+    # Email verification for addresses added to an account (verification
+    # link mailed to the address). Needs `auth.emailVerificationPageURL` (the
+    # /verify-email page of your auth UI) and a working `services.email`
+    # setup; when either is missing and this key is left at its default the
+    # feature stays off and the core logs a warning at boot (it does not
+    # refuse to boot). Setting this key to true EXPLICITLY makes the page URL
+    # required at boot. Set false to turn the feature off silently.
+    sendVerifyEmail: true
+    # Notice to the account's email when its MFA is enrolled, replaced,
+    # turned off or removed with a recovery code. Best-effort: sent only when
+    # mail is configured, and a delivery failure never fails the MFA call.
+    sendMfaChange: true
+    # Notice to the account's email when an administrator releases an
+    # external id it held (POST /system/admin/ext-id/release). Best-effort
+    # like sendMfaChange: the release is never rolled back by a failed send.
+    sendExternalIdReleased: true
+    # Confirmation to the account's email each time its holder changes the
+    # account's auto-deletion setting (account.autoDeletion), clearing
+    # included. Best-effort: a failed send never fails the change. Off, the
+    # first reminder becomes the first notice of a schedule.
+    sendAccountDeletionScheduled: true
+    # Reminders before an auto-deletion (account.autoDeletion.reminders).
+    # An account is never deleted less than reminders.minNoticeDays after
+    # its first notice: off, an account under the operator preset gets no
+    # notice and is therefore never deleted.
+    sendAccountDeletionReminder: true
+    # Notice, sent once, that an account due for auto-deletion could not be
+    # deleted: a deletion guard refused it (e.g. it manages a delegated
+    # account that would be left without any way in) or could not be
+    # checked, or the holder's own schedule needs self-deletion, which
+    # user-account.delete no longer allows. The sweep tries again at every
+    # pass, silently.
+    sendAccountDeletionBlocked: true
+    # Account transfer to a beneficiary (account.autoDeletion with action
+    # transfer). Off, a transfer cannot reach its beneficiary: keep the
+    # named and claim mails on wherever transfers are offered.
+    #  - sendAccountTransferNamed: to the beneficiary when named, if the
+    #    holder chose to tell them at setup (with a decline link);
+    #  - sendAccountTransferClaim: to the beneficiary when the claim window
+    #    opens (the claim link), sent again 30 and 60 days later;
+    #  - sendAccountTransferStarted / Lapsed: to the holder when the window
+    #    opens / ends without a claim and the account is kept;
+    #  - sendAccountTransferCancelled / Completed: to the holder and the
+    #    beneficiary when the transfer is cancelled (account used, declined,
+    #    changed) / when the claimant controls the account.
+    sendAccountTransferNamed: true
+    sendAccountTransferClaim: true
+    sendAccountTransferStarted: true
+    sendAccountTransferCancelled: true
+    sendAccountTransferLapsed: true
+    sendAccountTransferCompleted: true
     # 'in-process' is the default since the merged mail component landed in v2.
     # Deployments that still run the external pryv/service-mail microservice
     # must pin `method: microservice` in their override-config.yml.
@@ -505,25 +508,25 @@ services:
     # Sent by the registration email challenge (see account.emailVerification.
     # requireAtRegistration): carries the copy/paste code, not a link.
     emailChallengeTemplate: email-challenge
-    # Sent when the account's MFA changes (see enabled.mfaChange). The template
+    # Sent when the account's MFA changes (see sendMfaChange). The template
     # gets USERNAME, MFA_CHANGE (enrolled | replaced | deactivated | recovered
     # | deactivatedByAdmin) and one flag per change (MFA_ENROLLED,
     # MFA_REPLACED, MFA_DEACTIVATED, MFA_RECOVERED, MFA_DEACTIVATED_BY_ADMIN:
     # 'true' for the change that happened, '' otherwise).
     mfaChangeTemplate: mfa-change
     # Sent when an administrator releases an external id of the account (see
-    # enabled.externalIdReleased). The template gets USERNAME, NAMESPACE_LABEL
+    # sendExternalIdReleased). The template gets USERNAME, NAMESPACE_LABEL
     # and REASON (as given by the administrator); never the id itself.
     externalIdReleasedTemplate: external-id-released
     # Sent when the holder changes the account's auto-deletion setting (see
-    # enabled.accountDeletionScheduled). The template gets USERNAME, DEADLINE
+    # sendAccountDeletionScheduled). The template gets USERNAME, DEADLINE
     # (date and time of the deletion, UTC, '' when none), DAYS_LEFT, TRIGGER
     # (date | inactivity | none) with the flags SCHEDULED, TRIGGER_DATE and
     # TRIGGER_INACTIVITY ('true' or ''), INACTIVITY_DAYS, ACTION,
     # ACCOUNT_APP_URL (service.account) and EXPORT_URL (its data page).
     accountDeletionScheduledTemplate: account-deletion-scheduled
-    # Sent before an auto-deletion (see enabled.accountDeletionReminder), and
-    # when one is refused by a deletion guard (enabled.accountDeletionBlocked).
+    # Sent before an auto-deletion (see sendAccountDeletionReminder), and
+    # when one is refused by a deletion guard (sendAccountDeletionBlocked).
     # Both get the variables of the confirmation (USERNAME, DEADLINE: the
     # date and time the account is due, DAYS_LEFT, TRIGGER and its flags,
     # INACTIVITY_DAYS, ACTION, ACCOUNT_APP_URL, EXPORT_URL) and
@@ -643,7 +646,7 @@ account:
     # email address first: the client requests a one-time code
     # (POST {register}/email-challenge), the holder pastes it back
     # (POST {register}/email-challenge/verify) and the resulting proof is sent
-    # with the registration. Independent of services.email.enabled.verifyEmail
+    # with the registration. Independent of services.email.sendVerifyEmail
     # (that flag only governs the post-creation verification mail).
     # Requires a working mail configuration: the core refuses to boot when this
     # is true and services.email is incomplete. A mail delivery failure at

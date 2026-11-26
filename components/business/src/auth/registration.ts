@@ -19,6 +19,7 @@ const { getPlatform } = require('platform');
 const accountStreams = require('business/src/system-streams/index.ts');
 const emailsContainer = require('business/src/emails/container.ts');
 const { foundingVerifyLink } = require('business/src/emails/verifyLink.ts');
+const { isMailKindSwitchedOn } = require('business/src/emails/mailCapability.ts');
 const { User } = require('business/src/users/index.ts');
 const { getLogger, getConfigSync } = require('@pryv/boiler');
 const { REGISTRATION_FORWARD_HEADER, signRegistrationForward } = require('business/src/auth/registrationForward.ts');
@@ -440,11 +441,7 @@ class Registration {
     // already succeeded.
     if (!emailSettings) return next();
     // Skip this step if welcome mail is deactivated
-    const emailActivation = emailSettings.enabled as { welcome?: boolean } | boolean | undefined;
-    if (emailActivation === false ||
-        (typeof emailActivation === 'object' && emailActivation?.welcome === false)) {
-      return next();
-    }
+    if (!isMailKindSwitchedOn(emailSettings, 'welcome')) return next();
     const recipient = {
       email: context.newUser.email,
       name: context.newUser.username,

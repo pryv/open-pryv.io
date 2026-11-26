@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Mail switches: one reader
+
+- `components/business/src/emails/mailCapability.ts`: `mailSwitchKey`, `isMailKindSwitchedOn` /
+  `isMailKindSwitchedOnInConfig` (fail-closed on a non-boolean value) replace the per-site decodes of
+  `services.email.enabled` (reset, welcome, MFA, external-id, auto-deletion and transfer mails, `service.info`,
+  REQUIRED_WHEN, `bin/check-config.js`; `mailSwitchedOn` removed); `describeEmailSwitches` is the boot and
+  check-config refusal of the former object form, over every config scope. Config classification and the pinned
+  wildcard-leaves fixture follow the new keys.
+
 ### rqlite reads without an answer
 
 - `DBrqlite.query`: at every level, HTTP 503, a top-level `error`, no `results[0]` (also a body without `results`,

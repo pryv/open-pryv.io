@@ -324,7 +324,7 @@ export function createAutoDeletionSweep<F extends SweepFacts> (deps: SweepDeps<F
       logger.info(`auto-deletion sweep: ${r.accounts} account(s) with a schedule, ${r.reminders} reminder(s) sent, ${r.reminderFailures} refused, ${r.erased} account(s) erased, ${r.completed} unfinished erasure(s) completed, ${r.blocked} newly blocked, ${r.deferred} left for the next pass (maxDeletionsPerPass), ${r.failed} failure(s)`);
     }
     if (r.remindersOff > 0) {
-      logger.info(`auto-deletion sweep: ${r.remindersOff} reminder(s) due but services.email.enabled.accountDeletionReminder is false: without a first notice, those accounts are not deleted`);
+      logger.info(`auto-deletion sweep: ${r.remindersOff} reminder(s) due but services.email.sendAccountDeletionReminder is false: without a first notice, those accounts are not deleted`);
     }
     return r;
   }

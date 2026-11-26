@@ -43,7 +43,8 @@ import * as methodsSchema from '../schema/accountAutoDeletionMethods.ts';
 import { createPasswordStepUp } from './helpers/passwordStepUp.ts';
 import { getState, loadAccountFacts, computeSchedule, buildView, sendConfirmation, sendTransferMail } from './helpers/autoDeletion.ts';
 import type { AccountFacts } from './helpers/autoDeletion.ts';
-import { autoDeletionConfig, availableActions, availableTriggers, transferLinkKey, transferIdentityKey, mailSwitchedOn } from './helpers/autoDeletionPolicy.ts';
+import { autoDeletionConfig, availableActions, availableTriggers, transferLinkKey, transferIdentityKey } from './helpers/autoDeletionPolicy.ts';
+import { isMailKindSwitchedOnInConfig } from 'business/src/emails/mailCapability.ts';
 import { getTransferDelegation } from './helpers/transferDelegation.ts';
 
 type Api = { register: (...args: unknown[]) => void };
@@ -242,7 +243,7 @@ export default async function (api: Api) {
           if (!actions.includes(action)) return next(errors.autoDeletionActionNotAllowed(action, actions));
           setting = { mode, action, updatedAt: now };
           if (action === 'transfer') {
-            const read = readTransfer(params.transfer, actions, facts.email, mailSwitchedOn(config, 'accountTransferNamed'));
+            const read = readTransfer(params.transfer, actions, facts.email, isMailKindSwitchedOnInConfig(config, 'accountTransferNamed'));
             if (read instanceof APIError) return next(read);
             setting.transfer = read.setting;
             identity = read.identity;

@@ -46,20 +46,20 @@ const DEFAULT_PER_IP = { maxFailures: 30, windowSeconds: 900 };
 const WIDE = 100000000;
 // Only the two mails a transfer cannot do without (it is not offered without them).
 const BASE_MAILS = {
-  accountDeletionScheduled: false,
-  accountDeletionReminder: false,
-  accountDeletionBlocked: false,
-  accountTransferNamed: true,
-  accountTransferClaim: true,
-  accountTransferStarted: false,
-  accountTransferCancelled: false,
-  accountTransferLapsed: false,
-  accountTransferCompleted: false
+  sendAccountDeletionScheduled: false,
+  sendAccountDeletionReminder: false,
+  sendAccountDeletionBlocked: false,
+  sendAccountTransferNamed: true,
+  sendAccountTransferClaim: true,
+  sendAccountTransferStarted: false,
+  sendAccountTransferCancelled: false,
+  sendAccountTransferLapsed: false,
+  sendAccountTransferCompleted: false
 };
 const BASE_CONFIG = {
   'user-account': { delete: ['adminToken', 'personalToken'] },
   service: { account: ACCOUNT_APP },
-  services: { email: { enabled: BASE_MAILS } }
+  services: { email: { ...BASE_MAILS } }
 };
 
 const guarded = new Set();
@@ -209,10 +209,10 @@ describe('[ACTR] account transfer', function () {
       await withInjectedConfig({ delegation: { active: false } }, async () => {
         assert.deepEqual((await get(u)).body.autoDeletion.actions, ['delete']);
       });
-      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountTransferClaim: false } } } }, async () => {
+      await withInjectedConfig({ services: { email: { ...BASE_MAILS, sendAccountTransferClaim: false } } }, async () => {
         assert.deepEqual((await get(u)).body.autoDeletion.actions, ['delete'], 'without the claim mail no transfer can reach its beneficiary');
       });
-      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountTransferNamed: false } } } }, async () => {
+      await withInjectedConfig({ services: { email: { ...BASE_MAILS, sendAccountTransferNamed: false } } }, async () => {
         const res = await set(u, { mode: 'date', date: inDays(30), action: 'transfer', transfer: transferTo('b@actr.example.com', { notifyBeneficiary: 'atSetup' }), password: PASSWORD });
         assert.equal(errorId(res), 'auto-deletion-transfer-invalid');
         assert.equal(res.body.error.data.reason, 'named-mail-off');
@@ -342,7 +342,7 @@ describe('[ACTR] account transfer', function () {
     const varsOf = (mail) => Object.fromEntries(mail.message.global_merge_vars.map((x) => [x.name, x.content]));
 
     it('[ACTR3A] atSetup mails the beneficiary a decline link; declining falls back (delete) and tells the owner', async function () {
-      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountTransferNamed: true, accountTransferCancelled: true } } } }, async () => {
+      await withInjectedConfig({ services: { email: { ...BASE_MAILS, sendAccountTransferNamed: true, sendAccountTransferCancelled: true } } }, async () => {
         const u = await freshUser();
         const captured = capture();
         const res = await set(u, { mode: 'date', date: inDays(30), action: 'transfer', transfer: transferTo('b@actr.example.com', { notifyBeneficiary: 'atSetup', fallback: 'delete', name: 'Bea' }), password: PASSWORD });
@@ -381,7 +381,7 @@ describe('[ACTR] account transfer', function () {
     });
 
     it('[ACTR3C] the real mailer: the claim mail carries both links, the owner\'s says it started; reminders say "transferred"', async function () {
-      await withInjectedConfig({ services: { email: { enabled: { ...BASE_MAILS, accountDeletionReminder: true, accountTransferClaim: true, accountTransferStarted: true } } } }, async () => {
+      await withInjectedConfig({ services: { email: { ...BASE_MAILS, sendAccountDeletionReminder: true, sendAccountTransferClaim: true, sendAccountTransferStarted: true } } }, async () => {
         const u = await freshUser();
         await armTransfer(u, transferTo('b@actr.example.com', { fallback: 'delete', identityGiven: true }));
         await state.setIdentity(u.id, { name: 'Beatrice Example' }, transferIdentityKey(config), 'test');

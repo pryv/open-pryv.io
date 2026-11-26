@@ -404,7 +404,7 @@ describe('[VEML] account email verification', function () {
       const captured = [];
       nock('https://mandrillapp.local').post('/api/1.0/messages/send-template.json')
         .reply(200, (uri, body) => { captured.push(body); return {}; });
-      await withInjectedConfig({ services: { email: { enabled: { verifyEmail: true } } } }, async () => {
+      await withInjectedConfig({ services: { email: { sendVerifyEmail: true } } }, async () => {
         const res = await coreRequest.put(accountPath(u.username)).set('Authorization', u.token)
           .send({ emails: { add: [email] } });
         assert.strictEqual(res.status, 200, JSON.stringify(res.body));
@@ -424,7 +424,7 @@ describe('[VEML] account email verification', function () {
         .reply(200, (uri, body) => { captured.push(body); return {}; });
       const pageURL = 'https://app.example.com/verify-email?pryvServiceInfoUrl=https%3A%2F%2Fcore.example.com%2Freg%2Fservice%2Finfo';
       await withInjectedConfig({
-        services: { email: { enabled: { verifyEmail: true } } },
+        services: { email: { sendVerifyEmail: true } },
         auth: { emailVerificationPageURL: pageURL }
       }, async () => {
         const res = await coreRequest.put(accountPath(u.username)).set('Authorization', u.token)

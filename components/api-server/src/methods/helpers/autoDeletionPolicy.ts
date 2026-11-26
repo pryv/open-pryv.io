@@ -8,7 +8,7 @@ import type { ConfigLike } from '@pryv/boiler';
 import { normalizeAutoDeletionConfig } from 'business/src/autoDeletion/config.ts';
 import type { AutoDeletionConfig } from 'business/src/autoDeletion/config.ts';
 import { resolveLinkKey, resolveIdentityKey } from 'business/src/autoDeletion/state.ts';
-import { describeMailCapability } from 'business/src/emails/mailCapability.ts';
+import { describeMailCapability, isMailKindSwitchedOnInConfig } from 'business/src/emails/mailCapability.ts';
 
 /**
  * What a holder may set for the auto-deletion of their account on this core,
@@ -42,17 +42,10 @@ export function transferAvailable (config: ConfigLike): boolean {
   if (config.get('delegation:active') === false) return false;
   if (!describeMailCapability(config).ok) return false;
   // Without the claim mail no transfer can reach its beneficiary.
-  if (!mailSwitchedOn(config, 'accountTransferClaim')) return false;
+  if (!isMailKindSwitchedOnInConfig(config, 'accountTransferClaim')) return false;
   const accountApp = config.get('service:account');
   if (typeof accountApp !== 'string' || accountApp === '') return false;
   return transferLinkKey(config) != null;
-}
-
-/** Whether the mail `kind` is switched on (`services.email.enabled`). */
-export function mailSwitchedOn (config: ConfigLike, kind: string): boolean {
-  const enabled = config.get('services:email:enabled');
-  if (enabled === false) return false;
-  return !(enabled != null && typeof enabled === 'object' && (enabled as Record<string, unknown>)[kind] === false);
 }
 
 /** Key of the transfer links (null: none can be made). */

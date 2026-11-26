@@ -1947,7 +1947,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
 
     // ------------------------------------------------------------------
     // E-mail notice of an MFA change. Off in the test configuration
-    // (services.email.enabled.mfaChange: false); switched on here against
+    // (services.email.sendMfaChange: false); switched on here against
     // the Mandrill double the other mail tests use.
     // ------------------------------------------------------------------
     describe('[MSN] e-mail notice of an MFA change', function () {
@@ -1957,7 +1957,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
       let email;
 
       beforeEach(async function () {
-        restoreMail = injectTestConfigSnapshot({ services: { email: { enabled: { mfaChange: true } } } });
+        restoreMail = injectTestConfigSnapshot({ services: { email: { sendMfaChange: true } } });
         await _resetMFASingletons();
         // A user of its own, with a known address.
         username = ('mfn' + cuid.slug()).toLowerCase();
@@ -2041,7 +2041,7 @@ describe('[MFAA] MFA acceptance (seq)', function () {
         const captured = captureMails();
         const off = await coreRequest.post(`/${username}/mfa/deactivate`).set('Authorization', personalToken).send({ password });
         assert.strictEqual(off.status, 200, JSON.stringify(off.body));
-        const restore = injectTestConfigSnapshot({ services: { email: { enabled: { mfaChange: false } } } });
+        const restore = injectTestConfigSnapshot({ services: { email: { sendMfaChange: false } } });
         try {
           const act = await activateTotp();
           const confirm = await coreRequest.post(`/${username}/mfa/confirm`).set('Authorization', act.body.mfaToken)
