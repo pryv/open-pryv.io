@@ -30,6 +30,7 @@ const commonFns = require('./helpers/commonFunctions.ts');
 const { notifyMfaChange, auditMfaChange } = require('./helpers/mfaChange.ts');
 const { notifyExternalIdReleased, auditExternalIdReleased } = require('./helpers/externalIdRelease.ts');
 const { resetAutoDeletion } = require('./helpers/autoDeletionAdminReset.ts');
+const { recordAccountCreatedStep } = require('./helpers/accountCreationAudit.ts');
 const { Profile: MFAProfile } = require('business/src/mfa/index.ts');
 const Registration = require('business/src/auth/registration.ts').default;
 const methodsSchema = require('../schema/systemMethods.ts');
@@ -76,6 +77,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     registration.prepareUserData,
     refuseReservedUsername,
     registration.createUser.bind(registration),
+    recordAccountCreatedStep('system'),
     registration.sendWelcomeMail.bind(registration)
   );
 

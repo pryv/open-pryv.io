@@ -78,11 +78,13 @@ function filter (filter: AuditFilter): void {
   }
   validateFunctions(filter.methods.include);
   validateFunctions(filter.methods.exclude);
+  // Only a group naming no method family is refused. A method id that matches
+  // nothing is not: an entry of another release must not stop a boot, and the
+  // boot warns about it (`unknownFilterMethods`).
   function validateFunctions (methods: string[]): void {
-    methods.forEach((m: string) => {
-      if (isMethodAggregate(m)) return isValidAggregate(m);
-      return ALL_METHODS_MAP[m];
-    });
+    for (const m of methods) {
+      if (isMethodAggregate(m)) isValidAggregate(m);
+    }
 
     function isMethodAggregate (m: string): boolean {
       const parts = m.split('.');
@@ -94,7 +96,7 @@ function filter (filter: AuditFilter): void {
     function isValidAggregate (m: string): boolean {
       const parts = m.split('.');
       for (let i = 0; i < ALL_METHODS.length; i++) {
-        if (ALL_METHODS[i].startsWith(parts[0])) return true;
+        if (ALL_METHODS[i].startsWith(parts[0] + '.')) return true;
       }
       throw new Error('Invalid "audit:filter" configuration parameter: \n' +
         'invalid aggregate method provided: "' + m + '".\n' +

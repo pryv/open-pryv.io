@@ -31,8 +31,11 @@ export default function (expressApp: ExpressApp, app: AppLike) {
     if (forwardHeader != null) {
       const forward = verifyRegistrationForward(forwardHeader, getConfigSync().get('auth:adminAccessKey'), JSON.stringify(req.body ?? {}));
       if (forward == null) return next(errors.forbidden('Invalid registration forward.'));
-      const context = req.context as { registrationForwardedFrom?: string; source?: { ip?: string } };
+      const context = req.context as { registrationForwardedFrom?: string; registrationForwardClient?: string; source?: { ip?: string } };
       context.registrationForwardedFrom = forward.from;
+      // The client address as signed ('' when the landing core knew none): the
+      // peer of this request is the other core, never the client.
+      context.registrationForwardClient = forward.client;
       if (context.source != null && forward.client !== '') context.source.ip = forward.client;
     }
     api.call(req.context, req.body, methodCallback(res, next, 201));

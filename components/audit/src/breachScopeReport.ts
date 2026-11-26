@@ -46,8 +46,12 @@ export interface AuditRow {
 }
 
 const ERROR_TYPE = 'audit-log/pryv-api-error';
-/** The records of the writes the server makes to an access. */
-const ACCESS_WRITE_TYPE = 'audit-log/access';
+/**
+ * The records the server writes itself, never calls of the access whose
+ * stream they carry: what it did to an access, and the creation of the
+ * account with its first personal access.
+ */
+const SERVER_RECORD_TYPES = new Set(['audit-log/access', 'audit-log/account']);
 
 /** action -> class. Unmapped actions fall into `other`; the raw byAction
  * histogram is always primary (lossless), the class map is a rendering aid. */
@@ -225,8 +229,9 @@ export function buildReport (
   let maxScopedStreamCount = 0;
 
   for (const row of auditRows) {
-    // What the server did to the access is listed, not counted as a call of it.
-    const isCall = row.type !== ACCESS_WRITE_TYPE;
+    // What the server did (to the access, or the account's creation) is
+    // listed, not counted as a call of it.
+    const isCall = !SERVER_RECORD_TYPES.has(row.type);
     if (isCall) totalCalls++;
     const action = row.content?.action;
     const isError = row.type === ERROR_TYPE;

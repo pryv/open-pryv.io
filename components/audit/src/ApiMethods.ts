@@ -180,7 +180,12 @@ const ALL_METHODS = [
   // the account that holds them (api-server methods/helpers/accessWriteAudit.ts).
   'accesses.created',
   'accesses.changed',
-  'accesses.deleted'
+  'accesses.deleted',
+  // An account created on this core (by auth.register, system.createUser or
+  // delegations.createAccount): recorded by the server in the new account's
+  // own trail, once it exists (api-server
+  // methods/helpers/accountCreationAudit.ts).
+  'account.created'
 ];
 
 const NOT_AUDITED_METHODS = [
@@ -253,7 +258,7 @@ type MethodsMap = Record<string, true>;
 function throwIfMethodIsNotDeclared (methodId: string): void {
   if (methodId.includes('*')) return; // including to register for wildcards such as "*"
   if (allMethodsMap[methodId]) return;
-  throw new Error('Attempting to add a method not declared in audit, methodId: "' + methodId + '". Please add it to components/audit/src/ApiMethods.js#ALL_METHODS');
+  throw new Error('Attempting to add a method not declared in audit, methodId: "' + methodId + '". Please add it to components/audit/src/ApiMethods.ts#ALL_METHODS');
 }
 
 const AUDITED_METHODS_MAP = buildMap(AUDITED_METHODS);

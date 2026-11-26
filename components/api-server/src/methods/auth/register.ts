@@ -23,6 +23,7 @@ const policy = require('business/src/emails/registrationPolicy.ts');
 const mailing = require('./../helpers/mailing.ts');
 const { reserveEmailLookup } = require('../../routes/reg/emailLookupBudget.ts');
 const mailBudgets = require('../helpers/mailBudgets.ts');
+const { recordAccountCreatedStep } = require('../helpers/accountCreationAudit.ts');
 
 type RegisterParams = { username?: string; password?: string; email?: string; [k: string]: unknown };
 type EmailChallengeParams = { email: string; language?: string };
@@ -81,6 +82,9 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
     registration.forwardIfCrossCore.bind(registration),
     registration.validateOnPlatform.bind(registration),
     registration.createUser.bind(registration),
+    // The first record of the new account's trail (none when another core
+    // created it).
+    recordAccountCreatedStep('registration'),
     registration.buildResponse.bind(registration),
     registration.sendWelcomeMail.bind(registration));
 

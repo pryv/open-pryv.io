@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Audit: `account.created` in the new account's trail
+
+- New `components/api-server/src/methods/helpers/accountCreationAudit.ts`: `recordAccountCreated(userId,
+  { source, ip?, accessId? })` (never throws; audit off or not initialised: nothing; a failed write is logged and
+  counted by `eventForUser`), `recordAccountCreatedStep(source)` (the chain step after `registration.createUser`,
+  a no-op on `result.redirect` / `result.forwarded`), `ACCOUNT_EVENT_TYPE = 'audit-log/account'`. Wired in
+  `methods/auth/register.ts` (`auth.register`), `methods/system.ts` (`system.createUser`) and
+  `methods/helpers/delegationAccounts.ts` `provisionAccount` (same-core and cross-core
+  `delegations.createAccount`, after `insertOne`). `ip` is kept for `registration` only; the access id is left out
+  when it is the system id (no personal access made). `routes/auth/register.ts` keeps the signed client address of
+  a forward on `context.registrationForwardClient`; on a forwarded registration the step uses only that value ('':
+  no `ip`), never `context.source.ip` (the peer, the other core).
+- `audit/src/ApiMethods.ts`: `account.created` in `ALL_METHODS`, not in `WITHOUT_USER_METHODS`; the
+  undeclared-method error names `ApiMethods.ts`.
+- `audit/src/breachScopeReport.ts`: `SERVER_RECORD_TYPES` (`audit-log/access`, `audit-log/account`) are listed, not
+  counted as calls.
+- `audit/src/validation.ts` `validateFunctions`: the dead `return ALL_METHODS_MAP[m]` inside a `forEach` is gone
+  (a `for...of` checks the groups only, the behaviour it always had); `[GFCE]` asserted a refusal that never
+  happened and passed only because its own `assert.fail` was caught: it now asserts the acceptance, `[GY6E]` uses
+  `assert.throws`.
+- The event type `audit-log/account` is in data-types (unpublished 1.4.0, with the other `audit-log/*` record
+  types); the vendored catalogue (1.3.4) is unchanged: audit records are not validated against it.
+- Tests `[AACR1-9]`, `[AACRC]`, `[AACRD]`, `[AACRE]` (`api-server/test/audit-account-created.test.js`), `[AACRA]`
+  (`AuditFilter`), `[AACRB]` (`breachScopeReport`). `[AT04]` (`audit/test/acceptance/Audit.test.js`): a
+  registration now gives two records, the `auth.register` call row (syslog only) and `account.created` (syslog and
+  the new account's storage); the test waits for the audit writes, then asserts both exactly.
+
 ### CMC: one grant per relationship
 
 - New `components/cmc/src/replacedGrants.ts`: `endReplacedGrants` (accepter side, called by

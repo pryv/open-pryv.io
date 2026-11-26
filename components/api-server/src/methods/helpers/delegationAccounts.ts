@@ -5,6 +5,7 @@
  * Refer to LICENSE file
  */
 import { createRequire } from 'node:module';
+import { recordAccountCreated } from './accountCreationAudit.ts';
 const require = createRequire(import.meta.url);
 
 /**
@@ -137,6 +138,9 @@ export async function buildSystemCreateAccountDeps (): Promise<{
       // withSession=false: no login session / personal access is created — the
       // account is reachable only through its delegates until a real login.
       await usersRepository.insertOne(newUser, false);
+      // The first record of its trail. Never throws; a later roll-back treats
+      // the trail as an account deletion does (`audit.onUserDelete`).
+      await recordAccountCreated(newUser.id, { source: 'delegation' });
       return { userId: newUser.id };
     } catch (err) {
       // insertOne's own compensateFailedInsert already releases the user-core
