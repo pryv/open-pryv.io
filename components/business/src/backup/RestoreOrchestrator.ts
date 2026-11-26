@@ -116,6 +116,12 @@ class RestoreOrchestrator {
   ledgerConfig: { get (key: string): unknown } | null = null;
   /** What the `account.restored` record of each account restored by this run says, by the id restored under (`recordRestored`). */
   restoreFacts: Map<string, RestoreFacts> = new Map();
+  /**
+   * Under `audit.onUserDelete: keep`, the accounts whose audit trail this
+   * restore created (none there before its import): an undone restore that
+   * removes the account removes that trail too.
+   */
+  auditTrailsCreated: Set<string> = new Set();
 
   async init () {
     const { getStorageLayer, getUsersLocalIndex, getUserAccountStorage } = require('storage');
@@ -314,20 +320,28 @@ class RestoreOrchestrator {
       { snapshotMs: snapshotMsOf(manifest, userId), override: erased.override[0] ?? null });
 
     const restored = [{ userId: targetUserId, username }];
-    // From a whole backup, its external-id namespace rows too (absent ones
-    // written, a present one kept): the account's ids need their namespace.
-    const written = platformRead != null
-      ? await this._writePlatform(await this._accountPlatformRows(platformRead, restored, [imported]))
-      : { uniqueValuesLost: 0, extIdNamespaceSaltMismatch: [] };
-    const { uniqueValuesLost, extIdNamespaceSaltMismatch } = written;
-    const emailsHeldElsewhere = await this._emailsHeldElsewhere(restored);
-    const externalIds = await this._restoreExternalIds([imported]);
-    const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
-    const restoredStampFailed = opts.deferRestoredStamp === true ? [] : await this.stampRestored(erased.override);
-    if (opts.deferRestoredStamp !== true) await this.recordRestored(restored);
+    try {
+      // From a whole backup, its external-id namespace rows too (absent ones
+      // written, a present one kept): the account's ids need their namespace.
+      const written = platformRead != null
+        ? await this._writePlatform(await this._accountPlatformRows(platformRead, restored, [imported]))
+        : { uniqueValuesLost: 0, extIdNamespaceSaltMismatch: [] };
+      const { uniqueValuesLost, extIdNamespaceSaltMismatch } = written;
+      const emailsHeldElsewhere = await this._emailsHeldElsewhere(restored);
+      const externalIds = await this._restoreExternalIds([imported]);
+      const aliases = await this._restoreAliases([{ userId: targetUserId, username, aliases: aliasesOf(userManifest) }]);
+      const restoredStampFailed = opts.deferRestoredStamp === true ? [] : await this.stampRestored(erased.override);
+      if (opts.deferRestoredStamp !== true) await this.recordRestored(restored);
 
-    this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
-    return { restored, skipped: [], conflicts, extIdNamespaceSaltMismatch, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn, erasedSince: [], erasedRestored: erased.override, restoredStampFailed };
+      this.logger.info(`Single-user restore complete: ${username}` + (erasuresWithdrawn.length > 0 ? ' (its unfinished erasure withdrawn)' : ''));
+      return { restored, skipped: [], conflicts, extIdNamespaceSaltMismatch, uniqueValuesLost, emailsHeldElsewhere, externalIds, aliases, erasuresWithdrawn, erasedSince: [], erasedRestored: erased.override, restoredStampFailed };
+    } catch (err) {
+      this.logger.error(`Restore of user ${username} (${targetUserId}) stopped by a failure after its data was restored: the account is kept` +
+        (erasuresWithdrawn.length > 0 ? ' (its withdrawn erasure stays withdrawn)' : ''));
+      // Kept: its record of the restore, deferred or not (the caller never sees this run's report).
+      await this.recordRestored(restored);
+      throw err;
+    }
   }
 
   /**
@@ -433,7 +447,13 @@ class RestoreOrchestrator {
    */
   async recordRestored (accounts: Array<{ userId: string }>): Promise<void> {
     if (this.ledgerConfig == null || this.restoreFacts == null) return;
-    const { recordAccountRestored } = await import('../auth/accountAudit.ts');
+    let recordAccountRestored: typeof import('../auth/accountAudit.ts').recordAccountRestored;
+    try {
+      ({ recordAccountRestored } = await import('../auth/accountAudit.ts'));
+    } catch (err: unknown) {
+      this.logger.error(`The audit records of the restore of ${accounts.length} account(s) were not written (${errorMessage(err)})`);
+      return;
+    }
     for (const { userId } of accounts) {
       const facts = this.restoreFacts.get(userId);
       if (facts == null) continue;
@@ -481,6 +501,12 @@ class RestoreOrchestrator {
     const userLocalDirectory = require('storage').userLocalDirectory;
     // An erased account's kept directory: marked again if this restore fails.
     const wasErased: boolean = await userLocalDirectory.hasErasedMarker(targetUserId);
+    // Under `keep`, before anything is written: whether the account had a trail.
+    if (this._keepsAuditTrails() && !await this._hasAuditTrail(targetUserId)) {
+      (this.auditTrailsCreated ??= new Set()).add(targetUserId);
+    } else {
+      this.auditTrailsCreated?.delete(targetUserId);
+    }
 
     // Ensure user exists in local index
     let indexedHere = false;
@@ -522,7 +548,7 @@ class RestoreOrchestrator {
   async _clearFailedAccount (userId: string, username: string, indexedHere: boolean, cause: unknown): Promise<void> {
     const what = `Restore of user ${username} (${userId}) failed (${errorMessage(cause)})`;
     try {
-      await this._clearUserData({ id: userId }, userId, username);
+      await this._clearUserData({ id: userId }, userId, username, indexedHere);
       if (indexedHere) await this.usersLocalIndex.deleteById(userId);
       this.logger.error(`${what}: what was written for it is cleared` +
         (indexedHere ? ' and the account is removed from this core\'s index' : '; the account, on this core before the restore, is left empty'));
@@ -1129,12 +1155,15 @@ class RestoreOrchestrator {
    * The data is cleared first in both cases: the account deletion does not
    * remove the audit and the series. Under `audit.onUserDelete: keep` the
    * audit trail stays (the records it held before the restore and those the
-   * restore added from the backup); no `account.restored` is written for
-   * an account rolled back.
+   * restore added from the backup), unless the account is removed and had no
+   * trail before the restore: the trail is then the backup's alone, and goes
+   * with the account. No `account.restored` is written for an account rolled
+   * back.
    */
   async rollBackAccount (userId: string, username: string): Promise<'removed' | 'emptied'> {
-    await this._clearUserData({ id: userId }, userId, username);
-    if (this.preExistingAccounts?.has(userId) === true) return 'emptied';
+    const removed = this.preExistingAccounts?.has(userId) !== true;
+    await this._clearUserData({ id: userId }, userId, username, removed);
+    if (!removed) return 'emptied';
     const repository = this.usersRepository ?? await require('business/src/users/index.ts').getUsersRepository();
     await repository.deleteOne(userId, username);
     return 'removed';
@@ -1145,7 +1174,30 @@ class RestoreOrchestrator {
     return this.ledgerConfig?.get('audit:onUserDelete') === 'keep';
   }
 
-  async _clearUserData (user: UserRef, userId: string, username: string) {
+  /**
+   * Under `keep`, whether `userId` has an audit trail on this core now. A
+   * file-backed audit: its file is there (opening it would create it).
+   * Otherwise: it holds records. A check that fails counts as a trail found
+   * (kept, as for any trail).
+   */
+  async _hasAuditTrail (userId: string): Promise<boolean> {
+    const storage = this.auditStorage;
+    if (storage == null) return false;
+    try {
+      if (typeof storage.existingPathForUser === 'function') return require('node:fs').existsSync(storage.existingPathForUser(userId));
+      return (await (await storage.forUser(userId)).countEvents()) > 0;
+    } catch (err: unknown) {
+      this.logger.warn(`Could not tell whether user ${userId} has an audit trail (${errorMessage(err)}): counted as one, kept if the restore is undone`);
+      return true;
+    }
+  }
+
+  /**
+   * Clear what the account holds on this core. `accountRemoved`: the account
+   * goes too (a roll-back, the cleanup of a failed restore), so under `keep`
+   * a trail this restore created goes with it.
+   */
+  async _clearUserData (user: UserRef, userId: string, username: string, accountRemoved: boolean = false) {
     // Clear all user-scoped stores
     const collections = ['streams', 'accesses', 'profile', 'webhooks'];
     for (const coll of collections) {
@@ -1178,12 +1230,18 @@ class RestoreOrchestrator {
     // (the records written since the backup, an erasure's own records) and
     // the import adds the backup's records it lacks. The same for a roll-back
     // and for the cleanup of a failed restore: an operator tool does not
-    // remove retained audit records.
-    if (this.auditStorage && this._keepsAuditTrails()) {
+    // remove retained audit records. Except a trail this restore created for
+    // an account it now removes: it holds the backup's records only, under
+    // an id that is no account of this core.
+    const keeps = this._keepsAuditTrails();
+    const createdHere = keeps && accountRemoved && this.auditTrailsCreated?.has(userId) === true;
+    if (this.auditStorage && keeps && !createdHere) {
       this.logger.info(`audit:onUserDelete=keep: the audit trail of user ${userId} is kept (operator policy)`);
     } else if (this.auditStorage) {
+      if (createdHere) this.logger.info(`audit:onUserDelete=keep: the audit trail of user ${userId}, created by this restore, is removed with the account`);
       try {
         await this.auditStorage.deleteUser(userId);
+        if (createdHere) this.auditTrailsCreated.delete(userId);
       } catch (e: unknown) {
         this.logger.warn(`Audit clear failed for user ${userId}: ${(e as Error).message}`);
       }
@@ -1666,8 +1724,10 @@ type EventFilesLike = {
   removeAllForUser (userId: string): Promise<unknown>;
 };
 type AuditStorageLike = {
-  forUser (userId: string): Promise<{ importAllEvents (events: unknown[]): Promise<unknown> }>;
+  forUser (userId: string): Promise<{ importAllEvents (events: unknown[]): Promise<unknown>; countEvents (): number | Promise<number> }>;
   deleteUser (userId: string): Promise<unknown>;
+  /** A file-backed audit: the path of the account's audit file, nothing created. */
+  existingPathForUser? (userId: string): string;
 };
 type ErasureRecordsLike = Pick<ErasuresLocalDB, 'get' | 'claim' | 'delete' | 'insertIfAbsent'>;
 type SeriesConnectionLike = {

@@ -41,8 +41,9 @@
   registration; an administrator's address is never recorded. Ids and fixed words only: no username, no address of
   the account, no text. The sweep's own record (`account.autoDeletion.erase`) is still written, before it. With
   `audit.onUserDelete: erase` (the default) nothing is written: the trail goes with the account. A record that
-  cannot be written is counted as a lost audit record and does not stop the erasure. The trail of an erased account
-  stays open under `keep`, so the record of a call that was in flight can follow it.
+  cannot be written is counted as a lost audit record and does not stop the erasure; one whose write has no answer
+  within 10 seconds counts as lost too, and the erasure goes on (the same bound applies to the sweep's own record).
+  The trail of an erased account stays open under `keep`, so the record of a call that was in flight can follow it.
 - Under `keep`, the roll-back of an account whose creation failed (a delegated account) leaves a trail too, as
   before: it now reads `account.created` then `account.deleted`, for an account that was never usable.
 - **The sweep's `account.autoDeletion.erase` record no longer holds the username** (`content.record.username`): it is
@@ -57,14 +58,18 @@
   backup (`--restore-erased`), `unfinished` when the restore withdrew an erasure that had stopped, and absent
   otherwise. Accounts loaded from a v1 migration archive get the record too (they are restored from a backup). A
   subject's own restore through the API (`pryv-account-backup`) is a series of calls, each audited as a call: it
-  writes no `account.restored`. A record that cannot be written does not fail the restore.
+  writes no `account.restored`. A restore stopped by a failure after an account's data was restored (its platform
+  rows, its aliases) keeps that account, and writes its record. A record that cannot be written does not fail the
+  restore.
 - **With `audit.onUserDelete: keep`, a restore keeps the audit trail it finds.** A restore with `--overwrite`, the
   roll-back of a restore (`--verify-integrity`) and the cleanup of a restore that failed no longer remove the
   account's audit trail: the records written since the backup, and those of an erasure (`account.deleted`), stay,
   and the backup's records the trail lacks are added. A restore of a kept trail therefore reads `account.deleted`,
   then `account.restored`. With `erase` (the default) nothing changes: an overwrite replaces the trail with the
-  backup's. A roll-back under `keep` leaves the records the restore added from the backup (they are the account's
-  own, earlier records).
+  backup's. A roll-back under `keep` of an account that had a trail on the core before the restore leaves the
+  records the restore added to it from the backup. When the account had no trail before the restore (a new core, a
+  remapped id, an account erased under `erase`) and the roll-back or the cleanup removes the account, the trail the
+  restore created goes with it: it held the backup's records only, under an id that is no account of the core.
 - **The import of audit records skips the ids already there on SQLite too**, as it did on PostgreSQL: a restore onto
   an existing trail used to stop importing the backup's records at the first one already there (a warning, the
   rest not imported).

@@ -261,6 +261,44 @@ describe('[AADL] audit record of an account deletion', function () {
     });
   });
 
+  // Mutations caught: the write waited for without a bound (the erasure never
+  // ends); its late answer counted a second time.
+  it('[AADLF] a record whose write never answers: past the bound it counts as lost, once, and the erasure goes on', async function () {
+    const u = await account();
+    const { erasureRecordWait } = require('business/src/auth/accountAudit.ts');
+    const savedMs = erasureRecordWait.ms;
+    let staging = false;
+    let answerLate = null;
+    auditStorage.forUser = async function (userId) {
+      if (staging && userId === u.id) return { createEvent: () => new Promise((resolve, reject) => { answerLate = reject; }) };
+      return await originalForUser.call(auditStorage, userId);
+    };
+    const original = audit.eventForUser;
+    sinon.stub(audit, 'eventForUser').callsFake(async function (userId, event, methodId, ...rest) {
+      staging = methodId === 'account.deleted' && userId === u.id;
+      try {
+        return await original.call(audit, userId, event, methodId, ...rest);
+      } finally {
+        staging = false;
+      }
+    });
+    erasureRecordWait.ms = 300;
+    const before = lossCounter.snapshot().lost.total;
+    try {
+      await withKeep(async () => {
+        assert.strictEqual(await new Deletion(null, storageLayer, config).eraseAccount({ id: u.id, username: u.username }, { trigger: 'admin' }), true);
+      });
+      assert.ok(answerLate != null, 'the staged write was reached');
+      assert.equal(await exists(u), false, 'the account is gone');
+      assert.strictEqual(lossCounter.snapshot().lost.total, before + 1, 'counted lost at the bound');
+      answerLate(new Error('staged: a late failure'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.strictEqual(lossCounter.snapshot().lost.total, before + 1, 'the late answer is not counted again');
+    } finally {
+      erasureRecordWait.ms = savedMs;
+    }
+  });
+
   // Mutation caught: the stored trigger written as is.
   it('[AADL7] every trigger word gives its actor; any other word is `unknown`', function () {
     const table = {

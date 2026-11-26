@@ -316,6 +316,99 @@ describe('[AARS] audit record of an account restore', function () {
     });
   });
 
+  /** Whether `userId` has an audit trail left: for a file-backed audit, its file (read without opening it, which would create it). */
+  async function hasTrail (userId) {
+    if (typeof auditStorage.existingPathForUser === 'function') return fs.existsSync(auditStorage.existingPathForUser(userId));
+    return (await trail(userId)).length > 0;
+  }
+
+  /** Under `keep`: `u` erased, restored by an orchestrator of this process (deferred, as bin/backup.js does). */
+  async function restoredErased (u, eraseUnderKeep) {
+    if (eraseUnderKeep) await withKeep(() => erase(u));
+    else await erase(u);
+    const { o } = await orchestrator();
+    const reader = readerOf(u);
+    try {
+      await withKeep(() => o.restoreUser(u.id, reader, { restoreErased: true, skipPlatform: true, deferRestoredStamp: true }));
+    } finally {
+      await reader.close();
+    }
+    return o;
+  }
+
+  // Mutations caught: the trail the restore created kept after the account is
+  // removed; a trail the account had before the restore removed with it.
+  it('[AARSE] under `keep`, a roll-back that removes the account removes the trail the restore created, and only that one', async function () {
+    const created = await backedUpAccount();
+    let o = await restoredErased(created, false);
+    assert.ok(await hasTrail(created.id), 'the import wrote the backup\'s records');
+    await withKeep(async () => {
+      assert.strictEqual(await o.rollBackAccount(created.id, created.username), 'removed');
+    });
+    assert.equal(await exists(created), false);
+    assert.strictEqual(await hasTrail(created.id), false, 'the trail the restore created goes with the account');
+
+    const had = await backedUpAccount();
+    o = await restoredErased(had, true);
+    await withKeep(async () => {
+      assert.strictEqual(await o.rollBackAccount(had.id, had.username), 'removed');
+      const actions = (await trail(had.id)).map((e) => e.content?.action).sort();
+      assert.deepStrictEqual(actions, ['account.deleted', 'mfa.recovered'], 'the trail it had before the restore is kept');
+    });
+  });
+
+  // Mutation caught: the cleanup of a failed restore that keeps the trail the
+  // restore created for an account it removes.
+  it('[AARSG] under `keep`, the cleanup of a restore that failed after the audit import removes the trail it created', async function () {
+    const u = await backedUpAccount();
+    await erase(u);
+    const { o } = await orchestrator();
+    const reader = readerOf(u);
+    let trailAtFailure = null;
+    const failing = {
+      readManifest: () => reader.readManifest(),
+      async openUser (id) {
+        const userReader = await reader.openUser(id);
+        userReader.readExternalIds = async function * () {
+          trailAtFailure = await hasTrail(u.id);
+          throw new Error('injected read error after the audit');
+        };
+        return userReader;
+      },
+      readPlatformData: () => reader.readPlatformData(),
+      readServerMappings: () => reader.readServerMappings(),
+      close: () => reader.close()
+    };
+    try {
+      await withKeep(async () => {
+        await assert.rejects(o.restoreUser(u.id, failing, { restoreErased: true, skipPlatform: true }), /injected read error after the audit/);
+      });
+    } finally {
+      await reader.close();
+    }
+    assert.strictEqual(trailAtFailure, true, 'the import wrote the backup\'s records before the failure');
+    assert.equal(await exists(u), false);
+    assert.strictEqual(await hasTrail(u.id), false);
+  });
+
+  // Mutation caught: a single-account restore that fails after the account's
+  // data was restored keeps the account without its record.
+  it('[AARSF] a single-account restore stopped by a failure after its data was restored: the account, kept, has its record', async function () {
+    const u = await backedUpAccount();
+    const { o } = await orchestrator();
+    o._restoreAliases = async () => { throw new Error('injected alias failure'); };
+    const reader = readerOf(u);
+    try {
+      await assert.rejects(o.restoreUser(u.id, reader, { overwrite: true, skipPlatform: true, deferRestoredStamp: true }), /injected alias failure/);
+    } finally {
+      await reader.close();
+    }
+    assert.ok(await exists(u));
+    const found = await restoreRecords(u.id);
+    assert.strictEqual(found.length, 1, JSON.stringify(found));
+    assert.deepStrictEqual(found[0].content.record, { backupDate: await backupDateOf(u), target: 'existing' });
+  });
+
   // Mutation caught: the withdrawn erasure not carried to the record.
   it('[AARS6] an erasure that stopped unfinished, withdrawn by the restore: `unfinished`', async function () {
     const stopped = async (u) => {

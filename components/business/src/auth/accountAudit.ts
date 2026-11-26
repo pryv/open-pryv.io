@@ -30,6 +30,13 @@ export const ACCOUNT_RESTORED_ACTION = 'account.restored';
 type ConfigReader = { get (key: string): unknown };
 
 /**
+ * How long a record an erasure writes (`account.deleted`, and the
+ * auto-deletion sweep's erasure record) waits for the audit storage: past it
+ * the record counts as lost and the erasure goes on. Tests change `ms`.
+ */
+export const erasureRecordWait = { ms: 10 * 1000 };
+
+/**
  * The words an erasure's trigger may be (its record and the erasure ledger
  * keep the same word), and who erased the account for each. Any other word
  * (an old or foreign record: the trigger is a free string in storage) is
@@ -74,8 +81,8 @@ export type AccountRestore = {
 
 let uninitialisedLogged = false;
 
-/** Writes `content` in `userId`'s trail; never throws. */
-async function write (userId: string, action: string, accessId: string | null, content: Record<string, unknown>, config: ConfigReader): Promise<void> {
+/** Writes `content` in `userId`'s trail, waiting at most `waitMs` for the storage when set; never throws. */
+async function write (userId: string, action: string, accessId: string | null, content: Record<string, unknown>, config: ConfigReader, waitMs: number | null = null): Promise<void> {
   try {
     if (config.get('audit:active') !== true) return;
     // Loaded on demand: the audit singleton must not be pulled in before the
@@ -101,7 +108,7 @@ async function write (userId: string, action: string, accessId: string | null, c
       trashed: false,
       type: ACCOUNT_EVENT_TYPE,
       content: { action, ...content }
-    }, action);
+    }, action, 'event', waitMs);
   } catch (err) {
     logger.error(`Audit record "${action}" not written for ${userId}`, err);
   }
@@ -111,7 +118,8 @@ async function write (userId: string, action: string, accessId: string | null, c
  * The record of an account's deletion, the last one the server writes on
  * purpose in its trail: only where the trail outlives the account
  * (`audit.onUserDelete: keep`, read now, as the erasure reads it), written
- * before any of the account's data goes. Never throws.
+ * before any of the account's data goes. Never throws, and waits at most
+ * `erasureRecordWait.ms` for the audit storage.
  */
 export async function recordAccountDeleted (userId: string, deletion: AccountDeletion, config: ConfigReader = getConfigSync()): Promise<void> {
   if (config.get('audit:active') !== true || config.get('audit:onUserDelete') !== 'keep') return;
@@ -124,7 +132,7 @@ export async function recordAccountDeleted (userId: string, deletion: AccountDel
   await write(userId, ACCOUNT_DELETED_ACTION, accessId, {
     source: { name: words.source, ...(ip != null ? { ip } : {}) },
     record: { trigger: words.trigger, ...(accessId != null ? { accessId, accessType: 'personal' } : {}) }
-  }, config);
+  }, config, erasureRecordWait.ms);
 }
 
 const EARLIEST_BACKUP_MS = Date.UTC(2000, 0, 1);

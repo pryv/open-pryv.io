@@ -22,6 +22,7 @@ import { getTransferDelegation } from './transferDelegation.ts';
 import type { AccountFacts } from './autoDeletion.ts';
 import { autoDeletionConfig } from './autoDeletionPolicy.ts';
 import { Deletion } from 'business/src/auth/deletion.ts';
+import { erasureRecordWait } from 'business/src/auth/accountAudit.ts';
 import { getPlatform } from 'platform';
 import type { EmailRowsIndex } from 'business/src/emails/heldAddress.ts';
 import { defaultIsLoopWorker } from 'cmc/src/bootRetryLoop.ts';
@@ -78,7 +79,9 @@ function blockedSubstitutions (blocked: Notice['bookkeeping']['blocked']): Recor
  * erasure starts. Only where the trail outlives the account
  * (`audit.onUserDelete: keep`); otherwise it would go with the account and
  * the WARN log lines are the record. Without the username: the record
- * outlives the account (the log lines name it, for the operator).
+ * outlives the account (the log lines name it, for the operator). The
+ * storage is waited for at most `erasureRecordWait.ms`: past it the record
+ * counts as lost and the erasure starts all the same.
  */
 async function auditErasure (config: ConfigLike, account: SweepAccount, record: ErasureRecord): Promise<void> {
   if (config.get('audit:active') !== true || config.get('audit:onUserDelete') !== 'keep') return;
@@ -98,7 +101,7 @@ async function auditErasure (config: ConfigLike, account: SweepAccount, record: 
     trashed: false,
     type: 'audit-log/account-auto-deletion',
     content: { action: ERASURE_AUDIT_ACTION, source: { name: 'system' }, record: kept }
-  }, ERASURE_AUDIT_ACTION);
+  }, ERASURE_AUDIT_ACTION, 'event', erasureRecordWait.ms);
 }
 
 /**

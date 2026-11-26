@@ -862,6 +862,58 @@ describe('[ADSW] account auto-deletion sweep', function () {
     }
   });
 
+  // Mutations caught: the sweep's record waited for without a bound (the
+  // erasure never starts); its late answer counted a second time.
+  it('[ADSW28] the sweep\'s erasure record whose write never answers: counted as lost once past the bound, the erasure goes on', async function () {
+    if (config.get('audit:active') !== true) this.skip();
+    const auditStorage = require('storages').auditStorage;
+    const userLocalDirectory = require('storage').userLocalDirectory;
+    const audit = require('audit').default;
+    const lossCounter = require('audit/src/lossCounter.ts');
+    const { erasureRecordWait } = require('business/src/auth/accountAudit.ts');
+    const originalForUser = auditStorage.forUser;
+    const original = audit.eventForUser;
+    const savedMs = erasureRecordWait.ms;
+    const u = await freshUser();
+    await state.setSetting(u.id, onDate(T0 + 20 * DAY), 'test');
+    const s = await sweepFor([u]);
+    for (const d of [0, 13, 19]) await s.run(T0 + d * DAY);
+    let staging = false;
+    let answerLate = null;
+    auditStorage.forUser = async function (userId) {
+      if (staging && userId === u.id) return { createEvent: () => new Promise((resolve, reject) => { answerLate = reject; }) };
+      return await originalForUser.call(auditStorage, userId);
+    };
+    const stub = sinon.stub(audit, 'eventForUser').callsFake(async function (userId, event, methodId, ...rest) {
+      staging = methodId === 'account.autoDeletion.erase' && userId === u.id;
+      try {
+        return await original.call(audit, userId, event, methodId, ...rest);
+      } finally {
+        staging = false;
+      }
+    });
+    erasureRecordWait.ms = 300;
+    const before = lossCounter.snapshot().lost.total;
+    try {
+      await withInjectedConfig({ audit: { onUserDelete: 'keep' } }, async () => {
+        assert.equal((await s.run(T0 + 20 * DAY)).erased, 1);
+      });
+      assert.ok(answerLate != null, 'the staged write was reached');
+      assert.equal(await exists(u), false);
+      assert.strictEqual(lossCounter.snapshot().lost.total, before + 1, 'counted lost at the bound');
+      assert.ok(s.lines.some((l) => l.level === 'error' && l.msg.includes('erasure record of account') && l.msg.includes('not written')), 'logged');
+      answerLate(new Error('staged: a late failure'));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.strictEqual(lossCounter.snapshot().lost.total, before + 1, 'the late answer is not counted again');
+    } finally {
+      erasureRecordWait.ms = savedMs;
+      stub.restore();
+      auditStorage.forUser = originalForUser;
+      await auditStorage.deleteUser(u.id);
+      await userLocalDirectory.deleteUserDirectory(u.id);
+    }
+  });
+
   // Mutations caught: account.deleted written before `confirm` (a withdrawn
   // erasure would leave it), the sweep's own record replaced by it, an
   // address or an access kept for a sweep erasure.

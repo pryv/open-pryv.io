@@ -26,12 +26,24 @@
 - `business/src/backup/RestoreOrchestrator.ts`: `_restoreSingleUser` keeps per account (`restoreFacts`, by the id
   restored under) the backup's snapshot, whether the id was an account of the core and the erasure overridden or
   withdrawn; `recordRestored(accounts)` writes the records once each (no `ledgerConfig`: nothing). Called at the end
-  of `restoreUser` / `restoreAllUsers` unless `deferRestoredStamp`, in the `catch` of `restoreAllUsers` for the
-  accounts kept before a failure (deferred or not), and by `bin/backup.js` after `--verify-integrity`, beside
-  `stampRestored`. `_clearUserData` (overwrite, roll-back, cleanup of a failed restore) no longer calls
-  `auditStorage.deleteUser` under `audit:onUserDelete: keep` (`_keepsAuditTrails`).
-- SQLite `UserDatabase.importAllEvents` (audit and events imports): `INSERT ... ON CONFLICT (eventid) DO NOTHING`
-  (prepared on first use), the PostgreSQL engines' behaviour; the audit interface states it.
+  of `restoreUser` / `restoreAllUsers` unless `deferRestoredStamp`, in the `catch` of `restoreAllUsers` and of
+  `restoreUser` (a failure after the account's data was restored) for the accounts kept (deferred or not), and by
+  `bin/backup.js` after `--verify-integrity`, beside `stampRestored`; the `import` of the helper is inside its
+  `try`. `_clearUserData` (overwrite, roll-back, cleanup of a failed restore) no longer calls
+  `auditStorage.deleteUser` under `audit:onUserDelete: keep` (`_keepsAuditTrails`), except with `accountRemoved`
+  (the `'removed'` roll-back, the cleanup that releases the index entry) for an id in `auditTrailsCreated`: under
+  `keep`, `_importUser` records before any write whether the id had a trail (`_hasAuditTrail`: the audit file
+  exists for a file-backed audit, `existingPathForUser`, nothing opened; else `countEvents() > 0`; a failed check
+  counts as a trail).
+- SQLite `AuditUserDatabase.importAllEvents`: `INSERT ... ON CONFLICT (eventid) DO NOTHING` (prepared on first
+  use), the PostgreSQL audit engine's behaviour; the audit interface states it. The events import
+  (`UserDatabase.importAllEvents`) stays strict: an id already stored throws. One code path (`importRows`).
+- `audit/src/Audit.ts`: `eventForUser(..., kind, waitMs)`: with `waitMs`, the storage write is raced with a timer;
+  past it the record is counted lost (`storage-write-failed`) and the call throws, the late answer is swallowed
+  (logged, never counted again). `accountAudit.erasureRecordWait.ms` (10 s) bounds `recordAccountDeleted` and the
+  sweep's `auditErasure` (tests change it). Edge left as is: a restore that fails after withdrawing a stopped
+  erasure puts it back (`_putBackErasures`, steps not kept), and under `keep` the sweep's completion writes a
+  second `account.deleted`, with no restore record between them.
 - `api-server/src/methods/helpers/autoDeletionSweep.ts`: the audit copy of the sweep's erasure record leaves out
   `username`.
 - `audit/src/ApiMethods.ts`: `account.deleted`, `account.restored` in `ALL_METHODS`, not in
@@ -39,8 +51,10 @@
   method), `ACTION_CLASS` exported for its test.
 - Tests: `[AADL1-5,7-9]`, `[AADLD]` (`api-server/test/audit-account-deleted.test.js`), `[AADL6]` (sweep),
   `[AADLA]` (`AuditFilter`), `[AADLB]`, `[AADLE]` (`breachScopeReport`), `[AADLC]` (method classes; `[AUG8]` lists
-  `account.restored` as `other` on purpose), `[AARS1-9]`, `[AARSA]`, `[AARSC]`, `[AARSD]`
-  (`api-server/test/audit-account-restored.test.js`), `[AARSB]` (audit storage conformance, both engines). The step
+  `account.restored` as `other` on purpose), `[AARS1-9]`, `[AARSA]`, `[AARSC]`, `[AARSD]`, `[AARSE]`, `[AARSG]`
+  (a trail the restore created, removed with the account), `[AARSF]` (`restoreUser` failing late)
+  (`api-server/test/audit-account-restored.test.js`), `[AARSB]` (audit storage conformance, both engines), `[SQIM]`
+  (SQLite: events import strict, audit import skipping), `[AADLF]`, `[ADSW28]` (a write that never answers). The step
   lists of the erasure tests hold the new step; `[AGPE3]` counts the deletion record; `[ADSW17]` checks the username
   is gone.
 

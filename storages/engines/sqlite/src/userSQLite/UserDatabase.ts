@@ -725,16 +725,30 @@ UserDatabase.prototype.exportAllEventsStreamed = async function * (this: UserDat
 
 /**
  * Import raw event rows into the database. A row whose id is already there
- * is skipped, the stored one kept (as the PostgreSQL engine does): a restore
- * onto a trail kept after an erasure adds the backup's rows it lacks.
+ * makes the import throw (the restore of the account then fails and is
+ * cleaned up).
  */
 UserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {
+  await importRows(this, events, false);
+};
+
+/**
+ * Import raw audit rows. A row whose id is already there is skipped, the
+ * stored one kept (as the PostgreSQL engine does): a restore onto a trail
+ * kept after an erasure adds the backup's rows it lacks.
+ */
+AuditUserDatabase.prototype.importAllEvents = async function (this: UserDatabaseInstance, events: EventRow[]): Promise<void> {
+  await importRows(this, events, true);
+};
+
+async function importRows (udb: UserDatabaseInstance, events: EventRow[], skipExisting: boolean): Promise<void> {
   for (const event of events) {
     await concurrentSafeWrite.execute(() => {
-      insertRowIfAbsent(this, event, event.streamIds);
+      if (skipExisting) insertRowIfAbsent(udb, event, event.streamIds);
+      else insertRow(udb, event, event.streamIds);
     });
   }
-};
+}
 
 function prepareEventsDeleteQuery (params: GetParams): SqlPart & { usesFullText: boolean } {
   if (params.streams) { throw new Error(`Events DELETE with stream query not supported yet: ${JSON.stringify(params)}`); }
