@@ -68,7 +68,7 @@ process.on('SIGINT', () => {
 // flags). `dryRun` runs the full wizard but writes nothing — it previews
 // every file it would produce. `force` overwrites an existing config +
 // launcher scripts without prompting.
-const OPTS = { dryRun: false, force: false, nonInteractive: false, configFrom: null, profile: null, diagnose: false, insidePaas: false };
+const OPTS = { dryRun: false, force: false, nonInteractive: false, configFrom: null, profile: null, diagnose: false, insidePaas: false, setupCodeHash: null };
 
 // Canned answer sets, one YAML file per profile (an implementer adds one by
 // dropping a file there). Same format as a --config-from file.
@@ -112,6 +112,11 @@ Options:
                         (Dokku, Heroku-style): forces dnsLess and TLS "none", skips the
                         port bind tests, and leaves the PostgreSQL connection to the
                         DATABASE_URL the platform sets (read at boot, never written).
+  --setup-code-hash=<sha256>
+                        The SHA-256 of a setup code you generated yourself (answer
+                        key setup.codeHash; \`node bin/admin.js setup-code --hash\`
+                        makes one): written as setup.codeHash, so the first boot
+                        accepts that code and prints none.
   -h, --help            Show this help and exit.
 
 Answer keys use the env form PRYV_INIT_<KEY> (dots → underscores), e.g.
@@ -124,9 +129,10 @@ file keys are reported.
 }
 
 function parseArgs (argv) {
-  const opts = { help: false, dryRun: false, force: false, nonInteractive: false, configFrom: null, profile: null, diagnose: false, insidePaas: false };
+  const opts = { help: false, dryRun: false, force: false, nonInteractive: false, configFrom: null, profile: null, diagnose: false, insidePaas: false, setupCodeHash: null };
   for (const a of argv) {
     if (a === '-h' || a === '--help') opts.help = true;
+    else if (a.startsWith('--setup-code-hash=')) opts.setupCodeHash = a.slice('--setup-code-hash='.length);
     else if (a === '--dry-run') opts.dryRun = true;
     else if (a === '--force') opts.force = true;
     else if (a === '--non-interactive') opts.nonInteractive = true;
@@ -134,8 +140,8 @@ function parseArgs (argv) {
     else if (a === '--inside-paas') opts.insidePaas = true;
     else if (a.startsWith('--config-from=')) opts.configFrom = a.slice('--config-from='.length);
     else if (a.startsWith('--profile=')) opts.profile = a.slice('--profile='.length);
-    else if (a === '--config-from' || a === '--profile') {
-      process.stderr.write(`init: ${a} needs a value: ${a}=<${a === '--profile' ? 'name' : 'file'}>. Try --help.\n`);
+    else if (a === '--config-from' || a === '--profile' || a === '--setup-code-hash') {
+      process.stderr.write(`init: ${a} needs a value: ${a}=<${a === '--profile' ? 'name' : a === '--setup-code-hash' ? 'sha256' : 'file'}>. Try --help.\n`);
       process.exit(2);
     } else if (a.startsWith('-')) {
       process.stderr.write(`init: unknown option "${a}". Try --help.\n`);
@@ -288,6 +294,21 @@ function unusedAnswerKeys () {
 
 function invalidAnswer (key, raw, expected) {
   return usageError(`init: invalid value "${raw}" for "${key}" (${envVarFor(key)}); expected ${expected}.`);
+}
+
+/**
+ * `setup.codeHash`: the SHA-256 (64 hex characters) of a setup code the
+ * deployer generated, from --setup-code-hash or the answer key; null when
+ * neither is given (the first boot mints the code). Never prompted.
+ */
+function resolveSetupCodeHash () {
+  const raw = OPTS.setupCodeHash != null ? OPTS.setupCodeHash : autoAnswer('setup.codehash');
+  if (raw == null || String(raw).trim() === '') return null;
+  const value = String(raw).trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    throw invalidAnswer('setup.codeHash', raw, 'the SHA-256 of a setup code, 64 hex characters (node bin/admin.js setup-code --hash)');
+  }
+  return value;
 }
 
 /**
@@ -936,6 +957,28 @@ ${hasHostedSites ? '# # The hostedSites: block above already holds the administr
 # #     proxy: https://example.github.io/docs/
 # #     frameAncestors: ["'self'", "https://app.example.com"]
 
+# # Platform setup and administrators (docs/setup-and-administrators.md).
+# # A fresh platform prints a one-time setup code at its first boot (also in
+# # setup-code.txt next to this file); enter it on <this core>/system/setup/ or
+# # in the portal. codeHash: the SHA-256 of a code you chose instead (nothing
+# # is printed; node bin/admin.js setup-code --hash makes one).
+# # portal:
+# #   site: ${hasHostedSites ? '<the hosted site above>' : 'null'}   # the hosted site that is the portal
+# #   cors:
+# #     allowedOrigins: []   # a portal hosted outside the platform: https://host[:port]
+# # setup:
+# #   codeTtlHours: 24
+# #   codeHash: null
+# #   printCode: true
+# #   registrationWhilePending: closed   # closed | open
+# # auth:
+# #   adminAccessKeyScope: full   # break-glass: the admin key reaches only the break-glass routes
+# # admin:
+# #   session:
+# #     ttlMinutes: 60
+# #     stepUpMinutes: 5
+# #     requireMfa: true
+
 # # adapterRoutes: expose a sidecar container (a resource server for this core's
 # # accounts) under /adapter/<name>/ on every host. The core forwards every method,
 # # header and body and authenticates nothing on those paths: the sidecar must.
@@ -1509,6 +1552,7 @@ async function main () {
   OPTS.profile = parsed.profile;
   OPTS.diagnose = parsed.diagnose;
   OPTS.insidePaas = parsed.insidePaas;
+  OPTS.setupCodeHash = parsed.setupCodeHash;
   if (OPTS.configFrom) ANSWERS = loadAnswersFile(OPTS.configFrom);
   if (OPTS.profile) PROFILE = loadProfile(OPTS.profile);
 
@@ -1973,6 +2017,11 @@ async function main () {
   }
   console.log();
 
+  // 16. Setup code: minted and printed at the first boot, unless the deployer
+  // chose it and gives only its SHA-256 (no prompt: --setup-code-hash or the
+  // answer key setup.codeHash).
+  const setupCodeHash = resolveSetupCodeHash();
+
   // ── VALIDATION ────────────────────────────────────────────────
   console.log();
   console.log('Validating host environment');
@@ -2301,6 +2350,10 @@ async function main () {
     config.portal = { site: portalSite };
   }
 
+  if (setupCodeHash != null) {
+    config.setup = { codeHash: setupCodeHash };
+  }
+
   // New platform with subdomains: this core holds the cluster CA. The CA, the
   // join-token store and this core's Raft node certificate live on the data
   // volume (the defaults under /etc and /var/lib are not persisted in a
@@ -2451,6 +2504,13 @@ async function main () {
         'headers: the core adds this policy on top of the build\'s own (scripts from the site only,',
         'API calls to this platform only).'],
       { hostedSites: config.hostedSites, portal: config.portal });
+  }
+
+  if (config.setup) {
+    yamlBody += section(yaml, 'Platform setup',
+      ['SHA-256 of the setup code chosen at install: the first boot accepts that code and prints none.',
+        'Remove it once setup is done (it is ignored then).'],
+      { setup: config.setup });
   }
 
   const appendix = buildOptionalAppendix({
@@ -2764,6 +2824,23 @@ async function main () {
     }
     console.log();
   }
+  // The first administrator: the built-in setup page always works (bare IP,
+  // no DNS, no outbound access); the portal does once it is reachable.
+  console.log('Platform setup (first administrator):');
+  console.log('  Open the built-in setup page of the core:');
+  console.log((tlsStrategy === 'letsEncrypt' || tlsStrategy === 'custom')
+    ? '    https://<this host\'s IP>/system/setup/   (the certificate does not name the IP: expect a warning)'
+    : '    http://<this host\'s IP>:3000/system/setup/');
+  if (publicUrl.startsWith('http')) console.log(`    ${publicUrl.replace(/\/+$/, '')}/system/setup/`);
+  if (portalHostedSites) console.log(`  or the portal: ${portalDefaults.portalUrl({ site: portalSite, dnsLess, publicUrl, dnsDomain })}`);
+  if (setupCodeHash != null) {
+    console.log('  and enter the setup code you hashed into setup.codeHash: the core prints none.');
+  } else {
+    console.log('  and enter the one-time setup code the first boot prints, in its log');
+    console.log('  (docker logs pryvio) and in setup-code.txt next to the config file (mode 0600).');
+  }
+  console.log('  Lost or expired: docker exec pryvio node bin/admin.js setup-code --new');
+  console.log();
   if (caHolder) {
     console.log('Cluster CA (this core is the CA holder):');
     console.log(`  BACK UP ${caHolder.caDir}: losing its private key prevents adding any further cores.`);
