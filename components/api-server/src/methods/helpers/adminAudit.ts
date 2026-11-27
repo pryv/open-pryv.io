@@ -14,6 +14,7 @@ import type { AdminPermission } from 'business/src/admin/permissions.ts';
 import { activeGrants, hasActiveGrant, effectivePermissions } from 'business/src/admin/roles.ts';
 import { coreContext } from 'business/src/admin/scopes.ts';
 import { readLocalPolicy } from 'business/src/admin/localPolicy.ts';
+import { ledgerKey, usernameHash } from 'business/src/erasureLedger/index.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger, getConfigSync } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
@@ -133,6 +134,7 @@ export function auditAs (kind: 'subject' | 'personal' | 'public') {
     const { accessId, subject } = attribution(kind, context, context.methodId);
     context.access = { id: accessId };
     context.auditIntegrityPayload = { subject };
+    scrubQuery(context);
     next();
   };
 }
@@ -142,16 +144,25 @@ export function setAuditDetails (context: AdminAuditContext, details: { target?:
   const payload = context.auditIntegrityPayload;
   if (payload == null || typeof payload !== 'object' || !('subject' in payload)) return;
   const record = payload as AdminRecord;
-  if (details.target != null) record.target = details.target;
-  if (details.diff != null) record.diff = details.diff;
+  // No username in clear in a record: its keyed hash (and the account id where the caller knows it).
+  if (details.target != null) record.target = scrubAccountNames(details.target);
+  if (details.diff != null) record.diff = scrubAccountNames(details.diff);
   if (details.result != null) record.result = details.result;
 }
 
-/** The method step that names the object of the act, from the call's parameters. */
+/**
+ * The method step that names the object of the act, from the call's
+ * parameters. A username becomes the account id (when it is an account of
+ * this core) and the name's keyed hash.
+ */
 export function auditTarget<P> (targetOf: (params: P) => AdminTarget | null) {
-  return function setAuditTarget (context: AdminAuditContext, params: P, _result: ResultBag, next: Next) {
-    const target = targetOf(params ?? ({} as P));
-    if (target != null) setAuditDetails(context, { target });
+  return async function setAuditTarget (context: AdminAuditContext, params: P, _result: ResultBag, next: Next) {
+    try {
+      const target = targetOf(params ?? ({} as P));
+      if (target != null) setAuditDetails(context, { target: await withAccountId(target) });
+    } catch (err) {
+      getLogger('system-admin').error('administration audit target not resolved', err);
+    }
     next();
   };
 }
@@ -220,7 +231,8 @@ export type AdminActDetails = { target?: AdminTarget; diff?: Record<string, unkn
  * Reads declared not audited do not use this step (setMethodId only). An
  * answer never sent (the client went away first) records nothing.
  */
-export function adminRoute () {
+export function adminRoute (opts: { recordRefusals?: boolean } = {}) {
+  const recordRefusals = opts.recordRefusals !== false;
   return function adminRouteStep (req: AdminRouteRequest, res: Response, next: NextFunction) {
     const context = req.context;
     if (context == null || context.methodId == null) return next();
@@ -228,24 +240,99 @@ export function adminRoute () {
     const { accessId, subject } = attribution('subject', context, methodId);
     context.access = { id: accessId };
     context.auditIntegrityPayload = { subject };
+    scrubQuery(context);
     // The handler's details also reach an error record (setAuditDetails on it).
     res.locals.adminContext = context;
     res.on('finish', () => {
       if (context.auditErrorRecorded === true) return;
-      const act = (res.locals.adminAct ?? {}) as AdminActDetails;
       const ok = res.statusCode < 400;
-      const result = Object.assign({ status: res.statusCode }, act.result ?? {});
-      recordAdminAct(context, methodId, { target: act.target, diff: act.diff, result }, ok ? 'valid' : 'error').catch(() => {});
-      if (!ok) return;
-      if (act.targetUserId != null && act.targetAction != null) {
-        auditAdminAct(act.targetUserId, act.targetAction, { methodId, subject, ...(act.diff != null ? { diff: act.diff } : {}) }).catch(() => {});
+      // A route anyone can call (a one-time join token): a refusal is a log line, not a stored record.
+      if (!ok && !recordRefusals) {
+        getLogger('system-admin').info(`${methodId} refused (${res.statusCode})`);
+        return;
       }
-      if (context.adminSubject?.kind === 'session' && context.adminSubject.userId != null) {
-        auditAdminAct(context.adminSubject.userId, 'admin.act', act.target == null ? { methodId } : { methodId, target: act.target }).catch(() => {});
-      }
+      (async () => {
+        const raw = (res.locals.adminAct ?? {}) as AdminActDetails;
+        const target = await withAccountId(raw.target, raw.targetUserId);
+        const act = { ...raw, target: scrubAccountNames(target), diff: scrubAccountNames(raw.diff) };
+        const result = Object.assign({ status: res.statusCode }, act.result ?? {});
+        await recordAdminAct(context, methodId, { target: act.target, diff: act.diff, result }, ok ? 'valid' : 'error');
+        if (!ok) return;
+        if (act.targetUserId != null && act.targetAction != null) {
+          await auditAdminAct(act.targetUserId, act.targetAction, { methodId, subject, ...(act.diff != null ? { diff: act.diff } : {}) });
+        }
+        if (context.adminSubject?.kind === 'session' && context.adminSubject.userId != null) {
+          await auditAdminAct(context.adminSubject.userId, 'admin.act', act.target == null ? { methodId } : { methodId, target: act.target });
+        }
+      })().catch((err) => getLogger('system-admin').error(`administration audit records of "${methodId}" not written`, err));
     });
     next();
   };
+}
+
+// ------------------------------------------------------------ account names
+
+/** Keys of a record's `target` / `diff` (and of the query) that hold a username or a part of one. */
+const ACCOUNT_NAME_KEYS: Readonly<Record<string, string>> = Object.freeze({
+  username: 'usernameHash',
+  delegateUsername: 'delegateUsernameHash',
+  search: 'searchHash'
+});
+
+/**
+ * The keyed hash of a username, as the erasure ledger computes it (its key:
+ * `accountErasure.ledger.hmacKey`, or derived from the admin key), with the
+ * key's id; null when no key is available.
+ */
+function nameHash (name: string): string | null {
+  try {
+    const k = ledgerKey(getConfigSync());
+    return usernameHash(k, name);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A record part with every username replaced by its keyed hash (never stored
+ * in clear: the platform trail outlives the accounts it names and is outside
+ * their erasure). Without a key, the name is left out.
+ */
+export function scrubAccountNames<T extends Record<string, unknown> | undefined> (part: T): T {
+  if (part == null || typeof part !== 'object') return part;
+  let out: Record<string, unknown> | null = null;
+  for (const [key, hashKey] of Object.entries(ACCOUNT_NAME_KEYS)) {
+    if (!Object.hasOwn(part, key)) continue;
+    out ??= { ...part };
+    const value = out[key];
+    delete out[key];
+    if (typeof value === 'string' && value !== '') {
+      const hash = nameHash(value);
+      if (hash != null) out[hashKey] = hash;
+    }
+  }
+  return (out ?? part) as T;
+}
+
+/** The request's query string without a username in clear (it is recorded as `content.query`). */
+function scrubQuery (context: object): void {
+  const c = context as { originalQuery?: unknown };
+  const q = c.originalQuery;
+  if (q != null && typeof q === 'object' && !Array.isArray(q)) c.originalQuery = scrubAccountNames(q as Record<string, unknown>);
+}
+
+/** A target naming a username of this core, with the account id added (best-effort: unknown names stay as they are). */
+async function withAccountId (target: AdminTarget | undefined, knownId?: string): Promise<AdminTarget | undefined> {
+  if (target == null || target.userId != null) return target;
+  if (knownId != null) return { userId: knownId, ...target };
+  const name = target.username;
+  if (typeof name !== 'string' || name === '') return target;
+  try {
+    const id = await (await getUsersRepository()).getUserIdForUsername(name.toLowerCase());
+    return typeof id === 'string' ? { userId: id, ...target } : target;
+  } catch {
+    return target;
+  }
 }
 
 /** A text recorded by size and digest, never by content (a mail template body). */

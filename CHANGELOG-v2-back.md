@@ -33,6 +33,16 @@
 - `methods/systemAdminAudit.ts`: `readPlatformTrail` / `keepsPlatformTrail`, shared by `system.audit.get` and
   `bin/admin.js audit tail`. With a `subject` or `target` filter it reads the trail in batches of 1000 and filters
   before cutting the page (20000 records at most per page); without, it reads `limit + 1` to answer `hasMore`.
+- `AuditFilter`: a third filter, `audit.platformTrail.filter` (default `DEFAULT_PLATFORM_TRAIL_FILTER`,
+  `include: ['admin-acts']`); the group `admin-acts` (`ADMIN_ACT_METHODS`: audited ids without a user starting with
+  `system.` or `admin.`) is known to every filter; an entry gains `platformTrailValidOnly` for
+  `PUBLIC_REFUSAL_METHODS` (`system.setup.createSession`) selected through the group, and `Audit.eventForUser`
+  then stores only its done calls. `adminRoute({ recordRefusals: false })` (cores ack) logs a refusal instead of
+  recording it. Config: `checkPlatformTrailFilter` (boot and `bin/check-config.js`), classification, the init
+  appendix.
+- `methods/helpers/adminAudit.ts`: `scrubAccountNames` replaces `username` / `delegateUsername` / `search` in a
+  record's target, diff and recorded query by `usernameHash` / `delegateUsernameHash` / `searchHash` (the erasure
+  ledger's `usernameHash` and key); `auditTarget` and `adminRoute` add the account id of a username of this core.
 - `system.claimCodes.create`, `system.roles.claim` and `system.setup.createFirstAdmin` set the record's target and
   diff before their write, as `system.roles.set` / `delete` do. `RestoreOrchestrator` refuses the reserved id
   `platform-trail` as a manifest user id or a remap target.

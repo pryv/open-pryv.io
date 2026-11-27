@@ -248,6 +248,8 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['audit.active', P, p],
   ['audit.onUserDelete', P, p],
   ['audit.storage.**', P, c],
+  ['audit.platformTrail.filter.methods.include', P, c],
+  ['audit.platformTrail.filter.methods.exclude', P, c],
   // The syslog options are handed to a transport: only the known ones are shown.
   ['audit.syslog.active', P, c],
   ['audit.syslog.options.host', P, c],

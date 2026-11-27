@@ -57,7 +57,7 @@ type AuditEventLike = {
   type?: string;
   content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string; recordCount?: number; recordCountIncomplete?: boolean; scopedStreamIds?: string[]; scopedStreamCount?: number; delegation?: { delegateUsername?: string; delegateHostSlug?: string } };
 };
-type Destinations = { syslog?: boolean; storage?: boolean; platformTrail?: boolean };
+type Destinations = { syslog?: boolean; storage?: boolean; platformTrail?: boolean; platformTrailValidOnly?: boolean };
 type AuditFilterLike = { isAudited (methodId: string): Destinations | boolean };
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
 type AuditStorage = {
@@ -151,7 +151,8 @@ class Audit {
     this._syslog = await getSyslog();
     this.filter = new AuditFilter({
       syslogFilter: config.get('audit:syslog:filter'),
-      storageFilter: config.get('audit:storage:filter')
+      storageFilter: config.get('audit:storage:filter'),
+      platformTrailFilter: config.get('audit:platformTrail:filter') ?? null
     });
     logger.info('Audit started');
   }
@@ -206,9 +207,14 @@ class Audit {
       built.type = CONSTANTS.EVENT_TYPE_ERROR;
       built.content.id = error.id;
       built.content.message = error.message;
-      // A refused administration act keeps who tried it and on what.
+      // A refused administration act keeps who tried it and on what. Its
+      // message loses its quoted values (a username or an id, as in
+      // `Unknown user "<name>"`): the record names its object by id and keyed hash only.
       const attribution = adminAttribution(context.auditIntegrityPayload);
-      if (attribution != null) built.content.record = attribution;
+      if (attribution != null) {
+        built.content.record = attribution;
+        if (typeof error.message === 'string') built.content.message = error.message.replace(/"[^"]*"|'[^']*'/g, '"..."');
+      }
       return built;
     });
     if (event == null) { return; }
@@ -230,11 +236,12 @@ class Audit {
     let reason: LossReason = 'invalid-record';
     let silentLoss: LossReason | null = null;
     try {
-      const { syslog, storage, platformTrail } = this.#checked(userId, event);
+      const { syslog, storage, platformTrail, platformTrailValidOnly } = this.#checked(userId, event);
       // Where the stored copy goes: the account's own trail, or for a call
-      // without an account the platform trail, when the storage keeps it
-      // (else syslog only, as before it existed).
-      const storedUnder = storage ? userId : (platformTrail && this.#keepsPlatformTrail ? PLATFORM_TRAIL_USER_ID : null);
+      // without an account the platform trail, when the storage keeps it and
+      // `audit.platformTrail.filter` selects it (else syslog only).
+      const inPlatformTrail = platformTrail === true && this.#keepsPlatformTrail && !(platformTrailValidOnly === true && kind === 'error');
+      const storedUnder = storage ? userId : (inPlatformTrail ? PLATFORM_TRAIL_USER_ID : null);
       if (this.syslog && syslog) {
         try {
           this.syslog.eventForUser(userId, event);

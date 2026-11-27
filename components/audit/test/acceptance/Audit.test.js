@@ -213,10 +213,11 @@ describe('[AUDT] Audit', function () {
         await settleAudit();
       });
 
-      // The registration call itself has no user: its stored copy goes to the
-      // platform trail of the core. The server's own record of the creation
-      // (`account.created`) goes to the new account's trail, and to syslog
-      // like any audited action.
+      // The registration call itself has no user: public traffic, it goes to
+      // syslog only (the platform trail keeps the administration acts unless
+      // audit.platformTrail.filter names it). The server's own record of the
+      // creation (`account.created`) goes to the new account's trail, and to
+      // syslog like any audited action.
       it('[JU8F] validates the response', async function () {
         assert.strictEqual(res.status, 201, '[JU8F] must return 201');
         const newUserId = await (await require('business/src/users/index.ts').getUsersRepository()).getUserIdForUsername(newUsername);
@@ -224,8 +225,8 @@ describe('[AUDT] Audit', function () {
         const actions = (spy) => spy.getCalls().map((c) => c.args[1]?.content?.action).sort();
         assert.deepStrictEqual(actions(eventForUserSpy), ['account.created', 'auth.register'], 'two audit records');
         assert.deepStrictEqual(actions(sysLogSpy), ['account.created', 'auth.register'], '[KPPH] must log both in syslog');
-        assert.deepStrictEqual(storageSpy.getCalls().map((c) => c.args[0]).sort(), [newUserId, CONSTANTS.PLATFORM_TRAIL_USER_ID].sort(),
-          '[EI1U] the creation record in the new account\'s trail, the call in the platform trail');
+        assert.deepStrictEqual(storageSpy.getCalls().map((c) => c.args[0]), [newUserId],
+          '[EI1U] the creation record in the new account\'s trail; the registration call not stored');
         const created = eventForUserSpy.getCalls().find((c) => c.args[1]?.content?.action === 'account.created');
         assert.strictEqual(created.args[0], newUserId);
       });
@@ -449,6 +450,8 @@ describe('[AUDT] Audit', function () {
         before(async function () {
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include: ['all'], exclude: [] } } },
               storage: { filter: { methods: { include: ['all'], exclude: [] } } }
             }
@@ -470,6 +473,8 @@ describe('[AUDT] Audit', function () {
         before(async function () {
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include: [], exclude } } },
               storage: { filter: { methods: { include: [], exclude } } }
             }
@@ -490,6 +495,8 @@ describe('[AUDT] Audit', function () {
         before(async function () {
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include, exclude: [] } } },
               storage: { filter: { methods: { include, exclude: [] } } }
             }
@@ -509,6 +516,8 @@ describe('[AUDT] Audit', function () {
         before(async function () {
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include: [], exclude: ['all'] } } },
               storage: { filter: { methods: { include: [], exclude: ['all'] } } }
             }
@@ -527,6 +536,8 @@ describe('[AUDT] Audit', function () {
         before(async function () {
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include: ['events.all'], exclude: [] } } },
               storage: { filter: { methods: { include: ['events.all'], exclude: [] } } }
             }
@@ -548,6 +559,8 @@ describe('[AUDT] Audit', function () {
           const excluded = ['events.get', 'auth.login', 'auth.register'];
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include: [], exclude: excluded } } },
               storage: { filter: { methods: { include: [], exclude: excluded } } }
             }
@@ -571,6 +584,8 @@ describe('[AUDT] Audit', function () {
           const excluded = ['streams.all', 'auth.login', 'auth.register'];
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include: included, exclude: excluded } } },
               storage: { filter: { methods: { include: included, exclude: excluded } } }
             }
@@ -594,6 +609,8 @@ describe('[AUDT] Audit', function () {
           const excluded = ['events.get'];
           config.injectTestConfig({
             audit: {
+              // every call without an account in the platform trail: the storage filter decides
+              platformTrail: { filter: { methods: { include: ['all'], exclude: [] } } },
               syslog: { filter: { methods: { include: included, exclude: excluded } } },
               storage: { filter: { methods: { include: included, exclude: excluded } } }
             }

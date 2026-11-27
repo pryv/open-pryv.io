@@ -1358,6 +1358,20 @@ audit:
       methods:
         include: ['all']
         exclude: []
+  # The platform trail of this core (calls without an account of this core,
+  # read with GET /system/admin/audit or `bin/admin.js audit tail`): which of
+  # them are stored, among those `storage.filter` selects. "admin-acts" (the
+  # default): the administration acts (`system.*` methods and routes), not the
+  # refused setup-code tries. Public traffic without an account
+  # (auth.register, auth.emailChallenge, oauth.*, sso.refused, mfa.recover)
+  # stays in syslog unless named here, e.g. include: ['admin-acts',
+  # 'auth.register'], or include: ['all'] for every call without an account.
+  # No retention yet: the trail grows with what it keeps.
+  platformTrail:
+    filter:
+      methods:
+        include: ['admin-acts']
+        exclude: []
 
   syslog:
     # Opt-in: containerized deploys typically have no syslog daemon listening

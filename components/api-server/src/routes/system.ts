@@ -400,7 +400,8 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
   // (the gate lets it through, see system-permissions.ts). The handler verifies the token via
   // TokenStore, flips PlatformDB's `available:true`, returns a cluster snapshot.
   // Refusals share one 401 body; their reason is logged here.
-  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, setMethodId('system.cores.ack'), adminRoute(), async (req: PryvRequest, res: Response, next: NextFunction) => {
+  // Anyone can call it (the token is checked here): a refusal is logged, not stored.
+  expressApp.post(Paths.System + '/admin/cores/ack', contentType.json, setMethodId('system.cores.ack'), adminRoute({ recordRefusals: false }), async (req: PryvRequest, res: Response, next: NextFunction) => {
     try {
       // Recorded without a subject (the join token is the credential, never recorded).
       setAdminAct(res, { target: { coreId: shortText(req.body?.coreId) } });

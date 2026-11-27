@@ -44,13 +44,28 @@
   - Every grant in the role list, the one-account reads and the session read carries **`scopeState`**: `ok`, or
     `orphan`.
   - `POST /system/admin/claim-codes` accepts the six roles and every scope of the grammar; its messages list them.
-- **Platform trail.** Each core now stores the audit records of the calls without an account of this core
-  (administration acts, the account creations and deletions of `/system`, setup, sessions, roles, claim codes) in
-  its audit storage, under the reserved id `platform-trail`. Each record names who acted:
-  `content.record.subject` = `{ via: 'admin-key' | 'session' | 'setup', userId?, sessionId? (16 characters), role?,
-  scope?, localGrant? }`, where `role` and `scope` are the grant that gave the route's permission on this core; and
-  on what: `target`, `diff` (names and digests only: never a body, an address, a token or a secret value; a mail
-  template body is recorded by length and SHA-256), `result`. A refused act keeps its subject and target.
+- **Platform trail.** Each core now stores the audit records of its administration acts (the audited calls
+  without an account of this core whose method id starts with `system.`: account, core and status methods of
+  `/system`, setup, sessions, roles, claim codes) in its audit storage, under the reserved id `platform-trail`. Each
+  record names who acted: `content.record.subject` = `{ via: 'admin-key' | 'session' | 'setup', userId?, sessionId?
+  (16 characters), role?, scope?, localGrant? }`, where `role` and `scope` are the grant that gave the route's
+  permission on this core; and on what: `target`, `diff` (names and digests only: never a body, an address, a token
+  or a secret value; a mail template body is recorded by length and SHA-256), `result`. A refused act keeps its
+  subject and target.
+  - **No username in clear:** an account is named by its id (when it is an account of this core) and
+    `usernameHash`, the keyed hash of its username under the erasure ledger's key
+    (`accountErasure.ledger.hmacKey`, else derived from `auth.adminAccessKey`; without either key, the id only),
+    in `target`, `diff` and the recorded query (`search` of the users list becomes `searchHash`). The trail
+    outlives the accounts it names and is outside their erasure.
+  - **Which calls it keeps:** new key **`audit.platformTrail.filter`** (`methods.include` / `methods.exclude`, the
+    semantics of the other audit filters, applied together with `audit.storage.filter`). Default
+    `include: ['admin-acts']`: the administration acts, without the refused setup-code tries
+    (`system.setup.createSession` refusals). Public traffic without an account (`auth.register`,
+    `auth.emailChallenge*`, `oauth.*` events without a user, `sso.refused`, `mfa.recover`) stays in syslog only
+    unless named there (e.g. `include: ['admin-acts', 'auth.register']`, or `['all']` for every call without an
+    account; naming `system.setup.createSession` keeps its refusals). A refused `POST /system/admin/cores/ack`
+    (anyone can call it) is logged, never stored. Boot and `bin/check-config.js` refuse a malformed filter and warn
+    about names that select nothing.
   - **Attribution fix:** calls of the `/system` account, core and status methods made with an administrator session
     are recorded under `admin-session` with the account (they were all recorded under `admin`).
   - The `/system` routes served without an API method (certificates, mail templates, users validate / update /
@@ -64,7 +79,8 @@
     the administrator's own trail (`admin.act`) when its account is on this core; a grant or a revocation in the
     grantee's (`admin.role.granted`, `admin.role.revoked`).
   - New **`GET /system/admin/audit`** (`system.audit.get`, `audit:read`, not break-glass, not itself audited):
-    `fromTime`, `toTime` (seconds), `methodId`, `subject` (an account id, `admin-key` or `setup`), `target`,
+    `fromTime`, `toTime` (seconds), `methodId`, `subject` (an account id, `admin-key` or `setup`), `target` (a value
+    the act names: an account id, a username hash, a namespace...),
     `limit` (default 100, at most 1000), `skip` (at most 10000: read further by narrowing `toTime`); most recent
     first; `skip` and `limit` count matching records, and `hasMore` says whether more may follow (with a `subject`
     or `target` filter at most 20000 records are read per page: `scanLimitReached: true` then). Each core answers
@@ -73,9 +89,9 @@
   - Grants, revocations, claim codes (role, scope and lifetime, never the code), claims and the first
     administrator name the account and the role and scope in their platform-trail record, also when the act is
     refused.
-  - **Upgrade note:** records of calls without an account, which reached syslog only, are now also stored (when
-    `audit.storage.filter` selects them): audit storage grows with administration traffic. There is no retention
-    of the platform trail in this release (as for every audit trail). The platform trail is not part of an account
+  - **Upgrade note:** the administration acts, which reached syslog only, are now also stored: audit storage grows
+    with administration traffic (public traffic is not stored unless `audit.platformTrail.filter` names it). There
+    is no retention of the platform trail in this release (as for every audit trail). The platform trail is not part of an account
     backup, and a restore refuses `platform-trail` as an account id (in the backup or as the id an account is remapped to).
 - **`GET /system/admin/users`** takes optional `limit`, `skip` and `search` (a username prefix) and answers `total`;
   without them the answer is unchanged.

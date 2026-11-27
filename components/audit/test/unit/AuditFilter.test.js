@@ -15,6 +15,37 @@ describe('[AFLT] AuditFilter', () => {
       }
     };
   }
+  describe('[AFPF] platform trail filter (calls without an account)', () => {
+    const all = buildFilter();
+    const make = (platformTrailFilter, storageFilter = all) => new AuditFilter({ syslogFilter: all, storageFilter, platformTrailFilter });
+    it('[AFPT1] by default: the administration acts only, refused setup codes out; public traffic in syslog only', () => {
+      const f = make(undefined);
+      assert.deepStrictEqual(f.isAudited('system.roles.set'), { syslog: true, platformTrail: true });
+      assert.deepStrictEqual(f.isAudited('system.users.delete'), { syslog: true, platformTrail: true }, 'a /system handler id');
+      assert.deepStrictEqual(f.isAudited('system.setup.createSession'), { syslog: true, platformTrail: true, platformTrailValidOnly: true });
+      for (const m of ['auth.register', 'oauth.consent.shown', 'oauth.token.exchange_refused', 'sso.refused', 'mfa.recover']) {
+        assert.deepStrictEqual(f.isAudited(m), { syslog: true }, m);
+      }
+      assert.deepStrictEqual(f.isAudited('events.get'), { syslog: true, storage: true }, 'a call with an account: unchanged');
+    });
+    it('[AFPT2] opt in: a named id, or "all", is kept with its refusals; exclude and the storage filter still apply', () => {
+      let f = make(buildFilter(['admin-acts', 'auth.register']));
+      assert.strictEqual(f.isAudited('auth.register').platformTrail, true);
+      assert.strictEqual(f.isAudited('sso.refused').platformTrail, undefined);
+      assert.strictEqual(f.isAudited('system.setup.createSession').platformTrailValidOnly, true);
+      f = make(buildFilter(['all']));
+      assert.strictEqual(f.isAudited('sso.refused').platformTrail, true);
+      assert.strictEqual(f.isAudited('system.setup.createSession').platformTrailValidOnly, undefined);
+      f = make(buildFilter(['admin-acts'], ['system.roles.set']));
+      assert.strictEqual(f.isAudited('system.roles.set').platformTrail, undefined);
+      f = make(undefined, buildFilter(['all'], ['system.roles.delete']));
+      assert.strictEqual(f.isAudited('system.roles.delete').platformTrail, undefined, 'the storage filter excludes it');
+    });
+    it('[AFPT3] "admin-acts" is a known name; a malformed platform trail filter is refused', () => {
+      assert.deepStrictEqual(validation.unknownFilterMethods(buildFilter(['admin-acts'])), []);
+      assert.throws(() => make({ methods: { include: [12], exclude: [] } }));
+    });
+  });
   describe('[AF01] validation', () => {
     it('[3QJJ] must accept an existing method', () => {
       const method = 'events.get';
@@ -109,8 +140,8 @@ describe('[AFLT] AuditFilter', () => {
       // The deletion call itself is recorded without a user (the platform trail).
       assert.ok(apiMethods.WITHOUT_USER_METHODS.includes('auth.delete'));
     });
-    it('[AFPT] a method without a user goes to the platform trail by the storage filter, a method with one never does', () => {
-      const of = (include, exclude = []) => new AuditFilter({ syslogFilter: buildFilter([], ['all']), storageFilter: buildFilter(include, exclude) });
+    it('[AFPT] a method without a user goes to the platform trail by the storage filter (the platform trail filter selecting all), a method with one never does', () => {
+      const of = (include, exclude = []) => new AuditFilter({ syslogFilter: buildFilter([], ['all']), storageFilter: buildFilter(include, exclude), platformTrailFilter: buildFilter(['all']) });
       for (const m of apiMethods.AUDITED_METHODS) {
         const channels = of(['all']).isAudited(m);
         if (apiMethods.WITHOUT_USER_METHODS.includes(m)) {
@@ -134,7 +165,8 @@ describe('[AFLT] AuditFilter', () => {
 
   describe('[AF03] include and exclude together', () => {
     const channelsOf = (filter) => Object.fromEntries(apiMethods.ALL_METHODS.map((m) => [m, filter.isAudited(m)]));
-    const both = (f) => new AuditFilter({ syslogFilter: f, storageFilter: f });
+    // The platform trail filter selecting every call without an account: the storage filter decides.
+    const both = (f) => new AuditFilter({ syslogFilter: f, storageFilter: f, platformTrailFilter: buildFilter(['all']) });
     /** The methods a filter selects in syslog, and in either trail. */
     function selected (filter) {
       const channels = channelsOf(filter);
@@ -166,11 +198,16 @@ describe('[AFLT] AuditFilter', () => {
     });
 
     it('[AFID] defaults: everything audited with no filter given or `include: [all], exclude: []`; "all" on both sides selects nothing', () => {
-      for (const filter of [new AuditFilter(), both(buildFilter(['all'], []))]) {
-        const { syslog, stored } = selected(filter);
-        assert.deepStrictEqual(syslog, apiMethods.AUDITED_METHODS);
-        assert.deepStrictEqual(stored, apiMethods.AUDITED_METHODS);
-      }
+      const { syslog, stored } = selected(both(buildFilter(['all'], [])));
+      assert.deepStrictEqual(syslog, apiMethods.AUDITED_METHODS);
+      assert.deepStrictEqual(stored, apiMethods.AUDITED_METHODS);
+      // No filter given: every audited method in syslog; stored, all but the
+      // public traffic without an account (the platform trail keeps the administration acts).
+      const defaults = selected(new AuditFilter());
+      assert.deepStrictEqual(defaults.syslog, apiMethods.AUDITED_METHODS);
+      const publicTraffic = apiMethods.WITHOUT_USER_METHODS.filter((m) => !m.startsWith('system.') && !m.startsWith('admin.'));
+      assert.deepStrictEqual(defaults.stored, apiMethods.AUDITED_METHODS.filter((m) => !publicTraffic.includes(m)));
+      assert.ok(publicTraffic.includes('auth.register') && !defaults.stored.includes('auth.register'));
       assert.deepStrictEqual(selected(both(buildFilter(['all'], ['all']))), { syslog: [], stored: [] });
       assert.deepStrictEqual(selected(both(buildFilter([], ['all']))), { syslog: [], stored: [] });
     });
