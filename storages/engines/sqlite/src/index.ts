@@ -83,7 +83,10 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
   storageLayer.sessions = sessions;
   // Sessions of a shared database written before session ids were protected:
   // converted before anything reads them (one transaction, a no-op probe after).
-  if (sessions.hasClearRows()) await sessions.protectClearRows();
+  if (sessions.hasClearRows()) {
+    const converted = await sessions.protectClearRows();
+    if (converted.rows > 0) require('./user/AccessesSQLite.ts').vacuumQuietly(sharedDb.getDb(), 'the shared database');
+  }
   storageLayer.passwordResetRequests = new PasswordResetRequestsSQLite(sharedDb, { maxAge: options.passwordResetRequestMaxAge });
   storageLayer.accesses = new AccessesSQLite(options.integrityAccesses, options.tokenProtection);
   // Access hashes stored before they covered the wire form: recomputed once

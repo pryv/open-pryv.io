@@ -569,6 +569,20 @@ async function recomputeAccessesIntegrityOnce (accesses: AccessesSQLite): Promis
   return result;
 }
 
+/**
+ * After a conversion, rewrite the database file so the clear values left in
+ * free pages and in the write-ahead log are gone. Never fails the caller: a
+ * busy database keeps them until its next VACUUM (see the operator notes).
+ */
+function vacuumQuietly (db: SqliteDb, what: string): void {
+  try {
+    db.prepare('VACUUM').run();
+    db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').run();
+  } catch (err) {
+    logger.warn('access tokens at rest: VACUUM of ' + what + ' skipped: ' + (err as Error).message);
+  }
+}
+
 /** Written in the users base directory once every user database was converted; holds the key id. */
 const TOKEN_PROTECTED_MARKER = 'accesses-token-protected.done';
 
@@ -630,7 +644,11 @@ async function protectAccessTokensOnce (accesses: AccessesSQLite): Promise<{ row
   if (markerKid === accesses.tokenProtection.kid) return null;
   if (markerKid != null) throw foreignKeyError('access rows (walk marker under key id ' + markerKid + ')');
   let rows = 0;
-  const failed = await eachUserAccessesDb(async (udb) => { rows += await accesses.protectClearRowsOfUser(udb); });
+  const failed = await eachUserAccessesDb(async (udb, userId) => {
+    const n = await accesses.protectClearRowsOfUser(udb);
+    rows += n;
+    if (n > 0) vacuumQuietly(udb.db, 'user ' + userId);
+  });
   if (failed.length === 0) writeTokenMarker(accesses.tokenProtection.kid);
   else {
     logger.warn('access tokens at rest: the walk runs again at every start until every user database succeeds; failed: ' +
@@ -641,5 +659,6 @@ async function protectAccessTokensOnce (accesses: AccessesSQLite): Promise<{ row
 
 export {
   AccessesSQLite, duplicateIndexError, recomputeAccessesIntegrityOnce, INTEGRITY_WIRE_FORM_MARKER,
-  TOKEN_PROTECTED_MARKER, protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker
+  TOKEN_PROTECTED_MARKER, protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker,
+  vacuumQuietly
 };

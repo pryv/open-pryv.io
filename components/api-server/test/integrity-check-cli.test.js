@@ -39,7 +39,11 @@ describe('[ICKC] bin/integrity-check.js arguments', function () {
     // Nothing listens on port 9 (discard); the URL can only come from this file.
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'integrity-check-'));
     hostConfig = path.join(tmpDir, 'host-config-' + cuid.slug() + '.yml');
+    // A core's configuration always holds auth.adminAccessKey: the storage
+    // layer derives the access-token keys from it and refuses to start without.
     fs.writeFileSync(hostConfig, `
+auth:
+  adminAccessKey: integrity-check-cli-test-key
 storages:
   base:
     engine: sqlite

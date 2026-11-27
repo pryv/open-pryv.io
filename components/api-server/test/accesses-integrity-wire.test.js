@@ -318,9 +318,10 @@ describe('[AIWA] access integrity verifies on the wire form', function () {
     const legacy = integrity.accesses.rowFormHash(head);
     await writeStoredIntegrity(s.user.id, head.id, legacy);
     const stub = { isActive: true, set: integrity.accesses.set };
+    const tokenProtection = require('storages').storageLayer.accesses.tokenProtection;
     const engine = isPG
-      ? new (require('storages/engines/postgresql/src/user/AccessesPG.ts').AccessesPG)(require('storages').databasePG, stub)
-      : new (require('storages/engines/sqlite/src/user/AccessesSQLite.ts').AccessesSQLite)(stub);
+      ? new (require('storages/engines/postgresql/src/user/AccessesPG.ts').AccessesPG)(require('storages').databasePG, stub, tokenProtection)
+      : new (require('storages/engines/sqlite/src/user/AccessesSQLite.ts').AccessesSQLite)(stub, tokenProtection);
     try {
       await assert.rejects(engine.recomputeIntegrityOfVersionedRows(), /rowFormHash/);
       const stored = (await allRows(s.user)).find((r) => r.id === s.sharedId).integrity;
