@@ -25,6 +25,8 @@ import { DeletionNoticesLocalPG } from './deletionNoticesLocal.ts';
 
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }> };
 
+const logger = _internals.lazyLogger('storage:tokens-at-rest-pg');
+
 /** The token and integrity passes read and write stored values only: integrity is computed on items, not here. */
 const NO_INTEGRITY = { isActive: false, set: () => {}, rowFormHash: () => '' };
 
@@ -131,13 +133,36 @@ async function protectTokensAtRest (db?: PgDbLike, options: { deletedTokens?: bo
     result.sessions = s.rows;
     result.sessionsExpired = s.expired;
   }
-  if (options.tokensOnly === true) return result;
+  if (options.tokensOnly === true) {
+    await refreshPlannerStats(d, result);
+    return result;
+  }
   if (options.deletedTokens === true || result.accesses > 0) {
     result.deletedTokens = await (await accessesWithIntegrity(d, tp)).dropTokensOfDeletedRows();
   }
   if (await accesses.hasClearIntegrityRows()) result.integrity = (await accesses.sealClearIntegrityRows()).rows;
   result.deletionNotices = await notices.protectClearRows();
+  await refreshPlannerStats(d, result);
   return result;
+}
+
+/**
+ * After a pass that rewrote rows, the planner statistics still describe the
+ * clear form (every token set), so the probes of the next starts read whole
+ * tables instead of the empty partial indexes until autovacuum analyzes the
+ * tables. Analyze them now (well under a second for hundreds of thousands
+ * of rows; once per conversion).
+ */
+async function refreshPlannerStats (db: PgDbLike, result: ProtectResult): Promise<void> {
+  const tables: string[] = [];
+  if (result.accesses + result.deletedTokens + result.integrity > 0) tables.push('accesses');
+  if (result.sessions + result.sessionsExpired > 0) tables.push('sessions');
+  if (tables.length === 0) return;
+  try {
+    await db.query('ANALYZE ' + tables.join(', '));
+  } catch (err) {
+    logger.warn('access tokens at rest: ANALYZE ' + tables.join(', ') + ' failed (autovacuum will do it): ' + (err as Error).message);
+  }
 }
 
 /** Access rows in clear listed by `status` (after a start, the rows the conversion left). */

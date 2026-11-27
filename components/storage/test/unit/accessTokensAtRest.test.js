@@ -1234,6 +1234,26 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       }
     });
 
+    it('[TKPR3] PostgreSQL: a pass that converted rows refreshes the planner statistics of the tables it rewrote; a pass with nothing to do does not', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const db = storages.databasePG;
+      const statements = [];
+      const spy = {
+        query: (sql, params) => { statements.push(sql); return db.query(sql, params); },
+        withTransaction: (fn) => db.withTransaction(fn)
+      };
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkpr3-' + cuid() }));
+      await rawWrite(userId, a.id, { token: a.token, tokenHash: null, tokenEnc: null });
+      const tar = require('storages/engines/postgresql/src/tokensAtRest.ts');
+      const res = await tar.protectTokensAtRest(spy);
+      assert.ok(res.accesses >= 1, JSON.stringify(res));
+      assert.ok(statements.some((s) => /^ANALYZE accesses\b/.test(s)), statements.filter((s) => /ANALYZE/.test(s)).join(' | '));
+      assert.ok(!statements.some((s) => /^ANALYZE .*sessions/.test(s)), 'sessions were not rewritten');
+      statements.length = 0;
+      await tar.protectTokensAtRest(spy);
+      assert.ok(!statements.some((s) => /ANALYZE/.test(s)), 'nothing converted, nothing analyzed');
+    });
+
     it('[TKPR2] the probe indexes are there: rows in clear and the key id of protected rows (tokens, integrity values)', async () => {
       if (engine === 'postgresql') {
         const res = await storages.databasePG.query('SELECT indexname, indexdef FROM pg_indexes WHERE indexname IN ' +

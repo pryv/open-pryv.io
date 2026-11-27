@@ -79,6 +79,11 @@
   shared database gets `sessions_clear` and `sessions_kid` (created at init), the same two-bound probe. Measured on
   200 000 access rows and 50 000 sessions (PostgreSQL): the start checks went from about 60-90 ms of sequential
   scans to index reads.
+- PostgreSQL: a pass that rewrote rows (`protectTokensAtRest`: tokens, deleted tokens, integrity; sessions) ends with
+  `ANALYZE` of the tables it rewrote. Measured on 200 000 access rows and 50 000 sessions right after the chain of
+  migrations: the statistics still described the clear form, so the clear-row probes read the whole tables (start
+  checks about 120 ms) until autovacuum analyzed them; after the `ANALYZE` (0.45 s, once) they read the empty
+  partial indexes (start checks 2 to 5 ms). Test `[TKPR3]`.
 - PostgreSQL conversion pass: a batch whose rows another process converted meanwhile (two masters starting on one
   database) no longer ends the pass; it selects again until no clear row is left (`AccessesPG.protectClearRows`,
   stopping only when the same first row comes back with no progress). `AccessesPG.tokenBatchSize` (default 1000)
