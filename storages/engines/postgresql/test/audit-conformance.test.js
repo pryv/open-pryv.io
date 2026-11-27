@@ -30,7 +30,9 @@ describe('[PGAC] PostgreSQL AuditStorage conformance', function () {
       if (!_internals.getLogger) {
         _internals.set('getLogger', helpers.getLogger);
       }
-      const storage = new AuditStoragePG(db);
+      // The users index is in this database (base storage on PostgreSQL), so
+      // the refusal of unindexed ids can be switched on (off until told).
+      const storage = new AuditStoragePG(db, undefined, { seesUsersIndex: true });
       await storage.init();
       return storage;
     },
@@ -38,6 +40,12 @@ describe('[PGAC] PostgreSQL AuditStorage conformance', function () {
     async (userId) => {
       if (db) {
         await db.query('DELETE FROM audit_events WHERE user_id LIKE $1', [userId + '%']);
+      }
+    },
+    {
+      removePlatformTrailRows: async (_storage, eventIds) => {
+        const { PLATFORM_TRAIL_USER_ID } = require('storages/interfaces/auditStorage/AuditStorage.ts');
+        await db.query('DELETE FROM audit_events WHERE user_id = $1 AND eventid = ANY($2::text[])', [PLATFORM_TRAIL_USER_ID, eventIds]);
       }
     }
   );

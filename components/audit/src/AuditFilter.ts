@@ -9,19 +9,23 @@ const require = createRequire(import.meta.url);
 
 const validation = require('./validation.ts');
 
-type FilterEntry = { syslog?: true; storage?: true } | false;
+type FilterEntry = { syslog?: true; storage?: true; platformTrail?: true } | false;
 
 const {
   ALL_METHODS,
   AUDITED_METHODS,
-  WITH_USER_METHODS
+  WITH_USER_METHODS,
+  WITHOUT_USER_METHODS
 } = require('./ApiMethods.ts');
 
 class AuditFilter {
   /**
    * Map with items:
-   * method.id => { syslog: true, storage: true } if any of them is audited
+   * method.id => { syslog: true, storage: true, platformTrail: true } if any of them is audited
    * method.id => false if none is audited
+   * `storage`: kept in the account's own trail (methods with a user);
+   * `platformTrail`: kept in the trail of this core's acts (methods without a
+   * user). Both follow `audit:storage:filter`.
    */
   filter: { methods: Record<string, FilterEntry> };
 
@@ -55,12 +59,20 @@ class AuditFilter {
         storageFilterParam.methods.exclude
       )
     };
+    const platformTrailFilter = {
+      methods: buildIncludeMap(
+        AUDITED_METHODS.filter((m: string) => WITHOUT_USER_METHODS.includes(m)),
+        storageFilterParam.methods.include,
+        storageFilterParam.methods.exclude
+      )
+    };
     const methodsFullFilter: Record<string, FilterEntry> = {};
     for (let i = 0; i < ALL_METHODS.length; i++) {
       const m = ALL_METHODS[i];
-      let methodFilter: { syslog?: true; storage?: true } | false = {};
+      let methodFilter: { syslog?: true; storage?: true; platformTrail?: true } | false = {};
       if (syslogFilter.methods[m]) methodFilter.syslog = true;
       if (storageFilter.methods[m]) methodFilter.storage = true;
+      if (platformTrailFilter.methods[m]) methodFilter.platformTrail = true;
       if (Object.keys(methodFilter).length === 0) methodFilter = false;
       methodsFullFilter[m] = methodFilter;
     }
@@ -86,12 +98,12 @@ class AuditFilter {
           return buildMap(baseMethods.filter((m: string) => !exclude.includes(m)));
         }
       } else {
-        // both included and excluded
-        return buildMap(
-          baseMethods
-            .filter((m: string) => include.includes(m))
-            .filter((m: string) => !exclude.includes(m))
-        );
+        // both included and excluded: what `include` selects (every method
+        // for "all"), less what `exclude` names. "all" on both sides selects
+        // nothing.
+        if (hasAll(include) && hasAll(exclude)) return {};
+        const included = hasAll(include) ? baseMethods : baseMethods.filter((m: string) => include.includes(m));
+        return buildMap(included.filter((m: string) => !exclude.includes(m)));
       }
     }
 

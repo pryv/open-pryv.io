@@ -17,6 +17,28 @@
 
 import type { UserAuditDatabase } from './UserAuditDatabase.js';
 
+/**
+ * The reserved id the trail of this core's administration acts is kept
+ * under: the records of audited calls that have no account of this core in
+ * their context. It is not an account and can never be one (account ids are
+ * cuids, without a dash). A storage that keeps it (`acceptsPlatformTrail`)
+ * exempts this exact id, and no other, from the refusal of records of
+ * accounts that are not in the users index, and never deletes it as an
+ * account (`deleteUser` refuses it).
+ */
+const PLATFORM_TRAIL_USER_ID = 'platform-trail';
+
+/** Whether `userId` is the reserved id of the platform trail (exact match). */
+function isPlatformTrail (userId: unknown): boolean {
+  return userId === PLATFORM_TRAIL_USER_ID;
+}
+
+/** The refusal of `deleteUser(PLATFORM_TRAIL_USER_ID)`. */
+function platformTrailDeletionError (): Error {
+  return Object.assign(new Error('"' + PLATFORM_TRAIL_USER_ID + '" is the trail of the administration acts of this core, not an account: not deleted'),
+    { code: 'PLATFORM_TRAIL_NOT_AN_ACCOUNT' });
+}
+
 export interface AuditStorage {
   init(): Promise<AuditStorage>;
   getVersion(): string;
@@ -28,6 +50,12 @@ export interface AuditStorage {
    * does not do it by nature. Returns whether it does from now on.
    */
   refuseUnindexedUsers?(on: boolean): boolean;
+  /**
+   * Optional: whether the storage keeps the platform trail under
+   * `PLATFORM_TRAIL_USER_ID` (see there). Without it, records with no account
+   * go to syslog only.
+   */
+  acceptsPlatformTrail?(): boolean;
   close(): void;
 }
 
@@ -52,5 +80,8 @@ function validateAuditStorage (instance: unknown): AuditStorage {
 
 export {
   REQUIRED_METHODS,
-  validateAuditStorage
+  validateAuditStorage,
+  PLATFORM_TRAIL_USER_ID,
+  isPlatformTrail,
+  platformTrailDeletionError
 };

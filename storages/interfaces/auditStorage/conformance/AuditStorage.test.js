@@ -16,7 +16,9 @@ const require = createRequire(import.meta.url);
  * @param {Function} cleanupFn - async function called after tests for cleanup (receives userId)
  * @param {Object} [engineHooks] - engine test hooks, all optional:
  *   `setSummaryChunkRows(rows)` sets the window size of a windowed `summarize`
- *   and returns the previous one
+ *   and returns the previous one;
+ *   `removePlatformTrailRows(storage, eventIds)` removes the platform-trail
+ *   rows the tests wrote (the storage refuses to delete the trail itself)
  */
 export default function conformanceTests (getStorage, getUserId, cleanupFn, engineHooks = {}) {
   const assert = require('node:assert');
@@ -452,6 +454,61 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
               (err) => err.code === SUMMARY_BUDGET_ERROR_CODE);
           }
           assert.deepStrictEqual(await summary(dbA, { deadline: Date.now() + 60_000 }), ALL_A);
+        });
+      });
+
+      describe('platform trail (when acceptsPlatformTrail())', () => {
+        const { PLATFORM_TRAIL_USER_ID } = require('../AuditStorage.ts');
+        const written = [];
+        let n = 0;
+
+        function trailEvent () {
+          const id = 'sqpt-' + Date.now().toString(36) + '-' + (++n);
+          written.push(id);
+          return { id, streamIds: ['action-system.createUser', 'access-admin'], type: 'audit-log/pryv-api', time: 5000 + n, created: 5000, createdBy: 'system', modified: 5000, modifiedBy: 'system', content: { action: 'system.createUser', record: { subject: { via: 'admin-key' } } } };
+        }
+
+        before(function () {
+          if (typeof storage.acceptsPlatformTrail !== 'function' || storage.acceptsPlatformTrail() !== true) return this.skip();
+        });
+
+        after(async () => {
+          if (typeof storage.refuseUnindexedUsers === 'function') storage.refuseUnindexedUsers(false);
+          if (written.length > 0 && typeof engineHooks.removePlatformTrailRows === 'function') await engineHooks.removePlatformTrailRows(storage, written);
+        });
+
+        // audit.onUserDelete `erase` (refuse) and `keep` (accept): the trail is written and read back in both.
+        for (const refuse of [true, false]) {
+          it(`[SQPT1] writes and reads back the trail with records of unindexed ids ${refuse ? 'refused' : 'accepted'}`, async () => {
+            if (typeof storage.refuseUnindexedUsers === 'function') storage.refuseUnindexedUsers(refuse);
+            const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
+            const event = trailEvent();
+            await trail.createEvent(event);
+            const back = await trail.getOneEvent(event.id);
+            assert.ok(back != null, 'read back');
+            assert.deepStrictEqual(back.content, event.content);
+            const listed = await trail.getEvents({ query: [{ type: 'streamsQuery', content: [[{ any: ['action-system.createUser'] }]] }] });
+            assert.ok(listed.some((e) => e.id === event.id), 'listed by its action stream');
+          });
+        }
+
+        it('[SQPT2] refuses to delete the trail as an account, and keeps it', async () => {
+          const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
+          const event = trailEvent();
+          await trail.createEvent(event);
+          await assert.rejects(storage.deleteUser(PLATFORM_TRAIL_USER_ID), (err) => err.code === 'PLATFORM_TRAIL_NOT_AN_ACCOUNT');
+          assert.ok(await (await storage.forUser(PLATFORM_TRAIL_USER_ID)).getOneEvent(event.id) != null, 'still there');
+        });
+
+        it('[SQPT3] where unindexed ids are refused, an ordinary unknown id (also one close to the reserved one) is still refused', async function () {
+          if (typeof storage.refuseUnindexedUsers !== 'function' || storage.refuseUnindexedUsers(true) !== true) return this.skip();
+          try {
+            for (const other of [getUserId() + '-sqpt', PLATFORM_TRAIL_USER_ID + '-x', 'x' + PLATFORM_TRAIL_USER_ID, PLATFORM_TRAIL_USER_ID.toUpperCase(), PLATFORM_TRAIL_USER_ID + ' ']) {
+              await assert.rejects((await storage.forUser(other)).createEvent(trailEvent()), JSON.stringify(other));
+            }
+          } finally {
+            storage.refuseUnindexedUsers(false);
+          }
         });
       });
 

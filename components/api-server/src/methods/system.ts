@@ -43,7 +43,7 @@ const { getUsersRepository } = require('business/src/users/index.ts');
 const { getEventTypesLoadState } = require('business').types;
 const { getAPIVersion } = require('middleware/src/project_version.ts');
 
-const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
+const { auditAs, auditTarget, setAuditDetails, inActorTrail, auditAdminAct } = require('./helpers/adminAudit.ts');
 const { parseAccessRef } = require('business/src/accesses/refs.ts');
 const { getAccessIndex } = require('platform/src/accessIndex.ts');
 const { getNamespace, listNamespaces, setNamespace, deleteNamespace, namespaceInfo } = require('platform/src/externalIdIndex.ts');
@@ -51,6 +51,9 @@ const { getExternalIdsService } = require('business/src/external-ids/service.ts'
 const { APIError } = require('errors');
 
 const { platform } = require('platform') as { platform: Platform };
+
+/** Longest `search` of the users list (a username is at most 60 characters). */
+const USERNAME_SEARCH_MAX = 64;
 
 /**
  * @param api The user-facing API, used to compute usage stats per method
@@ -71,14 +74,22 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   await platform.init();
 
   // ---------------------------------------------------------------- createUser
+  // The object of an act, as recorded (method parameters, never a secret).
+  // Read before the parameters are validated: a value that is not a short text is left out.
+  const shortText = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 256;
+  const byUsername = (p: { username?: unknown }) => shortText(p.username) ? { username: p.username } : null;
+  const byNamespace = (p: { namespace?: unknown }) => shortText(p.namespace) ? { namespace: p.namespace } : null;
+
   systemAPI.register('system.createUser',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget(byUsername),
     commonFns.getParamsValidation(methodsSchema.createUser.params),
     registration.prepareUserData,
     refuseReservedUsername,
     registration.createUser.bind(registration),
     recordAccountCreatedStep('system'),
-    registration.sendWelcomeMail.bind(registration)
+    registration.sendWelcomeMail.bind(registration),
+    inActorTrail()
   );
 
   // `backloop` was a registration test name; the admin path refuses it too.
@@ -92,32 +103,59 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   }
 
   // --------------------------------------------------------------- getUserInfo
+  // Recorded in the platform trail, in the account's own trail and in the
+  // acting administrator's trail.
   systemAPI.register('system.getUserInfo',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget(byUsername),
     commonFns.getParamsValidation(methodsSchema.getUserInfo.params),
     loadUserToMinimalMethodContext,
     getUserInfoInit,
-    getUserInfoSetAccessStats
+    getUserInfoSetAccessStats,
+    async function inReadAccountTrail (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {
+      await recordReadByAdmin(context, context.user.id);
+      next();
+    },
+    inActorTrail()
   );
+
+  /** A row in the trail of the account an administrator read (when on this core). Best-effort. */
+  async function recordReadByAdmin (context: MethodContext, userId: string | undefined | null) {
+    if (userId == null) return;
+    const payload = (context as { auditIntegrityPayload?: { subject?: unknown } }).auditIntegrityPayload;
+    await auditAdminAct(userId, 'account.readByAdmin', { methodId: context.methodId, subject: payload?.subject ?? {} });
+  }
 
   // --------------------------------------------------------------- getAccess
   // Resolve a bare accessId -> owning user + operational metadata from the
   // cluster-wide reverse-index. Composite `<base>:<serial>` ids (as carried on
   // audit streams) are normalized to their base. Deleted accesses are returned
   // (with `deleted` set) — scoping a breach after revocation is the use case.
+  // Recorded in the platform trail, in the trail of the account holding the
+  // access when it is on this core, and in the acting administrator's trail.
   systemAPI.register('system.getAccess',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget((p: { accessId?: unknown }) => shortText(p.accessId) ? { accessId: p.accessId } : null),
     commonFns.getParamsValidation(methodsSchema.getAccess.params),
-    getAccess
+    getAccess,
+    inActorTrail()
   );
 
-  async function getAccess (_context: MethodContext, params: { accessId: string }, result: ResultBag & { accessIndex?: Record<string, unknown> }, next: Next) {
+  async function getAccess (context: MethodContext, params: { accessId: string }, result: ResultBag & { accessIndex?: Record<string, unknown> }, next: Next) {
     let baseId = params.accessId;
     try { baseId = parseAccessRef(params.accessId).base; } catch (_e) { /* not a composite ref — use as-is */ }
     try {
       const entry = await getAccessIndex(platform, baseId);
       if (entry == null) {
         return next(errors.unknownResource('access', params.accessId));
+      }
+      // The index is platform-wide; an administrator session reads the
+      // accesses of this core's accounts only (its grant may cover this core
+      // alone). The admin key keeps the platform-wide read.
+      if ((context as { adminSubject?: { kind?: string } }).adminSubject?.kind === 'session' && !platform.isSingleCore) {
+        const stored = entry.usernameToken ?? entry.username;
+        const holderCore = typeof stored === 'string' ? await platform.getUserCoreByPreHashedUsername(stored) : null;
+        if (holderCore !== platform.coreId) return next(errors.unknownResource('access', params.accessId));
       }
       const out: Record<string, unknown> = { ...entry };
       // Hashed mode: the row holds a usernameToken, not a plaintext username.
@@ -128,6 +166,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         out.core = coreId != null ? platform.coreIdToUrl(coreId) : null;
       }
       result.accessIndex = out;
+      // The holder's own trail, when the account is on this core (a
+      // plaintext username only: a hashed one stays on its core).
+      if (typeof entry.username === 'string') {
+        let holderId: string | null = null;
+        try { holderId = (await usersRepository.getUserIdForUsername(entry.username)) ?? null; } catch (_e) { /* not resolvable here */ }
+        await recordReadByAdmin(context, holderId);
+      }
       next();
     } catch (err) {
       return next(errors.unexpectedError(err));
@@ -199,13 +244,34 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   }
 
   // --------------------------------------------------------------- listUsers
+  // Optional paging: `limit` (1 to LIST_USERS_MAX_LIMIT), `skip`, `search` (a
+  // prefix of the username), over the usernames in order. Without any of
+  // them, every user, in the index's order. `total`: the users matching
+  // `search` (all of them without it), before `skip` and `limit`.
+  const LIST_USERS_MAX_LIMIT = 1000;
   systemAPI.register('system.listUsers',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
-    async function listUsers (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
+    auditAs('subject'),
+    async function listUsers (_context: MethodContext, params: { limit?: unknown, skip?: unknown, search?: unknown }, result: ResultBag, next: Next) {
+      const paged = params.limit != null || params.skip != null || params.search != null;
+      const limit = params.limit == null ? LIST_USERS_MAX_LIMIT : (params.limit === '' ? NaN : Number(params.limit));
+      if (!Number.isInteger(limit) || limit < 1 || limit > LIST_USERS_MAX_LIMIT) return next(errors.invalidParametersFormat(`\`limit\` must be a whole number from 1 to ${LIST_USERS_MAX_LIMIT}.`, { limit: params.limit }));
+      const skip = params.skip == null ? 0 : (params.skip === '' ? NaN : Number(params.skip));
+      if (!Number.isInteger(skip) || skip < 0) return next(errors.invalidParametersFormat('`skip` must be a whole number, 0 or more.', { skip: params.skip }));
+      if (params.search != null && (typeof params.search !== 'string' || params.search.length > USERNAME_SEARCH_MAX)) {
+        return next(errors.invalidParametersFormat(`\`search\` must be a text of at most ${USERNAME_SEARCH_MAX} characters.`, { search: params.search }));
+      }
       try {
         const usersMap: Record<string, string> = await usersIndex.getAllByUsername();
+        let entries = Object.entries(usersMap);
+        if (paged) {
+          const prefix = typeof params.search === 'string' ? params.search.toLowerCase() : '';
+          entries = entries.filter(([username]) => username.toLowerCase().startsWith(prefix))
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        }
+        result.total = entries.length;
+        if (paged) entries = entries.slice(skip, skip + limit);
         const users: Array<{ username: string; id: string; email: string; language: string; core?: string | null }> = [];
-        for (const [username, userId] of Object.entries(usersMap)) {
+        for (const [username, userId] of entries) {
           const user = await usersRepository.getUserById(userId);
           if (user == null) continue;
           const entry: { username: string, id: string, email: string, language: string, core?: string | null } = {
@@ -226,12 +292,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   // --------------------------------------------------------------- listCores
   systemAPI.register('system.listCores',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function listCores (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         const allCores = await platform.getAllCoreInfos();
@@ -267,7 +334,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   }
 
   systemAPI.register('system.extIdNamespaces.list',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function listExtIdNamespaces (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         result.namespaces = await listNamespaces(platform);
@@ -279,7 +346,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   );
 
   systemAPI.register('system.extIdNamespaces.get',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     commonFns.getParamsValidation(methodsSchema.extIdNamespacesGet.params),
     async function getExtIdNamespace (_context: MethodContext, params: { namespace: string }, result: ResultBag, next: Next) {
       try {
@@ -294,23 +361,27 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   );
 
   systemAPI.register('system.extIdNamespaces.set',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget(byNamespace),
     commonFns.getParamsValidation(methodsSchema.extIdNamespacesSet.params),
     async function setExtIdNamespace (context: MethodContext & { extIdNamespaceCreated?: boolean }, params: { namespace: string, label?: string, defaultMode?: string }, result: ResultBag, next: Next) {
       try {
         const { created, info } = await setNamespace(platform, params.namespace,
           { label: params.label, defaultMode: params.defaultMode }, Date.now() / 1000);
         context.extIdNamespaceCreated = created;
+        setAuditDetails(context, { diff: { created, ...(params.label != null ? { label: params.label } : {}), ...(params.defaultMode != null ? { defaultMode: params.defaultMode } : {}) } });
         result.namespace = info;
         next();
       } catch (err) {
         return next(extIdError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   systemAPI.register('system.extIdNamespaces.delete',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget(byNamespace),
     commonFns.getParamsValidation(methodsSchema.extIdNamespacesDelete.params),
     async function deleteExtIdNamespace (_context: MethodContext, params: { namespace: string, force?: boolean }, _result: ResultBag, next: Next) {
       try {
@@ -321,7 +392,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       } catch (err) {
         return next(extIdError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   // The holder answer of the forced-mode accept check, asked by the core that
@@ -329,7 +401,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   // else: no date, no account, no core. Not audited (a read; one event per
   // probe in the user's trail would be noise).
   systemAPI.register('system.extIdHolds',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     commonFns.getParamsValidation(methodsSchema.extIdHolds.params),
     async function extIdHolds (_context: MethodContext, params: { username: string, namespace: string, blindedValue: string }, result: ResultBag, next: Next) {
       try {
@@ -348,7 +420,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   // is told by mail when mail is configured; the answer never names the
   // account. Held on another core: the route answers 307 to that core.
   systemAPI.register('system.extIdRelease',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget(byNamespace),
     commonFns.getParamsValidation(methodsSchema.extIdRelease.params),
     async function extIdRelease (_context: MethodContext, params: { namespace: string, blindedValue: string, reason: string }, result: ResultBag, next: Next) {
       try {
@@ -368,7 +441,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       } catch (err) {
         return next(extIdError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   // ------------------------------------------------- auto-deletion reset
@@ -377,9 +451,10 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   // removed on their request (`removeSetting`). On the account's core; on
   // another core the route answers 307 to it.
   systemAPI.register('system.autoDeletion.reset',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget(byUsername),
     commonFns.getParamsValidation(methodsSchema.autoDeletionReset.params),
-    async function autoDeletionReset (_context: MethodContext, params: { username: string, reason: string, removeSetting?: boolean }, result: ResultBag, next: Next) {
+    async function autoDeletionReset (context: MethodContext, params: { username: string, reason: string, removeSetting?: boolean }, result: ResultBag, next: Next) {
       try {
         const outcome = await resetAutoDeletion(config, platform, params);
         if (outcome.kind === 'remote') {
@@ -387,11 +462,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
           return next();
         }
         Object.assign(result, outcome.result);
+        if (params.removeSetting === true) setAuditDetails(context, { diff: { removeSetting: true } });
         next();
       } catch (err) {
         return next(err instanceof APIError ? err : errors.unexpectedError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   // ------------------------------------------------------ erasure ledger
@@ -400,7 +477,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   const ledgerKeyOf = () => ledgerKey(config);
 
   systemAPI.register('system.erasures.list',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function listErasures (_context: MethodContext, params: { since?: unknown, limit?: unknown, after?: unknown }, result: ResultBag, next: Next) {
       const since = params.since == null ? 0 : (params.since === '' ? NaN : Number(params.since));
       if (!Number.isFinite(since) || since < 0) return next(errors.invalidParametersFormat('`since` must be a time in milliseconds since the epoch.', { since: params.since }));
@@ -416,11 +493,12 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   systemAPI.register('system.erasures.get',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function lookupErasures (_context: MethodContext, params: { userId?: unknown, username?: unknown }, result: ResultBag, next: Next) {
       const byId = typeof params.userId === 'string' && params.userId.length > 0;
       const byName = typeof params.username === 'string' && params.username.length > 0;
@@ -436,11 +514,14 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         // cannot match (a key change): `erased: false` is then not a proof.
         result.keyId = key.keyId;
         result.otherKeyRecords = await otherKeyRecordCount(platform, key);
+        // The id or name looked up is not recorded: the ledger itself keeps
+        // only keyed hashes of an erased account.
         next();
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   // ------------------------------------------------- effective configuration
@@ -448,7 +529,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   // (business/src/effectiveConfig). Audited without a user; the log line is
   // the trace of record when the audit syslog is off.
   systemAPI.register('system.getEffectiveConfig',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function getEffectiveConfig (_context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
       const extra = Object.keys(params).filter((k) => k !== 'digest');
       if (extra.length > 0) return next(errors.invalidParametersFormat('Unknown parameter(s): ' + extra.join(', ') + '. Only `digest` is accepted.', { parameters: extra }));
@@ -478,7 +559,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       } catch (err) {
         return next(errors.unexpectedError(err));
       }
-    }
+    },
+    inActorTrail()
   );
 
   // ------------------------------------------------------ eventTypesStatus
@@ -486,7 +568,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   // when the published dictionary has never loaded, in which case the core runs
   // on its embedded fallback and refuses unknown event types.
   systemAPI.register('system.getEventTypesStatus',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function getEventTypesStatus (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         result.eventTypes = getEventTypesLoadState();
@@ -506,7 +588,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   // be read; `upToDate` carries the answer.
   let migrationRunner: { status: () => Promise<unknown[]> } | null = null;
   systemAPI.register('system.getMigrationsStatus',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function getMigrationsStatus (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         const { createMigrationRunner, summarizeStatus } = require('storages/interfaces/migrations/index.ts');
@@ -528,7 +610,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   // only: no account, method or message. Read without storage, so it answers
   // when the audit storage is the failing part.
   systemAPI.register('system.getAuditStatus',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
     async function getAuditStatus (_context: MethodContext, _params: unknown, result: ResultBag, next: Next) {
       try {
         const { readLossStatus } = require('./helpers/auditStatusIpc.ts');
@@ -559,10 +641,12 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
 
   // --------------------------------------------------------------- deactivateMfa
   systemAPI.register('system.deactivateMfa',
-    setAuditAccessId(AuditAccessIds.ADMIN_TOKEN),
+    auditAs('subject'),
+    auditTarget(byUsername),
     commonFns.getParamsValidation(methodsSchema.deactivateMfa.params),
     loadUserToMinimalMethodContext,
-    deactivateMfa
+    deactivateMfa,
+    inActorTrail()
   );
 
   async function deactivateMfa (context: MethodContext, _params: unknown, _result: ResultBag, next: Next) {

@@ -42,6 +42,7 @@ type MethodContext = {
   auditRecordCountIncomplete?: boolean;
   auditScopedStreamIds?: string[];
   auditScopedStreamCount?: number;
+  auditErrorRecorded?: boolean;
 };
 type AuditEventLike = {
   id?: string;
@@ -56,12 +57,15 @@ type AuditEventLike = {
   type?: string;
   content: { record?: unknown; source?: unknown; action?: string; query?: unknown; id?: string; message?: string; callerId?: string; recordCount?: number; recordCountIncomplete?: boolean; scopedStreamIds?: string[]; scopedStreamCount?: number; delegation?: { delegateUsername?: string; delegateHostSlug?: string } };
 };
-type AuditFilterLike = { isAudited (methodId: string): { syslog?: boolean; storage?: boolean } | boolean };
+type Destinations = { syslog?: boolean; storage?: boolean; platformTrail?: boolean };
+type AuditFilterLike = { isAudited (methodId: string): Destinations | boolean };
 type SyslogLike = { eventForUser (userId: string | undefined, event: AuditEventLike): unknown };
 type AuditStorage = {
   forUser (userId: string): Promise<{ createEvent (e: AuditEventLike): Promise<unknown> }>;
   refuseUnindexedUsers? (on: boolean): boolean;
+  acceptsPlatformTrail? (): boolean;
 };
+const PLATFORM_TRAIL_USER_ID: string = CONSTANTS.PLATFORM_TRAIL_USER_ID;
 
 /** Tracing must not replace the error of the write it traces. */
 function endSpan (tracing: Tracing, name: string): void {
@@ -113,6 +117,8 @@ class Audit {
   #keepsErasedTrails = false;
   /** The storage cannot tell an erased account itself (see `init`). */
   #checksErasedMark = false;
+  /** The storage keeps the platform trail (records of calls without an account). */
+  #keepsPlatformTrail = false;
 
   /**
    * Requires to call async init() to use
@@ -140,6 +146,8 @@ class Audit {
     // the mark the erasure sets on every worker is checked here instead.
     this.#checksErasedMark = !this.#keepsErasedTrails && refuses === false;
     if (refuses != null) logger.info('Audit records of accounts that are erased: ' + (refuses ? 'refused' : this.#checksErasedMark ? 'refused once the account is marked erased' : 'accepted'));
+    this.#keepsPlatformTrail = this._storage?.acceptsPlatformTrail?.() === true;
+    if (this._storage != null && !this.#keepsPlatformTrail) logger.info('Audit records of calls without an account: syslog only (the audit storage does not keep the platform trail)');
     this._syslog = await getSyslog();
     this.filter = new AuditFilter({
       syslogFilter: config.get('audit:syslog:filter'),
@@ -185,6 +193,8 @@ class Audit {
   async errorApiCall (context: MethodContext, error: { id?: string; message?: string }) {
     const methodId = context.methodId;
     const userId = context?.user?.id;
+    // Tells a route that records its own outcome that this error is recorded.
+    context.auditErrorRecorded = true;
     const event = buildCounted('error', context.tracing, 'audit.errorApiCall', (): AuditEventLike | null => {
       if (!this.filter.isAudited(methodId)) { return null; }
       context.tracing.startSpan('audit.errorApiCall');
@@ -196,6 +206,9 @@ class Audit {
       built.type = CONSTANTS.EVENT_TYPE_ERROR;
       built.content.id = error.id;
       built.content.message = error.message;
+      // A refused administration act keeps who tried it and on what.
+      const attribution = adminAttribution(context.auditIntegrityPayload);
+      if (attribution != null) built.content.record = attribution;
       return built;
     });
     if (event == null) { return; }
@@ -217,7 +230,11 @@ class Audit {
     let reason: LossReason = 'invalid-record';
     let silentLoss: LossReason | null = null;
     try {
-      const { syslog, storage } = this.#checked(userId, event);
+      const { syslog, storage, platformTrail } = this.#checked(userId, event);
+      // Where the stored copy goes: the account's own trail, or for a call
+      // without an account the platform trail, when the storage keeps it
+      // (else syslog only, as before it existed).
+      const storedUnder = storage ? userId : (platformTrail && this.#keepsPlatformTrail ? PLATFORM_TRAIL_USER_ID : null);
       if (this.syslog && syslog) {
         try {
           this.syslog.eventForUser(userId, event);
@@ -227,7 +244,7 @@ class Audit {
           logger.error('Failed to send an audit record to syslog', err);
         }
       }
-      if (storage) {
+      if (storedUnder != null) {
         if (this.storage == null) {
           silentLoss = 'storage-unavailable';
           if (!this.#storageAbsenceLogged) {
@@ -236,7 +253,9 @@ class Audit {
           }
         } else {
           reason = 'storage-write-failed';
-          const store = this.#store(this.storage, userId!, event);
+          const store = storedUnder === PLATFORM_TRAIL_USER_ID
+            ? this.#storePlatformTrail(this.storage, event)
+            : this.#store(this.storage, storedUnder, event);
           if (waitMs == null) {
             await store;
           } else if (!await settlesWithin(store, waitMs)) {
@@ -267,8 +286,18 @@ class Audit {
     }
   }
 
+  /**
+   * Writes a record of the platform trail. Not an account: no erased mark to
+   * check, and a refusal is a lost record like any failed write (the storage
+   * exempts this exact id from the refusal of unindexed ids).
+   */
+  async #storePlatformTrail (storage: AuditStorage, event: AuditEventLike): Promise<void> {
+    const trail = await storage.forUser(PLATFORM_TRAIL_USER_ID);
+    await trail.createEvent(event);
+  }
+
   /** Validates the record, gives it an id, and tells where it has to go. */
-  #checked (userId: string | undefined, event: AuditEventLike): { syslog?: boolean; storage?: boolean } {
+  #checked (userId: string | undefined, event: AuditEventLike): Destinations {
     logger.debug('eventForUser: ' +
             userId +
             ' ' +
@@ -298,7 +327,7 @@ class Audit {
     // null-id row, which is the worse of the two. Assign it here, above both.
     if (event.id == null) event.id = cuid();
 
-    return this.filter.isAudited(methodId) as { syslog?: boolean; storage?: boolean };
+    return this.filter.isAudited(methodId) as Destinations;
   }
 
   async reloadConfig () {
@@ -316,6 +345,17 @@ function recordedSource (source: unknown): unknown {
   if (source == null || typeof source !== 'object' || (source as { ip?: unknown }).ip !== null) return source;
   const { ip: _ip, ...rest } = source as { ip: null };
   return rest;
+}
+
+/**
+ * Of the record an administration route prepared (`{ subject, target?, ... }`,
+ * api-server methods/helpers/adminAudit.ts), what an error record keeps: who
+ * acted and on what. Null for any other payload.
+ */
+function adminAttribution (payload: unknown): { subject: unknown; target?: unknown } | null {
+  if (payload == null || typeof payload !== 'object' || !('subject' in payload)) return null;
+  const { subject, target } = payload as { subject: unknown; target?: unknown };
+  return target === undefined ? { subject } : { subject, target };
 }
 
 function buildDefaultEvent (context: MethodContext): AuditEventLike {

@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 const { Readable } = require('stream');
 const { UNINDEXED_USER_ERRCODE } = require('./unindexedWritesGuard.ts');
 const { summaryBudgetError, summaryAccessFilter, SUMMARY_ERROR_TYPE } = require('../../../interfaces/auditStorage/UserAuditDatabase.ts');
+const { isPlatformTrail } = require('../../../interfaces/auditStorage/AuditStorage.ts');
 
 // SQLSTATE of a statement cancelled by `statement_timeout`.
 const PG_QUERY_CANCELED = '57014';
@@ -165,7 +166,9 @@ class UserAuditDatabasePG {
 
   async createEvent (event: AuditEvent): Promise<void> {
     const row = toDB(event);
-    const guarded = this.guard.on;
+    // The platform trail is not an account: never in the users index, and
+    // exempted by its exact id only (AuditStorage.ts).
+    const guarded = this.guard.on && !isPlatformTrail(this.userId);
     const res = await this.db.query(
       guarded ? INSERT_EVENT_OF_INDEXED_USER : INSERT_EVENT,
       [this.userId, row.eventid, row.head_id, row.stream_ids, row.time, row.deleted, row.end_time, row.type, row.content, row.description, row.client_data, row.integrity, row.attachments, row.trashed, row.created, row.created_by, row.modified, row.modified_by]

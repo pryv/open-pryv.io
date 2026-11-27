@@ -25,6 +25,17 @@ describe('[SQCF] UserSQLite conformance', () => {
     async (userId) => {
       await userLocalDirectory.deleteUserDirectory(userId);
     },
-    { setSummaryChunkRows: _setSummaryChunkRows }
+    {
+      setSummaryChunkRows: _setSummaryChunkRows,
+      // This test storage has a name of its own: its file in the trail's
+      // directory holds only the rows the tests wrote.
+      removePlatformTrailRows: async (storage) => {
+        const fs = require('node:fs');
+        const { PLATFORM_TRAIL_USER_ID } = require('storages/interfaces/auditStorage/AuditStorage.ts');
+        storage.closeUser(PLATFORM_TRAIL_USER_ID);
+        const dbPath = storage.existingPathForUser(PLATFORM_TRAIL_USER_ID);
+        for (const file of [dbPath, dbPath + '-wal', dbPath + '-shm']) fs.rmSync(file, { force: true });
+      }
+    }
   );
 });
