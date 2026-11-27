@@ -16,8 +16,14 @@ Guide: `docs/setup-and-administrators.md`.
 
 - **Setup state and setup code.** A fresh platform waits for its first administrator: its first core prints a
   one-time setup code at boot (once, in a marked block of stdout, and in `setup-code.txt` next to the config file,
-  mode 0600). Only its SHA-256 is kept in the platform store; a restart keeps it valid. **An existing platform
-  upgraded to this release is recorded as set up at its first boot: no code, no change to admin-key calls.**
+  mode 0600). Only its SHA-256 is kept in the platform store; a restart keeps it valid. Past 10 tries per 15
+  minutes on a core, redeeming answers 429 (the code stays valid). **An existing platform upgraded to this release
+  is recorded as set up at its first boot: no code, no change to admin-key calls.**
+- **BREAKING for fresh installs only: registration is closed until setup is finished**
+  (`setup.registrationWhilePending: closed`, the default; `POST /users` answers 403 meanwhile, except the first
+  administrator's account through the setup session). An install provisioned by automation finishes setup with the
+  admin key and no administrator: `POST /system/setup/finish` (admin key) or `node bin/admin.js setup finish`, then
+  gives the first administrator a claim code; or sets `setup.registrationWhilePending: open`.
 - **Built-in setup page `GET /system/setup/`** on every core, host name and the bare IP, with no dependency on
   hosted sites, DNS, certificates or outbound access: code, checks, sign in or create the first administrator,
   TOTP when MFA is on, finish. Strict Content-Security-Policy, `cache-control: no-store`, 404 once setup is done.
@@ -35,20 +41,26 @@ Guide: `docs/setup-and-administrators.md`.
   the account's role on each request. Sensitive acts need a recent second factor (step-up). Every existing
   `/system` route accepts an administrator session holding its permission, beside the admin key.
 - **Roles and claim codes**: role `owner` at scope `platform`. A one-time claim code (`bin/admin.js claim-code`,
-  `POST /system/admin/claim-codes`) gives the role to whoever claims it signed in. The last lasting owner grant
-  cannot be revoked: 400 `invalid-operation` with `data.id: last-owner`.
+  `POST /system/admin/claim-codes` with the admin key or an owner's session, not the setup session) gives the role
+  to whoever claims it signed in with a personal token (an app or shared token opens nothing). The last lasting
+  owner grant cannot be revoked: 400 `invalid-operation` with `data.id: last-owner`; its holder cannot delete that
+  account with its own token either (same answer). Deleting an account deletes its role. A session opened before a
+  revocation stays refused when the account gets a role again.
 - **Origin rule on `/system`**: a call with an `Origin` that is not authenticated by the admin key is accepted only
   from the core's own origin, the portal's or `portal.cors.allowedOrigins`, with CORS for that origin only.
   Admin-key calls and calls without `Origin` are unchanged.
 - **Break-glass admin key** (opt-in): `auth.adminAccessKeyScope: break-glass` limits the admin key to the
-  break-glass routes (calls between cores, setup code, claim codes, role listing and revocation, status). Default
-  `full`: unchanged.
+  break-glass `/system` routes (calls between cores, setup code, claim codes, role listing and revocation, status);
+  an unlisted `/system` path is refused, and outside `/system` the key no longer deletes accounts
+  (`DELETE /users/:username`) nor reaches `/reg/records` and `/reg/admin/*` (the previews cache clean-up keeps it).
+  Default `full`: unchanged.
 - **New config keys**: `portal.site`, `portal.cors.allowedOrigins`, `setup.codeTtlHours`, `setup.codeHash`,
   `setup.printCode`, `setup.registrationWhilePending` (`closed` by default: registration waits for setup, except the
   first administrator's account), `auth.adminAccessKeyScope`, `admin.session.ttlMinutes`,
   `admin.session.stepUpMinutes`, `admin.session.requireMfa`. Checked at boot and by `bin/check-config.js`.
-- **`bin/admin.js`**: `setup-code [--new | --hash [<code>]]`, `claim-code`, `roles list`, `roles revoke [--force]`,
-  `sessions revoke`, on the platform store directly.
+- **`bin/admin.js`**: `setup-code [--new | --hash [<code>]]`, `setup finish`, `claim-code`, `roles list`,
+  `roles revoke [--force]`, `sessions revoke`, on the platform store directly; each act writes one line (never a
+  code) to the audit syslog channel when `audit.syslog.active`.
 - **Install wizard**: "Next steps" names the setup page and where the code appears; `--setup-code-hash=<sha256>`
   (answer key `setup.codeHash`) writes the hash of a code chosen by the deployer, so the first boot prints none.
 

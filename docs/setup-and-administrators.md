@@ -21,7 +21,13 @@ The platform store holds `setup/state`: `pending` (the platform waits for its fi
 - A core that joins a platform later (`bin/master.js --bootstrap`) never mints a code: it reads the state.
 
 While `pending`, registration is closed (`setup.registrationWhilePending: closed`, the default) except for the
-first administrator's account, created through the setup session.
+first administrator's account, created through the setup session. **This changes the first boot of a fresh
+install**: until setup is finished, `POST /users` answers 403.
+
+**Automated installs** (CI rigs, images, infrastructure as code) that provision with the admin key and never open
+the setup page finish setup without a first administrator: `node bin/admin.js setup finish`, or
+`POST /system/setup/finish` with the admin key. Registration opens; the first administrator comes later from a
+claim code. (Or set `setup.registrationWhilePending: open` to keep registration open meanwhile.)
 
 ## The setup code
 
@@ -32,15 +38,16 @@ first administrator's account, created through the setup session.
   false` leaves the block out (the file is still written when possible). The code is never logged otherwise.
 - Only its SHA-256 is kept, in the platform store: a restart keeps a pending code valid but cannot show it again
   (the log says when it was issued and how to replace it).
-- Valid `setup.codeTtlHours` (24). Redeeming it is limited to 10 tries per 15 minutes per core; past that the code
-  is withdrawn and a new one must be minted.
+- Valid `setup.codeTtlHours` (24). Redeeming it is limited to 10 tries per 15 minutes per core; past that the
+  attempts answer 429 until the window ends, and the code stays valid (130 bits cannot be guessed at that rate).
 - **Replace it**: `node bin/admin.js setup-code --new` on a core (shell access is the proof of being the operator;
   in a container `docker exec <container> node bin/admin.js setup-code --new`), or `POST /system/admin/setup/code`
   with the admin key. The previous code stops working.
 - **Choose it yourself** (images, CI, marketplace): `node bin/admin.js setup-code --hash` prints a new code and
   its SHA-256; put only the hash in `setup.codeHash` (env `pryv_setup__codeHash`, or `init --setup-code-hash=`).
   The first boot then accepts that code and prints none. A hash of your own code is the SHA-256 (hex) of its
-  canonical form: the 26 characters, uppercase, no separator (`setup-code --hash <code>` computes it).
+  canonical form: the 26 characters, uppercase, no separator (`setup-code --hash <code>` computes it). Generate
+  the code with `setup-code --hash`, never choose it: nothing checks the strength of a code you pick.
 
 ## The built-in setup page
 
@@ -58,7 +65,12 @@ The page is three static files of the release (HTML, one script, one style sheet
 resource. Every answer carries `content-security-policy: default-src 'none'; script-src 'self'; style-src 'self';
 connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'` and `cache-control: no-store`.
 The setup session and the account's token live in the page's memory only: reloading the page ends the session
-(a new code is then needed).
+(a new code is then needed); the page asks before it is left.
+
+The page's registration asks for the basic fields only (username, email, password). A platform that requires
+more (extra account fields in `custom.systemStreams`, an invitation token, a proved email with
+`account.emailVerification.requireAtRegistration`) refuses it: create the account first with
+`POST /system/create-user` (admin key) or the account app, then sign in with it on the page.
 
 Signing in from the page uses the app id `pryv-setup-page`, which `auth.trustedApps` does not need to list: a
 sign-in with that app id is accepted when it comes from the core's own origin (the request's own host, `core.url`
@@ -74,19 +86,21 @@ checked against `auth.trustedApps` as any other.
 | `GET /system/setup/checks` | setup session or admin key |
 | `POST /system/setup/session { code }` | none (rate limited); answers the setup session (2 h) |
 | `POST /system/setup/first-admin { username, personalToken }` | setup session; the account gets `owner` |
-| `POST /system/setup/finish` | setup session or admin key; needs an owner |
+| `POST /system/setup/finish` | setup session (needs an owner) or admin key (finishes without one) |
 | `POST /system/admin/setup/code` | admin key or setup session |
 | `POST /system/admin/session { username }` | the account's personal token (`Authorization`), on its home core |
 | `GET`, `DELETE /system/admin/session` | administrator session |
 | `POST /system/admin/session/renew { personalToken }`, `.../step-up` | administrator session, on its home core |
-| `POST /system/admin/claim-codes { role, scope, ttlMinutes }` | admin key, setup session, or `claimCodes:mint` (step-up) |
+| `POST /system/admin/claim-codes { role, scope, ttlMinutes }` | admin key or `claimCodes:mint` (step-up); not the setup session (a code outlives it) |
 | `POST /system/admin/roles/claim { username, code }` | the account's personal token, on its home core |
 | `GET /system/admin/roles` | `roles:read` or admin key |
 | `DELETE /system/admin/roles/:userId[?role=&scope=]` | `roles:grant` (step-up) or admin key |
 | `GET /system/admin/portal/context` | any administrator subject |
 
 A refused credential answers 404, as an unknown route does. A personal token is valid on its account's home core
-only: elsewhere these routes answer an error naming the home core's URL.
+only: elsewhere these routes answer an error naming the home core's URL. An app or shared access of an
+administrator opens nothing: only a personal access does. `GET /system/setup/status` answers the state, whether a
+code is pending and the setup addresses, not when setup was done.
 
 ## Administrator sessions
 
@@ -98,9 +112,12 @@ only: elsewhere these routes answer an error naming the home core's URL.
    request on every core.
 4. **Step-up**: granting or revoking roles, minting claim codes and deleting accounts need a second factor younger
    than `admin.session.stepUpMinutes` (5): `POST /system/admin/session/step-up` with the token of a fresh sign-in.
+   A core accepts a second factor stamped up to 60 seconds in its future (clock difference with the home core).
+5. A session opened before the account's role row was deleted stays refused if the account gets a role again.
 
 With `services.mfa` on and `admin.session.requireMfa: true` (the default), the sign-in behind the personal token
-must have passed its second factor (recorded by the home core at `mfa.verify`).
+must have passed its second factor: the home core records, at `mfa.verify`, the account's latest second-factor
+sign-in in its local memory (one entry per account, lost at a restart: the administrator then signs in again).
 
 **Origin rule.** A call to `/system/*` that carries an `Origin` and is not authenticated by the admin key is
 accepted only from the core's own origin, the portal's origin (from `portal.site` and the topology) or one listed
@@ -119,14 +136,23 @@ Roles are stored in the platform store under `admin-role/<userId>` (the account 
 no credential in it). **The last lasting owner grant** (`owner` at scope `platform`, without expiry) cannot be
 revoked nor replaced by an expiring one: the route answers 400 `invalid-operation` with `data.id: last-owner`;
 `bin/admin.js roles revoke --force` does it anyway, after which the platform is administered with the admin key and
-a claim code.
+a claim code. Role rows are updated with a compare-and-set, and two revocations racing to remove the last two
+owners both fail rather than both succeed.
+
+Deleting an account deletes its role row (its administrator sessions stop). The holder of the last lasting owner
+grant cannot delete that account with its own token (400 `invalid-operation`, `data.id: last-owner`); an admin-key
+deletion goes through, logged.
 
 ## The admin key: `auth.adminAccessKeyScope`
 
-- `full` (default, unchanged behaviour): the admin key authenticates every `/system` route.
-- `break-glass`: the admin key reaches only the routes marked so in the route table (calls between cores, the setup
-  code, claim codes, role listing and revocation, status routes); everything else needs an administrator session.
-  A refused admin-key call answers 404.
+- `full` (default, unchanged behaviour): the admin key authenticates every route that takes it.
+- `break-glass`: on `/system`, the admin key reaches only the routes marked so in the route table (calls between
+  cores, the setup code, claim codes, role listing and revocation, status routes); a `/system` path the table does
+  not list is refused too. Outside `/system` the key no longer deletes accounts (`DELETE /users/:username`: the
+  account's own token still can, when `user-account.delete` allows it) nor reaches `/reg/records` (use
+  `bin/dns-records.js`) and the `/reg/admin/*` routes. The previews cache clean-up keeps the key (an operations
+  route of the previews server). Everything else needs an administrator session. A refused admin-key call answers
+  404.
 
 The key cannot be retired (other secrets are derived from it); keep it for recovery.
 
@@ -138,6 +164,7 @@ Runs on a core's shell and talks to the platform store directly, so it works whi
 node bin/admin.js setup-code                  setup state and the pending code's times
 node bin/admin.js setup-code --new            replace the setup code (printed once)
 node bin/admin.js setup-code --hash [<code>]  a code and its SHA-256 for setup.codeHash (no store access)
+node bin/admin.js setup finish                setup done without a first administrator (automated installs)
 node bin/admin.js claim-code [--role owner] [--scope platform] [--ttl 15m]
 node bin/admin.js roles list
 node bin/admin.js roles revoke <userId|username> [--role <r>] [--scope <s>] [--force]
@@ -169,5 +196,13 @@ runs on; give the user id for an account of another core.
 Each act (setup session, first administrator, finish, code replacement, session start, renewal, step-up and end,
 claim code minted, role claimed or revoked) is recorded with the audit's "without a user" path (the kind of
 subject, the administrator's id and a short session id; never a code or a token), and in the acting
-administrator's own trail when the account is on the core. Reads are not audited. `bin/admin.js` acts are not
-recorded in the audit (they are a shell act on the core).
+administrator's own trail when the account is on the core. Reads are not audited. Each `bin/admin.js` act
+(code replaced, setup finished, claim code minted, role revoked, sessions revoked) writes one line, never a code,
+to the tool's log and, when `audit.syslog.active`, to the audit syslog channel (notice level): the act, the role and
+scope, the target account id, the operating-system user and the core id.
+
+## Moving the platform store between engines
+
+`bin/migrate-platform.js` copies every row, the setup state, the role rows and the live codes and sessions
+included. Codes and sessions are stored by their SHA-256 only, so no secret moves; a pending setup code, a claim
+code or an administrator session stays valid on the new engine until it expires.
