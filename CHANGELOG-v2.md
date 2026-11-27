@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Operators: the reference nginx vhost throttles every spelling of the OAuth endpoints
+
+- `docs/nginx-ingress-sample.conf` matched `/oauth2/token` and `/oauth2/authorize` with exact, case-sensitive
+  locations, while the core accepts any letter case and a trailing slash: `/OAuth2/token` or `/oauth2/token/` reached
+  the core through `location /`, outside the OAuth rate limits. The locations are now case-insensitive with an optional
+  trailing slash, and `/oauth2/introspect` and `/oauth2/revoke` (which check the client secret) share the token
+  endpoint's zone. If you copied the sample, update your copy. The header links the full rate-limiting recipe.
+
 ### Configuration: the same platform digest with or without `--config`
 
 - `auth.sessionMaxAge` (14 days) and `auth.passwordResetRequestMaxAge` (1 hour) are now set in `default-config.yml`
