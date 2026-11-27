@@ -45,7 +45,9 @@ describe('[AUSC] audit storage scope', function () {
     for (const file of ['AuditStoragePG.ts', 'UserAuditDatabasePG.ts']) {
       for (const m of read('storages/engines/postgresql/src/' + file).matchAll(/\b(?:FROM|INTO|JOIN|UPDATE)\s+([a-z_]+)\b/g)) tables.add(m[1]);
     }
-    assert.deepStrictEqual([...tables].sort(), ['audit_events', 'users_index']);
+    // `audit_event_streams`: the index of records by access (kept by triggers
+    // on audit_events); `terms`: the recursive query listing its access ids.
+    assert.deepStrictEqual([...tables].sort(), ['audit_event_streams', 'audit_events', 'terms', 'users_index']);
     const indexReads = read('storages/engines/postgresql/src/UserAuditDatabasePG.ts').match(/users_index/g);
     assert.strictEqual(indexReads.length, 1, 'the guarded insert only');
   });

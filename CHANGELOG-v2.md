@@ -2,6 +2,124 @@
 
 ## Unreleased
 
+### PostgreSQL audit: reading one access's audit trail no longer walks the account's trail (operator notice)
+
+- Every app token may read the audit trail of its own access (`events.get` on `:_audit:access-<its id>`). On the
+  PostgreSQL audit engine that read every audit record of the account to make a page (about 100 to 130 ms for 20
+  records on an account of 200 000, whatever the access). It now reads the access's records in time order from a
+  new table: 0.3 ms for the same page (a page 5 000 records deep: 185 ms before, 54 ms now; 500 records: 151 ms
+  before, 10 ms now). Measured on PostgreSQL 16, 1 million audit records, data in memory. A read that also filters
+  by type keeps the previous plan (it is served by the type index). The `:_audit:accesses` listing (the account
+  owner's) no longer reads every record of the account either: 280 ms before, 1.2 ms now (24 accesses). Results
+  are the same rows in the same order; the stream filter that keeps one access out of another's trail is applied
+  exactly as before.
+- **New in the database:** table `audit_event_streams` (the access ids named by each audit record), a one-row table
+  `audit_event_streams_state`, two triggers on `audit_events` (`audit_event_streams_put`,
+  `audit_event_streams_drop`) and their functions. Created at every start when missing; the triggers keep the table
+  exact whatever writes or deletes audit records (this release, a previous one, a restore, a hand statement).
+  Disk: about 360 MB per million audit records (one row per record naming one access; 32-character ids), about
+  half the size of `audit_events` itself. Each audited API call writes one more small row per access it names:
+  measured median time of an audit insert 2.92 ms without, 2.99 ms with (within noise), the slowest 1 % 3.6 ms
+  without, 6.8 ms with. Erasing the audit trail of an account of 200 000 records takes about 1.3 s instead of
+  0.5 s.
+- **First start of this release** (`migrations.autoRunOnStart`, the default; also with a SQLite base storage and
+  the PostgreSQL audit engine): the core fills the table before serving, in batches of 20 000 records, saying so in
+  its log (`audit stream index: building ...`, progress every 10 s, then `complete, N audit records read in N ms`).
+  Measured: about 31 s per million audit records (PostgreSQL 16, data in memory, `shared_buffers` 128 MB), about
+  470 MB of WAL per million. Installing the triggers at that start takes milliseconds (18 ms with audit writes
+  going on), but waits for whatever holds a conflicting lock on `audit_events`, audit writes queuing behind it: seen
+  once at 0.8 s, right after a large deletion (most likely an autovacuum, which yields after a second). Writes go on
+  meanwhile (there are none from this core while it starts). A start stopped in the
+  middle resumes where it was, not from zero. Two processes filling at once are serialized: the second waits,
+  then finds the table complete. Later starts: one query. If the fill fails, the core starts anyway, says so in
+  its log, and reads keep the previous plan until a later start completes it. An orchestrator's start timeout
+  must allow for the fill on a large audit table.
+- **Large audit table: measure on a copy first** (the rate above is a floor: under write load or when the table
+  does not fit in memory it is slower), and if the wait at the first start is too long, **fill the table by hand
+  before upgrading**, while the previous release serves (it ignores these objects; its writes and deletes are
+  kept in the table by the triggers from the moment they exist). Run, in `psql` on the core's database:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS audit_event_streams (user_id TEXT NOT NULL, stream_id TEXT NOT NULL,
+    time DOUBLE PRECISION NOT NULL, eventid TEXT NOT NULL, PRIMARY KEY (user_id, stream_id, time, eventid));
+  CREATE TABLE IF NOT EXISTS audit_event_streams_state (id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+    complete BOOLEAN NOT NULL, cursor_user_id TEXT, cursor_eventid TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+  CREATE OR REPLACE FUNCTION audit_event_streams_put() RETURNS trigger LANGUAGE plpgsql AS $f$
+  BEGIN
+    IF TG_OP = 'UPDATE' AND OLD.time IS NOT NULL AND OLD.stream_ids IS NOT NULL THEN
+      DELETE FROM audit_event_streams WHERE user_id = OLD.user_id AND time = OLD.time AND eventid = OLD.eventid
+        AND stream_id = ANY (string_to_array(OLD.stream_ids, ' '));
+    END IF;
+    IF NEW.time IS NOT NULL AND NEW.stream_ids IS NOT NULL AND position('access-' IN NEW.stream_ids) > 0 THEN
+      INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
+        SELECT NEW.user_id, t, NEW.time, NEW.eventid FROM unnest(string_to_array(NEW.stream_ids, ' ')) AS t
+        WHERE left(t, 7) = 'access-'
+      ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+  END;
+  $f$;
+  CREATE OR REPLACE FUNCTION audit_event_streams_drop() RETURNS trigger LANGUAGE plpgsql AS $f$
+  DECLARE
+    emptied text[];
+  BEGIN
+    PERFORM pg_advisory_xact_lock_shared(1886544226);
+    SELECT array_agg(u.user_id) INTO emptied FROM (SELECT DISTINCT g.user_id FROM gone g) u
+      WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.user_id = u.user_id);
+    IF emptied IS NOT NULL THEN
+      DELETE FROM audit_event_streams WHERE user_id = ANY (emptied);
+    END IF;
+    IF EXISTS (SELECT 1 FROM gone g WHERE emptied IS NULL OR g.user_id <> ALL (emptied)) THEN
+      DELETE FROM audit_event_streams s USING (
+        SELECT g.user_id, t AS stream_id, g.time, g.eventid FROM gone g, unnest(string_to_array(g.stream_ids, ' ')) AS t
+        WHERE g.time IS NOT NULL AND left(t, 7) = 'access-' AND (emptied IS NULL OR g.user_id <> ALL (emptied))
+      ) k
+      WHERE s.user_id = k.user_id AND s.stream_id = k.stream_id AND s.time = k.time AND s.eventid = k.eventid;
+    END IF;
+    RETURN NULL;
+  END;
+  $f$;
+  SET lock_timeout = '2s';
+  CREATE TRIGGER audit_event_streams_put AFTER INSERT OR UPDATE OF stream_ids, time, user_id, eventid
+    ON audit_events FOR EACH ROW EXECUTE FUNCTION audit_event_streams_put();
+  CREATE TRIGGER audit_event_streams_drop AFTER DELETE ON audit_events
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION audit_event_streams_drop();
+  RESET lock_timeout;
+  BEGIN;
+  SELECT pg_advisory_xact_lock(1886544226);
+  INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
+    SELECT a.user_id, t, a.time, a.eventid FROM audit_events a, unnest(string_to_array(a.stream_ids, ' ')) AS t
+    WHERE a.time IS NOT NULL AND left(t, 7) = 'access-'
+  ON CONFLICT DO NOTHING;
+  INSERT INTO audit_event_streams_state (complete) VALUES (true)
+    ON CONFLICT (id) DO UPDATE SET complete = true, cursor_user_id = NULL, cursor_eventid = NULL, updated_at = now();
+  COMMIT;
+  ```
+
+  A `CREATE TRIGGER` that times out (it waits for the audit inserts in flight) is simply run again; one that
+  reports the trigger exists already is done (then run only what follows it). The last
+  transaction is one statement over the whole table: audit deletions (account erasures) wait for it, audit writes
+  do not. The first start of the release then finds the table complete. A by-hand fill that fails leaves the
+  state absent or incomplete: the start fills the table itself.
+- **With `migrations.autoRunOnStart: false`:** reads keep the previous plan (a warning says so at start) until
+  `node bin/migrate.js up` has run; running workers pick the new plan up within a minute.
+- **Loads that bypass triggers** (`pg_restore --disable-triggers` of `audit_events` alone, a session with
+  `session_replication_role = replica`, `TRUNCATE audit_events` by hand) leave the table inexact. The next start
+  detects a trigger missing or disabled and rebuilds the table from zero; after a load or a `TRUNCATE` with the
+  triggers in place, force it by hand, core stopped: `UPDATE audit_event_streams_state SET complete = false,
+  cursor_user_id = NULL, cursor_eventid = NULL;` then start (a fill from zero empties the table first). With
+  `TRUNCATE audit_events`, also `TRUNCATE audit_event_streams;`.
+- **Rolling back to the previous release:** nothing to do. It ignores the table, and the triggers (still
+  installed) keep it exact, so coming back to this release needs no rebuild. To remove everything (previous
+  release kept for good, core stopped), all together, never the triggers alone:
+  `DROP TRIGGER audit_event_streams_put ON audit_events;` `DROP TRIGGER audit_event_streams_drop ON audit_events;`
+  `DROP FUNCTION audit_event_streams_put();` `DROP FUNCTION audit_event_streams_drop();`
+  `DROP TABLE audit_event_streams, audit_event_streams_state;`
+- Records without a `time` (the core writes none) are not in the table: a read of one access does not return them.
+  Check before upgrading: `SELECT count(*) FROM audit_events WHERE time IS NULL;` should be 0.
+- SQLite audit engine: unchanged (it already reads one access's records through its full-text index): under 1 ms
+  for a page of 20 of any access on a 1-million-record audit file.
+
 ### PostgreSQL: one order for events sharing a time, new time index (operator notice)
 
 - `events.get` and audit reads on PostgreSQL return events (records) sharing a `time` in one order, by id in the

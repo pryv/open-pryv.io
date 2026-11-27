@@ -2,6 +2,73 @@
 
 ## Unreleased
 
+### PostgreSQL audit: records indexed by access (`audit_event_streams`)
+
+- New `storages/engines/postgresql/src/auditStreamIndex.ts`. Table `audit_event_streams (user_id, stream_id, time,
+  eventid)`, primary key in that order, one row per `access-...` term of each audit record with a time (several
+  per record: an access deleted with its children, the alias term of a versioned access; none for records without
+  an access term), and a one-row `audit_event_streams_state (complete, cursor_user_id, cursor_eventid)`. Both in
+  the schema DDL.
+- Kept by two triggers on `audit_events`, so every writer and deleter is covered (this release, a previous one, a
+  restore, a hand statement): `audit_event_streams_put` (AFTER INSERT OR UPDATE OF the key columns, row level;
+  an update removes the old rows first) and `audit_event_streams_drop` (AFTER DELETE, statement level with the
+  deleted rows as a transition table, so an account erasure is one join). `AuditStoragePG.deleteUser` also deletes
+  the account's rows directly.
+- Installed at each boot under the schema advisory lock, after the unindexed-user guard
+  (`installAuditStreamIndex`, same pattern: functions replaced, each trigger created where absent and enabled where
+  disabled, short lock timeout, retried); then the state row, complete only when `audit_events` is empty. A
+  trigger found absent or disabled while the state says complete resets it: the next fill starts from zero.
+- Filled by `ensureAuditStreamIndex`: one client, `statement_timeout` and `lock_timeout` 0, a session advisory lock
+  of its own polled with `pg_try_advisory_lock`; a run from zero empties the table, then batches of 20 000 records
+  walk `audit_events` by primary key, one transaction each with its position in the state row (a stopped run
+  resumes), log line before and every 10 s; complete only once both triggers fire. Each batch holds an exclusive
+  transaction advisory lock that the delete trigger takes shared: a deletion committing while a batch has read
+  the record waits for that batch, then removes the rows it added. Called by migration
+  `20261127_140000_audit_stream_index.js` (a failure there is logged, not fatal), by `bin/master.js` after the
+  migrations (all pairings, the SQLite base storage with the PostgreSQL audit storage included; a failure is
+  logged and the core starts on the slower plan) and by `bin/migrate.js up`.
+- Reader (`UserAuditDatabasePG.buildSelectQuery`): with the state complete (read by `AuditStoragePG` at init and
+  again in the background after 60 s) and a query naming exactly one block holding one `access-` id (plain or
+  `{ any: [id] }`; other items of the block, `not` included, kept), sorted on `time` alone, with no condition on
+  `time` a record without time could meet: candidates from the table in key order, each looked up in
+  `audit_events` (`CROSS JOIN LATERAL ... OFFSET 0`, joined on `eventid` and `time`) under every condition of the
+  plain statement, the stream filter included. The table orders and narrows, never authorizes: a forged or stale
+  row returns nothing the filter refuses. `OFFSET 0` keeps the planner from flattening the join and scanning
+  `audit_events` first (seen in the plan test: the LIKE is estimated to match almost nothing). Everything else is
+  the statement as before. `getAllAccesses` (the `:_audit:accesses` listing) reads the table by a skip scan (one
+  index descent per access) plus the access ids of records without a time; `getAllActions` unchanged.
+- Tests: `storages/engines/postgresql/test/audit-stream-index.test.js` `[PGAS1]` to `[PGAS9]`, `[PGASA]` to
+  `[PGASE]` (trigger rows, updates, deletes of one record and of a 5 000-record account, `deleteUser`, fill, resume
+  after a stop, install repair and reset, writes during a fill, row and order equivalence of the two statements
+  over 840 shapes (several accesses, alias, `%` and `_` in an id, ties, history, deleted and trashed rows, time
+  bounds, types, both directions, limits, skips), eligibility, plan (ordered primary-key scan, no sort), forged
+  and stale rows, the deletion during a batch, two fills at once, the listing, the state refresh). Conformance
+  `[ASQC]` (one access among many records, pages of 3 with ties, both engines). `[ASFL8]` (the own-trail read
+  reaches the store as one block naming the id alone, all audit engines), `[ASFL9]` (an app token is refused the
+  listings and another access's stream), `[SQQPD]` (SQLite: rowid set for one access). Mutations: the `time` join
+  removed (`[PGASA]` returns the record twice), the inner stream filter neutralised (`[PGAS7]` and `[PGASA]` fail:
+  another access's record returned), the delete trigger's lock removed (`[PGASB]` fails). Removing `OFFSET 0` did
+  not fail `[PGAS9]` on a later run: the bad plan depends on the statistics of the shared test table (it was seen
+  there once, before the fence was added).
+- A type filter keeps the plain statement (served by `idx_audit_type`): through the table it was slower on an
+  access holding 2 % of the records (39 ms against 7 ms). The delete trigger removes the rows of an account left
+  with no audit record by one range of the key (the keyed join took 4.3 s for a 200 000-record erasure; now
+  1.3 s, 0.5 s without triggers).
+- Measured on mbp2 (PostgreSQL 16, `shared_buffers` 128 MB, 5 accounts x 200 000 records, 20 per time value; one
+  busy access 60 %, 20 medium 1.9 % each, two rare ones of 50 records, newest and oldest, one without records),
+  median of 7, plain / indexed: limit 20 any access 100 to 133 ms / 0.3 ms server side (1.4 ms round trip);
+  skip 5 000 limit 20 busy 185 / 54 ms; limit 500 busy 151 / 10 ms; limit 20 with `toTime` 87 to 106 / 0.3 ms;
+  ascending limit 20 100 to 109 / 0.3 ms; all 3 998 records of a medium access 124 / 77 ms; accesses listing
+  281 / 1.2 ms. Fill: 31 s per million records idle (473 MB WAL), 33 s with a writer at 200 records/s including a
+  stop after 20 batches and the resume; no drift afterwards. Table: 129 MB heap + 231 MB key per million rows.
+  Audit insert (30 000 per side, alternating rounds): median 2.92 / 2.99 ms, p99 3.6 / 6.8 ms. Erasure of
+  200 000 records 0.5 / 1.3 s; one-record deletion 2.3 ms with triggers; 20 000 records of an account 51 / 448 ms
+  (no caller in the core). Several ids in one `any` (pre-existing LIKE path, unchanged): 100 ids 8.5 ms when the
+  page fills from recent records, but 5.6 s with 80 ids that match nothing plus a rare old access (480 ids:
+  33 s), one LIKE per id per row over the whole trail; only a personal token can name such a set. SQLite (no
+  change; one 1-million-record audit file, a laptop): limit 20 of any access 0.1 to 0.8 ms; skip 5 000 limit 20:
+  40 ms on a 1.9 % access, 608 ms on a 60 % one (the deep page of a dense access, a separate matter).
+
 ### Test tooling: a development core starts after `just clean-test-data`
 
 - `just clean-test-data` removes the one-time pass markers of the users directory (`accesses-token-protected.done`,

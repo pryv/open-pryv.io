@@ -147,6 +147,14 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     assert.deepStrictEqual(typed.rows, []);
   });
 
+  it('[SQQPD] the read of one access (an app token\'s own audit trail) uses the rowid set, newest first', async function () {
+    const { rows, plan } = await run({ streams: [[{ any: ['access-x'] }]], toTime: 1e12 }, { limit: 20 });
+    assert.match(plan, /INTEGER PRIMARY KEY/, plan);
+    assert.deepStrictEqual(rows.map((e) => e.id), ['sqqp-audit']);
+    const alias = await run({ streams: [[{ any: ['access-x:1'] }]], toTime: 1e12 }, { limit: 20 });
+    assert.deepStrictEqual(alias.rows.map((e) => e.id), ['sqqp-audit']);
+  });
+
   it('[SQQP6] lists access and action terms by range exactly as the prefix match did', function () {
     const prefixed = (prefix) => userDb.db.prepare('SELECT term FROM events_fts_v WHERE term LIKE ?').all(prefix + '%').map((r) => r.term);
     assert.deepStrictEqual(userDb.getAllAccesses().map((r) => r.term), prefixed('access-'));
