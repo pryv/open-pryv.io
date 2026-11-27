@@ -87,6 +87,17 @@ if (fs.existsSync(enginesDir)) {
   }
 }
 
+// The sequential suites use this checkout's rqlited (the platform DB), which
+// `just clean-test-data` leaves stopped: start it unless something already
+// answers on the test port. Parallel mode spawns its own per worker.
+if (process.env.NODE_ENV === 'test' && process.env.MOCHA_PARALLEL !== '1') {
+  const res = childProcess.spawnSync(path.resolve(__dirname, 'test-rqlited'), ['start'], {
+    env: process.env,
+    stdio: 'inherit'
+  });
+  if (res.status !== 0) logError('could not start rqlited (see above): suites using the platform DB will fail');
+}
+
 // The process that started this run (a shell, `just`). If it goes away, the
 // run was stopped: do not go on with the next component on our own, writing
 // into test databases a new run may already be using.

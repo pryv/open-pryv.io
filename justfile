@@ -294,7 +294,9 @@ trace:
 test-data command version:
     NODE_ENV=development node components/test-helpers/scripts/{{command}}-test-data {{version}}
 
-# Reset test state: SQLite DBs + per-user dirs + PG test databases
+# Reset test state: SQLite DBs + per-user dirs + PG test databases + rqlite data
+# (this checkout's rqlited is stopped and left stopped: a development core can
+# start next; the test recipes start it again)
 clean-test-data:
     #!/usr/bin/env bash
     set -uo pipefail
@@ -322,6 +324,12 @@ clean-test-data:
     rm -f ./var-pryv/users/external-ids.db ./var-pryv/users/external-ids.db-wal ./var-pryv/users/external-ids.db-shm
     rm -f ./var-pryv/users/cmc-deletion-notices.db ./var-pryv/users/cmc-deletion-notices.db-wal ./var-pryv/users/cmc-deletion-notices.db-shm
     rm -f ./var-pryv/users/account-erasures.db ./var-pryv/users/account-erasures.db-wal ./var-pryv/users/account-erasures.db-shm
+    # Markers of the one-time passes over the user databases removed below
+    # (access tokens at rest, the access integrity recompute). The token
+    # marker names the key it was written with: left behind, a development
+    # core (another key) refuses to boot with ForeignTokenKeyError.
+    rm -f ./var-pryv/users/accesses-token-protected.done ./var-pryv/users/accesses-token-unprotected \
+          ./var-pryv/users/accesses-integrity-wire-form.done
     # Per-user directories (each holds the user's audit SQLite + the SQLite
     # baseStorage file when the SQLite engine is in use).
     find ./var-pryv/users -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
@@ -404,16 +412,23 @@ clean-test-data:
     # "DELETE FROM keyValue" alone is NOT enough: the raft log + on-disk
     # db.sqlite retain historical writes that replay on restart, and after
     # many runs the integrity check observes ghost users (api-server
-    # matrix degrades from ~1068 passing to ~252). So when this checkout's
-    # OWN pidfile-managed local instance is in charge (whatever its port —
-    # offset checkouts run e.g. 4101): stop it, wipe the raft + db files,
-    # restart on the same ports. A remote/unmanaged rqlite (no local
-    # pidfile) keeps the keyValue-only wipe — its data dir is not ours to
+    # matrix degrades from ~1068 passing to ~252). So for a local rqlite:
+    # stop this checkout's own instance (the one storages/engines/rqlite/
+    # scripts/start launched, whatever its port: offset checkouts run e.g.
+    # 4101; never another checkout's) and wipe the raft + db files. It is
+    # NOT restarted: a development core started next spawns its own rqlited
+    # on these ports and data directory, and the test recipes start this
+    # one again (scripts/test-rqlited start). An rqlited this checkout did
+    # not start that holds the data directory (a running master's) and a
+    # remote one keep the keyValue-only wipe: their files are not ours to
     # touch.
-    if { [ "$RQLITE_HOST" = "localhost" ] || [ "$RQLITE_HOST" = "127.0.0.1" ]; } && [ -f ./var-pryv/rqlite-data/rqlited.pid ]; then
-      RQLITED_PID=$(cat ./var-pryv/rqlite-data/rqlited.pid)
-      kill "$RQLITED_PID" 2>/dev/null || true
-      for i in $(seq 1 40); do kill -0 "$RQLITED_PID" 2>/dev/null || break; sleep 0.25; done
+    RQLITE_STOP=1
+    if [ "$RQLITE_HOST" = "localhost" ] || [ "$RQLITE_HOST" = "127.0.0.1" ]; then
+      storages__engines__rqlite__host="$RQLITE_HOST" storages__engines__rqlite__port="$RQLITE_PORT" \
+        storages__engines__rqlite__raftPort="$RQLITE_RAFT_PORT" ./scripts/test-rqlited stop
+      RQLITE_STOP=$?
+    fi
+    if [ "$RQLITE_STOP" = "0" ]; then
       # The snapshot dir is `rsnapshots` with rqlite 9 and `wsnapshots` with
       # rqlite 10 (plus its `wal-staging` dir); wipe them all. Missing one leaves
       # the last snapshot on disk, which rqlite replays on restart: it resurrects
@@ -422,17 +437,21 @@ clean-test-data:
       rm -rf ./var-pryv/rqlite-data/db.sqlite* ./var-pryv/rqlite-data/raft ./var-pryv/rqlite-data/raft.db \
              ./var-pryv/rqlite-data/rsnapshots ./var-pryv/rqlite-data/wsnapshots ./var-pryv/rqlite-data/wal-staging \
              ./var-pryv/rqlite-data/clean_snapshot ./var-pryv/rqlite-data/rqlited.pid
-      RQLITE_HTTP_PORT="$RQLITE_PORT" RQLITE_RAFT_PORT="$RQLITE_RAFT_PORT" ./storages/engines/rqlite/scripts/start > /dev/null 2>&1 || echo "rqlited restart FAILED — run storages/engines/rqlite/scripts/start manually"
+    fi
+    # Something still answering on the port after that is not this checkout's
+    # rqlited (another process, a remote host): its keyValue table is reset.
+    if [ "$RQLITE_STOP" = "0" ] && ! curl -fs --max-time 2 "http://${RQLITE_HOST}:${RQLITE_PORT}/readyz" > /dev/null 2>&1; then
+      echo "rqlite data wiped; rqlited left stopped (\`just test\` starts it again, scripts/test-rqlited start does it by hand)"
     else
       # --max-time guards against an unresponsive rqlited (a hung HTTP API
       # once stalled this recipe for 40 minutes — same failure mode the PG
       # steps above wrap in `timeout`).
       curl -s --max-time 10 -X POST -H 'Content-Type: application/json' "http://${RQLITE_HOST}:${RQLITE_PORT}/db/execute" -d '[["DELETE FROM keyValue"]]' > /dev/null 2>&1 || echo "rqlite not reachable (skipping rqlite reset)"
-      echo "rqlite at ${RQLITE_HOST}:${RQLITE_PORT} (remote or unmanaged — no local pidfile): wiped keyValue only — for a full raft-state reset stop that rqlited, wipe its data dir, restart it"
+      echo "rqlite at ${RQLITE_HOST}:${RQLITE_PORT} (remote, or not started by this checkout's storages/engines/rqlite/scripts/start): wiped keyValue only; for a full raft-state reset stop that rqlited, wipe its data dir, restart it"
     fi
     # Stale customAuthStepFn from a prior aborted permissions-seq test (the [P4OM] invalid-fixture test crashes the api-server bin and leaves the file behind, polluting subsequent matrix runs with [api-server fatal] Not a function (string)). Safe to delete unconditionally — committed file is .gitkeep.
     rm -f ./custom-extensions/customAuthStepFn.js
-    echo "Test data cleaned: SQLite + per-user dirs + attachments/previews + PG (pryv-node-test + pryv-node) + two-core suite (pryv-node-test-2core-a/b/c DBs + var-pryv/users-2core-* dirs) + rqlite keyValue + custom-extensions stale fixture"
+    echo "Test data cleaned: SQLite + per-user dirs + one-time pass markers + attachments/previews + PG (pryv-node-test + pryv-node) + two-core suite (pryv-node-test-2core-a/b/c DBs + var-pryv/users-2core-* dirs) + rqlite + custom-extensions stale fixture"
 
 # Reset per-worker test state for parallel mode. Wipes worker-private
 # PG DBs (pryv-node-test-w0..N), per-worker user

@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+
+# @license
+# Copyright (C) Pryv https://pryv.com
+# This file is part of Pryv.io and released under BSD-Clause-3 License
+# Refer to LICENSE file
+
+# The rqlited the test suites use (the platform engine), for this checkout.
+#
+#   scripts/test-rqlited start   start it unless something already answers on
+#                                the test port (the test recipes call this)
+#   scripts/test-rqlited stop    stop it if THIS checkout started it with
+#                                storages/engines/rqlite/scripts/start
+#                                (`just clean-test-data` calls this)
+#
+# `stop` exit codes: 0 = no rqlited holds this checkout's data directory any
+# more (its files may be wiped); 2 = an rqlited this script did not start
+# (a running master's, one started in the foreground) holds it: left alone.
+#
+# Host and port: environment overrides first, then config/test-config.yml
+# (parallel checkouts carry their port offsets there), then 4001 / 4002.
+# Only a process whose command line names this checkout's data directory is
+# ever signalled: another checkout's rqlited, or one on another port, is not.
+
+set -uo pipefail
+cd "$(dirname "$0")/.." || exit 1
+
+TCFG=./config/test-config.yml
+URL_CFG=$(awk '/[[:space:]]rqlite:/{f=1} f&&/url:/{print $2; exit}' "$TCFG" 2>/dev/null)
+RAFT_CFG=$(awk '/[[:space:]]rqlite:/{f=1} f&&/raftPort:/{print $2; exit}' "$TCFG" 2>/dev/null)
+URL="${storages__engines__rqlite__url:-${URL_CFG:-http://localhost:4001}}"
+HOST_URL=$(echo "$URL" | sed -nE 's|https?://([^:/]+).*|\1|p')
+PORT_URL=$(echo "$URL" | sed -nE 's|https?://[^:/]+:([0-9]+).*|\1|p')
+HOST="${storages__engines__rqlite__host:-${HOST_URL:-localhost}}"
+PORT="${storages__engines__rqlite__port:-${PORT_URL:-4001}}"
+RAFT_PORT="${storages__engines__rqlite__raftPort:-${RAFT_CFG:-$((PORT + 1))}}"
+
+mkdir -p ./var-pryv
+DATA_DIR="$(cd ./var-pryv && pwd)/rqlite-data"
+DATA_DIR_P="$(cd ./var-pryv && pwd -P)/rqlite-data"
+PIDFILE=./var-pryv/rqlite-data/rqlited.pid
+
+is_local () {
+  [ "$HOST" = "localhost" ] || [ "$HOST" = "127.0.0.1" ]
+}
+
+# True when the command line of `$1` is an rqlited whose data directory (its
+# last argument) is this checkout's.
+holds_our_data_dir () {
+  local args
+  args=$(ps -ww -o args= -p "$1" 2>/dev/null) || return 1
+  case "$args" in
+    *rqlited*) ;;
+    *) return 1 ;;
+  esac
+  case "$args" in
+    *" $DATA_DIR" | *" $DATA_DIR/" | *" $DATA_DIR_P" | *" $DATA_DIR_P/") return 0 ;;
+  esac
+  return 1
+}
+
+# Pids of every rqlited holding this checkout's data directory.
+our_data_dir_pids () {
+  local pid
+  for pid in $(ps -ww -axo pid=,args= 2>/dev/null | awk '/rqlited/ {print $1}'); do
+    holds_our_data_dir "$pid" && echo "$pid"
+  done
+}
+
+cmd_start () {
+  is_local || return 0
+  if curl -fs --max-time 2 "http://127.0.0.1:${PORT}/readyz" > /dev/null 2>&1; then
+    return 0
+  fi
+  if [ ! -x ./bin-ext/rqlited ]; then
+    echo "rqlited not found at bin-ext/rqlited: run storages/engines/rqlite/scripts/setup (suites needing the platform DB will fail)"
+    return 1
+  fi
+  echo "Starting this checkout's rqlited on 127.0.0.1:${PORT} (raft ${RAFT_PORT}) for the test run"
+  RQLITE_HTTP_PORT="$PORT" RQLITE_RAFT_PORT="$RAFT_PORT" ./storages/engines/rqlite/scripts/start > /dev/null
+}
+
+cmd_stop () {
+  if [ -f "$PIDFILE" ]; then
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && holds_our_data_dir "$pid"; then
+      kill "$pid" 2>/dev/null || true
+      local _
+      for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+        for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+      fi
+      echo "Stopped this checkout's rqlited (pid $pid)"
+    fi
+    # Gone, or the pid now names another process (a pid file left by a
+    # crash or a reboot): the file no longer describes a running rqlited.
+    rm -f "$PIDFILE"
+  fi
+  local others
+  others=$(our_data_dir_pids | tr '\n' ' ')
+  if [ -n "$others" ]; then
+    echo "An rqlited not started by storages/engines/rqlite/scripts/start holds $DATA_DIR (pid ${others% }): left running"
+    return 2
+  fi
+  return 0
+}
+
+case "${1:-}" in
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  *) echo "Usage: scripts/test-rqlited start|stop" >&2; exit 64 ;;
+esac
