@@ -15,6 +15,7 @@ export * from './permissions.ts';
 export * from './codes.ts';
 export * from './store.ts';
 export * from './setupState.ts';
+export * from './scopes.ts';
 export * from './roles.ts';
 export * from './sessions.ts';
 export * from './capabilities.ts';

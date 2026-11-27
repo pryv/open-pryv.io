@@ -5,12 +5,17 @@
  * Refer to LICENSE file
  */
 
-import { PERMISSIONS } from './permissions.ts';
+import { PERMISSIONS, PLATFORM_ONLY_WRITES, REGION_SCOPED_PERMISSIONS } from './permissions.ts';
 import type { AdminPermission } from './permissions.ts';
 import { generateCode, formatCode, hashCode, normalizeCode } from './codes.ts';
 import { KEYS, checkKeyId, parseJson, isPlainObject, updatePlatformKv, undoPlatformKvUpdate } from './store.ts';
 import type { AdminStore } from './store.ts';
 import type { MintedCode } from './setupState.ts';
+import { SCOPE_PLATFORM, isScope, parseScope, scopeCoversCore } from './scopes.ts';
+import type { CoreContext } from './scopes.ts';
+import type { LocalPolicy } from './localPolicy.ts';
+
+export { SCOPE_PLATFORM, isScope } from './scopes.ts';
 
 /**
  * Administrator roles. The authority is the platform KV row
@@ -18,8 +23,19 @@ import type { MintedCode } from './setupState.ts';
  * email): every core reads it locally and computes the caller's permissions.
  * No credential is stored in it.
  *
- * Roles: `owner` (every permission). Scopes: `platform`. Other roles and
- * scopes are added by name; an unknown role or scope in a row grants nothing.
+ * Roles: `owner` (every permission), `operator`, `support`, `auditor`,
+ * `app-reviewer`, `viewer` (bundles below). Scopes: scopes.ts. An unknown
+ * role, an invalid scope or an expired grant in a row grants nothing; a
+ * scope that names nothing the platform knows (an orphan) matches no core.
+ *
+ * What a grant gives on a core (`effectivePermissions`):
+ * 1. its role's bundle when its scope covers the core, minus the
+ *    platform-only writes when the scope is not `platform`; OAuth client and
+ *    publisher permissions come from `platform` and `region:<r>` grants only;
+ * 2. nothing when this core's local policy does not accept replicated grants;
+ * 3. never a permission of the policy's `requireLocalScope`;
+ * 4. plus the policy's `localGrants` for the account (bundle minus the
+ *    platform-only writes), when it holds an active grant in the row.
  *
  * Claim codes (`admin-claim/<sha256(code)>`, TTL 15 min by default, 24 h at
  * most) carry a role and a scope fixed at mint time: whoever redeems one while
@@ -27,10 +43,9 @@ import type { MintedCode } from './setupState.ts';
  * atomically: of two concurrent claims exactly one wins.
  */
 
-export const ROLES = Object.freeze(['owner'] as const);
+export const ROLES = Object.freeze(['owner', 'operator', 'support', 'auditor', 'app-reviewer', 'viewer'] as const);
 export type Role = typeof ROLES[number];
 export const ROLE_OWNER: Role = 'owner';
-export const SCOPE_PLATFORM = 'platform';
 
 export type GrantVia = 'setup' | 'claim-code' | 'admin-key' | 'grant';
 
@@ -58,18 +73,37 @@ export const CLAIM_TTL_MAX_MS = 24 * 3600 * 1000;
 export const CLAIM_ATTEMPTS_MAX = 10;
 export const CLAIM_ATTEMPTS_WINDOW_MS = 15 * 60 * 1000;
 
-const ROLE_PERMISSIONS: Record<Role, readonly AdminPermission[]> = {
-  owner: PERMISSIONS
-};
+/** The permissions of each role (a public contract, as the names are). */
+export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly AdminPermission[]>> = Object.freeze({
+  owner: PERMISSIONS,
+  operator: Object.freeze([
+    'setup:read', 'roles:read', 'users:read', 'invitations:read', 'cores:read', 'cores:write', 'config:read',
+    'config:write', 'configEffective:read', 'certs:read', 'certs:write', 'dns:read', 'dns:write', 'mail:read',
+    'mail:write', 'observability:read', 'observability:write', 'migrations:read', 'integrity:read', 'extId:read',
+    'extId:write', 'oauthClients:read', 'publishers:read'
+  ] as const),
+  support: Object.freeze([
+    'users:read', 'users:write', 'users:delete', 'users:resetMfa', 'invitations:read', 'invitations:write',
+    'extId:read', 'extId:release', 'autoDeletion:clear'
+  ] as const),
+  auditor: Object.freeze([
+    'setup:read', 'roles:read', 'users:read', 'invitations:read', 'cores:read', 'config:read',
+    'configEffective:read', 'certs:read', 'dns:read', 'mail:read', 'observability:read', 'migrations:read',
+    'integrity:read', 'audit:read', 'erasures:read', 'extId:read', 'oauthClients:read', 'publishers:read'
+  ] as const),
+  'app-reviewer': Object.freeze([
+    'oauthClients:read', 'oauthClients:write', 'oauthClients:review', 'publishers:read', 'publishers:review'
+  ] as const),
+  viewer: Object.freeze([
+    'cores:read', 'config:read', 'configEffective:read', 'certs:read', 'dns:read', 'mail:read',
+    'observability:read', 'migrations:read', 'integrity:read', 'oauthClients:read', 'publishers:read'
+  ] as const)
+});
 
 const VIAS = new Set<string>(['setup', 'claim-code', 'admin-key', 'grant']);
 
 export function isRole (name: unknown): name is Role {
   return typeof name === 'string' && (ROLES as readonly string[]).includes(name);
-}
-
-export function isScope (scope: unknown): scope is string {
-  return scope === SCOPE_PLATFORM;
 }
 
 function checkActor (by: unknown): string {
@@ -151,6 +185,7 @@ export async function grantRole (db: AdminStore, userId: string, opts: {
   if (!isRole(opts.role)) throw new Error('unknown role');
   if (!isScope(opts.scope)) throw new Error('unknown scope');
   if (!VIAS.has(opts.via)) throw new Error('invalid via');
+  if (opts.expiresAt != null && !Number.isFinite(opts.expiresAt)) throw new Error('invalid expiry');
   const grant: RoleGrant = { role: opts.role, scope: opts.scope, grantedAt: opts.now, grantedBy: checkActor(opts.grantedBy), via: opts.via };
   if (opts.expiresAt != null) grant.expiresAt = opts.expiresAt;
   const key = roleKey(userId);
@@ -218,20 +253,89 @@ export async function revokeSessionsOf (db: AdminStore, userId: string, now: num
   return done != null;
 }
 
-/** The grants that count now: known role and scope, not expired. */
+/** The grants that count now: known role, scope of valid form (it may be an orphan), not expired. */
 export function activeGrants (row: RoleRow | null, now: number): RoleGrant[] {
-  if (row == null) return [];
+  if (row == null || !Array.isArray(row.grants)) return [];
   return row.grants.filter((g) => isPlainObject(g) && isRole(g.role) && isScope(g.scope) &&
     (g.expiresAt == null || g.expiresAt > now));
 }
 
-/** The permissions a role row gives on this core now. */
-export function permissionsOf (row: RoleRow | null, now: number): Set<AdminPermission> {
-  const out = new Set<AdminPermission>();
-  for (const grant of activeGrants(row, now)) {
-    for (const p of ROLE_PERMISSIONS[grant.role as Role]) out.add(p);
+/**
+ * Whether the row holds an active grant (any role, any scope): what an
+ * administrator session needs, on any core, whatever it gives there.
+ */
+export function hasActiveGrant (row: RoleRow | null, now: number): boolean {
+  return activeGrants(row, now).length > 0;
+}
+
+/** Why a permission of the account's roles is not held on this core. */
+export type DeniedReason = 'local-policy' | 'scope';
+export type DeniedPermission = { permission: AdminPermission; reason: DeniedReason };
+export type EffectivePermissions = { permissions: Set<AdminPermission>; denied: DeniedPermission[] };
+
+/**
+ * Where the permissions are computed: this core (null: no core, only
+ * `platform` grants count), its local policy (null: the default, every
+ * replicated grant counts) and the account (for the policy's local grants).
+ */
+export type PermissionContext = { core: CoreContext | null; policy?: LocalPolicy | null; userId?: string | null };
+
+/** Whether a replicated grant of this scope gives `p` on the core of `core` (before the local policy). */
+function scopeGives (p: AdminPermission, scope: string, core: CoreContext | null): boolean {
+  const s = parseScope(scope);
+  if (s == null) return false;
+  if (s.kind === 'platform') return true;
+  if (PLATFORM_ONLY_WRITES.has(p)) return false;
+  if (core == null) return false;
+  if (REGION_SCOPED_PERMISSIONS.has(p)) return s.kind === 'region' && core.regions.includes(s.id);
+  return scopeCoversCore(scope, core);
+}
+
+/**
+ * The permissions a role row gives on this core now, and those of its roles
+ * it does not give here with the reason (`scope`: the grant's scope does not
+ * reach this core or this permission; `local-policy`: this core's policy
+ * refuses it). See the header of this file for the rule.
+ */
+export function effectivePermissions (row: RoleRow | null, now: number, ctx: PermissionContext): EffectivePermissions {
+  const permissions = new Set<AdminPermission>();
+  const refused = new Map<AdminPermission, DeniedReason>();
+  const refuse = (p: AdminPermission, reason: DeniedReason) => {
+    // The local policy is the binding reason when both apply.
+    if (refused.get(p) !== 'local-policy') refused.set(p, reason);
+  };
+  const policy = ctx.policy ?? null;
+  const grants = activeGrants(row, now);
+  for (const grant of grants) {
+    for (const p of ROLE_PERMISSIONS[grant.role as Role]) {
+      if (!scopeGives(p, grant.scope, ctx.core)) refuse(p, 'scope');
+      else if (policy != null && (!policy.acceptReplicatedGrants || policy.requireLocalScope.has(p))) refuse(p, 'local-policy');
+      else permissions.add(p);
+    }
   }
-  return out;
+  // Local grants: for an account holding an active grant in the row only.
+  if (policy != null && grants.length > 0 && ctx.userId != null && ctx.core != null) {
+    for (const local of policy.localGrants) {
+      if (local.userId !== ctx.userId || !isRole(local.role)) continue;
+      for (const p of ROLE_PERMISSIONS[local.role]) {
+        if (PLATFORM_ONLY_WRITES.has(p)) refuse(p, 'scope');
+        else permissions.add(p);
+      }
+    }
+  }
+  const denied: DeniedPermission[] = [];
+  for (const [permission, reason] of refused) {
+    if (!permissions.has(permission)) denied.push({ permission, reason });
+  }
+  return { permissions, denied };
+}
+
+/**
+ * The permissions a role row gives now: on the core of `ctx` under its local
+ * policy, or, without `ctx`, those of the `platform` grants alone.
+ */
+export function permissionsOf (row: RoleRow | null, now: number, ctx?: PermissionContext): Set<AdminPermission> {
+  return effectivePermissions(row, now, ctx ?? { core: null }).permissions;
 }
 
 /** Mint a claim code for a role and scope. The code is answered once and never stored. */

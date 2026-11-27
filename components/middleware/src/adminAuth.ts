@@ -11,7 +11,9 @@ import { PERMISSIONS, STEP_UP_PERMISSIONS } from 'business/src/admin/permissions
 import type { AdminPermission } from 'business/src/admin/permissions.ts';
 import { resolveAdminSession, readSetupSession, isStepUpFresh } from 'business/src/admin/sessions.ts';
 import type { AdminSession, SetupSession } from 'business/src/admin/sessions.ts';
-import type { RoleRow } from 'business/src/admin/roles.ts';
+import type { RoleRow, DeniedPermission } from 'business/src/admin/roles.ts';
+import { coreContext } from 'business/src/admin/scopes.ts';
+import { readLocalPolicy } from 'business/src/admin/localPolicy.ts';
 import { readSetupState } from 'business/src/admin/setupState.ts';
 import { readAdminConfig, portalUrl } from 'business/src/admin/config.ts';
 import { hashToken } from 'business/src/admin/codes.ts';
@@ -24,17 +26,20 @@ import type { AdminStore } from 'business/src/admin/store.ts';
  * - the admin key (`Authorization: <auth.adminAccessKey>`), subject to
  *   `auth.adminAccessKeyScope` (`break-glass`: only the routes marked so);
  * - an administrator session (`Authorization: AdminSession <token>`), once
- *   setup is finished: its account's role row gives the permissions, checked
- *   against the route's; a step-up permission also needs a recent second
- *   factor;
+ *   setup is finished: its account's role row gives the permissions on this
+ *   core (the grants whose scope covers this core, under this core's
+ *   `admin.localPolicy`), checked against the route's; a step-up permission
+ *   also needs a recent second factor;
  * - a setup session (`Authorization: SetupSession <token>`), while setup is
  *   pending, on the routes that accept one.
  * Some routes check their own credential (a personal token of the account, a
  * one-time join token) or need none: the gate lets them through.
  *
  * Every refusal answers 404, as an unknown route does (no hint to retry).
- * The resolved subject `{ kind, userId?, permissions }` is set on the request
- * (`req.adminSubject`) and its method context.
+ * The resolved subject `{ kind, userId?, permissions, denied }` is set on the
+ * request (`req.adminSubject`) and its method context. The admin key and the
+ * setup session hold every permission: a local policy binds role holders,
+ * not them (the key's reach is `auth.adminAccessKeyScope`).
  *
  * Origin rule: a request that carries an `Origin` and is not authenticated by
  * the admin key is accepted only from the core's own origin, the platform's
@@ -50,6 +55,8 @@ export type AdminSubject = {
   /** The administrator's account (admin session). */
   userId?: string;
   permissions: ReadonlySet<AdminPermission>;
+  /** Admin session: the permissions of its roles not held on this core, and why (empty for the key and setup). */
+  denied: readonly DeniedPermission[];
   /** Admin session: its row, its role row and its id (the token's SHA-256, for audit records). */
   session?: AdminSession;
   role?: RoleRow;
@@ -212,7 +219,7 @@ export default function adminAuth (opts: AdminAuthOptions): RequestHandler {
         if (breakGlass && rule.breakGlass !== true) {
           return refuse('admin key outside its break-glass scope');
         }
-        return admit({ kind: 'key', permissions: ALL_PERMISSIONS });
+        return admit({ kind: 'key', permissions: ALL_PERMISSIONS, denied: [] });
       }
 
       if (rule == null) return refuse('no such route');
@@ -226,7 +233,8 @@ export default function adminAuth (opts: AdminAuthOptions): RequestHandler {
         // Administrator sessions open once setup is finished.
         if ((await readSetupState(store))?.state === 'pending') return refuse('setup is pending');
         const at = now();
-        const resolved = await resolveAdminSession(store, credential.token, at);
+        const resolved = await resolveAdminSession(store, credential.token, at,
+          { core: coreContext(config), policy: readLocalPolicy(config) });
         if (resolved == null) return refuse('unknown or ended admin session');
         if (rule.permission != null) {
           if (!resolved.permissions.has(rule.permission)) return refuse('permission not held');
@@ -239,6 +247,7 @@ export default function adminAuth (opts: AdminAuthOptions): RequestHandler {
           kind: 'session',
           userId: resolved.session.userId,
           permissions: resolved.permissions,
+          denied: resolved.denied,
           session: resolved.session,
           role: resolved.role,
           sessionId: hashToken(credential.token),
@@ -251,7 +260,7 @@ export default function adminAuth (opts: AdminAuthOptions): RequestHandler {
         const setupSession = await readSetupSession(store, credential.token);
         if (setupSession == null) return refuse('unknown or ended setup session');
         // The setup code is the operator's proof: while pending, its session acts as the admin key does.
-        return admit({ kind: 'setup', permissions: ALL_PERMISSIONS, setupSession, sessionId: hashToken(credential.token), token: credential.token });
+        return admit({ kind: 'setup', permissions: ALL_PERMISSIONS, denied: [], setupSession, sessionId: hashToken(credential.token), token: credential.token });
       }
       return refuse('no valid credential');
     } catch (err) {
