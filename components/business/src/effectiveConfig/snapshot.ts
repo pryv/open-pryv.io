@@ -85,6 +85,8 @@ const SCOPE_LABELS: Record<string, string> = {
   'defaults-paths': 'shipped-plugin',
   'default-audit-path': 'shipped-plugin',
   'default-file': 'default-file',
+  // Defaults a configuration plugin adds below every other scope (config/plugins/public-url.js).
+  'service-defaults': 'shipped-plugin',
   defaults: 'built-in'
 };
 

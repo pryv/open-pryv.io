@@ -28,8 +28,25 @@ export type KeyDef = {
 
 export type SchemaMap = Readonly<Record<string, KeyDef>>;
 
-/** The keys of the current batch. */
-export const SCHEMA: SchemaMap = Object.freeze({});
+const URL_VALUE = Object.freeze({ type: 'string', maxLength: 2048, pattern: '^https?://[^\\s]+$' });
+
+/**
+ * The keys of the current batch: the service information (`/service/info`).
+ * A key still needs a local value where the boot checks require one
+ * (config-validation: name, home, support, terms, eventTypes); a row replaces
+ * it once the core runs. `service.assets` is held by its leaf
+ * (`service.assets.definitions`): an object value would merge with the local
+ * one rather than replace it.
+ */
+export const SCHEMA: SchemaMap = Object.freeze({
+  'service.name': { schema: { type: 'string', minLength: 1, maxLength: 100 }, appliesAt: 'live', sensitive: false, capability: 'config' },
+  'service.home': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' },
+  'service.support': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' },
+  'service.terms': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' },
+  // Read when the API methods are registered (api-server) and at boot (hfs-server).
+  'service.eventTypes': { schema: URL_VALUE, appliesAt: 'restart', sensitive: false, capability: 'config' },
+  'service.assets.definitions': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' }
+});
 
 /**
  * Key names: dotted segments of letters, digits and `-`. No `_` nor `%`
@@ -46,7 +63,7 @@ export function isValidKeyName (key: unknown): key is string {
 // --- keys classified `platform` that stay in the configuration files ---- //
 
 const SECRET = 'secret: stays in the configuration files (no credential in the platform store)';
-const BATCH_1 = 'later batch 1 (service.*): added with its schema entries';
+const SERVICE_OTHERS = 'not scheduled: the other service.* values (derived at boot, per core, or not editable yet)';
 const BATCH_2 = 'later batch 2 (account policy, OAuth registration): sensitive, step-up on write';
 const BATCH_3 = 'later batch 3 (bulk policy)';
 const BATCH_4 = 'later batch 4 (dns): decided with its batch';
@@ -68,7 +85,7 @@ const GROUPS: ReadonlyArray<[string, readonly string[]]> = [
     'account.autoDeletion.transfer.identitySecretsKey', 'accountErasure.ledger.hmacKey', 'platform.piiHmacKey',
     'letsEncrypt.atRestKey', 'observability.otlp.headers', 'oauth.extensionOptions', 'custom.dataStores.*.settings'
   ]],
-  [BATCH_1, ['service.**']],
+  [SERVICE_OTHERS, ['service.**']],
   [BATCH_2, [
     'auth.passwordComplexityMinCharCategories', 'auth.passwordComplexityMinLength', 'auth.passwordAgeMaxDays',
     'auth.passwordAgeMinDays', 'auth.passwordPreventReuseHistoryLength', 'auth.passwordAttempts.**',

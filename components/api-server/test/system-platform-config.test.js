@@ -15,7 +15,8 @@ const require = createRequire(import.meta.url);
  * step-up for a sensitive key; the effective configuration reports the
  * source `platform-db`.
  *
- * The release's schema has no key yet: these tests replace it with two keys.
+ * The release's keys (the service information), plus one sensitive key for
+ * the step-up cases (the release has none yet).
  */
 
 const { withInjectedConfig } = require('test-helpers');
@@ -27,7 +28,7 @@ const platformConfig = require('business/src/platformConfig/index.ts');
 
 const MIN = 60 * 1000;
 const TEST_SCHEMA = Object.freeze({
-  'service.name': { schema: { type: 'string', minLength: 1, maxLength: 80 }, appliesAt: 'live', sensitive: false, capability: 'config' },
+  ...platformConfig.SCHEMA,
   'auth.passwordComplexityMinLength': { schema: { type: 'integer', minimum: 4, maximum: 64 }, appliesAt: 'live', sensitive: true, capability: 'config' }
 });
 const BASE = '/system/admin/platform-config';
@@ -79,7 +80,9 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(typeof res.body.rev, 'number');
     assert.ok(Array.isArray(res.body.coresBehind));
-    assert.deepEqual(res.body.entries.map((e) => e.key), ['auth.passwordComplexityMinLength', 'service.name']);
+    assert.deepEqual(res.body.entries.map((e) => e.key), Object.keys(TEST_SCHEMA).sort());
+    assert.deepEqual(Object.keys(platformConfig.SCHEMA).sort(),
+      ['service.assets.definitions', 'service.eventTypes', 'service.home', 'service.name', 'service.support', 'service.terms']);
     const name = res.body.entries.find((e) => e.key === 'service.name');
     assert.equal(name.source, 'local');
     assert.equal('value' in name, false);
@@ -99,6 +102,14 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
       assert.equal(set.body.entry.updatedBy.kind, 'admin-key');
       assert.equal(set.body.entry.updatedBy.coreId, coreId);
       assert.equal(config.get('service:name'), 'Stored name', 'the store row wins over the test scope');
+      const home = await put('service.home', { value: 'https://stored-home.example.com' });
+      assert.equal(home.status, 200, JSON.stringify(home.body));
+      assert.equal((await put('service.home', { value: 'ftp://not-http.example.com' })).status, 400);
+      // The service information reads it at once on the writing core.
+      const info = await coreRequest.get('/reg/service/info');
+      assert.equal(info.status, 200, JSON.stringify(info.body));
+      assert.deepEqual({ name: info.body.name, home: info.body.home }, { name: 'Stored name', home: 'https://stored-home.example.com' });
+      assert.ok(info.body.api != null && info.body.register != null, 'the derived URLs are still there');
       const got = await coreRequest.get(BASE + '/service.name').set('authorization', adminKey);
       assert.equal(got.status, 200);
       assert.deepEqual(got.body.entry.localOverride, { value: 'Local name' });
@@ -113,6 +124,7 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
       assert.equal(del.body.deleted, true);
       assert.equal(del.body.entry.source, 'local');
       assert.equal(config.get('service:name'), 'Local name', 'back to the local value');
+      assert.equal((await coreRequest.get('/reg/service/info')).body.name, 'Local name');
       const again = await coreRequest.delete(BASE + '/service.name').set('authorization', adminKey);
       assert.equal(again.status, 200);
       assert.equal(again.body.deleted, false);
@@ -121,9 +133,10 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
   });
 
   it('[SYPC3] a key outside the schema, a refused value or a malformed body is not written', async () => {
-    assert.equal((await put('service.terms', { value: 'https://x.example' })).status, 404);
-    assert.equal((await coreRequest.get(BASE + '/service.terms').set('authorization', adminKey)).status, 404);
-    assert.equal((await coreRequest.delete(BASE + '/service.terms').set('authorization', adminKey)).status, 404);
+    assert.equal((await put('service.serial', { value: 'x' })).status, 404);
+    assert.equal((await put('service.assets', { value: { definitions: 'https://x.example' } })).status, 404, 'an object key: its leaf only');
+    assert.equal((await coreRequest.get(BASE + '/service.serial').set('authorization', adminKey)).status, 404);
+    assert.equal((await coreRequest.delete(BASE + '/service.serial').set('authorization', adminKey)).status, 404);
     assert.equal((await put('not_a.key', { value: 'x' })).status, 404);
     const refused = await put('service.name', { value: '' });
     assert.equal(refused.status, 400, JSON.stringify(refused.body));

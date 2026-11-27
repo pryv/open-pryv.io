@@ -45,7 +45,7 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
   let savedIntegrityCheck;
   let savedPlatformData;
   let preExistingUserIds;
-  let savedService;
+  let savedMemoryService;
   let savedCoreUrl;
   let savedCoreId;
   let savedIsSingleCore;
@@ -65,7 +65,8 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     // the original `service.*` / `core.*` / `core:isSingleCore` values —
     // without this the multi-core URL rewrites and single-core resets leak
     // across describes. (`dns.domain` only lives in the test scope.)
-    savedService = config.get('service');
+    const memoryService = config.store.stores.memory.get('service');
+    savedMemoryService = memoryService === undefined ? undefined : structuredClone(memoryService);
     savedCoreUrl = config.get('core:url');
     savedCoreId = config.get('core:id');
     savedIsSingleCore = config.get('core:isSingleCore');
@@ -96,7 +97,11 @@ describe('[RGMD] register: multi-core (dnsLess=false path)', function () {
     // Restore mutated keys to their pre-describe values. Only the keys config
     // plugins claim with set() at boot (service, core:*) are restored with
     // set(); dns:domain came from the test scope, emptied above.
-    config.set('service', savedService);
+    // The memory scope's own `service` as it was: a copy of the whole merged
+    // `service` object there would hide the platform store.
+    const memory = config.store.stores.memory;
+    if (savedMemoryService === undefined) memory.clear('service');
+    else memory.set('service', savedMemoryService);
     config.set('core:url', savedCoreUrl || null);
     config.set('core:id', savedCoreId || null);
     config.set('core:isSingleCore', savedIsSingleCore != null ? savedIsSingleCore : true);
