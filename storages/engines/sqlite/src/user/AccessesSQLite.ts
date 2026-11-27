@@ -9,8 +9,11 @@ import { createRequire } from 'node:module';
 import type { Callback, UserOrId, UpdateData, FindOptions } from '../../../../interfaces/_shared/types.ts';
 import type { StoredAccess } from '../../../../interfaces/_shared/domain.ts';
 import type { DbRow } from './BaseStorageSQLite.ts';
-import type { SqliteDb } from '../types.ts';
+import type { SqliteDb, SqlParam } from '../types.ts';
+import type { JsonGuard, JsonSet } from '../../../../interfaces/_shared/jsonPath.ts';
+import type { TokenProtection } from '../../../../interfaces/_shared/tokenProtection.ts';
 const require = createRequire(import.meta.url);
+const { foreignKeyError } = require('../../../../interfaces/_shared/tokenProtection.ts');
 
 const { BaseStorageSQLite, decorateSQLiteDuplicateError } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
 const { UserBaseStorageDb } = require('../userBaseStorage/UserBaseStorageDb.ts');
@@ -66,10 +69,29 @@ function assertIntegritySet (access: AccessItem): void {
   );
 }
 
+/** An access whose stored token does not open: never returned without its token. */
+function tokenUnreadable (accessId: unknown, reason: string): Error {
+  const err = new Error('access ' + JSON.stringify(accessId) + ': stored token unreadable (' + reason + ')') as Error & { accessId: unknown };
+  err.name = 'TokenUnreadableError';
+  err.accessId = accessId;
+  return err;
+}
+
+function requireUserId (userId: string | null | undefined): string {
+  if (typeof userId !== 'string' || userId.length === 0) {
+    throw new Error('AccessesSQLite: the user id of the database is required to read or write a token');
+  }
+  return userId;
+}
+
+type UserDbHandle = { db: SqliteDb, userId?: string | null, readyTables?: Set<string> };
+type TokenPassResult = { rows: number; skipped: number };
+
 class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   integrityAccesses: IntegrityAccesses;
+  tokenProtection: TokenProtection;
 
-  constructor (integrityAccesses: IntegrityAccesses) {
+  constructor (integrityAccesses: IntegrityAccesses, tokenProtection: TokenProtection) {
     super();
     this.tableName = 'accesses';
     this.hasDeletedCol = true;
@@ -81,15 +103,198 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
         '{ isActive: false, set: () => {} } explicitly for integrity-less contexts'
       );
     }
+    if (tokenProtection == null) {
+      throw new Error('AccessesSQLite requires a tokenProtection ref (access tokens are never stored in clear)');
+    }
     this.integrityAccesses = integrityAccesses;
+    this.tokenProtection = tokenProtection;
   }
 
-  rowToItem (row: DbRow): AccessItem | null {
-    const item = super.rowToItem(row);
+  // ---- Token at rest: `token` (item) <-> `tokenHash` + `tokenEnc` (data JSON) ----
+  // The item above this class always carries the clear token; the stored data
+  // never does once converted (see `protectClearRowsOfUser`).
+
+  /** The stored data with `token` replaced by its pair, in place (key order kept). */
+  protectData (userId: string, data: Record<string, unknown>): Record<string, unknown> {
+    if (data.token == null) return data;
+    if (typeof data.token !== 'string') throw new TypeError('accesses: token must be a string');
+    const tokenHash = this.tokenProtection.hashAccessToken(userId, data.token);
+    const tokenEnc = this.tokenProtection.sealAccessToken(userId, tokenHash, data.token);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (k === 'token') { out.tokenHash = tokenHash; out.tokenEnc = tokenEnc; } else if (k !== 'tokenHash' && k !== 'tokenEnc') out[k] = v;
+    }
+    return out;
+  }
+
+  /** The stored data with its pair opened back to `token` (key order kept). */
+  openData (userId: string | null | undefined, data: Record<string, unknown>, accessId: unknown): Record<string, unknown> {
+    if (data.tokenEnc == null && !('tokenHash' in data)) return data;
+    // A clear token (data not converted yet) is authoritative over a pair.
+    let token: unknown = data.token;
+    if (token == null && data.tokenEnc != null) {
+      if (typeof data.tokenHash !== 'string') throw tokenUnreadable(accessId, 'the row has an encrypted token without its hash');
+      try {
+        token = this.tokenProtection.openAccessToken(requireUserId(userId), data.tokenHash, data.tokenEnc as string);
+      } catch (err) {
+        throw tokenUnreadable(accessId, (err as Error).message);
+      }
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (k === 'tokenHash') { if (token != null) out.token = token; } else if (k !== 'tokenEnc' && k !== 'token') out[k] = v;
+    }
+    if (out.token == null && token != null) out.token = token;
+    return out;
+  }
+
+  protected itemToRow (item: Partial<AccessItem>, userId?: string | null): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
+    if (item.token == null) return super.itemToRow(item, userId);
+    return super.itemToRow(this.protectData(requireUserId(userId), item as Record<string, unknown>), userId);
+  }
+
+  rowToItem (row: DbRow, userId?: string | null): AccessItem | null {
+    let item = super.rowToItem(row, userId);
+    if (item != null) item = this.openData(userId, item as Record<string, unknown>, row.id) as AccessItem;
     if (item && item.type === 'shared' && !('deviceName' in item)) {
       item.deviceName = null;
     }
     return item;
+  }
+
+  /** Rewrites a `token` condition into one on `tokenHash`. */
+  tokenCondition (userId: string, value: unknown): unknown {
+    const hash = (v: unknown): unknown => {
+      if (v === null || v === undefined) return v;
+      if (typeof v !== 'string') throw new TypeError('accesses: a token condition takes strings');
+      return this.tokenProtection.hashAccessToken(userId, v);
+    };
+    if (value === null || value === undefined || typeof value !== 'object') return hash(value);
+    if (Array.isArray(value)) throw new TypeError('accesses: unsupported token condition');
+    const out: Record<string, unknown> = {};
+    for (const [op, v] of Object.entries(value as Record<string, unknown>)) {
+      if (op === '$eq' || op === '$ne') out[op] = hash(v);
+      else if (op === '$in' && Array.isArray(v)) out[op] = v.map(hash);
+      else throw new TypeError('accesses: unsupported token condition operator ' + JSON.stringify(op));
+    }
+    return out;
+  }
+
+  buildWhere (query: Record<string, unknown>, userId?: string | null): { sql: string, params: SqlParam[] } {
+    if (query == null) return super.buildWhere(query, userId);
+    const hasOrToken = Array.isArray(query.$or) && (query.$or as Array<Record<string, unknown>>).some((c) => c != null && 'token' in c);
+    if (!('token' in query) && !hasOrToken) return super.buildWhere(query, userId);
+    const uid = requireUserId(userId);
+    const q: Record<string, unknown> = Object.assign({}, query);
+    if ('token' in q) {
+      q.tokenHash = this.tokenCondition(uid, q.token);
+      delete q.token;
+    }
+    if (hasOrToken) {
+      q.$or = (query.$or as Array<Record<string, unknown>>).map((clause) => {
+        if (clause == null || !('token' in clause)) return clause;
+        const c: Record<string, unknown> = Object.assign({}, clause);
+        c.tokenHash = this.tokenCondition(uid, clause.token);
+        delete c.token;
+        return c;
+      });
+    }
+    return super.buildWhere(q, userId);
+  }
+
+  compareAndSetJson (userOrUserId: UserOrId, query: Record<string, unknown>, guards: JsonGuard[], sets: JsonSet[], callback: Callback<boolean>): void {
+    const tokenPaths = new Set(['token', 'tokenHash', 'tokenEnc']);
+    if ([...(guards || []), ...(sets || [])].some((g) => tokenPaths.has(g.path?.[0]))) {
+      return callback(new Error('compareAndSetJson: the token is not a JSON field of accesses'));
+    }
+    super.compareAndSetJson(userOrUserId, query, guards, sets, callback);
+  }
+
+  /**
+   * Before the first use of a user's database in this process: refuse rows
+   * protected under another key, convert the rows still holding a clear token
+   * (a database restored by file copy, or missed by the start-up walk).
+   */
+  protected async onUserDbReady (udb: UserDbHandle): Promise<void> {
+    if (udb.readyTables?.has('accesses')) return;
+    await this.protectClearRowsOfUser(udb);
+    udb.readyTables?.add('accesses');
+  }
+
+  /** Whether a user's database holds rows protected under another key. */
+  hasForeignKeyRowsOfUser (udb: UserDbHandle): boolean {
+    return udb.db.prepare('SELECT 1 FROM accesses WHERE json_extract(data, \'$.tokenHash\') IS NOT NULL' +
+      ' AND json_extract(data, \'$.token\') IS NULL AND substr(json_extract(data, \'$.tokenHash\'), 1, ?) <> ? LIMIT 1')
+      .get(this.tokenProtection.kid.length + 1, this.tokenProtection.kid + '.') != null;
+  }
+
+  /**
+   * Convert, in one write transaction, every row of a user's database holding
+   * a clear token (live, deleted, history); the clear value is authoritative
+   * over a pair already there. Throws when rows are under another key.
+   * Idempotent.
+   */
+  async protectClearRowsOfUser (udb: UserDbHandle): Promise<number> {
+    const userId = requireUserId(udb.userId);
+    if (this.hasForeignKeyRowsOfUser(udb)) throw foreignKeyError('access rows of user ' + userId);
+    if (udb.db.prepare('SELECT 1 FROM accesses WHERE json_extract(data, \'$.token\') IS NOT NULL LIMIT 1').get() == null) return 0;
+    let count = 0;
+    await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
+      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.token\') IS NOT NULL').all();
+      const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND json_extract(data, \'$.token\') = ?');
+      for (const row of rows) {
+        const data = JSON.parse(row.data as string);
+        count += upd.run(JSON.stringify(this.protectData(userId, data)), row.id, data.token).changes;
+      }
+    }).immediate());
+    if (count > 0) logger.info('access tokens at rest: ' + count + ' access rows of user ' + userId + ' protected');
+    return count;
+  }
+
+  /** Rollback aid: the clear token written back, the pair dropped. */
+  async unprotectRowsOfUser (udb: UserDbHandle): Promise<number> {
+    const userId = requireUserId(udb.userId);
+    let count = 0;
+    await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
+      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.tokenEnc\') IS NOT NULL').all();
+      const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
+      for (const row of rows) {
+        const data = this.openData(userId, JSON.parse(row.data as string), row.id);
+        count += upd.run(JSON.stringify(data), row.id, row.data).changes;
+      }
+    }).immediate());
+    return count;
+  }
+
+  /** Re-hash and re-seal under the configured key the rows protected under one of `previous`. */
+  async rekeyRowsOfUser (udb: UserDbHandle, previous: TokenProtection[]): Promise<TokenPassResult> {
+    const userId = requireUserId(udb.userId);
+    const result: TokenPassResult = { rows: 0, skipped: 0 };
+    await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
+      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.tokenEnc\') IS NOT NULL' +
+        ' AND json_extract(data, \'$.token\') IS NULL').all();
+      const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
+      for (const row of rows) {
+        const data = JSON.parse(row.data as string);
+        if (this.tokenProtection.ownsHash(data.tokenHash)) continue;
+        const from = previous.find((p) => p.ownsHash(data.tokenHash));
+        if (from == null) { result.skipped++; continue; }
+        const token = from.openAccessToken(userId, data.tokenHash, data.tokenEnc);
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(data)) {
+          if (k === 'tokenHash') out.token = token; else if (k !== 'tokenEnc') out[k] = v;
+        }
+        result.rows += upd.run(JSON.stringify(this.protectData(userId, out)), row.id, row.data).changes;
+      }
+    }).immediate());
+    return result;
+  }
+
+  /** Counts per stored form in a user's database. */
+  tokenStatusOfUser (udb: UserDbHandle): Array<{ k: string, n: number }> {
+    return udb.db.prepare<{ k: string, n: number }>('SELECT CASE WHEN json_extract(data, \'$.token\') IS NOT NULL THEN \'clear\'' +
+      ' WHEN json_extract(data, \'$.tokenHash\') IS NULL THEN \'none\' ELSE substr(json_extract(data, \'$.tokenHash\'), 1, 8) END AS k,' +
+      ' COUNT(*) AS n FROM accesses GROUP BY 1').all();
   }
 
   applyDefaults (item: Partial<AccessItem>): AccessItem {
@@ -180,10 +385,11 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
     const udb = await UserBaseStorageDb.forUser(userId);
     await udb.ensureTable(this.tableName, { withDeleted: this.hasDeletedCol, withHeadId: this.hasHeadIdCol });
+    await this.onUserDbReady(udb);
     const rows = udb.db.prepare(
       `SELECT * FROM ${this.tableName} WHERE head_id = ? ORDER BY json_extract(data, '$.modified') ASC`
     ).all(baseId);
-    return rows.map((r: DbRow) => this.rowToItem(r)).filter((x: AccessItem | null): x is AccessItem => x != null);
+    return rows.map((r: DbRow) => this.rowToItem(r, userId)).filter((x: AccessItem | null): x is AccessItem => x != null);
   }
 
   snapshotHead (userOrUserId: UserOrId, baseId: string, callback: Callback<void>): void {
@@ -229,7 +435,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
           const write = udb.db.prepare(`UPDATE ${this.tableName} SET data = json_set(data, '$.integrity', ?)` +
             ' WHERE id = ? AND json_extract(data, \'$.integrity\') = ?');
           for (const row of rows) {
-            const item = this.rowToItem(row);
+            const item = this.rowToItem(row, userId);
             if (item == null || item.integrity == null) continue;
             result.scanned++;
             const stored = item.integrity;
@@ -296,13 +502,16 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
       if (err != null) decorateSQLiteDuplicateError(err);
       callback(err, result);
     };
+    // Compared on the stored form: the keyed hash of the token, no envelope opened.
+    const preparedHash = prepared.token != null ? this.tokenProtection.hashAccessToken(userId, prepared.token) : null;
     this._userDbAndWrite(userId, duplicateAwareCallback, (udb) => udb.db.transaction(() => {
-      const { sql: where, params } = this.buildWhere({ deleted: null, headId: null });
+      const { sql: where, params } = this.buildWhere({ deleted: null, headId: null }, userId);
       const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where}`.trim()).all(...params);
-      for (const ex of this.rowsToItems(rows)) {
-        if (ex == null) continue;
+      for (const row of rows) {
+        const ex = Object.assign(JSON.parse(row.data || '{}'), { id: row.id }) as AccessItem & { tokenHash?: string };
         if (ex.id === prepared.id) continue; // same row (should not happen, defensive)
-        if (ex.token != null && ex.token === prepared.token) {
+        const sameToken = ex.token != null ? ex.token === prepared.token : (ex.tokenHash != null && ex.tokenHash === preparedHash);
+        if (preparedHash != null && sameToken) {
           throw duplicateIndexError(['token'], { token: '(hidden)' });
         }
         if (ex.name != null && ex.type != null &&
@@ -360,4 +569,77 @@ async function recomputeAccessesIntegrityOnce (accesses: AccessesSQLite): Promis
   return result;
 }
 
-export { AccessesSQLite, duplicateIndexError, recomputeAccessesIntegrityOnce, INTEGRITY_WIRE_FORM_MARKER };
+/** Written in the users base directory once every user database was converted; holds the key id. */
+const TOKEN_PROTECTED_MARKER = 'accesses-token-protected.done';
+
+type UserDbVisitor = (udb: UserDbHandle, userId: string) => Promise<void>;
+
+/** Visit every user database holding an accesses table; returns the users whose visit failed. */
+async function eachUserAccessesDb (visit: UserDbVisitor): Promise<string[]> {
+  const failed: string[] = [];
+  for (const userId of await _internals.userLocalDirectory.listUserIds() as string[]) {
+    if (!fs.existsSync(UserBaseStorageDb.existingPathForUser(userId))) continue;
+    try {
+      const udb: UserDbHandle = await UserBaseStorageDb.forUser(userId);
+      const hasTable = udb.db.prepare('SELECT 1 FROM sqlite_master WHERE type = \'table\' AND name = ?').get('accesses') != null;
+      if (!hasTable) continue;
+      await visit(udb, userId);
+    } catch (err) {
+      if ((err as Error).name === 'ForeignTokenKeyError') throw err;
+      failed.push(userId);
+      logger.error('access tokens at rest: user ' + userId + ' failed: ' + (err as Error).message);
+    }
+  }
+  return failed;
+}
+
+function tokenMarkerPath (): string | null {
+  try {
+    return path.join(_internals.userLocalDirectory.getBasePath(), TOKEN_PROTECTED_MARKER);
+  } catch (_e) {
+    return null;
+  }
+}
+
+/** The key id recorded by the last complete walk, null when none completed. */
+function tokenMarkerKid (): string | null {
+  const marker = tokenMarkerPath();
+  if (marker == null || !fs.existsSync(marker)) return null;
+  return fs.readFileSync(marker, 'utf8').split('\n')[0].trim();
+}
+
+function writeTokenMarker (kid: string): void {
+  const marker = tokenMarkerPath();
+  if (marker == null) return;
+  fs.writeFileSync(marker, kid + '\nDO NOT DELETE THIS FILE - IT RECORDS THAT THE ACCESS TOKENS ARE PROTECTED AT REST UNDER THIS KEY ID\n');
+}
+
+function removeTokenMarker (): void {
+  const marker = tokenMarkerPath();
+  if (marker != null) fs.rmSync(marker, { force: true });
+}
+
+/**
+ * Convert every user database once (the marker file records the walk, with
+ * the key id): refused when the marker or a database is under another key. A
+ * database the walk misses is converted at its first use (`onUserDbReady`).
+ * Returns null when skipped (marker present for this key).
+ */
+async function protectAccessTokensOnce (accesses: AccessesSQLite): Promise<{ rows: number; failedUsers: number } | null> {
+  const markerKid = tokenMarkerKid();
+  if (markerKid === accesses.tokenProtection.kid) return null;
+  if (markerKid != null) throw foreignKeyError('access rows (walk marker under key id ' + markerKid + ')');
+  let rows = 0;
+  const failed = await eachUserAccessesDb(async (udb) => { rows += await accesses.protectClearRowsOfUser(udb); });
+  if (failed.length === 0) writeTokenMarker(accesses.tokenProtection.kid);
+  else {
+    logger.warn('access tokens at rest: the walk runs again at every start until every user database succeeds; failed: ' +
+      failed.slice(0, MAX_FAILED_USERS_LISTED).join(', ') + (failed.length > MAX_FAILED_USERS_LISTED ? ' and ' + (failed.length - MAX_FAILED_USERS_LISTED) + ' more' : ''));
+  }
+  return { rows, failedUsers: failed.length };
+}
+
+export {
+  AccessesSQLite, duplicateIndexError, recomputeAccessesIntegrityOnce, INTEGRITY_WIRE_FORM_MARKER,
+  TOKEN_PROTECTED_MARKER, protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker
+};

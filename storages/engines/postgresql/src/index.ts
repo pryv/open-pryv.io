@@ -65,6 +65,7 @@ type InitOptions = {
   passwordResetRequestMaxAge?: number;
   sessionMaxAge?: number;
   integrityAccesses?: unknown;
+  tokenProtection?: unknown;
   [k: string]: unknown;
 };
 type EventRow = { id: string; streamIds?: string[]; [k: string]: unknown };
@@ -91,8 +92,10 @@ function initStorageLayer (storageLayer: StorageLayer, connection: PgConnection,
   storageLayer.passwordResetRequests = new PasswordResetRequestsPG(connection, {
     maxAge: options.passwordResetRequestMaxAge
   });
-  storageLayer.sessions = new SessionsPG(connection, { maxAge: options.sessionMaxAge });
-  storageLayer.accesses = new AccessesPG(connection, options.integrityAccesses);
+  if (options.tokenProtection == null) throw new Error('PostgreSQL storage layer: tokenProtection is required');
+  _internals.set('tokenProtection', options.tokenProtection);
+  storageLayer.sessions = new SessionsPG(connection, { maxAge: options.sessionMaxAge }, options.tokenProtection);
+  storageLayer.accesses = new AccessesPG(connection, options.integrityAccesses, options.tokenProtection);
   storageLayer.profile = new ProfilePG(connection);
   storageLayer.streams = new StreamsPG(connection);
   storageLayer.webhooks = new WebhooksPG(connection);
@@ -410,7 +413,13 @@ function getMigrationsCapability (): unknown | null {
   return buildMigrationsCapability();
 }
 
+/** Access tokens and session ids at rest: see `tokensAtRest.ts`. */
+function getTokensAtRest (): unknown {
+  return require('./tokensAtRest.ts');
+}
+
 export {
+  getTokensAtRest,
   init,
   initStorageLayer,
   getUserAccountStorage,

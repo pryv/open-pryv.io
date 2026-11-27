@@ -13,6 +13,7 @@ const cuid = require('cuid');
 
 const helpers = require('../../../test/helpers');
 const { AccessesSQLite } = require('../src/user/AccessesSQLite.ts');
+const tokenProtection = require('business/src/accesses/tokenProtection.ts').createTokenProtection('test-key');
 const { UserBaseStorageDb } = require('../src/userBaseStorage/UserBaseStorageDb.ts');
 
 // SQLite has no unique index on the access fields (they live in a JSON
@@ -26,7 +27,7 @@ describe('[AIUQ] AccessesSQLite uniqueness under concurrent inserts', function (
   before(async function () {
     await helpers.dependencies.init();
     await userLocalDirectory.init();
-    storage = new AccessesSQLite({ isActive: false, set: () => {} });
+    storage = new AccessesSQLite({ isActive: false, set: () => {} }, tokenProtection);
   });
 
   beforeEach(function () { userId = cuid(); });

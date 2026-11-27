@@ -647,6 +647,8 @@ CREATE TABLE IF NOT EXISTS accesses (
   deleted DOUBLE PRECISION,
   alias TEXT,
   last_login DOUBLE PRECISION,
+  token_hash TEXT,
+  token_enc TEXT,
   PRIMARY KEY (user_id, id)
 );
 -- Index predicates intentionally omit head_id here. SCHEMA_SQL is a
@@ -654,8 +656,10 @@ CREATE TABLE IF NOT EXISTS accesses (
 -- so the matching migration 20260512_132200_access_versioning.js does
 -- the ALTER + index recreate. Fresh installs converge once that
 -- migration runs at boot.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_access_token
-  ON accesses(user_id, token) WHERE deleted IS NULL;
+-- The token itself is never stored in clear (\`token\` stays NULL): the
+-- unique index on its keyed hash, \`idx_access_token_hash\`, is created by
+-- the migration 20261127_120000_access_token_protection_columns.js, on
+-- fresh installs too (it needs the columns of existing installs first).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_access_name_type_deviceName
   ON accesses(user_id, name, type, device_name) NULLS NOT DISTINCT WHERE deleted IS NULL;
 
@@ -693,10 +697,12 @@ CREATE TABLE IF NOT EXISTS profile (
 
 -- Global tables
 
+-- \`id\` holds the keyed hash of the session id, \`id_enc\` its encrypted copy.
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   data JSONB,
-  expires TIMESTAMPTZ
+  expires TIMESTAMPTZ,
+  id_enc TEXT
 );
 
 CREATE TABLE IF NOT EXISTS password_resets (

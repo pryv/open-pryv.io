@@ -33,7 +33,7 @@ type SqliteStoredItem = StoredItemBase & { headId?: SqlParam, deleted?: SqlParam
 /** A row read back from a baseStorage table. */
 type DbRow = { id: string, head_id?: number | string | null, deleted?: number | null, data?: string, cnt?: number, [k: string]: unknown };
 /** The per-user handle returned by `userDb()` — only `.db` is touched downstream. */
-type UserDb = { db: SqliteDb };
+type UserDb = { db: SqliteDb, userId?: string | null, readyTables?: Set<string> };
 
 /**
  * Columns stored as proper SQL columns (vs packed into `data` JSON).
@@ -135,12 +135,19 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       withDeleted: this.hasDeletedCol,
       withHeadId: this.hasHeadIdCol
     });
+    await this.onUserDbReady(udb);
     return udb;
   }
 
+  /** Subclasses override to check or convert the rows of a user's database
+   *  once per opened handle, before its first use (see `UserBaseStorageDb.readyTables`). */
+  protected async onUserDbReady (_udb: UserDb): Promise<void> {}
+
   // ---- Row ↔ item mapping ----
 
-  rowToItem (row: DbRow | null | undefined): TItem | null {
+  /** `userId`: the owner of the database the row was read from (a collection
+   *  whose stored form depends on it, accesses, needs it). */
+  rowToItem (row: DbRow | null | undefined, _userId?: string | null): TItem | null {
     if (!row) return null;
     const dataJson = row.data ? JSON.parse(row.data) : {};
     const item: SqliteStoredItem = Object.assign({}, dataJson);
@@ -152,11 +159,12 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
     return item as TItem;
   }
 
-  rowsToItems (rows: DbRow[]): Array<TItem | null> {
-    return rows.map((r) => this.rowToItem(r));
+  rowsToItems (rows: DbRow[], userId?: string | null): Array<TItem | null> {
+    return rows.map((r) => this.rowToItem(r, userId));
   }
 
-  private itemToRow (item: SqliteStoredItem): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
+  /** `userId`: see `rowToItem`. */
+  protected itemToRow (item: SqliteStoredItem, _userId?: string | null): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
     const copy = Object.assign({}, item);
     // Document field → column-type narrowing (the document↔column boundary).
     const id = copy.id as string;
@@ -177,9 +185,9 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
    *
    * Supported operators per field: equality, $eq, $ne, $gt, $gte, $lt, $lte,
    * $in, $type ('null' / 'number' map to IS NULL / IS NOT NULL). Top-level
-   * $or supported.
+   * $or supported. `userId`: see `rowToItem`.
    */
-  buildWhere (query: Query): { sql: string, params: SqlParam[] } {
+  buildWhere (query: Query, _userId?: string | null): { sql: string, params: SqlParam[] } {
     const conditions: string[] = [];
     const params: SqlParam[] = [];
 
@@ -294,34 +302,34 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   find (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<Array<TItem | null>>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
-      const { sql: where, params } = this.buildWhere(q);
+      const { sql: where, params } = this.buildWhere(q, udb.userId);
       const orderBy = this.buildOrderBy(options);
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
       const rows = udb.db.prepare<DbRow>(sql).all(...params);
-      callback(null, this.applyProjection(this.rowsToItems(rows), options));
+      callback(null, this.applyProjection(this.rowsToItems(rows, udb.userId), options));
     });
   }
 
   findIncludingDeletionsAndVersions (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<Array<TItem | null>>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
-      const { sql: where, params } = this.buildWhere(query || {});
+      const { sql: where, params } = this.buildWhere(query || {}, udb.userId);
       const orderBy = this.buildOrderBy(options);
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
       const rows = udb.db.prepare<DbRow>(sql).all(...params);
-      callback(null, this.applyProjection(this.rowsToItems(rows), options));
+      callback(null, this.applyProjection(this.rowsToItems(rows, udb.userId), options));
     });
   }
 
   findOne (userOrUserId: UserOrId, query: Query, options: Options, callback: Callback<TItem | null>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
-      const { sql: where, params } = this.buildWhere(q);
+      const { sql: where, params } = this.buildWhere(q, udb.userId);
       const sql = `SELECT * FROM ${this.tableName} ${where} LIMIT 1`.trim();
       const row = udb.db.prepare<DbRow>(sql).get(...params);
       if (!row) return callback(null, null);
-      const item = this.rowToItem(row);
+      const item = this.rowToItem(row, udb.userId);
       const arr = this.applyProjection([item], options);
       callback(null, arr[0]);
     });
@@ -330,10 +338,10 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   findDeletion (userOrUserId: UserOrId, query: Query, _options: Options, callback: Callback<TItem | null>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = Object.assign({}, query || {}, { deleted: { $ne: null } });
-      const { sql: where, params } = this.buildWhere(q);
+      const { sql: where, params } = this.buildWhere(q, udb.userId);
       const sql = `SELECT * FROM ${this.tableName} ${where} LIMIT 1`.trim();
       const row = udb.db.prepare<DbRow>(sql).get(...params);
-      callback(null, row ? this.rowToItem(row) : null);
+      callback(null, row ? this.rowToItem(row, udb.userId) : null);
     });
   }
 
@@ -341,12 +349,12 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q: Query = { deleted: { $gt: deletedSince } };
       if (this.hasHeadIdCol) q.headId = null;
-      const { sql: where, params } = this.buildWhere(q);
+      const { sql: where, params } = this.buildWhere(q, udb.userId);
       const orderBy = this.buildOrderBy(options);
       const { clause: lim } = this.buildLimitOffset(options);
       const sql = `SELECT * FROM ${this.tableName} ${where} ${orderBy}${lim}`.trim();
       const rows = udb.db.prepare<DbRow>(sql).all(...params);
-      callback(null, this.rowsToItems(rows));
+      callback(null, this.rowsToItems(rows, udb.userId));
     });
   }
 
@@ -360,7 +368,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   protected _insertOneSync (udb: UserDb, item: Partial<TItem>): TItem | null {
     const prepared = this.applyDefaults(item);
-    const { id, head_id: headId, deleted, data } = this.itemToRow(prepared);
+    const { id, head_id: headId, deleted, data } = this.itemToRow(prepared, udb.userId);
     const cols: string[] = ['id'];
     const placeholders: string[] = ['?'];
     const vals: SqlParam[] = [id];
@@ -372,7 +380,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       .run(...vals);
 
     const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(id);
-    return this.rowToItem(row);
+    return this.rowToItem(row, udb.userId);
   }
 
   // The read-modify-write methods below run under BEGIN IMMEDIATE: the write
@@ -388,13 +396,13 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
    *  so a subclass can compose it with other statements inside ONE
    *  `udb.db.transaction`. See the class note on the `_<method>Sync` variants. */
   protected _findOneAndUpdateSync (udb: UserDb, query: Query, updatedData: UpdateData): TItem | null {
-    const { sql: where, params } = this.buildWhere(query || {});
+    const { sql: where, params } = this.buildWhere(query || {}, udb.userId);
     const row = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
     if (!row) return null;
-    const merged = this.applyUpdateToItem(this.rowToItem(row), updatedData);
+    const merged = this.applyUpdateToItem(this.rowToItem(row, udb.userId), updatedData);
     this._writeMerged(udb, row.id, merged);
     const updated = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} WHERE id = ?`).get(row.id);
-    return this.rowToItem(updated);
+    return this.rowToItem(updated, udb.userId);
   }
 
   updateOne (userOrUserId: UserOrId, query: Query, updatedData: UpdateData, callback: Callback<TItem | null>): void {
@@ -431,7 +439,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
         setArgs.push(`${jsonPathSql(s.path)}, json(?)`);
         setParams.push(JSON.stringify(s.value));
       }
-      const { sql: where, params: whereParams } = this.buildWhere(query || {});
+      const { sql: where, params: whereParams } = this.buildWhere(query || {}, this.getUserIdFromUserOrUserId(userOrUserId));
       const conds: string[] = [where || 'WHERE 1'];
       const guardParams: SqlParam[] = [];
       for (const g of guards) {
@@ -461,11 +469,11 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   /** Synchronous core of `updateMany`. See `_findOneAndUpdateSync`. */
   protected _updateManySync (udb: UserDb, query: Query, updatedData: UpdateData): { modifiedCount: number } {
-    const { sql: where, params } = this.buildWhere(query || {});
+    const { sql: where, params } = this.buildWhere(query || {}, udb.userId);
     const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where}`).all(...params);
     let modified = 0;
     for (const r of rows) {
-      const merged = this.applyUpdateToItem(this.rowToItem(r), updatedData);
+      const merged = this.applyUpdateToItem(this.rowToItem(r, udb.userId), updatedData);
       this._writeMerged(udb, r.id, merged);
       modified++;
     }
@@ -479,7 +487,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   removeOne (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
-      const { sql: where, params } = this.buildWhere(query || {});
+      const { sql: where, params } = this.buildWhere(query || {}, udb.userId);
       const row = udb.db.prepare<DbRow>(`SELECT id FROM ${this.tableName} ${where} LIMIT 1`).get(...params);
       if (!row) return 0;
       udb.db.prepare(`DELETE FROM ${this.tableName} WHERE id = ?`).run(row.id);
@@ -489,7 +497,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   removeMany (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     this._userDbAndWrite(userOrUserId, callback, (udb) => {
-      const { sql: where, params } = this.buildWhere(query || {});
+      const { sql: where, params } = this.buildWhere(query || {}, udb.userId);
       const res = udb.db.prepare(`DELETE FROM ${this.tableName} ${where}`).run(...params);
       return res.changes;
     });
@@ -502,7 +510,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   count (userOrUserId: UserOrId, query: Query, callback: Callback<number>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const q = this.addImplicitFilters(query || {});
-      const { sql: where, params } = this.buildWhere(q);
+      const { sql: where, params } = this.buildWhere(q, udb.userId);
       const row = udb.db.prepare<DbRow>(`SELECT COUNT(*) AS cnt FROM ${this.tableName} ${where}`).get(...params);
       callback(null, row?.cnt ?? 0);
     });
@@ -524,7 +532,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       await udb.ensureTable(this.tableName, { withDeleted: this.hasDeletedCol, withHeadId: this.hasHeadIdCol });
       const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName}`).all();
       for (const row of rows) {
-        yield this.rowToItem(row);
+        yield this.rowToItem(row, udb.userId);
       }
     }
   }
@@ -534,7 +542,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   exportAll (userOrUserId: UserOrId, callback: Callback<Array<TItem | null>>): void {
     this._userDbAnd(userOrUserId, callback, (udb) => {
       const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName}`).all();
-      callback(null, this.rowsToItems(rows));
+      callback(null, this.rowsToItems(rows, udb.userId));
     });
   }
 
@@ -549,7 +557,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
       const stmt = udb.db.prepare(`INSERT OR IGNORE INTO ${this.tableName} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`);
       const tx = udb.db.transaction((arr: Array<Partial<TItem>>) => {
         for (const it of arr) {
-          const row = this.itemToRow(this.applyDefaults(it));
+          const row = this.itemToRow(this.applyDefaults(it), udb.userId);
           const vals: SqlParam[] = [row.id];
           if (this.hasHeadIdCol) vals.push(row.head_id);
           if (this.hasDeletedCol) vals.push(row.deleted);
@@ -657,7 +665,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
   }
 
   protected _writeMerged (udb: UserDb, id: string, merged: SqliteStoredItem): void {
-    const row = this.itemToRow(Object.assign({}, merged, { id }));
+    const row = this.itemToRow(Object.assign({}, merged, { id }), udb.userId);
     const cols: string[] = [];
     const vals: SqlParam[] = [];
     if (this.hasHeadIdCol) { cols.push('head_id = ?'); vals.push(row.head_id); }
@@ -727,12 +735,12 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   /** Synchronous core of `findAndUpdateIfNeeded`. See `_findOneAndUpdateSync`. */
   protected _findAndUpdateIfNeededSync (udb: UserDb, query: Query, options: Options, updateIfNeededCallback: (item: TItem) => UpdateData | null): { count: number } {
-    const { sql: where, params } = this.buildWhere(query || {});
+    const { sql: where, params } = this.buildWhere(query || {}, udb.userId);
     const orderBy = this.buildOrderBy(options);
     const rows = udb.db.prepare<DbRow>(`SELECT * FROM ${this.tableName} ${where} ${orderBy}`.trim()).all(...params);
     let updates = 0;
     for (const r of rows) {
-      const item = this.rowToItem(r);
+      const item = this.rowToItem(r, udb.userId);
       if (item == null) continue;
       const updateQuery = updateIfNeededCallback(item);
       if (updateQuery == null) continue;

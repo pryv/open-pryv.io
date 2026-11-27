@@ -18,6 +18,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { AccessesSQLite } = require('../src/user/AccessesSQLite.ts');
+const tokenProtection = require('business/src/accesses/tokenProtection.ts').createTokenProtection('test-key');
 const { UserBaseStorageDb } = require('../src/userBaseStorage/UserBaseStorageDb.ts');
 
 function newAccessParams () {
@@ -30,7 +31,7 @@ describe('[AIGS] AccessesSQLite write-time integrity guard', function () {
       isActive: true,
       set: (item) => { item.integrity = 'ACCESS:0:sha256-stub'; }
     };
-    const storage = new AccessesSQLite(activeSetting);
+    const storage = new AccessesSQLite(activeSetting, tokenProtection);
     const out = storage.applyDefaults(newAccessParams());
     assert.strictEqual(out.integrity, 'ACCESS:0:sha256-stub');
   });
@@ -40,7 +41,7 @@ describe('[AIGS] AccessesSQLite write-time integrity guard', function () {
       isActive: true,
       set: () => { /* no-op: models a silently-disabled integrity ref */ }
     };
-    const storage = new AccessesSQLite(brokenSetting);
+    const storage = new AccessesSQLite(brokenSetting, tokenProtection);
     assert.throws(
       () => storage.applyDefaults(newAccessParams()),
       /access persisted without an integrity property/
@@ -49,7 +50,7 @@ describe('[AIGS] AccessesSQLite write-time integrity guard', function () {
 
   it('[AIG7] inactive integrity is a no-op — no value, no throw', function () {
     const inactiveSetting = { isActive: false, set: () => {} };
-    const storage = new AccessesSQLite(inactiveSetting);
+    const storage = new AccessesSQLite(inactiveSetting, tokenProtection);
     const out = storage.applyDefaults(newAccessParams());
     assert.strictEqual(out.integrity, undefined);
   });
@@ -91,13 +92,14 @@ describe('[AITXS] AccessesSQLite integrity writes run in one better-sqlite3 tran
         return run;
       }
     };
-    const fakeUdb = { db: fakeDb, ensureTable: async () => {} };
+    // `readyTables`: the first-use token conversion already ran on this handle.
+    const fakeUdb = { db: fakeDb, ensureTable: async () => {}, userId: 'u', readyTables: new Set(['accesses']) };
     UserBaseStorageDb.forUser = async () => fakeUdb;
   });
   afterEach(function () { UserBaseStorageDb.forUser = originalForUser; });
 
   it('[AITXS1] updateOne wraps both statements in one db.transaction', function (done) {
-    const storage = new AccessesSQLite(activeSetting);
+    const storage = new AccessesSQLite(activeSetting, tokenProtection);
     storage.updateOne({ id: 'u' }, { id: 'acc-x' }, { modified: 1, $set: { name: 'n2' } }, (err) => {
       try {
         assert.ifError(err);
@@ -110,7 +112,7 @@ describe('[AITXS] AccessesSQLite integrity writes run in one better-sqlite3 tran
   });
 
   it('[AITXS2] delete wraps batch-unset + recompute in one db.transaction', function (done) {
-    const storage = new AccessesSQLite(activeSetting);
+    const storage = new AccessesSQLite(activeSetting, tokenProtection);
     storage.delete({ id: 'u' }, { id: 'acc-x' }, (err) => {
       try {
         assert.ifError(err);

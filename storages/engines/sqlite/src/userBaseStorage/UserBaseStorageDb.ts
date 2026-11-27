@@ -89,6 +89,7 @@ class UserBaseStorageDb {
     // Refused for a database not there yet in an erased account's kept directory.
     const dbPath: string = await _internals.userLocalDirectory.ensureUserFile(userId, `baseStorage-${VERSION}.sqlite`);
     const inst = new UserBaseStorageDb(dbPath);
+    inst.userId = userId;
     await inst.init();
     inst.fileId = await fileIdentity(dbPath);
     UserBaseStorageDb.cache.set(userId, inst);
@@ -107,7 +108,11 @@ class UserBaseStorageDb {
   db!: SqliteDb;
   dbPath: string;
   fileId: string | null = null;
+  /** The user this database belongs to (set by `open`). */
+  userId: string | null = null;
   knownTables: Set<string> = new Set();
+  /** Tables whose rows were checked by a collection's first-use hook (see `BaseStorageSQLite.onUserDbReady`). */
+  readyTables: Set<string> = new Set();
 
   constructor (dbPath: string) {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });

@@ -422,7 +422,7 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
 
   insertOne (userOrUserId: UserOrId, item: Partial<T>, callback: Callback<T | null>): void {
     const userId = this.getUserIdFromUserOrUserId(userOrUserId);
-    item = this.applyDefaults(item);
+    item = this.toStorageItem(userId, this.applyDefaults(item));
 
     const cols: string[] = ['user_id'];
     const vals: unknown[] = [userId];
@@ -840,7 +840,7 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
 
     const doInserts = async (): Promise<void> => {
       for (const item of items) {
-        const prepared = this.applyDefaults(item);
+        const prepared = this.toStorageItem(userId, this.applyDefaults(item));
         const cols: string[] = ['user_id'];
         const vals: unknown[] = [userId];
         const placeholders: string[] = ['$1'];
@@ -935,6 +935,13 @@ class BaseStoragePG<T extends StoredItem = StoredItem> implements UserStorage<T>
    *  required fields. */
   applyDefaults (item: Partial<T>): T {
     return Object.assign({}, item) as T;
+  }
+
+  /** Subclasses override to change the stored form of a completed item (after
+   *  `applyDefaults`, so integrity is computed on the item, not the row).
+   *  Properties of the result map to columns. */
+  toStorageItem (_userId: string, item: T): T {
+    return item;
   }
 }
 

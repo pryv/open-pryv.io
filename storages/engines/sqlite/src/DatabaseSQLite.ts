@@ -53,9 +53,18 @@ class DatabaseSQLite {
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY,
           data TEXT NOT NULL,
-          expires INTEGER NOT NULL
+          expires INTEGER NOT NULL,
+          id_enc TEXT
         )
       `).run();
+    });
+    // `id` holds the keyed hash of the session id, `id_enc` its encrypted copy
+    // (rows of an older file are converted by `SessionsSQLite.protectClearRows`).
+    await concurrentSafeWrite.execute(() => {
+      const cols = this.db.prepare<{ name: string }>('PRAGMA table_info(sessions)').all();
+      if (!cols.some((c: { name: string }) => c.name === 'id_enc')) {
+        this.db.prepare('ALTER TABLE sessions ADD COLUMN id_enc TEXT').run();
+      }
     });
 
     await concurrentSafeWrite.execute(() => {

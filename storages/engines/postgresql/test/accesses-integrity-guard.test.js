@@ -17,6 +17,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { AccessesPG } = require('../src/user/AccessesPG.ts');
+const tokenProtection = require('business/src/accesses/tokenProtection.ts').createTokenProtection('test-key');
 
 // applyDefaults never touches the connection, so a bare stub is enough.
 const stubDb = {};
@@ -31,7 +32,7 @@ describe('[AIGP] AccessesPG write-time integrity guard', function () {
       isActive: true,
       set: (item) => { item.integrity = 'ACCESS:0:sha256-stub'; }
     };
-    const storage = new AccessesPG(stubDb, activeSetting);
+    const storage = new AccessesPG(stubDb, activeSetting, tokenProtection);
     const out = storage.applyDefaults(newAccessParams());
     assert.strictEqual(out.integrity, 'ACCESS:0:sha256-stub');
   });
@@ -41,7 +42,7 @@ describe('[AIGP] AccessesPG write-time integrity guard', function () {
       isActive: true,
       set: () => { /* no-op: models a silently-disabled integrity ref */ }
     };
-    const storage = new AccessesPG(stubDb, brokenSetting);
+    const storage = new AccessesPG(stubDb, brokenSetting, tokenProtection);
     assert.throws(
       () => storage.applyDefaults(newAccessParams()),
       /access persisted without an integrity property/
@@ -50,7 +51,7 @@ describe('[AIGP] AccessesPG write-time integrity guard', function () {
 
   it('[AIG3] inactive integrity is a no-op — no value, no throw', function () {
     const inactiveSetting = { isActive: false, set: () => {} };
-    const storage = new AccessesPG(stubDb, inactiveSetting);
+    const storage = new AccessesPG(stubDb, inactiveSetting, tokenProtection);
     const out = storage.applyDefaults(newAccessParams());
     assert.strictEqual(out.integrity, undefined);
   });
@@ -89,7 +90,7 @@ describe('[AITX] AccessesPG integrity writes run in one transaction on the tx cl
 
   it('[AITX1] updateOne runs both statements on the tx client, none on the pool', function (done) {
     const { db, calls } = makeDb();
-    const storage = new AccessesPG(db, activeSetting);
+    const storage = new AccessesPG(db, activeSetting, tokenProtection);
     storage.updateOne({ id: 'u' }, { id: 'acc-x' }, { modified: 1, $set: { name: 'n2' } }, (err) => {
       try {
         assert.ifError(err);
@@ -102,7 +103,7 @@ describe('[AITX] AccessesPG integrity writes run in one transaction on the tx cl
 
   it('[AITX2] delete runs batch-unset + recompute on the tx client, none on the pool', function (done) {
     const { db, calls } = makeDb();
-    const storage = new AccessesPG(db, activeSetting);
+    const storage = new AccessesPG(db, activeSetting, tokenProtection);
     storage.delete({ id: 'u' }, { id: 'acc-x' }, (err) => {
       try {
         assert.ifError(err);

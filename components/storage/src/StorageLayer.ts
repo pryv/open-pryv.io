@@ -23,7 +23,7 @@ const { pluginLoader } = require('storages');
  * provides an `initStorageLayer()` method that populates this instance.
  */
 type Connection = { waitForConnection: () => Promise<unknown> };
-type IntegrityOpts = { integrityAccesses?: unknown };
+type IntegrityOpts = { integrityAccesses?: unknown; tokenProtection?: unknown };
 
 class StorageLayer {
   connection: Connection | null = null;
@@ -43,6 +43,8 @@ class StorageLayer {
    *   DatabasePG instance, or null for SQLite).
    * @param [options] - Additional options from the barrel.
    * @param [options.integrityAccesses] - Integrity module for accesses.
+   * @param [options.tokenProtection] - Keyed hash + encrypted copy of access
+   *   tokens and session ids (default: resolved from the configuration).
    */
   async init (connection: Connection | null, options: IntegrityOpts = {}) {
     if (this.connection != null) {
@@ -62,7 +64,9 @@ class StorageLayer {
     await engineModule.initStorageLayer(this, connection, {
       passwordResetRequestMaxAge,
       sessionMaxAge,
-      integrityAccesses: options.integrityAccesses
+      integrityAccesses: options.integrityAccesses,
+      tokenProtection: options.tokenProtection ??
+        require('business/src/accesses/tokenProtection.ts').resolveTokenProtection(config)
     });
 
     // Validate all storage instances against their interface contracts

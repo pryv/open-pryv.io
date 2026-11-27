@@ -18,8 +18,9 @@
 module.exports = {
   async up (context) {
     const { AccessesPG } = require('../src/user/AccessesPG.ts');
+    const { currentProtection } = require('../src/tokensAtRest.ts');
     const integrity = require('business/src/integrity/index.ts').default;
-    const accesses = new AccessesPG(context.db, integrity.accesses);
+    const accesses = new AccessesPG(context.db, integrity.accesses, currentProtection());
     const res = await accesses.recomputeIntegrityOfVersionedRows();
     context.logger?.info?.('access integrity: ' + res.scanned + ' versioned rows scanned, ' + res.rewritten +
       ' rewritten, ' + res.unverified + ' left as stored (not the previous row hash)');

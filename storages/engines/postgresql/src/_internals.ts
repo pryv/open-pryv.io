@@ -50,7 +50,9 @@ const _internals = {
   get cache (): unknown { return registry.cache; },
   get createUserAccountStorage (): unknown { return registry.createUserAccountStorage; },
   get getLogger (): (name: string) => Logger { return registry.getLogger!; },
-  get config (): unknown { return registry.config; }
+  get config (): unknown { return registry.config; },
+  /** Set by `initStorageLayer`: the access-token protection of this process. */
+  get tokenProtection (): unknown { return registry.tokenProtection; }
 };
 
 export { _internals };

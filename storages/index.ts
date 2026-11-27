@@ -168,7 +168,10 @@ async function _doInit (config?: BoilerConfig) {
 
   // 4. StorageLayer
   const integrityAccesses = require('business/src/integrity/index.ts').default.accesses;
-  await storageLayer.init(connection, { integrityAccesses });
+  // Access tokens and session ids are stored as a keyed hash plus an encrypted
+  // copy; throws when no key is configured (no unkeyed fallback).
+  const tokenProtection = require('business/src/accesses/tokenProtection.ts').resolveTokenProtection(cfg);
+  await storageLayer.init(connection, { integrityAccesses, tokenProtection });
 
   // 4.5 Content-query acceleration indexes (optional engine capability —
   // engines without it serve content queries by scan, which is correct).
@@ -316,6 +319,22 @@ function runMaintenance<T> (fn: () => Promise<T>): Promise<T> {
   return pgRunMaintenance!(fn);
 }
 
+/** The access-token-at-rest passes of the base storage engine (status, conversion, guard, rollback, re-key). */
+type TokensAtRest = {
+  probeTokensAtRest: () => Promise<{ columnsReady: boolean; clearRows: boolean }>;
+  protectTokensAtRest: () => Promise<Record<string, number>>;
+  tokensAtRestStatus: () => Promise<Record<string, unknown>>;
+  unprotectTokensAtRest: () => Promise<Record<string, number>>;
+  rekeyTokensAtRest: (previous: unknown[]) => Promise<Record<string, number | boolean>>;
+};
+function getTokensAtRest (): TokensAtRest {
+  const mod = pluginLoader.getEngineModule(pluginLoader.getEngineFor('baseStorage'));
+  if (typeof mod.getTokensAtRest !== 'function') {
+    throw new Error('the base storage engine does not protect access tokens at rest');
+  }
+  return mod.getTokensAtRest();
+}
+
 /** Whether the current call runs inside `runMaintenance` (false without PostgreSQL). */
 function isInMaintenance (): boolean {
   try {
@@ -330,6 +349,7 @@ export {
   reset,
   runMaintenance,
   isInMaintenance,
+  getTokensAtRest,
   pluginLoader,
   databasePG,
   connection,

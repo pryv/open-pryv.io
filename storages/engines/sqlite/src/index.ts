@@ -50,6 +50,7 @@ interface InitOptions {
   sessionMaxAge?: number;
   passwordResetRequestMaxAge?: number;
   integrityAccesses?: unknown;
+  tokenProtection?: unknown;
   [k: string]: unknown;
 }
 
@@ -76,9 +77,15 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
 
   storageLayer.connection = sharedDb;
 
-  storageLayer.sessions = new SessionsSQLite(sharedDb, { maxAge: options.sessionMaxAge });
+  if (options.tokenProtection == null) throw new Error('SQLite storage layer: tokenProtection is required');
+  _internals.set('tokenProtection', options.tokenProtection);
+  const sessions = new SessionsSQLite(sharedDb, { maxAge: options.sessionMaxAge }, options.tokenProtection);
+  storageLayer.sessions = sessions;
+  // Sessions of a shared database written before session ids were protected:
+  // converted before anything reads them (one transaction, a no-op probe after).
+  if (sessions.hasClearRows()) await sessions.protectClearRows();
   storageLayer.passwordResetRequests = new PasswordResetRequestsSQLite(sharedDb, { maxAge: options.passwordResetRequestMaxAge });
-  storageLayer.accesses = new AccessesSQLite(options.integrityAccesses);
+  storageLayer.accesses = new AccessesSQLite(options.integrityAccesses, options.tokenProtection);
   // Access hashes stored before they covered the wire form: recomputed once
   // (no schema-migration runner for this engine; a marker file records it).
   try {
@@ -334,4 +341,9 @@ function createSeriesConnection (config: Record<string, unknown>): unknown {
   return require('./seriesStorage/index.ts').createSeriesConnection(config);
 }
 
-export { init, initStorageLayer, getUserAccountStorage, getUsersLocalIndex, getExternalIdsLocal, getDeletionNoticesLocal, getErasuresLocal, getDataStoreModule, createAuditStorage, createSeriesConnection };
+/** Access tokens and session ids at rest: see `tokensAtRest.ts`. */
+function getTokensAtRest (): unknown {
+  return require('./tokensAtRest.ts');
+}
+
+export { init, initStorageLayer, getTokensAtRest, getUserAccountStorage, getUsersLocalIndex, getExternalIdsLocal, getDeletionNoticesLocal, getErasuresLocal, getDataStoreModule, createAuditStorage, createSeriesConnection };
