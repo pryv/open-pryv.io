@@ -50,19 +50,28 @@ export default function platformConfigConformance (getDB) {
     this.timeout(20000);
     let db;
 
+    // Only this family's rows are removed: the store may be the one other
+    // suites use (a full wipe would leave their accounts without platform rows).
+    async function ownRows () {
+      return (await db.listAllPlatformKvEntries())
+        .filter(({ key }) => key.startsWith(pc.ROW_PREFIX) || key === pc.REV_KEY || key.startsWith(pc.CORE_REV_PREFIX));
+    }
+    async function clean () {
+      for (const { key } of await ownRows()) await db.deletePlatformKv(key);
+    }
+
     before(async () => {
       db = await getDB();
-      await db.deleteAll();
+      await clean();
       pc.setSchemaForTests(TEST_SCHEMA);
     });
 
-    after(() => {
+    after(async () => {
       pc.setSchemaForTests(null);
+      await clean();
     });
 
-    afterEach(async () => {
-      await db.deleteAll();
-    });
+    afterEach(clean);
 
     it('[PLATCFG1] set, get, list: validated, the revision bumps, the writer is recorded', async () => {
       assert.equal(await pc.currentRev(db), 0);
@@ -197,7 +206,7 @@ export default function platformConfigConformance (getDB) {
     it('[PLATCFG10] an unused store gets no write; the core revision is written only when it changes', async () => {
       const config = fakeConfig({ service: { name: 'Local' } });
       await pc.loadScope(config, db, 'core-a');
-      assert.deepEqual(await db.listAllPlatformKvEntries(), [], 'upgrade with no row: nothing written');
+      assert.deepEqual(await ownRows(), [], 'upgrade with no row: nothing written');
       await pc.setEntry(db, 'service.name', 'A', BY);
       await pc.loadScope(config, db, 'core-a');
       const recorded = await db.getPlatformKv('core-config-rev/core-a');
