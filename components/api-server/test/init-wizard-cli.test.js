@@ -181,9 +181,9 @@ describe('[INWZ] bin/init.js generated files', function () {
     assert.strictEqual(res.status, 0, res.output);
     const config = yaml.load(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'));
     assert.strictEqual(config.service.assets.definitions, 'https://pryv.github.io/assets-pryv.me/index.json');
-    // dnsLess: the trusted origins stay the public URL and the auth UI, nothing more.
+    // dnsLess: the trusted origins stay the public URL and the auth UI, plus the portal's app id.
     assert.deepStrictEqual(config.auth.trustedApps.split(',').map((s) => s.trim()).sort(),
-      ['*@https://account.example.com', '*@https://core.example.com']);
+      ['*@https://account.example.com', '*@https://core.example.com', 'pryv-platform-portal@https://core.example.com']);
   });
 
   it('[INWZA] the OAuth consent page defaults to the auth UI\'s /oauth2-authorize route, a key default-config.yml also carries; a consent-state key of its own is generated', () => {
@@ -513,12 +513,14 @@ describe('[INWP] bin/init.js profiles, diagnostics, cluster gating, PaaS mode an
   });
 
   describe('administration portal entry', () => {
-    it('[INWPG] dnsLess default: the published prefixed build proxied under /admin/, with the core\'s CSP', () => {
+    it('[INWPG] dnsLess default: the published build of this release proxied under /admin/, with the core\'s CSP', () => {
       const res = runWizard(configDir);
       assert.strictEqual(res.status, 0, res.output);
       const config = readConfig(configDir);
       assert.deepStrictEqual(config.portal, { site: 'admin' });
-      assert.match(config.hostedSites.admin.proxy, /^https:\/\/pryv\.github\.io\/app-web-platform-portal\/\d+\.\d+\.\d+\/prefixed\/$/);
+      const { portalPagesUrl, PORTAL_VERSION } = createRequire(import.meta.url)('business/src/admin/portalDefaults.ts');
+      assert.strictEqual(config.hostedSites.admin.proxy, `https://pryv.github.io/app-web-platform-portal/${PORTAL_VERSION}/`);
+      assert.strictEqual(config.hostedSites.admin.proxy, portalPagesUrl());
       const csp = config.hostedSites.admin.headers['content-security-policy'];
       assert.match(csp, /default-src 'self'/);
       assert.match(csp, /connect-src 'self';/);
@@ -527,11 +529,12 @@ describe('[INWP] bin/init.js profiles, diagnostics, cluster gating, PaaS mode an
       assert.strictEqual(check.status, 0, check.output);
     });
 
-    it('[INWPH] DNS topology: the root build on admin.<domain>, API calls allowed to the platform hosts', () => {
+    it('[INWPH] DNS topology: the same build on admin.<domain>, API calls allowed to the platform hosts', () => {
       const res = runWizard(configDir, [], DNS_ACTIVE_ANSWERS);
       assert.strictEqual(res.status, 0, res.output);
       const config = readConfig(configDir);
-      assert.match(config.hostedSites.admin.proxy, /\/root\/$/);
+      const { portalPagesUrl } = createRequire(import.meta.url)('business/src/admin/portalDefaults.ts');
+      assert.strictEqual(config.hostedSites.admin.proxy, portalPagesUrl());
       assert.match(config.hostedSites.admin.headers['content-security-policy'], /connect-src 'self' https:\/\/\*\.example\.invalid;/);
       assert.match(res.output, /https:\/\/admin\.example\.invalid\//);
     });
@@ -554,6 +557,39 @@ describe('[INWP] bin/init.js profiles, diagnostics, cluster gating, PaaS mode an
 
       res = runWizard(configDir, ['--force'], ANSWERS + 'portal.site: system\n');
       assert.match(res.output, /Administration portal: hostedSites\.system/);
+    });
+
+    it('[INWPN] the portal\'s app id is trusted from the portal origin only, whatever the site name; none adds no entry', () => {
+      const dirs = [];
+      /** Runs the wizard in a fresh directory; answers its trusted app entries. */
+      const trusted = (answers, check) => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'init-wizard-'));
+        dirs.push(dir);
+        const res = runWizard(dir, [], answers);
+        assert.strictEqual(res.status, 0, res.output);
+        check?.(dir, res);
+        return readConfig(dir).auth.trustedApps.split(',').map((s) => s.trim());
+      };
+      try {
+        // dnsLess: the portal is on the public URL's origin, under any site name.
+        let entries = trusted(ANSWERS + 'portal.site: console\n', (dir, res) => {
+          assert.strictEqual(readConfig(dir).hostedSites.console.proxy, createRequire(import.meta.url)('business/src/admin/portalDefaults.ts').portalPagesUrl());
+          assert.doesNotMatch(res.output, /needs a custom build/, 'any site name works with the published build');
+          assert.strictEqual(checkConfig(dir).status, 0);
+        });
+        assert.ok(entries.includes('pryv-platform-portal@https://core.example.com'), entries.join(', '));
+        // DNS topology: the portal's own host.
+        entries = trusted(DNS_ACTIVE_ANSWERS);
+        assert.ok(entries.includes('pryv-platform-portal@https://admin.example.invalid'), entries.join(', '));
+        // An operator's own list keeps its entries; the portal's is added once.
+        entries = trusted(DNS_ACTIVE_ANSWERS + "auth.trustedapps: '*@https://app.example.com, pryv-platform-portal@https://admin.example.invalid'\n");
+        assert.deepStrictEqual(entries, ['*@https://app.example.com', 'pryv-platform-portal@https://admin.example.invalid']);
+        // No portal: no entry.
+        entries = trusted(ANSWERS + 'portal.mode: none\n');
+        assert.ok(!entries.some((e) => e.startsWith('pryv-platform-portal@')), entries.join(', '));
+      } finally {
+        for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 

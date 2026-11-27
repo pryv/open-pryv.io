@@ -140,6 +140,24 @@
 - The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
   `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
 
+### Administration portal settings: internals
+
+- `business/src/admin/config.ts`: `describeAdminConfig` also validates `portal.url`, `portal.spaces` and
+  `portal.modules.{disabled,order}` (boot and `bin/check-config.js` through the same validator); `portalUrl()` returns
+  `portal.url` when set, so the `/system` origin rule accepts that portal's origin; `portalSettings()` and
+  `portalServiceInfo()` build the settings answer and the service-info field.
+- `portalDefaults.ts`: `portalPagesUrl()` takes no topology (one relative-base build per version), plus
+  `PORTAL_APP_ID` and `PORTAL_SPACES`. Method `system.portalSettings.get` (public, not audited) in `systemAdmin.ts`,
+  its row in `system-permissions.ts`; the four keys are classified public / platform for the effective config; the
+  service-info result schema accepts `portal`. Tests `[ADCF8]`, `[ADCF9]`, `[ADMS26]`, `[ADMS27]`, `[SN14]`,
+  `[INWPN]`; init snapshots updated.
+- `system.portalContext.get` gives `core.url` through `platform.coreIdToUrl()`, as `system.listCores` does
+  (`[ADMS16]`).
+- `hostedSitesIngress.ts` `rewriteLocation()` resolves the upstream `Location` against the request target and
+  answers null (the proxy then answers 502, logged as a warning) when it leaves the upstream base (`[HSTL]`).
+- `bin/check-config.js`: the dnsLess shared-origin warning for the portal (`[CKPS1]`, `[CKPS2]`) and the clear-text
+  portal origin warning (`[CKPS3]`). `[ADMS28]`: a session call from the `portal.url` origin, and look-alikes.
+
 ## 2.0.0-rc.91 - 2026-11-27
 
 ### Storage engines: interface versions checked at boot

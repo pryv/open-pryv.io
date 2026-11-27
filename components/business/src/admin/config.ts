@@ -7,14 +7,19 @@
 
 import { hostedSiteNames } from '../hostedSites.ts';
 import { isSha256Hex } from './codes.ts';
-import { portalUrl as portalAddress } from './portalDefaults.ts';
+import { portalUrl as portalAddress, PORTAL_SPACES, PORTAL_CONTRACT } from './portalDefaults.ts';
 
 /**
  * Configuration of setup and administration:
  *
  *   portal.site                     PLATFORM-WIDE  hosted site serving the portal (null: none; the
  *                                                  install wizard names it PORTAL_DEFAULT_SITE, `admin`)
+ *   portal.url                      PLATFORM-WIDE  address of a portal hosted outside the platform
+ *                                                  (null; not with portal.site)
  *   portal.cors.allowedOrigins      PLATFORM-WIDE  extra origins of a portal hosted outside the platform
+ *   portal.spaces                   PLATFORM-WIDE  portal spaces offered ([admin, developer])
+ *   portal.modules.disabled         PLATFORM-WIDE  portal module ids switched off ([])
+ *   portal.modules.order            PLATFORM-WIDE  portal module ids listed first, in this order ([])
  *   setup.codeTtlHours              PLATFORM-WIDE  lifetime of a setup code (24)
  *   setup.codeHash                  BOOTSTRAP      SHA-256 of an operator-supplied setup code (null)
  *   setup.printCode                 PER-CORE       print the setup code block at boot (true)
@@ -34,7 +39,13 @@ export type AdminKeyScope = 'full' | 'break-glass';
 export type RegistrationWhilePending = 'closed' | 'open';
 
 export type AdminConfig = {
-  portal: { site: string | null; allowedOrigins: string[] };
+  portal: {
+    site: string | null;
+    url: string | null;
+    allowedOrigins: string[];
+    spaces: string[];
+    modules: { disabled: string[]; order: string[] };
+  };
   setup: { codeTtlMs: number; codeHash: string | null; printCode: boolean; registrationWhilePending: RegistrationWhilePending };
   adminAccessKeyScope: AdminKeyScope;
   session: { ttlMs: number; stepUpMs: number; requireMfa: boolean };
@@ -59,6 +70,21 @@ function asNumber (v: unknown, fallback: number): number | undefined {
   if (v == null || v === '') return fallback;
   const n = typeof v === 'string' ? Number(v) : v;
   return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+}
+
+/** A portal module id: letters, digits, `.`, `_`, `-`, starting with a letter or digit. */
+const MODULE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
+/** An absolute http(s) URL without credentials, query or fragment. */
+function isPortalAddress (v: unknown): v is string {
+  if (typeof v !== 'string') return false;
+  try {
+    const u = new URL(v);
+    return (u.protocol === 'https:' || u.protocol === 'http:') && u.username === '' && u.password === '' &&
+      u.search === '' && u.hash === '';
+  } catch {
+    return false;
+  }
 }
 
 function isOrigin (v: unknown): boolean {
@@ -103,6 +129,44 @@ export function describeAdminConfig (config: ConfigReader): AdminConfigReport {
     }
   }
 
+  // portal.url
+  let url: string | null = null;
+  const rawUrl = config.get('portal:url');
+  if (rawUrl != null && rawUrl !== '') {
+    if (!isPortalAddress(rawUrl)) {
+      problem('portal.url', 'must be the absolute http(s) address of a portal hosted outside the platform (no credentials, query or fragment), or null');
+    } else if (rawSite != null && rawSite !== '') {
+      problem('portal.url', 'and portal.site are both set: portal.site names a portal served by the platform, portal.url one hosted outside it; keep one');
+    } else {
+      url = new URL(rawUrl).href; // one form for clients (lower-case host, a path)
+    }
+  }
+
+  // portal.spaces
+  let spaces: string[] = [...PORTAL_SPACES];
+  const rawSpaces = config.get('portal:spaces');
+  if (rawSpaces != null) {
+    if (!Array.isArray(rawSpaces) || rawSpaces.length === 0 ||
+        !rawSpaces.every((s) => typeof s === 'string' && PORTAL_SPACES.includes(s)) ||
+        new Set(rawSpaces).size !== rawSpaces.length) {
+      problem('portal.spaces', `must be a non-empty list of distinct portal spaces among: ${PORTAL_SPACES.join(', ')}`);
+    } else {
+      spaces = [...rawSpaces];
+    }
+  }
+
+  // portal.modules.disabled, portal.modules.order
+  const moduleIds = (key: 'disabled' | 'order'): string[] => {
+    const raw = config.get('portal:modules:' + key);
+    if (raw == null) return [];
+    if (!Array.isArray(raw) || !raw.every((m) => typeof m === 'string' && MODULE_ID_RE.test(m))) {
+      problem('portal.modules.' + key, 'must be a list of portal module ids (letters, digits, ".", "_" or "-")');
+      return [];
+    }
+    return [...new Set(raw as string[])];
+  };
+  const modules = { disabled: moduleIds('disabled'), order: moduleIds('order') };
+
   // setup.*
   let ttlHours = asNumber(config.get('setup:codeTtlHours'), DEFAULTS.codeTtlHours);
   if (ttlHours == null || ttlHours <= 0 || ttlHours > LIMITS.codeTtlHours) {
@@ -144,7 +208,7 @@ export function describeAdminConfig (config: ConfigReader): AdminConfigReport {
   if (requireMfa == null) problem('admin.session.requireMfa', 'must be true or false');
 
   const value: AdminConfig = {
-    portal: { site, allowedOrigins },
+    portal: { site, url, allowedOrigins, spaces, modules },
     setup: {
       codeTtlMs: ttlHours * 3600 * 1000,
       codeHash,
@@ -180,11 +244,13 @@ function trimSlash (url: string): string {
 }
 
 /**
- * The portal's address on this platform (derived from `portal.site` and the
- * topology, by the same rule the install wizard prints), or null.
+ * The portal's address: on this platform, derived from `portal.site` and the
+ * topology (by the same rule the install wizard prints); outside it,
+ * `portal.url`; else null.
  */
 export function portalUrl (config: ConfigReader): string | null {
-  const { site } = describeAdminConfig(config).value.portal;
+  const { site, url } = describeAdminConfig(config).value.portal;
+  if (url != null) return url;
   if (site == null) return null;
   const publicUrl = config.get('dnsLess:publicUrl');
   if (config.get('dnsLess:isActive') === true && typeof publicUrl === 'string' && publicUrl !== '') {
@@ -193,6 +259,22 @@ export function portalUrl (config: ConfigReader): string | null {
   const domain = config.get('dns:domain');
   if (typeof domain === 'string' && domain !== '') return portalAddress({ site, dnsLess: false, dnsDomain: domain });
   return null;
+}
+
+/**
+ * `GET /system/portal/settings`: what the portal shows on this platform
+ * (public, nothing secret). Values of an invalid configuration fall back to
+ * their defaults (the core does not boot with one).
+ */
+export function portalSettings (config: ConfigReader): { contract: number; spaces: string[]; modules: { disabled: string[]; order: string[] } } {
+  const { spaces, modules } = describeAdminConfig(config).value.portal;
+  return { contract: PORTAL_CONTRACT, spaces: [...spaces], modules: { disabled: [...modules.disabled], order: [...modules.order] } };
+}
+
+/** The `portal` field of service info, or null when no portal address is known. */
+export function portalServiceInfo (config: ConfigReader): { contract: number; url: string } | null {
+  const url = portalUrl(config);
+  return url == null ? null : { contract: PORTAL_CONTRACT, url };
 }
 
 /** The built-in setup page of this core, or null when the core has no public address configured. */

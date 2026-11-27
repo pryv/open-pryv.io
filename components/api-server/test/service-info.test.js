@@ -136,6 +136,32 @@ describe('[SINF] Service', () => {
       });
     });
 
+    it('[SN14] advertises portal { contract, url } on /service/info and /reg/service/info only when a portal is configured', async () => {
+      const { PORTAL_CONTRACT } = require('business/src/admin/portalDefaults.ts');
+      const paths = ['/' + username + '/service/info', '/reg/service/info'];
+      for (const p of paths) {
+        const plain = await coreRequest.get(p);
+        assert.strictEqual(plain.status, 200, p);
+        assert.ok(!('portal' in plain.body), p + ': portal must be absent unless configured');
+      }
+      const sites = { admin: { proxy: 'https://example.github.io/portal/' } };
+      // A hosted site: the address the topology gives it (the rule itself: [ADCF6], [ADCF9]).
+      await withInjectedConfig({ hostedSites: sites, portal: { site: 'admin' }, dns: { domain: 'sn14.example.org' } }, async () => {
+        const expected = require('business/src/admin/config.ts').portalUrl(await getConfig());
+        assert.ok(typeof expected === 'string' && expected.endsWith('/admin/'), String(expected));
+        for (const p of paths) {
+          const res = await coreRequest.get(p);
+          assert.deepStrictEqual(res.body.portal, { contract: PORTAL_CONTRACT, url: expected }, p);
+          validation.check(res, { status: 200, schema: methodsSchema.get.result });
+        }
+      });
+      await withInjectedConfig({ portal: { url: 'https://portal.example.com/' } }, async () => {
+        for (const p of paths) {
+          assert.deepStrictEqual((await coreRequest.get(p)).body.portal, { contract: PORTAL_CONTRACT, url: 'https://portal.example.com/' }, p);
+        }
+      });
+    });
+
     it('[SN05] advertises features.mfa.methods=["totp"] under the shipped default', async () => {
       const res = await coreRequest.get('/' + username + '/service/info');
       assert.strictEqual(res.status, 200);

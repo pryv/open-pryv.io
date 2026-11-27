@@ -146,8 +146,8 @@ export function setupChecks (input: SetupChecksInput): SetupCheck[] {
     : 'Open: anyone can register before setup is finished.');
   const portal = portalUrl(config);
   add('portal', 'info', 'Administration portal', portal != null
-    ? `Configured at ${portal} (hosted site '${cfg.portal.site}').`
-    : 'No portal configured (portal.site is null): this built-in page and the command line cover setup.');
+    ? `Configured at ${portal} (${cfg.portal.site != null ? `hosted site '${cfg.portal.site}'` : 'outside the platform, portal.url'}).`
+    : 'No portal configured (portal.site and portal.url are null): this built-in page and the command line cover setup.');
   add('admin-key', 'info', 'Admin key scope', cfg.adminAccessKeyScope === 'break-glass'
     ? 'break-glass: the admin key reaches only the break-glass routes; administration goes through administrator sessions.'
     : 'full: the admin key still authenticates every /system route (auth.adminAccessKeyScope).');

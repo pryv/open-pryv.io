@@ -38,7 +38,7 @@ import type { AdminStore } from 'business/src/admin/store.ts';
  *
  * Origin rule: a request that carries an `Origin` and is not authenticated by
  * the admin key is accepted only from the core's own origin, the platform's
- * portal origin (`portal.site` with the topology) or one listed in
+ * portal origin (`portal.site` with the topology, or `portal.url`) or one listed in
  * `portal.cors.allowedOrigins`, and gets CORS headers for that origin only.
  * Admin-key calls and requests without `Origin` keep the API-wide behaviour.
  */
