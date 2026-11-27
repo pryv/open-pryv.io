@@ -131,7 +131,12 @@ describe('[ADCF] setup and administration configuration', function () {
       assert.match(messages(config({ 'portal:url': bad })).join('\n'), /^portal\.url must be/m, String(bad));
     }
     const sites = { admin: { proxy: 'https://example.github.io/portal/' } };
-    assert.match(messages(config({ 'portal:url': 'https://portal.example.com/', 'portal:site': 'admin', hostedSites: sites }))[0], /portal\.url and portal\.site are both set/);
+    const both = config({ 'portal:url': 'https://portal.example.com/', 'portal:site': 'admin', hostedSites: sites });
+    assert.match(messages(both)[0], /portal\.url and portal\.site are both set/);
+    assert.equal(describeAdminConfig(both).value.portal.url, null, 'the gate then knows the site origin only');
+    assert.equal(describeAdminConfig(both).value.portal.site, 'admin');
+    // One published form: lower-case host, a path.
+    assert.equal(readAdminConfig(config({ 'portal:url': 'HTTPS://Portal.Example.com' })).portal.url, 'https://portal.example.com/');
     for (const bad of [[], ['admin', 'admin'], ['admin', 'ops'], 'admin', [1]]) {
       assert.match(messages(config({ 'portal:spaces': bad }))[0], /^portal\.spaces must be/, JSON.stringify(bad));
     }

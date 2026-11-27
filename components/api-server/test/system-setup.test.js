@@ -500,6 +500,23 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     });
   });
 
+  it('[ADMS28] an administrator session call from the portal.url origin is accepted with CORS; a look-alike origin is refused', async () => {
+    await ready();
+    const user = await freshUser();
+    const token = await owner(user);
+    // A path in portal.url: the origin is its scheme, host and port.
+    await withInjectedConfig({ portal: { url: 'https://Portal.Example.com/console/' } }, async () => {
+      const ok = await coreRequest.get('/system/admin/users').set(asSession(token)).set('origin', 'https://portal.example.com');
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+      assert.equal(ok.headers['access-control-allow-origin'], 'https://portal.example.com');
+      for (const lookAlike of ['https://portal.example.com.evil.net', 'http://portal.example.com', 'https://portal.example.com:8443', 'https://evil-portal.example.com']) {
+        const refused = await coreRequest.get('/system/admin/users').set(asSession(token)).set('origin', lookAlike);
+        assert.equal(refused.status, 404, lookAlike);
+        assert.equal(refused.headers['access-control-allow-origin'], undefined, lookAlike);
+      }
+    });
+  });
+
   // --------------------- origin rule ----------------- //
 
   it('[ADMS17] origin rule: a session call from a foreign origin is refused without CORS; from the core\'s own origin it is answered with CORS for it; an admin-key call is unchanged', async () => {

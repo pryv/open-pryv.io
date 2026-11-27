@@ -265,6 +265,20 @@ describe('[CKPS] bin/check-config.js portal next to other hosted sites', functio
     assert.doesNotMatch(alone.stdout + alone.stderr, /shares this platform's origin/);
   });
 
+  it('[CKPS3] a portal.url or an allowed portal origin over http is a warning, except on a loopback address', () => {
+    const CLEAR = /portal origin http:\/\/portal\.example\.com .*uses http/;
+    const external = runCheck(BASE + 'portal:\n  url: http://portal.example.com/console/\n');
+    assert.strictEqual(external.status, 0, external.stdout + external.stderr);
+    assert.match(external.stdout + external.stderr, CLEAR);
+    const origin = runCheck(BASE + 'portal:\n  cors:\n    allowedOrigins: [http://portal.example.com]\n');
+    assert.match(origin.stdout + origin.stderr, CLEAR);
+    for (const quiet of ['https://portal.example.com/', 'http://127.0.0.1:5173/', 'http://portal.localhost:5173/']) {
+      const res = runCheck(BASE + `portal:\n  url: ${quiet}\n`);
+      assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+      assert.doesNotMatch(res.stdout + res.stderr, /uses http: administrator sessions/, quiet);
+    }
+  });
+
   it('[CKPS2] DNS topology: each site has its own origin, no warning', () => {
     const dns = BASE.replace('  isActive: true\n', '  isActive: false\n') + 'dns:\n  domain: example.org\n' + sites(['admin', 'docs']);
     const res = runCheck(dns);

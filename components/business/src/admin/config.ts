@@ -138,7 +138,7 @@ export function describeAdminConfig (config: ConfigReader): AdminConfigReport {
     } else if (rawSite != null && rawSite !== '') {
       problem('portal.url', 'and portal.site are both set: portal.site names a portal served by the platform, portal.url one hosted outside it; keep one');
     } else {
-      url = rawUrl;
+      url = new URL(rawUrl).href; // one form for clients (lower-case host, a path)
     }
   }
 

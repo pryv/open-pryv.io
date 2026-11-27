@@ -1110,8 +1110,9 @@ hostedSites: {}
 # that carry an Origin are accepted from the core's own origin, the portal's, and
 # `cors.allowedOrigins` (a portal hosted outside the platform; scheme + host [+ port]).
 # `url`: the address of a portal hosted outside the platform, instead of `site` (its origin
-# is then accepted as the portal's). Service info publishes `portal: { contract, url }`
-# when either gives an address.
+# is then accepted as the portal's; add `pryv-platform-portal@<its origin>` to auth.trustedApps
+# so the portal can sign in). Service info publishes `portal: { contract, url }` when either
+# gives an address.
 # `spaces`, `modules`: what the portal shows on this platform, published without
 # authentication at GET /system/portal/settings (no rebuild of the portal needed).
 portal:

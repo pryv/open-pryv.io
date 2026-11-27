@@ -321,6 +321,21 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
           res.end();
           return;
         }
+        // Location cases of [HSTL]: /docs/loc/<case>
+        const LOCATIONS = {
+          'double-slash': '/docs//evil.example/x',
+          'protocol-relative': '//elsewhere.example/x',
+          sibling: '/docsx/y',
+          credentials: `http://u:p@127.0.0.1:${upstreamPort}/docs/x`,
+          'dot-segment': '/docs/../outside',
+          'base-no-slash': '/docs'
+        };
+        const loc = /^\/docs\/loc\/([a-z-]+)$/.exec(req.url);
+        if (loc != null && LOCATIONS[loc[1]] != null) {
+          res.writeHead(302, { location: LOCATIONS[loc[1]] });
+          res.end();
+          return;
+        }
         res.writeHead(200, {
           'content-type': 'text/html',
           etag: '"v1"',
@@ -452,7 +467,11 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal((await get('/sub/redirect-relative')).headers.location, '/sub/page/');
       // Another origin (e.g. the upstream host moved to a custom domain), or a
       // path of the upstream outside the base: never sent to the visitor.
-      for (const p of ['/redirect-away', '/redirect-outside']) {
+      // A double slash after the base stays a path of the site, never `//host`.
+      assert.equal((await get('/loc/double-slash')).headers.location, '/evil.example/x');
+      // The base without its slash is the site root.
+      assert.equal((await get('/loc/base-no-slash')).headers.location, '/');
+      for (const p of ['/redirect-away', '/redirect-outside', '/loc/protocol-relative', '/loc/sibling', '/loc/credentials', '/loc/dot-segment']) {
         const r = await get(p);
         assert.equal(r.status, 502, p);
         assert.equal(r.headers.location, undefined, p);

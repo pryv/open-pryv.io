@@ -204,6 +204,12 @@ runs on; give the user id for an account of another core.
 set together with `portal.url`). Service info (`/service/info`, `/reg/service/info`) carries
 `portal: { contract, url }` when either gives the portal an address.
 
+The portal signs in with the app id `pryv-platform-portal`: `auth.trustedApps` must accept it from the portal's
+origin. The install wizard adds `pryv-platform-portal@<portal origin>` when it writes a `portal.site` entry; with
+`portal.url`, add `pryv-platform-portal@<origin of portal.url>` yourself, or the portal's sign-in is refused.
+`bin/check-config.js` warns when `portal.url` or an origin of `portal.cors.allowedOrigins` uses `http:` on another
+host than a loopback address.
+
 ## Audit
 
 Each act (setup session, first administrator, finish, code replacement, session start, renewal, step-up and end,

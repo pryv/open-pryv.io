@@ -510,6 +510,15 @@ try {
   // dnsLess: every hosted site is served on the API's origin, the portal's
   // too, so a script of another site can read the administrator session the
   // portal keeps in that origin's sessionStorage.
+  // A clear-text portal origin is accepted for administrator sessions:
+  // fine on a loopback address (development), worth a word anywhere else.
+  const isLoopback = (h) => h === 'localhost' || h.endsWith('.localhost') || h === '[::1]' || /^127\./.test(h);
+  const clearText = [report.value.portal.url, ...report.value.portal.allowedOrigins]
+    .filter((u) => u != null)
+    .filter((u) => { const { protocol, hostname } = new URL(u); return protocol === 'http:' && !isLoopback(hostname); });
+  for (const u of clearText) {
+    warnings.push(`the portal origin ${new URL(u).origin} (portal.url or portal.cors.allowedOrigins) uses http: administrator sessions opened from it travel in clear. Serve that portal over https.`);
+  }
   const portalSite = report.value.portal.site;
   if (portalSite != null && configReader.get('dnsLess:isActive') === true) {
     const { hostedSiteNames } = require('../components/business/src/hostedSites.ts');

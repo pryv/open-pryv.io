@@ -137,7 +137,8 @@
   (`[ADMS16]`).
 - `hostedSitesIngress.ts` `rewriteLocation()` resolves the upstream `Location` against the request target and
   answers null (the proxy then answers 502, logged as a warning) when it leaves the upstream base (`[HSTL]`).
-- `bin/check-config.js`: the dnsLess shared-origin warning for the portal (`[CKPS1]`, `[CKPS2]`).
+- `bin/check-config.js`: the dnsLess shared-origin warning for the portal (`[CKPS1]`, `[CKPS2]`) and the clear-text
+  portal origin warning (`[CKPS3]`). `[ADMS28]`: a session call from the `portal.url` origin, and look-alikes.
 
 ## 2.0.0-rc.91 - 2026-11-27
 

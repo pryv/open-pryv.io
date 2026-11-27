@@ -298,6 +298,9 @@ function buildHostedSitesIngress (opts: {
     if (resolved.pathname.startsWith(base.pathname)) rest = resolved.pathname.slice(base.pathname.length);
     else if (resolved.pathname + '/' === base.pathname) rest = '';
     else return null;
+    // `<base>/host/x` (a double slash after the base) would read as `//host/x`
+    // with the `/` prefix of the DNS topology: another host for a browser.
+    rest = rest.replace(/^\/+/, '');
     return prefix + rest + resolved.search + resolved.hash;
   }
 
