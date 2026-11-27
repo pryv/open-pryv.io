@@ -107,21 +107,27 @@ const userStreams = ds.createUserStreams({
 
   async createDeleted (this: Store, userId: string, streamData: StoredStream): Promise<void> {
     const db = this.userStreamsStorage.db;
-    const existing = await db.query(
-      'SELECT id FROM streams WHERE user_id = $1 AND id = $2',
-      [userId, streamData.id]
-    );
-    if (existing.rows.length > 0) {
-      await db.query(
-        'UPDATE streams SET deleted = $2, name = NULL, parent_id = NULL WHERE user_id = $1 AND id = $3',
-        [userId, streamData.deleted, streamData.id]
+    try {
+      const existing = await db.query(
+        'SELECT id FROM streams WHERE user_id = $1 AND id = $2',
+        [userId, streamData.id]
       );
-    } else {
-      await db.query(
-        `INSERT INTO streams (user_id, id, name, path, deleted)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [userId, streamData.id, streamData.name || null, streamData.id + '/', streamData.deleted]
-      );
+      if (existing.rows.length > 0) {
+        await db.query(
+          'UPDATE streams SET deleted = $2, name = NULL, parent_id = NULL WHERE user_id = $1 AND id = $3',
+          [userId, streamData.deleted, streamData.id]
+        );
+      } else {
+        await db.query(
+          `INSERT INTO streams (user_id, id, name, path, deleted)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [userId, streamData.id, streamData.name || null, streamData.id + '/', streamData.deleted]
+        );
+      }
+    } finally {
+      // Bust after the write, like every other write of the streams table:
+      // marking a live stream deleted removes it from the cached tree.
+      _internals.cache.unsetUserData(userId);
     }
   },
 

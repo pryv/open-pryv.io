@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 /* global cache, describe, before, after, it, assert, cuid, config, initTests, initCore, coreRequest, getNewFixture, charlatan, withInjectedConfig */
 
 const STREAMS = {
@@ -163,6 +166,23 @@ describe('[CACH] Cache', function () {
 
     const res5 = await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ streams: ['T'] });
     assert.strictEqual(res5.status, 403, 'should not have acces once move out of authorized scope');
+  });
+
+  it('[CDLB] Recording the deletion of a live stream drops it from the cached tree', async () => {
+    const { getMall } = require('mall');
+    const mall = await getMall();
+    const id = 'cdlb-' + cuid();
+    await mall.streams.create(user.id, { id, name: id });
+    const res1 = await coreRequest.get(streamsPath).set('Authorization', personalToken);
+    assert.strictEqual(res1.status, 200);
+    assert.ok(res1.body.streams.some((s) => s.id === id), 'the new stream is listed');
+    assert.ok(cache.getStreams(user.id, 'local'), 'the tree is cached');
+
+    await mall.streams.create(user.id, { id, deleted: Date.now() / 1000 });
+
+    const res2 = await coreRequest.get(streamsPath).set('Authorization', personalToken);
+    assert.strictEqual(res2.status, 200);
+    assert.ok(!res2.body.streams.some((s) => s.id === id), 'the deleted stream is no longer listed');
   });
 });
 

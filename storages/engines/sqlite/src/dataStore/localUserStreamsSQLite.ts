@@ -55,9 +55,10 @@ function cloneStream (stream: StoredStream, childrenDepth: number): StoredStream
 }
 
 /**
- * SQLite data store: streams implementation. Mirrors localUserStreamsPG;
- * the SQLite engine doesn't get the `cache` internal (manifest), so reads
- * always go through storage (no memoization).
+ * SQLite data store: streams implementation. Mirrors localUserStreamsPG,
+ * including the per-user streams cache (the `cache` internal, see the
+ * manifest); without that internal (standalone engine tests) every read goes
+ * to storage.
  */
 const userStreams = ds.createUserStreams({
   userStreamsStorage: null,
@@ -120,16 +121,22 @@ const userStreams = ds.createUserStreams({
     });
     // The connection has no busy timeout: another process writing the same
     // user file makes a bare write fail with SQLITE_BUSY ("database is locked").
-    await concurrentSafeWrite.execute(() => {
-      const existing = udb.db.prepare('SELECT id FROM streams WHERE id = ?').get(streamData.id);
-      if (existing) {
-        udb.db.prepare('UPDATE streams SET deleted = ?, data = ? WHERE id = ?')
-          .run(streamData.deleted, dataJson, streamData.id);
-      } else {
-        udb.db.prepare('INSERT INTO streams (id, deleted, data) VALUES (?, ?, ?)')
-          .run(streamData.id, streamData.deleted, dataJson);
-      }
-    });
+    try {
+      await concurrentSafeWrite.execute(() => {
+        const existing = udb.db.prepare('SELECT id FROM streams WHERE id = ?').get(streamData.id);
+        if (existing) {
+          udb.db.prepare('UPDATE streams SET deleted = ?, data = ? WHERE id = ?')
+            .run(streamData.deleted, dataJson, streamData.id);
+        } else {
+          udb.db.prepare('INSERT INTO streams (id, deleted, data) VALUES (?, ?, ?)')
+            .run(streamData.id, streamData.deleted, dataJson);
+        }
+      });
+    } finally {
+      // Bust after the write, like every other write of the streams table:
+      // marking a live stream deleted removes it from the cached tree.
+      if (_internals.cache) _internals.cache.unsetUserData(userId);
+    }
   },
 
   async create (this: Store, userId: string, streamData: StoredStream): Promise<StoredStream> {

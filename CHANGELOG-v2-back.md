@@ -87,6 +87,15 @@
   change without a matching version decision and table update fails the suite with a message saying what to bump
   and update. Tests `[IFPA]` to `[IFPD]`.
 
+### Cache: evaluation memo, deletion records bust the stream tree
+
+- `components/cache/EVAL-2026-11-27.md`: cache on vs off under PostgreSQL and SQLite (throughput, latency, stream
+  table reads per request, invalidation paths, the `[FELT]` threshold). Outcome: keep the cache on both engines.
+- `createDeleted` of the local streams store (PostgreSQL and SQLite) now busts the user's cached stream tree and
+  access logic after its write, like the other stream writes; marking a live stream deleted left it in the cached
+  tree until the max age. Only reachable through `mall.streams.create` with a `deleted` timestamp (test fixtures).
+  Test `[CDLB]`.
+
 ### Password reset and notices: auto-deletion notices, transfer claim mails
 
 - `sendAutoDeletionMail`: the held-address check covers the stored-email branch only (`to == null`); a
