@@ -43,6 +43,7 @@ import { platform } from 'platform';
  *   GET    /system/admin/roles               roles:read
  *   DELETE /system/admin/roles/:userId       roles:grant (step-up)
  *   GET    /system/admin/portal/context      any administrator subject
+ *   GET    /system/portal/settings           public, the portal's spaces and modules (portal.*)
  *
  * A personal token is valid on its account's home core only: elsewhere these
  * routes answer an error naming the home core's URL.
@@ -241,6 +242,10 @@ export default function systemSetup (expressApp: Application, app: AppLike) {
 
   // --------------------- portal ----------------- //
   expressApp.get(Paths.System + '/admin/portal/context', setMethodId('system.portalContext.get'), (req: AdminRequest, res: Response, next: NextFunction) => {
+    res.set('Cache-Control', 'no-store');
+    call(req, res, next, {}, 200);
+  });
+  expressApp.get(Paths.System + '/portal/settings', setMethodId('system.portalSettings.get'), (req: AdminRequest, res: Response, next: NextFunction) => {
     res.set('Cache-Control', 'no-store');
     call(req, res, next, {}, 200);
   });

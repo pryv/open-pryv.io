@@ -94,7 +94,8 @@ export const SYSTEM_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
   { method: 'GET', path: '/system/admin/roles', methodId: 'system.roles.list', rule: { auth: 'admin', permission: 'roles:read', breakGlass: true } },
   { method: 'DELETE', path: '/system/admin/roles/:userId', methodId: 'system.roles.delete', rule: { auth: 'admin', permission: 'roles:grant', breakGlass: true } },
   // --- portal --- //
-  { method: 'GET', path: '/system/admin/portal/context', methodId: 'system.portalContext.get', rule: { auth: 'admin', permission: null, breakGlass: true, accepts: WITH_SETUP } }
+  { method: 'GET', path: '/system/admin/portal/context', methodId: 'system.portalContext.get', rule: { auth: 'admin', permission: null, breakGlass: true, accepts: WITH_SETUP } },
+  { method: 'GET', path: '/system/portal/settings', methodId: 'system.portalSettings.get', rule: { auth: 'public' } }
 ] as SystemRouteEntry[]);
 
 type Compiled = { entry: SystemRouteEntry; segments: string[] };

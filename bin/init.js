@@ -964,8 +964,13 @@ ${hasHostedSites ? '# # The hostedSites: block above already holds the administr
 # # is printed; node bin/admin.js setup-code --hash makes one).
 # # portal:
 # #   site: ${hasHostedSites ? '<the hosted site above>' : 'null'}   # the hosted site that is the portal
+# #   url: null   # instead of site: the address of a portal hosted outside the platform
 # #   cors:
 # #     allowedOrigins: []   # a portal hosted outside the platform: https://host[:port]
+# #   spaces: [admin, developer]   # the portal spaces offered (GET /system/portal/settings)
+# #   modules:
+# #     disabled: []   # portal module ids switched off
+# #     order: []      # portal module ids listed first, in this order
 # # setup:
 # #   codeTtlHours: 24
 # #   codeHash: null
@@ -1966,7 +1971,8 @@ async function main () {
     trustedOrigins.add(`https://access.${dnsDomain}`);
   }
   const defaultTrustedApps = [...trustedOrigins].map(o => `*@${o}`).join(', ');
-  const trustedApps = await ask(`  auth.trustedApps (auth UI + publicUrl origins${dnsLess ? '' : ' + reg/access hosts'})`, defaultTrustedApps, 'auth.trustedapps');
+  // The portal's own entry is added with the portal step below.
+  let trustedApps = await ask(`  auth.trustedApps (auth UI + publicUrl origins${dnsLess ? '' : ' + reg/access hosts'})`, defaultTrustedApps, 'auth.trustedapps');
 
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const serviceSerial = await ask('  service.serial (build tag)', today, 'service.serial');
@@ -2023,6 +2029,11 @@ async function main () {
     if (portalMode === 'static') {
       portalStatic = await askNonEmpty('  Folder holding the portal build (its index.html), inside the container', `${absConfigDir}/sites/${portalSite}`, 'portal.static');
     }
+    // The portal signs in with its own app id from its own origin.
+    const portalEntry = `${portalDefaults.PORTAL_APP_ID}@${originOf(portalDefaults.portalUrl({ site: portalSite, dnsLess, publicUrl, dnsDomain }))}`;
+    if (!trustedApps.split(',').map(s => s.trim()).includes(portalEntry)) {
+      trustedApps = trustedApps.trim() === '' ? portalEntry : `${trustedApps}, ${portalEntry}`;
+    }
   }
   console.log();
 
@@ -2065,16 +2076,13 @@ async function main () {
   }
 
   if (portalMode === 'static' && !fs.existsSync(path.join(portalStatic, 'index.html'))) {
-    warnings.push(`No index.html in ${portalStatic} yet: unpack the portal release there (the ${dnsLess ? 'prefixed/' : 'root/'} build) before starting, the core refuses to boot without it.`);
-  }
-  if (portalMode === 'pages' && dnsLess && portalSite !== portalDefaults.PORTAL_DEFAULT_SITE) {
-    warnings.push(`The published portal build for dnsLess is served under /${portalDefaults.PORTAL_DEFAULT_SITE}/; under /${portalSite}/ it needs a custom build (portal.mode static, or your own proxy).`);
+    warnings.push(`No index.html in ${portalStatic} yet: unpack the portal release there before starting, the core refuses to boot without it.`);
   }
   // The portal entry, checked by the same validator as boot and check-config.
   let portalHostedSites = null;
   if (portalMode !== 'none') {
     const entry = portalMode === 'pages'
-      ? { proxy: portalDefaults.portalPagesUrl({ dnsLess }) }
+      ? { proxy: portalDefaults.portalPagesUrl() }
       : { static: portalStatic };
     entry.headers = { 'content-security-policy': portalDefaults.portalSiteCsp({ dnsLess, dnsDomain }) };
     portalHostedSites = { [portalSite]: entry };

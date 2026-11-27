@@ -195,6 +195,10 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['hostedSites.*.hsts', P, p],
   ['portal.site', P, p],
   ['portal.cors.allowedOrigins', P, p],
+  ['portal.url', P, p],
+  ['portal.spaces', P, p],
+  ['portal.modules.disabled', P, p],
+  ['portal.modules.order', P, p],
   ['setup.codeTtlHours', P, p],
   // The hash of a high-entropy code cannot give the code back; still not shown.
   ['setup.codeHash', S, c],

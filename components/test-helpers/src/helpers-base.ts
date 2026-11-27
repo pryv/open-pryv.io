@@ -346,6 +346,29 @@ function getMochaHooks (isParallelMode = false) {
     }
   }
 
+  /**
+   * Removes every account the run leaves behind: repository, platform rows
+   * and user directories. Suites create users in many ways (fixtures,
+   * dynamic data sets, registrations through a spawned server) and many never
+   * remove them; once another component's run wipes the shared platform
+   * store, such a user stays in the repository without its platform rows and
+   * the next run fails the integrity hook before its first test.
+   * Sequential runs only (parallel workers own their databases), and only
+   * when this run opened the storages. `PRYV_TEST_KEEP_DATA=1` keeps the data
+   * for inspection.
+   */
+  async function removeRunUsers () {
+    if (process.env.MOCHA_PARALLEL === '1' || process.env.PRYV_TEST_KEEP_DATA === '1') return;
+    if (require('storages').storageLayer == null) return;
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const usersRepository = await getUsersRepository();
+    await usersRepository.deleteAll();
+    await userLocalDirectory.init();
+    for (const userId of await userLocalDirectory.listUserIds()) {
+      await userLocalDirectory.deleteUserDirectory(userId);
+    }
+  }
+
   return {
     async beforeAll (this: any) {
       // Spawning worker-private rqlited can take 5-10s on slower boxes
@@ -431,6 +454,7 @@ function getMochaHooks (isParallelMode = false) {
           this.timeout(30000 + INTEGRITY_HOOK_TIMEOUT_MS);
           await checkIndexAndPlatformIntegrity('END of run, after ' + path.basename(seenFile ?? checkedFile));
         }
+        await removeRunUsers();
       } finally {
         await teardownParallelWorker();
       }

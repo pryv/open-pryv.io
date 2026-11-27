@@ -256,6 +256,44 @@ With the account transfer (below), the administrator reset of 2.0.0-rc.90 also h
   before it completed is checked the same way when it is repeated. Ordinary delegation invites are
   not affected.
 
+### Administration portal: public settings route, `portal` in service info
+
+- **`GET /system/portal/settings`** (no authentication, nothing secret): what the administration portal shows on this
+  platform, `{ contract, spaces, modules: { disabled, order } }`. `contract` is the portal contract this core
+  implements (an integer); the rest comes from new optional keys: `portal.spaces` (default `[admin, developer]`),
+  `portal.modules.disabled` and `portal.modules.order` (module ids, default `[]`). Changing them needs no rebuild of
+  the portal. A call with an `Origin` follows the `/system` origin rule (the core's own origin, the portal's, or
+  `portal.cors.allowedOrigins`).
+- **Service info** (`/service/info`, `/reg/service/info`) carries `portal: { contract, url }` when a portal is
+  configured: `portal.site` naming a hosted site (the address comes from the topology: `<publicUrl>/<site>/` in
+  dnsLess, `https://<site>.<dns.domain>/` otherwise), or the new key `portal.url`, the address of a portal hosted
+  outside the platform (its origin is then accepted by the `/system` origin rule; published in one form, lower-case
+  host with a path). Absent otherwise; an explicit `service.portal` wins. **With `portal.url`, add
+  `pryv-platform-portal@<its origin>` to `auth.trustedApps`**: the portal signs in with that app id, and only the
+  install wizard's `portal.site` entry adds it for you.
+- **Behaviour change:** `GET /system/admin/portal/context`: `core.url` is now given in the same form as
+  `GET /system/admin/cores` (the core's URL with a trailing slash, **an empty string when the core knows no
+  address**); it was `core.url` from the configuration as is (without the slash, or `null`).
+- Boot and `bin/check-config.js` refuse an unknown space, an empty or repeated space list, a malformed module id, a
+  `portal.url` that is not an absolute http(s) address, and `portal.url` set together with `portal.site`.
+- `bin/check-config.js` warns, in dnsLess, when the portal shares the platform's origin with other hosted sites:
+  their pages can read the administrator session the portal keeps in that origin's `sessionStorage`. Host there
+  only sites you would trust with it, or use the DNS topology (each site on its own origin). It also warns when
+  `portal.url` or an origin of `portal.cors.allowedOrigins` uses `http:` on another host than a loopback address
+  (administrator sessions would travel in clear).
+- **Behaviour change, hosted sites with `proxy:`**: an upstream redirect (`Location`) that leaves the upstream base
+  (another origin, credentials in the URL, or a path outside the configured base) now answers **502** instead of
+  being passed to the visitor unchanged, so a site never sends its visitors off the platform's name (e.g. when the
+  upstream host moves to another domain). **Check your proxied sites** if their upstream legitimately redirects
+  elsewhere (a custom domain, a moved page): point `proxy:` at the final address. Redirects inside the base are
+  rewritten to the site's address as before, relative ones included; a double slash after the base stays a path of
+  the site.
+- Install wizard: the portal published on GitHub Pages is now one build per version
+  (`https://pryv.github.io/app-web-platform-portal/<version>/`) that works under any site name, in both topologies
+  (the warning about a custom build for another site name in dnsLess is gone); and the wizard adds
+  `pryv-platform-portal@<portal origin>` to `auth.trustedApps` when it writes the portal entry, so the portal can
+  sign in.
+
 ## 2.0.0-rc.91 - 2026-11-27
 
 ### Operators: the reference nginx vhost throttles every spelling of the OAuth endpoints

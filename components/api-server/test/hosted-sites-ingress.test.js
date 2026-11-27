@@ -306,6 +306,36 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
           res.end();
           return;
         }
+        if (req.url.startsWith('/docs/redirect-outside')) {
+          res.writeHead(302, { location: '/outside/x' });
+          res.end();
+          return;
+        }
+        if (req.url.startsWith('/docs/redirect-query')) {
+          res.writeHead(301, { location: `http://127.0.0.1:${upstreamPort}/docs/target/?a=1` });
+          res.end();
+          return;
+        }
+        if (req.url.startsWith('/docs/sub/redirect-relative')) {
+          res.writeHead(302, { location: 'page/' });
+          res.end();
+          return;
+        }
+        // Location cases of [HSTL]: /docs/loc/<case>
+        const LOCATIONS = {
+          'double-slash': '/docs//evil.example/x',
+          'protocol-relative': '//elsewhere.example/x',
+          sibling: '/docsx/y',
+          credentials: `http://u:p@127.0.0.1:${upstreamPort}/docs/x`,
+          'dot-segment': '/docs/../outside',
+          'base-no-slash': '/docs'
+        };
+        const loc = /^\/docs\/loc\/([a-z-]+)$/.exec(req.url);
+        if (loc != null && LOCATIONS[loc[1]] != null) {
+          res.writeHead(302, { location: LOCATIONS[loc[1]] });
+          res.end();
+          return;
+        }
         res.writeHead(200, {
           'content-type': 'text/html',
           etag: '"v1"',
@@ -430,10 +460,23 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(r.body, 'upstream:/docs/guide/caf%C3%A9%20menu.html');
     });
 
-    it('[HSTL] rewrites a Location inside the upstream base to the site; keeps others', async function () {
+    it('[HSTL] rewrites a Location inside the upstream base to the site; one leaving it answers 502', async function () {
       assert.equal((await get('/redirect-abs')).headers.location, '/target/');
       assert.equal((await get('/redirect-rel')).headers.location, '/other/');
-      assert.equal((await get('/redirect-away')).headers.location, 'https://elsewhere.example/x');
+      assert.equal((await get('/redirect-query')).headers.location, '/target/?a=1');
+      assert.equal((await get('/sub/redirect-relative')).headers.location, '/sub/page/');
+      // Another origin (e.g. the upstream host moved to a custom domain), or a
+      // path of the upstream outside the base: never sent to the visitor.
+      // A double slash after the base stays a path of the site, never `//host`.
+      assert.equal((await get('/loc/double-slash')).headers.location, '/evil.example/x');
+      // The base without its slash is the site root.
+      assert.equal((await get('/loc/base-no-slash')).headers.location, '/');
+      for (const p of ['/redirect-away', '/redirect-outside', '/loc/protocol-relative', '/loc/sibling', '/loc/credentials', '/loc/dot-segment']) {
+        const r = await get(p);
+        assert.equal(r.status, 502, p);
+        assert.equal(r.headers.location, undefined, p);
+        assert.equal(r.headers['x-frame-options'], 'DENY', p + ': the site headers');
+      }
     });
 
     it('[HSTM] upstream status passes through; HEAD has no body; POST answers 405 without reaching upstream', async function () {

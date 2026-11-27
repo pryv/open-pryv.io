@@ -27,7 +27,7 @@ import { setupCodeFileOf } from 'business/src/admin/setupBoot.ts';
 import type * as Migrations from 'storages/interfaces/migrations/index.ts';
 import { setDeletionGuard, setDeletionTeardownStep } from 'business/src/auth/deletionTeardown.ts';
 import type { RoleRow } from 'business/src/admin/roles.ts';
-import { readAdminConfig, adminMfaRequired, portalUrl, setupPageUrl } from 'business/src/admin/config.ts';
+import { readAdminConfig, adminMfaRequired, portalUrl, portalSettings, setupPageUrl } from 'business/src/admin/config.ts';
 import { offeredCapabilities } from 'business/src/admin/capabilities.ts';
 import { setupChecks } from 'business/src/admin/setupChecks.ts';
 import { factory as errors } from 'errors';
@@ -451,6 +451,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
 
   // ------------------------------------------------------------ portal
 
+  // Public: what the portal shows on this platform (spaces, modules), from `portal.*`.
+  systemAPI.register('system.portalSettings.get',
+    auditAs('public'),
+    wrap(async (_context, _params, result) => {
+      Object.assign(result, portalSettings(config));
+    }));
+
   systemAPI.register('system.portalContext.get',
     auditAs('subject'),
     wrap(async (context, _params, result) => {
@@ -458,7 +465,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const cfg = readAdminConfig(config);
       const state = await readSetupState(store());
       result.portalContext = {
-        core: { id: coreId(), url: platform.coreUrl },
+        // Same form as system.listCores (trailing slash), so the portal matches the two.
+        core: { id: coreId(), url: platform.coreIdToUrl(coreId()) },
         setup: { state: state?.state === 'pending' ? 'pending' : 'ready' },
         subject: { kind: subject.kind, userId: subject.userId ?? null, permissions: [...subject.permissions] },
         capabilities: offeredCapabilities(config),
