@@ -16,7 +16,9 @@ describe('[CQAC] events.get content/clientData query conditions', () => {
   let user, username, fixtures, personalToken, eventsPath;
   const eventIds = {};
 
-  before(async () => {
+  before(async function () {
+    // Core start plus fixtures: over mocha's 2 s default on a loaded machine.
+    this.timeout(30000);
     await initTests();
     await initCore();
     fixtures = getNewFixture();
