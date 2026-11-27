@@ -203,7 +203,8 @@ With the account transfer (below), the administrator reset of 2.0.0-rc.90 also h
   outside the platform (its origin is then accepted by the `/system` origin rule). Absent otherwise; an explicit
   `service.portal` wins.
 - `GET /system/admin/portal/context`: `core.url` is now given in the same form as `GET /system/admin/cores` (the
-  core's URL with a trailing slash); it was `core.url` from the configuration as is (without the slash, or null).
+  core's URL with a trailing slash, an empty string when the core knows no address); it was `core.url` from the
+  configuration as is (without the slash, or null).
 - Boot and `bin/check-config.js` refuse an unknown space, an empty or repeated space list, a malformed module id, a
   `portal.url` that is not an absolute http(s) address, and `portal.url` set together with `portal.site`.
 - `bin/check-config.js` warns, in dnsLess, when the portal shares the platform's origin with other hosted sites:
