@@ -29,7 +29,10 @@
  *     --require test-helpers/src/helpers-c.ts --timeout 0 test/bench/pg-unindexed-writes-concurrent.bench.js
  * Knobs: BENCH_WRITERS (writer counts, "1,4,8,16"), BENCH_ROUNDS (rounds per
  * side, 5), BENCH_BATCH (events per API batch call, 200), BENCH_SQL_EVENTS
- * (events per writer per SQL round, 500).
+ * (events per writer per SQL round, 500), BENCH_GUARD_BODY (`advisory`, the
+ * installed body, or `rowlock`, the row-lock body of the previous release:
+ * compare two runs). The installed body is put back at the end; a killed run
+ * leaves the row-lock body until the next boot, which reinstalls it.
  */
 
 /* global initTests, initCore, coreRequest, getNewFixture */
@@ -39,6 +42,9 @@ import cuid from 'cuid';
 import pg from 'pg';
 import * as storages from 'storages';
 import { guardTriggerToggle } from './guard-trigger-toggle.js';
+import { ROW_LOCK_FUNCTION_SQL } from '../../../../storages/engines/postgresql/src/unindexedWritesGuard.ts';
+
+const GUARD_BODY = process.env.BENCH_GUARD_BODY || 'advisory';
 
 const WRITERS = (process.env.BENCH_WRITERS || '1,4,8,16').split(',').map(Number);
 const ROUNDS = Number(process.env.BENCH_ROUNDS || 5);
@@ -67,6 +73,9 @@ describe('[PGUC] bench: PostgreSQL refusal of unindexed user rows, concurrent wr
     // The boot enables a guard trigger an earlier run left disabled.
     console.log(`PGUC events guard trigger after the boot: tgenabled ${await toggle.state()}`);
     await db.ensureUnindexedWritesGuard();
+    if (GUARD_BODY === 'rowlock') await db.query(ROW_LOCK_FUNCTION_SQL);
+    else assert.strictEqual(GUARD_BODY, 'advisory', 'BENCH_GUARD_BODY: advisory or rowlock');
+    console.log(`PGUC guard body under test: ${GUARD_BODY}`);
     const { host, port, database, user, password } = db.poolConfig;
     pool = new pg.Pool({ host, port, database, user, password, max: MAX_N + 2 });
     fixtures = getNewFixture();
@@ -87,8 +96,9 @@ describe('[PGUC] bench: PostgreSQL refusal of unindexed user rows, concurrent wr
   after(async function () {
     if (db == null) return;
     const state = await toggle.restore();
+    await db.ensureUnindexedWritesGuard(); // the installed body back after a row-lock run
     console.log(`PGUC events guard trigger at the end: tgenabled ${state}`);
-    console.log('PGUC-JSON ' + JSON.stringify(results));
+    console.log('PGUC-JSON ' + JSON.stringify({ guardBody: GUARD_BODY, results }));
     if (errorSamples.length > 0) console.log('PGUC API error samples: ' + JSON.stringify(errorSamples.slice(0, 5)));
     // Rows written without the API carry no integrity: removed before the
     // suite's integrity check.

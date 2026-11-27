@@ -70,6 +70,27 @@
   Bump policy and history: `storages/interfaces/README.md`. `storages/README.md` rewritten from the loader (it named
   factories, files and config keys that no longer exist). Tests `[IFVA]` to `[IFVH]`.
 
+### PostgreSQL unindexed-user guard: per-user advisory lock
+
+- `storages/engines/postgresql/src/unindexedWritesGuard.ts`: `refuse_unindexed_user()` takes
+  `pg_advisory_xact_lock_shared(LOCK_CLASS, hashtext(user_id))` then probes `users_index` without a row lock (two
+  statements, so the probe's snapshot follows the wait); outside READ COMMITTED it keeps `FOR KEY SHARE`. New
+  `lock_user_index_removal()` + trigger on `users_index` take the exclusive lock. Install order: removal side first;
+  if it cannot be installed, the insert function gets the row-lock body (`ROW_LOCK_FUNCTION_SQL`) so no state leaves
+  a hole. Outcome key `users_index`. `usersLocalIndex.ts` unchanged; the audit insert keeps its row lock.
+- Tests `[PGAL1]` to `[PGAL9]` (`storages/engines/postgresql/test/unindexed-user-guard.test.js`): one shared lock and
+  no tuple lock per insert, removal holds inserts back, read committed and repeatable read, id change versus
+  rename, boot repair, previous body coexistence, colliding keys, concurrent writers versus an erasure, install
+  order and the row-lock fallback on each failure of the removal side. `[PGUG*]` unchanged.
+- Bench (`[PGUC]`, `BENCH_GUARD_BODY=rowlock|advisory`, 3 alternating runs at 1 to 32 writers, macOS arm64, load 4
+  to 31 during the runs). Advisory body: MultiXacts per insert 0 at every writer count (row lock: 0.1 to 0.99 on one
+  account from 4 writers); one account against separate accounts, mean trigger time ratio 0.95 to 1.16 at 8 to 32
+  writers (row lock 1.0 to 3.3), p99 at most 107 us (row lock up to 879 us); no `MultiXactGen` or heavyweight
+  advisory-lock wait, 0 deadlocks, 0 errors; `LWLock:LockManager` on one account at most 0.31 backends per sample
+  above separate accounts at 32 writers. Single writer: median trigger time 2 to 4 us above the row lock (13 to 20
+  us), about 0.15 % of an API event. `[PGUC1]` through the API: the trigger is 0.05 to 0.54 % of a writer's event
+  time. Lock-table bound: the operator note in `CHANGELOG-v2.md` and the guard's header.
+
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 
 - `api-server/src/methods/mfa.ts`: `mfa.confirm` accepts an enrolment session only and `mfa.verify` a login session

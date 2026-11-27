@@ -493,7 +493,8 @@ class DatabasePG {
    * Install or repair the unindexed-user guard (function, triggers, enabled
    * state) under the schema advisory lock, as the boot does; for the
    * migration and for tests.
-   * @returns per guarded table: 'present', 'created', 're-enabled' or 'failed'
+   * @returns per guarded table, and `users_index` for the removal-lock
+   *   trigger: 'present', 'created', 're-enabled' or 'failed'
    */
   async ensureUnindexedWritesGuard (options: { lockTimeoutMs?: number; attempts?: number } = {}): Promise<Record<string, string>> {
     await this.ensureConnect();
