@@ -87,6 +87,17 @@ roll back or change a key.
   with `out of shared memory`. Bulk loads use `pg_restore --disable-triggers` or `SET pryv.unindexed_writes =
   'allow'`, which take no lock (as documented for the guard).
 
+### Operators (Let's Encrypt): port 80 is bound only for the http-01 challenge
+
+- With `letsEncrypt.enabled`, the master used to bind `0.0.0.0:80` for the ACME challenge server whatever the
+  challenge, including DNS-01 deployments (`dns.active` with `dns.domain`, or a `dns.domain` cluster member with
+  `letsEncrypt.certRenewer: false`), where it only answered 404. It now binds port 80 only when the derived
+  challenge is http-01 (`dnsLess.publicUrl`, or a per-core `core.url`), and logs
+  `[acme] dns-01 challenge: port 80 not bound` otherwise. A reverse proxy in front of a DNS-01 core can now listen
+  on 80 (for an HTTPS redirect) without depending on which process starts first; before, a master started first
+  held the port and the proxy failed to start. Nothing to do for http-01 deployments. A DNS-01 deployment that
+  relied on the core's 404 on port 80 now gets a refused connection there unless something else listens.
+
 ### Account auto-deletion reset and erasure ledger: the account transfer parts
 
 With the account transfer (below), the administrator reset of 2.0.0-rc.90 also handles a transfer:

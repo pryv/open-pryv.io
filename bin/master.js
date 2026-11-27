@@ -692,23 +692,29 @@ if (cluster.isPrimary) {
         // (typically `dnsLess.isActive: true`), bind a tiny HTTP server on
         // :80 that serves /.well-known/acme-challenge/<token> from an
         // in-memory store. CertRenewer.challengeCreateFn writes into the
-        // same store. DNS-01 mode skips this entirely; only the DNS
-        // writer path is exercised.
+        // same store. DNS-01 mode leaves :80 unbound, so a reverse proxy
+        // can hold it whatever the start order; only the DNS writer path
+        // is exercised.
         const { Http01ChallengeStore } = require('business/src/acme/Http01ChallengeStore.ts');
         const { createHttp01Server } = require('business/src/acme/Http01Server.ts');
+        const { http01ListenerNeeded } = require('business/src/acme/deriveHostnames.ts');
         const http01Store = new Http01ChallengeStore();
-        try {
-          const http01Server = createHttp01Server({
-            store: http01Store,
-            port: 80,
-            host: '0.0.0.0',
-            log: (m) => log('[acme] ' + m)
-          });
-          await http01Server.listenAsync();
-          log('[acme] http-01 challenge server listening on :80');
-        } catch (err) {
-          log('[acme] http-01 server failed to bind :80: ' + err.message);
-          log('[acme]   (DNS-01 deployments can ignore this; http-01 challenges will fail)');
+        if (http01ListenerNeeded(config)) {
+          try {
+            const http01Server = createHttp01Server({
+              store: http01Store,
+              port: 80,
+              host: '0.0.0.0',
+              log: (m) => log('[acme] ' + m)
+            });
+            await http01Server.listenAsync();
+            log('[acme] http-01 challenge server listening on :80');
+          } catch (err) {
+            log('[acme] http-01 server failed to bind :80: ' + err.message);
+            log('[acme]   (http-01 challenges will fail until port 80 is free for this process)');
+          }
+        } else {
+          log('[acme] dns-01 challenge: port 80 not bound (no http-01 challenge server needed)');
         }
 
         acmeOrchestrator = buildAcmeOrchestrator({

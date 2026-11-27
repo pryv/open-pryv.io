@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const assert = require('node:assert/strict');
-const { deriveHostnames } = require('../../src/acme/deriveHostnames.ts');
+const { deriveHostnames, http01ListenerNeeded } = require('../../src/acme/deriveHostnames.ts');
 
 function cfg (values) {
   return { get: (k) => values[k] };
@@ -136,5 +136,47 @@ describe('[DERIVEHOSTS] deriveHostnames', () => {
       })),
       /invalid URL/
     );
+  });
+});
+
+describe('[HT01L] http01ListenerNeeded (port 80 challenge listener)', () => {
+  it('[HT01A] dnsLess http-01 topology needs the port 80 listener', () => {
+    assert.equal(http01ListenerNeeded(cfg({
+      'dnsLess:isActive': true,
+      'dnsLess:publicUrl': 'https://api.example.com/'
+    })), true);
+  });
+
+  it('[HT01B] per-core core.url http-01 topology needs the port 80 listener', () => {
+    assert.equal(http01ListenerNeeded(cfg({
+      'dnsLess:isActive': false,
+      'core:url': 'https://core1.example.com/'
+    })), true);
+  });
+
+  it('[HT01C] embedded DNS (dns-01 wildcard) leaves port 80 free', () => {
+    assert.equal(http01ListenerNeeded(cfg({
+      'dnsLess:isActive': false,
+      'dns:active': true,
+      'core:url': 'https://core-use1.mc.example.com',
+      'dns:domain': 'mc.example.com'
+    })), false);
+  });
+
+  it('[HT01D] materialize-only cluster member (dns-01) leaves port 80 free', () => {
+    assert.equal(http01ListenerNeeded(cfg({
+      'dnsLess:isActive': false,
+      'letsEncrypt:certRenewer': false,
+      'core:url': 'https://core-euc1.mc.example.com',
+      'dns:domain': 'mc.example.com'
+    })), false);
+  });
+
+  it('[HT01E] an underivable topology keeps the former behaviour (listener bound)', () => {
+    assert.equal(http01ListenerNeeded(cfg({})), true);
+    assert.equal(http01ListenerNeeded(cfg({
+      'dnsLess:isActive': true,
+      'dnsLess:publicUrl': 'not a url'
+    })), true);
   });
 });
