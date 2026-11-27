@@ -546,6 +546,43 @@ async function subscribe (scopeName: Scope, pubsub: LocalPubsub): Promise<Transp
   };
 }
 
+type FlushOutcome = 'routed' | 'alone' | 'unreachable';
+const FLUSH_POLL_MS = 10;
+
+/**
+ * Waits until the broker has routed everything this process published before
+ * the call, for a short-lived process (a CLI) about to exit. The broker handles
+ * one connection's messages in order, so its answer to a subscription sent after
+ * them means they were routed. 'alone': this process is the broker and no other
+ * process is connected (nobody to tell). 'unreachable': not connected to a
+ * broker now (the connection is made when the process starts publishing or
+ * subscribing, so it is not waited for), or no answer in time.
+ */
+async function flushPublished (timeoutMs: number): Promise<FlushOutcome> {
+  const deadline = Date.now() + timeoutMs;
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); });
+  await Promise.race([init(), expired]);
+  clearTimeout(timer);
+  // Publications whose own init() await is still pending go out first.
+  await new Promise((resolve) => setImmediate(resolve));
+  const localClient = client;
+  if (localClient == null || localClient.cid == null) return 'unreachable';
+  if (isOwnBroker(localClient) && broker!.clients.size <= 1) return 'alone';
+  const generation = localClient.nextSubSeq++;
+  const scope = 'flush.' + localClient.cid + '.' + generation;
+  localClient.subGenerations.set(scope, generation);
+  localClient.send({ t: 'sub', scope, n: generation });
+  while (!localClient.confirmedScopes.has(scope) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, FLUSH_POLL_MS));
+  }
+  const routed = localClient.confirmedScopes.has(scope);
+  localClient.subGenerations.delete(scope);
+  localClient.confirmedScopes.delete(scope);
+  localClient.send({ t: 'unsub', scope });
+  return routed ? 'routed' : 'unreachable';
+}
+
 function setTestDeliverHook (deliverHook: DeliverHook | null) {
   testDeliverHook = deliverHook;
 }
@@ -580,5 +617,5 @@ function _setHeartbeatForTests (intervalMs: number, deadlineMs: number): void {
   if (heartbeatTimer != null) { _stopHeartbeat(); _startHeartbeat(); }
 }
 
-export { init, deliver, subscribe, setTestDeliverHook, onConnectionStateChange, _closeForTests, _isConnectedForTests, _emitConnectionStateForTests, _setHeartbeatForTests };
-export type { TransportSubscription };
+export { init, deliver, subscribe, flushPublished, setTestDeliverHook, onConnectionStateChange, _closeForTests, _isConnectedForTests, _emitConnectionStateForTests, _setHeartbeatForTests };
+export type { TransportSubscription, FlushOutcome };

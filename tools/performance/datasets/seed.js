@@ -315,11 +315,55 @@ async function apiCall (method, path, body, token) {
   if (body) opts.body = JSON.stringify(body);
 
   const res = await fetch(TARGET + path, opts);
-  const data = await res.json();
-  if (!res.ok && data.error) {
-    throw new Error(`${method} ${path}: ${data.error.message || res.status}`);
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text.length > 0 ? JSON.parse(text) : null;
+  } catch {
+    // not JSON (a proxy error page): reported below with its status
+  }
+  if (!res.ok) {
+    const err = new Error(`${method} ${path}: ${res.status} ${data?.error?.id ?? ''} ${data?.error?.message ?? text.slice(0, 120)}`.trim());
+    err.status = res.status;
+    throw err;
   }
   return data;
+}
+
+// ─── Failed writes ─────────────────────────────────────────────────
+
+// Every write the seed could not make, by reason: reported at the end, and
+// the exit code is 1 when there is any (a partial seed skews every benchmark).
+const failures = new Map();
+let failedWrites = 0;
+function recordFailure (what, err) {
+  failedWrites++;
+  // The path names the user: group by what failed and the error itself.
+  const reason = `${what}: ${err.status ?? ''} ${String(err.message).replace(/^\S+ \S+: \d+ /, '')}`;
+  failures.set(reason, (failures.get(reason) ?? 0) + 1);
+}
+
+// The API runs at most `limits.requests.maxInflightPerAccess` (32 by default)
+// calls of one access at once per worker and answers 429 past it: the events
+// are written well below that, and a 429 is retried.
+const EVENTS_IN_FLIGHT = 16;
+const MAX_RETRIES_429 = 5;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function createEvent (username, event, token) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await apiCall('POST', `/${username}/events`, event, token);
+      return true;
+    } catch (err) {
+      if (err.status === 429 && attempt < MAX_RETRIES_429) {
+        await sleep(100 * 2 ** attempt);
+        continue;
+      }
+      recordFailure(`events.create (${event.type})`, err);
+      return false;
+    }
+  }
 }
 
 async function systemCall (method, path, body) {
@@ -422,6 +466,10 @@ async function main () {
       await createUser(username);
     } catch (err) {
       console.error(`  Failed to create user: ${err.message}`);
+      if (err.status === 403) {
+        console.error('  (a fresh core keeps registration closed until its setup is finished: see "Seeding a fresh core" in README.md)');
+      }
+      recordFailure('users.create', err);
       continue;
     }
 
@@ -431,6 +479,7 @@ async function main () {
       masterToken = await login(username);
     } catch (err) {
       console.error(`  Failed to login: ${err.message}`);
+      recordFailure('auth.login', err);
       continue;
     }
 
@@ -468,6 +517,7 @@ async function main () {
         // stream might already exist
         if (!err.message.includes('already')) {
           console.error(`  Stream ${stream.id}: ${err.message}`);
+          recordFailure('streams.create', err);
         }
       }
     }
@@ -484,29 +534,26 @@ async function main () {
       restrictedToken = accessRes.access?.token || null;
     } catch (err) {
       console.error(`  Failed to create restricted access: ${err.message}`);
+      recordFailure('accesses.create', err);
       restrictedToken = masterToken; // fallback
     }
 
-    // create events in batches
+    // create events, EVENTS_IN_FLIGHT at a time
     console.log(`  Creating ${EVENTS_PER_USER} events...`);
-    const BATCH_SIZE = 100;
     let createdCount = 0;
     let errors = 0;
+    const PROGRESS_EVERY = 5000;
 
-    for (let i = 0; i < EVENTS_PER_USER; i += BATCH_SIZE) {
-      const batchEnd = Math.min(i + BATCH_SIZE, EVENTS_PER_USER);
+    for (let i = 0; i < EVENTS_PER_USER; i += EVENTS_IN_FLIGHT) {
+      const batchEnd = Math.min(i + EVENTS_IN_FLIGHT, EVENTS_PER_USER);
       const promises = [];
       for (let j = i; j < batchEnd; j++) {
-        const event = eventGen(j, EVENTS_PER_USER);
-        promises.push(
-          apiCall('POST', `/${username}/events`, event, masterToken)
-            .then(() => { createdCount++; })
-            .catch(() => { errors++; })
-        );
+        promises.push(createEvent(username, eventGen(j, EVENTS_PER_USER), masterToken)
+          .then((ok) => { if (ok) createdCount++; else errors++; }));
       }
       await Promise.all(promises);
 
-      if ((i + BATCH_SIZE) % 5000 === 0 || batchEnd === EVENTS_PER_USER) {
+      if (Math.floor(batchEnd / PROGRESS_EVERY) > Math.floor(i / PROGRESS_EVERY) || batchEnd === EVENTS_PER_USER) {
         console.log(`    ${createdCount}/${EVENTS_PER_USER} events created (${errors} errors)`);
       }
     }
@@ -599,6 +646,14 @@ async function main () {
   fs.writeFileSync(outPath, JSON.stringify(seedResult, null, 2) + '\n');
   console.log(`\nSeed result written to: ${outPath}`);
   console.log(`Users created: ${seedResult.users.length}`);
+
+  if (failedWrites > 0) {
+    console.error(`\nFAILED: ${failedWrites} write(s) of the seed failed; the seeded data is incomplete:`);
+    for (const [reason, count] of [...failures].sort((a, b) => b[1] - a[1])) {
+      console.error(`  ${count} x ${reason}`);
+    }
+    process.exitCode = 1;
+  }
 }
 
 main().catch((err) => {

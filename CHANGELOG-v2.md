@@ -98,6 +98,15 @@ roll back or change a key.
   held the port and the proxy failed to start. Nothing to do for http-01 deployments. A DNS-01 deployment that
   relied on the core's 404 on port 80 now gets a refused connection there unless something else listens.
 
+### Operators (backup): a restore into a running core invalidates its caches
+
+- `bin/backup.js --restore` (with `--overwrite` on an account the core serves) writes the storage from its own
+  process; the API workers could then serve the pre-restore stream tree and accesses (a removed access still
+  accepted) for up to `caching:accessMaxAgeSeconds`. The restore now sends the workers the same cache
+  invalidation as an account deletion, for every account it wrote (kept or rolled back), and prints
+  `Caches: the running core's workers were told ...`. When the pub/sub broker (`tcpBroker.port`) does not answer,
+  or no core is connected to it, it prints a warning instead: if the core's API is running, restart it.
+
 ### Account auto-deletion reset and erasure ledger: the account transfer parts
 
 With the account transfer (below), the administrator reset of 2.0.0-rc.90 also handles a transfer:

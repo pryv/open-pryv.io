@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Restore cache invalidation, deterministic cache test, performance seed failures
+
+- `messages`: `pubsub.flushPublished(timeoutMs)` (tcp transport `flushPublished`) lets a short-lived process wait
+  until the broker routed what it published: a `sub` to a one-off scope sent after the publications, its `subok`
+  answered in order on the same connection. Returns `routed`, `alone` (this process is the broker, nobody else
+  connected) or `unreachable` (not connected now, or no answer in time); no wire protocol change.
+  `bin/backup.js` restore calls `cache.unsetUserById` for every account it wrote (restored, rolled back, emptied,
+  failed rollback), then `flushPublished(5000)`; test `[RCBC]` restores into the running test core and reads at
+  once.
+- Cache test `[FELT]` counts the stream storage reads (`storageLayer.streams.find`) instead of timing calls: a
+  miss reads, a hit reads nothing and returns the same tree, every call reads with the cache off. Runs on both
+  engines and in CI (the SQLite and `IS_CI` skips are gone).
+- `tools/performance/datasets/seed.js`: events are written 16 at a time (the per-access in-flight ceiling is 32
+  per worker: the 100-call batches got 429 for a fifth to a third of the events, silently) with 429 retries; any
+  failed write is listed by reason at the end and the seed exits 1. `apiCall` throws on every non-2xx answer,
+  including one without a JSON error body. README: registration on a fresh core (setup finished or
+  `setup.registrationWhilePending: open`).
+
 ### Access tokens and session ids at rest: keyed hash plus encrypted copy
 
 - `components/business/src/accesses/tokenProtection.ts`: the protection object injected at storage init (contract in

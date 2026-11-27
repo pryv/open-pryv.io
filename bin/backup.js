@@ -429,6 +429,12 @@ async function runRestore (args) {
     console.log('Backup kept: integrity verification incomplete or failed.');
   }
 
+  // The running core's workers cache streams and accesses; they must drop what
+  // they hold for every account this restore wrote (kept or rolled back).
+  await bustRunningCoreCaches([
+    ...report.restored, ...(report.rolledBack ?? []), ...(report.emptied ?? []), ...(report.rollbackFailed ?? [])
+  ].map((u) => u.userId));
+
   // Print report
   console.log('\nRestore report:');
   console.log(`  Restored: ${report.restored.length} users`);
@@ -521,6 +527,39 @@ async function runRestore (args) {
   // Nothing restored because every account was erased after the backup.
   if (report.restored.length === 0 && report.erasedSince && report.erasedSince.length > 0) return 3;
   return 0;
+}
+
+const CACHE_BUST_TIMEOUT_MS = 5000;
+
+/**
+ * Tells the API workers of a running core to drop what they cache for these
+ * accounts (stream tree, access logic, names), the same invalidation the API
+ * sends when an account is deleted. This process writes the storage directly:
+ * without it, the workers would serve the pre-restore streams and accesses up
+ * to `caching:accessMaxAgeSeconds`. When no broker relays it, says to restart
+ * the workers instead.
+ */
+async function bustRunningCoreCaches (userIds) {
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return;
+  const { getConfig } = require('@pryv/boiler');
+  const config = await getConfig();
+  if (!config.get('caching:isActive')) return; // the workers of this configuration cache nothing
+  const cache = require('cache').default;
+  const { pubsub } = require('messages');
+  for (const userId of ids) cache.unsetUserById(userId);
+  const outcome = await pubsub.flushPublished(CACHE_BUST_TIMEOUT_MS);
+  if (outcome === 'routed') {
+    console.log(`Caches: the running core's workers were told to drop what they cache for the ${ids.length} account(s) written.`);
+    return;
+  }
+  const port = config.has('tcpBroker:port') ? config.get('tcpBroker:port') : 4222;
+  const maxAge = config.get('caching:accessMaxAgeSeconds') ?? 60;
+  const why = outcome === 'alone'
+    ? `no running core found on the pub/sub broker (port ${port})`
+    : `the pub/sub broker (port ${port}) did not answer`;
+  console.error(`WARNING: caches not invalidated: ${why}. If this core's API is running, restart it now: ` +
+    `its workers may serve the pre-restore streams and accesses of the restored accounts for up to ${maxAge} s (caching:accessMaxAgeSeconds).`);
 }
 
 /**
@@ -862,7 +901,11 @@ Restore:
                             a version before 2.0.0-rc.51 anyway (it holds only
                             the last delta; refused by default)
   --user, -u <userId>       Restore a single user (default: all users)
-  --overwrite               Clear existing data before import
+  --overwrite               Clear existing data before import. On a core whose
+                            API is running, the restore then tells its workers
+                            to drop their cached streams and accesses of the
+                            accounts written; when it cannot reach them it says
+                            so: restart the API then
   --skip-conflicts          Skip users with username/email conflicts, and users
                             the platform routes to another core (multi-core)
   --delete-on-success       Delete backup data after successful restore
