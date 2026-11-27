@@ -65,8 +65,9 @@ storages/         Plugin tree for storage engines (npm workspace)
     s3/             attachments on S3-compatible object stores (fileStorage)
     influxdb/       high-frequency series (seriesStorage)
   datastores/       Custom datastore plugins (e.g. `account` for system streams)
-  manifest-schema.js  Schema for engine manifests
-  pluginLoader.js     Reads `storages.<type>.engine` + loads the chosen engine
+  manifest-schema.ts  Schema for engine manifests
+  pluginLoader.ts     Checks every engine's interface versions, loads it, reads `storages.<type>.engine`
+  interfaces/versions.ts  Interface version per storage type (bump policy: interfaces/README.md)
 
 config/           default-config.yml + plugins
 Dockerfile        Canonical container (bundles rqlited, sharp)
@@ -161,7 +162,7 @@ NODE_ENV=production node bin/master.js --config /path/to/your/override-config.ym
    const engine = pluginLoader.getEngineModule(pluginLoader.getEngineFor('platformStorage'));
    ```
 
-   Adding an engine = new directory under `storages/engines/` with a `manifest.json` + `src/index.js`. Don't reinvent; the plugin pattern exists.
+   Adding an engine = new directory under `storages/engines/` with a `manifest.json` + `src/index.ts`; the manifest declares `interfaceVersions` per storage type (see `storages/README.md`). Changing what an interface asks of engines may need a version bump: `storages/interfaces/README.md` says when. Don't reinvent; the plugin pattern exists.
 
    PostgreSQL is a first-class production engine for every `storageType`. `platform` defaults to rqlite (Raft consensus is what makes multi-core work); single-core dnsLess deployments in full PG mode may select postgresql instead, the diskless shape, with `storages.file.engine: s3` for attachments and `bin/migrate-platform.js` to move platform data when the topology changes. See `README-DBs.md` for the human-readable DB layout.
 
@@ -263,7 +264,7 @@ key of `config/default-config.yml` that no rule names; an unclassified key is re
 - `docs/oauth2.md`: the OAuth2 authorization server, operator side (endpoints, registry clients and the OAuth extension, consent, token exchange for resource servers, client metadata documents (an https URL as `client_id`, served as a registry client with the operator's template), configuration, the `bin/oauth-client.js` CLI); `components/oauth2/IMPLEMENTERS-GUIDE.md` (writing an OAuth extension, new grants and scopes) and `components/oauth2/INTERNALS.md` (keyspaces, multi-core flow, consent composition, client status, metadata-document clients, purge, per-user audiences).
 - `components/business/src/acme/`: ACME orchestrator + cert renewer internals.
 - `components/platform/`: PlatformDB interface + rqlite specifics.
-- `storages/manifest-schema.js` + `storages/pluginLoader.js`: how engines are loaded.
+- `storages/README.md`, `storages/manifest-schema.ts` + `storages/pluginLoader.ts`: how engines are declared, checked and loaded; `storages/interfaces/README.md`: interface versions and when to bump them.
 - `storages/engines/<name>/manifest.json`: what each engine provides.
 
 **External docs (pryv.github.io):**

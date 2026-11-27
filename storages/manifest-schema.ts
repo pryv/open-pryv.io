@@ -18,6 +18,9 @@
  * Optional fields:
  *   requiredInternals — host capabilities the engine needs at init
  *   scripts           — setup/start scripts paths
+ *   interfaceVersions — per declared storage type, the interface version the
+ *                       engine implements (positive integer; absent = 1),
+ *                       see interfaces/README.md
  */
 
 const VALID_STORAGE_TYPES = ['baseStorage', 'dataStore', 'platformStorage', 'seriesStorage', 'fileStorage', 'auditStorage'];
@@ -27,6 +30,7 @@ type EngineManifest = {
   entrypoint: string;
   requiredInternals?: string[];
   scripts?: Record<string, string>;
+  interfaceVersions?: Record<string, number>;
   [k: string]: unknown;
 };
 
@@ -48,6 +52,21 @@ function validateManifest (manifest: unknown, engineDir: string): EngineManifest
   for (const st of m.storageTypes) {
     if (typeof st !== 'string' || !VALID_STORAGE_TYPES.includes(st)) {
       throw new Error(`Invalid manifest in ${engineDir}: unknown storageType "${st}". Valid: ${VALID_STORAGE_TYPES.join(', ')}`);
+    }
+  }
+
+  // interfaceVersions: optional object, one positive integer per declared storageType
+  if (m.interfaceVersions != null) {
+    if (typeof m.interfaceVersions !== 'object' || Array.isArray(m.interfaceVersions)) {
+      throw new Error(`Invalid manifest in ${engineDir}: "interfaceVersions" must be an object if present`);
+    }
+    for (const [st, version] of Object.entries(m.interfaceVersions as Record<string, unknown>)) {
+      if (!(m.storageTypes as string[]).includes(st)) {
+        throw new Error(`Invalid manifest in ${engineDir}: "interfaceVersions" names "${st}", which is not in "storageTypes"`);
+      }
+      if (!Number.isInteger(version) || (version as number) < 1) {
+        throw new Error(`Invalid manifest in ${engineDir}: "interfaceVersions.${st}" must be a positive integer`);
+      }
     }
   }
 
