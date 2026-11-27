@@ -166,7 +166,7 @@ just test all                     # all components (PostgreSQL — default since
 just test api-server              # single component
 just test-sqlite all              # SQLite mode (alternative engine)
 just test-parallel all            # parallel file execution
-just clean-test-data              # reset test databases
+just clean-test-data              # reset test data (leaves this checkout's rqlited stopped; `just test` starts it)
 ```
 
 ## Documentation

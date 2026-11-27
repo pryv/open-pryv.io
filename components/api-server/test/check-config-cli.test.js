@@ -20,12 +20,21 @@ const cuid = require('cuid');
 
 const CLI = path.resolve(__dirname, '../../../bin/check-config.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
+// Each check runs in a child process, killed after CLI_TIMEOUT_MS. A check
+// takes a second or two, but well over 30 s on a loaded machine (seen at a load
+// average of 40). The tests have no mocha timeout of their own: spawnSync
+// blocks, so mocha could only flag a slow test afterwards, and a test running
+// several checks would be flagged before any check timed out. Each child's
+// timeout bounds the test.
+const CLI_TIMEOUT_MS = 90000;
 
-// Each check boots a node process with the whole config stack: on a loaded
-// machine (several suites at once) that alone can take well over 30 s, and a
-// killed child reads as a wrong exit status, not as a timeout.
-const CLI_SPAWN_TIMEOUT_MS = 120000;
-const CLI_TEST_TIMEOUT_MS = 300000;
+function spawnCli (args, env) {
+  const res = spawnSync('node', args, { cwd: REPO_ROOT, encoding: 'utf8', env, timeout: CLI_TIMEOUT_MS });
+  if (res.error?.code === 'ETIMEDOUT') {
+    res.stderr = (res.stderr || '') + `\n[test] bin/check-config.js killed after ${CLI_TIMEOUT_MS / 1000} s\n`;
+  }
+  return res;
+}
 
 // The test runner itself sets `a__b` config variables: keep only the ones a
 // test passes. No NODE_ENV by default: boot (and check-config) would otherwise
@@ -36,12 +45,7 @@ function runCli (files, nodeEnv = null, extraEnv = {}) {
   for (const k of Object.keys(env)) if (/^[^_].*__/.test(k)) delete env[k];
   Object.assign(env, extraEnv);
   if (nodeEnv == null) delete env.NODE_ENV; else env.NODE_ENV = nodeEnv;
-  const res = spawnSync('node', [CLI, ...files], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-    env,
-    timeout: CLI_SPAWN_TIMEOUT_MS
-  });
+  const res = spawnCli([CLI, ...files], env);
   return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
 }
 
@@ -92,7 +96,7 @@ platform:
 const BASE = BASE_WITHOUT_PII_KEY + PII_KEY;
 
 describe('[CKCF] bin/check-config.js email verification', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CKCF1] a config that never mentions verifyEmail passes with a warning about the page URL', () => {
     const res = runCheck(BASE);
@@ -239,7 +243,7 @@ letsEncrypt:
 });
 
 describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CKBL1] says which base layer boot adds under the file', () => {
     const prod = runCheck(BASE, 'production');
@@ -265,7 +269,7 @@ describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {
 });
 
 describe('[CKPS] bin/check-config.js portal next to other hosted sites', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
   const WARNING = /portal\.site 'admin' shares this platform's origin with the hosted site\(s\) 'docs'/;
   const sites = (names) => 'hostedSites:\n' + names.map((n) => `  ${n}:\n    proxy: https://example.github.io/${n}/\n`).join('') + 'portal:\n  site: admin\n';
 
@@ -300,7 +304,7 @@ describe('[CKPS] bin/check-config.js portal next to other hosted sites', functio
 });
 
 describe('[CKSE] bin/check-config.js series engine with a SQLite base', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   const PROBLEM = /storages\.series\.engine=postgresql requires storages\.base\.engine: postgresql/;
   const withoutSeries = BASE.replace('  series:\n    engine: sqlite\n', '');
@@ -326,7 +330,7 @@ describe('[CKSE] bin/check-config.js series engine with a SQLite base', function
 });
 
 describe('[CKPK] bin/check-config.js platform.piiHmacKey', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CKPK1] hashed PII (the default) without a key is a problem', () => {
     for (const body of [
@@ -394,7 +398,7 @@ ${extra}`;
 });
 
 describe('[CKRQ] bin/check-config.js rqlite url', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   function withRqlite (block) {
     return BASE.replace('    engine: sqlite\n', '    engine: sqlite\n  engines:\n    rqlite:\n' + block);
@@ -422,7 +426,7 @@ describe('[CKRQ] bin/check-config.js rqlite url', function () {
 });
 
 describe('[CKRF] bin/check-config.js Raft TLS on a multi-core node', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   const MULTI_CORE = BASE + 'core:\n  ip: 203.0.113.7\n';
   function withRqlite (yamlBody, block) {
@@ -458,7 +462,7 @@ describe('[CKRF] bin/check-config.js Raft TLS on a multi-core node', function ()
 });
 
 describe('[CCIA] bin/check-config.js integrity.algorithm', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CCIA1] md5 and sha1 are problems; sha512 and the default pass', () => {
     for (const algorithm of ['md5', 'sha1']) {
@@ -477,7 +481,7 @@ integrity:
 });
 
 describe('[CKSS] bin/check-config.js custom system streams', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[ESOT3] an "other" custom system stream is a problem; account streams and an empty "other" list pass', () => {
     const other = runCheck(BASE + `
@@ -511,7 +515,7 @@ custom:
 });
 
 describe('[CKEV] bin/check-config.js keys supplied by environment variables', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
   const OWN_KEY = 'k3J9vQx2Lm8Pz4Rt6Wy1Ab5Cd7Ef0Gh2Ij4Kl6Mn8=';
 
   it('[CKEV1] a required key set as `a__b` in the environment is not reported missing', () => {
@@ -540,7 +544,7 @@ describe('[CKEV] bin/check-config.js keys supplied by environment variables', fu
 });
 
 describe('[CKBS] bin/check-config.js on a core joined with --bootstrap', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CKBS1] keys in bootstrap-config.yml next to the file count, as at boot; the file still wins', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-config-bs-'));
@@ -551,7 +555,7 @@ describe('[CKBS] bin/check-config.js on a core joined with --bootstrap', functio
         const env = Object.assign({}, process.env);
         for (const k of Object.keys(env)) if (/^[^_].*__/.test(k)) delete env[k];
         delete env.NODE_ENV;
-        return spawnSync('node', [CLI, file], { cwd: REPO_ROOT, encoding: 'utf8', env, timeout: CLI_SPAWN_TIMEOUT_MS });
+        return spawnCli([CLI, file], env);
       };
       assert.strictEqual(run().status, 1, 'no key anywhere');
       fs.writeFileSync(path.join(dir, 'bootstrap-config.yml'), 'platform:\n  piiHmacKey: k3J9vQx2Lm8Pz4Rt6Wy1Ab5Cd7Ef0Gh2Ij4Kl6Mn8=\n');
@@ -565,7 +569,7 @@ describe('[CKBS] bin/check-config.js on a core joined with --bootstrap', functio
 });
 
 describe('[CKOC] bin/check-config.js oauth.consentUrl', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[OPUC3] a per-user entry in the metadata-document template passes; one with the placeholder elsewhere is a problem', () => {
     const block = (audience) => BASE + `
@@ -628,7 +632,7 @@ oauth:
 });
 
 describe('[CKOI] bin/check-config.js oauth.issuer host on a platform with the embedded DNS', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   // A member of a DNS platform (dns.domain, dnsLess off): its only other note
   // is the "no DNS of its own" warning.
@@ -683,7 +687,7 @@ oauth:
 });
 
 describe('[CKSO] bin/check-config.js sso.stateKey', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CKSO1] sso.stateKey: unset with sign-in enabled is a problem, disabled is silent; a placeholder is a problem; a random value is clean', () => {
     const sso = (enabled, stateKey) => BASE + `
@@ -709,7 +713,7 @@ sso:
 });
 
 describe('[CCDL] bin/check-config.js reads the shipped defaults under the file', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   const PG_DEFAULTS = BASE.replace('storages:\n  base:\n    engine: sqlite\n  series:\n    engine: sqlite\n', '');
 
@@ -742,7 +746,7 @@ describe('[CCDL] bin/check-config.js reads the shipped defaults under the file',
 });
 
 describe('[CCMC] bin/check-config.js on a multi-core member without a DNS of its own', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   const NEITHER = /Neither dnsLess\.isActive nor dns\.active is true/;
   const withTopology = (block) => BASE.replace('dnsLess:\n  isActive: true\n  publicUrl: https://core.example.com/\n', block);
@@ -784,7 +788,7 @@ describe('[CCMC] bin/check-config.js on a multi-core member without a DNS of its
 });
 
 describe('[CCDU] bin/check-config.js on dns.domain with dnsLess.isActive left unset', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   const PROBLEM = /'dns\.domain' is set \(example\.org\) but 'dnsLess\.isActive' is not: set it explicitly/;
   const withTopology = (block) => BASE.replace('dnsLess:\n  isActive: true\n  publicUrl: https://core.example.com/\n', block);
@@ -819,7 +823,7 @@ describe('[CCDU] bin/check-config.js on dns.domain with dnsLess.isActive left un
 });
 
 describe('[CKPU] bin/check-config.js oauth.perUserIssuer', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CKPU1] on a dnsLess core the key is a problem; off it is not', () => {
     const on = runCheck(BASE + 'oauth:\n  perUserIssuer: true\n');
@@ -832,7 +836,7 @@ describe('[CKPU] bin/check-config.js oauth.perUserIssuer', function () {
 });
 
 describe('[CKSU] bin/check-config.js account.storageUsed.intervalHours', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   it('[CKSU1] a number >= 0 passes (0 turns the job off); a string or a negative value is a problem', () => {
     for (const ok of ['0', '6', '24']) {
@@ -848,7 +852,7 @@ describe('[CKSU] bin/check-config.js account.storageUsed.intervalHours', functio
 });
 
 describe('[CKPC] bin/check-config.js auth.passwordCheckConcurrency / passwordCheckQueue', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
   const withAuth = (lines) => BASE.replace('\nauth:\n', '\nauth:\n' + lines);
 
   it('[CKPC1] integers >= 0 pass; a negative, fractional or quoted value is a problem', () => {
@@ -876,7 +880,7 @@ describe('[CKPC] bin/check-config.js auth.passwordCheckConcurrency / passwordChe
 });
 
 describe('[CKLY] bin/check-config.js on a --config file with config/override-config.yml', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
 
   // A two-file deployment: `--config host-config.yml`, the secrets in config/override-config.yml.
   const HOST = BASE_WITHOUT_PII_KEY
@@ -967,7 +971,7 @@ platform:
 });
 
 describe('[CKPT] bin/check-config.js storages.engines.postgresql time limits', function () {
-  this.timeout(CLI_TEST_TIMEOUT_MS);
+  this.timeout(0);
   const withPg = (lines) => BASE.replace('\nstorages:\n', '\nstorages:\n  engines:\n    postgresql:\n' + lines);
 
   it('[CKPT1] integers >= 0 pass; a negative, fractional or quoted value is a problem', () => {

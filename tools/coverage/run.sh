@@ -41,6 +41,8 @@ fi
 if [ "$REPORT_ONLY" = false ]; then
   rm -rf "$V8DIR" coverage
   mkdir -p "$V8DIR"
+  # `just clean-test-data` leaves this checkout's rqlited stopped.
+  scripts/test-rqlited start || true
 
   run_engine() {
     local engine="$1"

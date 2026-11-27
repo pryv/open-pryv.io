@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Test tooling: a development core starts after `just clean-test-data`
+
+- `just clean-test-data` removes the one-time pass markers of the users directory (`accesses-token-protected.done`,
+  `accesses-token-unprotected`, `accesses-integrity-wire-form.done`): the token marker written under the test key
+  made a development core refuse to boot (`ForeignTokenKeyError`). It also stops this checkout's rqlited (only the
+  one `storages/engines/rqlite/scripts/start` launched: the pid file's process must name this checkout's data
+  directory, so another checkout's rqlited, a running master's or a reused pid is never signalled) and leaves it
+  stopped, so `bin/master.js` can spawn its own on the same ports; the test recipes start it again
+  (`scripts/test-rqlited start` from `scripts/components-run`, sequential mode; also the coverage and backup round
+  trip tools). Something else answering on the port still gets the keyValue-only reset.
+- `check-config` CLI tests: each check's child process is killed after 90 s instead of 30 s (a check took over 30 s
+  at a load average of 40), and the tests no longer carry a 60 s mocha timeout that a test running several checks
+  could hit first.
+
 ### SQLite: `events.get` with a stream filter no longer slows down as the stream grows
 
 - `storages/engines/sqlite` `UserDatabase`: a page sorted newest first, with a stream filter selecting fewer
