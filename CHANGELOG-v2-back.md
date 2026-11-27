@@ -31,9 +31,11 @@
   `idx_audit_time` dropped `CONCURRENTLY` (same leading columns: every use of the old index is served by the new
   one). The whole run holds a session advisory lock of its own on one dedicated client (an index being built
   concurrently reads as invalid, so two unserialized runs could drop each other's build and leave a table with no
-  time index), with `statement_timeout` and `lock_timeout` at 0 for the run (reset before the client goes back),
-  and logs before each build. The schema DDL builds the new indexes only on a database holding neither them nor
-  the old ones (fresh), so a boot never builds them without `CONCURRENTLY`. Tests `[PGTI1]` to `[PGTI4]`,
+  time index). The lock is polled with `pg_try_advisory_lock`: a session waiting in `pg_advisory_lock` holds a
+  snapshot that the holder's concurrent build waits for, a deadlock (seen in the test). The run sets
+  `statement_timeout` and `lock_timeout` to 0 (reset before the client goes back) and logs before each build. The
+  schema DDL builds the new indexes only on a database holding neither them nor the old ones (fresh), so a boot
+  never builds them without `CONCURRENTLY`. Tests `[PGTI1]` to `[PGTI4]`,
   `[PGTI6]` (two runs at once: each index built once, a third connection sees a valid time index at every look;
   fails with the lock removed), `[PGTI7]` (new index present, old one only dropped), `[PGTI8]` (other columns).
 - Measured on 1 million events and 1 million audit records (5 users, 20 rows per time value, 50 streams), median

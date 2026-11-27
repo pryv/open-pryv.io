@@ -85,12 +85,25 @@ function escapeRegExp (s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Wait for this migration's advisory lock, saying so when another session holds it. */
+const LOCK_POLL_MS = 500;
+
+/**
+ * Take this migration's advisory lock, saying so when another session holds
+ * it. Polled, never waited on with `pg_advisory_lock`: a statement waiting
+ * for the lock holds a snapshot, which the holder's concurrent build waits
+ * for in turn (a deadlock PostgreSQL then breaks by failing one of them).
+ */
 async function acquireLock (client: IndexDbClient, log: IndexLogLike): Promise<void> {
-  const res = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [TIME_ID_INDEXES_LOCK_KEY]);
-  if (res.rows[0]?.locked === true) return;
-  log.info?.('time sort indexes: another process is building them; waiting for it');
-  await client.query('SELECT pg_advisory_lock($1)', [TIME_ID_INDEXES_LOCK_KEY]);
+  let said = false;
+  for (;;) {
+    const res = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [TIME_ID_INDEXES_LOCK_KEY]);
+    if (res.rows[0]?.locked === true) return;
+    if (!said) {
+      log.info?.('time sort indexes: another process is building them; waiting for it');
+      said = true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+  }
 }
 
 /**
