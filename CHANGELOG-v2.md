@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### PostgreSQL: one order for events sharing a time, new time index (operator notice)
+
+- `events.get` and audit reads on PostgreSQL return events (records) sharing a `time` in one order, by id in the
+  direction of the time sort: pages read with `skip` no longer repeat or miss one. SQLite already did.
+- **First start of this release on PostgreSQL** (a migration, `migrations.autoRunOnStart`; else
+  `node bin/migrate.js up`): builds the index `idx_event_time_id` on `events (user_id, time, id)` and
+  `idx_audit_time_id` on `audit_events (user_id, time, eventid)`, then drops `idx_event_time` and `idx_audit_time`,
+  which they replace. Both builds run `CONCURRENTLY`: the table stays readable and writable, the start waits for
+  the build. Measured on a test machine (PostgreSQL 16, no concurrent load): about 3.5 s per million rows and per
+  table (a plain build: 2.7 s), so a core holding 50 million events and 50 million audit records starts about 6
+  minutes later once. Disk: each new index is about 1.5 times the one it replaces (74 MB instead of 50 MB per
+  million rows with 32-character ids); both coexist during the build. A build interrupted (core stopped) leaves
+  an invalid index that the next start drops and builds again.
+- A core using a SQLite base storage with the PostgreSQL audit engine runs no PostgreSQL migration: its existing
+  `audit_events` keeps `idx_audit_time` (the order is still fixed; a page then sorts its time ties). To get the
+  new index there, run at any time (reads and writes go on):
+  `CREATE INDEX CONCURRENTLY idx_audit_time_id ON audit_events (user_id, time, eventid);` then
+  `DROP INDEX CONCURRENTLY idx_audit_time;`. A fresh database gets the new indexes in any setup.
+
 ### Access tokens and session ids no longer stored in clear (operator notice)
 
 Nothing changes for clients: the same tokens, the same `token` and `apiEndpoint` in every response, the same

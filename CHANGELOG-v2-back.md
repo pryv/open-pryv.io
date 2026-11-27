@@ -16,6 +16,26 @@
   at a load average of 40), and the tests no longer carry a 60 s mocha timeout that a test running several checks
   could hit first.
 
+### PostgreSQL: time sorts with a tie-breaker, served by `(user_id, time, id)` indexes
+
+- `localUserEventsPG.ts` `buildEventQuery` and `UserAuditDatabasePG.ts` `buildSelectQuery`: when the last sort key
+  is `time`, the sort ends with `id` (`eventid` for audit) in the same direction. Equal-time rows used to come back
+  in scan order, which differs between plans (top-N heap sort, full sort, backward index scan), so `skip` pages
+  could repeat or miss rows. Tests `[EGLT1]` (now on PostgreSQL too) and `[PGTI5]` (audit pages); both fail with
+  the tie-breaker disabled.
+- New `src/timeIdIndexes.ts` + migration `20261127_130000_time_id_indexes.js`: `idx_event_time_id` /
+  `idx_audit_time_id` built `CONCURRENTLY` (an invalid leftover is dropped and built again), then
+  `idx_event_time` / `idx_audit_time` dropped `CONCURRENTLY` (same leading columns: every use of the old index is
+  served by the new one). The schema DDL builds the new indexes only on a database holding neither them nor the
+  old ones (fresh), so a boot never builds them without `CONCURRENTLY`. Tests `[PGTI1]` to `[PGTI4]`.
+- Measured on 1 million events and 1 million audit records (5 users, 20 rows per time value, 50 streams), median
+  of 7, before (time sort, `(user_id, time)`) / after (time + id sort, `(user_id, time, id)`): one stream limit 20
+  17.0 / 15.5 ms; one stream limit 500 109.6 / 110.5 ms; two streams + time frame limit 20 12.6 / 11.1 ms; skip 5000
+  limit 20 3.3 / 3.6 ms; no filter limit 20 0.06 / 0.05 ms; audit limit 20 0.06 / 0.04 ms; audit skip 5000 3.0 /
+  3.4 ms; audit one access limit 20 231 / 250 ms. Same plans, no sort step added (without the new index the id
+  sort made a restricted page of 20 three to four times slower). Migration: 3.4 s (events) + 3.3 s (audit);
+  second run 3 ms.
+
 ### SQLite: `events.get` with a stream filter no longer slows down as the stream grows
 
 - `storages/engines/sqlite` `UserDatabase`: a page sorted newest first, with a stream filter selecting fewer
@@ -34,9 +54,8 @@
   index). A read paged with `skip` could switch plan between pages (the bounded walk for the first pages, the rowid
   set deeper), and then repeated some events and missed others. The time sort now ends with `rowid` in the same
   direction (the `time` index's trailing key, so the walks keep the index with no temporary sort): pages over
-  equal-time events no longer repeat or miss rows (tests `[SQQPC]`, `[EGLT1]`). PostgreSQL still orders equal
-  times as the scan gives them: a tie-breaker there needs an index on `(user_id, time, id)` (without it, a
-  restricted page of 20 measured 3 to 4 times slower under a parallel plan).
+  equal-time events no longer repeat or miss rows (tests `[SQQPC]`, `[EGLT1]`). PostgreSQL: see the
+  `(user_id, time, id)` entry above.
 - Through the API (one core, 2 workers, one user seeded with 16 000 events, then events created in 2 of the
   restricted streams): restricted `events.get?limit=20` went 12, 19, 27, 35, 43, 51 ms from 2 400 to 17 500
   events in those streams, then 5.6 ms past 20 000; now 4.3 to 5.9 ms throughout. A personal
