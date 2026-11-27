@@ -74,22 +74,79 @@ class SchemaMigrationsPG {
   }
 }
 
+type LockQueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+interface LockClient { query: LockQueryFn; release: (err?: Error) => void }
+/** The part of DatabasePG the lock uses: one dedicated client from its pool. */
+interface LockDb { getClient: () => Promise<LockClient> }
+interface LockLog { info?: (msg: string) => void }
+
+// Advisory-lock key of the migration runner ('prtm' in hex). Distinct from
+// the schema DDL key (a booting process must not wait for a migration) and
+// from the keys migrations take for themselves.
+const MIGRATIONS_LOCK_KEY = 0x7072746d;
+const LOCK_POLL_MS = 500;
+
 /**
- * Build the capability object the MigrationRunner consumes.
+ * Run `fn` holding the migration runner's advisory lock, on a client of its
+ * own kept for the whole run (a session lock: it is released by the unlock,
+ * or by the connection closing if the process dies). The client stays idle
+ * while `fn` runs, so it never holds a snapshot.
+ *
+ * The lock is polled with `pg_try_advisory_lock`, never waited on with
+ * `pg_advisory_lock`: a statement waiting for the lock holds a snapshot, and a
+ * migration building an index CONCURRENTLY under the lock waits for every
+ * older snapshot, a deadlock PostgreSQL breaks by failing one of them.
  */
-function buildMigrationsCapability (): unknown {
+async function withMigrationsLock<T> (db: LockDb, fn: () => Promise<T>, log: LockLog = {}): Promise<T> {
+  const client = await db.getClient();
+  let broken = false;
+  try {
+    let said = false;
+    for (;;) {
+      const res = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [MIGRATIONS_LOCK_KEY]);
+      if (res.rows[0]?.locked === true) break;
+      if (!said) {
+        log.info?.('[migrations] postgresql: another process is applying migrations; waiting for it');
+        said = true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+    }
+    try {
+      return await fn();
+    } finally {
+      // A client whose unlock fails is discarded: closing its connection
+      // releases the lock anyway.
+      try {
+        await client.query('SELECT pg_advisory_unlock($1)', [MIGRATIONS_LOCK_KEY]);
+      } catch (unlockErr) {
+        broken = true;
+      }
+    }
+  } catch (err) {
+    broken = true;
+    throw err;
+  } finally {
+    client.release(broken ? new Error('migrations lock: run or unlock failed; discarding client') : undefined);
+  }
+}
+
+/**
+ * Build the capability object the MigrationRunner consumes, on `db` (the
+ * engine's registered DatabasePG by default).
+ */
+function buildMigrationsCapability (db: unknown = _internals.databasePG): unknown {
   const path = require('path');
-  const db = _internals.databasePG;
   if (!db) throw new Error('PostgreSQL engine: databasePG not registered — cannot build migrations capability');
-  const store = new SchemaMigrationsPG(db);
+  const store = new SchemaMigrationsPG(db as PgDbLike);
   const getLogger = _internals.getLogger || (() => ({ debug () {}, info () {}, warn () {}, error () {} }));
   return {
     id: 'postgresql',
     migrationsDir: path.resolve(__dirname, '..', 'migrations'),
     getVersion: () => store.getVersion(),
     setVersion: (v: number) => store.setVersion(v),
-    buildContext: () => ({ db, logger: getLogger('migrations-postgresql') })
+    buildContext: () => ({ db, logger: getLogger('migrations-postgresql') }),
+    withLock: <T>(fn: () => Promise<T>): Promise<T> => withMigrationsLock(db as LockDb, fn, getLogger('migrations-postgresql'))
   };
 }
 
-export { SchemaMigrationsPG, buildMigrationsCapability };
+export { SchemaMigrationsPG, buildMigrationsCapability, withMigrationsLock, MIGRATIONS_LOCK_KEY };
