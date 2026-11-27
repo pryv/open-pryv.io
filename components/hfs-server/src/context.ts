@@ -22,7 +22,10 @@ const { getMall } = require('mall');
 type SeriesRepository = unknown;
 type MetadataCacheLike = unknown;
 type MetadataUpdaterLike = { start?: () => void };
-type TypeRepoLike = { tryUpdate: (url: string) => Promise<unknown> };
+type TypeRepoLike = {
+  tryUpdateFrom: (sources: Array<{ url: string; guarded: boolean }>, apiVersion: string | undefined,
+    onFallback: (failed: string, next: string, err: Error) => void) => Promise<unknown>;
+};
 type TracerSpan = { end?: () => void };
 type TracerLike = { startSpan: (name: string, opts?: Record<string, unknown>) => TracerSpan };
 type InfluxConnection = unknown;
@@ -41,7 +44,7 @@ class Context {
   typeRepository!: TypeRepoLike;
 
   config: ConfigLike;
-  constructor (influxConn: InfluxConnection, tracer: TracerLike, typeRepoUpdateUrl: string, config: ConfigLike) {
+  constructor (influxConn: InfluxConnection, tracer: TracerLike, typeRepoUpdateUrl: string | Array<{ url: string; guarded: boolean }>, config: ConfigLike) {
     this.series = new business.series.Repository(influxConn);
     this.metadataUpdater = new MetadataForgetter(getLogger('metadata.update'));
     this.tracer = tracer;
@@ -53,15 +56,20 @@ class Context {
     await this.configureMetadataCache();
   }
 
-  configureTypeRepository (url: string): void {
+  /** `sources`: a URL, or the sources in order (platform store value, then the local one). */
+  configureTypeRepository (sources: string | Array<{ url: string; guarded: boolean }>): void {
     const typeRepo: TypeRepoLike = new business.types.TypeRepository();
+    const list = typeof sources === 'string' ? [{ url: sources, guarded: false }] : sources;
     // Fire-and-forget, but NEVER let it reject unhandled: there is no global
     // unhandledRejection handler, so an uncaught rejection here crashes (and
     // crash-loops) the HFS worker whenever the dictionary endpoint is
     // unreachable at boot. hfs is already fail-closed for unknown types
     // (`lookup()` throws), so on failure we log and keep running on the embedded
     // fallback instead of dying.
-    typeRepo.tryUpdate(url).catch((err: unknown) => {
+    typeRepo.tryUpdateFrom(list, undefined, (failed, next, err) => {
+      getLogger('typeRepo').warn(`[platform-config-fallback] service.eventTypes from the platform store (${failed}) could not be loaded ` +
+        `(${err.message}): this core's local value (${next}) is used`);
+    }).catch((err: unknown) => {
       getLogger('typeRepo').error(
         'Event-types dictionary unavailable for the HFS worker; running on the embedded ' +
         `fallback. Cause: ${(err as Error).message ?? String(err)}`);

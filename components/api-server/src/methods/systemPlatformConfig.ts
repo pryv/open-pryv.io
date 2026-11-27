@@ -66,6 +66,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       source: loadable ? SOURCE_LABEL : 'local',
       appliesAt: def.appliesAt,
       sensitive: def.sensitive,
+      stepUp: def.sensitive || def.stepUp === true,
       capability: def.capability,
       locked: lockedOf(key, def)
     };
@@ -91,7 +92,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   }
 
   function stepUpMissing (def: KeyDef, subject: AdminSubject | undefined): boolean {
-    if (!def.sensitive || subject?.kind !== 'session') return false;
+    if (!(def.sensitive || def.stepUp === true) || subject?.kind !== 'session') return false;
     // The gate always sets the session row of a session subject: without it, refuse.
     if (subject.session == null) return true;
     return !isStepUpFresh(subject.session, Date.now(), readAdminConfig(config).session.stepUpMs);

@@ -268,6 +268,23 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
     assert.equal((await platformConfig.getEntry(db, 'service.name')).value, 'Encoded dot');
   });
 
+  it('[SYPC12] the keys with platform-wide reach (assets, event types): https only, and a recent second factor; the value stays shown', async () => {
+    const stale = await ownerSession(Date.now() - 60 * MIN);
+    for (const key of ['service.assets.definitions', 'service.eventTypes']) {
+      const refused = await put(key, { value: 'https://assets.example.com/index.json' }, 'AdminSession ' + stale);
+      assert.equal(refused.status, 403, key + ': ' + JSON.stringify(refused.body));
+      assert.equal(refused.body.error.data.stepUp, true, key);
+      assert.equal((await put(key, { value: 'http://assets.example.com/index.json' })).status, 400, key + ': http refused');
+    }
+    assert.deepEqual(await platformConfig.listEntries(db), []);
+    const fresh = await ownerSession(Date.now());
+    const ok = await put('service.assets.definitions', { value: 'https://assets.example.com/index.json' }, 'AdminSession ' + fresh);
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.deepEqual({ value: ok.body.entry.value, sensitive: ok.body.entry.sensitive, stepUp: ok.body.entry.stepUp },
+      { value: 'https://assets.example.com/index.json', sensitive: false, stepUp: true });
+    assert.equal((await put('service.home', { value: 'https://home.example.com' }, 'AdminSession ' + stale)).status, 200, 'other keys: no step-up');
+  });
+
   // The command-line tool runs in its own process, with the release's schema
   // (no key yet): what it can show here is the refusals, the stale-row
   // cleanup and the export.

@@ -19,6 +19,10 @@ const SeriesRowType = require('./types/series_row_type.ts').default;
 const BasicType = require('./types/basic_type.ts').default;
 const ComplexType = require('./types/complex_type.ts').default;
 const SERIES_PREFIX = 'series:';
+const { isIP } = require('node:net');
+const { lookup: dnsLookup } = require('node:dns/promises');
+const { isRefusedAddress, stripBrackets } = require('./webhooks/destination.ts');
+const { currentPeerSettings } = require('./outbound/peerFetch.ts');
 
 // The version baked into the repo. Captured before any remote merge so we can
 // always report which dictionary is actually in effect.
@@ -73,6 +77,28 @@ function _resetEventTypesLoadStateForTests (): void {
   loadState.lastSuccessAt = null;
   loadState.lastAttemptAt = null;
   loadState.lastError = null;
+}
+
+// Why a URL from the platform store is not fetched, or null (see `tryUpdate`).
+async function guardedUrlRefusal (rawUrl: string): Promise<string | null> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return 'not a URL';
+  }
+  if (url.protocol !== 'https:') return 'only https is fetched';
+  if (url.username !== '' || url.password !== '') return 'credentials in the URL';
+  const host = stripBrackets(url.hostname);
+  const allow = currentPeerSettings().allow;
+  let addresses: string[];
+  try {
+    addresses = isIP(host) !== 0 ? [host] : (await dnsLookup(host, { all: true })).map((a: { address: string }) => a.address);
+  } catch {
+    return 'the host does not resolve';
+  }
+  if (addresses.some((a) => isRefusedAddress(a, allow))) return 'the host is a private, loopback or link-local address';
+  return null;
 }
 
 type EventLike = { type: string; content?: unknown; [k: string]: unknown };
@@ -278,7 +304,12 @@ class TypeRepository {
   // Tries to update the stored type definitions with a file found on the
   // internet.
   //
-  async tryUpdate (sourceURL: string, apiVersion?: string) {
+  //
+  // `options.guarded` (a URL from the platform store that is not the core's
+  // local value): https only, no credentials, no host resolving to a private,
+  // loopback or link-local address (`cmc.allowedPrivateHosts` excepted), and
+  // no redirect followed.
+  async tryUpdate (sourceURL: string, apiVersion?: string, options: { guarded?: boolean } = {}) {
     function unavailableError (err: unknown): never {
       const e = new Error('Could not update event types from ' +
                 sourceURL +
@@ -305,6 +336,10 @@ class TypeRepository {
     loadState.lastAttemptAt = Date.now();
     let eventTypesDefinition: Record<string, unknown> | undefined;
     try {
+      if (options.guarded === true) {
+        const refusal = await guardedUrlRefusal(sourceURL);
+        if (refusal != null) throw new Error('refused: ' + refusal);
+      }
       if (isFileUrl(sourceURL)) {
         // used for tests
         let filePath = removeFileProtocol(sourceURL);
@@ -328,10 +363,13 @@ class TypeRepository {
         try {
           const res = await fetch(sourceURL, {
             headers: { 'User-Agent': USER_AGENT_PREFIX + apiVersion },
-            signal: controller.signal
+            signal: controller.signal,
+            redirect: options.guarded === true ? 'error' : 'follow'
           });
           if (!res.ok) {
-            throw new Error(`Event types fetch failed: HTTP ${res.status} ${res.statusText}`);
+            // The status class only: the state is shown to administrators, the
+            // upstream's own words are not.
+            throw new Error(`Event types fetch failed: HTTP ${Math.floor(res.status / 100)}xx`);
           }
           eventTypesDefinition = await res.json();
         } finally {
@@ -360,6 +398,26 @@ class TypeRepository {
     loadState.version = (eventTypesDefinition!.version as string | null | undefined) ?? loadState.version;
     loadState.lastSuccessAt = Date.now();
     loadState.lastError = null;
+  }
+
+  // Tries the sources in order (see `eventTypesSources` in
+  // platformConfig): the first that loads wins and its URL is answered; a
+  // failing source with another one after it is reported to `onFallback`.
+  // Throws the last failure when none loads.
+  async tryUpdateFrom (sources: ReadonlyArray<{ url: string; guarded: boolean }>, apiVersion?: string,
+    onFallback?: (failed: string, next: string, err: Error) => void): Promise<string> {
+    let lastErr: unknown = new Error('no event types source');
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i];
+      try {
+        await this.tryUpdate(source.url, apiVersion, { guarded: source.guarded });
+        return source.url;
+      } catch (err) {
+        lastErr = err;
+        if (i + 1 < sources.length && onFallback != null) onFallback(source.url, sources[i + 1].url, err as Error);
+      }
+    }
+    throw lastErr;
   }
 
   // True until a dictionary fetch has ever succeeded. While degraded, the

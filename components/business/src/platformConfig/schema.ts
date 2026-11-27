@@ -20,15 +20,27 @@ export type KeyDef = {
   schema: Record<string, unknown>;
   /** `live`: read at use, a change applies at once; `restart`: read at boot. */
   appliesAt: 'live' | 'restart';
-  /** A write needs a recent second factor (administrator session). */
+  /**
+   * A write needs a recent second factor (administrator session), and the
+   * audit records and answers show a fingerprint, not the value.
+   */
   sensitive: boolean;
+  /**
+   * A write needs a recent second factor (administrator session); the value
+   * stays shown (a key with platform-wide reach whose value is public).
+   */
+  stepUp?: boolean;
   /** The administration capability the key belongs to (business/src/admin/capabilities.ts). */
   capability: string;
 };
 
 export type SchemaMap = Readonly<Record<string, KeyDef>>;
 
-const URL_VALUE = Object.freeze({ type: 'string', maxLength: 2048, pattern: '^https?://[^\\s]+$' });
+// An http(s) URL: no whitespace, quotes, angle brackets nor backslash, no
+// credentials (`@` before the path).
+const URL_TAIL = '[^\\s"\'<>\\\\@/]+(/[^\\s"\'<>\\\\]*)?$';
+const URL_VALUE = Object.freeze({ type: 'string', maxLength: 2048, pattern: '^https?://' + URL_TAIL });
+const HTTPS_URL_VALUE = Object.freeze({ type: 'string', maxLength: 2048, pattern: '^https://' + URL_TAIL });
 
 /**
  * The keys of the current batch: the service information (`/service/info`).
@@ -37,15 +49,22 @@ const URL_VALUE = Object.freeze({ type: 'string', maxLength: 2048, pattern: '^ht
  * it once the core runs. `service.assets` is held by its leaf
  * (`service.assets.definitions`): an object value would merge with the local
  * one rather than replace it.
+ *
+ * `service.assets.definitions` (what every app's sign-in button and the auth
+ * pages load) and `service.eventTypes` (the catalogue every core validates
+ * events with) reach the whole platform: https only, and a write needs a
+ * recent second factor.
  */
 export const SCHEMA: SchemaMap = Object.freeze({
-  'service.name': { schema: { type: 'string', minLength: 1, maxLength: 100 }, appliesAt: 'live', sensitive: false, capability: 'config' },
+  // No control character (line breaks included).
+  'service.name': { schema: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[^\\u0000-\\u001f\\u007f]+$' }, appliesAt: 'live', sensitive: false, capability: 'config' },
   'service.home': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' },
   'service.support': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' },
   'service.terms': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' },
-  // Read when the API methods are registered (api-server) and at boot (hfs-server).
-  'service.eventTypes': { schema: URL_VALUE, appliesAt: 'restart', sensitive: false, capability: 'config' },
-  'service.assets.definitions': { schema: URL_VALUE, appliesAt: 'live', sensitive: false, capability: 'config' }
+  // Read when the API methods are registered (api-server) and at boot (hfs-server):
+  // /service/info shows a new value at once, the cores validate with it after a restart.
+  'service.eventTypes': { schema: HTTPS_URL_VALUE, appliesAt: 'restart', sensitive: false, stepUp: true, capability: 'config' },
+  'service.assets.definitions': { schema: HTTPS_URL_VALUE, appliesAt: 'live', sensitive: false, stepUp: true, capability: 'config' }
 });
 
 /**

@@ -9,6 +9,8 @@ import type { EventsQueryState } from '../../../../storages/interfaces/_shared/t
 import { openUploadedFile } from './helpers/uploadedFiles.ts';
 import { claimSingleUseAccept } from './helpers/cmcAcceptClaim.ts';
 import { onWorkerStop } from '../workerStop.ts';
+import { eventTypesSources } from 'business/src/platformConfig/index.ts';
+import type { EventTypesSource } from 'business/src/platformConfig/index.ts';
 import { clientFor as clusterKvClientFor } from 'messages/src/cluster_kv.ts';
 
 import type { MethodNext } from './_types.ts';
@@ -154,32 +156,39 @@ const EVENT_TYPES_RETRY_MAX_MS = 300000;
 
 // Load the dictionary once, awaited by boot. On failure the core stays UP but
 // degraded and a background retry is scheduled.
-async function initEventTypesDictionary (eventTypesUrl: string, apiVersion: string): Promise<void> {
+// The sources: the platform store's value first when there is one, then the
+// core's local value (business/src/platformConfig `eventTypesSources`).
+async function initEventTypesDictionary (sources: EventTypesSource[], apiVersion: string): Promise<void> {
   try {
-    await typeRepo.tryUpdate(eventTypesUrl, apiVersion);
+    const url = await typeRepo.tryUpdateFrom(sources, apiVersion, eventTypesFallback);
     const state = typeRepo.getLoadState();
-    getLogger('typeRepo').info(`Event-types dictionary loaded (version ${state.version ?? 'unknown'}) from ${eventTypesUrl}`);
+    getLogger('typeRepo').info(`Event-types dictionary loaded (version ${state.version ?? 'unknown'}) from ${url}`);
   } catch (err: unknown) {
     getLogger('typeRepo').error(
       'Event-types dictionary unavailable at boot; running on the embedded fallback ' +
       `(version ${typeRepo.getLoadState().embeddedVersion ?? 'unknown'}) and REFUSING unknown ` +
       `event types until it loads. Cause: ${(err as Error).message ?? String(err)}`);
-    scheduleEventTypesRetry(eventTypesUrl, apiVersion, EVENT_TYPES_RETRY_START_MS);
+    scheduleEventTypesRetry(sources, apiVersion, EVENT_TYPES_RETRY_START_MS);
   }
+}
+
+function eventTypesFallback (failed: string, next: string, err: Error): void {
+  getLogger('typeRepo').warn(`[platform-config-fallback] service.eventTypes from the platform store (${failed}) could not be loaded ` +
+    `(${err.message}): this core's local value (${next}) is used`);
 }
 
 // Retry the dictionary fetch in the background with exponential backoff, until
 // it succeeds. Timers are unref'd so they never keep the process alive.
-function scheduleEventTypesRetry (eventTypesUrl: string, apiVersion: string, delayMs: number): void {
+function scheduleEventTypesRetry (sources: EventTypesSource[], apiVersion: string, delayMs: number): void {
   const timer = setTimeout(() => {
-    typeRepo.tryUpdate(eventTypesUrl, apiVersion).then(
+    typeRepo.tryUpdateFrom(sources, apiVersion, eventTypesFallback).then(
       () => {
         const state = typeRepo.getLoadState();
         getLogger('typeRepo').info(`Event-types dictionary recovered (version ${state.version ?? 'unknown'}); unknown types are validated again.`);
       },
       (err: unknown) => {
         getLogger('typeRepo').error(`Event-types dictionary still unavailable; core stays degraded and keeps retrying. Cause: ${(err as Error).message ?? String(err)}`);
-        scheduleEventTypesRetry(eventTypesUrl, apiVersion, Math.min(delayMs * 2, EVENT_TYPES_RETRY_MAX_MS));
+        scheduleEventTypesRetry(sources, apiVersion, Math.min(delayMs * 2, EVENT_TYPES_RETRY_MAX_MS));
       }
     );
   }, delayMs);
@@ -200,7 +209,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // future dynamic-config sources) reach the per-request callsites.
   const getAuth = () => config.get('auth');
   const getUpdates = () => config.get('updates');
-  const eventTypesUrl = config.get('service:eventTypes');
+  const eventTypesUrls = eventTypesSources(config);
   const usersRepository = await getUsersRepository();
   const mall = await getMall();
   const platform = await getPlatform();
@@ -227,7 +236,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
   // boots, but it runs DEGRADED: it logs at error, refuses unknown types (see
   // `validateEventContentAndCoerce`) rather than accept them unvalidated, and
   // retries in the background with backoff until the dictionary loads.
-  await initEventTypesDictionary(eventTypesUrl, version);
+  await initEventTypesDictionary(eventTypesUrls, version);
 
   const logger = getLogger('methods:events');
 

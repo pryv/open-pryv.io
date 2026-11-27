@@ -216,6 +216,52 @@ Options:
 - Host your own and set the URL in config
 - Serve them from the core itself with a hosted site (see [Hosted sites](#hosted-sites-static-folder-or-fixed-proxy-on-a-reserved-name)), e.g. a `www` site whose folder holds `assets/index.json`, then set `service.assets.definitions: https://www.<dns.domain>/assets/index.json`
 
+### Platform-wide settings held in the platform store
+
+`service.name`, `service.home`, `service.support`, `service.terms`, `service.eventTypes` and
+`service.assets.definitions` can be set once for the whole platform, through the API (`/system/admin/platform-config`,
+the portal) or from a core's shell:
+
+```
+node bin/platform-config.js list
+node bin/platform-config.js set service.name "My Platform"
+node bin/platform-config.js unset service.name
+node bin/platform-config.js seed
+```
+
+- A value written to the platform store replaces the configuration file's on every core (within
+  `platform.configPollSeconds`, default 15; `service.eventTypes` at the next start). `unset` gives each core its
+  own value back. Nothing is written at upgrade: until a key is set, the files and the environment are read as
+  before.
+- `seed` copies this core's current values where the store has none. `export` prints the rows as JSON, `import
+  <file>` sets them (every key checked first, then written one by one; a failure part way lists what was written).
+- Keep the `service.*` values in the configuration file anyway: a core checks them at boot, before it reads the
+  store.
+- `bin/platform-config.js` talks to the store directly: lockdown (below) does not apply to it.
+
+### Lockdown: administration managed outside the API
+
+When a part of the administration is managed elsewhere (a PaaS, a GitOps repository, a front proxy), mark it in
+the core's configuration file so the API (and the portal) cannot change it:
+
+```yaml
+admin:
+  lockdown:
+    capabilities:
+      certs: readonly        # editable (default) | readonly | hidden
+      dns: hidden
+    platformConfig:
+      readonly: [service.name]
+```
+
+- `readonly` and `hidden` refuse the capability's writes (403 `admin-lockdown-capability`), for administrators and
+  the admin key alike; `hidden` also takes the module out of the portal. Reads keep working. Setup, administrator
+  roles and claim codes are never locked.
+- `platformConfig.readonly` keys cannot be written to the platform store through the API (403 `admin-lockdown-key`).
+- Ready-made blocks: `config/lockdown-profiles/` (`dokku`, `gitops`, `behind-cloudflare`, `air-gap`), each with a
+  header saying what it assumes. Lockdown is per core: put the same block on every core (a core logs
+  `[admin-lockdown-drift]` when another one differs). `bin/check-config.js` validates it.
+
 ### Email
 
 Transactional mails (password reset, welcome, email verification, registration

@@ -418,6 +418,29 @@ export function startPolling (config: ScopedConfig, db: KvStore, coreId: string,
   return () => clearInterval(timer);
 }
 
+export type EventTypesSource = { url: string; guarded: boolean };
+
+/**
+ * Where a process loads the event types catalogue from, in order: the value
+ * of the platform store when there is one (guarded: https, public hosts, no
+ * redirect), then this core's local value when it differs, so a wrong row
+ * cannot leave every core without its catalogue at the next restart.
+ */
+export function eventTypesSources (config: Pick<ScopedConfig, 'get' | 'getLocal'> & {
+  getScopeAndValue?: (key: string) => { scope: string; value: unknown } | null;
+}): EventTypesSource[] {
+  const path = 'service:eventTypes';
+  const found = typeof config.getScopeAndValue === 'function' ? config.getScopeAndValue(path) : null;
+  const local = typeof config.getLocal === 'function' ? config.getLocal(path) : config.get(path);
+  if (found == null || found.scope !== PLATFORM_STORE_SCOPE || typeof found.value !== 'string') {
+    const url = found?.value ?? local;
+    return typeof url === 'string' ? [{ url, guarded: false }] : [];
+  }
+  const out: EventTypesSource[] = [{ url: found.value, guarded: found.value !== local }];
+  if (typeof local === 'string' && local !== found.value) out.push({ url: local, guarded: false });
+  return out;
+}
+
 /** Rows that hide a different local value (files, environment) on this core. */
 export async function localOverrides (config: ScopedConfig, db: KvStore): Promise<Array<{ key: string; local: unknown }>> {
   const out: Array<{ key: string; local: unknown }> = [];

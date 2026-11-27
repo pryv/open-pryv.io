@@ -69,7 +69,8 @@ async function createContext (config: ConfigLike) {
   }
 
   const tracer = new NoopTracer();
-  const typeRepoUpdateUrl = config.get('service:eventTypes');
+  // The platform store's value first when there is one, then the local one.
+  const typeRepoUpdateUrl = require('business/src/platformConfig/index.ts').eventTypesSources(config);
   const context = new Context(influx, tracer, typeRepoUpdateUrl, config);
   await context.init();
   context.startMetadataUpdater();

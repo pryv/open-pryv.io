@@ -84,6 +84,7 @@ describe('[PLCS] platform configuration schema', function () {
       const def = SCHEMA[key];
       assert.ok(['live', 'restart'].includes(def.appliesAt), 'appliesAt of ' + key);
       assert.equal(typeof def.sensitive, 'boolean', 'sensitive of ' + key);
+      assert.ok(def.stepUp === undefined || typeof def.stepUp === 'boolean', 'stepUp of ' + key);
       assert.ok(capabilities.has(def.capability), 'capability of ' + key);
       assert.equal(validator.validateSchema(def.schema), true, 'schema of ' + key);
     }
@@ -102,6 +103,31 @@ describe('[PLCS] platform configuration schema', function () {
 
   it('[PLCS7] no schema key is an administration or authentication setting (admin.*, auth.*): the store scope outranks the files', () => {
     for (const key of Object.keys(SCHEMA)) assert.ok(!/^(admin|auth)\./.test(key), key);
+  });
+
+  it('[PLCS8] every key is of capability `config` until the write checks the caller holds the key\'s own capability', () => {
+    // The /system gate admits a write on `config:write`: a key of another
+    // capability (dns, mail, ...) needs `<capability>:write` checked in the
+    // method first, then this guard can go.
+    for (const [key, def] of Object.entries(SCHEMA)) assert.equal(def.capability, 'config', key);
+  });
+
+  it('[PLCS9] the values the schema refuses', () => {
+    const { createValidator: make } = require('utils/src/jsonValidator.ts');
+    const v = make();
+    const ok = (key, value) => v.validate(value, SCHEMA[key].schema) === true;
+    assert.equal(ok('service.name', 'Pryv Lab'), true);
+    for (const bad of ['a\nb', 'tab\there', 'nul\u0000', 'del\u007f', '']) assert.equal(ok('service.name', bad), false, JSON.stringify(bad));
+    assert.equal(ok('service.home', 'http://home.example.com/path?q=1'), true);
+    for (const bad of ['https://a@b.example.com/', 'https://x.example.com/"onload', 'https://x.example.com/<script>',
+      'https://x.example.com/a b', 'https://x.example.com\\a', 'javascript:alert(1)', 'ftp://x.example.com', 'https://']) {
+      assert.equal(ok('service.home', bad), false, bad);
+    }
+    for (const key of ['service.eventTypes', 'service.assets.definitions']) {
+      assert.equal(ok(key, 'https://x.example.com/index.json'), true, key);
+      assert.equal(ok(key, 'http://x.example.com/index.json'), false, key + ' is https only');
+      assert.equal(SCHEMA[key].stepUp, true, key + ' needs the step-up');
+    }
   });
 
   it('[PLCS6] value schemas are bounded and closed', () => {

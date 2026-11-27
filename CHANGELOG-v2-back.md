@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Platform-wide configuration in the platform store, lockdown
+
+- boiler: a `platform-store` scope right below `memory`, above override-config.yml, bootstrap-config.yml, the
+  test scope, the environment and the files, filled from the store and replaced on each change;
+  `Config.getLocal()` reads a key without it.
+- `business/src/platformConfig`: the schema of the keys the store may hold (unit tests: every key classified
+  `platform` is in it or listed with the reason it stays in the files; values bounded and closed; no secret, no
+  `admin.*` / `auth.*` key; capability `config` only until the write checks the key's own capability); rows
+  `platform-config/<key>` (`{ value, updatedAt, updatedBy }`), `platform-config-rev`, `core-config-rev/<coreId>`
+  (written when it changes, never while the store is unused). Compare-and-set writes; once the row is written a
+  failed revision bump is retried, then logged; every process reloads when the revision changes and in full every
+  20 checks; the writing worker sends `platform-config:invalidate`, relayed by the master to its other workers.
+  hfs-server loads the store values at boot. Unknown or refused rows are skipped (`[platform-config-invalid]`,
+  once per process).
+- Audit of the writes, without a user: key, before, after, changed; a sensitive value shows a keyed fingerprint,
+  or only `{ set: true }` when no fingerprint key is configured.
+- `config/plugins/public-url.js` sets only the leaves it derives (`service.api`, `service.register`,
+  `service.access`) instead of a copy of the whole `service` object in the memory scope, which outranks the
+  store; the default assets moved to a `service-defaults` scope below the files, the environment, the service
+  information and the platform store.
+- The event types catalogue is loaded from the store's value first (https, a host that does not resolve to a
+  private, loopback or link-local address, no redirect followed), then from the core's local value.
+- Lockdown (`business/src/admin/lockdown.ts`, `middleware/src/adminLockdown.ts`): checked after the `/system`
+  gate; `lockdownRefusal` / `lockdownKeyRefusal` also used by the admin-key routes outside `/system`; an invalid
+  block reaching a running process refuses every lockable write (500 `admin-lockdown-invalid`);
+  `platformConfig.readonly` checked against the schema. The boot step writes `admin-lockdown-hash/<coreId>` only
+  when the digest changed, and nothing for a core that locks nothing and never wrote one.
+- Tests: the platform-store conformance (`[PLATCFG]`), the administration rows and `PlatformDB` conformance and the
+  `bin/migrate-platform.js` round trip (with the new families) run on a private rqlited of their own, and on the
+  PostgreSQL `platform_kv` table only when no other suite holds rows in it: they no longer wipe the shared store
+  (which left other suites' accounts without platform rows).
+
 ### Deletion records: one order for equal deletion times
 
 - `getDeletionsStreamed` (events.get with `modifiedSince` + `includeDeletions`, read with `limit` / `skip`) ordered by

@@ -13,8 +13,8 @@ const REG_PATH = '/reg';
 // than at a path nothing answers. Operators set their own for their branding.
 const DEFAULT_ASSETS_DEFINITIONS = 'https://pryv.github.io/assets-pryv.me/index.json';
 
-// The scope of the default UI assets: added after the configuration's own
-// scopes, so the files, the environment and the platform store all win over it.
+// The scope of the default UI assets: added after the files, the environment,
+// the service information and the platform store, which all win over it.
 const DEFAULTS_SCOPE = 'service-defaults';
 
 /**
@@ -22,7 +22,8 @@ const DEFAULTS_SCOPE = 'service-defaults';
  * `service.access`) in the configuration's memory scope, never the whole
  * `service` object: a copy of the other `service.*` values there would hide
  * the values held in the platform store (the memory scope outranks it). The
- * default assets go in a scope below every other.
+ * default assets go in a scope below the files, the environment, the service
+ * information and the platform store.
  */
 async function publicUrlToService (config) {
   const isDnsLess = config.get('dnsLess:isActive');

@@ -13,7 +13,8 @@ const require = createRequire(import.meta.url);
  * (dnsLess with a public URL; multi-core with `core.url` and `dns.domain`):
  * it derives `service.api`, `service.register` and `service.access` only;
  * the default `service.assets.definitions` (the public Pryv assets: the core
- * serves none itself) sits below every other scope; an operator setting is
+ * serves none itself) sits below the files, the environment, the service
+ * information and the platform store; an operator setting is
  * kept; and no key the platform store may hold resolves from the memory
  * scope, so a store row replaces the local value.
  */
@@ -101,5 +102,44 @@ describe('[PUAS] public-url plugin: derived service URLs and default UI assets',
         assert.ok(String(config.get('service:register')).includes('example.com'), name);
       }
     }
+  });
+
+  /** A row for every key of the schema, as the platform store scope holds them. */
+  function storeTree () {
+    const stored = {};
+    for (const key of Object.keys(SCHEMA)) {
+      let node = stored;
+      const segments = key.split('.');
+      for (const seg of segments.slice(0, -1)) node = node[seg] = node[seg] ?? {};
+      node[segments[segments.length - 1]] = 'https://store.example.com/' + key;
+    }
+    return stored;
+  }
+
+  it('[PUAS-05] service information from serviceInfoUrl: its own assets are served (not the default), a row replaces each key, the derived URLs stay', async () => {
+    const infoFile = path.join(dir, 'service-info.json');
+    fs.writeFileSync(infoFile, JSON.stringify({ ...LOCAL_SERVICE, assets: { definitions: 'https://info.example.com/assets.json' } }));
+    fs.writeFileSync(path.join(dir, 'default-config.yml'), 'http:\n  port: 3000\n');
+    fs.writeFileSync(path.join(dir, 'override-config.yml'), JSON.stringify({ ...SHAPES.dnsLess, serviceInfoUrl: 'file://' + infoFile }));
+    const config = new Config().initSync({
+      baseConfigDir: dir,
+      extras: [{ scope: 'serviceInfo', key: 'service', urlFromKey: 'serviceInfoUrl' }, { plugin: publicUrl }]
+    }, logging);
+    await config.initASync();
+    assert.strictEqual(config.get('service:assets:definitions'), 'https://info.example.com/assets.json');
+    assert.strictEqual(config.getScopeAndValue('service:assets:definitions').scope, 'serviceInfo');
+    assert.strictEqual(config.get('service:name'), 'Local name');
+    for (const key of Object.keys(SCHEMA)) assert.notStrictEqual(config.getScopeAndValue(configPath(key))?.scope, 'memory', key);
+    config.replaceScopeConfig(PLATFORM_STORE_SCOPE, storeTree());
+    for (const key of Object.keys(SCHEMA)) assert.strictEqual(config.get(configPath(key)), 'https://store.example.com/' + key, key);
+    assert.strictEqual(config.get('service:api'), 'https://api.example.com/{username}/');
+    assert.strictEqual(config.getScopeAndValue('service:api').scope, 'memory');
+  });
+
+  it('[PUAS-06] nothing derived (no public URL, no dns.domain): a row replaces each key', () => {
+    const config = boot({ dnsLess: { isActive: false }, service: LOCAL_SERVICE });
+    assert.strictEqual(config.get('service:api'), undefined, 'nothing derived');
+    config.replaceScopeConfig(PLATFORM_STORE_SCOPE, storeTree());
+    for (const key of Object.keys(SCHEMA)) assert.strictEqual(config.get(configPath(key)), 'https://store.example.com/' + key, key);
   });
 });

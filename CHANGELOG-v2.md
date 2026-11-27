@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### Platform-wide configuration held in the platform store: the service information (operator notice)
+
+- The service information can be set once for the whole platform, through the API (and so the portal):
+  `service.name`, `service.home`, `service.support`, `service.terms`, `service.eventTypes` and
+  `service.assets.definitions`.
+  - `GET /system/admin/platform-config` lists these keys with, for each: the value and where it comes from
+    (`platform-db` or `local`), `effective` (what this core reads), `localOverride` (a store value hiding this
+    core's own one), `appliesAt` (`live`, or `restart` for `service.eventTypes`), `sensitive`, `stepUp`,
+    `capability` and `locked`; plus `rev` and `coresBehind` (the cores that have not loaded the latest change).
+  - `GET`, `PUT` (`{ "value": ... }`) and `DELETE /system/admin/platform-config/:key`. Permissions `config:read`
+    and `config:write`. A value the key's schema refuses answers 400 with the errors; a key not listed answers 404.
+  - `service.assets.definitions` and `service.eventTypes` reach every app's sign-in UI and every core's event
+    validation: https only, and a write needs a recent second factor from an administrator session (the admin key
+    does not). The URLs of the other keys are http or https, without credentials, quotes, angle brackets or spaces;
+    `service.name` has no control character.
+- **A key with no value in the store reads the configuration files and the environment exactly as before. An
+  upgrade writes nothing and changes no value.** A store value replaces the local one on every core; deleting it
+  gives the local value back. A core whose local value is hidden logs `[platform-config-override]` at start.
+- A change is read at once by the core that made it and by the others within `platform.configPollSeconds`
+  (default 15). `service.eventTypes`: `/service/info` shows the new URL at once, the cores load the catalogue from
+  it at their next start; if it cannot be loaded there (or points to a private, loopback or link-local host), a
+  core uses its own local value and logs `[platform-config-fallback]`.
+- **The local values stay required**: a core checks `service.name`, `home`, `support`, `terms` and `eventTypes`
+  at boot, before it reads the platform store. Keep them in the configuration file (or the service information
+  URL) even when the store holds them.
+- `bin/platform-config.js` does the same from a core's shell (also with the API down): `list`, `get`, `set`,
+  `unset`, `seed` (copies this core's current values where the store has none), `export`, `import`.
+- The effective configuration (`GET /system/admin/config/effective`) reports source `platform-db` for a value held
+  in the platform store.
+- `system.getEventTypesStatus`: `lastError` of a failed download now gives the HTTP status class only
+  (`HTTP 4xx`), not the upstream's own status line.
+- **Deployments with `serviceInfoUrl`**: when the service information it serves holds `assets.definitions`, that
+  value is now the one served (before, the built-in default `https://pryv.github.io/assets-pryv.me/index.json`
+  hid it). Check that the URL it gives answers before upgrading.
+
+### Lockdown: administration managed outside the API, per core (operator notice)
+
+- `admin.lockdown` in a core's own configuration file (never in the platform store, no route changes it) marks
+  administration as managed elsewhere (a PaaS, GitOps, a front proxy):
+  - `capabilities.<capability>: editable | readonly | hidden`: the writes of a `readonly` or `hidden` capability
+    answer 403 `admin-lockdown-capability`; `hidden` also leaves it out of the portal context.
+  - `platformConfig.readonly: [keys]`: writing or deleting one of these platform configuration keys answers 403
+    `admin-lockdown-key`. A key whose own capability is locked is refused too.
+- It binds every caller: administrator sessions, the setup session and the admin key, on the `/system` routes and
+  on the admin-key writes outside them (`/reg/records`, `/reg/admin/servers/:src/rename/:dst`,
+  `/reg/admin/invitations/post`, account deletion by the admin key). Reads are never locked, nor the session
+  routes, setup, role management and claim codes.
+- An unknown capability or key, or a lock on setup, roles or claim codes, is a boot problem (also reported by
+  `bin/check-config.js`). A `platformConfig.readonly` written for a newer release (a key this release does not
+  know) stops an older core: remove it before rolling back.
+- No block: everything stays editable, as before. Profiles ready to copy: `config/lockdown-profiles/` (`dokku`,
+  `gitops`, `behind-cloudflare`, `air-gap`). Lockdown is per core: under GitOps, put the block on every core.
+- A core whose lockdown differs from another registered core's logs `[admin-lockdown-drift]` at start.
+
 ### PostgreSQL: one order for events sharing a time, new time index (operator notice)
 
 - `events.get` and audit reads on PostgreSQL return events (records) sharing a `time` in one order, by id in the
