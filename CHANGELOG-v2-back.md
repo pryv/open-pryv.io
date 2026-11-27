@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### SQLite: a deep page of a stream most events hold no longer reads every one of them
+
+- A read sorted by time with a stream filter counts its full-text candidates up to a cap (20 000) to choose its plan.
+  At the cap, the walk of the `time` index was taken only for a page (`limit + skip`) up to `cap^2 / rows`, about 400
+  on 1 M rows (80 on 5 M): a deeper page, or a plain `limit=500`, read every candidate through the rowid set and
+  sorted them, synchronously. Measured on a 1 M-row audit file, an access on 60 % of the rows: 0.8 ms at skip 380,
+  548 ms at skip 400, 588 ms at skip 5000, 604 ms for `limit=500` (descending; ascending 150 ms). The same code
+  serves the user events store on the SQLite base engine.
+- At the cap, when the whole walk is refused, a probe on the full-text index (by rowid, the index only) now finds the
+  page-th candidate from the end the walk starts at; the rows between them (`reach`) estimate the walk, since an
+  audit log is written in time order. The walk is taken over `2 x reach` rows of the `time` index (a `time >=` bound,
+  or `time <=` ascending) when that is not above half the candidates the rowid set would read, and it answers only
+  when it fills the page, else the rowid set runs (the bounded walk of the under-cap case, same exactness: the walk
+  holds the exact stream condition and every other condition, whole tie groups at the bound, the same order with
+  the rowid tie-breaker). Not taken: descending from a `toTime` (a `rowid <=` bound does not shorten the probe
+  backward, measured 6 to 12 ms instead of 0.1), ascending when a row has no time (it sorts first, outside any
+  window).
+- Measured (same file, median of 7, warm): skip 5000 588 -> 3.5 ms descending, 143 -> 1.9 ms ascending; skip 50 000
+  926 -> 27 ms; `limit=500` 604 -> 2.0 ms; with a type filter 606 -> 2.7 ms; skip 100 000 (the API maximum) keeps
+  the rowid set as before (the rule refuses it). On 5 M rows (3 GB), `limit=100`: the rowid set 2.5 to 15 s (the
+  spread is page-cache contention), the walk 0.9 ms; skip 5000 2.2 ms. The probe costs 0.1 ms at page 5 000, 2 ms at 100 000. A file
+  restored in shuffled order: skip 5000 224 -> 11 ms (the walk still fills there; when it does not, the wasted walk
+  is at most half the rowid set's rows). Unchanged: a stream under the cap, a filter of rare streams, a page the
+  whole walk takes.
+- Tests storages:sqlite `[SQQPE]` (descending: walk, skips cutting tie groups, type filter, `not`, all / trashed
+  states, deeper than the rule, past every match, `toTime`, the test hook off), `[SQQPF]` (ascending, and a row
+  without a time), `[SQQPG]` (rowids not in time order: shuffled, newest first, a probe that misjudges the density:
+  the walk falls short and the rows stay those of the rowid set). Mutations, each failing a test: the `time >=` or
+  `time <=` bound dropped while the fallback is kept, a page that is not full answered, the no-time refusal removed,
+  the upper bound applied as a lower one, the reach probe read in the wrong direction.
+
 ### Deletion records: one order for equal deletion times
 
 - `getDeletionsStreamed` (events.get with `modifiedSince` + `includeDeletions`, read with `limit` / `skip`) ordered by

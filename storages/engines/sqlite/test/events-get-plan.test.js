@@ -408,6 +408,175 @@ describe('[SQQP] userSQLite events.get query plans', function () {
     }
   });
 
+  // A deep page at the cap: 400 rows (or `n`), times in groups of 3 equal
+  // values, `dense` on 3 rows of 5 (240 candidates), `tagged` on every 4th
+  // row, two `dense` rows trashed, `note/txt` on odd rows.
+  async function denseDb (suffix, { order, denseOf = (i) => i % 5 < 3 } = {}) {
+    const id = userId + '-' + suffix;
+    const db = await storage.forUser(id);
+    for (const i of order ?? Array.from({ length: 400 }, (_, i) => i)) {
+      const streamIds = [denseOf(i) ? 'dense' : 'other'];
+      if (i % 4 === 0) streamIds.push('tagged');
+      db.createEventSync({
+        id: 'sqqp' + suffix + '-' + i,
+        streamIds,
+        type: i % 2 === 1 ? 'note/txt' : 'count/generic',
+        time: 4000 + Math.floor(i / 3),
+        created: 4000 + i,
+        createdBy: 'test',
+        modified: 4000 + i,
+        modifiedBy: 'test',
+        trashed: i === 390 || i === 385
+      });
+    }
+    return { id, db };
+  }
+
+  // Each case through the default plan, the rowid set and `getEvents`: same
+  // rows. `mode`: `walk` (the bounded walk answers), `fallback` (tried, the
+  // rowid set answers), `tried` (either), `set` (no walk), `any`.
+  async function checkCases (db, cases) {
+    for (const [q, o, mode, empty] of cases) {
+      const label = JSON.stringify([q, o]);
+      const walked = await run(q, o, db);
+      if (mode === 'set') assert.strictEqual(walked.walked, null, 'no walk ' + label);
+      else if (mode !== 'any') assert.ok(walked.walked != null, 'walk tried ' + label);
+      if (mode === 'walk') assert.strictEqual(walked.sql, walked.walked, 'walk answers ' + label);
+      if (mode === 'fallback') assert.notStrictEqual(walked.sql, walked.walked, 'rowid set answers ' + label);
+      const list = db.getEvents({ query: localStorePrepareQuery(q), options: localStorePrepareOptions(o) });
+      const set = await runRowidSet(q, o, db);
+      assert.match(set.sql, /NOT INDEXED/, set.sql);
+      assert.deepStrictEqual(walked.rows.map((e) => e.id), set.rows.map((e) => e.id), label);
+      assert.deepStrictEqual(list.map((e) => e.id), set.rows.map((e) => e.id), 'getEvents ' + label);
+      assert.strictEqual(set.rows.length === 0, empty === true, label);
+    }
+  }
+
+  it('[SQQPE] a deep page at the cap: a walk bounded by a reach probe, the rowid set when it falls short; the same rows', async function () {
+    const { id, db } = await denseDb('e');
+    const previous = _setCandidateProbeCap(20);
+    try {
+      const dense = { streams: [[{ any: ['dense'] }]] };
+      // Page 30: 30 x 400 rows > 20 x 20, the whole walk is refused. The 30th
+      // candidate from the end is 50 rows back: a walk over the newest 100
+      // rows (100 <= 30 x 400 / 50 / 2).
+      const deep = await run(dense, { limit: 5, skip: 25 }, db);
+      assert.ok(deep.walked != null && deep.sql === deep.walked, deep.sql);
+      assert.match(deep.sql, /time >= \?/, deep.sql);
+      assert.ok(!deep.sql.includes('NOT INDEXED') && !deep.sql.includes('events_fts'), deep.sql);
+      assert.match(deep.plan, /USING INDEX events_time/, deep.plan);
+      assert.doesNotMatch(deep.plan, /TEMP B-TREE/, deep.plan);
+      await checkCases(db, [
+        [dense, { limit: 5, skip: 25 }, 'walk'],
+        // Skips cutting groups of equal times.
+        [dense, { limit: 5, skip: 26 }, 'walk'],
+        [dense, { limit: 4, skip: 29 }, 'walk'],
+        // Newest first from a `toTime`: no reach probe (the full-text index
+        // cannot start it there), the rowid set.
+        [{ ...dense, toTime: 4100 }, { limit: 5, skip: 25 }, 'set'],
+        [{ ...dense, types: ['note/txt'] }, { limit: 3, skip: 20 }, 'tried'],
+        [{ streams: [[{ any: ['dense'] }, { not: ['tagged'] }]] }, { limit: 5, skip: 25 }, 'tried'],
+        [{ ...dense, state: 'all' }, { limit: 5, skip: 25 }, 'walk'],
+        // Two trashed rows: the walk falls short.
+        [{ ...dense, state: 'trashed' }, { limit: 5, skip: 25 }, 'fallback', true],
+        [{ ...dense, state: 'trashed' }, { limit: 2 }, 'fallback'],
+        // Deeper than the rule allows; past every match.
+        [dense, { limit: 5, skip: 200 }, 'set'],
+        [dense, { limit: 5, skip: 300 }, 'set', true],
+        [{ ...dense, toTime: 3000 }, { limit: 5, skip: 25 }, 'set', true]
+      ]);
+      const bounded = _setBoundedWalk(false);
+      try {
+        await checkCases(db, [[dense, { limit: 5, skip: 25 }, 'set']]);
+      } finally {
+        _setBoundedWalk(bounded);
+      }
+    } finally {
+      _setCandidateProbeCap(previous);
+      storage.closeUser(id);
+      try { await userLocalDirectory.deleteUserDirectory(id); } catch (_e) { /* best-effort */ }
+    }
+  });
+
+  it('[SQQPF] a deep page at the cap, ascending: a walk over the oldest rows; none when a row has no time', async function () {
+    const { id, db } = await denseDb('f');
+    const previous = _setCandidateProbeCap(20);
+    try {
+      const dense = { streams: [[{ any: ['dense'] }]] };
+      const asc = { limit: 5, skip: 25, sortAscending: true };
+      const deep = await run(dense, asc, db);
+      assert.ok(deep.walked != null && deep.sql === deep.walked, deep.sql);
+      assert.match(deep.sql, /time <= \?/, deep.sql);
+      assert.doesNotMatch(deep.sql, /time >= \?/, deep.sql);
+      assert.match(deep.plan, /USING INDEX events_time/, deep.plan);
+      assert.doesNotMatch(deep.plan, /TEMP B-TREE/, deep.plan);
+      await checkCases(db, [
+        [dense, asc, 'walk'],
+        [dense, { limit: 5, skip: 26, sortAscending: true }, 'walk'],
+        [dense, { limit: 3, skip: 4, sortAscending: true }, 'walk'],
+        [{ ...dense, toTime: 4100 }, asc, 'walk'],
+        [{ ...dense, types: ['note/txt'] }, { limit: 3, skip: 20, sortAscending: true }, 'tried'],
+        [{ ...dense, state: 'trashed' }, { limit: 2, sortAscending: true }, 'fallback'],
+        [dense, { limit: 5, skip: 200, sortAscending: true }, 'set']
+      ]);
+      // A row without a time sorts first ascending, outside any window: no walk.
+      db.createEventSync({ id: 'sqqpf-notime', streamIds: ['dense'], type: 'note/txt', time: null, created: 1, createdBy: 'test', modified: 1, modifiedBy: 'test' });
+      const first = await run(dense, { limit: 5, sortAscending: true }, db);
+      assert.strictEqual(first.rows[0].id, 'sqqpf-notime');
+      await checkCases(db, [
+        [dense, { limit: 5, sortAscending: true }, 'set'],
+        [dense, asc, 'set'],
+        // Descending, it sorts last: the walk is unaffected.
+        [dense, { limit: 5, skip: 25 }, 'walk']
+      ]);
+    } finally {
+      _setCandidateProbeCap(previous);
+      storage.closeUser(id);
+      try { await userLocalDirectory.deleteUserDirectory(id); } catch (_e) { /* best-effort */ }
+    }
+  });
+
+  it('[SQQPG] a deep page at the cap, rowids not in time order: the estimate may be wrong, the rows are not', async function () {
+    const previous = _setCandidateProbeCap(20);
+    // A seeded shuffle; inserted newest first; and the newest half inserted
+    // first, with `dense` on 1 row of 10 there and on every row of the oldest
+    // half: the probe, from the highest rowids, sees 30 candidates in 30 rows,
+    // and the newest 60 rows hold 6 (the walk falls short).
+    let seed = 7;
+    const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const shuffled = Array.from({ length: 400 }, (_, i) => i);
+    for (let k = shuffled.length - 1; k > 0; k--) { const j = Math.floor(random() * (k + 1)); [shuffled[k], shuffled[j]] = [shuffled[j], shuffled[k]]; }
+    const layouts = [
+      ['g1', { order: shuffled }],
+      ['g2', { order: Array.from({ length: 400 }, (_, i) => 399 - i) }],
+      ['g3', { order: Array.from({ length: 400 }, (_, k) => (k + 200) % 400), denseOf: (i) => i < 200 || i % 10 === 0 }]
+    ];
+    try {
+      for (const [suffix, options] of layouts) {
+        const { id, db } = await denseDb(suffix, options);
+        try {
+          const dense = { streams: [[{ any: ['dense'] }]] };
+          await checkCases(db, [
+            [dense, { limit: 5, skip: 25 }, 'any'],
+            [dense, { limit: 4, skip: 31 }, 'any'],
+            [{ ...dense, toTime: 4100 }, { limit: 5, skip: 25 }, 'any'],
+            [dense, { limit: 5, skip: 25, sortAscending: true }, 'any'],
+            [dense, { limit: 4, skip: 31, sortAscending: true }, 'any']
+          ]);
+          // Newest first: the probe reads the oldest rows, of the same density.
+          const desc = await run(dense, { limit: 5, skip: 25 }, db);
+          if (suffix === 'g2') assert.ok(desc.walked != null && desc.sql === desc.walked, 'walk answers ' + desc.sql);
+          if (suffix === 'g3') assert.ok(desc.walked != null && desc.sql !== desc.walked, 'walk falls short ' + desc.sql);
+        } finally {
+          storage.closeUser(id);
+          try { await userLocalDirectory.deleteUserDirectory(id); } catch (_e) { /* best-effort */ }
+        }
+      }
+    } finally {
+      _setCandidateProbeCap(previous);
+    }
+  });
+
   it('[SQQP8] stream ids carrying quotes stay inside the match expression', async function () {
     for (const id of ["o'q", 'd"q', "x' OR 1=1 --"]) {
       const { rows } = await run({ streams: [[{ any: [id] }]] }, {});
