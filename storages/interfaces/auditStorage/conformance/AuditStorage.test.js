@@ -512,6 +512,53 @@ export default function conformanceTests (getStorage, getUserId, cleanupFn, engi
         });
       });
 
+      // The default audit read of an app token: its own access among the
+      // records of many. Ids follow the insertion order, so the tie order of
+      // both engines (time then eventid, time then insertion) is the same.
+      describe('getEvents() of one access among many records', () => {
+        let ownUserId;
+        let ownDb;
+        const pad = (i) => String(i).padStart(3, '0');
+
+        before(async () => {
+          ownUserId = getUserId() + '-one-access';
+          ownDb = await storage.forUser(ownUserId);
+          for (let i = 0; i < 60; i++) {
+            await ownDb.createEvent({
+              id: 'oa-' + pad(i),
+              streamIds: i % 3 === 0 ? ['access-mine', 'action-events.get'] : ['access-other-' + (i % 5), 'action-events.get'],
+              type: 'audit-log/pryv-api',
+              time: 7000 + Math.floor(i / 6),
+              created: 7000,
+              createdBy: 'test',
+              modified: 7000,
+              modifiedBy: 'test'
+            });
+          }
+        });
+
+        after(async () => {
+          if (cleanupFn) await cleanupFn(ownUserId);
+        });
+
+        it('[ASQC] must page the access\'s records by time, ties included, in both directions', async () => {
+          const mine = [];
+          for (let i = 0; i < 60; i += 3) mine.push('oa-' + pad(i));
+          const query = () => [
+            { type: 'equal', content: { field: 'trashed', value: false } },
+            { type: 'streamsQuery', content: [[{ any: ['access-mine'] }]] }
+          ];
+          for (const [time, expected] of [[-1, [...mine].reverse()], [1, mine]]) {
+            for (const skip of [0, 3, 6, 18]) {
+              const page = await ownDb.getEvents({ query: query(), options: { sort: { time }, limit: 3, skip } });
+              assert.deepStrictEqual(page.map((e) => e.id), expected.slice(skip, skip + 3), `time ${time} skip ${skip}`);
+            }
+          }
+          const accesses = (await ownDb.getAllAccesses()).map((r) => r.term).sort();
+          assert.deepStrictEqual(accesses, ['access-mine', 'access-other-1', 'access-other-2', 'access-other-3', 'access-other-4', 'access-other-0'].sort());
+        });
+      });
+
       it('[SQ16] deleteUser() must remove the user database', async () => {
         const deleteUserId = getUserId() + '-del';
         const delDb = await storage.forUser(deleteUserId);

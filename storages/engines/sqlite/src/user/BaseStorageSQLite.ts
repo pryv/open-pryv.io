@@ -753,7 +753,7 @@ class BaseStorageSQLite<TItem extends SqliteStoredItem = SqliteStoredItem> imple
 
   // ---- Async / write plumbing ----
 
-  private _userDbAnd<T> (userOrUserId: UserOrId, callback: Callback<T>, fn: (udb: UserDb) => void): void {
+  protected _userDbAnd<T> (userOrUserId: UserOrId, callback: Callback<T>, fn: (udb: UserDb) => void): void {
     this.userDb(userOrUserId)
       .then((udb) => {
         try { fn(udb); } catch (err) { callback(err as Error); }

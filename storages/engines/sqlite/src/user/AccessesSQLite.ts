@@ -11,8 +11,17 @@ import type { StoredAccess } from '../../../../interfaces/_shared/domain.ts';
 import type { DbRow } from './BaseStorageSQLite.ts';
 import type { SqliteDb, SqlParam } from '../types.ts';
 import type { JsonGuard, JsonSet } from '../../../../interfaces/_shared/jsonPath.ts';
-import type { TokenProtection } from '../../../../interfaces/_shared/tokenProtection.ts';
+import type { TokenProtection, ExportAccessesOptions } from '../../../../interfaces/_shared/tokenProtection.ts';
+import { itemsReportingUnreadable, isSealedValue, SEALED_PREFIX, refuseIntegrityValueCondition } from '../../../../interfaces/_shared/tokenProtection.ts';
 const require = createRequire(import.meta.url);
+
+/** Accesses whose unreadable integrity was logged by this process (once each, bounded). */
+const unreadableIntegrityLogged = new Set<string>();
+
+/** `data.integrity` stored in clear (a row not converted yet). */
+const CLEAR_INTEGRITY_SQL = '(json_extract(data, \'$.integrity\') IS NOT NULL AND substr(json_extract(data, \'$.integrity\'), 1, 7) <> \'sealed:\')';
+/** `data.integrity` stored sealed (under any key). */
+const SEALED_INTEGRITY_SQL = '(substr(json_extract(data, \'$.integrity\'), 1, 7) = \'sealed:\')';
 const { foreignKeyError } = require('../../../../interfaces/_shared/tokenProtection.ts');
 
 const { BaseStorageSQLite, decorateSQLiteDuplicateError } = require('./BaseStorageSQLite.ts') as typeof import('./BaseStorageSQLite.ts');
@@ -114,21 +123,65 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   // The item above this class always carries the clear token; the stored data
   // never does once converted (see `protectClearRowsOfUser`).
 
-  /** The stored data with `token` replaced by its pair, in place (key order kept). */
-  protectData (userId: string, data: Record<string, unknown>): Record<string, unknown> {
-    if (data.token == null) return data;
-    if (typeof data.token !== 'string') throw new TypeError('accesses: token must be a string');
-    const tokenHash = this.tokenProtection.hashAccessToken(userId, data.token);
-    const tokenEnc = this.tokenProtection.sealAccessToken(userId, tokenHash, data.token);
+  /** Whether the stored data holds an `integrity` value in clear. */
+  static hasClearIntegrity (data: Record<string, unknown>): boolean {
+    return typeof data.integrity === 'string' && !isSealedValue(data.integrity);
+  }
+
+  /**
+   * The stored data with `token` replaced by its pair and `integrity` sealed,
+   * in place (key order kept). `fromItem`: the data is an item from above the
+   * engine, which never carries a stored form, so every `integrity` string is
+   * sealed (a `sealed:`-looking one reads back as the same public string);
+   * otherwise (stored data: conversion, re-key) a value already sealed is left.
+   */
+  protectData (userId: string, data: Record<string, unknown>, fromItem: boolean = false): Record<string, unknown> {
+    const sealIntegrity = fromItem ? typeof data.integrity === 'string' : AccessesSQLite.hasClearIntegrity(data);
+    if (data.token == null && !sealIntegrity) return data;
+    let tokenHash: string | null = null;
+    let tokenEnc: string | null = null;
+    if (data.token != null) {
+      if (typeof data.token !== 'string') throw new TypeError('accesses: token must be a string');
+      tokenHash = this.tokenProtection.hashAccessToken(userId, data.token);
+      tokenEnc = this.tokenProtection.sealAccessToken(userId, tokenHash, data.token);
+    }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(data)) {
-      if (k === 'token') { out.tokenHash = tokenHash; out.tokenEnc = tokenEnc; } else if (k !== 'tokenHash' && k !== 'tokenEnc') out[k] = v;
+      if (k === 'integrity' && sealIntegrity) out[k] = this.tokenProtection.sealAccessIntegrity(userId, v as string);
+      else if (tokenHash == null) out[k] = v;
+      else if (k === 'token') { out.tokenHash = tokenHash; out.tokenEnc = tokenEnc; } else if (k !== 'tokenHash' && k !== 'tokenEnc') out[k] = v;
     }
     return out;
   }
 
-  /** The stored data with its pair opened back to `token` (key order kept). */
+  /**
+   * The public `integrity` of a stored value: a clear one as stored, a sealed
+   * one opened. One that does not open is logged (ids only) and gives
+   * undefined: the item is returned without it.
+   */
+  openedIntegrity (userId: string | null | undefined, stored: unknown, accessId: unknown): unknown {
+    if (!isSealedValue(stored)) return stored;
+    try {
+      return this.tokenProtection.openAccessIntegrity(requireUserId(userId), stored);
+    } catch (err) {
+      const key = JSON.stringify([userId, accessId]);
+      if (!unreadableIntegrityLogged.has(key)) {
+        if (unreadableIntegrityLogged.size >= 10000) unreadableIntegrityLogged.clear();
+        unreadableIntegrityLogged.add(key);
+        logger.error('access ' + JSON.stringify(accessId) + ' of user ' + JSON.stringify(userId) +
+          ': stored integrity unreadable, returned without it (' + (err as Error).message + ')');
+      }
+      return undefined;
+    }
+  }
+
+  /** The stored data with its pair opened back to `token` and its `integrity` opened (key order kept). */
   openData (userId: string | null | undefined, data: Record<string, unknown>, accessId: unknown): Record<string, unknown> {
+    if (isSealedValue(data.integrity)) {
+      data = Object.assign({}, data);
+      const opened = this.openedIntegrity(userId, data.integrity, accessId);
+      if (opened === undefined) delete data.integrity; else data.integrity = opened;
+    }
     if (data.tokenEnc == null && !('tokenHash' in data)) return data;
     // A clear token (data not converted yet) is authoritative over a pair.
     let token: unknown = data.token;
@@ -149,8 +202,24 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   }
 
   protected itemToRow (item: Partial<AccessItem>, userId?: string | null): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
-    if (item.token == null) return super.itemToRow(item, userId);
-    return super.itemToRow(this.protectData(requireUserId(userId), item as Record<string, unknown>), userId);
+    if (item.token == null && typeof item.integrity !== 'string') return super.itemToRow(item, userId);
+    return super.itemToRow(this.protectData(requireUserId(userId), item as Record<string, unknown>, true), userId);
+  }
+
+  /**
+   * With `options.onUnreadableRow` (a whole-store read made for a report, the
+   * integrity check), a row whose token does not open is reported there and
+   * left out instead of failing the read. Without it the read throws, as every
+   * lookup does. A database holding rows under another key still fails as a
+   * whole (its first-use check).
+   */
+  exportAll (userOrUserId: UserOrId, callback: Callback<Array<AccessItem | null>>, options?: ExportAccessesOptions): void {
+    const report = options?.onUnreadableRow;
+    if (report == null) return super.exportAll(userOrUserId, callback);
+    this._userDbAnd(userOrUserId, callback, (udb) => {
+      const rows = udb.db.prepare<DbRow>('SELECT * FROM accesses').all();
+      callback(null, itemsReportingUnreadable(rows, (r: DbRow) => this.rowToItem(r, udb.userId), report));
+    });
   }
 
   rowToItem (row: DbRow, userId?: string | null): AccessItem | null {
@@ -182,6 +251,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
 
   buildWhere (query: Record<string, unknown>, userId?: string | null): { sql: string, params: SqlParam[] } {
     if (query == null) return super.buildWhere(query, userId);
+    refuseIntegrityValueCondition(query);
     const hasOrToken = Array.isArray(query.$or) && (query.$or as Array<Record<string, unknown>>).some((c) => c != null && 'token' in c);
     if (!('token' in query) && !hasOrToken) return super.buildWhere(query, userId);
     const uid = requireUserId(userId);
@@ -211,6 +281,9 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     if ([...(guards || []), ...(sets || [])].some((g) => tokenPaths.has(g.path?.[0]))) {
       return callback(new Error('compareAndSetJson: the token is not a JSON field of accesses'));
     }
+    if ([...(guards || []), ...(sets || [])].some((g) => g.path?.[0] === 'integrity')) {
+      return callback(new Error('compareAndSetJson: the integrity of an access is stored sealed, not a JSON field'));
+    }
     super.compareAndSetJson(userOrUserId, query, guards, sets, callback);
   }
 
@@ -233,32 +306,36 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
 
   /** Whether a user's database holds rows protected under another key. */
   hasForeignKeyRowsOfUser (udb: UserDbHandle): boolean {
-    return udb.db.prepare('SELECT 1 FROM accesses WHERE json_extract(data, \'$.tokenHash\') IS NOT NULL' +
-      ' AND json_extract(data, \'$.token\') IS NULL AND substr(json_extract(data, \'$.tokenHash\'), 1, ?) <> ? LIMIT 1')
-      .get(this.tokenProtection.kid.length + 1, this.tokenProtection.kid + '.') != null;
+    const kid = this.tokenProtection.kid;
+    const sealedOwn = SEALED_PREFIX + kid + '.';
+    return udb.db.prepare('SELECT 1 FROM accesses WHERE (json_extract(data, \'$.tokenHash\') IS NOT NULL' +
+      ' AND json_extract(data, \'$.token\') IS NULL AND substr(json_extract(data, \'$.tokenHash\'), 1, ?) <> ?)' +
+      ' OR (' + SEALED_INTEGRITY_SQL + ' AND substr(json_extract(data, \'$.integrity\'), 1, ?) <> ?) LIMIT 1')
+      .get(kid.length + 1, kid + '.', sealedOwn.length, sealedOwn) != null;
   }
 
   /**
    * Convert, in one write transaction, every row of a user's database holding
-   * a clear token (live, deleted, history); the clear value is authoritative
-   * over a pair already there. Throws when rows are under another key.
-   * Idempotent.
+   * a clear token or a clear `integrity` (live, deleted, history); the clear
+   * token is authoritative over a pair already there. Throws when rows are
+   * under another key. Idempotent.
    */
   async protectClearRowsOfUser (udb: UserDbHandle): Promise<number> {
     const userId = requireUserId(udb.userId);
     if (this.hasForeignKeyRowsOfUser(udb)) throw foreignKeyError('access rows of user ' + userId);
-    if (udb.db.prepare('SELECT 1 FROM accesses WHERE json_extract(data, \'$.token\') IS NOT NULL LIMIT 1').get() == null) return 0;
+    const toConvert = '(json_extract(data, \'$.token\') IS NOT NULL OR ' + CLEAR_INTEGRITY_SQL + ')';
+    if (udb.db.prepare('SELECT 1 FROM accesses WHERE ' + toConvert + ' LIMIT 1').get() == null) return 0;
     let count = 0;
     const unreadable: unknown[] = [];
     await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
-      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.token\') IS NOT NULL').all();
+      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE ' + toConvert).all();
       // Compare-and-set on the whole stored data (one write transaction).
       const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
       for (const row of rows) {
         const data = JSON.parse(row.data as string);
         // A legacy token stored as a number or a boolean: its string form.
         if (typeof data.token === 'number' || typeof data.token === 'boolean') data.token = String(data.token);
-        if (typeof data.token !== 'string') { unreadable.push(row.id); continue; }
+        if (data.token != null && typeof data.token !== 'string') { unreadable.push(row.id); continue; }
         count += upd.run(JSON.stringify(this.protectData(userId, data)), row.id, row.data).changes;
       }
     }).immediate());
@@ -270,40 +347,79 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     return count;
   }
 
-  /** Rollback aid: the clear token written back, the pair dropped. */
+  /**
+   * Rollback aid: the clear token written back, the pair dropped, the public
+   * `integrity` written back in clear (one that does not open is left sealed
+   * and logged).
+   */
   async unprotectRowsOfUser (udb: UserDbHandle): Promise<number> {
     const userId = requireUserId(udb.userId);
     let count = 0;
     await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
-      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.tokenEnc\') IS NOT NULL').all();
+      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.tokenEnc\') IS NOT NULL' +
+        ' OR ' + SEALED_INTEGRITY_SQL).all();
       const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
       for (const row of rows) {
-        const data = this.openData(userId, JSON.parse(row.data as string), row.id);
+        const stored = JSON.parse(row.data as string);
+        const data = this.openData(userId, stored, row.id);
+        // unreadable: left as stored (the previous image reports it), never dropped here
+        if (stored.integrity != null && data.integrity === undefined) data.integrity = stored.integrity;
         count += upd.run(JSON.stringify(data), row.id, row.data).changes;
       }
     }).immediate());
     return count;
   }
 
-  /** Re-hash and re-seal under the configured key the rows protected under one of `previous`. */
+  /**
+   * Re-hash and re-seal under the configured key the rows protected under one
+   * of `previous` (token pair and sealed `integrity`, each recognised by its
+   * key id). A value under a key not given is left and counted as skipped.
+   */
   async rekeyRowsOfUser (udb: UserDbHandle, previous: TokenProtection[]): Promise<TokenPassResult> {
     const userId = requireUserId(udb.userId);
     const result: TokenPassResult = { rows: 0, skipped: 0 };
+    const tp = this.tokenProtection;
     await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
-      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.tokenEnc\') IS NOT NULL' +
-        ' AND json_extract(data, \'$.token\') IS NULL').all();
+      const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE (json_extract(data, \'$.tokenEnc\') IS NOT NULL' +
+        ' AND json_extract(data, \'$.token\') IS NULL) OR ' + SEALED_INTEGRITY_SQL).all();
       const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
       for (const row of rows) {
-        const data = JSON.parse(row.data as string);
-        if (this.tokenProtection.ownsHash(data.tokenHash)) continue;
-        const from = previous.find((p) => p.ownsHash(data.tokenHash));
-        if (from == null) { result.skipped++; continue; }
-        const token = from.openAccessToken(userId, data.tokenHash, data.tokenEnc);
-        const out: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(data)) {
-          if (k === 'tokenHash') out.token = token; else if (k !== 'tokenEnc') out[k] = v;
+        let data: Record<string, unknown> = JSON.parse(row.data as string);
+        let changed = false;
+        let skipped = false;
+        if (data.tokenEnc != null && data.token == null && !tp.ownsHash(data.tokenHash as string)) {
+          const from = previous.find((p) => p.ownsHash(data.tokenHash as string));
+          if (from == null) skipped = true;
+          else {
+            const token = from.openAccessToken(userId, data.tokenHash as string, data.tokenEnc as string);
+            const out: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(data)) {
+              if (k === 'tokenHash') out.token = token; else if (k !== 'tokenEnc') out[k] = v;
+            }
+            data = this.protectData(userId, out);
+            changed = true;
+          }
         }
-        result.rows += upd.run(JSON.stringify(this.protectData(userId, out)), row.id, row.data).changes;
+        if (isSealedValue(data.integrity) && !tp.ownsSealed(data.integrity)) {
+          const stored = data.integrity;
+          const from = previous.find((p) => p.ownsSealed(stored));
+          let clear: string | null = null;
+          if (from != null) {
+            try {
+              clear = from.openAccessIntegrity(userId, stored);
+            } catch (err) {
+              logger.error('access tokens at rest: rekey: access ' + JSON.stringify(row.id) + ' of user ' + JSON.stringify(userId) +
+                ': integrity does not open under its previous key, left as is (' + (err as Error).message + ')');
+            }
+          }
+          if (clear == null) skipped = true;
+          else {
+            data = Object.assign({}, data, { integrity: tp.sealAccessIntegrity(userId, clear) });
+            changed = true;
+          }
+        }
+        if (skipped) result.skipped++;
+        if (changed) result.rows += upd.run(JSON.stringify(data), row.id, row.data).changes;
       }
     }).immediate());
     return result;
@@ -316,10 +432,83 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
       ' COUNT(*) AS n FROM accesses GROUP BY 1').all();
   }
 
+  /** Counts per stored form of `integrity` in a user's database (`k`: 'none', 'clear' or the key id). */
+  integrityStatusOfUser (udb: UserDbHandle): Array<{ k: string, n: number }> {
+    return udb.db.prepare<{ k: string, n: number }>('SELECT CASE WHEN json_extract(data, \'$.integrity\') IS NULL THEN \'none\'' +
+      ' WHEN ' + CLEAR_INTEGRITY_SQL + ' THEN \'clear\' ELSE substr(json_extract(data, \'$.integrity\'), 8, 8) END AS k,' +
+      ' COUNT(*) AS n FROM accesses GROUP BY 1').all();
+  }
+
+  // ---- Tokens of deleted accesses ----
+
+  /**
+   * Drop the token (clear, hash and encrypted copy) of every deleted row, and
+   * of every history row whose head is deleted, in a user's database, inside
+   * the caller's write transaction. `modified` is untouched. While integrity
+   * is active, a row whose stored integrity verifies on the row with its
+   * token is re-hashed without it; any other value is kept as stored, for the
+   * integrity check to report. Compare-and-set on the whole stored data.
+   *
+   * `deletedAt` (a deletion): only the history rows of the heads that
+   * deletion marked (`deleted = deletedAt`, read through the `deleted` and
+   * `head_id` indexes; the heads lost their token in its update), not every
+   * row of the database.
+   */
+  _dropTokensOfDeletedRowsSync (udb: UserDbHandle, deletedAt?: number): number {
+    const userId = requireUserId(udb.userId);
+    const holdsToken = '(json_extract(a.data, \'$.token\') IS NOT NULL' +
+      ' OR json_extract(a.data, \'$.tokenHash\') IS NOT NULL OR json_extract(a.data, \'$.tokenEnc\') IS NOT NULL)';
+    const rows = deletedAt != null
+      ? udb.db.prepare<DbRow>('SELECT a.* FROM accesses a WHERE a.head_id IN (SELECT d.id FROM accesses d WHERE d.deleted = ?' +
+        ' AND d.head_id IS NULL) AND ' + holdsToken).all(deletedAt)
+      : udb.db.prepare<DbRow>('SELECT a.* FROM accesses a WHERE ' + holdsToken +
+        ' AND (a.deleted IS NOT NULL OR (a.head_id IS NOT NULL AND EXISTS (SELECT 1 FROM accesses d' +
+        ' WHERE d.id = a.head_id AND d.deleted IS NOT NULL)))').all();
+    const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
+    let count = 0;
+    for (const row of rows) {
+      const data: Record<string, unknown> = JSON.parse(row.data as string);
+      const out: Record<string, unknown> = Object.assign({}, data);
+      delete out.token;
+      delete out.tokenHash;
+      delete out.tokenEnc;
+      if (this.integrityAccesses.isActive && data.integrity != null) {
+        let verifies = false;
+        try {
+          const withToken = this.rowToItem(row, userId);
+          if (withToken?.integrity != null) {
+            const check = Object.assign({}, withToken);
+            this.integrityAccesses.set(check, true);
+            verifies = check.integrity === withToken.integrity;
+          }
+        } catch (_e) {
+          // the token does not open: the stored integrity cannot be verified, kept as stored
+        }
+        const without = verifies ? this.rowToItem(Object.assign({}, row, { data: JSON.stringify(out) }), userId) : null;
+        if (without != null) {
+          this.integrityAccesses.set(without, true);
+          if (typeof without.integrity === 'string') out.integrity = this.tokenProtection.sealAccessIntegrity(userId, without.integrity);
+        }
+      }
+      count += upd.run(JSON.stringify(out), row.id, row.data).changes;
+    }
+    if (count > 0) logger.info('access tokens at rest: token dropped from ' + count + ' deleted access rows of user ' + userId);
+    return count;
+  }
+
+  /** `_dropTokensOfDeletedRowsSync` in its own write transaction. */
+  async dropTokensOfDeletedRowsOfUser (udb: UserDbHandle): Promise<number> {
+    let count = 0;
+    await concurrentSafeWrite.execute(() => udb.db.transaction(() => { count = this._dropTokensOfDeletedRowsSync(udb); }).immediate());
+    return count;
+  }
+
   applyDefaults (item: Partial<AccessItem>): AccessItem {
     const copy = Object.assign({}, item) as AccessItem;
     copy.id = copy.id || generateId();
-    copy.token = copy.token || secureToken();
+    // Only a live head gets a token: a deletion record or a history row
+    // without one (dropped at deletion) is restored without one.
+    if (!copy.token && copy.deleted == null && copy.headId == null) copy.token = secureToken();
     if (copy.deleted === undefined) copy.deleted = null;
     delete copy.apiEndpoint;
     if (this.integrityAccesses.isActive) {
@@ -340,15 +529,27 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     this.findIncludingDeletionsAndVersions(userOrUserId, q, options, callback);
   }
 
+  /**
+   * Marks the matching accesses deleted. A deleted access never authenticates
+   * and its token is never returned: the deletion record drops it, and so do
+   * the history rows of the deleted accesses, in the same transaction (see
+   * `_dropTokensOfDeletedRowsSync`). The integrity of each is computed on the
+   * row without its token.
+   */
   delete (userOrUserId: UserOrId, query: Record<string, unknown>, callback: Callback<{ modifiedCount: number; integrityRecomputed?: number }>): void {
     const now = timestamp.now();
     const updateData: AccessUpdate = {
       $set: { deleted: now },
-      $unset: { integrity: 1 }
+      $unset: { integrity: 1, token: 1 }
     };
 
     if (!this.integrityAccesses.isActive) {
-      return this.updateMany(userOrUserId, query, updateData, callback);
+      this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
+        const res = this._updateManySync(udb, query, updateData);
+        this._dropTokensOfDeletedRowsSync(udb, now);
+        return res;
+      }).immediate());
+      return;
     }
 
     const integrityBatchCode = Math.random();
@@ -372,6 +573,7 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
       const res = this._updateManySync(udb, query, updateData);
       const res2 = this._findAndUpdateIfNeededSync(udb, { integrityBatchCode }, {}, updateIfNeeded);
+      this._dropTokensOfDeletedRowsSync(udb, now);
       return { modifiedCount: res.modifiedCount, integrityRecomputed: res2.count };
     }).immediate());
   }
@@ -467,7 +669,9 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
               result.unverified++;
               continue;
             }
-            result.rewritten += write.run(item.integrity, row.id, stored).changes;
+            // Compare-and-set on the stored (raw) value, clear or sealed; the new value written sealed.
+            const raw = JSON.parse(row.data as string).integrity;
+            result.rewritten += write.run(this.tokenProtection.sealAccessIntegrity(userId, item.integrity as string), row.id, raw).changes;
           }
         }).immediate());
       } catch (err) {
@@ -492,7 +696,24 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
       if (a.deleted === undefined) return Object.assign({ deleted: null }, a);
       return a;
     });
-    super.insertMany(userOrUserId, prepared, callback);
+    // The base `insertMany` is `importAll`: the rows only, without the token
+    // drop of a restore (see `importAll` below).
+    super.importAll(userOrUserId, prepared, callback);
+  }
+
+  /**
+   * A restore: a backup taken before deleted accesses dropped their token
+   * still carries it on deletion records and their history rows; it goes
+   * after the import, as at deletion.
+   */
+  importAll (userOrUserId: UserOrId, items: Array<Partial<AccessItem>>, callback: Callback<void>): void {
+    super.importAll(userOrUserId, items, (err: Error | null) => {
+      if (err || !items || items.length === 0) return callback(err);
+      this._userDbAndWrite(userOrUserId, callback, (udb) => udb.db.transaction(() => {
+        this._dropTokensOfDeletedRowsSync(udb);
+        return undefined;
+      }).immediate());
+    });
   }
 
   /**
@@ -676,17 +897,37 @@ function removeUnprotectedMarker (): void {
   if (marker != null) fs.rmSync(marker, { force: true });
 }
 
-/** The key id recorded by the last complete walk, null when none completed. */
-function tokenMarkerKid (): string | null {
+/**
+ * The walk the marker's first line records after the key id. `v2`: tokens
+ * protected, `integrity` sealed, deleted accesses without their token. A
+ * marker without it (written by an earlier build) is a walk to do again, not
+ * a marker of another key.
+ */
+const TOKEN_WALK_VERSION = 'v2';
+
+/** The first line of the marker: `[kid, walk version]`, null when no walk completed. */
+function tokenMarkerLine (): [string, string | null] | null {
   const marker = tokenMarkerPath();
   if (marker == null || !fs.existsSync(marker)) return null;
-  return fs.readFileSync(marker, 'utf8').split('\n')[0].trim();
+  const parts = fs.readFileSync(marker, 'utf8').split('\n')[0].trim().split(/\s+/);
+  return [parts[0], parts[1] ?? null];
 }
 
-function writeTokenMarker (kid: string): void {
+/** The key id recorded by the last complete walk, null when none completed. */
+function tokenMarkerKid (): string | null {
+  return tokenMarkerLine()?.[0] ?? null;
+}
+
+/** The walk version recorded with the key id (null: an earlier walk, or none). */
+function tokenMarkerVersion (): string | null {
+  return tokenMarkerLine()?.[1] ?? null;
+}
+
+function writeTokenMarker (kid: string, version: string | null = TOKEN_WALK_VERSION): void {
   const marker = tokenMarkerPath();
   if (marker == null) return;
-  fs.writeFileSync(marker, kid + '\nDO NOT DELETE THIS FILE - IT RECORDS THAT THE ACCESS TOKENS ARE PROTECTED AT REST UNDER THIS KEY ID\n');
+  fs.writeFileSync(marker, kid + (version != null ? ' ' + version : '') +
+    '\nDO NOT DELETE THIS FILE - IT RECORDS THAT THE ACCESS TOKENS ARE PROTECTED AT REST UNDER THIS KEY ID\n');
 }
 
 function removeTokenMarker (): void {
@@ -696,31 +937,39 @@ function removeTokenMarker (): void {
 
 /**
  * Convert every user database once (the marker file records the walk, with
- * the key id): refused when the marker or a database is under another key. A
- * database the walk misses is converted at its first use (`onUserDbReady`).
- * Returns null when skipped (marker present for this key).
+ * the key id and the walk version): tokens and `integrity` in clear are
+ * protected, deleted accesses and the history rows of deleted accesses drop
+ * their token. Refused when the marker or a database is under another key. A
+ * database the walk misses is converted at its first use (`onUserDbReady`),
+ * tokens and `integrity` only: the token of a deleted access is left until
+ * the next walk (`bin/hfs-author-scrub.js`, run before the first start, still
+ * maps it). Returns null when skipped (marker of this walk for this key).
  */
-async function protectAccessTokensOnce (accesses: AccessesSQLite): Promise<{ rows: number; failedUsers: number } | null> {
+async function protectAccessTokensOnce (accesses: AccessesSQLite): Promise<{ rows: number; deletedTokens: number; failedUsers: number } | null> {
   const markerKid = tokenMarkerKid();
-  if (markerKid === accesses.tokenProtection.kid) return null;
-  if (markerKid != null) throw foreignKeyError('access rows (walk marker under key id ' + markerKid + ')');
+  if (markerKid === accesses.tokenProtection.kid && tokenMarkerVersion() === TOKEN_WALK_VERSION) return null;
+  if (markerKid != null && markerKid !== accesses.tokenProtection.kid) throw foreignKeyError('access rows (walk marker under key id ' + markerKid + ')');
   let rows = 0;
+  let deletedTokens = 0;
   const failed = await eachUserAccessesDb(async (udb, userId) => {
     const n = await accesses.protectClearRowsOfUser(udb);
+    const d = await accesses.dropTokensOfDeletedRowsOfUser(udb);
     rows += n;
-    if (n > 0) vacuumQuietly(udb.db, 'user ' + userId);
+    deletedTokens += d;
+    if (n > 0 || d > 0) vacuumQuietly(udb.db, 'user ' + userId);
   });
   if (failed.length === 0) writeTokenMarker(accesses.tokenProtection.kid);
   else {
     logger.warn('access tokens at rest: the walk runs again at every start until every user database succeeds; failed: ' +
       failed.slice(0, MAX_FAILED_USERS_LISTED).join(', ') + (failed.length > MAX_FAILED_USERS_LISTED ? ' and ' + (failed.length - MAX_FAILED_USERS_LISTED) + ' more' : ''));
   }
-  return { rows, failedUsers: failed.length };
+  return { rows, deletedTokens, failedUsers: failed.length };
 }
 
 export {
   AccessesSQLite, duplicateIndexError, recomputeAccessesIntegrityOnce, INTEGRITY_WIRE_FORM_MARKER,
-  TOKEN_PROTECTED_MARKER, protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker,
+  TOKEN_PROTECTED_MARKER, protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, tokenMarkerVersion, writeTokenMarker, removeTokenMarker,
+  TOKEN_WALK_VERSION,
   TOKEN_UNPROTECTED_MARKER, tokensUnprotected, writeUnprotectedMarker, removeUnprotectedMarker,
   vacuumQuietly
 };

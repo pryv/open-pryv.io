@@ -87,6 +87,10 @@ for (const username of refUsernames) {
   for (const field of [...statsFields].sort()) {
     const vals = userEntries.map(u => u.stats?.[field] !== undefined ? u.stats[field] : '-');
     report.push(fmt('stats.' + field, vals));
+    // Each restore leg adds one `account.restored` record to the account's own
+    // audit trail, so the audit count grows by design; the content check below
+    // compares the audit records without those.
+    if (field === 'audit') continue;
     const numericVals = vals.filter(v => typeof v === 'number');
     if (new Set(numericVals).size > 1) divergences++;
   }
@@ -120,6 +124,16 @@ function canonical (value) {
   return JSON.stringify(value);
 }
 
+// The record a restore writes in the account's own trail (`account.restored`):
+// one per restore leg, so it is left out of the comparison.
+function isRestoreRecord (record) {
+  let content = record.content;
+  if (typeof content === 'string') {
+    try { content = JSON.parse(content); } catch (e) { return false; }
+  }
+  return content != null && content.action === 'account.restored';
+}
+
 function listFiles (dir, rel = '') {
   const out = [];
   for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
@@ -145,7 +159,9 @@ function collectionDigests (userDir) {
     const raw = rel.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(file)) : fs.readFileSync(file);
     for (const line of raw.toString('utf8').split('\n')) {
       if (line.trim() === '') continue;
-      (records[collection] ||= []).push(canonical(JSON.parse(line)));
+      const record = JSON.parse(line);
+      if (collection === 'audit' && isRestoreRecord(record)) continue;
+      (records[collection] ||= []).push(canonical(record));
     }
   }
   const digests = {};

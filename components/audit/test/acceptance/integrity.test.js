@@ -92,16 +92,14 @@ describe('[AINT] Audit events integrity', function () {
     assert.strictEqual(computedIntegrity.key, auditEvent.content.record.key);
   });
 
-  it('[U09J] must find access integrity key and record value in the audit log ', async () => {
+  it('[TKIA1] the audit record of accesses.create names the access by its key, without the hash (it covers the token)', async () => {
     const rows = await getAuditRows(personalToken, ':_audit:action-accesses.create', 'accesses.create');
     assert.strictEqual(1, rows.length);
 
     const auditEvent = rows[0];
     assert.ok(auditEvent.content.record);
-    assert.strictEqual(appAccess.integrity, auditEvent.content.record.integrity);
-
-    const computedIntegrity = integrity.accesses.compute(appAccess);
-    assert.strictEqual(computedIntegrity.integrity, auditEvent.content.record.integrity);
-    assert.strictEqual(computedIntegrity.key, auditEvent.content.record.key);
+    assert.deepStrictEqual(Object.keys(auditEvent.content.record), ['key']);
+    assert.strictEqual(auditEvent.content.record.key, integrity.accesses.key(appAccess));
+    assert.ok(!JSON.stringify(auditEvent).includes(appAccess.integrity.split(':').pop()), 'the hash is nowhere in the record');
   });
 });

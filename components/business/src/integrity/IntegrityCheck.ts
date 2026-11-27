@@ -14,7 +14,10 @@ const { fromCallback } = require('utils');
  * Recomputes hashes on events and accesses and compares against stored values.
  */
 type StorageLayer = {
-  accesses: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: AccessLike[]) => void) => void };
+  accesses: {
+    exportAll: (user: { id: string }, cb: (err: Error | null, items?: AccessLike[]) => void,
+      options?: { onUnreadableRow?: (accessId: unknown, reason: string) => void }) => void
+  };
   events?: { exportAll: (user: { id: string }, cb: (err: Error | null, items?: EventLike[]) => void) => void };
 };
 type UsersIndexLike = { getAllByUsername: () => Promise<Record<string, string>> };
@@ -25,6 +28,8 @@ type Integrity = {
 type EventLike = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; headId?: string; [k: string]: unknown };
 type AccessLike = { id?: string; _id?: unknown; __v?: unknown; userId?: string; user_id?: string; integrity?: string; [k: string]: unknown };
 type StoreCheckStatus = 'checked' | 'inactive' | 'unavailable';
+/** Errors of a stored token that does not open, or of a database under another key. */
+const UNREADABLE_ERROR_NAMES = new Set(['TokenUnreadableError', 'ForeignTokenKeyError']);
 type Report = {
   userId: string;
   username?: string;
@@ -183,9 +188,27 @@ class IntegrityCheck {
 
   async _checkUserAccesses (userId: string, report: Report) {
     const user = { id: userId };
-    const accesses = await fromCallback((cb: (err: Error | null, items?: AccessLike[]) => void) =>
-      this.storageLayer!.accesses.exportAll(user, cb)
-    ) as AccessLike[];
+    // An access whose stored token does not open cannot be verified (its
+    // integrity covers the token): it is reported and the others are checked.
+    const unreadable: Array<{ accessId: unknown; reason: string }> = [];
+    let accesses: AccessLike[];
+    try {
+      accesses = await fromCallback((cb: (err: Error | null, items?: AccessLike[]) => void) =>
+        this.storageLayer!.accesses.exportAll(user, cb, {
+          onUnreadableRow: (accessId: unknown, reason: string) => unreadable.push({ accessId, reason })
+        })
+      ) as AccessLike[];
+    } catch (err) {
+      // A user database refused as a whole (rows under another key, SQLite):
+      // reported for this user, the run goes on with the next one.
+      if (!UNREADABLE_ERROR_NAMES.has((err as Error).name)) throw err;
+      report.accesses.status = 'checked';
+      report.accesses.errors.push({
+        accessId: (err as Error & { accessId?: unknown }).accessId ?? null,
+        error: 'integrity not verifiable: ' + (err as Error).message
+      });
+      return;
+    }
 
     if (!accesses) {
       report.accesses.status = 'unavailable';
@@ -193,6 +216,10 @@ class IntegrityCheck {
     }
 
     report.accesses.status = 'checked';
+    for (const u of unreadable) {
+      report.accesses.checked++;
+      report.accesses.errors.push({ accessId: u.accessId, error: 'integrity not verifiable: ' + u.reason });
+    }
     for (const access of accesses) {
       // Normalize _id -> id for MongoDB raw docs
       if (access._id != null && access.id == null) {

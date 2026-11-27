@@ -148,6 +148,9 @@ auth:
   filesReadTokenSecret: $RT_FILES_SECRET
   passwordResetPageURL: http://127.0.0.1:$PORT/reset
   trustedApps: "*@*"
+setup:
+  # A throwaway core: registration must not wait for the platform setup.
+  registrationWhilePending: open
 platform:
   # Fixed throwaway key (base64 of 32 bytes): every leg must hash PII with the
   # same key, or the restored platform index would not match the backup.

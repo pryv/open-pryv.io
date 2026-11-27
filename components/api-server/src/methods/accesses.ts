@@ -1644,11 +1644,14 @@ export default async function produceAccessesApiMethods (api: { register (...arg
     return access.expires != null && now > access.expires;
   }
 
+  // The audit record names the access version by its key only: the hash
+  // covers the token, so a copy of it in the audit storage would be an
+  // offline oracle for a weak token. The hash is read from that version's
+  // row, where it is stored sealed.
   function addIntegrityToContext (context: MethodContext, params: AccessesCreateParams, result: AccessesCreateResult, next: MethodNext) {
     if (result?.access?.integrity != null) {
       context.auditIntegrityPayload = {
-        key: integrity.accesses.key(result.access),
-        integrity: result.access.integrity
+        key: integrity.accesses.key(result.access)
       };
       if (process.env.NODE_ENV === 'test' &&
                 integrity.accesses.isActive) {

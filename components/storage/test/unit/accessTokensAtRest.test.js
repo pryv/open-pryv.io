@@ -68,6 +68,35 @@ describe('[TKAR] access tokens and session ids at rest', function () {
     udb.readyTables.delete('accesses');
   }
 
+  /** The stored `integrity` of a row, as stored (clear or sealed), null when absent. */
+  async function rawIntegrity (userId, id) {
+    if (engine === 'postgresql') {
+      const res = await storages.databasePG.query('SELECT integrity FROM accesses WHERE user_id = $1 AND id = $2', [userId, id]);
+      return res.rows[0]?.integrity ?? null;
+    }
+    const udb = await sqliteUserDb(userId);
+    const row = udb.db.prepare('SELECT data FROM accesses WHERE id = ?').get(id);
+    return JSON.parse(row.data).integrity ?? null;
+  }
+
+  /** Write a stored `integrity` as is (null = absent). */
+  async function rawWriteIntegrity (userId, id, value) {
+    if (engine === 'postgresql') {
+      await storages.databasePG.query('UPDATE accesses SET integrity = $1 WHERE user_id = $2 AND id = $3', [value, userId, id]);
+      return;
+    }
+    const udb = await sqliteUserDb(userId);
+    const d = JSON.parse(udb.db.prepare('SELECT data FROM accesses WHERE id = ?').get(id).data);
+    if (value == null) delete d.integrity; else d.integrity = value;
+    udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ?').run(JSON.stringify(d), id);
+    udb.readyTables.delete('accesses');
+  }
+
+  /** The public hash of an item (what the API returns and a client recomputes). */
+  function hashOf (item) {
+    return require('business/src/integrity/index.ts').default.accesses.hash(item);
+  }
+
   /** The stored sessions: `{ id, idEnc, data }`. */
   async function rawSessions () {
     if (engine === 'postgresql') {
@@ -191,7 +220,7 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       assert.strictEqual((await call(accesses, 'findOne', userId, { token }, null)).id, b.id);
     });
 
-    it('[TKST6] history and deleted rows open to the same token; exportAll / importAll keep tokens and integrity', async () => {
+    it('[TKST6] a history row opens to the token until the access is deleted, then both rows hold none; exportAll / importAll keep tokens and integrity', async () => {
       // A user of its own: the rows of the other tests are updated without a
       // recomputed hash, which an import recomputes.
       const userId = await indexedUserId();
@@ -206,7 +235,8 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       const all = await call(accesses, 'findIncludingDeletionsAndVersions', userId, {}, null);
       const mine = all.filter((x) => x.id === a.id || x.headId === a.id);
       assert.strictEqual(mine.length, 2);
-      for (const x of mine) assert.strictEqual(x.token, token);
+      // a deleted access never authenticates: its deletion record and its history drop the token
+      for (const x of mine) assert.strictEqual(x.token, undefined);
       const exported = await call(accesses, 'exportAll', userId);
       const target = await indexedUserId();
       try {
@@ -240,6 +270,51 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       });
       await rawWrite(userId, a.id, raw);
       assert.strictEqual((await call(accesses, 'findOne', userId, { token }, null)).id, a.id);
+    });
+
+    it('[TKUR1] a whole-store export asked to report unreadable rows returns the others and names that one; without it the export still throws', async () => {
+      const u = await indexedUserId();
+      try {
+        const good = await call(accesses, 'insertOne', u, newAccess({ token: 'tkur1-good-' + cuid() }));
+        const bad = await call(accesses, 'insertOne', u, newAccess({ token: 'tkur1-bad-' + cuid() }));
+        const raw = await rawAccess(u, bad.id);
+        const other = createTokenProtection('tkur1-other-key');
+        await rawWrite(u, bad.id, { token: null, tokenHash: raw.tokenHash, tokenEnc: other.sealAccessToken(u, raw.tokenHash, bad.token) });
+        const reported = [];
+        const items = await promisify((cb) => accesses.exportAll(u, cb, { onUnreadableRow: (id, reason) => reported.push({ id, reason }) }))();
+        assert.deepStrictEqual(items.map((x) => x.id), [good.id]);
+        assert.strictEqual(items[0].token, good.token);
+        assert.strictEqual(reported.length, 1);
+        assert.strictEqual(reported[0].id, bad.id);
+        assert.ok(!reported[0].reason.includes(bad.token), 'the reason does not carry the token');
+        await assert.rejects(call(accesses, 'exportAll', u), (err) => err.name === 'TokenUnreadableError');
+        await assert.rejects(call(accesses, 'findOne', u, { id: bad.id }, null), (err) => err.name === 'TokenUnreadableError');
+      } finally {
+        await call(accesses, 'removeAll', u);
+      }
+    });
+
+    it('[TKUR2] the integrity check reports an access whose token does not open and checks the others', async () => {
+      const u = await indexedUserId();
+      const IntegrityCheck = require('business/src/integrity/IntegrityCheck.ts').default;
+      const checker = await new IntegrityCheck().init();
+      try {
+        await call(accesses, 'insertOne', u, newAccess({ token: 'tkur2-a-' + cuid() }));
+        await call(accesses, 'insertOne', u, newAccess({ token: 'tkur2-b-' + cuid() }));
+        const bad = await call(accesses, 'insertOne', u, newAccess({ token: 'tkur2-bad-' + cuid() }));
+        const raw = await rawAccess(u, bad.id);
+        const other = createTokenProtection('tkur2-other-key');
+        await rawWrite(u, bad.id, { token: null, tokenHash: raw.tokenHash, tokenEnc: other.sealAccessToken(u, raw.tokenHash, bad.token) });
+        const report = await checker.checkUser(u);
+        assert.strictEqual(report.accesses.status, 'checked');
+        assert.strictEqual(report.accesses.checked, 3);
+        assert.strictEqual(report.accesses.errors.length, 1, JSON.stringify(report.accesses.errors));
+        assert.strictEqual(report.accesses.errors[0].accessId, bad.id);
+        assert.match(report.accesses.errors[0].error, /stored token unreadable/);
+        assert.strictEqual(report.ok, false);
+      } finally {
+        await call(accesses, 'removeAll', u);
+      }
     });
 
     it('[TKST8] a one-character and a 500-character token round trip', async () => {
@@ -290,6 +365,602 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       const many = await call(accesses, 'find', userId, { id: a.id }, { projection: { token: 1 } });
       assert.strictEqual(many.length, 1);
       assert.strictEqual(many[0].token, token);
+    });
+  });
+
+  describe('[TKIN] access integrity at rest', () => {
+    let userId;
+    const tokensAtRest = () => storages.getTokensAtRest();
+    const sealedPrefix = () => 'sealed:' + accesses.tokenProtection.kid + '.';
+    before(async function () {
+      if (!accesses.integrityAccesses.isActive) this.skip();
+      userId = await indexedUserId();
+    });
+    after(async () => { if (userId != null) await call(accesses, 'removeAll', userId); });
+
+    it('[TKIN1] the stored integrity is sealed under the key id; findOne returns the public value, the hash of the item', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin1-' + cuid() }));
+      const raw = await rawIntegrity(userId, a.id);
+      assert.ok(raw.startsWith(sealedPrefix()), raw);
+      assert.ok(!raw.includes(a.integrity.split(':').pop()), 'the stored value does not hold the hash');
+      const found = await call(accesses, 'findOne', userId, { id: a.id }, null);
+      assert.match(found.integrity, /^ACCESS:0:/);
+      assert.strictEqual(found.integrity, a.integrity);
+      assert.strictEqual(found.integrity, hashOf(found));
+    });
+
+    it('[TKIN2] an update with `modified` and a deletion: the stored value sealed, the item value verifies', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin2-' + cuid() }));
+      const updated = await call(accesses, 'updateOne', userId, { id: a.id }, { name: 'tkin2-renamed-' + cuid(), modified: Date.now() / 1000 });
+      assert.notStrictEqual(updated.integrity, a.integrity);
+      assert.strictEqual(updated.integrity, hashOf(updated));
+      assert.ok((await rawIntegrity(userId, a.id)).startsWith(sealedPrefix()));
+      await call(accesses, 'delete', userId, { id: a.id });
+      const [deletion] = await call(accesses, 'findDeletionRecords', userId, { id: a.id }, null);
+      assert.ok(deletion.deleted != null);
+      assert.strictEqual(deletion.integrity, hashOf(deletion));
+      assert.ok((await rawIntegrity(userId, a.id)).startsWith(sealedPrefix()));
+    });
+
+    it('[TKIN3] a history row: its integrity sealed, verifying under its composite id', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin3-' + cuid() }));
+      await call(accesses, 'snapshotHead', userId, a.id);
+      const [h] = await accesses.findHistory(userId, a.id);
+      assert.strictEqual(h.headId, a.id);
+      assert.strictEqual(h.integrity, hashOf(h));
+      assert.ok((await rawIntegrity(userId, h.id)).startsWith(sealedPrefix()));
+    });
+
+    it('[TKIN4] the conversion pass seals clear values (live, deleted, history); before it a clear value reads as itself; a second run changes nothing', async () => {
+      const live = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin4-live-' + cuid() }));
+      await call(accesses, 'snapshotHead', userId, live.id);
+      const [hist] = await accesses.findHistory(userId, live.id);
+      const del = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin4-del-' + cuid() }));
+      await call(accesses, 'delete', userId, { id: del.id });
+      const [delRec] = await call(accesses, 'findDeletionRecords', userId, { id: del.id }, null);
+      const publicOf = { [live.id]: live.integrity, [hist.id]: hist.integrity, [del.id]: delRec.integrity };
+      // written in clear, as by an image before this one
+      for (const [id, value] of Object.entries(publicOf)) await rawWriteIntegrity(userId, id, value);
+      for (const [id, value] of Object.entries(publicOf)) assert.strictEqual(await rawIntegrity(userId, id), value);
+      if (engine === 'postgresql') {
+        assert.strictEqual((await call(accesses, 'findOne', userId, { id: live.id }, null)).integrity, live.integrity);
+        const res = await tokensAtRest().protectTokensAtRest();
+        assert.ok(res.integrity >= 3, JSON.stringify(res));
+        const again = await tokensAtRest().protectTokensAtRest();
+        assert.strictEqual(again.integrity, 0);
+      } else {
+        require('storages/engines/sqlite/src/user/AccessesSQLite.ts').removeTokenMarker();
+        await tokensAtRest().protectTokensAtRest();
+        assert.strictEqual(require('storages/engines/sqlite/src/user/AccessesSQLite.ts').tokenMarkerVersion(), 'v2');
+        const udb = await sqliteUserDb(userId);
+        assert.strictEqual(await accesses.protectClearRowsOfUser(udb), 0, 'a second run changes nothing');
+      }
+      for (const [id, value] of Object.entries(publicOf)) {
+        const raw = await rawIntegrity(userId, id);
+        assert.ok(raw.startsWith(sealedPrefix()), id + ': ' + raw);
+        assert.strictEqual(accesses.tokenProtection.openAccessIntegrity(userId, raw), value);
+      }
+      assert.strictEqual((await call(accesses, 'findOne', userId, { id: live.id }, null)).integrity, live.integrity);
+    });
+
+    it('[TKIN5] an envelope tampered or copied from another user: the item comes back without integrity, nothing throws, the integrity check reports it and goes on', async () => {
+      const u = await indexedUserId();
+      const IntegrityCheck = require('business/src/integrity/IntegrityCheck.ts').default;
+      const checker = await new IntegrityCheck().init();
+      try {
+        const good = await call(accesses, 'insertOne', u, newAccess({ token: 'tkin5-good-' + cuid() }));
+        const tampered = await call(accesses, 'insertOne', u, newAccess({ token: 'tkin5-t-' + cuid() }));
+        const copied = await call(accesses, 'insertOne', u, newAccess({ token: 'tkin5-c-' + cuid() }));
+        const raw = await rawIntegrity(u, tampered.id);
+        const flipped = raw.slice(0, -6) + (raw.slice(-6, -5) === 'A' ? 'B' : 'A') + raw.slice(-5);
+        await rawWriteIntegrity(u, tampered.id, flipped);
+        // the sealed value of another user's access, same key
+        const elsewhere = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin5-o-' + cuid() }));
+        await rawWriteIntegrity(u, copied.id, await rawIntegrity(userId, elsewhere.id));
+        for (const id of [tampered.id, copied.id]) {
+          const item = await call(accesses, 'findOne', u, { id }, null);
+          assert.ok(item != null);
+          assert.ok(!('integrity' in item), id + ' returned without integrity');
+          assert.ok(typeof item.token === 'string', 'the token still opens');
+        }
+        assert.strictEqual((await call(accesses, 'findOne', u, { id: good.id }, null)).integrity, good.integrity);
+        const report = await checker.checkUser(u);
+        assert.strictEqual(report.accesses.checked, 3);
+        const failing = report.accesses.errors.map((e) => e.accessId).sort();
+        assert.deepStrictEqual(failing, [tampered.id, copied.id].sort(), JSON.stringify(report.accesses.errors));
+        for (const e of report.accesses.errors) assert.strictEqual(e.error, 'missing integrity property');
+      } finally {
+        await call(accesses, 'removeAll', u);
+      }
+    });
+
+    it('[TKIN6] exportAll then importAll under another key and another user: the integrity verifies, stored under the new key id', async () => {
+      const src = await indexedUserId();
+      const dst = await indexedUserId();
+      const otherTp = createTokenProtection('tkin6-other-key-' + cuid());
+      const other = engine === 'postgresql'
+        ? new (require('storages/engines/postgresql/src/user/AccessesPG.ts').AccessesPG)(storages.databasePG, accesses.integrityAccesses, otherTp)
+        : new (require('storages/engines/sqlite/src/user/AccessesSQLite.ts').AccessesSQLite)(accesses.integrityAccesses, otherTp);
+      try {
+        const a = await call(accesses, 'insertOne', src, newAccess({ token: 'tkin6-' + cuid() }));
+        await call(accesses, 'snapshotHead', src, a.id);
+        const exported = await call(accesses, 'exportAll', src);
+        await call(other, 'importAll', dst, exported);
+        const imported = await call(other, 'exportAll', dst);
+        assert.strictEqual(imported.length, exported.length);
+        for (const it of imported) {
+          assert.strictEqual(it.integrity, exported.find((x) => x.id === it.id).integrity);
+          assert.strictEqual(it.integrity, hashOf(it));
+          const raw = await rawIntegrity(dst, it.id);
+          assert.ok(raw.startsWith('sealed:' + otherTp.kid + '.'), raw);
+        }
+      } finally {
+        await call(accesses, 'removeAll', src);
+        await call(other, 'removeAll', dst);
+      }
+    });
+
+    it('[TKIN9] a query on an integrity value is refused; integrity null or { $ne: null } passes', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin9-' + cuid() }));
+      await assert.rejects(call(accesses, 'find', userId, { integrity: a.integrity }, null), /stored integrity is sealed/);
+      await assert.rejects(call(accesses, 'find', userId, { $or: [{ integrity: { $in: [a.integrity] } }] }, null), /stored integrity is sealed/);
+      assert.deepStrictEqual((await call(accesses, 'find', userId, { id: a.id, integrity: null }, null)).length, 0);
+      assert.deepStrictEqual((await call(accesses, 'find', userId, { id: a.id, integrity: { $ne: null } }, null)).map((x) => x.id), [a.id]);
+    });
+
+    it('[TKUP1] PostgreSQL upgrade order: migration 120100 converts tokens only, 120400 then seals the integrity and drops the tokens of deleted accesses', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const db = storages.databasePG;
+      const live = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkup1-l-' + cuid() }));
+      const del = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkup1-d-' + cuid() }));
+      await call(accesses, 'delete', userId, { id: del.id });
+      const [delRec] = await call(accesses, 'findDeletionRecords', userId, { id: del.id }, null);
+      // what an image before tokens at rest wrote: clear token, clear integrity computed with it
+      await rawWrite(userId, live.id, { token: live.token, tokenHash: null, tokenEnc: null });
+      await rawWriteIntegrity(userId, live.id, live.integrity);
+      await rawWrite(userId, del.id, { token: del.token, tokenHash: null, tokenEnc: null });
+      await rawWriteIntegrity(userId, del.id, hashOf(Object.assign({}, delRec, { token: del.token })));
+      await require('storages/engines/postgresql/migrations/20261127_120100_access_token_protection_rows.js').up({ db });
+      const afterTokens = await rawAccess(userId, live.id);
+      assert.strictEqual(afterTokens.token, null);
+      assert.ok(afterTokens.tokenHash != null);
+      assert.strictEqual(await rawIntegrity(userId, live.id), live.integrity, '120100 leaves the integrity to 120400');
+      assert.ok((await rawAccess(userId, del.id)).tokenHash != null, '120100 leaves the deleted token to 120400');
+      await require('storages/engines/postgresql/migrations/20261127_120400_access_integrity_sealed.js').up({ db });
+      assert.ok((await rawIntegrity(userId, live.id)).startsWith(sealedPrefix()));
+      const rawDel = await rawAccess(userId, del.id);
+      assert.deepStrictEqual([rawDel.token, rawDel.tokenHash, rawDel.tokenEnc], [null, null, null]);
+      const [rec] = await call(accesses, 'findDeletionRecords', userId, { id: del.id }, null);
+      assert.strictEqual(rec.integrity, hashOf(rec));
+      assert.strictEqual((await call(accesses, 'findOne', userId, { token: live.token }, null)).id, live.id);
+    });
+
+    it('[TKIN0] PostgreSQL: the wire-form recompute rewrites a sealed and a clear previous row hash, writing sealed values', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const integrity = require('business/src/integrity/index.ts').default;
+      const { AccessesPG } = require('storages/engines/postgresql/src/user/AccessesPG.ts');
+      const pass = new AccessesPG(storages.databasePG, integrity.accesses, accesses.tokenProtection);
+      // updated heads (serial set): their row form differs from their wire form
+      const sealedRow = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin0-s-' + cuid(), serial: 2 }));
+      const clearRow = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin0-c-' + cuid(), serial: 3 }));
+      const rowFormOf = async (id) => integrity.accesses.rowFormHash(await call(accesses, 'findOne', userId, { id }, null));
+      const sealedPrevious = await rowFormOf(sealedRow.id);
+      const clearPrevious = await rowFormOf(clearRow.id);
+      assert.notStrictEqual(sealedPrevious, sealedRow.integrity);
+      await rawWriteIntegrity(userId, sealedRow.id, accesses.tokenProtection.sealAccessIntegrity(userId, sealedPrevious));
+      await rawWriteIntegrity(userId, clearRow.id, clearPrevious);
+      const res = await pass.recomputeIntegrityOfVersionedRows();
+      assert.ok(res.rewritten >= 2, JSON.stringify(res));
+      for (const a of [sealedRow, clearRow]) {
+        const raw = await rawIntegrity(userId, a.id);
+        assert.ok(raw.startsWith(sealedPrefix()), raw);
+        const item = await call(accesses, 'findOne', userId, { id: a.id }, null);
+        assert.strictEqual(item.integrity, a.integrity);
+        assert.strictEqual(item.integrity, hashOf(item));
+      }
+    });
+  });
+
+  describe('[TKDL] tokens of deleted accesses', () => {
+    let userId;
+    const tokensAtRest = () => storages.getTokensAtRest();
+    const integrityActive = () => accesses.integrityAccesses.isActive;
+    before(async () => { userId = await indexedUserId(); });
+    after(async () => { await call(accesses, 'removeAll', userId); });
+
+    it('[TKDL1] a deletion drops the token, its hash and its copy from the deletion record and its history rows; the record verifies without it', async () => {
+      const token = 'tkdl1-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      await call(accesses, 'snapshotHead', userId, a.id);
+      await call(accesses, 'snapshotHead', userId, a.id);
+      const kept = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkdl1-kept-' + cuid() }));
+      await call(accesses, 'snapshotHead', userId, kept.id);
+      const historyIds = (await accesses.findHistory(userId, a.id)).map((h) => h.id);
+      assert.strictEqual(historyIds.length, 2);
+      await call(accesses, 'delete', userId, { id: a.id });
+      for (const id of [a.id, ...historyIds]) {
+        const raw = await rawAccess(userId, id);
+        assert.strictEqual(raw.token, null, id);
+        assert.strictEqual(raw.tokenHash, null, id);
+        assert.strictEqual(raw.tokenEnc, null, id);
+      }
+      const [deletion] = await call(accesses, 'findDeletionRecords', userId, { id: a.id }, null);
+      assert.ok(!('token' in deletion));
+      for (const h of await accesses.findHistory(userId, a.id)) assert.ok(!('token' in h));
+      if (integrityActive()) {
+        assert.strictEqual(deletion.integrity, hashOf(deletion));
+        for (const h of await accesses.findHistory(userId, a.id)) assert.strictEqual(h.integrity, hashOf(h));
+      }
+      // a live access and its history keep theirs
+      assert.strictEqual((await call(accesses, 'findOne', userId, { token: kept.token }, null)).id, kept.id);
+      assert.strictEqual((await accesses.findHistory(userId, kept.id))[0].token, kept.token);
+    });
+
+    it('[TKDL2] the pass drops the token of rows deleted before the upgrade (a verifying integrity re-hashed, another kept as stored); a second run is a no-op', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkdl2-a-' + cuid() }));
+      await call(accesses, 'snapshotHead', userId, a.id);
+      const b = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkdl2-b-' + cuid() }));
+      await call(accesses, 'delete', userId, { id: a.id });
+      await call(accesses, 'delete', userId, { id: b.id });
+      const [hist] = await accesses.findHistory(userId, a.id);
+      // what an earlier image left: the clear token, an integrity computed with it
+      const earlier = async (id, token) => {
+        await rawWrite(userId, id, { token, tokenHash: null, tokenEnc: null });
+        const item = (await call(accesses, 'findIncludingDeletionsAndVersions', userId, { id }, null))[0];
+        return item;
+      };
+      const aItem = await earlier(a.id, a.token);
+      const hItem = await earlier(hist.id, a.token);
+      await earlier(b.id, b.token);
+      if (integrityActive()) {
+        await rawWriteIntegrity(userId, a.id, hashOf(aItem));
+        await rawWriteIntegrity(userId, hist.id, hashOf(hItem));
+        await rawWriteIntegrity(userId, b.id, 'ACCESS:0:sha256-not-the-hash-of-this-row');
+      }
+      if (engine === 'postgresql') {
+        const res = await tokensAtRest().protectTokensAtRest();
+        assert.ok(res.deletedTokens >= 3, JSON.stringify(res));
+        const again = await tokensAtRest().protectTokensAtRest(undefined, { deletedTokens: true });
+        assert.strictEqual(again.deletedTokens, 0);
+      } else {
+        require('storages/engines/sqlite/src/user/AccessesSQLite.ts').removeTokenMarker();
+        const res = await tokensAtRest().protectTokensAtRest();
+        assert.ok(res.deletedTokens >= 3, JSON.stringify(res));
+        assert.strictEqual(await accesses.dropTokensOfDeletedRowsOfUser(await sqliteUserDb(userId)), 0);
+      }
+      for (const id of [a.id, hist.id, b.id]) {
+        const raw = await rawAccess(userId, id);
+        assert.deepStrictEqual([raw.token, raw.tokenHash, raw.tokenEnc], [null, null, null], id);
+      }
+      if (integrityActive()) {
+        const [deletion] = await call(accesses, 'findDeletionRecords', userId, { id: a.id }, null);
+        assert.strictEqual(deletion.integrity, hashOf(deletion));
+        const [h] = await accesses.findHistory(userId, a.id);
+        assert.strictEqual(h.integrity, hashOf(h));
+        const [kept] = await call(accesses, 'findDeletionRecords', userId, { id: b.id }, null);
+        assert.strictEqual(kept.integrity, 'ACCESS:0:sha256-not-the-hash-of-this-row', 'never blessed');
+      }
+    });
+
+    it('[TKDL3] export then import of an account with deleted accesses: no token comes back on its deletion records, nor from a backup that still had one', async () => {
+      const src = await indexedUserId();
+      const dst = await indexedUserId();
+      const old = await indexedUserId();
+      try {
+        const a = await call(accesses, 'insertOne', src, newAccess({ token: 'tkdl3-' + cuid() }));
+        await call(accesses, 'snapshotHead', src, a.id);
+        await call(accesses, 'delete', src, { id: a.id });
+        const exported = await call(accesses, 'exportAll', src);
+        assert.ok(exported.every((x) => x.token == null));
+        await call(accesses, 'importAll', dst, exported);
+        for (const r of await rawAccesses(dst)) assert.deepStrictEqual([r.token, r.tokenHash, r.tokenEnc], [null, null, null], r.id);
+        // a backup taken before deleted accesses dropped their token
+        const withTokens = exported.map((x) => Object.assign({}, x, { token: a.token }));
+        await call(accesses, 'importAll', old, withTokens);
+        for (const r of await rawAccesses(old)) assert.deepStrictEqual([r.token, r.tokenHash, r.tokenEnc], [null, null, null], r.id);
+        if (integrityActive()) {
+          for (const it of await call(accesses, 'exportAll', old)) assert.strictEqual(it.integrity, hashOf(it), it.id);
+        }
+      } finally {
+        for (const u of [src, dst, old]) await call(accesses, 'removeAll', u);
+      }
+    });
+
+    it('[TKDL5] a deletion drops the tokens of its own accesses\' history only; the pass takes the rest', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkdl5-a-' + cuid() }));
+      await call(accesses, 'snapshotHead', userId, a.id);
+      await call(accesses, 'delete', userId, { id: a.id });
+      const [aHist] = await accesses.findHistory(userId, a.id);
+      // left by an earlier image: a history row of a deleted access with its token
+      await rawWrite(userId, aHist.id, { token: a.token, tokenHash: null, tokenEnc: null });
+      const b = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkdl5-b-' + cuid() }));
+      await call(accesses, 'snapshotHead', userId, b.id);
+      const [bHist] = await accesses.findHistory(userId, b.id);
+      await call(accesses, 'delete', userId, { id: b.id });
+      const rawB = await rawAccess(userId, bHist.id);
+      assert.deepStrictEqual([rawB.token, rawB.tokenHash, rawB.tokenEnc], [null, null, null]);
+      // not touched by the deletion of b (SQLite: its first use may protect it, it still holds a token)
+      const rawA = await rawAccess(userId, aHist.id);
+      assert.ok(rawA.token != null || rawA.tokenHash != null, 'the deletion of b did not sweep the account');
+      if (engine === 'postgresql') {
+        await tokensAtRest().protectTokensAtRest(undefined, { deletedTokens: true });
+      } else {
+        await accesses.dropTokensOfDeletedRowsOfUser(await sqliteUserDb(userId));
+      }
+      const after = await rawAccess(userId, aHist.id);
+      assert.deepStrictEqual([after.token, after.tokenHash, after.tokenEnc], [null, null, null]);
+    });
+
+    it('[TKDL4] a new live access may reuse the token of a deleted one', async () => {
+      const token = 'tkdl4-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      await call(accesses, 'delete', userId, { id: a.id });
+      const b = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      assert.strictEqual((await call(accesses, 'findOne', userId, { token }, null)).id, b.id);
+    });
+  });
+
+  describe('[TKDN] deletion notices: the pending endpoint at rest', () => {
+    let notices;
+    const tokensAtRest = () => storages.getTokensAtRest();
+    const ENDPOINT = 'https://peer-tok@peer.example.com/bob/';
+    const HOST = 'https://peer.example.com/bob/';
+    function noticeRow (overrides = {}) {
+      return Object.assign({
+        id: cuid(),
+        deletedUserId: cuid(),
+        accessId: cuid(),
+        apiEndpoint: ENDPOINT,
+        path: 'events',
+        body: { k: 'v' },
+        attempts: 1,
+        nextAttemptAfter: 1000,
+        status: 'pending',
+        lastFailureReason: 'network',
+        lastFailureDetail: null,
+        createdAt: 500
+      }, overrides);
+    }
+    async function rawEndpoint (id) {
+      if (engine === 'postgresql') {
+        return (await storages.databasePG.query('SELECT api_endpoint FROM cmc_deletion_notices WHERE id = $1', [id])).rows[0]?.api_endpoint;
+      }
+      return notices.db.prepare('SELECT api_endpoint FROM cmc_deletion_notices WHERE id = ?').get(id)?.api_endpoint;
+    }
+    async function rawWriteEndpoint (id, value) {
+      if (engine === 'postgresql') {
+        await storages.databasePG.query('UPDATE cmc_deletion_notices SET api_endpoint = $1 WHERE id = $2', [value, id]);
+        return;
+      }
+      notices.db.prepare('UPDATE cmc_deletion_notices SET api_endpoint = ? WHERE id = ?').run(value, id);
+    }
+    before(async () => {
+      const { pluginLoader } = require('storages');
+      const Cls = pluginLoader.getEngineModule(pluginLoader.getEngineFor('baseStorage')).getDeletionNoticesLocal();
+      notices = new Cls();
+      await notices.init();
+    });
+
+    it('[TKDN1] a pending row is stored sealed, never with the token; listDue and listAll return the clear endpoint', async () => {
+      const r = noticeRow();
+      await notices.insert(r);
+      try {
+        const raw = await rawEndpoint(r.id);
+        assert.ok(raw.startsWith('sealed:' + accesses.tokenProtection.kid + '.'), raw);
+        assert.ok(!raw.includes('peer-tok'));
+        assert.strictEqual((await notices.listAll()).find((x) => x.id === r.id).apiEndpoint, ENDPOINT);
+        assert.strictEqual((await notices.listDue(1000, 1000)).find((x) => x.id === r.id).apiEndpoint, ENDPOINT);
+        // a reschedule keeps it sealed
+        await notices.update(Object.assign({}, r, { attempts: 2, nextAttemptAfter: 2000 }));
+        assert.ok((await rawEndpoint(r.id)).startsWith('sealed:'));
+      } finally {
+        await notices.delete(r.id);
+      }
+    });
+
+    it('[TKDN2] a row turned failed-permanent stores its stripped endpoint in clear', async () => {
+      const r = noticeRow();
+      await notices.insert(r);
+      try {
+        await notices.update(Object.assign({}, r, { apiEndpoint: HOST, status: 'failed-permanent', lastFailureReason: 'cmc-retry-stale' }));
+        assert.strictEqual(await rawEndpoint(r.id), HOST);
+        assert.strictEqual((await notices.listAll()).find((x) => x.id === r.id).apiEndpoint, HOST);
+      } finally {
+        await notices.delete(r.id);
+      }
+    });
+
+    it('[TKDN3] [TKDN5] the pass seals a clear pending row, unprotect writes it back, rekey re-seals one under a previous key (going on past one that does not open); an unreadable one reads empty', async () => {
+      const r = noticeRow();
+      const bad = noticeRow();
+      await notices.insert(r);
+      await notices.insert(bad);
+      const previous = createTokenProtection('tkdn3-previous-' + cuid());
+      try {
+        await rawWriteEndpoint(r.id, ENDPOINT); // written in clear, as by an image before this one
+        const res = await tokensAtRest().protectTokensAtRest();
+        assert.ok(res.deletionNotices >= 1, JSON.stringify(res));
+        assert.ok((await rawEndpoint(r.id)).startsWith('sealed:' + accesses.tokenProtection.kid + '.'));
+        await tokensAtRest().unprotectTokensAtRest();
+        assert.strictEqual(await rawEndpoint(r.id), ENDPOINT);
+        await tokensAtRest().protectTokensAtRest();
+        assert.ok((await rawEndpoint(r.id)).startsWith('sealed:' + accesses.tokenProtection.kid + '.'));
+        await rawWriteEndpoint(r.id, previous.sealSecret('deletion-notice:' + r.id, ENDPOINT));
+        const rk = await tokensAtRest().rekeyTokensAtRest([previous]);
+        assert.ok(rk.deletionNotices >= 1, JSON.stringify(rk));
+        assert.ok((await rawEndpoint(r.id)).startsWith('sealed:' + accesses.tokenProtection.kid + '.'));
+        assert.strictEqual((await notices.listAll()).find((x) => x.id === r.id).apiEndpoint, ENDPOINT);
+        // the envelope of another notice: does not open for this one
+        await rawWriteEndpoint(bad.id, await rawEndpoint(r.id));
+        assert.strictEqual((await notices.listAll()).find((x) => x.id === bad.id).apiEndpoint, '');
+        // [TKDN5] rekey meeting one under the previous key that does not open goes on with the others
+        await rawWriteEndpoint(bad.id, previous.sealSecret('deletion-notice:another-notice', ENDPOINT));
+        await rawWriteEndpoint(r.id, previous.sealSecret('deletion-notice:' + r.id, ENDPOINT));
+        const rk2 = await tokensAtRest().rekeyTokensAtRest([previous]);
+        assert.ok(rk2.deletionNotices >= 1, JSON.stringify(rk2));
+        assert.ok((await rawEndpoint(r.id)).startsWith('sealed:' + accesses.tokenProtection.kid + '.'));
+        assert.ok((await rawEndpoint(bad.id)).startsWith('sealed:' + previous.kid + '.'), 'left as is, retired by the outbox');
+        // a `sealed:`-looking endpoint given for a pending row is sealed, never stored as is
+        await notices.update(Object.assign({}, bad, { apiEndpoint: 'sealed:00000000.x' }));
+        assert.ok((await rawEndpoint(bad.id)).startsWith('sealed:' + accesses.tokenProtection.kid + '.'));
+        assert.strictEqual((await notices.listAll()).find((x) => x.id === bad.id).apiEndpoint, 'sealed:00000000.x');
+      } finally {
+        await tokensAtRest().protectTokensAtRest(); // leave the store protected whatever happened above
+        await notices.delete(r.id);
+        await notices.delete(bad.id);
+      }
+    });
+  });
+
+  describe('[TKIM] an integrity value from above the engine', () => {
+    it('[TKIM1] a `sealed:`-looking value given with integrity inactive (create, update, restore) is sealed, never stored as is; the guard passes and it reads back unchanged', async () => {
+      const u = await indexedUserId();
+      const inactive = { isActive: false, set: () => {}, rowFormHash: () => '' };
+      const plain = engine === 'postgresql'
+        ? new (require('storages/engines/postgresql/src/user/AccessesPG.ts').AccessesPG)(storages.databasePG, inactive, accesses.tokenProtection)
+        : new (require('storages/engines/sqlite/src/user/AccessesSQLite.ts').AccessesSQLite)(inactive, accesses.tokenProtection);
+      const own = 'sealed:' + accesses.tokenProtection.kid + '.';
+      try {
+        const forged = 'sealed:00000000.not-an-envelope';
+        const a = await call(plain, 'insertOne', u, newAccess({ token: 'tkim1-a-' + cuid(), integrity: forged }));
+        let raw = await rawIntegrity(u, a.id);
+        assert.notStrictEqual(raw, forged);
+        assert.ok(raw.startsWith(own), raw);
+        assert.strictEqual((await call(plain, 'findOne', u, { id: a.id }, null)).integrity, forged);
+        const later = 'sealed:11111111.also-not';
+        await call(plain, 'updateOne', u, { id: a.id }, { integrity: later });
+        raw = await rawIntegrity(u, a.id);
+        assert.ok(raw.startsWith(own), raw);
+        assert.strictEqual((await call(plain, 'findOne', u, { id: a.id }, null)).integrity, later);
+        // a restore of a file carrying such a value
+        const b = newAccess({ token: 'tkim1-b-' + cuid(), integrity: forged });
+        await call(plain, 'importAll', u, [b]);
+        assert.ok((await rawIntegrity(u, b.id)).startsWith(own));
+        if (engine === 'postgresql') {
+          await storages.getTokensAtRest().probeTokensAtRest();
+        } else {
+          const { UserBaseStorageDb } = require('storages/engines/sqlite/src/userBaseStorage/UserBaseStorageDb.ts');
+          UserBaseStorageDb.evict(u);
+          assert.strictEqual((await call(accesses, 'findOne', u, { id: b.id }, null)).integrity, forged);
+        }
+      } finally {
+        await call(plain, 'removeAll', u);
+      }
+    });
+  });
+
+  describe('[TKIA] audit records of access writes', () => {
+    it('[TKIA3] the start pass scrubs the audit engine\'s own records, whatever the base engine (default pairing: PostgreSQL base, SQLite audit)', async function () {
+      const auditStorage = storages.auditStorage;
+      if (auditStorage == null) this.skip();
+      const { pluginLoader } = require('storages');
+      const auditEngine = pluginLoader.getEngineFor('auditStorage');
+      const u = await indexedUserId();
+      const userDb = await auditStorage.forUser(u);
+      const base = { type: 'audit-log/pryv-api', time: 1700000000, created: 1700000000, createdBy: 'tkia3', modified: 1700000000, modifiedBy: 'tkia3' };
+      const accessId = 'tkia3-a-' + cuid();
+      const eventId = 'tkia3-e-' + cuid();
+      await userDb.createEvent(Object.assign({}, base, {
+        id: accessId,
+        streamIds: ['access-tkia3', 'action-accesses.create'],
+        content: { action: 'accesses.create', record: { key: 'ACCESS:0:a1:1700000000', integrity: 'ACCESS:0:sha256-tkia3' } }
+      }));
+      await userDb.createEvent(Object.assign({}, base, {
+        id: eventId,
+        streamIds: ['access-tkia3', 'action-events.create'],
+        content: { action: 'events.create', record: { key: 'EVENT:0:e1:1700000000', integrity: 'EVENT:0:sha256-tkia3' } }
+      }));
+      // a conversion in the same pass (rows a previous image wrote): the scrub runs again whatever its marker
+      const a = await call(accesses, 'insertOne', u, newAccess({ token: 'tkia3-' + cuid() }));
+      await rawWrite(u, a.id, { token: a.token, tokenHash: null, tokenEnc: null });
+      if (engine === 'sqlite') require('storages/engines/sqlite/src/user/AccessesSQLite.ts').removeTokenMarker();
+      try {
+        const res = await storages.getTokensAtRest().protectTokensAtRest();
+        assert.ok(res.auditRecords >= 1, auditEngine + ': ' + JSON.stringify(res));
+        const scrubbed = await userDb.getOneEvent(accessId);
+        assert.deepStrictEqual(scrubbed.content.record, { key: 'ACCESS:0:a1:1700000000' });
+        const kept = await userDb.getOneEvent(eventId);
+        assert.strictEqual(kept.content.record.integrity, 'EVENT:0:sha256-tkia3');
+        if (auditEngine === 'sqlite') {
+          const { AUDIT_ACCESS_INTEGRITY_MARKER } = require('storages/engines/sqlite/src/auditAccessIntegrityScrub.ts');
+          assert.ok(fs.existsSync(path.join(storage.userLocalDirectory.getBasePath(), AUDIT_ACCESS_INTEGRITY_MARKER)));
+          // first start of the release: no conversion, no marker yet
+          await userDb.createEvent(Object.assign({}, base, {
+            id: accessId + '-2',
+            streamIds: ['access-tkia3', 'action-accesses.create'],
+            content: { action: 'accesses.create', record: { key: 'ACCESS:0:a2:1700000000', integrity: 'ACCESS:0:sha256-tkia3b' } }
+          }));
+          fs.rmSync(path.join(storage.userLocalDirectory.getBasePath(), AUDIT_ACCESS_INTEGRITY_MARKER));
+          const again = await storages.getTokensAtRest().protectTokensAtRest();
+          assert.ok(again.auditRecords >= 1, JSON.stringify(again));
+          assert.deepStrictEqual((await userDb.getOneEvent(accessId + '-2')).content.record, { key: 'ACCESS:0:a2:1700000000' });
+        }
+      } finally {
+        await call(accesses, 'removeAll', u);
+      }
+    });
+
+    it('[TKIA2] the scrub removes the integrity copy from access-write records and leaves event records alone', async () => {
+      const accessRecord = { action: 'accesses.create', record: { key: 'ACCESS:0:a1:1700000000', integrity: 'ACCESS:0:sha256-x' } };
+      const eventRecord = { action: 'events.create', record: { key: 'EVENT:0:e1:1700000000', integrity: 'EVENT:0:sha256-y' } };
+      if (engine === 'postgresql') {
+        const u = await indexedUserId();
+        const ids = [cuid(), cuid()];
+        try {
+          await storages.databasePG.query('INSERT INTO audit_events (user_id, eventid, content) VALUES ($1, $2, $3::jsonb), ($1, $4, $5::jsonb)',
+            [u, ids[0], JSON.stringify(accessRecord), ids[1], JSON.stringify(eventRecord)]);
+          const migration = require('storages/engines/postgresql/migrations/20261127_120500_access_audit_integrity_scrub.js');
+          const res = await migration.up({ db: storages.databasePG });
+          assert.ok(res.records >= 1);
+          const rows = (await storages.databasePG.query('SELECT eventid, content FROM audit_events WHERE user_id = $1', [u])).rows;
+          const byId = Object.fromEntries(rows.map((r) => [r.eventid, r.content]));
+          assert.deepStrictEqual(byId[ids[0]].record, { key: 'ACCESS:0:a1:1700000000' });
+          assert.deepStrictEqual(byId[ids[1]].record, eventRecord.record);
+          assert.strictEqual((await migration.up({ db: storages.databasePG })).records, 0, 'a second run changes nothing');
+        } finally {
+          await storages.databasePG.query('DELETE FROM audit_events WHERE user_id = $1', [u]);
+        }
+        return;
+      }
+      const os = require('node:os');
+      const SQLite3 = require('better-sqlite3');
+      const { scrubAuditFile } = require('storages/engines/sqlite/src/auditAccessIntegrityScrub.ts');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tkia2-'));
+      const file = path.join(dir, 'audit.sqlite');
+      try {
+        const db = new SQLite3(file);
+        db.prepare('CREATE TABLE events (eventid TEXT PRIMARY KEY, content TEXT)').run();
+        db.prepare('INSERT INTO events (eventid, content) VALUES (?, ?), (?, ?)').run('a', JSON.stringify(accessRecord), 'e', JSON.stringify(eventRecord));
+        db.close();
+        assert.strictEqual(await scrubAuditFile(file), 1);
+        assert.strictEqual(await scrubAuditFile(file), 0, 'a second run changes nothing');
+        const check = new SQLite3(file);
+        const byId = Object.fromEntries(check.prepare('SELECT eventid, content FROM events').all().map((r) => [r.eventid, JSON.parse(r.content)]));
+        check.close();
+        assert.deepStrictEqual(byId.a.record, { key: 'ACCESS:0:a1:1700000000' });
+        assert.deepStrictEqual(byId.e.record, eventRecord.record);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('[TKIA4] PostgreSQL: once its index exists, the scrub runs while another session holds a concurrent index build\'s lock on audit_events', async function () {
+      if (engine !== 'postgresql') return this.skip();
+      const { scrubAuditEventsTable } = require('storages/engines/postgresql/src/auditAccessIntegrityScrub.ts');
+      await scrubAuditEventsTable(storages.databasePG);
+      const holder = await storages.databasePG.connectDedicated('tkia4 holder');
+      const runner = await storages.databasePG.connectDedicated('tkia4 runner');
+      try {
+        await holder.query('BEGIN');
+        // The lock a CREATE INDEX CONCURRENTLY of audit_events holds for its whole build.
+        await holder.query('LOCK TABLE audit_events IN SHARE UPDATE EXCLUSIVE MODE');
+        await runner.query('SET lock_timeout = \'2s\'');
+        assert.strictEqual(typeof await scrubAuditEventsTable(runner), 'number');
+      } finally {
+        await holder.query('ROLLBACK').catch(() => {});
+        await holder.end();
+        await runner.end();
+      }
     });
   });
 
@@ -361,22 +1032,31 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       const del = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkmg-del-' + cuid() }));
       await call(accesses, 'delete', userId, { id: del.id });
       const items = await call(accesses, 'findIncludingDeletionsAndVersions', userId, {}, null);
-      for (const it of items) await rawWrite(userId, it.id, { token: it.token, tokenHash: null, tokenEnc: null });
+      // the deleted access dropped its token at deletion: nothing to write back
+      for (const it of items) if (it.token != null) await rawWrite(userId, it.id, { token: it.token, tokenHash: null, tokenEnc: null });
       return { live, del, items };
     }
 
-    it('[TKMG1] rows in the clear form (live, deleted, history) are protected by the pass; a second run changes nothing; tokens authenticate', async () => {
-      const { live, items } = await clearFormRows();
-      assert.ok((await rawAccesses(userId)).every((r) => r.token != null));
+    it('[TKMG1] rows in the clear form (live, history) are protected by the pass; a second run changes nothing; tokens authenticate', async () => {
+      const { live, del, items } = await clearFormRows();
+      const withToken = items.filter((it) => it.token != null);
+      assert.ok(withToken.length >= 2);
+      const raws = await rawAccesses(userId);
+      for (const it of withToken) assert.ok(raws.find((r) => r.id === it.id).token != null);
       if (engine === 'sqlite') {
         const { removeTokenMarker } = require('storages/engines/sqlite/src/user/AccessesSQLite.ts');
         removeTokenMarker();
       }
       const res = await tokensAtRest().protectTokensAtRest();
-      assert.ok(res.accesses >= items.length, JSON.stringify(res));
+      assert.ok(res.accesses >= withToken.length, JSON.stringify(res));
       for (const r of await rawAccesses(userId)) {
         assert.strictEqual(r.token, null);
-        assert.ok(r.tokenHash != null && r.tokenEnc != null);
+        if (r.id === del.id) {
+          assert.strictEqual(r.tokenHash, null);
+          assert.strictEqual(r.tokenEnc, null);
+        } else {
+          assert.ok(r.tokenHash != null && r.tokenEnc != null);
+        }
       }
       const again = await tokensAtRest().protectTokensAtRest();
       assert.strictEqual(again.accesses, 0);
@@ -487,6 +1167,127 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       assert.ok(hashIdx != null, names.join(', '));
       assert.match(hashIdx.indexdef, /UNIQUE/);
       assert.match(hashIdx.indexdef, /head_id IS NULL/);
+    });
+
+    it('[TKMG8] PostgreSQL: a batch another process converted meanwhile does not end the pass; the rows after it are converted', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const { AccessesPG } = require('storages/engines/postgresql/src/user/AccessesPG.ts');
+      const noIntegrity = { isActive: false, set: () => {}, rowFormHash: () => '' };
+      const items = [];
+      for (let i = 0; i < 5; i++) items.push(await call(accesses, 'insertOne', userId, newAccess({ token: 'tkmg8-' + i + '-' + cuid() })));
+      for (const it of items) await rawWrite(userId, it.id, { token: it.token, tokenHash: null, tokenEnc: null });
+      const db = storages.databasePG;
+      const other = new AccessesPG(db, noIntegrity, accesses.tokenProtection);
+      let interceptions = 0;
+      // A second master on the same database converts the first batch between our select and our update.
+      const racing = {
+        query: async (sql, params) => {
+          if (interceptions === 0 && sql.startsWith('UPDATE accesses a SET token_hash')) {
+            interceptions++;
+            const [uids, ids, toks] = params;
+            for (let i = 0; i < ids.length; i++) {
+              const cols = other.protectedColumns(uids[i], toks[i]);
+              await db.query('UPDATE accesses SET token_hash = $1, token_enc = $2, token = NULL WHERE user_id = $3 AND id = $4 AND token = $5',
+                [cols.token_hash, cols.token_enc, uids[i], ids[i], toks[i]]);
+            }
+          }
+          return db.query(sql, params);
+        }
+      };
+      const first = new AccessesPG(racing, noIntegrity, accesses.tokenProtection);
+      first.tokenBatchSize = 2;
+      await first.protectClearRows();
+      assert.strictEqual(interceptions, 1);
+      for (const it of items) assert.strictEqual((await rawAccess(userId, it.id)).token, null, 'row ' + it.id + ' converted');
+      for (const it of items) assert.strictEqual((await call(accesses, 'findOne', userId, { token: it.token }, null)).id, it.id);
+    });
+
+    it('[TKPR1] the boot probe finds a row under another key whatever its key id sorts before or after the current one', async () => {
+      const kid = accesses.tokenProtection.kid;
+      const keyWithKid = (pred) => {
+        for (let i = 0; ; i++) {
+          const p = createTokenProtection('tkpr1-key-' + i + '-' + cuid());
+          if (pred(p.kid)) return p;
+        }
+      };
+      const lower = keyWithKid((k) => k < kid);
+      const higher = keyWithKid((k) => k > kid);
+      // rows under the current key around the foreign one: both bounds matter
+      await call(accesses, 'insertOne', userId, newAccess({ token: 'tkpr1-current-' + cuid() }));
+      await call(sessions, 'generate', { username: 'tkpr1-keep' }, {});
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkpr1-' + cuid() }));
+      const raw = await rawAccess(userId, a.id);
+      try {
+        for (const previous of [lower, higher]) {
+          const h = previous.hashAccessToken(userId, a.token);
+          await rawWrite(userId, a.id, { token: null, tokenHash: h, tokenEnc: previous.sealAccessToken(userId, h, a.token) });
+          if (engine === 'postgresql') {
+            await assert.rejects(tokensAtRest().probeTokensAtRest(), (err) => err.name === 'ForeignTokenKeyError', 'access under ' + previous.kid);
+          } else {
+            await assert.rejects(call(accesses, 'findOne', userId, { id: a.id }, null), (err) => err.name === 'ForeignTokenKeyError');
+          }
+        }
+        await rawWrite(userId, a.id, raw);
+        await tokensAtRest().probeTokensAtRest();
+        // a session alone under another key
+        for (const previous of [lower, higher]) {
+          const sid = 'tkpr1-session-' + cuid();
+          const sh = previous.hashSessionId(sid);
+          if (engine === 'postgresql') {
+            await storages.databasePG.query('INSERT INTO sessions (id, id_enc, data, expires) VALUES ($1, $2, $3, $4)',
+              [sh, previous.sealSessionId(sh, sid), JSON.stringify({ username: 'tkpr1-user' }), new Date(Date.now() + 3600000)]);
+          } else {
+            storageLayer.connection.getDb().prepare('INSERT INTO sessions (id, id_enc, data, expires) VALUES (?, ?, ?, ?)')
+              .run(sh, previous.sealSessionId(sh, sid), JSON.stringify({ username: 'tkpr1-user' }), Date.now() + 3600000);
+          }
+          try {
+            await assert.rejects(tokensAtRest().probeTokensAtRest(), (err) => err.name === 'ForeignTokenKeyError', 'session under ' + previous.kid);
+          } finally {
+            await call(sessions, 'remove', { username: 'tkpr1-user' });
+          }
+        }
+        await tokensAtRest().probeTokensAtRest();
+      } finally {
+        await rawWrite(userId, a.id, raw);
+        await call(sessions, 'remove', { username: 'tkpr1-keep' });
+      }
+    });
+
+    it('[TKPR3] PostgreSQL: a pass that converted rows refreshes the planner statistics of the tables it rewrote; a pass with nothing to do does not', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const db = storages.databasePG;
+      const statements = [];
+      const spy = {
+        query: (sql, params) => { statements.push(sql); return db.query(sql, params); },
+        withTransaction: (fn) => db.withTransaction(fn)
+      };
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkpr3-' + cuid() }));
+      await rawWrite(userId, a.id, { token: a.token, tokenHash: null, tokenEnc: null });
+      const tar = require('storages/engines/postgresql/src/tokensAtRest.ts');
+      const res = await tar.protectTokensAtRest(spy);
+      assert.ok(res.accesses >= 1, JSON.stringify(res));
+      assert.ok(statements.some((s) => /^ANALYZE accesses\b/.test(s)), statements.filter((s) => /ANALYZE/.test(s)).join(' | '));
+      assert.ok(!statements.some((s) => /^ANALYZE .*sessions/.test(s)), 'sessions were not rewritten');
+      statements.length = 0;
+      await tar.protectTokensAtRest(spy);
+      assert.ok(!statements.some((s) => /ANALYZE/.test(s)), 'nothing converted, nothing analyzed');
+    });
+
+    it('[TKPR2] the probe indexes are there: rows in clear and the key id of protected rows (tokens, integrity values)', async () => {
+      if (engine === 'postgresql') {
+        const res = await storages.databasePG.query('SELECT indexname, indexdef FROM pg_indexes WHERE indexname IN ' +
+          '(\'idx_access_token_kid\', \'idx_session_clear\', \'idx_session_kid\', \'idx_access_integrity_clear\', \'idx_access_integrity_kid\', \'idx_access_head_id\')');
+        const defs = Object.fromEntries(res.rows.map((r) => [r.indexname, r.indexdef]));
+        assert.match(defs.idx_access_head_id ?? '', /head_id IS NOT NULL/);
+        assert.match(defs.idx_access_integrity_clear ?? '', /integrity IS NOT NULL/);
+        assert.match(defs.idx_access_integrity_kid ?? '', /left"?\(integrity, 16\)/);
+        assert.match(defs.idx_access_token_kid ?? '', /left"?\(token_hash, 9\)/);
+        assert.match(defs.idx_session_clear ?? '', /id_enc IS NULL/);
+        assert.match(defs.idx_session_kid ?? '', /left"?\(id, 9\)/);
+        return;
+      }
+      const names = storageLayer.connection.getDb().prepare('SELECT name FROM sqlite_master WHERE type = \'index\' AND tbl_name = \'sessions\'').all().map((r) => r.name);
+      assert.ok(names.includes('sessions_clear') && names.includes('sessions_kid'), names.join(', '));
     });
   });
 
@@ -616,6 +1417,77 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       } finally {
         await tokensAtRest().protectTokensAtRest(); // leave the store protected whatever happened above
         await call(sessions, 'remove', { username: 'tktl4-user' });
+      }
+    });
+
+    it('[TKIN7] unprotect writes the public integrity back in clear; the pass seals it again', async function () {
+      if (!accesses.integrityAccesses.isActive) this.skip();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin7-' + cuid() }));
+      try {
+        await tokensAtRest().unprotectTokensAtRest();
+        assert.strictEqual(await rawIntegrity(userId, a.id), a.integrity);
+        await tokensAtRest().protectTokensAtRest();
+        const raw = await rawIntegrity(userId, a.id);
+        assert.ok(raw.startsWith('sealed:' + accesses.tokenProtection.kid + '.'), raw);
+        assert.strictEqual((await call(accesses, 'findOne', userId, { id: a.id }, null)).integrity, a.integrity);
+      } finally {
+        await tokensAtRest().protectTokensAtRest();
+      }
+    });
+
+    it('[TKIN8] an integrity sealed under a previous key, on a row without token: the guard refuses, rekey re-seals it', async function () {
+      if (!accesses.integrityAccesses.isActive) this.skip();
+      const previous = createTokenProtection('tkin8-previous-' + cuid());
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkin8-' + cuid() }));
+      await call(accesses, 'delete', userId, { id: a.id });
+      const [deletion] = await call(accesses, 'findDeletionRecords', userId, { id: a.id }, null);
+      assert.ok(!('token' in deletion));
+      await rawWriteIntegrity(userId, a.id, previous.sealAccessIntegrity(userId, deletion.integrity));
+      try {
+        if (engine === 'postgresql') {
+          await assert.rejects(tokensAtRest().probeTokensAtRest(), (err) => {
+            assert.strictEqual(err.name, 'ForeignTokenKeyError');
+            assert.match(err.message, /integrity/);
+            return true;
+          });
+        } else {
+          const { UserBaseStorageDb } = require('storages/engines/sqlite/src/userBaseStorage/UserBaseStorageDb.ts');
+          UserBaseStorageDb.evict(userId);
+          await assert.rejects(call(accesses, 'findOne', userId, { id: a.id }, null), (err) => err.name === 'ForeignTokenKeyError');
+        }
+        const status = await tokensAtRest().tokensAtRestStatus();
+        assert.ok(status.accessIntegrity.sealedOtherKeys[previous.kid] >= 1, JSON.stringify(status.accessIntegrity));
+        const res = await tokensAtRest().rekeyTokensAtRest([previous]);
+        assert.strictEqual(res.remaining, false, JSON.stringify(res));
+        const raw = await rawIntegrity(userId, a.id);
+        assert.ok(raw.startsWith('sealed:' + accesses.tokenProtection.kid + '.'), raw);
+        const [after] = await call(accesses, 'findDeletionRecords', userId, { id: a.id }, null);
+        assert.strictEqual(after.integrity, deletion.integrity);
+        await tokensAtRest().probeTokensAtRest();
+      } finally {
+        await rawWriteIntegrity(userId, a.id, accesses.tokenProtection.sealAccessIntegrity(userId, deletion.integrity));
+      }
+    });
+
+    it('[TKIR1] rekey meeting an integrity value that does not open under its previous key goes on with the others and names it', async function () {
+      if (!accesses.integrityAccesses.isActive) this.skip();
+      const previous = createTokenProtection('tkir1-previous-' + cuid());
+      const good = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkir1-g-' + cuid() }));
+      const bad = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkir1-b-' + cuid() }));
+      await rawWriteIntegrity(userId, good.id, previous.sealAccessIntegrity(userId, good.integrity));
+      // under the previous key, but sealed for another user: does not open here
+      await rawWriteIntegrity(userId, bad.id, previous.sealAccessIntegrity('another-user', bad.integrity));
+      try {
+        const res = await tokensAtRest().rekeyTokensAtRest([previous]);
+        assert.strictEqual(res.remaining, true, JSON.stringify(res));
+        assert.ok((await rawIntegrity(userId, good.id)).startsWith('sealed:' + accesses.tokenProtection.kid + '.'), 'the readable one is re-keyed');
+        assert.ok((await rawIntegrity(userId, bad.id)).startsWith('sealed:' + previous.kid + '.'), 'the unreadable one is left as is');
+        if (engine === 'postgresql') {
+          assert.deepStrictEqual(res.integrityUnreadable.filter((r) => r.id === bad.id), [{ userId, id: bad.id }]);
+        }
+      } finally {
+        await rawWriteIntegrity(userId, good.id, accesses.tokenProtection.sealAccessIntegrity(userId, good.integrity));
+        await rawWriteIntegrity(userId, bad.id, accesses.tokenProtection.sealAccessIntegrity(userId, bad.integrity));
       }
     });
 

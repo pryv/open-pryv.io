@@ -21,6 +21,7 @@ const {
   DELIVERY_RETRY_AFTER_MAX_MS,
   FAILED_RETENTION_MS,
   STALE_REASON,
+  NOTICE_CREDENTIAL_UNREADABLE_REASON,
   nextDeliveryAttemptAt,
   enqueueDeletionNotice,
   runDeletionOutboxPass,
@@ -260,5 +261,28 @@ describe('[CMCOB] CMC deletion outbox: revoke notices of a deleted account', () 
     assert.equal(r.failedPermanent, 1);
     assert.equal(outbox.rows.get(b.id).lastFailureReason, 'cmc-handler-destination-refused');
     assert.equal(outbox.rows.get(a.id).status, 'pending', 'its update threw, left for a later pass');
+  });
+
+  it('[TKDN4] a due row whose stored endpoint does not open (read back empty) is retired with its own reason and never sent', async () => {
+    const outbox = fakeOutbox();
+    const log = logger();
+    const unreadable = await queued(outbox, 0);
+    // what the storage returns for an envelope that does not open
+    outbox.rows.get(unreadable.id).apiEndpoint = '';
+    const fine = await queued(outbox, 0);
+    const p = peer({ status: 201 });
+    const r = await runDeletionOutboxPass({ outbox, deps: depsOf(p, unreadable.nextAttemptAfter, log) });
+    assert.equal(r.processed, 2);
+    assert.equal(r.failedPermanent, 1);
+    assert.equal(r.succeeded, 1);
+    assert.equal(p.calls.length, 1, 'only the readable row is sent');
+    assert.equal(p.calls[0].url, HOST + 'events');
+    const stored = outbox.rows.get(unreadable.id);
+    assert.equal(stored.status, 'failed-permanent');
+    assert.equal(stored.lastFailureReason, NOTICE_CREDENTIAL_UNREADABLE_REASON);
+    assert.equal(stored.apiEndpoint, '');
+    assert.equal(outbox.rows.has(fine.id), false, 'the readable row was delivered');
+    const warn = log.lines.find((l) => l.level === 'warn' && /does not open/.test(l.msg));
+    assert.equal(warn.ctx.deletionNoticeId, unreadable.id);
   });
 });

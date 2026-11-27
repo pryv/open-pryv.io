@@ -19,8 +19,9 @@ const require = createRequire(import.meta.url);
  *   level, the grant's forbidden features reach the session.
  *
  * Two levels on one stream come from the app changing its offer between two
- * consents (the offer's capability copy is updated with the app's personal
- * token), so the second consent is a re-authorization of the same grant.
+ * consents (the offer's capability copy is rewritten through the mall, as the
+ * plugin writes its internal subtree), so the second consent is a
+ * re-authorization of the same grant.
  *
  * Pattern C — initCore + coreRequest + getNewFixture + cuid; outbound HTTP
  * through the in-process fetch shim.
@@ -173,9 +174,15 @@ describe('[PMRG] OAuth permission merge rule (re-consent join, refresh meet)', f
     assert.equal(got.status, 200, describeRes(got));
     assert.equal(got.body.events.length, 1, describeRes(got));
     const offer = got.body.events[0];
-    const res = await coreRequest.put('/' + appUsername + '/events/' + offer.id).set('Authorization', appToken)
-      .send({ content: { ...offer.content, request: { ...offer.content.request, permissions } } });
-    assert.equal(res.status, 200, describeRes(res));
+    // The copy lives in the plugin-internal subtree, which the API does not
+    // write for any access (as events.getOne does not show it): written
+    // through the mall, as the plugin writes it.
+    const { getMall } = require('mall');
+    const { getUsersRepository } = require('business/src/users/index.ts');
+    const appUserId = await (await getUsersRepository()).getUserIdForUsername(appUsername);
+    const updated = await (await getMall()).events.updateWithMerge(appUserId, offer.id,
+      (stored) => ({ ...stored, content: { ...stored.content, request: { ...stored.content.request, permissions } } }));
+    assert.ok(updated != null, 'offer copy updated');
     // /authorize caches a resolved offer for a few seconds.
     require('oauth2/src/offerResolver.ts').clearOfferCache();
   }

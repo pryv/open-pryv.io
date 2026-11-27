@@ -80,6 +80,13 @@ class DatabaseSQLite {
     await concurrentSafeWrite.execute(() => {
       this.db.prepare('CREATE INDEX IF NOT EXISTS sessions_expires ON sessions(expires)').run();
     });
+    // The checks of every start (`SessionsSQLite.hasClearRows` /
+    // `hasForeignKeyRows`) read these instead of the whole table; the
+    // expression must stay the one of the probe (8-character key id + dot).
+    await concurrentSafeWrite.execute(() => {
+      this.db.prepare('CREATE INDEX IF NOT EXISTS sessions_clear ON sessions(id) WHERE id_enc IS NULL').run();
+      this.db.prepare('CREATE INDEX IF NOT EXISTS sessions_kid ON sessions(substr(id, 1, 9)) WHERE id_enc IS NOT NULL').run();
+    });
     await concurrentSafeWrite.execute(() => {
       this.db.prepare('CREATE INDEX IF NOT EXISTS password_resets_username ON password_resets(username)').run();
     });

@@ -210,6 +210,46 @@ describe('[PGTI] PostgreSQL time sort indexes', function () {
     assert.strictEqual(await definition('idx_event_time'), null);
   });
 
+  it('[PGTI9] the schema DDL of another process starting during a concurrent build takes no lock on the table', async function () {
+    await insertRows(8);
+    await db.query('DROP INDEX IF EXISTS idx_event_time_id');
+    await db.query(OLD.events);
+    const within = (promise, ms) => Promise.race([promise.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), ms))]);
+    // A transaction holding a snapshot keeps the build waiting (old
+    // snapshots), its lock on the table held, for as long as the test needs.
+    const blocker = await db.getClient();
+    let build, ddl, other;
+    try {
+      await blocker.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      await blocker.query('SELECT 1 FROM users_index LIMIT 1');
+      build = migration.up({ db });
+      build.catch(() => {}); // awaited below
+      for (let i = 0; ; i++) {
+        const p = await db.query('SELECT phase FROM pg_stat_progress_create_index');
+        if (p.rows.some((r) => /old snapshots/.test(r.phase))) break;
+        if (i > 400) throw new Error('the build did not reach its wait');
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      other = new DatabasePG(helpers.state.config);
+      ddl = other.ensureConnect(); // runs the schema DDL
+      ddl.catch(() => {}); // awaited below
+      assert.ok(await within(ddl, 5000), 'the schema DDL completes while the build waits');
+      const write = db.query('INSERT INTO events (user_id, id, stream_ids, type, time, created, modified) VALUES ($1, $2, $3, $4, 1, 1, 1)',
+        [userId, 'pgti9-w', '["s"]', 'note/txt']);
+      write.catch(() => {});
+      assert.ok(await within(write, 3000), 'a write goes through while the build waits');
+    } finally {
+      await blocker.query('COMMIT').catch(() => {});
+      blocker.release();
+      if (ddl != null) await ddl.catch(() => {});
+      if (other != null) await other.close();
+    }
+    const res = await build;
+    assert.deepStrictEqual([res[0].name, res[0].built], ['idx_event_time_id', true]);
+    assert.strictEqual((await definition('idx_event_time_id')).valid, true);
+  });
+
   async function readStreamed (user, options) {
     const ids = [];
     for await (const e of user.getEventsStreamed({ query: [], options })) ids.push(e.id);

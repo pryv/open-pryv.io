@@ -28,6 +28,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const { _internals } = require('./_internals.ts');
+const { acquireAdvisoryLock, releaseAdvisoryLock } = require('./advisoryLock.ts');
 
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<{ v?: number }> }> };
 
@@ -75,58 +76,65 @@ class SchemaMigrationsPG {
 }
 
 type LockQueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
-interface LockClient { query: LockQueryFn; release: (err?: Error) => void }
-/** The part of DatabasePG the lock uses: one dedicated client from its pool. */
-interface LockDb { getClient: () => Promise<LockClient> }
-interface LockLog { info?: (msg: string) => void }
+interface LockClient { query: LockQueryFn; end: () => Promise<void> }
+/** The part of DatabasePG the lock uses: a connection outside its pools. */
+interface LockDb { connectDedicated: (applicationName: string, onLost?: (err: Error) => void) => Promise<LockClient> }
+interface LockLog { info?: (msg: string) => void; warn?: (msg: string) => void }
+interface LockOptions { pollMs?: number; waitLogEveryMs?: number; heartbeatMs?: number }
 
 // Advisory-lock key of the migration runner ('prtm' in hex). Distinct from
 // the schema DDL key (a booting process must not wait for a migration) and
 // from the keys migrations take for themselves.
 const MIGRATIONS_LOCK_KEY = 0x7072746d;
-const LOCK_POLL_MS = 500;
+const LOCK_LABEL = '[migrations] postgresql';
+/** Shown in `pg_stat_activity` (and in the waiting runner's log line). */
+const LOCK_APPLICATION_NAME = 'open-pryv.io migrations';
+// While `fn` runs the lock connection is idle: a short statement now and then
+// keeps a server `idle_session_timeout` or an idle-flow firewall from closing
+// it, and turns a lost connection into a warning early.
+const HEARTBEAT_MS = 30_000;
 
 /**
- * Run `fn` holding the migration runner's advisory lock, on a client of its
- * own kept for the whole run (a session lock: it is released by the unlock,
- * or by the connection closing if the process dies). The client stays idle
- * while `fn` runs, so it never holds a snapshot.
+ * Run `fn` holding the migration runner's advisory lock, on a connection of
+ * its own outside the pools (a small pool `max` cannot starve the run), kept
+ * for the whole run and ended afterwards: a session lock, released by the
+ * unlock, or by the connection closing if the process dies. The connection
+ * stays idle while `fn` runs (bar the heartbeat), so it holds no snapshot. The
+ * lock is polled (see `advisoryLock.ts`), with no maximum wait.
  *
- * The lock is polled with `pg_try_advisory_lock`, never waited on with
- * `pg_advisory_lock`: a statement waiting for the lock holds a snapshot, and a
- * migration building an index CONCURRENTLY under the lock waits for every
- * older snapshot, a deadlock PostgreSQL breaks by failing one of them.
+ * A lock that did not do its job is said: the connection lost during the run,
+ * or an unlock finding the lock no longer held, logs a warning (another
+ * runner may have applied the same migrations at the same time).
  */
-async function withMigrationsLock<T> (db: LockDb, fn: () => Promise<T>, log: LockLog = {}): Promise<T> {
-  const client = await db.getClient();
-  let broken = false;
-  try {
-    let said = false;
-    for (;;) {
-      const res = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [MIGRATIONS_LOCK_KEY]);
-      if (res.rows[0]?.locked === true) break;
-      if (!said) {
-        log.info?.('[migrations] postgresql: another process is applying migrations; waiting for it');
-        said = true;
-      }
-      await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
+async function withMigrationsLock<T> (db: LockDb, fn: () => Promise<T>, log: LockLog = {}, opts: LockOptions = {}): Promise<T> {
+  let lost = false;
+  let held = false;
+  const client = await db.connectDedicated(LOCK_APPLICATION_NAME, (err) => {
+    if (lost) return;
+    lost = true;
+    // Before the lock is held the next poll fails and the run with it.
+    if (held) {
+      log.warn?.(`${LOCK_LABEL}: the migrations lock connection was lost (${err.message}); ` +
+        'another process may now apply migrations at the same time');
     }
+  });
+  try {
+    await acquireAdvisoryLock(client, MIGRATIONS_LOCK_KEY, log, {
+      label: LOCK_LABEL, holderDoing: 'applying migrations', pollMs: opts.pollMs, waitLogEveryMs: opts.waitLogEveryMs
+    });
+    held = true;
+    const heartbeat = setInterval(() => { client.query('SELECT 1').catch(() => {}); }, opts.heartbeatMs ?? HEARTBEAT_MS);
+    heartbeat.unref?.();
     try {
       return await fn();
     } finally {
-      // A client whose unlock fails is discarded: closing its connection
-      // releases the lock anyway.
-      try {
-        await client.query('SELECT pg_advisory_unlock($1)', [MIGRATIONS_LOCK_KEY]);
-      } catch (unlockErr) {
-        broken = true;
-      }
+      clearInterval(heartbeat);
+      // Lost: said already, and the lock went with the connection. A failed
+      // release is said once too (a later 'error' adds nothing).
+      if (!lost && !(await releaseAdvisoryLock(client, MIGRATIONS_LOCK_KEY, log, LOCK_LABEL))) lost = true;
     }
-  } catch (err) {
-    broken = true;
-    throw err;
   } finally {
-    client.release(broken ? new Error('migrations lock: run or unlock failed; discarding client') : undefined);
+    await client.end().catch(() => {});
   }
 }
 
@@ -149,4 +157,4 @@ function buildMigrationsCapability (db: unknown = _internals.databasePG): unknow
   };
 }
 
-export { SchemaMigrationsPG, buildMigrationsCapability, withMigrationsLock, MIGRATIONS_LOCK_KEY };
+export { SchemaMigrationsPG, buildMigrationsCapability, withMigrationsLock, MIGRATIONS_LOCK_KEY, LOCK_APPLICATION_NAME };

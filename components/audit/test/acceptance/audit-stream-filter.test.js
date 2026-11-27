@@ -23,7 +23,7 @@ const { pollUntil } = require('test-helpers');
 // `storages__audit__engine=postgresql` to be exercised.
 describe('[ASFL] audit stream filter', function () {
   this.timeout(60000);
-  let fixtures, eventsPath, personal, appAccess, engine;
+  let fixtures, eventsPath, personal, appAccess, engine, userId;
   let otherEventsPath, otherPersonal;
 
   before(async function () {
@@ -39,6 +39,7 @@ describe('[ASFL] audit stream filter', function () {
       type: 'app', token: cuid(), permissions: [{ streamId: 'yo', level: 'read' }]
     })).attrs;
     eventsPath = '/' + user.attrs.username + '/events';
+    userId = user.attrs.id;
 
     // A SECOND user. The filter is also what keeps one user's audit trail out
     // of another's: the query is AND-ed with `user_id`, and a malformed
@@ -148,6 +149,32 @@ describe('[ASFL] audit stream filter', function () {
     const events = await auditQuery(personal.token, [':_audit:access-%']);
     assert.strictEqual(events.length, 0,
       `[${engine}] a wildcard id must be matched literally, not expanded`);
+  });
+
+  it('[ASFL8] an access reading its own audit stream reaches the store as one block naming its id alone', async function () {
+    // The shape the PostgreSQL audit store serves from its index of records
+    // by access; anything else there falls back to the plain statement.
+    const audit = require('audit').default;
+    const userDb = await audit.storage.forUser(userId);
+    const original = userDb.getEventsStreamed;
+    const seen = [];
+    userDb.getEventsStreamed = function (params) {
+      seen.push(structuredClone(params.query.filter((item) => item.type === 'streamsQuery')));
+      return original.call(this, params);
+    };
+    try {
+      await auditQuery(appAccess.token, [':_audit:access-' + appAccess.id]);
+    } finally {
+      userDb.getEventsStreamed = original;
+    }
+    assert.deepStrictEqual(seen, [[{ type: 'streamsQuery', content: [[{ any: ['access-' + appAccess.id] }]] }]]);
+  });
+
+  it('[ASFL9] an app access may not read the access or action listings, nor another access\'s stream', async function () {
+    for (const stream of [':_audit:accesses', ':_audit:actions', ':_audit:access-' + personal.id, ':_audit:action-events.get']) {
+      const res = await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ streams: [stream] });
+      assert.strictEqual(res.status, 403, stream + ': ' + JSON.stringify(res.body?.error));
+    }
   });
 
   it('[ASFL4] a stream id that is a suffix of a real one does not match it', async function () {

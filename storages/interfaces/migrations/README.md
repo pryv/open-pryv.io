@@ -119,14 +119,24 @@ An engine may give its capability a `withLock(fn)`: `runAll()` then runs that en
 and reads the current version only once the lock is held.
 
 PostgreSQL (a booting core and `bin/migrate.js up`, or several cores on one database): `withLock` holds a session
-advisory lock of its own (`MIGRATIONS_LOCK_KEY` in `SchemaMigrations.ts`) on a dedicated client for the whole run. The
-first runner applies the migrations; the others wait (polling, logged once), then find the version at target and apply
-nothing. The lock is polled, never waited on with `pg_advisory_lock`: a waiting statement holds a snapshot, which a
-migration building an index `CONCURRENTLY` would wait for (deadlock). A migration may take an advisory lock of its own
-under a different key.
+advisory lock of its own (`MIGRATIONS_LOCK_KEY` in `SchemaMigrations.ts`) for the whole run, on a connection of its own
+outside the pools (application name `open-pryv.io migrations`), so a small `storages.engines.postgresql.max` cannot
+starve it. The first runner applies the migrations; the others wait, then find the version at target and apply
+nothing. A waiting runner logs who holds the lock (pid, client address, application name), again every minute with the
+time waited, and once it gets the lock. There is no maximum wait: a core must not start with pending migrations, and a
+dead holder's connection closes, which releases the lock. The lock is polled, never waited on with
+`pg_advisory_lock`: a waiting statement holds a snapshot, which a migration building an index `CONCURRENTLY` waits for,
+through a lock session that waits for nothing, so PostgreSQL detects no deadlock and both would wait for ever. A
+migration may take an advisory lock of its own under a different key. When the lock connection is lost during the run,
+or the unlock finds the lock no longer held (e.g. a transaction-mode pooler in front of PostgreSQL), the runner logs a
+warning: another runner may have applied the same migrations at the same time.
+
+The runner is not re-entrant: a migration never calls it.
 
 rqlite has no `withLock`: Raft serializes the version write, not the migration, so two cores booting together could
-both run a migration. No rqlite migration exists yet; the first one must be idempotent, or add a lock first.
+both run a migration. The runner warns whenever it applies a migration of an engine without `withLock`, and a test
+fails while the rqlite migrations directory holds a migration and rqlite has no `withLock`: the first rqlite migration
+must come with a lock.
 
 ## Not in scope
 
