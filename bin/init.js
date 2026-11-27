@@ -1095,6 +1095,15 @@ ${PLATFORM_DISKLESS_BLOCK}${ATTACHMENTS_BLOCK}
 # #   passwordCheckConcurrency: 2
 # #   passwordCheckQueue: 50
 
+# # auth.accessTokensKey — SECRET. Access tokens and session ids are stored as
+# # a keyed hash plus an encrypted copy, with keys derived from this base64
+# # 32-byte key, or from auth.adminAccessKey when empty (the default). A core
+# # finding tokens under another key refuses to start: changing either key
+# # needs \`node bin/access-tokens.js rekey\` (core stopped). Set it to rotate
+# # auth.adminAccessKey independently.
+# # auth:
+# #   accessTokensKey: ''
+
 # # storages.engines.postgresql.statementTimeoutMs / idleInTransactionTimeoutMs
 # # — time limits on the database work of API request handling (default 30000
 # # and 60000 ms). A longer statement is stopped (503 api-unavailable); a

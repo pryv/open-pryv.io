@@ -2,6 +2,45 @@
 
 ## Unreleased
 
+### Access tokens and session ids no longer stored in clear (operator notice)
+
+Nothing changes for clients: the same tokens, the same `token` and `apiEndpoint` in every response, the same
+errors, no forced sign-in. What changes is how the core stores them, and what an operator must know to upgrade,
+roll back or change a key.
+
+- **Stored form.** Every access token and personal session id is stored as a keyed hash (HMAC-SHA256, the only
+  lookup key) plus an encrypted copy (AES-256-GCM, opened when the access is read). A database dump or a stolen
+  data file no longer holds a usable token. The keys derive from the new optional **`auth.accessTokensKey`**
+  (base64, 32 bytes; SECRET, YAML only) when set, else from `auth.adminAccessKey`. Nothing to configure on an
+  existing platform. The keys never enter the database.
+- **First start of this release.** Before the workers start, every stored token is converted in place: live,
+  deleted and history accesses, and sessions (expired sessions are removed). One HMAC, one encryption and one row
+  update per access; on PostgreSQL it is a migration (`migrations.autoRunOnStart: false`: run
+  `node bin/migrate.js up`, the core warns that tokens cannot be looked up until then). On SQLite the user
+  databases are walked once (a marker file `accesses-token-protected.done` in the users directory records it) and
+  any database the walk missed is converted at its first use. The same pass runs at every start: rows written in
+  clear since (see rollback below) are converted again.
+- **Changing the key refuses the start.** A core that finds tokens protected under another key than the
+  configured one (after changing `auth.accessTokensKey`, or `auth.adminAccessKey` while `auth.accessTokensKey` is
+  not set) stops with a message naming the fix, because every app, shared and personal token would be rejected
+  otherwise. Fix: restore the previous key, or, core stopped, write the previous value to a file and run
+  `node bin/access-tokens.js rekey --previous-key-file <path>`, then start. Set `auth.accessTokensKey` to rotate
+  `auth.adminAccessKey` independently; switching to it is itself a key change (run `rekey` with the
+  `auth.adminAccessKey` value). Cores of one platform may use different values of `auth.accessTokensKey`.
+- **Rollback to an earlier image.** An earlier image cannot read the new stored form: every token would be
+  rejected. Before starting it, with this image and the core stopped, run `node bin/access-tokens.js unprotect
+  --yes` (writes the clear tokens and session ids back and restores the clear-token index), then start the earlier
+  image without starting this one again. If the earlier image was started without `unprotect`, nothing is lost:
+  starting this image again converts back what was written in the meantime (sessions opened meanwhile included).
+  Several cores sharing one PostgreSQL database must be upgraded together.
+- **Old clear copies.** The upgrade cannot reach copies made before it: database dumps and backups taken earlier
+  (treat them as credential stores), and, until vacuum, the old row versions in the data files. On PostgreSQL run
+  `VACUUM (FULL) accesses, sessions;` once after the upgrade if the old values must be gone from the data files
+  (it locks both tables while it runs). On SQLite the first start vacuums each user database it converts and the
+  shared database (a database converted later, at its first use, is not: run `VACUUM` on it). Backups made by
+  `bin/backup.js` still hold the tokens in clear (they restore on a core with another key): encrypt them.
+- **`bin/access-tokens.js status`**: counts of rows in clear, under the configured key, and under other keys.
+
 ### Configuration: the same platform digest with or without `--config`
 
 - `auth.sessionMaxAge` (14 days) and `auth.passwordResetRequestMaxAge` (1 hour) are now set in `default-config.yml`

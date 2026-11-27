@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Access tokens and session ids at rest: keyed hash plus encrypted copy
+
+- `components/business/src/accesses/tokenProtection.ts`: the protection object injected at storage init (contract in
+  `storages/interfaces/_shared/tokenProtection.ts`). Four keys HKDF-derived from the key root
+  (`auth.accessTokensKey`, else `auth.adminAccessKey`; none throws, no unkeyed fallback), labels
+  `access-token-hash-v1`, `access-token-enc-v1`, `session-id-hash-v1`, `session-id-enc-v1`. Access hash
+  `kid + '.' + base64url(HMAC(userId | 0x00 | token))`; session hash without user id. The envelope is the version-2
+  at-rest envelope of `acme/AtRestEncryption.ts`, its context binding the user id and the hash
+  (`access-token:<userId>:<hash>`, `session-id:<hash>`). The `kid` (8 hex chars) identifies the key root.
+- The engine classes are the only place that knows the stored form; items above them are unchanged (integrity is
+  computed on the item, so its values do not change). PostgreSQL: `AccessesPG` writes `token_hash` / `token_enc`
+  (`token` stays NULL, the column goes in a later release) through the new `BaseStoragePG.toStorageItem` hook, maps
+  `token` conditions (`=`, `$eq`, `$ne`, `$in`, `null`, also inside `$or`) to the hash and `token` updates (`plain`,
+  `$set`, `$unset`) to the pair, opens on read and throws `TokenUnreadableError` (with `accessId`) when the copy
+  does not open. SQLite: the same in the JSON `data` column (`tokenHash`, `tokenEnc`); `BaseStorageSQLite`
+  threads the database's user id to `rowToItem` / `itemToRow` / `buildWhere` (`UserBaseStorageDb.userId`) and has
+  an `onUserDbReady` hook, used by accesses for the first-use conversion and the foreign-key check. The uniqueness
+  check of `AccessesSQLite.insertOne` compares hashes. `SessionsPG` / `SessionsSQLite` key the row by the hash of
+  the id, with `id_enc`.
+- PostgreSQL migrations `20261127_120000` (columns, `idx_access_token_hash` unique on `(user_id, token_hash)` for
+  live heads, `idx_access_token_clear` for the probe), `20261127_120100` (conversion pass), `20261127_120200` (drops
+  `idx_access_token`). `SCHEMA_SQL` creates the columns on fresh installs and no longer the clear-token index.
+- `storages/engines/*/src/tokensAtRest.ts` (barrel: `storages.getTokensAtRest()`): `protectTokensAtRest` (guard,
+  then conversion; master before workers fork, `bin/migrate.js up`, the PostgreSQL migration),
+  `probeTokensAtRest`, `tokensAtRestStatus`, `unprotectTokensAtRest`, `rekeyTokensAtRest`. Per-row compare-and-set
+  statements on PostgreSQL (keyset batches of 1000), one transaction per user database on SQLite.
+  `bin/access-tokens.js` drives them.
+- Cache: the `UNSET_ACCESS_LOGIC` broker message carries `accessId` only; the receiver evicts the token its own map
+  holds for that id (messages with `accessToken` still accepted).
+- Not in this change: the `/reg/access` polling state, pending deletion notices and backup files keep tokens as
+  they did.
+- Tests: `[TKPA]` (business unit), `[TKAR]` with `[TKST]`, `[TKSS]`, `[TKMG]`, `[TKTL]`, `[TKSQ]`
+  (`components/storage/test/unit/accessTokensAtRest.test.js`, both engines, raw rows asserted), `[TKAP2]` (cache).
+
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 
 - `api-server/src/methods/mfa.ts`: `mfa.confirm` accepts an enrolment session only and `mfa.verify` a login session
