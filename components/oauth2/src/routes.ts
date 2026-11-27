@@ -48,6 +48,7 @@ const { buildDiscoveryDocument, buildOpenIdConfiguration, handleJsonDocument } =
 const { setExtension, getExtension, extensionGeneration } = require('./extension.ts');
 const { loadSigningKeys, hasSigningKeys, publicJwkSet } = require('./signingKeys.ts');
 const { handleOffer } = require('./routes/offer.ts');
+const { handleClientsValidation } = require('./routes/clientsValidation.ts');
 const { checkRegistryClients } = require('./registryBootCheck.ts');
 const { listNamespaces } = require('./scopeRegistry.ts');
 const { handleAuthorize } = require('./routes/authorize.ts');
@@ -219,6 +220,12 @@ export type Deps = {
   readRegistryGrant?: (params: {
     session: { userId: string; username: string; [key: string]: unknown }; clientId: string; streamIds?: string[];
   }) => Promise<{ permissions: Array<Record<string, unknown>>; aliased: boolean; heldAt?: Record<string, string | null | undefined> } | null>;
+  /**
+   * The stored ids of the clients a signed-in account's accesses are named
+   * after (`oauth-grant:<clientId>`, `oauth:<clientId>`), read with its
+   * context. `/oauth2/clients/validation` mounts only with it.
+   */
+  listHeldClientIds?: (session: { userId: string; username: string; [key: string]: unknown }) => Promise<Iterable<string>>;
   /** Token exchange (RFC 8693): the subject session re-read on its home core. */
   readSubjectSession?: ReadSubjectSession;
   /** Token exchange: find or mint the derived session on this core. */
@@ -350,6 +357,17 @@ export function registerRoutes (app: { get?: Function; post?: Function; use?: Fu
       ...(deps.isPlatformRoutedLabel != null ? { isPlatformRoutedLabel: deps.isPlatformRoutedLabel } : {}),
       ...perUser,
     })));
+
+  // The current level of the apps an account granted (its account screens).
+  if (typeof deps.listHeldClientIds === 'function') {
+    app.post!('/oauth2/clients/validation',
+      guardRoute(handleClientsValidation({
+        config: deps.config,
+        platform: deps.platform,
+        resolveUser: deps.resolveUser,
+        listHeldClientIds: deps.listHeldClientIds,
+      })));
+  }
 
   app.post!('/oauth2/authorize/accept',
     guardRoute(handleAccept({
