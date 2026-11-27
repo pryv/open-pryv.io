@@ -148,7 +148,9 @@ describe('[SINF] Service', () => {
       // A hosted site: the address the topology gives it (the rule itself: [ADCF6], [ADCF9]).
       await withInjectedConfig({ hostedSites: sites, portal: { site: 'admin' }, dns: { domain: 'sn14.example.org' } }, async () => {
         const expected = require('business/src/admin/config.ts').portalUrl(await getConfig());
-        assert.ok(typeof expected === 'string' && expected.endsWith('/admin/'), String(expected));
+        // dnsLess: `<publicUrl>/admin/`; DNS topology: `https://admin.<dns.domain>/`.
+        assert.ok(typeof expected === 'string' &&
+          (expected.endsWith('/admin/') || expected === 'https://admin.sn14.example.org/'), String(expected));
         for (const p of paths) {
           const res = await coreRequest.get(p);
           assert.deepStrictEqual(res.body.portal, { contract: PORTAL_CONTRACT, url: expected }, p);
