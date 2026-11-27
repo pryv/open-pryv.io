@@ -89,6 +89,9 @@ const FAILED_RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 d
 const RETRY_AFTER_MAX_MS = MAX_DELAY_MS;
 const DELIVERY_RETRY_AFTER_MAX_MS = 30 * 60 * 1000; // 30 min
 const STALE_REASON = 'cmc-retry-stale';
+// A revoke notice of a deleted account whose stored endpoint does not open
+// (the storage returns it empty): retired unsent, never retried.
+const NOTICE_CREDENTIAL_UNREADABLE_REASON = 'cmc-notice-credential-unreadable';
 // A retried `consent/accept-cmc` whose author is the server (`createdBy`
 // `system`, or a record on `:_cmc:inbox`, where the only accept is the
 // server's mirror of a received one): never re-dispatched. Every accept a
@@ -615,6 +618,20 @@ async function runDeletionOutboxPass (params: {
   for (const row of due) {
     summary.processed += 1;
     try {
+      if (row.apiEndpoint === '') {
+        await outbox.update({
+          ...row,
+          apiEndpoint: '',
+          status: 'failed-permanent',
+          lastFailureReason: NOTICE_CREDENTIAL_UNREADABLE_REASON,
+          lastFailureDetail: { retiredAt: now },
+        });
+        deps.logger?.warn?.('cmc/retry: a revoke notice of a deleted account whose stored endpoint does not open was retired, not sent (the counterparty was never told)', {
+          ...logOf(row), attempts: row.attempts,
+        });
+        summary.failedPermanent += 1;
+        continue;
+      }
       const host = stripCredentials(row.apiEndpoint);
       if (now - row.createdAt > DELIVERY_STALE_AFTER_MS) {
         await outbox.update({
@@ -1193,6 +1210,7 @@ export {
   RETRY_AFTER_MAX_MS,
   DELIVERY_RETRY_AFTER_MAX_MS,
   STALE_REASON,
+  NOTICE_CREDENTIAL_UNREADABLE_REASON,
   SYSTEM_AUTHORED_REASON,
   FOREIGN_RECORD_REASON,
   NON_RETRYABLE_REASONS,

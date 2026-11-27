@@ -8,9 +8,10 @@
  */
 
 // Access tokens and personal session ids at rest: the core stores a keyed hash
-// (the lookup key) and an encrypted copy, never the clear value. This tool
-// reports the stored form and runs the two operator passes. Run `unprotect`
-// and `rekey` with the core stopped.
+// (the lookup key) and an encrypted copy, never the clear value. The stored
+// access `integrity` and the endpoint of pending deletion notices are sealed
+// under the same key. This tool reports the stored form and runs the two
+// operator passes. Run `unprotect` and `rekey` with the core stopped.
 //
 // Usage:
 //   node bin/access-tokens.js status
@@ -31,19 +32,25 @@ const USAGE = `Usage:
 
 Commands:
   status      Rows per stored form: in clear, protected under the configured key,
-              protected under another key (by key id). PostgreSQL also lists the
+              protected under another key (by key id), for access tokens, sessions,
+              access integrity values (accessIntegrity) and the endpoints of pending
+              deletion notices (deletionNotices). PostgreSQL also lists the
               access rows in clear (accessesInClear): after a start, the ones the
               conversion left because another live access of the same user holds
               the same token; delete one of the two, the next start converts the
               other. Read-only.
   rekey       Re-hash and re-seal under the configured key the rows protected under
-              the previous one, after a change of auth.accessTokensKey or, when that
+              the previous one (tokens, session ids, integrity values, notice
+              endpoints), after a change of auth.accessTokensKey or, when that
               is not set, of auth.adminAccessKey. The core refuses to start until
               this is done. The file holds the previous value of the setting that
               was in use (either form is recognised). Idempotent. Core stopped.
+              A pending deletion notice under a key not given (or not re-keyed)
+              is not refused at start: it is retired unsent.
   unprotect   Rollback aid, before starting an image that does not protect tokens
-              at rest: writes the clear tokens and session ids back and restores the
-              clear-token index. Start the previous image right after, without
+              at rest: writes the clear tokens, session ids, access integrity
+              values and notice endpoints back and restores the clear-token index.
+              Start the previous image right after, without
               starting this image again (its start protects the rows again; the
               tools of this image, status and backup included, leave them in
               clear). Core stopped.
@@ -122,17 +129,32 @@ require('@pryv/boiler').init({
         break;
       case 'rekey': {
         const res = await tokensAtRest.rekeyTokensAtRest(candidates);
-        console.log(`Re-keyed ${res.accesses} access row(s) and ${res.sessions} session(s).`);
+        // SQLite counts an access row once, for its token and its integrity value.
+        console.log(`Re-keyed ${res.accesses} access row(s), ${res.sessions} session(s), ` +
+          (res.integrity != null ? `${res.integrity} access integrity value(s) ` : '') +
+          `and ${res.deletionNotices ?? 0} deletion notice(s).`);
+        const unreadable = Array.isArray(res.integrityUnreadable) ? res.integrityUnreadable : [];
+        if (unreadable.length > 0) {
+          // Damaged under their own previous key: re-keying cannot open them.
+          console.error('These access integrity values do not open under their previous key and were left as they are ' +
+            '(user id, access id):');
+          for (const r of unreadable) console.error(`  ${r.userId} ${r.id}`);
+          console.error('Remedy: set the integrity of each of these rows to NULL (core stopped), then start; ' +
+            '`node bin/integrity-check.js` then reports them as "missing integrity property".');
+        }
         if (res.remaining) {
-          console.error('Rows remain under a key other than the configured one (see `status`): ' +
-            'the given previous key is not theirs.');
+          console.error('Rows remain under a key other than the configured one (see `status`)' +
+            (unreadable.length > 0 ? ', the ones above included' : ': the given previous key is not theirs') + '.');
           process.exit(2);
         }
         break;
       }
       case 'unprotect': {
         const res = await tokensAtRest.unprotectTokensAtRest();
-        console.log(`Wrote back the clear token of ${res.accesses} access row(s) and the clear id of ${res.sessions} session(s).`);
+        // SQLite counts an access row once, for its token and its integrity value.
+        console.log(`Wrote back the clear token of ${res.accesses} access row(s), the clear id of ${res.sessions} session(s), ` +
+          (res.integrity != null ? `${res.integrity} access integrity value(s) ` : '') +
+          `and ${res.deletionNotices ?? 0} deletion notice endpoint(s).`);
         console.log('Start the previous image now, without starting this one again.');
         break;
       }

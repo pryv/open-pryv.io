@@ -24,7 +24,48 @@ export type TokenProtection = {
   sealSessionId (idHash: string, id: string): string;
   /** Throws (`name === 'TokenUnreadableError'`) when the envelope does not open. */
   openSessionId (idHash: string, idEnc: string): string;
+  /** Whether a stored value is a sealed one (`sealed:<kid>.<envelope>`), under any key. */
+  isSealed (stored: unknown): boolean;
+  /** Whether a stored value is sealed under this key root. */
+  ownsSealed (stored: unknown): boolean;
+  /** The stored form of an access `integrity` value (bound to the user id). */
+  sealAccessIntegrity (userId: string, integrity: string): string;
+  /** Throws (`name === 'TokenUnreadableError'`) when the value does not open (tampered, another user, another key). */
+  openAccessIntegrity (userId: string, stored: string): string;
+  /** The stored form of a credential sent to another platform (bound to `context`). */
+  sealSecret (context: string, value: string): string;
+  /** Throws (`name === 'TokenUnreadableError'`) when the value does not open. */
+  openSecret (context: string, stored: string): string;
 };
+
+/** Prefix of every sealed stored value (followed by the key id, a dot and the envelope). */
+export const SEALED_PREFIX = 'sealed:';
+
+/** Whether a stored value is a sealed one, under any key. */
+export function isSealedValue (stored: unknown): stored is string {
+  return typeof stored === 'string' && stored.startsWith(SEALED_PREFIX);
+}
+
+/**
+ * The stored access `integrity` is sealed (a fresh envelope at each write): a
+ * query can only test its presence. Any other condition on it (top level or
+ * inside `$or`) is refused rather than silently matching nothing.
+ */
+export function refuseIntegrityValueCondition (query: Record<string, unknown> | null | undefined): void {
+  const check = (q: Record<string, unknown> | null | undefined): void => {
+    if (q == null || !Object.prototype.hasOwnProperty.call(q, 'integrity')) return;
+    const v = q.integrity;
+    if (v === null) return;
+    if (v != null && typeof v === 'object' && !Array.isArray(v)) {
+      const keys = Object.keys(v);
+      if (keys.length === 1 && keys[0] === '$ne' && (v as Record<string, unknown>).$ne === null) return;
+    }
+    throw new TypeError('accesses: the stored integrity is sealed, a query takes `integrity: null` or `{ $ne: null }` only');
+  };
+  if (query == null) return;
+  check(query);
+  if (Array.isArray(query.$or)) for (const clause of query.$or as Array<Record<string, unknown>>) check(clause);
+}
 
 /**
  * Length of the key-id prefix of a stored hash (the key id and its dot), as
@@ -102,9 +143,14 @@ export const CONVERSION_PENDING_MESSAGE = 'access tokens at rest: access tokens 
 
 /** The passes of the base storage engine the start relies on (see `storages.getTokensAtRest`). */
 type BootTokensAtRest = {
-  probeTokensAtRest: () => Promise<{ columnsReady: boolean; clearRows: boolean }>;
+  /** `clearIntegrityOnly`: no token or session waits, but access `integrity` values are stored in clear. */
+  probeTokensAtRest: () => Promise<{ columnsReady: boolean; clearRows: boolean; clearIntegrityOnly?: boolean }>;
   protectTokensAtRest: () => Promise<Record<string, number>>;
 };
+
+/** The warning when only access `integrity` values wait for the conversion (lookups unaffected). */
+export const CLEAR_INTEGRITY_PENDING_MESSAGE = '[access-tokens-at-rest] access integrity values are still stored in clear ' +
+  '(migrations.autoRunOnStart is false). Lookups are not affected; run `node bin/migrate.js up` to seal them.';
 
 /**
  * What the master does before its workers serve. With `autoRun`: refuse rows
@@ -122,7 +168,10 @@ export async function tokensAtRestAtBoot (opts: {
   const { tokensAtRest, autoRun, log, warn } = opts;
   if (!autoRun) {
     const probe = await tokensAtRest.probeTokensAtRest();
-    if (!probe.clearRows) return;
+    if (!probe.clearRows) {
+      if (probe.clearIntegrityOnly === true) warn(CLEAR_INTEGRITY_PENDING_MESSAGE);
+      return;
+    }
     if (probe.columnsReady) throw new Error(CONVERSION_PENDING_MESSAGE);
     warn('[access-tokens-at-rest] access tokens or session ids are still stored in clear and cannot be ' +
       'looked up (autoRunOnStart=false, migration pending). Run `node bin/migrate.js up` to convert them.');
