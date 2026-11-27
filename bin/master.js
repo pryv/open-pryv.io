@@ -235,6 +235,30 @@ if (cluster.isPrimary) {
       autoRun: autoRunMigrations
     });
 
+    // PostgreSQL audit storage: the index of audit records by access
+    // (audit_event_streams) is filled before workers serve. The migration
+    // above does it too when the base storage is PostgreSQL; this also covers
+    // a state reset by the schema step (a trigger found missing) and a SQLite
+    // base storage with a PostgreSQL audit storage. One query once complete;
+    // until it is, reads of one access's audit trail keep the slower plan.
+    {
+      const auditStorage = require('../storages/index.ts').auditStorage;
+      if (auditStorage != null && typeof auditStorage.ensureStreamIndex === 'function') {
+        if (autoRunMigrations) {
+          // A failure leaves the state incomplete, which the readers handle
+          // (the slower plan): it is reported, and the next start resumes.
+          try {
+            await auditStorage.ensureStreamIndex({ logger: { info: log, warn, error } });
+          } catch (e) {
+            error(`[audit-stream-index] fill failed: ${e.message}; reads of one access's audit trail use the slower plan until a later start completes it`);
+          }
+        } else if (!auditStorage.streamIndex?.complete) {
+          warn('[audit-stream-index] incomplete and migrations.autoRunOnStart is false: reads of one access\'s ' +
+            'audit trail use the slower plan until `node bin/migrate.js up` has run');
+        }
+      }
+    }
+
     // Access tokens and session ids are stored as a keyed hash plus an
     // encrypted copy. Before workers serve: refuse to start on rows protected
     // under another key (every token would be rejected; `bin/access-tokens.js

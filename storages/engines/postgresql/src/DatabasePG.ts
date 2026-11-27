@@ -9,6 +9,8 @@ import { createRequire } from 'node:module';
 
 import type { Logger } from '@pryv/boiler';
 import { installUnindexedWritesGuard } from './unindexedWritesGuard.ts';
+import { installAuditStreamIndex } from './auditStreamIndex.ts';
+import type { InstallOutcome } from './auditStreamIndex.ts';
 const require = createRequire(import.meta.url);
 
 const { AsyncLocalStorage } = require('node:async_hooks');
@@ -509,6 +511,8 @@ class DatabasePG {
         // Rows of a user id the users index does not hold are refused (see
         // unindexedWritesGuard.ts): after the tables, one table at a time.
         await installUnindexedWritesGuard(client, this.logger);
+        // The triggers keeping audit_event_streams, then its state row.
+        await installAuditStreamIndex(client, this.logger);
       } finally {
         await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_KEY]);
       }
@@ -533,6 +537,25 @@ class DatabasePG {
       await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_KEY]);
       try {
         return await installUnindexedWritesGuard(client, this.logger, options);
+      } finally {
+        await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_KEY]);
+      }
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Install or repair the triggers and state row of `audit_event_streams`
+   * under the schema advisory lock, as the boot does; for tests.
+   */
+  async ensureAuditStreamIndexInstalled (options: { lockTimeoutMs?: number; attempts?: number } = {}): Promise<InstallOutcome> {
+    await this.ensureConnect();
+    const client = this._guardClient(await this._maintenance().connect());
+    try {
+      await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_KEY]);
+      try {
+        return await installAuditStreamIndex(client, this.logger, options);
       } finally {
         await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_KEY]);
       }
@@ -905,6 +928,25 @@ CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(user_id, type);
 CREATE INDEX IF NOT EXISTS idx_audit_deleted ON audit_events(user_id, deleted) WHERE deleted IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_head_id ON audit_events(user_id, head_id) WHERE head_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_created_by ON audit_events(user_id, created_by);
+
+-- The access stream ids of each audit record, kept by triggers on audit_events
+-- (see auditStreamIndex.ts); used to read one access's trail in time order.
+CREATE TABLE IF NOT EXISTS audit_event_streams (
+  user_id TEXT NOT NULL,
+  stream_id TEXT NOT NULL,
+  time DOUBLE PRECISION NOT NULL,
+  eventid TEXT NOT NULL,
+  PRIMARY KEY (user_id, stream_id, time, eventid)
+);
+-- One row. complete: every audit record's access stream ids are in
+-- audit_event_streams; the cursor is the position of an unfinished fill.
+CREATE TABLE IF NOT EXISTS audit_event_streams_state (
+  id BOOLEAN PRIMARY KEY DEFAULT true CHECK (id),
+  complete BOOLEAN NOT NULL,
+  cursor_user_id TEXT,
+  cursor_eventid TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 -- Event attachment content (storages.file.engine: postgresql) — one row per
 -- fixed-size chunk so reads/writes stream without holding whole files in

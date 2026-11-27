@@ -133,6 +133,127 @@
   `delegation-managed-resource`). `components/business/test/unit/accesses-canReadEvent.test.js`
   `[CRF1]` to `[CRF4]` (forced streams per store).
 
+### PostgreSQL audit: records indexed by access (`audit_event_streams`)
+
+- New `storages/engines/postgresql/src/auditStreamIndex.ts`. Table `audit_event_streams (user_id, stream_id, time,
+  eventid)`, primary key in that order, one row per `access-...` term of each audit record with a time (several
+  per record: an access deleted with its children, the alias term of a versioned access; none for records without
+  an access term), and a one-row `audit_event_streams_state (complete, cursor_user_id, cursor_eventid)`. Both in
+  the schema DDL.
+- Kept by two triggers on `audit_events`, so every writer and deleter is covered (this release, a previous one, a
+  restore, a hand statement): `audit_event_streams_put` (AFTER INSERT OR UPDATE OF the key columns, row level;
+  an update removes the old rows first) and `audit_event_streams_drop` (AFTER DELETE, statement level with the
+  deleted rows as a transition table; an account left with no record loses its rows by one range of the key,
+  found and deleted in ONE statement so one snapshot: with two statements, a record committed for that account
+  between them lost its row). `AuditStoragePG.deleteUser` also deletes the account's rows directly.
+- Installed at each boot under the schema advisory lock, after the unindexed-user guard
+  (`installAuditStreamIndex`, same pattern: each function replaced only when its stored body differs, each trigger
+  created where absent and enabled where disabled, short lock timeout, retried); then the state row, complete only
+  when `audit_events` is empty. A trigger found absent, disabled or not installable resets the state, complete or
+  not (a saved fill position is stale too: writes the trigger missed may sort behind it): the next fill starts from
+  zero. A changed trigger DEFINITION is never applied by the install (it creates absent triggers only): it must
+  ship as a drop + create (comment next to the constants).
+- Filled by `ensureAuditStreamIndex`: a dedicated connection (`DatabasePG.connectDedicated`, application name
+  `open-pryv.io audit stream index`, outside the pools), `statement_timeout` and `lock_timeout` 0, a session
+  advisory lock of its own taken by polling (`advisoryLock.ts`, with the holder in the waiting log); refuses to
+  start, and resets the state, while a trigger does not fire; a run from zero empties the table (`TRUNCATE` with a
+  2 s lock timeout, up to 30 attempts, so audit inserts never queue more than 2 s behind it while a streamed read
+  holds the table), then batches of 20 000 records walk `audit_events` by primary key, one transaction each with
+  its position in the state row (a stopped run resumes), log line before and every 10 s; complete only once both
+  triggers fire (else the state is reset). State writes are compare-and-set on the cursor and `updated_at` last
+  read or written: a reset by another process during the fill makes it start again from zero (at most 3 times)
+  instead of being overwritten. Each batch holds an exclusive transaction advisory lock that the delete trigger and
+  the update branch of the put trigger take shared: a deletion or update committing while a batch has read the
+  record waits for that batch, then removes the rows it added. Inserts take no lock. A missing state table is an
+  error, never a reported fill. Called by migration
+  `20261127_140000_audit_stream_index.js` (a failure there is logged, not fatal), by `bin/master.js` after the
+  migrations (all pairings, the SQLite base storage with the PostgreSQL audit storage included; a failure is
+  logged and the core starts on the slower plan) and by `bin/migrate.js up`.
+- Reader (`UserAuditDatabasePG.buildSelectQuery`): with the state complete (read by `AuditStoragePG` at init and
+  again in the background after 60 s) and a query naming exactly one block holding one `access-` id (plain or
+  `{ any: [id] }`; other items of the block, `not` included, kept), sorted on `time` alone, with no condition on
+  `time` a record without time could meet: candidates from the table in key order, each looked up in
+  `audit_events` (`CROSS JOIN LATERAL ... OFFSET 0`, joined on `eventid` and `time`) under every condition of the
+  plain statement, the stream filter included. The table orders and narrows, never authorizes: a forged or stale
+  row returns nothing the filter refuses. `OFFSET 0` keeps the planner from flattening the join and scanning
+  `audit_events` first (seen in the plan test: the LIKE is estimated to match almost nothing). Everything else is
+  the statement as before. `getAllAccesses` (the `:_audit:accesses` listing) reads the table by a skip scan (one
+  index descent per access) plus the access ids of records without a time; `getAllActions` unchanged.
+- Tests: `storages/engines/postgresql/test/audit-stream-index.test.js` `[PGAS1]` to `[PGAS9]`, `[PGASA]` to
+  `[PGASM]` (trigger rows, updates, deletes of one record and of a 5 000-record account, `deleteUser`, fill, resume
+  after a stop, install repair and reset, writes during a fill, row and order equivalence of the two statements
+  over 840 shapes (several accesses, alias, `%` and `_` in an id, ties, history, deleted and trashed rows, time
+  bounds including `equal`, a block naming two ids, both directions, limits, skips, streamed reads with and
+  without a limit), eligibility, the exact text of the indexed statement, plan (outer side of the nested loop an
+  ordered scan of the primary key in the sort direction, no sort, read from the JSON plan), forged and stale rows,
+  the deletion during a batch, two fills at once, the listing, the state refresh, a stale fill position reset when
+  a trigger is repaired and a fill refused or reset while a trigger does not fire, a reset during a fill, an update
+  during a batch, a whole-account delete racing an insert for that account, the `TRUNCATE` not holding inserts
+  behind a read, a restore through the triggers, a fill with inserts, single deletions, account erasures and time
+  updates going on, and the record without a time (returned by the plain read, not by the indexed one: a recorded
+  decision)). api-server `[AADL1]` / `[AADL3]` on the PostgreSQL audit engine: the rows stay with a kept trail
+  (which still reads through the table) and go with an erased one. Conformance `[ASQC]` (one access among many
+  records, pages of 3 with ties, both engines). `[ASFL8]` (the own-trail read reaches the store as one block naming
+  the id alone, all audit engines), `[ASFL9]` (an app token is refused the listings and another access's stream),
+  `[SQQPD]` (SQLite: rowid set for one access). Before the fixes `[PGASF]`, `[PGASG]`, `[PGASH]`, `[PGASI]` and
+  `[PGASJ]` failed (an audit insert waited 5.5 s behind the waiting `TRUNCATE`). Mutations, each failing its test:
+  the `time` join removed (`[PGASA]`: the record twice), the inner stream filter neutralised (`[PGAS7]`,
+  `[PGASA]`), the delete trigger's lock removed (`[PGASB]`), `OFFSET 0` removed (`[PGAS8]`, the text pin), the
+  install's reset limited to a complete state (`[PGASF]`), the compare-and-set removed (`[PGASG]`), the update
+  branch's lock removed (`[PGASH]`), the `TRUNCATE` lock timeout removed (`[PGASJ]`). Removing `OFFSET 0` does not
+  fail the plan test `[PGAS9]` (5 runs, seeded with every record naming the access): on the shared test table the
+  planner estimates the new account small and picks the table first even without the fence (EXPLAIN checked), so
+  the fence is pinned by the statement text only.
+- A type filter keeps the plain statement (served by `idx_audit_type`): through the table it was slower on an
+  access holding 2 % of the records (39 ms against 7 ms). The delete trigger removes the rows of an account left
+  with no audit record by one range of the key (the keyed join took 4.3 s for a 200 000-record erasure; two
+  statements 1.3 s; the one-statement form 1.5 s; 0.5 s without triggers; no drift after the runs).
+- Measured on mbp2 (PostgreSQL 16, `shared_buffers` 128 MB, 5 accounts x 200 000 records, 20 per time value; one
+  busy access 60 %, 20 medium 1.9 % each, two rare ones of 50 records, newest and oldest, one without records),
+  median of 7, plain / indexed: limit 20 any access 100 to 133 ms / 0.3 ms server side (1.4 ms round trip);
+  skip 5 000 limit 20 busy 185 / 54 ms; limit 500 busy 151 / 10 ms; limit 20 with `toTime` 87 to 106 / 0.3 ms;
+  ascending limit 20 100 to 109 / 0.3 ms; all 3 998 records of a medium access 124 / 77 ms; accesses listing
+  281 / 1.2 ms. Fill: 31 s per million records idle (473 MB WAL), 33 s with a writer at 200 records/s including a
+  stop after 20 batches and the resume; no drift afterwards. Table: 129 MB heap + 231 MB key per million rows.
+  Audit insert (30 000 per side, alternating rounds): median 2.92 / 2.99 ms, p99 3.6 / 6.8 ms. Erasure of
+  200 000 records 0.5 / 1.5 s; one-record deletion 2.3 ms with triggers; 20 000 records of an account 51 / 448 ms
+  (no caller in the core). Several ids in one `any` (pre-existing LIKE path, unchanged): 100 ids 8.5 ms when the
+  page fills from recent records, but 5.6 s with 80 ids that match nothing plus a rare old access (480 ids:
+  33 s), one LIKE per id per row over the whole trail; only a personal token can name such a set. SQLite (no
+  change; one 1-million-record audit file, a laptop): limit 20 of any access 0.1 to 0.8 ms; skip 5 000 limit 20:
+  40 ms on a 1.9 % access, 608 ms on a 60 % one (the deep page of a dense access, a separate matter).
+
+### SQLite: a deep page of a stream most events hold no longer reads every one of them
+
+- A read sorted by time with a stream filter counts its full-text candidates up to a cap (20 000) to choose its plan.
+  At the cap, the walk of the `time` index was taken only for a page (`limit + skip`) up to `cap^2 / rows`, about 400
+  on 1 M rows (80 on 5 M): a deeper page, or a plain `limit=500`, read every candidate through the rowid set and
+  sorted them, synchronously. Measured on a 1 M-row audit file, an access on 60 % of the rows: 0.8 ms at skip 380,
+  548 ms at skip 400, 588 ms at skip 5000, 604 ms for `limit=500` (descending; ascending 150 ms). The same code
+  serves the user events store on the SQLite base engine.
+- At the cap, when the whole walk is refused, a probe on the full-text index (by rowid, the index only) now finds the
+  page-th candidate from the end the walk starts at; the rows between them (`reach`) estimate the walk, since an
+  audit log is written in time order. The walk is taken over `2 x reach` rows of the `time` index (a `time >=` bound,
+  or `time <=` ascending) when that is not above half the candidates the rowid set would read, and it answers only
+  when it fills the page, else the rowid set runs (the bounded walk of the under-cap case, same exactness: the walk
+  holds the exact stream condition and every other condition, whole tie groups at the bound, the same order with
+  the rowid tie-breaker). Not taken: descending from a `toTime` (a `rowid <=` bound does not shorten the probe
+  backward, measured 6 to 12 ms instead of 0.1), ascending when a row has no time (it sorts first, outside any
+  window).
+- Measured (same file, median of 7, warm): skip 5000 588 -> 3.5 ms descending, 143 -> 1.9 ms ascending; skip 50 000
+  926 -> 27 ms; `limit=500` 604 -> 2.0 ms; with a type filter 606 -> 2.7 ms; skip 100 000 (the API maximum) keeps
+  the rowid set as before (the rule refuses it). On 5 M rows (3 GB), `limit=100`: the rowid set 2.5 to 15 s (the
+  spread is page-cache contention), the walk 0.9 ms; skip 5000 2.2 ms. The probe costs 0.1 ms at page 5 000, 2 ms at 100 000. A file
+  restored in shuffled order: skip 5000 224 -> 11 ms (the walk still fills there; when it does not, the wasted walk
+  is at most half the rowid set's rows). Unchanged: a stream under the cap, a filter of rare streams, a page the
+  whole walk takes.
+- Tests storages:sqlite `[SQQPE]` (descending: walk, skips cutting tie groups, type filter, `not`, all / trashed
+  states, deeper than the rule, past every match, `toTime`, the test hook off), `[SQQPF]` (ascending, and a row
+  without a time), `[SQQPG]` (rowids not in time order: shuffled, newest first, a probe that misjudges the density:
+  the walk falls short and the rows stay those of the rowid set). Mutations, each failing a test: the `time >=` or
+  `time <=` bound dropped while the fallback is kept, a page that is not full answered, the no-time refusal removed,
+  the upper bound applied as a lower one, the reach probe read in the wrong direction.
+
 ### Deletion records: one order for equal deletion times
 
 - `getDeletionsStreamed` (events.get with `modifiedSince` + `includeDeletions`, read with `limit` / `skip`) ordered by

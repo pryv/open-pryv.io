@@ -109,6 +109,12 @@ describe('[AADL] audit record of an account deletion', function () {
     }
   }
 
+  /** PostgreSQL audit engine: records are also indexed by access in audit_event_streams. */
+  const pgAudit = () => typeof auditStorage?.ensureStreamIndex === 'function';
+  async function streamIndexRows (userId) {
+    return (await auditStorage.db.query('SELECT count(*)::int AS n FROM audit_event_streams WHERE user_id = $1', [userId])).rows[0].n;
+  }
+
   async function deletionRecords (userId) {
     return (await trail(userId)).filter((e) => e.content?.action === 'account.deleted');
   }
@@ -157,6 +163,22 @@ describe('[AADL] audit record of an account deletion', function () {
       assert.deepStrictEqual(record.content.record, { trigger: 'holder', accessId: u.accessId, accessType: 'personal' });
       assert.deepStrictEqual(Object.keys(record.content).sort(), ['action', 'record', 'source']);
       assertNoneOf(record, [u.username, u.email, u.token, u.streamId]);
+      if (pgAudit()) {
+        // The kept trail keeps its rows, and reads through them.
+        const kept = await trail(u.id);
+        const terms = kept.filter((e) => e.time != null)
+          .reduce((n, e) => n + new Set(e.streamIds.filter((s) => s.startsWith('access-'))).size, 0);
+        assert.ok(terms > 0);
+        assert.strictEqual(await streamIndexRows(u.id), terms);
+        assert.strictEqual(auditStorage.streamIndex.isComplete(), true);
+        const accessQuery = { query: [{ type: 'streamsQuery', content: [[{ any: ['access-' + u.accessId] }]] }], options: { sort: { time: -1 } } };
+        const { buildSelectQuery } = require('storages/engines/postgresql/src/UserAuditDatabasePG.ts');
+        assert.ok(buildSelectQuery(u.id, structuredClone(accessQuery), true).sql.includes('audit_event_streams'));
+        const read = await (await originalForUser.call(auditStorage, u.id)).getEvents(accessQuery);
+        assert.deepStrictEqual(read.map((e) => e.id).sort(),
+          kept.filter((e) => e.streamIds.includes('access-' + u.accessId)).map((e) => e.id).sort());
+        assert.ok(read.length >= 2, 'the call and the deletion record: ' + read.length);
+      }
     }, HOLDER_DELETES);
   });
 
@@ -185,9 +207,15 @@ describe('[AADL] audit record of an account deletion', function () {
       return await original.call(audit, userId, event, methodId, ...rest);
     });
     const u = await account();
+    if (pgAudit()) {
+      // A record naming the access, so the erasure has rows to remove.
+      await coreRequest.get('/' + u.username + '/access-info').set('Authorization', u.token);
+      await pollUntil(() => streamIndexRows(u.id), (n) => n > 0, { timeoutMs: 5000 });
+    }
     const res = await coreRequest.delete('/users/' + u.username).set('Authorization', adminKey);
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
     assert.ok(!actions.includes('account.deleted'), JSON.stringify(actions));
+    if (pgAudit()) assert.strictEqual(await streamIndexRows(u.id), 0, 'the erasure removed the rows of audit_event_streams');
     if (isPg) assert.strictEqual((await trail(u.id)).length, 0);
     else await assert.rejects(originalForUser.call(auditStorage, u.id), /erased/);
 
