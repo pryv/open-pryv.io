@@ -258,7 +258,7 @@ describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {
 });
 
 describe('[CKPS] bin/check-config.js portal next to other hosted sites', function () {
-  this.timeout(60000);
+  this.timeout(CLI_TEST_TIMEOUT_MS);
   const WARNING = /portal\.site 'admin' shares this platform's origin with the hosted site\(s\) 'docs'/;
   const sites = (names) => 'hostedSites:\n' + names.map((n) => `  ${n}:\n    proxy: https://example.github.io/${n}/\n`).join('') + 'portal:\n  site: admin\n';
 

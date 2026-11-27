@@ -37,6 +37,12 @@ email.enabled: false
 `;
 
 /** Runs the wizard unattended into a fresh directory (local mode, no docker). */
+// The wizard and check-config each boot a node process: on a loaded machine
+// (several suites at once) that can take well over 30 s, and a killed child
+// reads as a wrong exit status, not as a timeout.
+const CLI_SPAWN_TIMEOUT_MS = 120000;
+const CLI_TEST_TIMEOUT_MS = 300000;
+
 function runWizard (configDir, extraArgs = [], answers = ANSWERS, extraEnv = {}) {
   const args = ['--non-interactive', ...extraArgs];
   if (answers != null) {
@@ -58,7 +64,7 @@ function runCli (configDir, args, extraEnv = {}) {
     cwd: REPO_ROOT,
     env,
     encoding: 'utf8',
-    timeout: 60000
+    timeout: CLI_SPAWN_TIMEOUT_MS
   });
   return { status: res.status, output: (res.stdout || '') + (res.stderr || '') };
 }
@@ -69,7 +75,7 @@ function readConfig (configDir) {
 
 function checkConfig (configDir) {
   const check = spawnSync('node', [CHECK_CLI, path.join(configDir, 'pryv-config.yml')], {
-    cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000
+    cwd: REPO_ROOT, encoding: 'utf8', timeout: CLI_SPAWN_TIMEOUT_MS
   });
   return { status: check.status, output: check.stdout + check.stderr };
 }
@@ -133,7 +139,7 @@ const DNS_ACTIVE_ANSWERS = ANSWERS.replace(/^dnsless:.*\n/m, 'dnsless: false\n')
   .replace(/^publicurl:.*\n/m, 'dnsdomain: example.invalid\npublicip: 192.0.2.10\n');
 
 describe('[INWZ] bin/init.js generated files', function () {
-  this.timeout(60000);
+  this.timeout(CLI_TEST_TIMEOUT_MS);
   let configDir;
 
   before(function () {
@@ -170,7 +176,7 @@ describe('[INWZ] bin/init.js generated files', function () {
     assert.match(config, /^letsEncrypt:\n {2}enabled: true$/m);
     assert.doesNotMatch(config, /^ {2}email:/m);
     const check = spawnSync('node', [CHECK_CLI, path.join(configDir, 'pryv-config.yml')], {
-      cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: CLI_SPAWN_TIMEOUT_MS
     });
     assert.doesNotMatch(check.stdout + check.stderr, /letsEncrypt\.email/);
     assert.strictEqual(check.status, 0, check.stdout + check.stderr);
@@ -233,7 +239,7 @@ describe('[INWZ] bin/init.js generated files', function () {
     assert.strictEqual(config.logs.file.level, 'error');
     assert.strictEqual(config.logs.file.path, path.join(configDir, 'data', 'logs', 'api-server.errors.log'));
     const check = spawnSync('node', [CHECK_CLI, path.join(configDir, 'pryv-config.yml')], {
-      cwd: REPO_ROOT, encoding: 'utf8', timeout: 30000
+      cwd: REPO_ROOT, encoding: 'utf8', timeout: CLI_SPAWN_TIMEOUT_MS
     });
     assert.strictEqual(check.status, 0, check.stdout + check.stderr);
   });
@@ -252,7 +258,7 @@ describe('[INWZ] bin/init.js generated files', function () {
     const env = { ...process.env };
     for (const k of ['LOGS', 'LOG_FORMAT', 'DEBUG', 'NODE_ENV']) delete env[k];
     const boot = spawnSync(process.execPath, [script, '--config', path.join(configDir, 'pryv-config.yml')], {
-      cwd: configDir, env, encoding: 'utf8', timeout: 30000
+      cwd: configDir, env, encoding: 'utf8', timeout: CLI_SPAWN_TIMEOUT_MS
     });
     assert.strictEqual(boot.status, 0, boot.stdout + boot.stderr);
     const out = boot.stdout + boot.stderr;
@@ -286,7 +292,7 @@ describe('[INWZ] bin/init.js generated files', function () {
 });
 
 describe('[INWP] bin/init.js profiles, diagnostics, cluster gating, PaaS mode and portal entry', function () {
-  this.timeout(120000);
+  this.timeout(CLI_TEST_TIMEOUT_MS);
   let configDir;
 
   before(function () {
