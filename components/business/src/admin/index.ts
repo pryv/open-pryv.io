@@ -20,3 +20,6 @@ export * from './sessions.ts';
 export * from './capabilities.ts';
 export * from './config.ts';
 export * from './setupBoot.ts';
+export * from './localPolicy.ts';
+export * from './lockdown.ts';
+export * from './lockdownBoot.ts';

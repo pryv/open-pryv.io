@@ -8,6 +8,8 @@
 import { hostedSiteNames } from '../hostedSites.ts';
 import { isSha256Hex } from './codes.ts';
 import { portalUrl as portalAddress, PORTAL_SPACES, PORTAL_CONTRACT } from './portalDefaults.ts';
+import { describeLocalPolicy } from './localPolicy.ts';
+import { describeLockdown } from './lockdown.ts';
 
 /**
  * Configuration of setup and administration:
@@ -28,6 +30,8 @@ import { portalUrl as portalAddress, PORTAL_SPACES, PORTAL_CONTRACT } from './po
  *   admin.session.ttlMinutes        PLATFORM-WIDE  admin session lifetime (60)
  *   admin.session.stepUpMinutes     PLATFORM-WIDE  age of the second factor accepted for a sensitive act (5)
  *   admin.session.requireMfa        PLATFORM-WIDE  administrators need MFA whenever the platform has it on (true)
+ *   admin.localPolicy               PER-CORE       grants this core accepts (validated by localPolicy.ts)
+ *   admin.lockdown                  PER-CORE       what this core locks (validated by lockdown.ts)
  *
  * One validator for the boot-time config validation, `bin/check-config.js`
  * and the readers. Pure: reads the values it is given.
@@ -51,7 +55,7 @@ export type AdminConfig = {
   session: { ttlMs: number; stepUpMs: number; requireMfa: boolean };
 };
 
-export type AdminConfigReport = { value: AdminConfig; problems: Array<{ message: string; path: string[] }> };
+export type AdminConfigReport = { value: AdminConfig; problems: Array<{ message: string; path: string[] }>; warnings: string[] };
 
 export const ADMIN_KEY_SCOPES: readonly AdminKeyScope[] = ['full', 'break-glass'];
 export const REGISTRATION_WHILE_PENDING: readonly RegistrationWhilePending[] = ['closed', 'open'];
@@ -207,6 +211,13 @@ export function describeAdminConfig (config: ConfigReader): AdminConfigReport {
   const requireMfa = asBoolean(config.get('admin:session:requireMfa'), true);
   if (requireMfa == null) problem('admin.session.requireMfa', 'must be true or false');
 
+  // admin.localPolicy, admin.lockdown: their own validators.
+  const warnings: string[] = [];
+  for (const report of [describeLocalPolicy(config), describeLockdown(config)]) {
+    problems.push(...report.problems);
+    warnings.push(...report.warnings);
+  }
+
   const value: AdminConfig = {
     portal: { site, url, allowedOrigins, spaces, modules },
     setup: {
@@ -222,7 +233,7 @@ export function describeAdminConfig (config: ConfigReader): AdminConfigReport {
       requireMfa: requireMfa ?? true
     }
   };
-  return { value, problems };
+  return { value, problems, warnings };
 }
 
 /** The resolved values; throws one Error listing every problem (boot paths, after validation passed). */

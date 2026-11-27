@@ -14,7 +14,7 @@ import type { InstallOutcome } from './auditStreamIndex.ts';
 const require = createRequire(import.meta.url);
 
 const { AsyncLocalStorage } = require('node:async_hooks');
-const { Pool } = require('pg');
+const { Pool, Client } = require('pg');
 const { setTimeout } = require('timers/promises');
 const { _internals } = require('./_internals.ts');
 const { isRequestServingProcess } = require('utils');
@@ -82,6 +82,12 @@ interface PgClient {
   // 'error' event that ends the process.
   on: (event: string, handler: (err: Error) => void) => void;
   removeListener: (event: string, handler: (err: Error) => void) => void;
+}
+
+/** A connection outside the pools (see `connectDedicated`); the caller ends it. */
+interface PgDedicatedClient {
+  query: (text: string, params?: unknown[]) => Promise<PgQueryResult>;
+  end: () => Promise<void>;
 }
 
 interface PgPool {
@@ -431,6 +437,30 @@ class DatabasePG {
   }
 
   /**
+   * A connection of its own, outside the pools (their `max` does not count
+   * it), with the main pool's settings minus the time limits, TCP keepalive
+   * on and `applicationName` shown in `pg_stat_activity`: for a session
+   * advisory lock held for a whole run. The caller ends it. A lost connection
+   * is logged and reported to `onLost` (an unhandled 'error' would end the
+   * process).
+   */
+  async connectDedicated (applicationName: string, onLost?: (err: Error) => void): Promise<PgDedicatedClient> {
+    const { statement_timeout: _s, idle_in_transaction_session_timeout: _i, max: _m, idleTimeoutMillis: _t, ...settings } = this.poolConfig;
+    const client = new Client({ ...settings, application_name: applicationName, keepAlive: true });
+    client.on('error', (err: Error) => {
+      this.logger.warn(`PostgreSQL connection "${applicationName}" lost: ${err.message}`);
+      onLost?.(err);
+    });
+    try {
+      await client.connect();
+    } catch (err) {
+      await client.end().catch(() => {});
+      throw err;
+    }
+    return client;
+  }
+
+  /**
    * Run a function inside a transaction.
    */
   async withTransaction<T> (fn: (client: PgClient) => Promise<T>): Promise<T> {
@@ -575,7 +605,23 @@ class DatabasePG {
 // Arbitrary application-wide advisory-lock key for schema DDL ('pryv' in hex)
 const SCHEMA_INIT_LOCK_KEY = 0x70727976;
 
-const SCHEMA_SQL = `
+/**
+ * Turn each `CREATE [UNIQUE] INDEX IF NOT EXISTS name ON ...;` statement (at
+ * the start of a line) into one that runs only when no relation of that name
+ * exists. `IF NOT EXISTS` looks at the name only after taking a SHARE lock on
+ * the table: while another session builds an index of that table
+ * CONCURRENTLY (the time sort index migration), that request queues every
+ * write to the table behind it, and PostgreSQL then aborts the build as a
+ * deadlock (the build waits for the snapshot of this transaction). An index
+ * that exists takes no lock at all this way.
+ */
+function createIndexesOnlyIfMissing (sql: string): string {
+  return sql.replace(/^CREATE (UNIQUE )?INDEX IF NOT EXISTS (\w+)([^;]*);/gm,
+    (_stmt: string, unique: string | undefined, name: string, rest: string) =>
+      `DO $$ BEGIN IF to_regclass('${name}') IS NULL THEN CREATE ${unique ?? ''}INDEX ${name}${rest}; END IF; END $$;`);
+}
+
+const SCHEMA_SQL = createIndexesOnlyIfMissing(`
 -- User-scoped tables
 
 CREATE TABLE IF NOT EXISTS streams (
@@ -914,6 +960,6 @@ CREATE TABLE IF NOT EXISTS attachment_files (
   data BYTEA NOT NULL,
   PRIMARY KEY (user_id, event_id, file_id, seq)
 );
-`;
+`);
 
 export { DatabasePG, runMaintenance, isInMaintenance, setRequestServingForTests, STATEMENT_CANCELLED };

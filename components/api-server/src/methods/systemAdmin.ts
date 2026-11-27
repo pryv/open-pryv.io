@@ -7,10 +7,9 @@
 import * as nodeFs from 'node:fs';
 import * as nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createId as cuid } from '@paralleldrive/cuid2';
-import timestamp from 'unix-timestamp';
-import type { MethodNext as Next, ResultBag } from './_types.ts';
+import type { ResultBag } from './_types.ts';
 import type { AdminSubject } from 'middleware/src/adminAuth.ts';
+import { auditAs, actorOf, auditAdminAct, wrap as wrapStep } from './helpers/adminAudit.ts';
 import type { AdminStore } from 'business/src/admin/store.ts';
 import {
   readSetupState, redeemSetupCode, countSetupAttempt, pendingSetupCode, mintSetupCode, markReady
@@ -29,6 +28,8 @@ import { setDeletionGuard, setDeletionTeardownStep } from 'business/src/auth/del
 import type { RoleRow } from 'business/src/admin/roles.ts';
 import { readAdminConfig, adminMfaRequired, portalUrl, portalSettings, setupPageUrl } from 'business/src/admin/config.ts';
 import { offeredCapabilities } from 'business/src/admin/capabilities.ts';
+import { lockdownView, withoutHiddenCapabilities } from 'business/src/admin/lockdown.ts';
+import { policyView } from 'business/src/admin/localPolicy.ts';
 import { setupChecks } from 'business/src/admin/setupChecks.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger } from '@pryv/boiler';
@@ -66,8 +67,6 @@ type AdminContext = {
   auditIntegrityPayload?: unknown;
 };
 
-const SESSION_ID_LENGTH = 16;
-
 export default async function (systemAPI: { register: (...args: unknown[]) => void }) {
   const config = await ready();
   const logger = getLogger('system-admin');
@@ -104,59 +103,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
 
   // ------------------------------------------------------------ helpers
 
-  /** The audit access id and the record of who acted (no secret in it). */
-  function auditAs (kind: 'subject' | 'personal' | 'public') {
-    return function setAuditSubject (context: AdminContext, _params: unknown, _result: ResultBag, next: Next) {
-      const subject = context.adminSubject;
-      let accessId = 'public';
-      const record: Record<string, unknown> = {};
-      if (kind === 'personal' && context.adminPersonal != null) {
-        accessId = 'personal-token';
-        record.userId = context.adminPersonal.userId;
-      }
-      if (kind !== 'public' && subject != null) {
-        accessId = subject.kind === 'key' ? 'admin' : subject.kind === 'session' ? 'admin-session' : 'setup-session';
-        record.via = subject.kind === 'key' ? 'admin-key' : subject.kind;
-        if (subject.userId != null) record.userId = subject.userId;
-        if (subject.sessionId != null) record.sessionId = subject.sessionId.slice(0, SESSION_ID_LENGTH);
-      }
-      context.access = { id: accessId };
-      context.auditIntegrityPayload = { subject: record };
-      next();
-    };
-  }
-
-  /** The id an act is attributed to in the rows it writes. */
-  function actorOf (subject: AdminSubject | undefined): string {
-    if (subject?.kind === 'session' && subject.userId != null) return subject.userId;
-    return subject?.kind === 'setup' ? 'setup' : 'admin-key';
-  }
-
-  /** A row of the administrator's own trail, when the account is on this core. Best-effort. */
-  async function auditAdminAct (userId: string | undefined, action: string, record: Record<string, unknown>): Promise<void> {
-    if (userId == null) return;
-    try {
-      if (config.get('audit:active') !== true) return;
-      if ((await usersRepository.getUsernameForUserId(userId)) == null) return; // not an account of this core
-      const auditSingleton = (await import('audit')).default;
-      const C = auditSingleton.CONSTANTS;
-      const now = timestamp.now();
-      await auditSingleton.eventForUser(userId, {
-        id: cuid(),
-        createdBy: 'system',
-        modifiedBy: 'system',
-        streamIds: [C.ACTION_STREAM_ID_PREFIX + action],
-        time: now,
-        endTime: now,
-        created: now,
-        modified: now,
-        trashed: false,
-        type: 'audit-log/admin',
-        content: { action, source: { name: 'admin' }, record }
-      }, action);
-    } catch (err) {
-      logger.error(`administration audit row "${action}" not written`, err);
-    }
+  /** A method step from an async function (methods/helpers/adminAudit.ts). */
+  function wrap (fn: (context: AdminContext, params: Record<string, unknown>, result: ResultBag) => Promise<unknown>) {
+    return wrapStep(fn);
   }
 
   /**
@@ -180,17 +129,6 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
 
   function rolePayload (userId: string, row: RoleRow | null) {
     return { userId, grants: activeGrants(row, Date.now()), updatedAt: row?.updatedAt ?? null };
-  }
-
-  function wrap (fn: (context: AdminContext, params: Record<string, unknown>, result: ResultBag) => Promise<unknown>) {
-    return async function adminStep (context: AdminContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
-      try {
-        const err = await fn(context, params ?? {}, result);
-        next(err as Error | undefined);
-      } catch (err) {
-        next(err instanceof Error && 'id' in err ? err : errors.unexpectedError(err));
-      }
-    };
   }
 
   // ------------------------------------------------------------ setup
@@ -464,14 +402,20 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const subject = context.adminSubject!;
       const cfg = readAdminConfig(config);
       const state = await readSetupState(store());
-      result.portalContext = {
+      const portalContext: Record<string, unknown> = {
         // Same form as system.listCores (trailing slash), so the portal matches the two.
         core: { id: coreId(), url: platform.coreIdToUrl(coreId()) },
         setup: { state: state?.state === 'pending' ? 'pending' : 'ready' },
         subject: { kind: subject.kind, userId: subject.userId ?? null, permissions: [...subject.permissions] },
-        capabilities: offeredCapabilities(config),
+        capabilities: withoutHiddenCapabilities(config, offeredCapabilities(config)),
         portal: { url: portalUrl(config), setupPageUrl: setupPageUrl(config) },
         adminSession: { ttlMinutes: cfg.session.ttlMs / 60000, stepUpMinutes: cfg.session.stepUpMs / 60000, mfaRequired: adminMfaRequired(config) }
       };
+      // This core's lockdown and local policy, when they say something.
+      const lockdown = lockdownView(config);
+      if (lockdown != null) portalContext.lockdown = lockdown;
+      const localPolicy = policyView(config, subject);
+      if (localPolicy != null) portalContext.localPolicy = localPolicy;
+      result.portalContext = portalContext;
     }));
 }

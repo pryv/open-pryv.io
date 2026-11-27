@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 const adminAuth = require('./adminAuth.ts').default;
+const adminLockdown = require('./adminLockdown.ts').default;
 const checkUserCore = require('./checkUserCore.ts').default;
 const commonHeaders = require('./commonHeaders.ts').default;
 const contentType = require('./contentType.ts');
@@ -27,6 +28,7 @@ const subdomainToPath = require('./subdomainToPath.ts').default;
 
 export {
   adminAuth,
+  adminLockdown,
   checkUserCore,
   commonHeaders,
   contentType,
