@@ -163,6 +163,12 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
     assert.equal((await get('/clients?queue=maybe', asKey())).status, 400);
     assert.equal((await get('/clients?origin=martian', asKey())).status, 400);
     assert.equal((await get('/clients?bogus=1', asKey())).status, 400);
+    // Paging: without limit every row; limit / skip cut the same order.
+    const allIds = list.body.clients.map((c) => c.clientId);
+    const paged = await get('/clients?limit=2&skip=1', asKey());
+    assert.deepEqual(paged.body.clients.map((c) => c.clientId), allIds.slice(1, 3));
+    assert.equal((await get('/clients?limit=0', asKey())).status, 400);
+    assert.equal((await get('/clients?skip=-1', asKey())).status, 400);
 
     const op = await get('/clients/' + ids.op, asKey());
     assert.equal(op.status, 200, JSON.stringify(op.body));
@@ -177,7 +183,7 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
     // Changed since the reviewer saw it: refused, unchanged.
     const stale = await post('/clients/' + ids.eu + '/approve', { digest: 'x'.repeat(43) }, asKey());
     assert.equal(stale.status, 409, JSON.stringify(stale.body));
-    assert.equal(stale.body.error.data.digest, one.body.digest);
+    assert.ok(!JSON.stringify(stale.body).includes(one.body.digest), 'the current digest is not handed back: the reviewer reads the client again');
     assert.equal((await storage.getClient(db, ids.eu)).validation, undefined);
     assert.equal((await post('/clients/' + ids.eu + '/approve', {}, asKey())).status, 400, 'digest required');
     assert.equal((await post('/clients/' + ids.eu + '/approve', { digest: one.body.digest, grade: 'A' }, asKey())).status, 400, 'unknown parameter');
@@ -200,7 +206,9 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
       assert.deepEqual([rec.content.record.diff.from.level, rec.content.record.diff.to.level, rec.content.record.diff.digest], ['nonValidated', 'appValidated', one.body.digest]);
       const [own] = await trail(owner.userId, 'oauth.client.reviewed', since);
       assert.ok(own != null, 'in the owner\'s trail');
-      assert.deepEqual([own.content.record.clientId, own.content.record.act, own.content.record.by], [ids.eu, 'approve', 'admin-key']);
+      assert.deepEqual([own.content.record.clientId, own.content.record.act, own.content.record.by, own.content.record.reason],
+        [ids.eu, 'approve', 'platform-administrator', 'reviewed the policy']);
+      assert.equal(own.content.record.digest, undefined);
     }
     // Under break-glass the key reaches none of them.
     await withInjectedConfig({ auth: { adminAccessKeyScope: 'break-glass' } }, async () => {
@@ -220,7 +228,10 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
       assert.equal((await get('/clients/' + ids.eu, asSession(euToken))).status, 200);
       for (const id of [ids.us, ids.both, ids.all, ids.op]) {
         assert.equal((await get('/clients/' + id, asSession(euToken))).status, 404, 'read ' + id);
-        assert.equal((await post('/clients/' + id + '/suspend', { reason: 'out of reach' }, asSession(euToken))).status, 404, 'act ' + id);
+        assert.equal((await post('/clients/' + id + '/suspend', { reason: 'out of reach' }, asSession(euToken))).status, 404, 'suspend ' + id);
+        assert.equal((await post('/clients/' + id + '/approve', { digest: 'x'.repeat(43) }, asSession(euToken))).status, 404, 'approve ' + id);
+        assert.equal((await post('/clients/' + id + '/unvalidate', { reason: 'out of reach' }, asSession(euToken))).status, 404, 'unvalidate ' + id);
+        assert.equal((await post('/clients/' + id + '/resume', null, asSession(euToken))).status, 404, 'resume ' + id);
       }
       assert.equal((await storage.getClient(db, ids.us)).status, undefined, 'nothing written out of reach');
       const s = await post('/clients/' + ids.eu + '/suspend', { reason: 'abuse report' }, asSession(euToken));
@@ -251,9 +262,17 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
       const all = (await get('/clients', asSession(platToken))).body.clients.map((c) => c.clientId).filter((id) => Object.values(ids).includes(id));
       assert.equal(all.length, 5);
       const both = await get('/clients/' + ids.both, asSession(platToken));
+      const since = timestamp.now();
       const a = await post('/clients/' + ids.both + '/approve', { digest: both.body.digest }, asSession(platToken));
       assert.equal(a.status, 200, JSON.stringify(a.body));
       assert.equal(a.body.client.validation.app.by, plat.userId);
+      if (audit != null) {
+        // The owner's own trail never names the reviewing account.
+        const [own] = await trail(owner.userId, 'oauth.client.reviewed', since);
+        assert.ok(own != null, 'in the owner\'s trail');
+        assert.ok(!JSON.stringify(own.content).includes(plat.userId), JSON.stringify(own.content));
+        assert.equal(own.content.record.by, 'platform-administrator');
+      }
       // Unvalidate: back to the queue.
       const u = await post('/clients/' + ids.both + '/unvalidate', { reason: 'policy page gone' }, asSession(platToken));
       assert.deepEqual([u.status, u.body.validation.level, u.body.inQueue, u.body.client.statusLog.at(-1).reason], [200, 'nonValidated', true, 'unvalidate']);
@@ -278,14 +297,29 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
     await inHostings(async () => {
       const eu = await freshUser();
       const euToken = await sessionOf(eu.userId, [['app-reviewer', 'region:eu']]);
-      // A regional reviewer creates a publisher row with regions in its reach only.
-      assert.equal((await put('/publishers/' + owner.userId, { status: 'validated', reason: 'KYC' }, asSession(euToken))).status, 400, 'no regions: platform');
-      assert.equal((await put('/publishers/' + owner.userId, { status: 'validated', regions: ['us'], reason: 'KYC' }, asSession(euToken))).status, 400);
+      // A regional reviewer cannot create a publisher row (it counts for every
+      // client of the account on every core), whatever regions it names: 404, nothing written.
+      for (const body of [
+        { status: 'validated', reason: 'KYC' },
+        { status: 'validated', displayName: 'Trusted Co', regions: ['eu'], reason: 'KYC' },
+        { status: 'great', regions: ['eu'], reason: 'KYC' }
+      ]) {
+        assert.equal((await put('/publishers/' + owner.userId, body, asSession(euToken))).status, 404, JSON.stringify(body));
+      }
+      assert.equal(await cv.readPublisher(db, owner.userId), null, 'nothing written');
+      assert.equal((await get('/clients/' + ids.all, asKey())).body.validation.level, 'nonValidated', 'no effect on its clients');
+      // A platform reviewer creates it and assigns it to eu; the eu reviewer then decides it.
+      const plat = await freshUser();
+      const platToken = await sessionOf(plat.userId, [['app-reviewer', 'platform']]);
+      const created = await put('/publishers/' + owner.userId, { status: 'pending', regions: ['eu'], reason: 'request received' }, asSession(platToken));
+      assert.equal(created.status, 200, JSON.stringify(created.body));
       const since = timestamp.now();
-      const set = await put('/publishers/' + owner.userId, { status: 'validated', displayName: 'Admo Co', regions: ['eu'], reason: 'KYC done' }, asSession(euToken));
+      const set = await put('/publishers/' + owner.userId, { status: 'validated', displayName: 'Admo Co', reason: 'KYC done' }, asSession(euToken));
       assert.equal(set.status, 200, JSON.stringify(set.body));
       assert.deepEqual([set.body.publisher.status, set.body.publisher.displayName, set.body.publisher.regions], ['validated', 'Admo Co', ['eu']]);
-      assert.deepEqual(set.body.publisher.statusLog.map((e) => [e.by, e.from, e.to, e.reason]), [[eu.userId, 'absent', 'validated', 'KYC done']]);
+      assert.deepEqual(set.body.publisher.statusLog.map((e) => [e.by, e.from, e.to, e.reason]),
+        [[plat.userId, 'absent', 'pending', 'request received'], [eu.userId, 'pending', 'validated', 'KYC done']]);
+      assert.equal((await put('/publishers/' + owner.userId, { status: 'validated', regions: ['us'], reason: 'KYC' }, asSession(euToken))).status, 400, 'not left in a region out of reach');
       // The badge of its apps follows (an unreviewed one becomes Publisher Validated).
       assert.deepEqual((await get('/clients/' + ids.all, asKey())).body.validation, { level: 'publisherValidated', publisher: { name: 'Admo Co', validated: true } });
       assert.equal((await get('/publishers/' + owner.userId, asSession(euToken))).status, 200);
@@ -293,9 +327,12 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
       if (audit != null) {
         const rec = (await trail(PLATFORM_TRAIL_USER_ID, 'system.publishers.set', since)).find((e) => e.content.record.diff != null);
         assert.deepEqual(rec.content.record.target, { publisherUserId: owner.userId });
-        assert.deepEqual([rec.content.record.diff.from.status, rec.content.record.diff.to.status], ['absent', 'validated']);
-        const [own] = await trail(owner.userId, 'oauth.publisher.reviewed', since);
+        assert.deepEqual([rec.content.record.diff.from.status, rec.content.record.diff.to.status], ['pending', 'validated']);
+        const owns = await trail(owner.userId, 'oauth.publisher.reviewed', since);
+        const own = owns.find((e) => e.content.record.to?.status === 'validated');
         assert.ok(own != null, 'in the publisher\'s trail');
+        assert.deepEqual([own.content.record.by, own.content.record.reason], ['platform-administrator', 'KYC done']);
+        assert.ok(!JSON.stringify(own.content).includes(eu.userId), 'never the reviewing account');
         const [act] = await trail(eu.userId, 'admin.act', since);
         assert.equal(act.content.record.methodId, 'system.publishers.set');
       }
@@ -308,7 +345,7 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
       // The eu reviewer may not widen it to every region; suspending keeps name and regions.
       assert.equal((await put('/publishers/' + owner.userId, { status: 'validated', regions: null, reason: 'x' }, asSession(euToken))).status, 400);
       const sus = await put('/publishers/' + owner.userId, { status: 'suspended', reason: 'complaints' }, asSession(euToken));
-      assert.deepEqual([sus.status, sus.body.publisher.displayName, sus.body.publisher.regions, sus.body.publisher.statusLog.length], [200, 'Admo Co', ['eu'], 2]);
+      assert.deepEqual([sus.status, sus.body.publisher.displayName, sus.body.publisher.regions, sus.body.publisher.statusLog.length], [200, 'Admo Co', ['eu'], 3]);
       assert.equal((await get('/clients/' + ids.all, asKey())).body.validation.level, 'nonValidated');
       assert.equal((await put('/publishers/bad%2Fid', { status: 'validated', reason: 'x' }, asKey())).status, 400);
       assert.equal((await put('/publishers/' + owner.userId, { status: 'great', reason: 'x' }, asKey())).status, 400);

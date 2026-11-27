@@ -46,7 +46,8 @@ export type ClientReviewErrorCode =
   | 'not-applicable'
   | 'digest-required'
   | 'stale-digest'
-  | 'needs-approval';
+  | 'needs-approval'
+  | 'invalid-row';
 
 /** Why a review act was refused (nothing was written). */
 export class ClientReviewError extends Error {
@@ -141,7 +142,14 @@ async function reviewRow (platform: PlatformDB, clientId: string, opts: ReviewOp
     const row = parseRow(raw);
     if (row == null || (opts.allow != null && !opts.allow(row))) throw unknown();
     before = row;
-    const next = decide(row, now);
+    let next: OAuthClient | null;
+    try {
+      next = decide(row, now);
+    } catch (err) {
+      if (err instanceof ClientReviewError) throw err;
+      // The registration rules refuse the row (written before a newer rule): nothing written.
+      throw new ClientReviewError('invalid-row', (err as Error).message, { clientId });
+    }
     if (next == null) return { next: raw, result: row };
     return { next: JSON.stringify(next), result: next };
   });

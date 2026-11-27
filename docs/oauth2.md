@@ -2264,8 +2264,11 @@ cover: a grant at scope `platform` covers every row; a grant at
 `regions` (every region) needs `platform`. This holds for the lists and the
 reads too. A row out of reach answers 404, as a missing one (and as a missing
 permission). A publisher row is judged on its own `regions` (absent:
-`platform`); a decision may only leave it in regions the reviewer covers, and
-a reviewer scoped to a region creates a publisher row with `regions` given.
+`platform`), and a decision may only leave it in regions the reviewer covers.
+A publisher decision counts for every client of the account, on every core:
+so creating a publisher row (none stored yet) needs scope `platform`, and a
+reviewer scoped to a region decides only the rows a platform reviewer
+assigned to its region (for another account it gets 404).
 
 **A client** is answered as `show` prints it: `{ client, validation, digest,
 reviewStands, inQueue }`, where `client` is the row with `"clientSecretHash":
@@ -2276,11 +2279,13 @@ it stands; `reviewStands` whether its stored app review still matches.
 **The queue** (`queue=true`) is computed at each read: developer clients whose
 review does not stand, and clients under review. The list answers one line
 per client (id, kind, origin, owner, name, status, regions, the same review
-fields).
+fields). Both lists take `limit` (1 to 1000) and `skip`; without them every
+row is answered.
 
 **`approve`** validates the row as the reviewer saw it: `digest` must be the
-row's current review digest, else `409` (`stale-resource`, with the current
-digest in `data`) and nothing is written. On a developer's client it records
+row's current review digest, else `409` (`stale-resource`) and nothing is
+written; the answer does not give the new digest: the reviewer reads the
+client again, so what is approved is always what was read. On a developer's client it records
 the app review (`validation.app`, `by` the acting account); on a registry
 client under review it also approves the held changes (back to `active`), and
 on a suspended one it approves the changes made meanwhile (it stays
@@ -2304,7 +2309,10 @@ or `{ publisherUserId }`, `diff` = status and level before and after, the
 reason and, for `approve`, the digest), in the acting administrator's own
 trail (`admin.act`), and, when that account is on this core, in the trail of
 the client's owner (`oauth.client.reviewed`) or of the publisher
-(`oauth.publisher.reviewed`). The reads are not recorded.
+(`oauth.publisher.reviewed`). That account reads its own trail: the record
+there gives the act, the statuses and the reviewer's reason (write it for the
+developer to read), and names the actor `platform-administrator`, never the
+administrator's account. The reads are not recorded.
 
 ---
 

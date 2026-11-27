@@ -54,13 +54,22 @@ import { computeThumbprint, validatePublicJwk } from 'oauth2/src/jwks.ts';
  * Each act is recorded in the platform trail with `{ target, diff }`, in the
  * acting administrator's own trail, and in the trail of the client's owner
  * (`oauth.client.reviewed`) or of the publisher (`oauth.publisher.reviewed`)
- * when that account is on this core.
+ * when that account is on this core: there the act, the statuses and the
+ * reviewer's reason, the actor named `platform-administrator` only (never
+ * the administrator's account).
+ *
+ * A publisher decision counts for every client of the account on every
+ * core: creating a publisher row needs scope `platform`; a reviewer scoped to
+ * a region decides the rows assigned to its region.
  */
 
 type ConfigReader = { get: (key: string) => unknown };
 type OauthContext = AdminAuditContext & { adminSubject?: AdminSubject };
 
 const CLIENT_ID_MAX_LENGTH = 1024;
+/** Who acted, as the reviewed account's own trail says it (never the administrator's account). */
+const REVIEWED_BY = 'platform-administrator';
+const LIST_LIMIT_MAX = 1000;
 const ORIGINS = ['operator', 'metadata-document', 'developer'];
 const STATUSES = ['active', 'suspended', 'review'];
 
@@ -82,6 +91,18 @@ export function reviewScopes (subject: AdminSubject | undefined, permission: Adm
 export function coversRegions (scopes: readonly string[], regions: readonly string[] | null | undefined, config: ConfigReader): boolean {
   const hostings = hostingsOf(config);
   return scopes.some((s) => scopeCoversRegions(s, regions, hostings));
+}
+
+/** `limit` (1 to 1000) and `skip` (0 or more) of a list, both optional (none: every row, as before). */
+function pageOf (params: Record<string, unknown>): { ok: true; limit: number | null; skip: number } | { ok: false; error: unknown } {
+  const int = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' && /^\d{1,9}$/.test(v) ? Number(v) : NaN);
+  const limit = params.limit == null ? null : int(params.limit);
+  const skip = params.skip == null ? 0 : int(params.skip);
+  if (limit != null && !(Number.isInteger(limit) && limit >= 1 && limit <= LIST_LIMIT_MAX)) {
+    return { ok: false, error: errors.invalidParametersFormat('`limit` must be an integer from 1 to ' + LIST_LIMIT_MAX + '.', { limit: params.limit }) };
+  }
+  if (!(Number.isInteger(skip) && skip >= 0)) return { ok: false, error: errors.invalidParametersFormat('`skip` must be an integer, 0 or more.', { skip: params.skip }) };
+  return { ok: true, limit, skip };
 }
 
 function unknownParams (params: Record<string, unknown>, known: readonly string[]) {
@@ -129,6 +150,8 @@ function maskedCapabilityUrl (url: unknown): unknown {
 /** The client row as answered: no secret hash (said set), keys by thumbprint, capability tokens masked. */
 export function clientRowView (client: OAuthClient): Record<string, unknown> {
   const view: Record<string, unknown> = { ...client };
+  // A legacy row's account username (rows now name the account by id).
+  delete view.accountUsername;
   if (client.clientSecretHash != null) view.clientSecretHash = '(set)';
   if (client.previousSecretHash != null) view.previousSecretHash = '(set)';
   if (client.jwks != null) view.jwks = keysView(client.jwks);
@@ -180,7 +203,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     if (!(err instanceof ClientReviewError)) throw err;
     switch (err.code) {
       case 'unknown-client': return errors.unknownResource('oauth client', clientId);
-      case 'stale-digest': return errors.staleResource('oauth client', { clientId, digest: err.data.digest });
+      // Not the current digest: the reviewer reads the client again, so what is approved is what was read.
+      case 'stale-digest': return errors.staleResource('oauth client', { clientId });
       case 'digest-required': return errors.invalidParametersFormat('`digest` (the review digest shown for the client) is required.', { clientId });
       default: return errors.invalidOperation('The client "' + clientId + '" ' + err.message + '.', { clientId, ...err.data });
     }
@@ -200,7 +224,10 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
     setAuditDetails(context, { target: { clientId: outcome.client.clientId }, diff });
     const owner = outcome.client.origin === 'developer' ? outcome.client.owner?.userId : undefined;
     if (outcome.changed && owner != null) {
-      await auditAdminAct(owner, 'oauth.client.reviewed', { clientId: outcome.client.clientId, act, by: actorOf(context.adminSubject), ...diff });
+      // The owner's trail: the act and the reason addressed to it, never who reviewed.
+      await auditAdminAct(owner, 'oauth.client.reviewed', {
+        clientId: outcome.client.clientId, act, by: REVIEWED_BY, from: diff.from, to: diff.to, reason: diff.reason, changed: true
+      });
     }
   }
 
@@ -209,8 +236,10 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   systemAPI.register('system.oauthClients.list',
     auditAs('subject'),
     wrap(async (context: OauthContext, params, result: ResultBag) => {
-      const bad = unknownParams(params, ['queue', 'origin', 'status']);
+      const bad = unknownParams(params, ['queue', 'origin', 'status', 'limit', 'skip']);
       if (bad != null) return bad;
+      const page = pageOf(params);
+      if (!page.ok) return page.error;
       const { queue, origin, status } = params;
       if (queue != null && !['true', 'false', true, false].includes(queue as string | boolean)) {
         return errors.invalidParametersFormat('`queue` must be true or false.', { queue });
@@ -220,7 +249,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const onlyQueue = queue === true || queue === 'true';
       const scopes = reviewScopes(context.adminSubject, 'oauthClients:read');
       const clients = [];
+      let toSkip = page.skip;
       for (const id of await listClientIds(platform())) {
+        if (page.limit != null && clients.length >= page.limit) break;
         let c: OAuthClient | null;
         try {
           c = await getClient(platform(), id);
@@ -232,6 +263,10 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         if (status != null && (c.status ?? 'active') !== status) continue;
         const review = await reviewOf(c);
         if (onlyQueue && !review.inQueue) continue;
+        if (toSkip > 0) {
+          toSkip--;
+          continue;
+        }
         clients.push({
           clientId: c.clientId,
           kind: c.kind ?? 'app-account',
@@ -318,14 +353,17 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   systemAPI.register('system.publishers.list',
     auditAs('subject'),
     wrap(async (context: OauthContext, params, result: ResultBag) => {
-      const bad = unknownParams(params, ['status']);
+      const bad = unknownParams(params, ['status', 'limit', 'skip']);
       if (bad != null) return bad;
+      const page = pageOf(params);
+      if (!page.ok) return page.error;
       if (params.status != null && !PUBLISHER_STATUSES.includes(params.status as string)) {
         return errors.invalidParametersFormat('`status` must be one of: ' + PUBLISHER_STATUSES.join(', ') + '.', { status: params.status });
       }
       const scopes = reviewScopes(context.adminSubject, 'publishers:read');
       result.publishers = (await listPublishers(platform()))
         .filter(({ row }) => coversRegions(scopes, row.regions, config) && (params.status == null || row.status === params.status))
+        .slice(page.skip, page.limit == null ? undefined : page.skip + page.limit)
         .map(({ userId, row }) => publisherView(userId, row, false));
     }));
 
@@ -350,14 +388,13 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (idProblem != null) return errors.invalidParametersFormat('The publisher id (an account id) ' + idProblem + '.', { userId });
       setAuditDetails(context, { target: { publisherUserId: userId } });
       const scopes = reviewScopes(context.adminSubject, 'publishers:review');
-      // A stored row: its regions must be in reach (a row out of reach answers
-      // as missing, before any parameter is judged). No row yet: the regions
-      // it is created with (none given: every region, scope platform).
-      const allow = (row: PublisherRecord | null) => row != null
-        ? coversRegions(scopes, row.regions, config)
-        : coversRegions(scopes, (params.regions as string[] | null | undefined) ?? null, config);
-      const existing = await readPublisher(platform(), userId);
-      if (existing != null && !allow(existing)) return errors.unknownResource('publisher', userId);
+      // A stored row: its regions must be in reach. No row yet (or an
+      // unreadable one): scope platform only. A publisher decision counts
+      // for every client of the account on every core, so a reviewer scoped
+      // to a region decides only rows a platform reviewer assigned to it.
+      // Out of reach answers as missing, before any parameter is judged.
+      const allow = (row: PublisherRecord | null) => coversRegions(scopes, row?.regions ?? null, config);
+      if (!allow(await readPublisher(platform(), userId))) return errors.unknownResource('publisher', userId);
       if (!PUBLISHER_STATUSES.includes(params.status as string)) {
         return errors.invalidParametersFormat('`status` must be one of: ' + PUBLISHER_STATUSES.join(', ') + '.', { status: params.status });
       }
@@ -370,9 +407,6 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         if (!coversRegions(scopes, params.regions as string[] | null, config)) {
           return errors.invalidParametersFormat('`regions`: a decision may only leave the publisher in regions the reviewer covers.', { regions: params.regions });
         }
-      }
-      if (existing == null && !allow(null)) {
-        return errors.invalidParametersFormat('`regions` is required: a publisher without regions is decided at scope platform.', { userId });
       }
       const reason = reasonParam(params, true);
       if (!reason.ok) return reason.error;
@@ -393,7 +427,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       }
       const diff = { from: { status: decided.before?.status ?? 'absent' }, to: { status: decided.row.status }, reason: reason.reason };
       setAuditDetails(context, { target: { publisherUserId: userId }, diff });
-      await auditAdminAct(userId, 'oauth.publisher.reviewed', { publisherUserId: userId, by: actorOf(context.adminSubject), ...diff });
+      // The publisher's trail: the decision and its reason, never who decided.
+      await auditAdminAct(userId, 'oauth.publisher.reviewed', { publisherUserId: userId, by: REVIEWED_BY, ...diff });
       result.publisher = publisherView(userId, decided.row, true);
     }),
     inActorTrail());

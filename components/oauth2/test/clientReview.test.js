@@ -220,4 +220,44 @@ describe('[OCRV] OAuth2 review acts and publisher decisions', () => {
     await platform.setPlatformKv('dev-publisher/zz-broken', '{');
     assert.deepEqual((await cv.listPublishers(platform)).map((p) => p.userId), [OWNER]);
   });
+
+  it('[OCRV7] the caller\'s reach is judged on the row the act writes: regions moved out of reach between the read and the write answer unknown, nothing written', async () => {
+    const platform = fakePlatform();
+    const inEu = (row) => Array.isArray(row?.regions) && row.regions.length > 0 && row.regions.every((r) => r === 'eu');
+    const moveToUs = (key) => async () => {
+      const r = JSON.parse(platform.kv.get(key));
+      platform.kv.set(key, JSON.stringify({ ...r, regions: ['us'] }));
+    };
+    for (const act of ['approve', 'suspend', 'unvalidate']) {
+      await setClient(platform, developerClient({
+        regions: ['eu'],
+        ...(act === 'unvalidate' ? { validation: { app: { v: 1, at: 1, by: 'u0', digest: 'a'.repeat(43) } } } : {}),
+      }));
+      const digest = cv.validationDigest(await getClient(platform, 'dev-app'));
+      platform.beforeReplace = moveToUs('oauth-client/dev-app');
+      const run = act === 'approve'
+        ? review.approveClient(platform, 'dev-app', { digest, by: 'u1', allow: inEu })
+        : act === 'suspend'
+          ? review.setClientStatus(platform, 'dev-app', { status: 'suspended', by: 'u1', allow: inEu })
+          : review.withdrawReview(platform, 'dev-app', { by: 'u1', allow: inEu });
+      await assert.rejects(run, (e) => e.code === 'unknown-client', act);
+      const stored = await getClient(platform, 'dev-app');
+      assert.deepEqual([stored.regions, stored.status, stored.statusLog], [['us'], undefined, undefined], act + ': only the concurrent change');
+    }
+    // A publisher row moved out of reach the same way.
+    await platform.setPlatformKv('dev-publisher/' + OWNER, JSON.stringify({ status: 'pending', regions: ['eu'] }));
+    platform.beforeReplace = moveToUs('dev-publisher/' + OWNER);
+    await assert.rejects(cv.decidePublisher(platform, OWNER, { status: 'validated', reason: 'ok', by: 'u1', allow: inEu }), (e) => e.code === 'unknown-publisher');
+    assert.deepEqual(await cv.readPublisher(platform, OWNER), { status: 'pending', regions: ['us'] });
+  });
+
+  it('[OCRV8] a row the registration rules now refuse: approve answers invalid-row (nothing written); suspend still works', async () => {
+    const platform = fakePlatform();
+    // Written before the no-fragment rule (setClient writes as is).
+    await setClient(platform, developerClient({ redirectUris: ['https://app.example.com/cb#old'] }));
+    const digest = cv.validationDigest(await getClient(platform, 'dev-app'));
+    await assert.rejects(review.approveClient(platform, 'dev-app', { digest, by: 'u1' }), (e) => e.code === 'invalid-row' && /fragment/.test(e.message));
+    assert.equal((await getClient(platform, 'dev-app')).validation, undefined);
+    assert.equal((await review.setClientStatus(platform, 'dev-app', { status: 'suspended', by: 'u1' })).client.status, 'suspended');
+  });
 });
