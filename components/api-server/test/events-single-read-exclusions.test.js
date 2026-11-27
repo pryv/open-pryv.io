@@ -633,9 +633,9 @@ describe('[SRCU] CMC protections on events.update and internal writes', function
     assert.strictEqual(own.status, 200, JSON.stringify(own.body));
   });
 
-  it('[SRC8] update and delete answer unknown-resource for a plugin-internal event, as getOne does; the inbox keeps its refusal', async function () {
+  it('[SRC8] update and delete answer unknown-resource for a plugin-internal event, as getOne does (personal included); the inbox keeps its refusal', async function () {
     const internal = await mall.events.create(userId, { streamIds: [responsesStreamId], type: 'note/txt', content: 'internal' });
-    for (const token of [appToken, capabilityToken]) {
+    for (const token of [appToken, capabilityToken, personal]) {
       const calls = [
         coreRequest.get(eventsPath() + '/' + internal.id).set('Authorization', token),
         coreRequest.put(eventsPath() + '/' + internal.id).set('Authorization', token).send({ content: 'changed' }),

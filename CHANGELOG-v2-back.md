@@ -11,8 +11,8 @@
   `applyPrerequisitesForUpdate` and `checkEventForDelete` (hence `events.deleteAttachment`) refuse with
   `errors.forbidden()` before the any-one-stream `contribute` rule, through one helper `refusalForWriteById`, which
   also answers `unknownResource` for a deletion record (`streamIds` not an array) instead of a `TypeError`, and,
-  for a non-personal access, for an event under `:_cmc:_internal` (`cmc.isCmcInternalStreamId`), matching
-  `cmcEventGetOneInternalGuard`, and for every access under `:_delegation:_internal`
+  for every access, personal included, for an event under `:_cmc:_internal` (`cmc.isCmcInternalStreamId`), matching
+  `cmcEventGetOneInternalGuard`, and under `:_delegation:_internal`
   (`delegation.isDelegationInternalStreamId`, when `delegation:active`), matching
   `delegationEventGetOneInternalGuard`; the delegation update / delete guards are unchanged and still refuse the rest
   of the namespace. `events.deleteAttachment` now chains `cmcEventDeleteGuard`,

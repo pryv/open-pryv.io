@@ -1508,9 +1508,8 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
    * The refusal for a write by id (events.update, events.delete,
    * events.deleteAttachment) on a stored event, before any permission rule:
    * a deletion record (it keeps no streams) is unknown; an event under the
-   * account-delegation internal subtree is unknown to every access, personal
-   * included, and one under the CMC plugin-internal subtree to an app or
-   * shared access, as events.getOne answers them (the plugins' write guards
+   * account-delegation or the CMC plugin-internal subtree is unknown to every
+   * access, personal included, as events.getOne answers it (the plugins' write guards
    * keep their own refusals for the events the caller can see: the
    * delegation namespace root, the CMC inbox, member records); and an event
    * hidden from the access (a stream withholds reading, or it is outside the
@@ -1522,7 +1521,7 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (delegationActive && event.streamIds.some((s: string) => delegation.isDelegationInternalStreamId(s))) {
       return errors.unknownResource('event', id);
     }
-    if (!context.access.isPersonal() && event.streamIds.some((s: string) => cmc.isCmcInternalStreamId(s))) {
+    if (event.streamIds.some((s: string) => cmc.isCmcInternalStreamId(s))) {
       return errors.unknownResource('event', id);
     }
     if (await isEventHiddenByGrants(context.access, event.streamIds)) return errors.forbidden();

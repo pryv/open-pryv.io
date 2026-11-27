@@ -13,10 +13,10 @@
   events whose streams are each readable to the access or covered by none of its grants.
 - `events.update`, `events.delete` and `events.deleteAttachment` on the id of a deleted event now answer
   `404 unknown-resource` (they could fail with an internal error).
-- For an app or shared access, `events.update`, `events.delete` and `events.deleteAttachment` on an event of the
-  CMC plugin-internal subtree now answer `404 unknown-resource`, as `events.getOne` does (was `403` with
-  `cmc-protected-event-write`). Events such an access can see (the CMC inbox, a group's member records) keep the
-  `403 cmc-protected-event-write` refusal.
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the CMC plugin-internal subtree now
+  answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was `403` with
+  `cmc-protected-event-write` for an app or shared access; a personal access could update or delete it). Events the
+  caller can see (the CMC inbox, a group's member records) keep the `403 cmc-protected-event-write` refusal.
 - `events.update`, `events.delete` and `events.deleteAttachment` on an event of the account-delegation internal
   subtree now answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was
   `400 delegation-managed-resource`). An event on the namespace root, which those accesses can read, keeps
