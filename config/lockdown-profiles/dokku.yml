@@ -1,0 +1,18 @@
+# Lockdown profile: Dokku (or another PaaS in front of the core).
+#
+# Assumes: the PaaS terminates TLS and renews the certificates (dokku-letsencrypt), the
+# domains and DNS records are managed by the PaaS and the DNS provider, and the core is a
+# single core deployed from an image (no core joins through a bootstrap bundle).
+# So: certificates, DNS and bootstrap are not shown in the portal and cannot be changed
+# through the API on this core (the /system routes and the admin-key DNS records routes
+# under /reg).
+#
+# Copy the `admin.lockdown` block into this core's configuration file (override-config.yml),
+# then restart the core. Lockdown is per core and is never edited through the API.
+# Setup, administrator roles and claim codes stay reachable whatever the profile.
+admin:
+  lockdown:
+    capabilities:
+      certs: hidden
+      dns: hidden
+      bootstrap: hidden
