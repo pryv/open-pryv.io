@@ -567,11 +567,6 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
         return 0;
       }
     });
-    if (result.rows > 0 || result.skipped > 0) {
-      logger.info('access tokens at rest: ' + result.rows + ' access rows protected' +
-        (result.skipped > 0 ? ', ' + result.skipped + ' left unconverted' : ''));
-    }
-    return result;
   }
 
   /** Whether any row still holds a clear token. */

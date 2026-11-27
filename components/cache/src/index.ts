@@ -20,7 +20,7 @@ type SynchroModule = {
   removeListenerForUserId (userId: string): void;
   unsetUser (username: string | null, userId?: string | null): void;
   unsetUserData (userId: string): void;
-  unsetAccessLogic (userId: string, accessLogic: { id: string; token: string }): void;
+  unsetAccessLogic (userId: string, accessLogic: { id: string }): void;
 };
 
 const _caches: Record<string, InstanceType<typeof LRU>> = {};

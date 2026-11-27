@@ -13,14 +13,12 @@
  * idempotent.
  */
 
-import { createRequire } from 'node:module';
 import type { TokenProtection } from '../../../interfaces/_shared/tokenProtection.ts';
 import type { AccessesSQLite } from './user/AccessesSQLite.ts';
 import type { SessionsSQLite } from './SessionsSQLite.ts';
-const require = createRequire(import.meta.url);
-
-const { _internals } = require('./_internals.ts');
-const { foreignKeyError } = require('../../../interfaces/_shared/tokenProtection.ts');
+import { foreignKeyError } from '../../../interfaces/_shared/tokenProtection.ts';
+import { _internals } from './_internals.ts';
+import { protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker } from './user/AccessesSQLite.ts';
 
 type KeyStatus = { clear: number; protectedCurrentKey: number; protectedOtherKeys: Record<string, number> };
 type Layer = { accesses: AccessesSQLite; sessions: SessionsSQLite };
@@ -34,11 +32,10 @@ function layer (): Layer {
 
 async function usersDirectory (): Promise<void> {
   // Not initialised in the supervisor process; idempotent.
-  await _internals.userLocalDirectory.init();
+  await (_internals.userLocalDirectory as { init: () => Promise<void> }).init();
 }
 
 async function probeTokensAtRest (): Promise<{ columnsReady: boolean; clearRows: boolean }> {
-  const { tokenMarkerKid } = require('./user/AccessesSQLite.ts');
   await usersDirectory();
   const { accesses, sessions } = layer();
   const kid = accesses.tokenProtection.kid;
@@ -49,7 +46,6 @@ async function probeTokensAtRest (): Promise<{ columnsReady: boolean; clearRows:
 }
 
 async function protectTokensAtRest (): Promise<Record<string, number>> {
-  const { protectAccessTokensOnce } = require('./user/AccessesSQLite.ts');
   await usersDirectory();
   const { accesses, sessions } = layer();
   if (sessions.hasForeignKeyRows()) throw foreignKeyError('sessions');
@@ -66,7 +62,6 @@ function addStatus (status: KeyStatus, kid: string, k: string, n: number): void 
 }
 
 async function tokensAtRestStatus (): Promise<Record<string, unknown>> {
-  const { eachUserAccessesDb, tokenMarkerKid } = require('./user/AccessesSQLite.ts');
   await usersDirectory();
   const { accesses, sessions } = layer();
   const kid = accesses.tokenProtection.kid;
@@ -78,7 +73,6 @@ async function tokensAtRestStatus (): Promise<Record<string, unknown>> {
 }
 
 async function unprotectTokensAtRest (): Promise<Record<string, number>> {
-  const { eachUserAccessesDb, removeTokenMarker } = require('./user/AccessesSQLite.ts');
   await usersDirectory();
   const { accesses, sessions } = layer();
   let rows = 0;
@@ -94,7 +88,6 @@ async function unprotectTokensAtRest (): Promise<Record<string, number>> {
 }
 
 async function rekeyTokensAtRest (previous: TokenProtection[]): Promise<Record<string, number | boolean>> {
-  const { eachUserAccessesDb, writeTokenMarker, tokenMarkerKid } = require('./user/AccessesSQLite.ts');
   await usersDirectory();
   const { accesses, sessions } = layer();
   // A walk not completed yet stays to do (it converts the rows still in clear).

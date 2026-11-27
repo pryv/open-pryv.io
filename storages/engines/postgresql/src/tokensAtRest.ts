@@ -13,12 +13,13 @@
  * statements.
  */
 
-import { createRequire } from 'node:module';
+import { getConfigSync } from '@pryv/boiler';
 import type { TokenProtection } from '../../../interfaces/_shared/tokenProtection.ts';
-const require = createRequire(import.meta.url);
-
-const { _internals } = require('./_internals.ts');
-const { foreignKeyError } = require('../../../interfaces/_shared/tokenProtection.ts');
+import { foreignKeyError } from '../../../interfaces/_shared/tokenProtection.ts';
+import { resolveTokenProtection } from 'business/src/accesses/tokenProtection.ts';
+import { _internals } from './_internals.ts';
+import { AccessesPG } from './user/AccessesPG.ts';
+import { SessionsPG } from './SessionsPG.ts';
 
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }> };
 
@@ -39,18 +40,15 @@ type KeyStatus = { clear: number; protectedCurrentKey: number; protectedOtherKey
 /** The protection injected at storage init, else the configured one. */
 function currentProtection (): TokenProtection {
   if (_internals.tokenProtection != null) return _internals.tokenProtection as TokenProtection;
-  const { getConfigSync } = require('@pryv/boiler');
-  return require('business/src/accesses/tokenProtection.ts').resolveTokenProtection(getConfigSync());
+  return resolveTokenProtection(getConfigSync());
 }
 
-function stores (db: PgDbLike, tp: TokenProtection) {
-  const { AccessesPG } = require('./user/AccessesPG.ts');
-  const { SessionsPG } = require('./SessionsPG.ts');
+function stores (db: PgDbLike, tp: TokenProtection): { accesses: AccessesPG; sessions: SessionsPG } {
   return { accesses: new AccessesPG(db, NO_INTEGRITY, tp), sessions: new SessionsPG(db, {}, tp) };
 }
 
 function dbOrDefault (db?: PgDbLike): PgDbLike {
-  const out = db ?? _internals.databasePG;
+  const out = db ?? (_internals.databasePG as PgDbLike | undefined);
   if (out == null) throw new Error('access tokens at rest: PostgreSQL not initialised');
   return out;
 }

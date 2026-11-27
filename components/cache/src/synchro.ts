@@ -22,7 +22,6 @@ interface CacheModule {
 
 interface AccessLogicRef {
   id: string;
-  token: string;
 }
 
 let cache: CacheModule | null = null;
