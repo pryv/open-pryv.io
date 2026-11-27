@@ -1157,6 +1157,22 @@ admin:
     ttlMinutes: 60
     stepUpMinutes: 5
     requireMfa: true
+  # PER-CORE: which administrator grants this core accepts (each core decides for itself;
+  # cores holding different values is expected).
+  # - `acceptReplicatedGrants`: false: only `localGrants` give permissions on this core.
+  # - `requireLocalScope`: permission names that only `localGrants` give on this core.
+  # - `localGrants`: [{ userId, role }] granted by this file only, on this core only.
+  localPolicy:
+    acceptReplicatedGrants: true
+    requireLocalScope: []
+    localGrants: []
+  # PER-CORE: administration managed elsewhere (a PaaS, GitOps, a front proxy), so not
+  # editable through the API on this core. No block: everything editable.
+  # lockdown:
+  #   capabilities:
+  #     dns: readonly                  # editable | readonly | hidden, per capability
+  #   platformConfig:
+  #     readonly: []                   # platform configuration keys
 
 # === PER-CORE (the NAME SET and the `paths` are PLATFORM-WIDE by intent) ===
 # --- Adapter routes (a sidecar served under /adapter/<name>/ on every host this core serves) ---
@@ -1258,6 +1274,9 @@ platform:
   # the migration is all-at-once — which is why no per-token scheme tag is
   # needed.
   piiAlgorithm: hmac-sha256                       # cluster-wide; only hmac-sha256 today
+  # PER-CORE: how often (seconds) each process checks the platform store for a change of
+  # the platform-wide configuration held there.
+  configPollSeconds: 15
 
 # === MIXED ===
 # `enabled` + `email` + `atRestKey` are PLATFORM-WIDE (every core must agree);

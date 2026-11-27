@@ -563,11 +563,13 @@ try {
 }
 
 // Setup and administration keys (portal.site names a configured hosted site,
-// setup.*, auth.adminAccessKeyScope, admin.session.*): the boot-time rule.
+// setup.*, auth.adminAccessKeyScope, admin.session.*, admin.localPolicy,
+// admin.lockdown): the boot-time rule.
 try {
   const { describeAdminConfig } = require('../components/business/src/admin/config.ts');
   const report = describeAdminConfig(configReader);
   for (const p of report.problems) problems.push(p.message);
+  for (const w of report.warnings) warnings.push(w);
   // dnsLess: every hosted site is served on the API's origin, the portal's
   // too, so a script of another site can read the administrator session the
   // portal keeps in that origin's sessionStorage.
