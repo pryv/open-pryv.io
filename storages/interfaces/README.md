@@ -26,6 +26,7 @@ table below and the changelog. Versions are per storage type: a change to `platf
 | `baseStorage` | 1 | the release introducing interface versions | initial |
 | `dataStore` | 1 | the release introducing interface versions | initial |
 | `platformStorage` | 1 | the release introducing interface versions | initial |
+| `platformStorage` | 2 | the release introducing platform setup and administrators | two new required `PlatformDB` methods: `setPlatformKvIfAbsent` (atomic insert-if-absent) and `replacePlatformKvIfValue` (atomic compare-and-set, or delete); conformance `[PLKV13]`, `[PLKV14]` |
 | `seriesStorage` | 1 | the release introducing interface versions | initial |
 | `fileStorage` | 1 | the release introducing interface versions | initial |
 | `auditStorage` | 1 | the release introducing interface versions | initial |

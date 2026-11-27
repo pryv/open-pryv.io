@@ -142,7 +142,9 @@
   `setup/state` and `admin-role/` rows goes through `admin/store.ts updatePlatformKv` (compare-and-set, retried), so
   a `ready` state never goes back to `pending` and concurrent role writes all land; a revocation that leaves no
   lasting owner because of a racing one is undone (both fail). Conformance `[PLKV13]`, `[PLKV14]`, `[ADKC]` (both
-  engines, `[ADKC17]`, `[ADKC18]` for the races), `[MPKV]`.
+  engines, `[ADKC17]`, `[ADKC18]` for the races), `[MPKV]`. Two new required methods: the `platformStorage`
+  interface version goes to 2 (`storages/interfaces/versions.ts`, the `postgresql` and `rqlite` manifests,
+  history in `storages/interfaces/README.md`); an engine maintained elsewhere must implement both and declare 2.
 - `bin/migrate-platform.js` carries `setup/state` and `admin-role/`, and copies the TTL rows of codes and sessions
   like every other row (hashes only: no secret moves; a live code or session stays valid on the new engine).
 - `mfa.verify` stamps the second factor of a sign-in in the home core's local key-value store, one entry per
