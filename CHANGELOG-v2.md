@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Events: write methods refuse an event the access cannot read
+
+- `events.update`, `events.delete` and `events.deleteAttachment` now refuse an event that `events.getOne` hides from
+  the access: one of its streams is held at `none` or `create-only` (own grant or inherited), even when another of
+  its streams grants `contribute`; or, for an access migrated from v1 that carries forced streams, the event is
+  outside them. The refusal is the error `events.getOne` gives for that event (`403 forbidden`).
+- Behaviour change: an app or shared access that could update, trash or delete such an event, or remove one of its
+  attachments, now gets that error and the event is left as it was. Personal accesses are unchanged, and so are
+  events whose streams are each readable to the access or covered by none of its grants.
+- `events.update`, `events.delete` and `events.deleteAttachment` on the id of a deleted event now answer
+  `404 unknown-resource` (they could fail with an internal error).
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the CMC plugin-internal subtree now
+  answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was `403` with
+  `cmc-protected-event-write` for an app or shared access; a personal access could update or delete it). Events the
+  caller can see (the CMC inbox, a group's member records) keep the `403 cmc-protected-event-write` refusal.
+- `events.update`, `events.delete` and `events.deleteAttachment` on an event of the account-delegation internal
+  subtree now answer `404 unknown-resource` to every access, personal included, as `events.getOne` does (was
+  `400 delegation-managed-resource`). An event on the namespace root, which those accesses can read, keeps
+  `delegation-managed-resource`.
+- `events.deleteAttachment` now applies the refusals of `events.delete`: an attachment of a CMC inbox, internal or
+  member-record event cannot be removed by an app or shared access (`cmc-protected-event-write`), nor one of an
+  emails container item (`emails-reserved-stream`, personal token included), an account event or an
+  account-delegation event; a shared-secret item cannot be modified (`shared-secret-immutable`).
+- Forced streams (accesses migrated from v1) are judged in every store an event's streams belong to, not only the
+  store of its first stream, on reads and writes alike.
+- Unchanged, by design: a producer holding `create-only` or `contribute` on one of a series event's streams may still
+  append HF points to it even when it cannot read the event (no event content is returned); and `streams.delete`,
+  which requires `manage` on the whole deleted subtree, still removes those streams from (or merges into the parent)
+  the events that also sit in a stream the access cannot read.
+
 ### Access tokens and session ids no longer stored in clear (operator notice)
 
 Nothing changes for clients: the same tokens, the same `token` and `apiEndpoint` in every response, the same
