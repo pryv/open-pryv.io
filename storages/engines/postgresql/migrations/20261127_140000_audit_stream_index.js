@@ -19,8 +19,9 @@
  * this migration does not run.
  *
  * A failed fill does not fail the migration: the state stays incomplete, the
- * readers keep the plain statement, and the fill that follows (start or
- * `bin/migrate.js up`) resumes it and reports the failure.
+ * readers keep the plain statement, and the fill that follows resumes it
+ * (`bin/migrate.js up` reports a failure as an error; the master logs it and
+ * starts on the plain statement).
  */
 module.exports = {
   async up (context) {

@@ -12,18 +12,29 @@
 - Kept by two triggers on `audit_events`, so every writer and deleter is covered (this release, a previous one, a
   restore, a hand statement): `audit_event_streams_put` (AFTER INSERT OR UPDATE OF the key columns, row level;
   an update removes the old rows first) and `audit_event_streams_drop` (AFTER DELETE, statement level with the
-  deleted rows as a transition table, so an account erasure is one join). `AuditStoragePG.deleteUser` also deletes
-  the account's rows directly.
+  deleted rows as a transition table; an account left with no record loses its rows by one range of the key,
+  found and deleted in ONE statement so one snapshot: with two statements, a record committed for that account
+  between them lost its row). `AuditStoragePG.deleteUser` also deletes the account's rows directly.
 - Installed at each boot under the schema advisory lock, after the unindexed-user guard
-  (`installAuditStreamIndex`, same pattern: functions replaced, each trigger created where absent and enabled where
-  disabled, short lock timeout, retried); then the state row, complete only when `audit_events` is empty. A
-  trigger found absent or disabled while the state says complete resets it: the next fill starts from zero.
-- Filled by `ensureAuditStreamIndex`: one client, `statement_timeout` and `lock_timeout` 0, a session advisory lock
-  of its own polled with `pg_try_advisory_lock`; a run from zero empties the table, then batches of 20 000 records
-  walk `audit_events` by primary key, one transaction each with its position in the state row (a stopped run
-  resumes), log line before and every 10 s; complete only once both triggers fire. Each batch holds an exclusive
-  transaction advisory lock that the delete trigger takes shared: a deletion committing while a batch has read
-  the record waits for that batch, then removes the rows it added. Called by migration
+  (`installAuditStreamIndex`, same pattern: each function replaced only when its stored body differs, each trigger
+  created where absent and enabled where disabled, short lock timeout, retried); then the state row, complete only
+  when `audit_events` is empty. A trigger found absent, disabled or not installable resets the state, complete or
+  not (a saved fill position is stale too: writes the trigger missed may sort behind it): the next fill starts from
+  zero. A changed trigger DEFINITION is never applied by the install (it creates absent triggers only): it must
+  ship as a drop + create (comment next to the constants).
+- Filled by `ensureAuditStreamIndex`: a dedicated connection (`DatabasePG.connectDedicated`, application name
+  `open-pryv.io audit stream index`, outside the pools), `statement_timeout` and `lock_timeout` 0, a session
+  advisory lock of its own taken by polling (`advisoryLock.ts`, with the holder in the waiting log); refuses to
+  start, and resets the state, while a trigger does not fire; a run from zero empties the table (`TRUNCATE` with a
+  2 s lock timeout, up to 30 attempts, so audit inserts never queue more than 2 s behind it while a streamed read
+  holds the table), then batches of 20 000 records walk `audit_events` by primary key, one transaction each with
+  its position in the state row (a stopped run resumes), log line before and every 10 s; complete only once both
+  triggers fire (else the state is reset). State writes are compare-and-set on the cursor and `updated_at` last
+  read or written: a reset by another process during the fill makes it start again from zero (at most 3 times)
+  instead of being overwritten. Each batch holds an exclusive transaction advisory lock that the delete trigger and
+  the update branch of the put trigger take shared: a deletion or update committing while a batch has read the
+  record waits for that batch, then removes the rows it added. Inserts take no lock. A missing state table is an
+  error, never a reported fill. Called by migration
   `20261127_140000_audit_stream_index.js` (a failure there is logged, not fatal), by `bin/master.js` after the
   migrations (all pairings, the SQLite base storage with the PostgreSQL audit storage included; a failure is
   logged and the core starts on the slower plan) and by `bin/migrate.js up`.

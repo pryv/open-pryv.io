@@ -33,30 +33,39 @@
  * (`installAuditStreamIndex`): functions replaced, each trigger created where
  * absent and enabled where found disabled, then the one-row state created
  * (complete when `audit_events` is empty, i.e. on a fresh database). A
- * trigger found absent or disabled while the state says complete means
- * records may have been written or deleted unseen: the state is reset and
- * the next fill rebuilds the table from zero.
+ * trigger found absent or disabled means records may have been written or
+ * deleted unseen, anywhere in the table: the state is reset (complete or
+ * not: a saved fill position is stale too) and the next fill rebuilds the
+ * table from zero.
  *
  * Filled by `ensureAuditStreamIndex` (a migration and the master's start, on
- * one dedicated client, with an advisory lock of its own taken by polling):
- * a run starting from zero empties the table first, then walks
+ * a dedicated connection, with an advisory lock of its own taken by
+ * polling): a run starting from zero empties the table first, then walks
  * `audit_events` by primary key in batches, one transaction each, recording
- * its position in the state row, so a stopped run resumes where it was.
+ * its position in the state row, so a stopped run resumes where it was. A
+ * fill refuses to run, and resets the state, while a trigger does not fire.
+ * Its state updates are compare-and-set: a reset made meanwhile by another
+ * process (its install found a trigger missing) makes the fill start again
+ * from zero instead of being overwritten.
  *
- * Race with deletions: a batch reads a record, a DELETE of that record
- * commits before the batch does. The delete trigger would not see the
- * batch's uncommitted rows and they would stay. Each batch therefore holds an
- * exclusive transaction-level advisory lock, and the delete trigger takes it
- * shared before removing rows: it waits for the batch in progress, then (a
- * new statement, so a fresh snapshot in READ COMMITTED) sees and removes its
- * rows. Outside a fill nobody holds the exclusive side.
+ * Race with deletions and updates: a batch reads a record, a DELETE (or an
+ * UPDATE of its key columns) of that record commits before the batch does.
+ * The trigger would not see the batch's uncommitted rows and the old ones
+ * would stay. Each batch therefore holds an exclusive transaction-level
+ * advisory lock, and the delete trigger and the update branch of the put
+ * trigger take it shared before removing rows: they wait for the batch in
+ * progress, then (a new statement, so a fresh snapshot in READ COMMITTED)
+ * see and remove its rows. Inserts take no lock (a batch never reads an
+ * uncommitted record). Outside a fill nobody holds the exclusive side.
  */
+
+import { acquireAdvisoryLock, releaseAdvisoryLock } from './advisoryLock.ts';
 
 type StreamIndexQueryResult = { rows: Array<Record<string, unknown>>; rowCount?: number | null };
 type StreamIndexQueryFn = (sql: string, params?: unknown[]) => Promise<StreamIndexQueryResult>;
-interface StreamIndexClient { query: StreamIndexQueryFn; release: (err?: Error) => void }
-/** The part of DatabasePG used by the fill: one dedicated client from its pool. */
-interface StreamIndexDb { getClient: () => Promise<StreamIndexClient> }
+interface StreamIndexClient { query: StreamIndexQueryFn; end: () => Promise<void> }
+/** The part of DatabasePG used by the fill: a connection outside its pools. */
+interface StreamIndexDb { connectDedicated: (applicationName: string) => Promise<StreamIndexClient> }
 interface StreamIndexLog { info?: (msg: string) => void; warn?: (msg: string) => void; error?: (msg: string) => void }
 type InstallClient = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> };
 
@@ -73,14 +82,20 @@ const FILL_LOCK_KEY = 0x70726173;
 // trigger ('prab'). See the race note above.
 const BATCH_LOCK_KEY = 0x70726162;
 
+// The update branch waits for a fill batch in progress (see the race note on
+// top): the batch may have read the old version and would add its rows after
+// they were removed here.
 const PUT_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION audit_event_streams_put() RETURNS trigger
 LANGUAGE plpgsql AS $f$
 BEGIN
-  IF TG_OP = 'UPDATE' AND OLD.time IS NOT NULL AND OLD.stream_ids IS NOT NULL THEN
-    DELETE FROM audit_event_streams
-      WHERE user_id = OLD.user_id AND time = OLD.time AND eventid = OLD.eventid
-        AND stream_id = ANY (string_to_array(OLD.stream_ids, ' '));
+  IF TG_OP = 'UPDATE' THEN
+    PERFORM pg_advisory_xact_lock_shared(${BATCH_LOCK_KEY});
+    IF OLD.time IS NOT NULL AND OLD.stream_ids IS NOT NULL THEN
+      DELETE FROM audit_event_streams
+        WHERE user_id = OLD.user_id AND time = OLD.time AND eventid = OLD.eventid
+          AND stream_id = ANY (string_to_array(OLD.stream_ids, ' '));
+    END IF;
   END IF;
   IF NEW.time IS NOT NULL AND NEW.stream_ids IS NOT NULL AND position('${COVERED_PREFIX}' IN NEW.stream_ids) > 0 THEN
     INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
@@ -98,6 +113,11 @@ $f$;
 // range of the primary key each; the rows of the other deleted records are
 // removed one key at a time. Measured on the erasure of a 200 000-record
 // account: 4.3 s with keys alone, 1.3 s this way (0.5 s without triggers).
+// Finding the emptied accounts and deleting their rows is ONE statement, so
+// one snapshot: a record committed for such an account after it keeps its
+// row (invisible to the delete), one committed before makes the account not
+// emptied. Two statements would delete the row of a record committed
+// between them.
 const DROP_FUNCTION_SQL = `
 CREATE OR REPLACE FUNCTION audit_event_streams_drop() RETURNS trigger
 LANGUAGE plpgsql AS $f$
@@ -105,11 +125,13 @@ DECLARE
   emptied text[];
 BEGIN
   PERFORM pg_advisory_xact_lock_shared(${BATCH_LOCK_KEY});
-  SELECT array_agg(u.user_id) INTO emptied FROM (SELECT DISTINCT g.user_id FROM gone g) u
-    WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.user_id = u.user_id);
-  IF emptied IS NOT NULL THEN
-    DELETE FROM audit_event_streams WHERE user_id = ANY (emptied);
-  END IF;
+  WITH e AS MATERIALIZED (
+    SELECT u.user_id FROM (SELECT DISTINCT g.user_id FROM gone g) u
+      WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.user_id = u.user_id)
+  ), d AS (
+    DELETE FROM audit_event_streams s USING e WHERE s.user_id = e.user_id
+  )
+  SELECT array_agg(e.user_id) INTO emptied FROM e;
   IF EXISTS (SELECT 1 FROM gone g WHERE emptied IS NULL OR g.user_id <> ALL (emptied)) THEN
     DELETE FROM audit_event_streams s USING (
       SELECT g.user_id, t AS stream_id, g.time, g.eventid
@@ -124,6 +146,12 @@ END;
 $f$;
 `;
 
+// ⚑ The install creates a trigger only where absent: a changed definition
+// (the `UPDATE OF` column list, the transition table name, the timing) is
+// never applied by editing these constants alone. A later change of a trigger
+// definition must ship as a drop + create in the install (or a comparison
+// with `pg_get_triggerdef`). The functions are replaced whenever their body
+// differs, so a change of a body needs nothing more.
 const PUT_TRIGGER_SQL = `CREATE TRIGGER ${PUT_TRIGGER} AFTER INSERT OR UPDATE OF stream_ids, time, user_id, eventid ` +
   'ON audit_events FOR EACH ROW EXECUTE FUNCTION audit_event_streams_put()';
 const DROP_TRIGGER_SQL = `CREATE TRIGGER ${DROP_TRIGGER} AFTER DELETE ON audit_events ` +
@@ -144,7 +172,7 @@ interface InstallOutcome {
   [DROP_TRIGGER]: TriggerOutcome;
   /** The state after the install. */
   complete: boolean;
-  /** Whether a complete state was reset by this install. */
+  /** Whether this install reset the state (it said complete, or held a fill position). */
   reset: boolean;
 }
 
@@ -160,13 +188,13 @@ async function installAuditStreamIndex (client: InstallClient, logger: StreamInd
   const attempts = options.attempts ?? ATTEMPTS;
   await client.query(`SET lock_timeout = ${Math.max(1, Math.floor(lockTimeoutMs))}`);
   try {
-    await withRetry(() => client.query(PUT_FUNCTION_SQL), attempts);
-    await withRetry(() => client.query(DROP_FUNCTION_SQL), attempts);
+    await ensureFunction(client, 'audit_event_streams_put', PUT_FUNCTION_SQL, attempts);
+    await ensureFunction(client, 'audit_event_streams_drop', DROP_FUNCTION_SQL, attempts);
     const put = await ensureTrigger(client, logger, PUT_TRIGGER, PUT_TRIGGER_SQL, attempts);
     const drop = await ensureTrigger(client, logger, DROP_TRIGGER, DROP_TRIGGER_SQL, attempts);
     // After the triggers: a record committed before they existed makes the
     // table non-empty, so the state starts incomplete and the fill covers it.
-    const before = await client.query('SELECT complete FROM audit_event_streams_state');
+    const before = await client.query('SELECT complete, cursor_user_id FROM audit_event_streams_state');
     let complete: boolean;
     let reset = false;
     if (before.rows.length === 0) {
@@ -179,18 +207,38 @@ async function installAuditStreamIndex (client: InstallClient, logger: StreamInd
     }
     const repaired = [put, drop].some((o) => o !== 'present');
     const broken = [put, drop].includes('failed');
-    if (complete && (broken || (before.rows.length > 0 && repaired))) {
-      await client.query(RESET_STATE_SQL);
+    // A trigger that was not firing may have missed writes anywhere in the
+    // table: a complete state is wrong, and so is the position of an
+    // unfinished fill (it would resume past them). A row inserted just now
+    // (fresh database, triggers just created) holds neither.
+    const hadRow = before.rows.length > 0;
+    if (broken || (hadRow && repaired)) {
+      const position = hadRow && before.rows[0].cursor_user_id != null;
+      if (complete || position) {
+        await client.query(RESET_STATE_SQL);
+        reset = true;
+        logger.warn?.('PostgreSQL: a trigger of audit_event_streams was ' + (broken ? 'not installable' : 'missing or disabled') +
+          ': the index of audit records by access is rebuilt from zero at the next fill; until then reads of one access\'s ' +
+          'audit trail use the slower plan');
+      }
       complete = false;
-      reset = true;
-      logger.warn?.('PostgreSQL: a trigger of audit_event_streams was ' + (broken ? 'not installable' : 'missing or disabled') +
-        ': the index of audit records by access is rebuilt at the next fill; until then reads of one access\'s ' +
-        'audit trail use the slower plan');
     }
     return { [PUT_TRIGGER]: put, [DROP_TRIGGER]: drop, complete, reset };
   } finally {
     await client.query('RESET lock_timeout').catch(() => {});
   }
+}
+
+/**
+ * Run `createSql` (a `CREATE OR REPLACE FUNCTION ... $f$body$f$`) only when
+ * the stored body differs: no catalog write, and no invalidation of cached
+ * plans, at every connect of every pool.
+ */
+async function ensureFunction (client: InstallClient, name: string, createSql: string, attempts: number): Promise<void> {
+  const body = createSql.slice(createSql.indexOf('$f$') + 3, createSql.lastIndexOf('$f$'));
+  const res = await client.query('SELECT prosrc FROM pg_proc WHERE oid = to_regprocedure($1)', [name + '()']);
+  if (res.rows[0]?.prosrc === body) return;
+  await withRetry(() => client.query(createSql), attempts);
 }
 
 /** Create `trigger` where absent, enable it where disabled; 'failed' rather than thrown. */
@@ -229,9 +277,22 @@ async function withRetry<T> (fn: () => Promise<T>, attempts: number): Promise<T>
 
 // -- Fill -------------------------------------------------------------------
 
-const FILL_LOCK_POLL_MS = 500;
+const FILL_APPLICATION_NAME = 'open-pryv.io audit stream index';
+const FILL_LOCK_LABEL = 'audit stream index';
 const DEFAULT_BATCH_ROWS = 20000;
 const PROGRESS_EVERY_MS = 10_000;
+/**
+ * The TRUNCATE of a fill from zero asks for an ACCESS EXCLUSIVE lock: while
+ * it waits, every audit insert (the put trigger writes the table) queues
+ * behind it, and it waits for as long as a streamed read of the table keeps
+ * its cursor open. So it waits 2 s at most, then lets the inserts through
+ * and tries again.
+ */
+const TRUNCATE_LOCK_TIMEOUT_MS = 2000;
+const TRUNCATE_ATTEMPTS = 30;
+const TRUNCATE_RETRY_MS = 500;
+/** Restarts from zero after a reset made by another process during the fill. */
+const MAX_RESTARTS = 3;
 
 interface FillResult {
   /** True when the state was complete already (nothing done). */
@@ -253,65 +314,94 @@ interface FillOptions {
 
 /**
  * Bring `audit_event_streams` to complete. Idempotent: on a complete state it
- * is one query. Runs on one client from `db`, with no statement or lock time
+ * is one query. Runs on a connection of its own (outside the pools, so no
+ * pool budget is taken for the whole fill), with no statement or lock time
  * limit, under its own advisory lock taken by polling (never waited on with
  * `pg_advisory_lock`: a session waiting in that statement holds a snapshot,
- * the pattern that deadlocked the concurrent index builds).
+ * the pattern that deadlocked the concurrent index builds). Ending the
+ * connection releases the lock and rolls back a batch left open by a failure.
  */
 async function ensureAuditStreamIndex (db: StreamIndexDb, options: FillOptions = {}): Promise<FillResult> {
   const log: StreamIndexLog = options.logger ?? {};
-  const client = await db.getClient();
-  let broken = false;
+  const client = await db.connectDedicated(FILL_APPLICATION_NAME);
   try {
     await client.query('SET statement_timeout = 0');
     await client.query('SET lock_timeout = 0');
-    await acquireFillLock(client, log);
-    try {
-      return await fillLocked(client, log, options);
-    } finally {
-      try {
-        await client.query('SELECT pg_advisory_unlock($1)', [FILL_LOCK_KEY]);
-        await client.query('RESET statement_timeout');
-        await client.query('RESET lock_timeout');
-      } catch (cleanupErr) {
-        broken = true;
-      }
-    }
-  } catch (err) {
-    broken = true;
-    // A batch transaction left open by the failure goes with the connection.
-    throw err;
+    await acquireAdvisoryLock(client, FILL_LOCK_KEY, log, { label: FILL_LOCK_LABEL, holderDoing: 'filling it' });
+    const res = await fillLocked(client, log, options);
+    await releaseAdvisoryLock(client, FILL_LOCK_KEY, log, FILL_LOCK_LABEL);
+    return res;
   } finally {
-    client.release(broken ? new Error('audit stream index fill failed; discarding client') : undefined);
+    await client.end().catch(() => {});
   }
 }
 
-async function acquireFillLock (client: StreamIndexClient, log: StreamIndexLog): Promise<void> {
-  let said = false;
-  for (;;) {
-    const res = await client.query('SELECT pg_try_advisory_lock($1) AS locked', [FILL_LOCK_KEY]);
-    if (res.rows[0]?.locked === true) return;
-    if (!said) {
-      log.info?.('audit stream index: another process is filling it; waiting for it');
-      said = true;
+/** The triggers must fire for the table to stay exact; if one does not, reset the state and throw. */
+async function requireTriggersFiring (client: StreamIndexClient, when: string): Promise<void> {
+  for (const trigger of [PUT_TRIGGER, DROP_TRIGGER]) {
+    const state = await triggerState(client, trigger);
+    if (state === 'O' || state === 'A') continue;
+    // Writes it missed may sort behind any saved position.
+    await client.query(RESET_STATE_SQL);
+    throw new Error(`audit stream index: trigger ${trigger} on audit_events is ${state == null ? 'missing' : 'disabled'} ${when}; ` +
+      'the index is left incomplete and its position reset (the next start installs the trigger and rebuilds it from zero)');
+  }
+}
+
+/** TRUNCATE the table, waiting at most TRUNCATE_LOCK_TIMEOUT_MS at a time (see there). */
+async function truncateTable (client: StreamIndexClient, log: StreamIndexLog): Promise<void> {
+  await client.query(`SET lock_timeout = ${TRUNCATE_LOCK_TIMEOUT_MS}`);
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await client.query('TRUNCATE audit_event_streams');
+        return;
+      } catch (err: unknown) {
+        if (attempt >= TRUNCATE_ATTEMPTS || (err as { code?: string })?.code !== '55P03') throw err;
+        if (attempt === 1) log.info?.('audit stream index: waiting for reads of audit_event_streams to end before emptying it');
+        await new Promise((resolve) => setTimeout(resolve, TRUNCATE_RETRY_MS));
+      }
     }
-    await new Promise((resolve) => setTimeout(resolve, FILL_LOCK_POLL_MS));
+  } finally {
+    await client.query('SET lock_timeout = 0');
   }
 }
 
 async function fillLocked (client: StreamIndexClient, log: StreamIndexLog, options: FillOptions): Promise<FillResult> {
-  const t0 = Date.now();
-  const batchRows = Math.max(1, Math.floor(options.batchRows ?? DEFAULT_BATCH_ROWS));
   const present = await client.query('SELECT to_regclass(\'audit_event_streams_state\') IS NOT NULL AS present');
   if (present.rows[0]?.present !== true) {
-    return { alreadyComplete: false, fromZero: false, rows: 0, batches: 0, durationMs: 0 };
+    // The schema step creates it before any fill: never report a no-op as a fill.
+    throw new Error('audit stream index: table audit_event_streams_state is missing (the schema step did not run)');
   }
   await client.query('INSERT INTO audit_event_streams_state (complete) VALUES (false) ON CONFLICT (id) DO NOTHING');
-  const state = (await client.query('SELECT complete, cursor_user_id, cursor_eventid FROM audit_event_streams_state')).rows[0];
+  for (let restarts = 0; ; restarts++) {
+    const res = await fillRun(client, log, options);
+    if (res != null) return res;
+    if (restarts >= MAX_RESTARTS) {
+      throw new Error('audit stream index: the state was reset by another process during each of ' + (MAX_RESTARTS + 1) + ' fills; left incomplete');
+    }
+    log.warn?.('audit stream index: the state was reset by another process during the fill (a trigger found missing); starting again from zero');
+  }
+}
+
+// Compare-and-set on the state the run last read or wrote: `updated_at`
+// changes with every write (the reset included), the cursor covers a reset
+// by hand that leaves `updated_at` alone.
+const STATE_GUARD = 'complete = false AND cursor_user_id IS NOT DISTINCT FROM $1 AND cursor_eventid IS NOT DISTINCT FROM $2 AND updated_at::text = $3';
+
+/** One run from the saved state; null when the state was changed by someone else (start again). */
+async function fillRun (client: StreamIndexClient, log: StreamIndexLog, options: FillOptions): Promise<FillResult | null> {
+  const t0 = Date.now();
+  const batchRows = Math.max(1, Math.floor(options.batchRows ?? DEFAULT_BATCH_ROWS));
+  const state = (await client.query(
+    'SELECT complete, cursor_user_id, cursor_eventid, updated_at::text AS stamp FROM audit_event_streams_state')).rows[0];
   if (state.complete === true) {
     return { alreadyComplete: true, fromZero: false, rows: 0, batches: 0, durationMs: Date.now() - t0 };
   }
+  // No time spent on a fill that cannot end complete.
+  await requireTriggersFiring(client, 'before the fill');
   let cursor: [string, string] | null = state.cursor_user_id == null ? null : [String(state.cursor_user_id), String(state.cursor_eventid)];
+  let stamp = String(state.stamp);
   const fromZero = cursor == null;
   const estimate = Number((await client.query(
     'SELECT GREATEST(reltuples, 0)::bigint AS n FROM pg_class WHERE oid = \'audit_events\'::regclass')).rows[0]?.n ?? 0);
@@ -320,7 +410,7 @@ async function fillLocked (client: StreamIndexClient, log: StreamIndexLog, optio
   if (fromZero) {
     // Rows of records deleted while a trigger was missing, or left by an
     // interrupted run that never recorded a position: start from nothing.
-    await client.query('TRUNCATE audit_event_streams');
+    await truncateTable(client, log);
   }
   let rows = 0;
   let batches = 0;
@@ -353,8 +443,15 @@ async function fillLocked (client: StreamIndexClient, log: StreamIndexLog, optio
       read = Number(res.rows[0]?.n ?? 0);
       last = read > 0 ? res.rows[0] : undefined;
       if (last != null) {
-        await client.query('UPDATE audit_event_streams_state SET cursor_user_id = $1, cursor_eventid = $2, updated_at = now()',
-          [last.user_id, last.eventid]);
+        const saved = await client.query(
+          `UPDATE audit_event_streams_state SET cursor_user_id = $4, cursor_eventid = $5, updated_at = now() WHERE ${STATE_GUARD} ` +
+          'RETURNING updated_at::text AS stamp',
+          [cursor?.[0] ?? null, cursor?.[1] ?? null, stamp, last.user_id, last.eventid]);
+        if (saved.rows.length !== 1) {
+          await client.query('ROLLBACK');
+          return null;
+        }
+        stamp = String(saved.rows[0].stamp);
       }
       await client.query('COMMIT');
     } catch (err) {
@@ -372,16 +469,14 @@ async function fillLocked (client: StreamIndexClient, log: StreamIndexLog, optio
     }
     if (read < batchRows) break;
   }
-  // Complete only with both triggers firing: without them a record written or
-  // deleted from now on would be missed, and readers would hide it.
-  for (const trigger of [PUT_TRIGGER, DROP_TRIGGER]) {
-    const state = await triggerState(client, trigger);
-    if (state !== 'O' && state !== 'A') {
-      throw new Error(`audit stream index: trigger ${trigger} on audit_events is ${state == null ? 'missing' : 'disabled'}; ` +
-        'the index is left incomplete (the next start installs the trigger and rebuilds it)');
-    }
-  }
-  await client.query('UPDATE audit_event_streams_state SET complete = true, cursor_user_id = NULL, cursor_eventid = NULL, updated_at = now()');
+  // Complete only with both triggers firing: a trigger that stopped during the
+  // run missed writes behind the position, and without it a record written
+  // or deleted from now on would be missed too; readers would hide them.
+  await requireTriggersFiring(client, 'at the end of the fill');
+  const done = await client.query(
+    `UPDATE audit_event_streams_state SET complete = true, cursor_user_id = NULL, cursor_eventid = NULL, updated_at = now() WHERE ${STATE_GUARD}`,
+    [cursor?.[0] ?? null, cursor?.[1] ?? null, stamp]);
+  if (done.rowCount !== 1) return null;
   const durationMs = Date.now() - t0;
   log.info?.(`audit stream index: complete, ${rows} audit records read in ${durationMs} ms`);
   return { alreadyComplete: false, fromZero, rows, batches, durationMs };

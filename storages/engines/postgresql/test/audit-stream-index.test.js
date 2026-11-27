@@ -18,12 +18,13 @@ import * as helpers from '../../../test/helpers/index.js';
 import { DatabasePG } from '../src/DatabasePG.ts';
 import { AuditStoragePG } from '../src/AuditStoragePG.ts';
 import { UserAuditDatabasePG, buildSelectQuery } from '../src/UserAuditDatabasePG.ts';
-import { ensureAuditStreamIndex, BATCH_LOCK_KEY, PUT_TRIGGER, DROP_TRIGGER } from '../src/auditStreamIndex.ts';
+import { ensureAuditStreamIndex, BATCH_LOCK_KEY, PUT_TRIGGER, DROP_TRIGGER, DROP_FUNCTION_SQL } from '../src/auditStreamIndex.ts';
 const require = createRequire(import.meta.url);
 const migration = require('../migrations/20261127_140000_audit_stream_index.js');
 
 const PREFIX = 'pgas-';
 const NO_LOG = { getLogger: () => ({ debug () {}, info () {}, warn () {}, error () {} }) };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('[PGAS] PostgreSQL audit records indexed by access', function () {
   this.timeout(120_000);
@@ -83,8 +84,9 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
     return (await db.query('SELECT complete, cursor_user_id, cursor_eventid FROM audit_event_streams_state')).rows[0];
   }
 
+  // What the install does (and the CHANGELOG's by-hand statement).
   async function resetState () {
-    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = NULL, cursor_eventid = NULL');
+    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = NULL, cursor_eventid = NULL, updated_at = now()');
   }
 
   async function triggerState (name) {
@@ -304,7 +306,8 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
       shapes.push([id + ' time', [...BASE(), one(id), { type: 'lowerOrEqual', content: { field: 'time', value: 10_030 } },
         { type: 'greaterOrEqual', content: { field: 'time', value: 10_005 } }]]);
       shapes.push([id + ' greater', [...BASE(), one(id), { type: 'greater', content: { field: 'time', value: 10_020 } }]]);
-      shapes.push([id + ' types', [...BASE(), one(id), { type: 'typesList', content: ['audit-log/pryv-api-error'] }]]);
+      shapes.push([id + ' equal', [...BASE(), one(id), { type: 'equal', content: { field: 'time', value: 10_010 } }]]);
+      shapes.push([id + ' and access-b', [...BASE(), { type: 'streamsQuery', content: [[{ any: [id] }, { any: ['access-b'] }]] }]]);
       shapes.push([id + ' all states', [one(id)]]);
     }
     let compared = 0;
@@ -322,6 +325,8 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
       }
       const streamed = await readStreamed(u, query, { sort: { time: -1 }, limit: 7 }, true);
       assert.deepStrictEqual(streamed, await readStreamed(u, query, { sort: { time: -1 }, limit: 7 }, false), name + ' streamed');
+      const whole = await readStreamed(u, query, { sort: { time: 1 } }, true);
+      assert.deepStrictEqual(whole, await readStreamed(u, query, { sort: { time: 1 } }, false), name + ' streamed, no limit');
     }
     assert.ok(compared > 500);
     // Not vacuous: the read of access-a has pages, and ties at equal times.
@@ -338,6 +343,12 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
     assert.ok(uses(sqlOf([one('access-x')])));
     assert.ok(uses(sqlOf([{ type: 'streamsQuery', content: [['access-x', { not: ['access-y'] }]] }])));
     assert.ok(uses(sqlOf([one('access-x')], { sort: { time: 1 } })));
+    // The whole statement, `OFFSET 0` included: removing that fence lets the
+    // planner walk the account's trail first (see buildSelectQuery).
+    assert.strictEqual(sqlOf([one('access-x')]),
+      'SELECT a.* FROM (SELECT eventid AS s_eventid, time AS s_time FROM audit_event_streams WHERE user_id = $1 AND stream_id = $3) s ' +
+      'CROSS JOIN LATERAL (SELECT * FROM audit_events WHERE user_id = $1 AND ((((\' \' || stream_ids || \' \') LIKE $2 ESCAPE \'\\\'))) ' +
+      'AND eventid = s.s_eventid AND time = s.s_time OFFSET 0) a ORDER BY s.s_time DESC, s.s_eventid DESC LIMIT 20');
     const plain = buildSelectQuery('u', { query: [one('access-x')], options: { sort: { time: -1 }, limit: 20 } }, false).sql;
     assert.strictEqual(plain, 'SELECT * FROM audit_events WHERE user_id = $1 AND ((((\' \' || stream_ids || \' \') LIKE $2 ESCAPE \'\\\'))) ' +
       'ORDER BY time DESC, eventid DESC LIMIT 20');
@@ -362,19 +373,32 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
   });
 
   it('[PGAS9] the indexed read is an ordered scan of the primary key, without a sort', async function () {
+    // Seeded so that, without the `OFFSET 0` fence, the planner WANTS the bad
+    // plan: every record names the access, the LIKE is estimated to match
+    // almost none of them, so a flattened join expects to read the whole range
+    // of the table for 20 rows and scans audit_events first instead.
     const u = newUser();
-    await db.query(`INSERT INTO audit_events (user_id, eventid, stream_ids, type, time, created, modified)
-      SELECT $1, 'p' || i, 'access-' || (i % 50) || ' action-y ..', 'audit-log/pryv-api', i / 20, i, i
+    await db.query(`INSERT INTO audit_events (user_id, eventid, stream_ids, type, time, created, modified, deleted, head_id)
+      SELECT $1, 'p' || i, 'access-all action-y ..', 'audit-log/pryv-api', i / 20, i, i, NULL, NULL
       FROM generate_series(1, 5000) AS i`, [u]);
     await db.query('ANALYZE audit_events');
     await db.query('ANALYZE audit_event_streams');
-    const { sql, values } = buildSelectQuery(u, {
-      query: [...BASE(), one('access-7'), { type: 'equal', content: { field: 'deleted', value: null } }, { type: 'equal', content: { field: 'head_id', value: null } }],
-      options: { sort: { time: -1 }, limit: 20 }
-    }, true);
-    const plan = (await db.query('EXPLAIN ' + sql, values)).rows.map((r) => r['QUERY PLAN']).join('\n');
-    assert.match(plan, /audit_event_streams_pkey/, plan);
-    assert.doesNotMatch(plan, /\bSort\b/, plan);
+    for (const [time, direction] of [[-1, 'Backward'], [1, 'Forward']]) {
+      const { sql, values } = buildSelectQuery(u, {
+        query: [...BASE(), one('access-all'), { type: 'equal', content: { field: 'deleted', value: null } }, { type: 'equal', content: { field: 'head_id', value: null } }],
+        options: { sort: { time }, limit: 20 }
+      }, true);
+      const root = (await db.query('EXPLAIN (FORMAT JSON) ' + sql, values)).rows[0]['QUERY PLAN'][0].Plan;
+      const text = JSON.stringify(root);
+      const nodes = [];
+      (function walk (n) { nodes.push(n); for (const c of n.Plans ?? []) walk(c); })(root);
+      assert.ok(!nodes.some((n) => /Sort/.test(n['Node Type'])), 'no sort: ' + text);
+      const loop = nodes.find((n) => n['Node Type'] === 'Nested Loop');
+      assert.ok(loop != null, 'a nested loop: ' + text);
+      const outer = loop.Plans.find((c) => c['Parent Relationship'] === 'Outer');
+      assert.ok(/Index (Only )?Scan/.test(outer['Node Type']) && outer['Index Name'] === 'audit_event_streams_pkey' &&
+        outer['Scan Direction'] === direction, 'the outer side reads the key ' + direction + ': ' + text);
+    }
   });
 
   it('[PGASA] a forged or stale row of the table never returns a record the stream filter refuses, nor twice', async function () {
@@ -451,5 +475,210 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
     const filled = await storage.ensureStreamIndex();
     assert.strictEqual(filled.alreadyComplete, false);
     assert.strictEqual(storage.streamIndex.complete, true);
+  });
+
+  it('[PGASF] a trigger not firing resets an incomplete state too, and a fill never leaves a position past unseen writes', async function () {
+    const u = newUser();
+    // A start that could not create the trigger, then a fill that walked the
+    // whole table before failing its end check: incomplete, position past
+    // every record. The core served meanwhile, without the trigger.
+    await db.query(`DROP TRIGGER ${PUT_TRIGGER} ON audit_events`);
+    await put(u, 'unseen', ['access-a', 'action-y'], 5);
+    const last = (await db.query('SELECT max(user_id) AS m FROM audit_events')).rows[0].m;
+    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = $1, cursor_eventid = $2', [last + 'z', '']);
+    // The next start creates the trigger: the position is stale.
+    const res = await db.ensureAuditStreamIndexInstalled();
+    assert.deepStrictEqual([res[PUT_TRIGGER], res.complete, res.reset], ['created', false, true]);
+    assert.deepStrictEqual(await state(), { complete: false, cursor_user_id: null, cursor_eventid: null });
+    const fill = await ensureAuditStreamIndex(db);
+    assert.strictEqual(fill.fromZero, true);
+    assert.deepStrictEqual(await junction(u), ['access-a|5|unseen']);
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+
+    // A fill started while a trigger is disabled: refused before reading, no position kept.
+    await db.query(`ALTER TABLE audit_events DISABLE TRIGGER ${PUT_TRIGGER}`);
+    try {
+      await resetState();
+      await assert.rejects(ensureAuditStreamIndex(db, { batchRows: 1000 }), /disabled/);
+      assert.deepStrictEqual(await state(), { complete: false, cursor_user_id: null, cursor_eventid: null });
+    } finally {
+      await db.query(`ALTER TABLE audit_events ENABLE TRIGGER ${PUT_TRIGGER}`);
+    }
+    // A trigger disabled during the fill: the end check resets the position.
+    try {
+      await assert.rejects(ensureAuditStreamIndex(db, {
+        batchRows: 1000,
+        afterBatch: async (b) => { if (b === 1) await db.query(`ALTER TABLE audit_events DISABLE TRIGGER ${PUT_TRIGGER}`); }
+      }), /disabled/);
+      assert.deepStrictEqual(await state(), { complete: false, cursor_user_id: null, cursor_eventid: null });
+    } finally {
+      await db.query(`ALTER TABLE audit_events ENABLE TRIGGER ${PUT_TRIGGER}`);
+    }
+  });
+
+  it('[PGASG] a state reset by another process during a fill restarts the fill from zero', async function () {
+    const u = newUser();
+    for (let i = 0; i < 300; i++) await put(u, 'r' + String(i).padStart(4, '0'), ['access-' + (i % 4)], 2000 + i);
+    // Resume inside u's records (the rest of the table is indexed already).
+    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = $1, cursor_eventid = $2, updated_at = now()', [u, 'r0100']);
+    let batches = 0;
+    const fill = await ensureAuditStreamIndex(db, {
+      batchRows: 50,
+      afterBatch: async () => {
+        if (++batches !== 1) return;
+        // What another process meets: a record written unseen behind the
+        // position, then its install finds the trigger and resets the state.
+        await db.query(`ALTER TABLE audit_events DISABLE TRIGGER ${PUT_TRIGGER}`);
+        await put(u, 'r0050x', ['access-late'], 1);
+        await db.query(`ALTER TABLE audit_events ENABLE TRIGGER ${PUT_TRIGGER}`);
+        await resetState();
+      }
+    });
+    assert.strictEqual(fill.fromZero, true, 'the run that completed started from zero');
+    assert.ok((await junction(u)).includes('access-late|1|r0050x'));
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+    assert.strictEqual((await state()).complete, true);
+  });
+
+  it('[PGASH] an update during a batch removes the old row that batch adds', async function () {
+    const u = newUser();
+    await put(u, 'm1', ['access-x', 'action-y'], 100);
+    const batch = await db.getClient();
+    let updated = false;
+    try {
+      await batch.query('BEGIN');
+      await batch.query('SELECT pg_advisory_xact_lock($1)', [BATCH_LOCK_KEY]);
+      // What a batch that read the version before the update writes.
+      await db.query('DELETE FROM audit_event_streams WHERE user_id = $1', [u]);
+      await batch.query('INSERT INTO audit_event_streams (user_id, stream_id, time, eventid) VALUES ($1, \'access-x\', 100, \'m1\')', [u]);
+      const update = db.query('UPDATE audit_events SET time = 200 WHERE user_id = $1 AND eventid = $2', [u, 'm1']).then(() => { updated = true; });
+      await sleep(300);
+      assert.strictEqual(updated, false, 'the update waits for the batch');
+      await batch.query('COMMIT');
+      await update;
+    } finally {
+      batch.release();
+    }
+    assert.deepStrictEqual(await junction(u), ['access-x|200|m1']);
+  });
+
+  it('[PGASI] a record written for an account while its whole trail is deleted keeps its row', async function () {
+    const u = newUser();
+    await put(u, 'old', ['access-x', 'action-y'], 1);
+    // The delete function with a pause in the statement that finds the
+    // emptied accounts: the late record commits during it.
+    const paused = DROP_FUNCTION_SQL.replace('FROM gone g) u', 'FROM gone g) u, pg_sleep(1) z');
+    assert.notStrictEqual(paused, DROP_FUNCTION_SQL);
+    await db.query(paused);
+    try {
+      const deletion = db.query('DELETE FROM audit_events WHERE user_id = $1', [u]);
+      await sleep(300);
+      await put(u, 'late', ['access-y', 'action-y'], 2);
+      await deletion;
+    } finally {
+      await db.query(DROP_FUNCTION_SQL);
+    }
+    assert.deepStrictEqual(await junction(u), ['access-y|2|late']);
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+  });
+
+  it('[PGASJ] a fill from zero does not hold audit writes behind a read of the table', async function () {
+    const u = newUser();
+    await put(u, 'a', ['access-x', 'action-y'], 1);
+    await resetState();
+    const reader = await db.getClient();
+    await reader.query('BEGIN');
+    await reader.query('SELECT count(*) FROM audit_event_streams WHERE user_id = $1', [u]);
+    const released = sleep(6000).then(() => reader.query('COMMIT')).finally(() => reader.release());
+    try {
+      const fill = ensureAuditStreamIndex(db);
+      await sleep(500); // its TRUNCATE now waits for the reader
+      const waiting = await db.query('SELECT count(*)::int AS n FROM pg_locks WHERE relation = \'audit_event_streams\'::regclass ' +
+        'AND mode = \'AccessExclusiveLock\' AND NOT granted');
+      assert.strictEqual(waiting.rows[0].n, 1, 'the fill waits for its TRUNCATE');
+      const t0 = Date.now();
+      await put(u, 'b', ['access-x', 'action-y'], 2);
+      const waited = Date.now() - t0;
+      assert.ok(waited < 3500, 'an audit insert waited ' + waited + ' ms');
+      await fill;
+    } finally {
+      await released;
+    }
+    assert.deepStrictEqual(await junction(u), ['access-x|1|a', 'access-x|2|b']);
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+  });
+
+  it('[PGASK] a restore imports records through the triggers', async function () {
+    const u = newUser();
+    await put(u, 'kept', ['access-a', 'action-y'], 1);
+    const rows = [
+      { eventid: 'kept', stream_ids: 'access-other action-y ..', time: 1, type: 'audit-log/pryv-api' },
+      { eventid: 'new', stream_ids: 'access-b action-y ..', time: 2, type: 'audit-log/pryv-api' },
+      { eventid: 'two', stream_ids: 'access-c access-d:2 action-y ..', time: 3, type: 'audit-log/pryv-api' },
+      { eventid: 'notime', stream_ids: 'access-e action-y ..', time: null, type: 'audit-log/pryv-api' }
+    ];
+    await userDb(u, true).importAllEvents(rows);
+    assert.deepStrictEqual(await junction(u), ['access-a|1|kept', 'access-b|2|new', 'access-c|3|two', 'access-d:2|3|two']);
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+  });
+
+  it('[PGASL] a fill with inserts, single deletions, account erasures and time updates going on ends exact', async function () {
+    const writer = newUser();
+    const deleted = newUser();
+    const updated = newUser();
+    for (let i = 0; i < 200; i++) {
+      const k = String(i).padStart(4, '0');
+      await put(writer, 'w' + k, ['access-' + (i % 3)], 1000 + i);
+      await put(deleted, 'd' + k, ['access-' + (i % 3), 'access-z'], 1000 + i);
+      await put(updated, 'u' + k, ['access-' + (i % 3)], 1000 + i);
+    }
+    // Resume just before this test's accounts (the rest of the shared test
+    // table is indexed already): small batches over these accounts only.
+    await db.query('UPDATE audit_event_streams_state SET complete = false, cursor_user_id = $1, cursor_eventid = $2, updated_at = now()', [PREFIX, '']);
+    const run = { stop: false };
+    const counts = { inserts: 0, deletions: 0, erasures: 0, updates: 0 };
+    const loops = [
+      (async () => {
+        while (!run.stop) await put(writer, 'live-' + counts.inserts++, ['access-' + (counts.inserts % 3), 'action-y'], 5000 + counts.inserts);
+      })(),
+      (async () => {
+        for (let i = 0; i < 200 && !run.stop; i++) {
+          await db.query('DELETE FROM audit_events WHERE user_id = $1 AND eventid = $2', [deleted, 'd' + String(i).padStart(4, '0')]);
+          counts.deletions++;
+        }
+      })(),
+      (async () => {
+        while (!run.stop) {
+          const v = newUser();
+          for (let i = 0; i < 20; i++) await put(v, 'e' + i, ['access-' + (i % 2), 'action-y'], 100 + i);
+          await db.query('DELETE FROM audit_events WHERE user_id = $1', [v]);
+          counts.erasures++;
+        }
+      })(),
+      (async () => {
+        while (!run.stop) {
+          const i = counts.updates++ % 200;
+          await db.query('UPDATE audit_events SET time = time + 0.5 WHERE user_id = $1 AND eventid = $2', [updated, 'u' + String(i).padStart(4, '0')]);
+        }
+      })()
+    ];
+    try {
+      await ensureAuditStreamIndex(db, { batchRows: 30, afterBatch: () => sleep(3) });
+    } finally {
+      run.stop = true;
+      await Promise.all(loops);
+    }
+    assert.ok(counts.inserts > 0 && counts.deletions > 0 && counts.erasures > 0 && counts.updates > 0, JSON.stringify(counts));
+    assert.deepStrictEqual(await drift(), { missing: 0, extra: 0 });
+    assert.strictEqual((await state()).complete, true);
+  });
+
+  it('[PGASM] a record without a time: the plain read returns it, the indexed read does not (recorded decision)', async function () {
+    const u = newUser();
+    await put(u, 'timed', ['access-x', 'action-y'], 10);
+    await put(u, 'untimed', ['access-x', 'action-y'], null);
+    const query = [...BASE(), one('access-x')];
+    assert.deepStrictEqual(await read(u, query, { sort: { time: -1 } }, false), ['untimed', 'timed']);
+    assert.deepStrictEqual(await read(u, query, { sort: { time: -1 } }, true), ['timed']);
   });
 });

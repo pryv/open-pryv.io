@@ -33,7 +33,10 @@
   middle resumes where it was, not from zero. Two processes filling at once are serialized: the second waits,
   then finds the table complete. Later starts: one query. If the fill fails, the core starts anyway, says so in
   its log, and reads keep the previous plan until a later start completes it. An orchestrator's start timeout
-  must allow for the fill on a large audit table.
+  must allow for the fill on a large audit table. The fill uses one database connection of its own (application
+  name `open-pryv.io audit stream index`), outside `storages.engines.postgresql.max`. A rebuild from zero while
+  another core serves (a repair, see below) empties the table first: that waits for reads of the table in progress,
+  2 s at a time, so audit writes queue for 2 s at most.
 - **Large audit table: measure on a copy first** (the rate above is a floor: under write load or when the table
   does not fit in memory it is slower), and if the wait at the first start is too long, **fill the table by hand
   before upgrading**, while the previous release serves (it ignores these objects; its writes and deletes are
@@ -46,9 +49,12 @@
     complete BOOLEAN NOT NULL, cursor_user_id TEXT, cursor_eventid TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE OR REPLACE FUNCTION audit_event_streams_put() RETURNS trigger LANGUAGE plpgsql AS $f$
   BEGIN
-    IF TG_OP = 'UPDATE' AND OLD.time IS NOT NULL AND OLD.stream_ids IS NOT NULL THEN
-      DELETE FROM audit_event_streams WHERE user_id = OLD.user_id AND time = OLD.time AND eventid = OLD.eventid
-        AND stream_id = ANY (string_to_array(OLD.stream_ids, ' '));
+    IF TG_OP = 'UPDATE' THEN
+      PERFORM pg_advisory_xact_lock_shared(1886544226);
+      IF OLD.time IS NOT NULL AND OLD.stream_ids IS NOT NULL THEN
+        DELETE FROM audit_event_streams WHERE user_id = OLD.user_id AND time = OLD.time AND eventid = OLD.eventid
+          AND stream_id = ANY (string_to_array(OLD.stream_ids, ' '));
+      END IF;
     END IF;
     IF NEW.time IS NOT NULL AND NEW.stream_ids IS NOT NULL AND position('access-' IN NEW.stream_ids) > 0 THEN
       INSERT INTO audit_event_streams (user_id, stream_id, time, eventid)
@@ -64,11 +70,13 @@
     emptied text[];
   BEGIN
     PERFORM pg_advisory_xact_lock_shared(1886544226);
-    SELECT array_agg(u.user_id) INTO emptied FROM (SELECT DISTINCT g.user_id FROM gone g) u
-      WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.user_id = u.user_id);
-    IF emptied IS NOT NULL THEN
-      DELETE FROM audit_event_streams WHERE user_id = ANY (emptied);
-    END IF;
+    WITH e AS MATERIALIZED (
+      SELECT u.user_id FROM (SELECT DISTINCT g.user_id FROM gone g) u
+        WHERE NOT EXISTS (SELECT 1 FROM audit_events a WHERE a.user_id = u.user_id)
+    ), d AS (
+      DELETE FROM audit_event_streams s USING e WHERE s.user_id = e.user_id
+    )
+    SELECT array_agg(e.user_id) INTO emptied FROM e;
     IF EXISTS (SELECT 1 FROM gone g WHERE emptied IS NULL OR g.user_id <> ALL (emptied)) THEN
       DELETE FROM audit_event_streams s USING (
         SELECT g.user_id, t AS stream_id, g.time, g.eventid FROM gone g, unnest(string_to_array(g.stream_ids, ' ')) AS t
@@ -98,17 +106,26 @@
 
   A `CREATE TRIGGER` that times out (it waits for the audit inserts in flight) is simply run again; one that
   reports the trigger exists already is done (then run only what follows it). The last
-  transaction is one statement over the whole table: audit deletions (account erasures) wait for it, audit writes
-  do not. The first start of the release then finds the table complete. A by-hand fill that fails leaves the
-  state absent or incomplete: the start fills the table itself.
+  transaction is one statement over the whole table: audit deletions (account erasures) and updates wait for it,
+  audit writes do not. An account deletion served by the API that waits that long is stopped by
+  `storages.engines.postgresql.statementTimeoutMs` (default 30 s) and answers an error: run the by-hand fill in a
+  quiet window. The first start of the release then finds the table complete. A by-hand fill that fails leaves the
+  state absent or incomplete: the start fills the table itself. Everything here was measured on PostgreSQL 16 (the
+  core supports 14 and later).
 - **With `migrations.autoRunOnStart: false`:** reads keep the previous plan (a warning says so at start) until
   `node bin/migrate.js up` has run; running workers pick the new plan up within a minute.
+- **Never disable or drop these triggers while a core serves.** Records written or deleted meanwhile are missed,
+  and a core already reading through the table hides them. If it happened, restart every core on that database:
+  the start finds the trigger missing or disabled, repairs it and rebuilds the table from zero.
 - **Loads that bypass triggers** (`pg_restore --disable-triggers` of `audit_events` alone, a session with
-  `session_replication_role = replica`, `TRUNCATE audit_events` by hand) leave the table inexact. The next start
-  detects a trigger missing or disabled and rebuilds the table from zero; after a load or a `TRUNCATE` with the
-  triggers in place, force it by hand, core stopped: `UPDATE audit_event_streams_state SET complete = false,
-  cursor_user_id = NULL, cursor_eventid = NULL;` then start (a fill from zero empties the table first). With
-  `TRUNCATE audit_events`, also `TRUNCATE audit_event_streams;`.
+  `session_replication_role = replica`, `TRUNCATE audit_events` by hand) leave the table inexact, and the core
+  cannot detect it: after such a load the triggers are in place and firing again. After any such load, force the
+  rebuild by hand, core stopped: `UPDATE audit_event_streams_state SET complete = false, cursor_user_id = NULL,
+  cursor_eventid = NULL, updated_at = now();` then start (a fill from zero empties the table first). With
+  `TRUNCATE audit_events`, also `TRUNCATE audit_event_streams;`. Only a trigger found missing or disabled AT a
+  start is repaired without help. A full `pg_dump` / `pg_restore` of the database needs nothing: the table and its
+  state are restored as dumped, from the same snapshot as `audit_events`, and the triggers are created after the
+  data.
 - **Rolling back to the previous release:** nothing to do. It ignores the table, and the triggers (still
   installed) keep it exact, so coming back to this release needs no rebuild. To remove everything (previous
   release kept for good, core stopped), all together, never the triggers alone:

@@ -7,6 +7,7 @@
 
 import { createRequire } from 'node:module';
 import type { Logger } from '@pryv/boiler';
+import type { FillResult } from './auditStreamIndex.ts';
 const require = createRequire(import.meta.url);
 
 const { LRUCache: LRU } = require('lru-cache');
@@ -20,7 +21,7 @@ const VERSION = '1.0.0';
 type DbLike = {
   ensureConnect: () => Promise<void>;
   query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
-  getClient?: () => Promise<unknown>;
+  connectDedicated?: (applicationName: string) => Promise<unknown>;
   close: () => Promise<void>;
 };
 type StreamIndexStateLike = { complete: boolean; isComplete: () => boolean; refresh: () => Promise<boolean> };
@@ -83,7 +84,7 @@ class AuditStoragePG {
    * Fill `audit_event_streams` until complete (see auditStreamIndex.ts):
    * the start does it before serving. Idempotent; one query once complete.
    */
-  async ensureStreamIndex (options: { logger?: FillLog; batchRows?: number } = {}): Promise<unknown> {
+  async ensureStreamIndex (options: { logger?: FillLog; batchRows?: number } = {}): Promise<FillResult> {
     this.checkInitialized();
     const res = await ensureAuditStreamIndex(this.db, options);
     await this.streamIndex.refresh();
@@ -126,7 +127,9 @@ class AuditStoragePG {
     this.userDBsCache.delete(userId);
     await this.db.query('DELETE FROM audit_events WHERE user_id = $1', [userId]);
     // The delete trigger removed the account's rows; this also removes what a
-    // trigger disabled at some point left behind.
+    // trigger disabled at some point left behind. Deliberately not one
+    // transaction with the statement above: each is idempotent, so running
+    // this again after a failure between them completes it.
     await this.db.query('DELETE FROM audit_event_streams WHERE user_id = $1', [userId]);
   }
 
