@@ -38,7 +38,8 @@ describe('[PGSC] PostgreSQL schema', function () {
       "SELECT indexname FROM pg_indexes WHERE tablename = 'events' ORDER BY indexname"
     );
     const indexes = res.rows.map(r => r.indexname);
-    assert(indexes.includes('idx_event_time'), 'missing idx_event_time');
+    // idx_event_time_id replaced idx_event_time (see time-id-indexes.test.js)
+    assert(indexes.includes('idx_event_time_id'), 'missing idx_event_time_id');
     assert(indexes.includes('idx_event_trashed'), 'missing idx_event_trashed');
     assert(indexes.includes('idx_event_modified'), 'missing idx_event_modified');
     assert(indexes.includes('idx_event_head_id'), 'missing idx_event_head_id');

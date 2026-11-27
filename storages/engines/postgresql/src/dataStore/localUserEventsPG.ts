@@ -604,9 +604,15 @@ function buildEventQuery (userId: string, localQuery: LocalQueryItem[], localOpt
 
   // Sort
   if (localOptions.sort) {
-    const sortParts = (Object.entries(localOptions.sort) as Array<[string, number]>).map(([k, v]) =>
+    const sortEntries = Object.entries(localOptions.sort) as Array<[string, number]>;
+    const sortParts = sortEntries.map(([k, v]) =>
       `e.${toCol(k)} ${v === 1 ? 'ASC' : 'DESC'}`
     );
+    // Events sharing a time: `id` in the same direction makes their order
+    // independent of the plan, so pages read with skip neither repeat nor miss
+    // one. `idx_event_time_id` (user_id, time, id) serves this order as is.
+    const last = sortEntries[sortEntries.length - 1];
+    if (last != null && last[0] === 'time') sortParts.push(`e.id ${last[1] === 1 ? 'ASC' : 'DESC'}`);
     sql += ' ORDER BY ' + sortParts.join(', ');
   }
 

@@ -1109,10 +1109,21 @@ hostedSites: {}
 # https://<site>.<dns.domain>/ otherwise). Calls authenticated with a setup or admin session
 # that carry an Origin are accepted from the core's own origin, the portal's, and
 # `cors.allowedOrigins` (a portal hosted outside the platform; scheme + host [+ port]).
+# `url`: the address of a portal hosted outside the platform, instead of `site` (its origin
+# is then accepted as the portal's; add `pryv-platform-portal@<its origin>` to auth.trustedApps
+# so the portal can sign in). Service info publishes `portal: { contract, url }` when either
+# gives an address.
+# `spaces`, `modules`: what the portal shows on this platform, published without
+# authentication at GET /system/portal/settings (no rebuild of the portal needed).
 portal:
   site: null
+  # url: null                       # e.g. https://portal.example.com/
   cors:
     allowedOrigins: []
+  # spaces: [admin, developer]      # the portal spaces offered (at least one)
+  # modules:
+  #   disabled: []                  # portal module ids switched off
+  #   order: []                     # portal module ids listed first, in this order
 
 # === MIXED: platform setup (first administrator) ===
 # A fresh platform waits for its first administrator: the first core that boots prints a
@@ -1146,6 +1157,22 @@ admin:
     ttlMinutes: 60
     stepUpMinutes: 5
     requireMfa: true
+  # PER-CORE: which administrator grants this core accepts (each core decides for itself;
+  # cores holding different values is expected).
+  # - `acceptReplicatedGrants`: false: only `localGrants` give permissions on this core.
+  # - `requireLocalScope`: permission names that only `localGrants` give on this core.
+  # - `localGrants`: [{ userId, role }] granted by this file only, on this core only.
+  localPolicy:
+    acceptReplicatedGrants: true
+    requireLocalScope: []
+    localGrants: []
+  # PER-CORE: administration managed elsewhere (a PaaS, GitOps, a front proxy), so not
+  # editable through the API on this core. No block: everything editable.
+  # lockdown:
+  #   capabilities:
+  #     dns: readonly                  # editable | readonly | hidden, per capability
+  #   platformConfig:
+  #     readonly: []                   # platform configuration keys
 
 # === PER-CORE (the NAME SET and the `paths` are PLATFORM-WIDE by intent) ===
 # --- Adapter routes (a sidecar served under /adapter/<name>/ on every host this core serves) ---
@@ -1247,6 +1274,9 @@ platform:
   # the migration is all-at-once — which is why no per-token scheme tag is
   # needed.
   piiAlgorithm: hmac-sha256                       # cluster-wide; only hmac-sha256 today
+  # PER-CORE: how often (seconds) each process checks the platform store for a change of
+  # the platform-wide configuration held there.
+  configPollSeconds: 15
 
 # === MIXED ===
 # `enabled` + `email` + `atRestKey` are PLATFORM-WIDE (every core must agree);

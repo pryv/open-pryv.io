@@ -27,7 +27,7 @@ import { failIngress, hasEncodedSeparatorOrDotSegment } from './ingressGuard.ts'
  * Match rule per topology:
  *   - DNS topology (dnsLess off, dns.domain set): Host `<name>.<dns.domain>`.
  *   - dnsLess: path prefix `/<name>/` (`/<name>` answers 301 to `/<name>/`).
- *     Same origin as the API there; bundles are built with that base.
+ *     Same origin as the API there: bundles use relative paths, or that base.
  *
  * Static sites behave like GitHub Pages: `index.html` for folders, `.html`
  * extension fallback, `404.html` (status 404) for misses, dotfiles and
@@ -284,13 +284,24 @@ function buildHostedSitesIngress (opts: {
 
   // ----------------------------------------------------------------- proxy
 
-  function rewriteLocation (location: string, site: ProxySite, prefix: string): string {
+  /**
+   * An upstream `Location` as the site's own address, or null when it leaves
+   * the upstream base (another origin, or a path outside the base): the site
+   * never sends its visitors off the platform's name.
+   */
+  function rewriteLocation (location: string, site: ProxySite, prefix: string, target: URL): string | null {
     const base = new URL(site.upstream);
-    if (location.startsWith(site.upstream)) return prefix + location.slice(site.upstream.length);
-    if (location.startsWith('/') && !location.startsWith('//') && location.startsWith(base.pathname)) {
-      return prefix + location.slice(base.pathname.length);
-    }
-    return location;
+    let resolved: URL;
+    try { resolved = new URL(location, target); } catch { return null; }
+    if (resolved.origin !== base.origin || resolved.username !== '' || resolved.password !== '') return null;
+    let rest: string;
+    if (resolved.pathname.startsWith(base.pathname)) rest = resolved.pathname.slice(base.pathname.length);
+    else if (resolved.pathname + '/' === base.pathname) rest = '';
+    else return null;
+    // `<base>/host/x` (a double slash after the base) would read as `//host/x`
+    // with the `/` prefix of the DNS topology: another host for a browser.
+    rest = rest.replace(/^\/+/, '');
+    return prefix + rest + resolved.search + resolved.hash;
   }
 
   function proxy (req: IncomingMessage, res: ServerResponse, site: ProxySite, subPath: string, search: string, prefix: string) {
@@ -327,7 +338,20 @@ function buildHostedSitesIngress (opts: {
       for (const name of FORWARDED_RESPONSE_HEADERS) {
         const value = proxyRes.headers[name];
         if (value == null) continue;
-        outHeaders[name] = name === 'location' ? rewriteLocation(String(value), site, prefix) : value;
+        if (name === 'location') {
+          const location = rewriteLocation(String(value), site, prefix, target);
+          if (location == null) {
+            // e.g. the upstream host moved to another domain: answer an error
+            // rather than send the visitor away from this platform.
+            proxyRes.resume();
+            logger.warn(`[hosted-sites] ${site.name}: the upstream redirects outside ${redactUrl(site.upstream)}, answered 502 ${redactUrl(req.url)}`);
+            plain(res, 502, 'Bad Gateway', {}, req.method === 'HEAD');
+            return;
+          }
+          outHeaders[name] = location;
+        } else {
+          outHeaders[name] = value;
+        }
       }
       // The operator's headers win over the upstream's
       Object.assign(outHeaders, headersOf(site));

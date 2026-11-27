@@ -61,6 +61,50 @@
   `delegation-managed-resource`). `components/business/test/unit/accesses-canReadEvent.test.js`
   `[CRF1]` to `[CRF4]` (forced streams per store).
 
+### Test tooling: a development core starts after `just clean-test-data`
+
+- `just clean-test-data` removes the one-time pass markers of the users directory (`accesses-token-protected.done`,
+  `accesses-token-unprotected`, `accesses-integrity-wire-form.done`): the token marker written under the test key
+  made a development core refuse to boot (`ForeignTokenKeyError`). It also stops this checkout's rqlited (only the
+  one `storages/engines/rqlite/scripts/start` launched: the pid file's process must name this checkout's data
+  directory, so another checkout's rqlited, a running master's or a reused pid is never signalled) and leaves it
+  stopped, so `bin/master.js` can spawn its own on the same ports; the test recipes start it again
+  (`scripts/test-rqlited start` from `scripts/components-run`, sequential mode; also the coverage and backup round
+  trip tools). Something else answering on the port still gets the keyValue-only reset.
+- `check-config` CLI tests: each check's child process is killed after 90 s instead of 30 s (a check took over 30 s
+  at a load average of 40), and the tests no longer carry a 60 s mocha timeout that a test running several checks
+  could hit first.
+
+### PostgreSQL: time sorts with a tie-breaker, served by `(user_id, time, id)` indexes
+
+- `localUserEventsPG.ts` `buildEventQuery` and `UserAuditDatabasePG.ts` `buildSelectQuery`: when the last sort key
+  is `time`, the sort ends with `id` (`eventid` for audit) in the same direction. Equal-time rows used to come back
+  in scan order, which differs between plans (top-N heap sort, full sort, backward index scan), so `skip` pages
+  could repeat or miss rows. Tests `[EGLT1]` (now on PostgreSQL too, 48 events over 6 times), `[EGLT2]` (the same
+  on PostgreSQL with the time index dropped, so the planner sorts) and `[PGTI5]` (audit pages, plain and streamed,
+  with and without the index). With the index present, a backward index scan hands ties over in index order and
+  hides a missing tie-breaker; `[EGLT2]` and the no-index `[PGTI5]` cases fail with the tie-breaker disabled.
+- New `src/timeIdIndexes.ts` + migration `20261127_130000_time_id_indexes.js`: `idx_event_time_id` /
+  `idx_audit_time_id` built `CONCURRENTLY` (an invalid leftover, or an index of that name with other columns, is
+  dropped and built again; one being built by another session stops the run), then `idx_event_time` /
+  `idx_audit_time` dropped `CONCURRENTLY` (same leading columns: every use of the old index is served by the new
+  one). The whole run holds a session advisory lock of its own on one dedicated client (an index being built
+  concurrently reads as invalid, so two unserialized runs could drop each other's build and leave a table with no
+  time index). The lock is polled with `pg_try_advisory_lock`: a session waiting in `pg_advisory_lock` holds a
+  snapshot that the holder's concurrent build waits for, a deadlock (seen in the test). The run sets
+  `statement_timeout` and `lock_timeout` to 0 (reset before the client goes back) and logs before each build. The
+  schema DDL builds the new indexes only on a database holding neither them nor the old ones (fresh), so a boot
+  never builds them without `CONCURRENTLY`. Tests `[PGTI1]` to `[PGTI4]`,
+  `[PGTI6]` (two runs at once: each index built once, a third connection sees a valid time index at every look;
+  fails with the lock removed), `[PGTI7]` (new index present, old one only dropped), `[PGTI8]` (other columns).
+- Measured on 1 million events and 1 million audit records (5 users, 20 rows per time value, 50 streams), median
+  of 7, before (time sort, `(user_id, time)`) / after (time + id sort, `(user_id, time, id)`): one stream limit 20
+  17.0 / 15.5 ms; one stream limit 500 109.6 / 110.5 ms; two streams + time frame limit 20 12.6 / 11.1 ms; skip 5000
+  limit 20 3.3 / 3.6 ms; no filter limit 20 0.06 / 0.05 ms; audit limit 20 0.06 / 0.04 ms; audit skip 5000 3.0 /
+  3.4 ms; audit one access limit 20 231 / 250 ms. Same plans, no sort step added (without the new index the id
+  sort made a restricted page of 20 three to four times slower). Migration: 3.4 s (events) + 3.3 s (audit);
+  second run 3 ms.
+
 ### SQLite: `events.get` with a stream filter no longer slows down as the stream grows
 
 - `storages/engines/sqlite` `UserDatabase`: a page sorted newest first, with a stream filter selecting fewer
@@ -79,9 +123,8 @@
   index). A read paged with `skip` could switch plan between pages (the bounded walk for the first pages, the rowid
   set deeper), and then repeated some events and missed others. The time sort now ends with `rowid` in the same
   direction (the `time` index's trailing key, so the walks keep the index with no temporary sort): pages over
-  equal-time events no longer repeat or miss rows (tests `[SQQPC]`, `[EGLT1]`). PostgreSQL still orders equal
-  times as the scan gives them: a tie-breaker there needs an index on `(user_id, time, id)` (without it, a
-  restricted page of 20 measured 3 to 4 times slower under a parallel plan).
+  equal-time events no longer repeat or miss rows (tests `[SQQPC]`, `[EGLT1]`). PostgreSQL: see the
+  `(user_id, time, id)` entry above.
 - Through the API (one core, 2 workers, one user seeded with 16 000 events, then events created in 2 of the
   restricted streams): restricted `events.get?limit=20` went 12, 19, 27, 35, 43, 51 ms from 2 400 to 17 500
   events in those streams, then 5.6 ms past 20 000; now 4.3 to 5.9 ms throughout. A personal
@@ -225,6 +268,24 @@
   delegation on the core, transfers are not offered.
 - The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
   `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
+
+### Administration portal settings: internals
+
+- `business/src/admin/config.ts`: `describeAdminConfig` also validates `portal.url`, `portal.spaces` and
+  `portal.modules.{disabled,order}` (boot and `bin/check-config.js` through the same validator); `portalUrl()` returns
+  `portal.url` when set, so the `/system` origin rule accepts that portal's origin; `portalSettings()` and
+  `portalServiceInfo()` build the settings answer and the service-info field.
+- `portalDefaults.ts`: `portalPagesUrl()` takes no topology (one relative-base build per version), plus
+  `PORTAL_APP_ID` and `PORTAL_SPACES`. Method `system.portalSettings.get` (public, not audited) in `systemAdmin.ts`,
+  its row in `system-permissions.ts`; the four keys are classified public / platform for the effective config; the
+  service-info result schema accepts `portal`. Tests `[ADCF8]`, `[ADCF9]`, `[ADMS26]`, `[ADMS27]`, `[SN14]`,
+  `[INWPN]`; init snapshots updated.
+- `system.portalContext.get` gives `core.url` through `platform.coreIdToUrl()`, as `system.listCores` does
+  (`[ADMS16]`).
+- `hostedSitesIngress.ts` `rewriteLocation()` resolves the upstream `Location` against the request target and
+  answers null (the proxy then answers 502, logged as a warning) when it leaves the upstream base (`[HSTL]`).
+- `bin/check-config.js`: the dnsLess shared-origin warning for the portal (`[CKPS1]`, `[CKPS2]`) and the clear-text
+  portal origin warning (`[CKPS3]`). `[ADMS28]`: a session call from the `portal.url` origin, and look-alikes.
 
 ## 2.0.0-rc.91 - 2026-11-27
 

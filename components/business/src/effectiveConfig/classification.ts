@@ -195,6 +195,10 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['hostedSites.*.hsts', P, p],
   ['portal.site', P, p],
   ['portal.cors.allowedOrigins', P, p],
+  ['portal.url', P, p],
+  ['portal.spaces', P, p],
+  ['portal.modules.disabled', P, p],
+  ['portal.modules.order', P, p],
   ['setup.codeTtlHours', P, p],
   // The hash of a high-entropy code cannot give the code back; still not shown.
   ['setup.codeHash', S, c],
@@ -203,6 +207,12 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['admin.session.ttlMinutes', P, p],
   ['admin.session.stepUpMinutes', P, p],
   ['admin.session.requireMfa', P, p],
+  // Each core decides for itself: differences between cores are expected.
+  ['admin.localPolicy.acceptReplicatedGrants', P, c],
+  ['admin.localPolicy.requireLocalScope', P, c],
+  ['admin.localPolicy.localGrants', P, c],
+  // Absent by default; capability names and key lists under it.
+  ['admin.lockdown.**', P, c],
   ['adapterRoutes', P, p],
   ['adapterRoutes.*.upstream', U, c],
   ['adapterRoutes.*.paths', P, p],
@@ -214,6 +224,7 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['platform.piiMode', P, p],
   ['platform.piiAlgorithm', P, p],
   ['platform.piiHmacKey', S, p],
+  ['platform.configPollSeconds', P, c],
 
   ['letsEncrypt.enabled', P, p],
   ['letsEncrypt.email', P, p],

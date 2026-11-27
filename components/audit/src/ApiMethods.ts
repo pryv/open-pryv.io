@@ -5,6 +5,17 @@
  * Refer to LICENSE file
  */
 import type {} from 'node:fs';
+import * as adminRoles from './apiMethods/adminRoles.ts';
+import * as adminAudit from './apiMethods/adminAudit.ts';
+import * as platformConfig from './apiMethods/platformConfig.ts';
+import * as adminOauth from './apiMethods/adminOauth.ts';
+
+/**
+ * Areas that declare their method ids in their own file (apiMethods/), joined
+ * into the three lists below: new ids of those areas go there, not here.
+ */
+const AREAS: ReadonlyArray<{ all: readonly string[]; notAudited: readonly string[]; withoutUser: readonly string[] }> =
+  [adminRoles, adminAudit, platformConfig, adminOauth];
 
 const ALL_METHODS = [
   'getAccessInfo',
@@ -128,6 +139,7 @@ const ALL_METHODS = [
   'system.roles.list',
   'system.roles.delete',
   'system.portalContext.get',
+  'system.portalSettings.get',
   // Those acts recorded in the acting administrator's own trail (emitted
   // directly via audit.eventForUser() when the account is on the core).
   'admin.role.created',
@@ -224,7 +236,8 @@ const ALL_METHODS = [
   // An account restored from a backup (bin/backup.js --restore): recorded in
   // the restored account's trail once the restore keeps it (business
   // src/auth/accountAudit.ts, RestoreOrchestrator.recordRestored).
-  'account.restored'
+  'account.restored',
+  ...AREAS.flatMap((a) => a.all)
 ];
 
 const NOT_AUDITED_METHODS = [
@@ -253,12 +266,14 @@ const NOT_AUDITED_METHODS = [
   // the unauthenticated lookup, like auth.cores
   'auth.extIdCores',
   // reads of the setup state, an administrator's own session, the role rows
-  // and the portal context, the setup checks summary
+  // and the portal context, the setup checks summary, the public portal settings
   'system.setup.getStatus',
   'system.setup.getChecks',
   'system.adminSession.get',
   'system.roles.list',
-  'system.portalContext.get'
+  'system.portalContext.get',
+  'system.portalSettings.get',
+  ...AREAS.flatMap((a) => a.notAudited)
 ];
 
 const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m));
@@ -303,7 +318,8 @@ const WITHOUT_USER_METHODS = [
   'oauth.client.metadata_fetched',
   'oauth.client.metadata_refused',
   // SSO refusals resolve no user (no-account / unproved email).
-  'sso.refused'
+  'sso.refused',
+  ...AREAS.flatMap((a) => a.withoutUser)
 ];
 
 const WITH_USER_METHODS = AUDITED_METHODS.filter(m => !WITHOUT_USER_METHODS.includes(m));

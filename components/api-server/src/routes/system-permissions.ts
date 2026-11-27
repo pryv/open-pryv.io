@@ -4,7 +4,12 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import type { AdminRouteRule } from 'middleware/src/adminAuth.ts';
+import type { SystemRouteEntry } from './systemRoutes/common.ts';
+import { KEY_ONLY, SESSION_ONLY, SETUP_ONLY, WITH_SETUP } from './systemRoutes/common.ts';
+import { ROLE_ROUTES } from './systemRoutes/roles.ts';
+import { AUDIT_ROUTES } from './systemRoutes/audit.ts';
+import { PLATFORM_CONFIG_ROUTES } from './systemRoutes/platformConfig.ts';
+import { OAUTH_ROUTES } from './systemRoutes/oauth.ts';
 
 /**
  * Every route under `/system` and what it accepts: the permission an
@@ -14,24 +19,18 @@ import type { AdminRouteRule } from 'middleware/src/adminAuth.ts';
  * reads this table; a test fails on a `/system` route without an entry, and on
  * an entry without a route.
  *
+ * The table is the main list below followed by one list per area, each in
+ * its own file under `systemRoutes/` (roles, audit, platform configuration,
+ * OAuth review). A route of an area goes in that area's list. The matcher
+ * takes the first entry that matches, in that order.
+ *
  * Break-glass routes: core to core, setup code, claim codes, role listing and
  * revocation, status. Core-to-core routes accept the admin key only.
  */
 
-export type SystemRouteEntry = {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  path: string;
-  /** The API method id, when the route has one. */
-  methodId: string | null;
-  rule: AdminRouteRule;
-};
+export type { SystemRouteEntry };
 
-const KEY_ONLY = ['key'] as const;
-const SESSION_ONLY = ['session'] as const;
-const SETUP_ONLY = ['setup'] as const;
-const WITH_SETUP = ['key', 'session', 'setup'] as const;
-
-export const SYSTEM_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
+const MAIN_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
   // --- accounts --- //
   { method: 'POST', path: '/system/create-user', methodId: 'system.createUser', rule: { auth: 'admin', permission: 'users:write' } },
   { method: 'GET', path: '/system/user-info/:username', methodId: 'system.getUserInfo', rule: { auth: 'admin', permission: 'users:read' } },
@@ -94,8 +93,17 @@ export const SYSTEM_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
   { method: 'GET', path: '/system/admin/roles', methodId: 'system.roles.list', rule: { auth: 'admin', permission: 'roles:read', breakGlass: true } },
   { method: 'DELETE', path: '/system/admin/roles/:userId', methodId: 'system.roles.delete', rule: { auth: 'admin', permission: 'roles:grant', breakGlass: true } },
   // --- portal --- //
-  { method: 'GET', path: '/system/admin/portal/context', methodId: 'system.portalContext.get', rule: { auth: 'admin', permission: null, breakGlass: true, accepts: WITH_SETUP } }
+  { method: 'GET', path: '/system/admin/portal/context', methodId: 'system.portalContext.get', rule: { auth: 'admin', permission: null, breakGlass: true, accepts: WITH_SETUP } },
+  { method: 'GET', path: '/system/portal/settings', methodId: 'system.portalSettings.get', rule: { auth: 'public' } }
 ] as SystemRouteEntry[]);
+
+export const SYSTEM_ROUTES: readonly SystemRouteEntry[] = Object.freeze([
+  ...MAIN_ROUTES,
+  ...ROLE_ROUTES,
+  ...AUDIT_ROUTES,
+  ...PLATFORM_CONFIG_ROUTES,
+  ...OAUTH_ROUTES
+]);
 
 type Compiled = { entry: SystemRouteEntry; segments: string[] };
 

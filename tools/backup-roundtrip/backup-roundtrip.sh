@@ -17,7 +17,8 @@
 #
 # ⚑ Destructive for the local dev data: each leg runs `just clean-test-data`
 # and the script temporarily replaces config/override-config.yml (restored on
-# exit). Needs PostgreSQL and rqlited running, like the test matrices; their
+# exit). Needs PostgreSQL running, like the test matrices, and starts this
+# checkout's rqlited when nothing answers on its port (scripts/test-rqlited); their
 # endpoints are read the way `just clean-test-data` reads them (environment
 # overrides, then config/test-config.yml), so both address the same instances.
 #
@@ -109,6 +110,7 @@ if ! (exec 3<>"/dev/tcp/$PG_HOST/$PG_PORT") 2>/dev/null; then
   echo "✗ PostgreSQL is not reachable at $PG_HOST:$PG_PORT"
   exit 1
 fi
+"$SC/scripts/test-rqlited" start || true
 if ! curl -s -o /dev/null "$RQLITE_URL/status"; then
   echo "✗ rqlited is not reachable at $RQLITE_URL"
   exit 1
@@ -325,6 +327,11 @@ run_leg () {
   cd "$SC"
   if ! just clean-test-data > "$BACKUP_DIR/clean-test-data.log" 2>&1; then
     echo "  ✗ just clean-test-data failed:"; tail -20 "$BACKUP_DIR/clean-test-data.log"; exit 1
+  fi
+  # The clean leaves this checkout's rqlited stopped; the master below uses it
+  # as an external rqlited.
+  if ! "$SC/scripts/test-rqlited" start >> "$BACKUP_DIR/clean-test-data.log" 2>&1; then
+    echo "  ✗ rqlited did not start:"; tail -20 "$BACKUP_DIR/clean-test-data.log"; exit 1
   fi
   cd "$SC"
 

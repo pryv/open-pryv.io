@@ -444,9 +444,15 @@ function buildSelectQuery (userId: string, params: Params): { sql: string, value
 
   if (params.options?.sort) {
     const sorts: string[] = [];
-    for (const [field, order] of Object.entries(params.options.sort) as Array<[string, number]>) {
+    const entries = Object.entries(params.options.sort) as Array<[string, number]>;
+    for (const [field, order] of entries) {
       sorts.push(`${toDBFieldName(field)} ${order > 0 ? 'ASC' : 'DESC'}`);
     }
+    // Records sharing a time: `eventid` in the same direction makes their order
+    // independent of the plan (pages read with skip neither repeat nor miss
+    // one); `idx_audit_time_id` (user_id, time, eventid) serves it as is.
+    const last = entries[entries.length - 1];
+    if (last != null && last[0] === 'time') sorts.push(`eventid ${last[1] > 0 ? 'ASC' : 'DESC'}`);
     sql += ' ORDER BY ' + sorts.join(', ');
   }
   if (params.options?.limit) sql += ' LIMIT ' + parseInt(String(params.options.limit));

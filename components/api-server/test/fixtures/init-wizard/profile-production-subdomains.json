@@ -67,7 +67,7 @@
       "filesReadTokenSecret": "<secret>",
       "passwordResetPageURL": "https://account.pryv.me/reset-password",
       "emailVerificationPageURL": "https://account.pryv.me/verify-email",
-      "trustedApps": "*@https://core.example.invalid, *@https://account.pryv.me, *@https://reg.example.invalid, *@https://access.example.invalid"
+      "trustedApps": "*@https://core.example.invalid, *@https://account.pryv.me, *@https://reg.example.invalid, *@https://access.example.invalid, pryv-platform-portal@https://admin.example.invalid"
     },
     "access": {
       "defaultAuthUrl": "https://account.pryv.me/auth"
@@ -142,7 +142,7 @@
     },
     "hostedSites": {
       "admin": {
-        "proxy": "https://pryv.github.io/app-web-platform-portal/0.1.0/root/",
+        "proxy": "https://pryv.github.io/app-web-platform-portal/0.1.0/",
         "headers": {
           "content-security-policy": "default-src 'self'; connect-src 'self' https://*.example.invalid; object-src 'none'; base-uri 'self'; form-action 'self'"
         }

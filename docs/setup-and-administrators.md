@@ -96,6 +96,7 @@ checked against `auth.trustedApps` as any other.
 | `GET /system/admin/roles` | `roles:read` or admin key |
 | `DELETE /system/admin/roles/:userId[?role=&scope=]` | `roles:grant` (step-up) or admin key |
 | `GET /system/admin/portal/context` | any administrator subject |
+| `GET /system/portal/settings` | none; answers `{ contract, spaces, modules: { disabled, order } }` from `portal.*` |
 
 A refused credential answers 404, as an unknown route does. A personal token is valid on its account's home core
 only: elsewhere these routes answer an error naming the home core's URL. An app or shared access of an
@@ -120,9 +121,15 @@ must have passed its second factor: the home core records, at `mfa.verify`, the 
 sign-in in its local memory (one entry per account, lost at a restart: the administrator then signs in again).
 
 **Origin rule.** A call to `/system/*` that carries an `Origin` and is not authenticated by the admin key is
-accepted only from the core's own origin, the portal's origin (from `portal.site` and the topology) or one listed
+accepted only from the core's own origin, the portal's origin (from `portal.site` and the topology, or
+`portal.url`) or one listed
 in `portal.cors.allowedOrigins`, and gets CORS headers for that origin only. Admin-key calls and calls without
 `Origin` keep the API-wide behaviour.
+
+**dnsLess and other hosted sites.** In dnsLess every hosted site is served on the API's origin, the portal's
+too, and the portal keeps the administrator session in that origin's `sessionStorage`: a page of another hosted
+site can read it. Host there only sites you would trust with an administrator session, or use the DNS topology,
+where each site has its own origin. `bin/check-config.js` warns when the portal shares its origin this way.
 
 ## Claim codes and roles
 
@@ -179,7 +186,11 @@ runs on; give the user id for an account of another core.
 | Key | Category | Default | Meaning |
 |---|---|---|---|
 | `portal.site` | platform-wide | `null` | the hosted site that is the portal (the wizard writes `admin`) |
+| `portal.url` | platform-wide | `null` | address of a portal hosted outside the platform (instead of `portal.site`) |
 | `portal.cors.allowedOrigins` | platform-wide | `[]` | origins of a portal hosted outside the platform |
+| `portal.spaces` | platform-wide | `[admin, developer]` | the portal spaces offered |
+| `portal.modules.disabled` | platform-wide | `[]` | portal module ids switched off |
+| `portal.modules.order` | platform-wide | `[]` | portal module ids listed first, in this order |
 | `setup.codeTtlHours` | platform-wide | `24` | lifetime of a setup code |
 | `setup.codeHash` | bootstrap | `null` | SHA-256 of a setup code chosen by the deployer |
 | `setup.printCode` | per-core | `true` | print the setup code block at boot |
@@ -189,7 +200,15 @@ runs on; give the user id for an account of another core.
 | `admin.session.stepUpMinutes` | platform-wide | `5` | how recent the second factor must be for a sensitive act |
 | `admin.session.requireMfa` | platform-wide | `true` | administrators need MFA whenever `services.mfa` is on |
 
-`bin/check-config.js` and the boot check these keys (`portal.site` must name a configured hosted site).
+`bin/check-config.js` and the boot check these keys (`portal.site` must name a configured hosted site, and is not
+set together with `portal.url`). Service info (`/service/info`, `/reg/service/info`) carries
+`portal: { contract, url }` when either gives the portal an address.
+
+The portal signs in with the app id `pryv-platform-portal`: `auth.trustedApps` must accept it from the portal's
+origin. The install wizard adds `pryv-platform-portal@<portal origin>` when it writes a `portal.site` entry; with
+`portal.url`, add `pryv-platform-portal@<origin of portal.url>` yourself, or the portal's sign-in is refused.
+`bin/check-config.js` warns when `portal.url` or an origin of `portal.cors.allowedOrigins` uses `http:` on another
+host than a loopback address.
 
 ## Audit
 
