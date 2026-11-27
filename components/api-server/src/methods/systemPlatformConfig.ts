@@ -16,7 +16,7 @@ import type { ScopedConfig, Entry, KeyDef, KvStore, UpdatedBy } from 'business/s
 import { reloadAfterWrite, coreIdOf } from 'business/src/platformConfig/boot.ts';
 import { readAdminConfig } from 'business/src/admin/config.ts';
 import { isStepUpFresh } from 'business/src/admin/sessions.ts';
-import { lockdownView } from 'business/src/admin/lockdown.ts';
+import { lockdownView, lockdownRefusal } from 'business/src/admin/lockdown.ts';
 import { fingerprint, fingerprintKey } from 'business/src/effectiveConfig/redact.ts';
 import { factory as errors } from 'errors';
 import { ready, getLogger } from '@pryv/boiler';
@@ -184,6 +184,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (!Object.prototype.hasOwnProperty.call(params, 'value')) {
         return errors.invalidParametersFormat('The body must be `{ "value": ... }`.', { key });
       }
+      // The key's own capability (the lockdown step checked `config` and the read-only keys).
+      const locked = lockdownRefusal(config, def.capability);
+      if (locked != null) return locked;
       if (stepUpMissing(def, context.adminSubject)) return errors.forbidden(STEP_UP_MESSAGE, { stepUp: true });
       let written;
       try {
@@ -209,6 +212,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const def = keyDef(key);
       // A key this release does not know (a stale row, or a key of a newer
       // release during an upgrade) is treated as sensitive.
+      const locked = lockdownRefusal(config, (def ?? UNKNOWN_KEY_DEF).capability);
+      if (locked != null) return locked;
       if (stepUpMissing(def ?? UNKNOWN_KEY_DEF, context.adminSubject)) return errors.forbidden(STEP_UP_MESSAGE, { stepUp: true });
       let removed;
       try {

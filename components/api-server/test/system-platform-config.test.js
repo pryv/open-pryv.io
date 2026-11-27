@@ -29,6 +29,8 @@ const platformConfig = require('business/src/platformConfig/index.ts');
 const MIN = 60 * 1000;
 const TEST_SCHEMA = Object.freeze({
   ...platformConfig.SCHEMA,
+  // A key of another capability than `config` (none in the release yet).
+  'test-only.dnsLabel': { schema: { type: 'string', maxLength: 20 }, appliesAt: 'live', sensitive: false, capability: 'dns' },
   'auth.passwordComplexityMinLength': { schema: { type: 'integer', minimum: 4, maximum: 64 }, appliesAt: 'live', sensitive: true, capability: 'config' }
 });
 const BASE = '/system/admin/platform-config';
@@ -235,6 +237,35 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
     assert.equal((await put('service.name', { value: 'x' }, auth)).status, 404);
     assert.equal((await coreRequest.delete(BASE + '/service.name').set('authorization', auth)).status, 404);
     assert.deepEqual(await platformConfig.listEntries(db), []);
+  });
+
+  it('[SYPC10] lockdown: a read-only key, or a key whose own capability is locked, cannot be written; reads still work', async () => {
+    await withInjectedConfig({ admin: { lockdown: { capabilities: { dns: 'readonly' }, platformConfig: { readonly: ['service.name'] } } } }, async () => {
+      const key = await put('service.name', { value: 'Locked' });
+      assert.equal(key.status, 403, JSON.stringify(key.body));
+      assert.equal(key.body.error.id, 'admin-lockdown-key');
+      assert.equal((await coreRequest.delete(BASE + '/service.name').set('authorization', adminKey)).status, 403);
+      const cap = await put('test-only.dnsLabel', { value: 'x' });
+      assert.equal(cap.status, 403, JSON.stringify(cap.body));
+      assert.equal(cap.body.error.id, 'admin-lockdown-capability');
+      assert.equal(cap.body.error.data.capability, 'dns');
+      assert.equal((await put('service.home', { value: 'https://open.example.com' })).status, 200, 'another key stays editable');
+      const list = await coreRequest.get(BASE).set('authorization', adminKey);
+      assert.equal(list.status, 200);
+      const locked = Object.fromEntries(list.body.entries.map((e) => [e.key, e.locked]));
+      assert.deepEqual({ name: locked['service.name'], dns: locked['test-only.dnsLabel'], home: locked['service.home'] }, { name: true, dns: true, home: false });
+    });
+    assert.equal(await platformConfig.getEntry(db, 'service.name'), null);
+    assert.equal(await platformConfig.getEntry(db, 'test-only.dnsLabel'), null);
+  });
+
+  it('[SYPC11] the key is taken as Express decodes it, once, with its case: other forms are unknown keys', async () => {
+    for (const variant of ['service%252Ename', 'Service.Name', 'SERVICE.NAME', 'service.name%20', 'service%2Fname']) {
+      assert.equal((await put(variant, { value: 'x' })).status, 404, variant);
+      assert.equal((await coreRequest.delete(BASE + '/' + variant).set('authorization', adminKey)).status, 404, variant);
+    }
+    assert.equal((await put('service%2Ename', { value: 'Encoded dot' })).status, 200, 'one encoding is the key itself');
+    assert.equal((await platformConfig.getEntry(db, 'service.name')).value, 'Encoded dot');
   });
 
   // The command-line tool runs in its own process, with the release's schema

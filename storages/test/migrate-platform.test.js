@@ -83,6 +83,8 @@ describe('[MPKV] bin/migrate-platform.js: every platform row family', function (
     await db.setPlatformKv('platform-config/service.name', JSON.stringify({ value: 'Name ' + suffix, updatedAt: now, updatedBy: { kind: 'cli', coreId: 'core-a' } }));
     await db.setPlatformKv('platform-config-rev', '3');
     await db.setPlatformKv('core-config-rev/core-a', JSON.stringify({ rev: 3, at: now }));
+    // A core's lockdown digest (drift warning).
+    await db.setPlatformKv('admin-lockdown-hash/core-a', JSON.stringify({ digest: 'd'.repeat(64), at: now }));
     // Typed families keep working alongside.
     await db.setUserUniqueField('user-' + suffix, 'email', suffix + '@example.com');
     await db.setUserCore('user-' + suffix, 'core-a');
@@ -100,7 +102,7 @@ describe('[MPKV] bin/migrate-platform.js: every platform row family', function (
   it('[MPK1] rqlite -> postgresql -> rqlite keeps every row, values unchanged', async () => {
     await seed(rq);
     const source = await allRows(rq);
-    assert.strictEqual(source.length, 20);
+    assert.strictEqual(source.length, 21);
 
     await migrate(rq, pg, { dryRun: false, force: false, log: quiet().log });
     assert.deepStrictEqual(await allRows(pg), source);
@@ -152,14 +154,15 @@ describe('[MPKV] bin/migrate-platform.js: every platform row family', function (
       'setup/': 1,
       'admin-role/': 1,
       'platform-config/': 1,
-      'core-config-rev/': 1
+      'core-config-rev/': 1,
+      'admin-lockdown-hash/': 1
     };
     for (const [family, count] of Object.entries(expected)) {
       assert.match(text, new RegExp('would migrate +' + count + ' {2}platform rows ' + family + '$', 'm'), family);
     }
     // lone-key-<suffix> and platform-config-rev
     assert.match(text, /would migrate +2 {2}platform rows \(other keys\)$/m);
-    assert.match(text, /20 record\(s\) would be migrated/);
+    assert.match(text, /21 record\(s\) would be migrated/);
   });
 
   it('[MPK4] a fresh target is accepted; the engine\'s own schema marker is neither counted nor copied', async () => {

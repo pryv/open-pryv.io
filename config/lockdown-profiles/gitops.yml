@@ -18,7 +18,7 @@ admin:
       bootstrap: hidden
     platformConfig:
       readonly:
-        - service.assets
+        - service.assets.definitions
         - service.eventTypes
         - service.home
         - service.name

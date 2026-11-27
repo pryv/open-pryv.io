@@ -100,6 +100,10 @@ describe('[PLCS] platform configuration schema', function () {
     }
   });
 
+  it('[PLCS7] no schema key is an administration or authentication setting (admin.*, auth.*): the store scope outranks the files', () => {
+    for (const key of Object.keys(SCHEMA)) assert.ok(!/^(admin|auth)\./.test(key), key);
+  });
+
   it('[PLCS6] value schemas are bounded and closed', () => {
     for (const [key, def] of Object.entries(SCHEMA)) assert.deepEqual(boundedSchemaProblems(def.schema), [], 'schema of ' + key);
     // the check itself

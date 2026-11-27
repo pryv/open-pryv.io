@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 import { APIError } from 'errors';
 import { CAPABILITY_NAMES } from './capabilities.ts';
+import { SCHEMA } from '../platformConfig/schema.ts';
 
 /**
  * This core's lockdown (`admin.lockdown`, per-core YAML, never in the
@@ -167,10 +168,10 @@ export function parseLockdown (raw: unknown, schemaKeys: ReadonlySet<string> | n
 
 /**
  * The platform configuration keys the store may hold in this release (the
- * keys of the platform configuration schema). Null: not known in this
- * build, so `platformConfig.readonly` keys are checked for their form only.
+ * keys of the platform configuration schema): `platformConfig.readonly`
+ * keys are checked against them.
  */
-const PLATFORM_CONFIG_KEYS: ReadonlySet<string> | null = null;
+const PLATFORM_CONFIG_KEYS: ReadonlySet<string> = new Set(Object.keys(SCHEMA));
 
 // --- Reading, cached per configuration object --- //
 
