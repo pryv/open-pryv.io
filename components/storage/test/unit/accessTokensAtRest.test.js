@@ -405,6 +405,25 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       }
     });
 
+    it('[TKMG7] PostgreSQL: a clear row duplicating the token of a protected live access is left in clear, the others converted', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const token = 'tkmg7-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      const b = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkmg7-b-' + cuid() }));
+      const c = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkmg7-c-' + cuid() }));
+      await rawWrite(userId, b.id, { token, tokenHash: null, tokenEnc: null });
+      await rawWrite(userId, c.id, { token: c.token, tokenHash: null, tokenEnc: null });
+      try {
+        const res = await tokensAtRest().protectTokensAtRest();
+        assert.strictEqual(res.accessesSkipped, 1, JSON.stringify(res));
+        assert.strictEqual((await rawAccess(userId, b.id)).token, token);
+        assert.strictEqual((await rawAccess(userId, c.id)).token, null);
+        assert.strictEqual((await call(accesses, 'findOne', userId, { token }, null)).id, a.id);
+      } finally {
+        await call(accesses, 'removeOne', userId, { id: b.id });
+      }
+    });
+
     it('[TKMG6] PostgreSQL: idx_access_token is gone, idx_access_token_hash is there', async function () {
       if (engine !== 'postgresql') this.skip();
       const res = await storages.databasePG.query('SELECT indexname, indexdef FROM pg_indexes WHERE tablename = \'accesses\'');

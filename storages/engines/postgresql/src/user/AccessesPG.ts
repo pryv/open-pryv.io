@@ -506,13 +506,52 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
 
   /**
    * Protect every row still holding a clear token (live, deleted, history):
-   * hash, seal and scrub in one compare-and-set statement per row, so a crash
-   * leaves each row either old or new and a re-run continues. The clear value
+   * hash, seal and scrub in one compare-and-set statement per batch of rows
+   * (on the clear value of each), so a crash leaves each row either old or
+   * new and a re-run continues; a batch meeting a duplicate falls back to row
+   * by row, the duplicate left in clear. The clear value
    * is authoritative: a hash already on such a row (written by a previous
    * image after a rollback) is replaced. Idempotent.
    */
   async protectClearRows (): Promise<TokenPassResult> {
-    const result = await this._eachTokenRow('token IS NOT NULL', async (row) => {
+    const result: TokenPassResult = { rows: 0, skipped: 0 };
+    for (;;) {
+      // Converted rows leave the selection: always the first batch.
+      const res = await this.db.query(
+        'SELECT user_id, id, token FROM accesses WHERE token IS NOT NULL ORDER BY user_id, id LIMIT $1', [RECOMPUTE_BATCH_SIZE]);
+      if (res.rows.length === 0) break;
+      const pairs = res.rows.map((row) => this.protectedColumns(row.user_id as string, row.token as string));
+      try {
+        // One statement per batch, compare-and-set on the clear value of each row.
+        const upd = await this.db.query(
+          'UPDATE accesses a SET token_hash = v.h, token_enc = v.e, token = NULL ' +
+          'FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[]) AS v(uid, id, tok, h, e) ' +
+          'WHERE a.user_id = v.uid AND a.id = v.id AND a.token = v.tok',
+          [res.rows.map((r) => r.user_id), res.rows.map((r) => r.id), res.rows.map((r) => r.token),
+            pairs.map((p) => p.token_hash), pairs.map((p) => p.token_enc)]);
+        result.rows += upd.rowCount;
+        // Nothing matched (rows changed meanwhile): no progress to expect here.
+        if (upd.rowCount === 0) break;
+      } catch (err) {
+        if ((err as { code?: string }).code !== '23505') throw err;
+        // A duplicate in the batch: row by row, the duplicate left in clear.
+        const one = await this._protectClearRowsOneByOne();
+        result.rows += one.rows;
+        result.skipped += one.skipped;
+        break;
+      }
+      if (res.rows.length < RECOMPUTE_BATCH_SIZE) break;
+    }
+    if (result.rows > 0 || result.skipped > 0) {
+      logger.info('access tokens at rest: ' + result.rows + ' access rows protected' +
+        (result.skipped > 0 ? ', ' + result.skipped + ' left unconverted' : ''));
+    }
+    return result;
+  }
+
+  /** Row-by-row conversion: a row whose token another live access holds stays in clear. */
+  async _protectClearRowsOneByOne (): Promise<TokenPassResult> {
+    return await this._eachTokenRow('token IS NOT NULL', async (row) => {
       const cols = this.protectedColumns(row.user_id as string, row.token as string);
       try {
         const upd = await this.db.query(
