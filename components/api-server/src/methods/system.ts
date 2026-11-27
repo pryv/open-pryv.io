@@ -149,6 +149,14 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (entry == null) {
         return next(errors.unknownResource('access', params.accessId));
       }
+      // The index is platform-wide; an administrator session reads the
+      // accesses of this core's accounts only (its grant may cover this core
+      // alone). The admin key keeps the platform-wide read.
+      if ((context as { adminSubject?: { kind?: string } }).adminSubject?.kind === 'session' && !platform.isSingleCore) {
+        const stored = entry.usernameToken ?? entry.username;
+        const holderCore = typeof stored === 'string' ? await platform.getUserCoreByPreHashedUsername(stored) : null;
+        if (holderCore !== platform.coreId) return next(errors.unknownResource('access', params.accessId));
+      }
       const out: Record<string, unknown> = { ...entry };
       // Hashed mode: the row holds a usernameToken, not a plaintext username.
       // Surface the owning core so the responder can recover the plaintext

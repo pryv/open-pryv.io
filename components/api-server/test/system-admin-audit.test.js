@@ -243,6 +243,74 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     });
   });
 
+  describe('[SYAS] an administrator session acts on this core\'s accounts only; the admin key as before', function () {
+    let platform;
+    const SLUG = cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8);
+    const foreign = 'syaufr' + SLUG;
+    const OTHER_CORE = 'syau-other-' + SLUG;
+    // Platform rows of names with no account here: removed within each test,
+    // before the integrity check of the next one.
+    let cleanups = [];
+
+    before(function () {
+      platform = require('platform').platform;
+    });
+
+    afterEach(async function () {
+      for (const fn of cleanups.reverse()) {
+        try { await fn(); } catch (_e) { /* best-effort */ }
+      }
+      cleanups = [];
+    });
+
+    it('[SYAS1] PUT /system/users: 404 for a name with no account on this core (its platform rows untouched); the key still writes; a local account is changed', async () => {
+      const email = 'syau-' + SLUG + '@example.com';
+      assert.ok(await platform.setUserUniqueFieldIfNotExists(foreign, 'email', email), 'a row of an account elsewhere');
+      cleanups.push(() => platform.deleteUser(foreign, null));
+      const token = await ownerSession(await freshUser('syaus'));
+      const res = await coreRequest.put('/system/users').set(asSession(token)).send({ username: foreign, fieldsToDelete: { email } });
+      assert.equal(res.status, 404, JSON.stringify(res.body));
+      assert.equal(await platform.getUsersUniqueField('email', email), platform.hashFor('username', foreign), 'the row is untouched');
+      const byKey = await coreRequest.put('/system/users').set('authorization', adminKey).send({ username: foreign, user: {} });
+      assert.equal(byKey.status, 200, 'the admin key keeps the platform-wide write: ' + JSON.stringify(byKey.body));
+      const local = await freshUser('syaul');
+      const ok = await coreRequest.put('/system/users').set(asSession(token)).send({ username: local.username, user: {} });
+      assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    });
+
+    it('[SYAS2] POST /system/users/validate: a session naming another core is refused before anything is reserved', async () => {
+      const token = await ownerSession(await freshUser('syauv'));
+      const name = 'syauvl' + SLUG;
+      const res = await coreRequest.post('/system/users/validate').set(asSession(token)).send({ username: name, core: OTHER_CORE, uniqueFields: {} });
+      assert.equal(res.status, 400, JSON.stringify(res.body));
+      assert.equal(res.body.reservation, false);
+      assert.equal(res.body.error.id, 'invalid-parameters-format');
+      assert.equal(await platform.getUsersUniqueField('username', name), null, 'nothing reserved');
+      assert.equal(await platform.getUserCore(name), null, 'no routing row');
+    });
+
+    it('[SYAS3] GET /system/accesses/:id: on a multi-core platform a session reads only the accesses of this core\'s accounts; the key reads any', async () => {
+      const accessIndex = require('platform/src/accessIndex.ts');
+      const holder = 'syauax' + SLUG;
+      const aid = 'syauacc' + cuid();
+      await accessIndex.putAccessIndex(platform, holder, { id: aid, type: 'app', expires: null, created: 1700000000, modified: 1700000100 });
+      cleanups.push(() => platform.deletePlatformKv('access-index/' + aid));
+      await platform.setUserCore(holder, OTHER_CORE);
+      cleanups.push(() => platform.deleteUserCore(holder));
+      const token = await ownerSession(await freshUser('syaua'));
+      Object.defineProperty(platform, 'isSingleCore', { configurable: true, get: () => false });
+      try {
+        assert.equal((await coreRequest.get('/system/accesses/' + aid).set(asSession(token))).status, 404, 'held on another core');
+        assert.equal((await coreRequest.get('/system/accesses/' + aid).set('authorization', adminKey)).status, 200, 'the key reads it');
+        await platform.setUserCore(holder, platform.coreId);
+        assert.equal((await coreRequest.get('/system/accesses/' + aid).set(asSession(token))).status, 200, 'held on this core');
+      } finally {
+        delete platform.isSingleCore;
+      }
+      assert.equal(platform.isSingleCore, true, 'single-core again');
+    });
+  });
+
   it('[SYAU7] GET /system/admin/users: unchanged without paging (plus total), paged by limit, skip and username prefix', async () => {
     const prefix = 'syaupg' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(-5);
     const created = [];

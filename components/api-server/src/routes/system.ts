@@ -53,6 +53,11 @@ function setAdminAct (res: Response, act: { target?: Record<string, string | und
   if (res.locals.adminContext != null) setAuditDetails(res.locals.adminContext, { target: next.target as Record<string, string> | undefined, diff: next.diff as Record<string, unknown> | undefined });
 }
 
+/** Whether the /system gate authenticated an administrator session (not the admin key, not a setup session). */
+function isAdminSession (req: PryvRequest): boolean {
+  return (req as PryvRequest & { adminSubject?: { kind?: string } }).adminSubject?.kind === 'session';
+}
+
 /** The account an act changed, when it is on this core: the act is also recorded in its own trail. */
 async function noteTargetAccount (res: Response, username: unknown, action: string): Promise<void> {
   if (typeof username !== 'string') return;
@@ -436,6 +441,12 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
 
+      // An administrator session reserves names for this core only (its grant
+      // may cover this core alone); the admin key may name any core.
+      if (isAdminSession(req) && req.body.core != null && req.body.core !== platform.coreId) {
+        return res.status(400).json({ reservation: false, error: { id: 'invalid-parameters-format', message: 'an administrator session reserves a username for this core only: leave `core` out or name this core' } });
+      }
+
       // 1. Check invitation token via Platform (PlatformDB + config fallback)
       const isTokenValid = await platform.isInvitationTokenValid(invitationToken);
       if (!isTokenValid) {
@@ -555,6 +566,15 @@ export default function system (expressApp: Application, app: { systemAPI: { cal
       setAdminAct(res, { target: { username: shortText(username) }, diff: { updated: names(fieldsForUpdate), deleted: names(fieldsToDelete) } });
       if (!username) {
         return next(errors.invalidParametersFormat('Missing username'));
+      }
+      // An administrator session changes the platform rows of this core's
+      // accounts only (its grant may cover this core alone); the admin key
+      // keeps the platform-wide write.
+      if (isAdminSession(req)) {
+        const { getUsersRepository } = require('business/src/users/index.ts');
+        if (typeof username !== 'string' || !await (await getUsersRepository()).usernameExists(username)) {
+          return next(errors.unknownResource('user', typeof username === 'string' ? username : undefined));
+        }
       }
       const { getPlatform } = require('platform');
       const platform = await getPlatform();
