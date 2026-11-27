@@ -637,6 +637,13 @@ class DBpostgresql {
     return (res.rowCount ?? 0) > 0;
   }
 
+  async replacePlatformKvIfValue (key: string, expected: string, next: string | null): Promise<boolean> {
+    const res = next == null
+      ? await this.db.query('DELETE FROM platform_kv WHERE key = $1 AND value = $2', [key, expected])
+      : await this.db.query('UPDATE platform_kv SET value = $3 WHERE key = $1 AND value = $2', [key, expected, next]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async getPlatformKv (key: string): Promise<string | null> {
     return await this.#get(key);
   }

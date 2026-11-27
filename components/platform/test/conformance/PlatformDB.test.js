@@ -1178,6 +1178,25 @@ export default function conformanceTests (getDB) {
         assert.strictEqual(await db.getPlatformKv(raced), values[results.indexOf(true)]);
       });
 
+      it('[PLKV14] replacePlatformKvIfValue changes or deletes a row only when it holds the expected value; of concurrent writers exactly one wins', async () => {
+        const key = 'plkv-cas/' + cuid();
+        assert.strictEqual(await db.replacePlatformKvIfValue(key, 'x', 'y'), false, 'no row');
+        assert.strictEqual(await db.getPlatformKv(key), null, 'nothing inserted');
+        await db.setPlatformKv(key, 'v1');
+        assert.strictEqual(await db.replacePlatformKvIfValue(key, 'stale', 'v2'), false);
+        assert.strictEqual(await db.getPlatformKv(key), 'v1');
+        assert.strictEqual(await db.replacePlatformKvIfValue(key, 'v1', 'v2'), true);
+        assert.strictEqual(await db.getPlatformKv(key), 'v2');
+        const values = ['a', 'b', 'c', 'd', 'e'];
+        const results = await Promise.all(values.map((v) => db.replacePlatformKvIfValue(key, 'v2', v)));
+        assert.strictEqual(results.filter(Boolean).length, 1);
+        assert.strictEqual(await db.getPlatformKv(key), values[results.indexOf(true)]);
+        const current = await db.getPlatformKv(key);
+        assert.strictEqual(await db.replacePlatformKvIfValue(key, 'stale', null), false);
+        assert.strictEqual(await db.replacePlatformKvIfValue(key, current, null), true);
+        assert.strictEqual(await db.getPlatformKv(key), null, 'deleted');
+      });
+
       it('[PLKV09] platform-kv keyspace isolated from access-state / user-core', async () => {
         const suffix = cuid();
         const kvKey = 'iso-plkv/' + suffix;

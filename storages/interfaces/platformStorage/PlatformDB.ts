@@ -301,6 +301,14 @@ export interface PlatformDB {
    * exactly ONE gets true. For first-writer-wins indefinite state.
    */
   setPlatformKvIfAbsent (key: string, value: string): Promise<boolean>;
+  /**
+   * ATOMIC compare-and-set: replace the row's value by `next` (or delete the
+   * row when `next` is null) ONLY when it currently holds exactly `expected`,
+   * in one linearized statement. True when this call changed the row.
+   * Concurrent callers expecting the same value: exactly ONE gets true. For
+   * read-modify-write updates of indefinite state (retry on false).
+   */
+  replacePlatformKvIfValue (key: string, expected: string, next: string | null): Promise<boolean>;
   getPlatformKv (key: string): Promise<string | null>;
   deletePlatformKv (key: string): Promise<void>;
   listPlatformKvKeys (prefix: string): Promise<string[]>;
@@ -474,6 +482,8 @@ const PlatformDB: PlatformDB = {
   async setPlatformKv (key: string, value: string): Promise<void> { throw new Error('Not implemented'); },
 
   async setPlatformKvIfAbsent (key: string, value: string): Promise<boolean> { throw new Error('Not implemented'); },
+
+  async replacePlatformKvIfValue (key: string, expected: string, next: string | null): Promise<boolean> { throw new Error('Not implemented'); },
 
   async getPlatformKv (key: string): Promise<string | null> { throw new Error('Not implemented'); },
 
