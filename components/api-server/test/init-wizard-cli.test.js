@@ -108,7 +108,8 @@ function snapshotOf (configDir) {
     }
     return v;
   };
-  const files = listTree(configDir).filter((f) => f !== 'answers.yml');
+  // `ca.srl` (the CA's serial file) is written by some OpenSSL versions only.
+  const files = listTree(configDir).filter((f) => f !== 'answers.yml' && !f.endsWith('/ca.srl'));
   const launchers = {};
   for (const f of ['run-pryv.sh', 'check-config.sh', 'config-to-env.sh']) {
     if (fs.existsSync(path.join(configDir, f))) launchers[f] = fs.readFileSync(path.join(configDir, f), 'utf8').split(configDir).join('<DIR>');
