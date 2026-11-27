@@ -21,7 +21,7 @@ const { runDeletionTeardownSteps, runDeletionGuards } = require('business/src/au
 const { storedWebhookIds, signalWebhooksStopped } = require('business/src/webhooks/accountSignals.ts') as typeof import('../webhooks/accountSignals.ts');
 const errors = require('errors').factory;
 const cache = require('cache').default;
-const isAdminKey = require('middleware/src/isAdminKey.ts').default;
+const { isAdminKeyInFullScope } = require('middleware/src/isAdminKey.ts');
 const { getLogger } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
@@ -121,7 +121,7 @@ class Deletion {
   async checkIfAuthorized (context: MethodContext, params: Record<string, unknown>, result: ResultBag, next: Next) {
     const canDelete = this.config.get('user-account:delete') as string[];
     if (canDelete.includes('adminToken')) {
-      if (isAdminKey(context.authorizationHeader, this.config.get('auth:adminAccessKey'))) {
+      if (isAdminKeyInFullScope(context.authorizationHeader, this.config)) {
         context.deletionByAdmin = true;
         return setAdminAuditAccessId(context, params, result, next);
       }

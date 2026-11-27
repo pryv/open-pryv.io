@@ -45,6 +45,10 @@ const { passwordIpRefusal, countPasswordIpFailure } = require('business/src/auth
 const { createAccountAttemptThrottle } = require('../helpers/accountAttemptThrottle.ts') as typeof import('../helpers/accountAttemptThrottle.ts');
 
 const MFA_PROFILE_ID = 'private';
+const { readSetupState } = require('business/src/admin/setupState.ts');
+const { readSetupSession } = require('business/src/admin/sessions.ts');
+/** App id of the built-in setup page (routes/setup-page/setup.js). */
+const SETUP_PAGE_APP_ID = 'pryv-setup-page';
 
 // Refused logins of an enrolled user whose method is not active are logged at
 // most once per user per window, per process, so a client retrying in a loop
@@ -88,10 +92,31 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   });
   const passwordAttemptsCfg = () => normalizePasswordAttempts(config.get('auth:passwordAttempts'));
 
+  const trustedAppCheck = commonFns.getTrustedAppCheck(getAuth);
+  /**
+   * `auth.trustedApps` decides which app may sign in from which origin; the
+   * built-in setup page of this core is trusted on top of it, narrowly: app
+   * id `pryv-setup-page`, a request from this core's own origin (the route
+   * sets `setupPageOrigin`) carrying a valid setup session while setup is
+   * pending. Its origin (the bare IP, a core host) is often not in the list
+   * at first boot.
+   */
+  async function trustedAppOrSetupPage (context: MethodContext, params: { appId?: string; origin?: string }, result: ResultBag, next: Next) {
+    try {
+      if (params.appId === SETUP_PAGE_APP_ID && context.setupPageOrigin === true && typeof context.setupSessionToken === 'string') {
+        const db = require('storages').platformDB;
+        if ((await readSetupState(db))?.state === 'pending' && (await readSetupSession(db, context.setupSessionToken)) != null) return next();
+      }
+    } catch (err) {
+      return next(errors.unexpectedError(err));
+    }
+    trustedAppCheck(context, params, result, next);
+  }
+
   api.register('auth.login',
     commonFns.refuseGenericDispatch,
     commonFns.getParamsValidation(methodsSchema.login.params),
-    commonFns.getTrustedAppCheck(getAuth),
+    trustedAppOrSetupPage,
     applyPrerequisitesForLogin,
     checkPassword,
     mfaResolveForLogin,

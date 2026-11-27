@@ -1,0 +1,33 @@
+:root { color-scheme: light dark; --fg: #1d2329; --muted: #5b6670; --line: #d3d9de; --accent: #1f5fa8; --bad: #a3261f; --warn: #8a5a00; --ok: #22663a; --bg: #ffffff; --panel: #f4f6f8; }
+@media (prefers-color-scheme: dark) {
+  :root { --fg: #e6e9ec; --muted: #9aa5ae; --line: #38424b; --accent: #7fb0ea; --bad: #f08a83; --warn: #e7b85c; --ok: #7fcf98; --bg: #15191d; --panel: #1e2328; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 44rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.15rem; margin: 0 0 .5rem; }
+.lead { color: var(--muted); }
+.note { font-size: .9rem; color: var(--muted); border-left: 3px solid var(--line); padding-left: .75rem; }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 1rem 1.25rem; margin: 1.25rem 0; }
+label { display: block; font-weight: 600; margin: .75rem 0 .25rem; }
+input { width: 100%; padding: .5rem .6rem; font: inherit; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+button { margin-top: 1rem; padding: .5rem 1rem; font: inherit; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+button:disabled { opacity: .6; cursor: wait; }
+.tabs { display: flex; gap: .5rem; }
+.tab { background: transparent; color: var(--accent); border: 1px solid var(--accent); margin-top: 0; }
+.tab.active { background: var(--accent); color: #fff; }
+.message { border-radius: 6px; padding: .75rem 1rem; border: 1px solid var(--bad); color: var(--bad); }
+.message.info { border-color: var(--ok); color: var(--ok); }
+.checks { list-style: none; padding: 0; margin: 0; }
+.checks li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+.checks .status { display: inline-block; min-width: 5.5rem; font-weight: 700; font-size: .8rem; text-transform: uppercase; }
+.checks .ok { color: var(--ok); }
+.checks .info { color: var(--muted); }
+.checks .warn { color: var(--warn); }
+.checks .blocking { color: var(--bad); }
+.checks .detail { display: block; color: var(--muted); font-size: .9rem; }
+code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .9rem; overflow-wrap: anywhere; }
+pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .75rem; white-space: pre-wrap; }
+dl.secret dt { font-weight: 600; margin-top: .5rem; }
+dl.secret dd { margin: 0; }

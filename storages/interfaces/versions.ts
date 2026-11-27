@@ -17,7 +17,7 @@
 const INTERFACE_VERSIONS: Readonly<Record<string, number>> = Object.freeze({
   baseStorage: 2,
   dataStore: 1,
-  platformStorage: 1,
+  platformStorage: 2,
   seriesStorage: 1,
   fileStorage: 1,
   auditStorage: 1

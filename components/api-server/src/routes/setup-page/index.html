@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Platform setup</title>
+<link rel="stylesheet" href="setup.css">
+<script src="setup.js" defer></script>
+</head>
+<body>
+<main>
+  <h1>Platform setup</h1>
+  <p class="lead">This page creates the first administrator of this platform. It is served by the core
+    itself and disappears once setup is finished.</p>
+  <p class="note">Keep this page open until the end: reloading it ends the setup session, and the setup
+    code works once (a new one is minted with <code>node bin/admin.js setup-code --new</code>).
+    A platform that requires more account fields than this page asks for: create the account with
+    <code>POST /system/create-user</code> (admin key) or the account app, then sign in here.</p>
+
+  <div id="message" class="message" role="alert" hidden></div>
+
+  <section id="step-code" class="step">
+    <h2>1. Setup code</h2>
+    <p>Enter the one-time setup code printed in the core's boot log (also in <code>setup-code.txt</code>
+      next to its configuration file).</p>
+    <form id="form-code" autocomplete="off">
+      <label for="code">Setup code</label>
+      <input id="code" name="code" required spellcheck="false" autocapitalize="characters"
+        placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX" maxlength="64">
+      <button type="submit">Continue</button>
+    </form>
+  </section>
+
+  <section id="step-checks" class="step" hidden>
+    <h2>2. Checks</h2>
+    <p>What this core sees of its configuration. A blocking item does not prevent finishing setup, but the
+      platform will not serve as configured until it is fixed.</p>
+    <ul id="checks" class="checks"></ul>
+    <button type="button" id="checks-continue">Continue</button>
+  </section>
+
+  <section id="step-account" class="step" hidden>
+    <h2>3. First administrator</h2>
+    <p>Sign in with an account of this platform, or create one. That account receives the role
+      <code>owner</code> for the whole platform.</p>
+    <div class="tabs">
+      <button type="button" id="tab-signin" class="tab active">Sign in</button>
+      <button type="button" id="tab-register" class="tab">Create an account</button>
+    </div>
+    <form id="form-signin" autocomplete="off">
+      <label for="signin-username">Username</label>
+      <input id="signin-username" required spellcheck="false" autocapitalize="none" maxlength="100">
+      <label for="signin-password">Password</label>
+      <input id="signin-password" type="password" required autocomplete="current-password" maxlength="100">
+      <button type="submit">Sign in</button>
+    </form>
+    <form id="form-register" autocomplete="off" hidden>
+      <label for="register-username">Username</label>
+      <input id="register-username" required spellcheck="false" autocapitalize="none" maxlength="100">
+      <label for="register-email">Email</label>
+      <input id="register-email" type="email" required maxlength="300">
+      <label for="register-password">Password</label>
+      <input id="register-password" type="password" required autocomplete="new-password" minlength="6" maxlength="100">
+      <button type="submit">Create the account and sign in</button>
+    </form>
+    <form id="form-mfa-code" autocomplete="off" hidden>
+      <p>This account signs in with a second factor.</p>
+      <label for="mfa-code">Code</label>
+      <input id="mfa-code" required inputmode="numeric" maxlength="20" autocomplete="one-time-code">
+      <button type="submit">Verify</button>
+    </form>
+  </section>
+
+  <section id="step-totp" class="step" hidden>
+    <h2>4. Second factor</h2>
+    <p>Administrators of this platform sign in with a second factor. Add this account to an authenticator
+      app with the secret below (or the link), then enter the code it shows.</p>
+    <dl class="secret">
+      <dt>Secret</dt><dd><code id="totp-secret"></code></dd>
+      <dt>Link</dt><dd><code id="totp-uri"></code></dd>
+    </dl>
+    <form id="form-totp" autocomplete="off">
+      <label for="totp-code">Code</label>
+      <input id="totp-code" required inputmode="numeric" maxlength="20" autocomplete="one-time-code">
+      <button type="submit">Enable</button>
+    </form>
+    <div id="recovery" hidden>
+      <p><strong>Recovery codes</strong>: store them now, they are shown once.</p>
+      <pre id="recovery-codes"></pre>
+      <p>Then sign in again with your password and a new code from the app.</p>
+      <button type="button" id="totp-continue">Sign in again</button>
+    </div>
+  </section>
+
+  <section id="step-finish" class="step" hidden>
+    <h2>5. Finish</h2>
+    <p id="finish-who"></p>
+    <button type="button" id="finish">Finish setup</button>
+  </section>
+
+  <section id="step-done" class="step" hidden>
+    <h2>Setup is done</h2>
+    <p>The platform is ready. This page is no longer served.</p>
+    <p id="done-portal"></p>
+    <p>Other administrators get their role with a claim code: <code>node bin/admin.js claim-code --role owner</code>.</p>
+  </section>
+</main>
+</body>
+</html>

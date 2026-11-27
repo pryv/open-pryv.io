@@ -629,6 +629,21 @@ class DBpostgresql {
     await this.#set(key, value);
   }
 
+  async setPlatformKvIfAbsent (key: string, value: string): Promise<boolean> {
+    const res = await this.db.query(
+      'INSERT INTO platform_kv (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
+      [key, value]
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async replacePlatformKvIfValue (key: string, expected: string, next: string | null): Promise<boolean> {
+    const res = next == null
+      ? await this.db.query('DELETE FROM platform_kv WHERE key = $1 AND value = $2', [key, expected])
+      : await this.db.query('UPDATE platform_kv SET value = $3 WHERE key = $1 AND value = $2', [key, expected, next]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async getPlatformKv (key: string): Promise<string | null> {
     return await this.#get(key);
   }

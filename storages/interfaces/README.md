@@ -27,6 +27,7 @@ table below and the changelog. Versions are per storage type: a change to `platf
 | `baseStorage` | 2 | the release storing access tokens at rest | accesses and sessions store a keyed hash plus an encrypted copy through the injected `tokenProtection` (init option), conditions on `token` and session ids go through the hash; the engine exports `getTokensAtRest()` (probe, protect, status, unprotect, rekey) |
 | `dataStore` | 1 | the release introducing interface versions | initial |
 | `platformStorage` | 1 | the release introducing interface versions | initial |
+| `platformStorage` | 2 | the release introducing platform setup and administrators | two new required `PlatformDB` methods: `setPlatformKvIfAbsent` (atomic insert-if-absent) and `replacePlatformKvIfValue` (atomic compare-and-set, or delete); conformance `[PLKV13]`, `[PLKV14]` |
 | `seriesStorage` | 1 | the release introducing interface versions | initial |
 | `fileStorage` | 1 | the release introducing interface versions | initial |
 | `auditStorage` | 1 | the release introducing interface versions | initial |

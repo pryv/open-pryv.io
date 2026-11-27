@@ -25,6 +25,7 @@ const { integrity } = require('business');
 const { withInjectedConfig, injectTestConfigSnapshot } = require('test-helpers');
 const { _resetMFASingletons } = require('business/src/mfa/index.ts');
 const { base32Decode, totpCode } = require('business/src/mfa/totp.ts');
+const { mfaSignInAt } = require('business/src/admin/sessions.ts');
 
 /* global initTests, initCore, coreRequest, getNewFixture, assert, cuid */
 
@@ -85,7 +86,7 @@ describe('[LGLL] sign-in records lastLogin', function () {
     assert.equal(access.integrity, integrity.accesses.hash(access), 'the stored integrity matches the access');
   }
 
-  it('[LGLL1] a login records lastLogin, with access tracking off too, and leaves a valid integrity', async function () {
+  it('[LGLL1] a login records lastLogin, with access tracking off too, and leaves a valid integrity (no second factor stamped)', async function () {
     const { username, user } = await freshUser();
     const before = timestamp.now();
     await withInjectedConfig({ accessTracking: { isActive: false } }, async () => {
@@ -97,6 +98,8 @@ describe('[LGLL] sign-in records lastLogin', function () {
     assert.ok(access.lastLogin >= before - 1 && access.lastLogin <= timestamp.now() + 1, 'lastLogin is the login time');
     assert.ok(access.lastUsed == null, 'no usage recorded with tracking off');
     assertIntegrity(access);
+    const kv = require('messages/src/cluster_kv.ts').clientFor();
+    assert.equal(await mfaSignInAt(kv, { token: access.token, userId: user.id }), null, 'no second factor stamped');
   });
 
   it('[LGLL2] a later login moves lastLogin forward on the same access', async function () {
@@ -111,7 +114,7 @@ describe('[LGLL] sign-in records lastLogin', function () {
     assertIntegrity(second);
   });
 
-  it('[LGLL3] with a second factor, the password step leaves lastLogin untouched and mfa.verify records it', async function () {
+  it('[LGLL3] with a second factor, the password step leaves lastLogin untouched and mfa.verify records it and stamps the factor', async function () {
     const { username, user } = await freshUser();
     const restore = injectTestConfigSnapshot(totpConfig);
     await _resetMFASingletons();
@@ -141,6 +144,11 @@ describe('[LGLL] sign-in records lastLogin', function () {
       assert.equal(after.token, verify.body.token, 'the released token is the access token');
       assert.ok(after.lastLogin >= verifyStart, 'lastLogin is the verify time: ' + after.lastLogin + ' < ' + verifyStart);
       assertIntegrity(after);
+      // The second factor is stamped on this core for the released token, so an
+      // administrator session can be opened from it; a password-only sign-in has none.
+      const kv = require('messages/src/cluster_kv.ts').clientFor();
+      const stampedAt = await mfaSignInAt(kv, { token: verify.body.token, userId: user.id });
+      assert.ok(typeof stampedAt === 'number' && stampedAt >= verifyStart * 1000 - 1000, 'second factor stamped: ' + stampedAt);
     } finally {
       restore();
       await _resetMFASingletons();

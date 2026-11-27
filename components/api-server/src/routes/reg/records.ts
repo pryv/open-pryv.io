@@ -20,14 +20,15 @@ const require = createRequire(import.meta.url);
  * refreshes immediately — remote cores pick up the change on their next
  * periodic refresh.
  *
- * Auth: `auth:adminAccessKey` (BOOTSTRAP, must be identical across cores).
+ * Auth: `auth:adminAccessKey` (BOOTSTRAP, must be identical across cores),
+ * refused under `auth.adminAccessKeyScope: break-glass`.
  * A missing or wrong key answers 404, like the other admin routes.
  */
 
 const { getPlatform } = require('platform');
 const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
 const errors = require('errors').factory;
-const isAdminKey = require('middleware/src/isAdminKey.ts').default;
+const { isAdminKeyInFullScope } = require('middleware/src/isAdminKey.ts');
 const { isPlatformNoAnswer } = require('storages/interfaces/platformStorage/noAnswer.ts');
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
@@ -36,10 +37,8 @@ const { getLogger } = require('@pryv/boiler');
 const logger = getLogger('routes:reg:records');
 
 export default function (expressApp: ExpressApp, app: AppLike) {
-  const adminAccessKey = app.config.get('auth:adminAccessKey') as string | undefined;
-
   function isAuthorized (req: Request): boolean {
-    if (isAdminKey(req.headers.authorization, adminAccessKey)) return true;
+    if (isAdminKeyInFullScope(req.headers.authorization, app.config)) return true;
     // Never the headers: a near-miss key would land in the log.
     logger.warn('Unauthorized attempt to access an admin route', { url: redactUrl(req.url), ip: clientIp(req) });
     return false;

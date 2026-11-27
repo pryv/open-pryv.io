@@ -555,6 +555,37 @@ describe('[INWP] bin/init.js profiles, diagnostics, cluster gating, PaaS mode an
       assert.match(res.output, /Administration portal: hostedSites\.system/);
     });
   });
+
+  describe('setup-code handoff', () => {
+    it('[INWPL] Next steps name the setup page and where the code appears; no setup block is written by default', () => {
+      const res = runWizard(configDir);
+      assert.strictEqual(res.status, 0, res.output);
+      assert.match(res.output, /Platform setup \(first administrator\)/);
+      assert.match(res.output, /https:\/\/<this host's IP>\/system\/setup\//);
+      assert.match(res.output, /https:\/\/core\.example\.com\/system\/setup\//);
+      assert.match(res.output, /setup-code\.txt/);
+      assert.match(res.output, /bin\/admin\.js setup-code --new/);
+      assert.strictEqual(readConfig(configDir).setup, undefined);
+      assert.match(fs.readFileSync(path.join(configDir, 'pryv-config.yml'), 'utf8'), /# # setup:\n# # {3}codeTtlHours: 24/, 'the appendix mirrors the setup keys');
+    });
+
+    it('[INWPM] --setup-code-hash (or setup.codeHash) is written as setup.codeHash; a malformed one is refused', () => {
+      const { generateCode, hashCode } = createRequire(import.meta.url)('business/src/admin/codes.ts');
+      const hash = hashCode(generateCode());
+      let res = runWizard(configDir, ['--setup-code-hash=' + hash.toUpperCase()]);
+      assert.strictEqual(res.status, 0, res.output);
+      assert.deepStrictEqual(readConfig(configDir).setup, { codeHash: hash });
+      assert.match(res.output, /prints none/);
+      const check = checkConfig(configDir);
+      assert.strictEqual(check.status, 0, check.output);
+      res = runWizard(configDir, ['--force'], ANSWERS + 'setup.codeHash: ' + hash + '\n');
+      assert.strictEqual(res.status, 0, res.output);
+      assert.deepStrictEqual(readConfig(configDir).setup, { codeHash: hash });
+      res = runWizard(configDir, ['--force', '--setup-code-hash=abc']);
+      assert.strictEqual(res.status, 2, res.output);
+      assert.match(res.output, /setup\.codeHash/);
+    });
+  });
 });
 
 /** A TCP port free at the time of the call. */

@@ -343,6 +343,60 @@ With the account transfer (below), the administrator reset of 2.0.0-rc.90 also h
   accepts a target that holds only the schema marker its engine writes for itself (that marker is not copied
   either); `--dry-run` never refuses, as before.
 
+### Platform setup and administrators: setup code, built-in setup page, administrator sessions, roles
+
+Guide: `docs/setup-and-administrators.md`.
+
+- **Setup state and setup code.** A fresh platform waits for its first administrator: its first core prints a
+  one-time setup code at boot (once, in a marked block of stdout, and in `setup-code.txt` next to the config file,
+  mode 0600). Only its SHA-256 is kept in the platform store; a restart keeps it valid. Past 10 tries per 15
+  minutes on a core, redeeming answers 429 (the code stays valid). **An existing platform upgraded to this release
+  is recorded as set up at its first boot: no code, no change to admin-key calls.**
+- **BREAKING for fresh installs only: registration is closed until setup is finished**
+  (`setup.registrationWhilePending: closed`, the default; `POST /users` answers 403 meanwhile, except the first
+  administrator's account through the setup session). An install provisioned by automation finishes setup with the
+  admin key and no administrator: `POST /system/setup/finish` (admin key) or `node bin/admin.js setup finish`, then
+  gives the first administrator a claim code; or sets `setup.registrationWhilePending: open`.
+- **Built-in setup page `GET /system/setup/`** on every core, host name and the bare IP, with no dependency on
+  hosted sites, DNS, certificates or outbound access: code, checks, sign in or create the first administrator,
+  TOTP when MFA is on, finish. Strict Content-Security-Policy, `cache-control: no-store`, 404 once setup is done.
+  It signs in with the app id `pryv-setup-page`, accepted from the core's own origin with a valid setup session
+  while setup is pending, whatever `auth.trustedApps` says.
+- **New routes**: `GET /system/setup/status`, `GET /system/setup/checks`, `POST /system/setup/session`,
+  `POST /system/setup/first-admin`, `POST /system/setup/finish`, `POST /system/admin/setup/code`,
+  `POST|GET|DELETE /system/admin/session`, `POST /system/admin/session/renew`,
+  `POST /system/admin/session/step-up`, `POST /system/admin/claim-codes`, `POST /system/admin/roles/claim`,
+  `GET /system/admin/roles`, `DELETE /system/admin/roles/:userId`, `GET /system/admin/portal/context`. Method ids
+  `system.setup.*`, `system.adminSession.*`, `system.claimCodes.create`, `system.roles.*`,
+  `system.portalContext.get`; the acts are audited.
+- **Administrator sessions**: `Authorization: AdminSession <token>`, opened on the account's home core from a
+  personal token (with the second factor of the sign-in when MFA is on), accepted by every core, checked against
+  the account's role on each request. Sensitive acts need a recent second factor (step-up). Every existing
+  `/system` route accepts an administrator session holding its permission, beside the admin key.
+- **Roles and claim codes**: role `owner` at scope `platform`. A one-time claim code (`bin/admin.js claim-code`,
+  `POST /system/admin/claim-codes` with the admin key or an owner's session, not the setup session) gives the role
+  to whoever claims it signed in with a personal token (an app or shared token opens nothing). The last lasting
+  owner grant cannot be revoked: 400 `invalid-operation` with `data.id: last-owner`; its holder cannot delete that
+  account with its own token either (same answer). Deleting an account deletes its role. A session opened before a
+  revocation stays refused when the account gets a role again.
+- **Origin rule on `/system`**: a call with an `Origin` that is not authenticated by the admin key is accepted only
+  from the core's own origin, the portal's or `portal.cors.allowedOrigins`, with CORS for that origin only.
+  Admin-key calls and calls without `Origin` are unchanged.
+- **Break-glass admin key** (opt-in): `auth.adminAccessKeyScope: break-glass` limits the admin key to the
+  break-glass `/system` routes (calls between cores, setup code, claim codes, role listing and revocation, status);
+  an unlisted `/system` path is refused, and outside `/system` the key no longer deletes accounts
+  (`DELETE /users/:username`) nor reaches `/reg/records` and `/reg/admin/*` (the previews cache clean-up keeps it).
+  Default `full`: unchanged.
+- **New config keys**: `portal.site`, `portal.cors.allowedOrigins`, `setup.codeTtlHours`, `setup.codeHash`,
+  `setup.printCode`, `setup.registrationWhilePending` (`closed` by default: registration waits for setup, except the
+  first administrator's account), `auth.adminAccessKeyScope`, `admin.session.ttlMinutes`,
+  `admin.session.stepUpMinutes`, `admin.session.requireMfa`. Checked at boot and by `bin/check-config.js`.
+- **`bin/admin.js`**: `setup-code [--new | --hash [<code>]]`, `setup finish`, `claim-code`, `roles list`,
+  `roles revoke [--force]`, `sessions revoke`, on the platform store directly; each act writes one line (never a
+  code) to the audit syslog channel when `audit.syslog.active`.
+- **Install wizard**: "Next steps" names the setup page and where the code appears; `--setup-code-hash=<sha256>`
+  (answer key `setup.codeHash`) writes the hash of a code chosen by the deployer, so the first boot prints none.
+
 ## 2.0.0-rc.90 - 2026-11-26
 
 ### Multi-core: a platform read without an answer is no longer "not found"

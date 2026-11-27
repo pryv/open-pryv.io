@@ -25,6 +25,9 @@ const mailing = require('./../helpers/mailing.ts');
 const { reserveEmailLookup } = require('../../routes/reg/emailLookupBudget.ts');
 const mailBudgets = require('../helpers/mailBudgets.ts');
 const { recordAccountCreatedStep } = require('../helpers/accountCreationAudit.ts');
+const { readSetupState } = require('business/src/admin/setupState.ts');
+const { readSetupSession } = require('business/src/admin/sessions.ts');
+const { readAdminConfig } = require('business/src/admin/config.ts');
 
 type RegisterParams = { username?: string; password?: string; email?: string; [k: string]: unknown };
 type EmailChallengeParams = { email: string; language?: string };
@@ -66,10 +69,31 @@ export default async function (api: { register: (...args: unknown[]) => void }) 
   await registration.init();
   const platform: Platform = await getPlatform();
 
+  /**
+   * While the platform setup is pending, registration is closed
+   * (`setup.registrationWhilePending: closed`, the default) except for a
+   * request carrying a setup session (`Authorization: SetupSession <token>`):
+   * the setup creates the first administrator's account that way. A request
+   * forwarded by another core was checked by the core it landed on.
+   */
+  async function refuseWhileSetupPending (context: MethodContext & { setupSessionToken?: string | null; registrationForwardedFrom?: string }, _params: RegisterParams, _result: ResultBag, next: MethodNext) {
+    try {
+      if (context.registrationForwardedFrom != null) return next();
+      const db = require('storages').platformDB;
+      if ((await readSetupState(db))?.state !== 'pending') return next();
+      if (readAdminConfig(config).setup.registrationWhilePending === 'open') return next();
+      if (context.setupSessionToken != null && (await readSetupSession(db, context.setupSessionToken)) != null) return next();
+      next(errors.forbidden('Registration opens once the platform setup is finished.'));
+    } catch (err) {
+      next(errors.unexpectedError(err));
+    }
+  }
+
   api.register('auth.register',
     commonFns.refuseGenericDispatch,
     setAuditAccessId(AuditAccessIds.PUBLIC),
     commonFns.getParamsValidation(methodsSchema.register.params),
+    refuseWhileSetupPending,
     stripServerOwnedFields,
     enforcePasswordRules,
     registration.prepareUserData.bind(registration),

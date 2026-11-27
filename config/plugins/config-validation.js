@@ -549,6 +549,15 @@ function checkHostedSites (config, problems) {
   }
 }
 
+// Setup and administration keys: portal.site must name a configured hosted
+// site, the origins, setup.*, auth.adminAccessKeyScope, admin.session.*.
+function checkAdminConfig (config, problems) {
+  const { describeAdminConfig } = require('../../components/business/src/admin/config.ts');
+  for (const p of describeAdminConfig(config).problems) {
+    problems.push({ message: p.message, path: p.path, payload: {} });
+  }
+}
+
 // adapterRoutes shape (names, upstream origin and loop, claimed paths, limits).
 // The `adapter` account check needs the users database: the api-server and
 // master run it before they serve.
@@ -774,6 +783,7 @@ async function validate (config) {
   checkEmailSwitches(config, problems);
   checkMfaConfig(config, problems);
   checkHostedSites(config, problems);
+  checkAdminConfig(config, problems);
   checkAdapterRoutes(config, problems);
   checkTrustedProxies(config, problems);
   checkWebhooks(config, problems);
@@ -1124,6 +1134,7 @@ module.exports = {
   checkMfaConfig,
   checkPasswordCheckLimit,
   checkHostedSites,
+  checkAdminConfig,
   checkAdapterRoutes,
   checkClientMetadataDocuments,
   checkTrustedProxies,

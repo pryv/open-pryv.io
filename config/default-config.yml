@@ -184,7 +184,14 @@ invitationTokens: null  # null = allow all, [] = block all, ['token1'] = check l
 # - `filesReadTokenSecret`: PER-CORE secret (must be identical across cores for cross-core validation).
 # - `passwordComplexity*`, `passwordAge*`, `passwordPreventReuseHistoryLength`: PLATFORM-WIDE policy (documented as YAML-only in v2, targeted for post-v2 move to PlatformDB).
 # - `adminAccessKey`: BOOTSTRAP, operator-sync responsibility (see CONFIG-SEPARATION.md open question).
+# - `adminAccessKeyScope`: PLATFORM-WIDE. What the admin key opens: `full` (every route that
+#   takes it, as before administrator sessions existed) or `break-glass`: on /system/* only the
+#   core-to-core routes, the setup code, claim codes, role listing and revocation and status
+#   routes (an unlisted /system path is refused too); outside /system the key no longer deletes
+#   accounts (DELETE /users/:username) nor reaches /reg/records and /reg/admin/*. The previews
+#   cache clean-up keeps the key. The rest needs an administrator session.
 auth:
+  adminAccessKeyScope: full
   filesReadTokenSecret: 'REPLACE ME'
   passwordComplexityMinCharCategories: 0
   passwordComplexityMinLength: 0
@@ -1094,6 +1101,51 @@ hostedSites: {}
 #                                             # auto (default) only when this core terminates TLS,
 #                                             # always when a proxy in front terminates TLS and the
 #                                             # site is HTTPS-only, never
+
+# === PLATFORM-WIDE: administration portal ===
+# The portal is a hosted site (above); `site` names which one (null: no portal configured;
+# the install wizard writes the entry under the name `admin`).
+# Its origin is derived from the name and the topology (<publicUrl>/<site>/ in dnsLess,
+# https://<site>.<dns.domain>/ otherwise). Calls authenticated with a setup or admin session
+# that carry an Origin are accepted from the core's own origin, the portal's, and
+# `cors.allowedOrigins` (a portal hosted outside the platform; scheme + host [+ port]).
+portal:
+  site: null
+  cors:
+    allowedOrigins: []
+
+# === MIXED: platform setup (first administrator) ===
+# A fresh platform waits for its first administrator: the first core that boots prints a
+# one-time setup code, to enter on the built-in page /system/setup/ of a core (or in the
+# portal). Only its SHA-256 is kept in the platform store. An existing platform is recorded
+# as set up, no code is issued.
+# - `codeTtlHours`: PLATFORM-WIDE. Lifetime of a setup code.
+# - `codeHash`: BOOTSTRAP. SHA-256 (hex) of a code chosen by the deployer instead of a minted
+#   one (nothing secret is printed then); the code is 26 Crockford base32 characters, hashed
+#   uppercase without separators. Env: pryv_setup__codeHash. null: a code is minted.
+# - `printCode`: PER-CORE. false: the code block is not printed (it is still written to
+#   setup-code.txt, mode 0600, next to the config file, when possible).
+# - `registrationWhilePending`: PLATFORM-WIDE. `closed`: no account registration until setup
+#   is done, except the first administrator's through the setup session; `open`.
+setup:
+  codeTtlHours: 24
+  codeHash: null
+  printCode: true
+  registrationWhilePending: closed
+
+# === PLATFORM-WIDE: administrator sessions ===
+# An administrator is a Pryv account holding a role. The portal opens a session on the
+# account's home core from a personal access; any core accepts it while it lives.
+# - `ttlMinutes`: session lifetime (renewed by the home core; idle lock is the portal's).
+# - `stepUpMinutes`: how recent the second factor must be for sensitive acts (role grants,
+#   claim codes, account deletion).
+# - `requireMfa`: administrators must have passed MFA at sign-in whenever services.mfa is
+#   active (false: not required).
+admin:
+  session:
+    ttlMinutes: 60
+    stepUpMinutes: 5
+    requireMfa: true
 
 # === PER-CORE (the NAME SET and the `paths` are PLATFORM-WIDE by intent) ===
 # --- Adapter routes (a sidecar served under /adapter/<name>/ on every host this core serves) ---

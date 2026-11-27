@@ -28,6 +28,8 @@ learn-config
 external-ressources/
 components/api-server/config/override-config.yml
 config/override-config.yml
+# one-time platform setup code, written by the master at first boot
+setup-code.txt
 
 # netbeans IDE
 nbproject/
