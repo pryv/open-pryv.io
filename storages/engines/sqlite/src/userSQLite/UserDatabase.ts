@@ -153,7 +153,7 @@ UserDatabase.prototype.init = async function (this: UserDatabaseInstance): Promi
   // Head events only: a history version is a row of its own (headId set), never
   // addressed by its own id (same as the PostgreSQL engine's `head_id IS NULL`).
   this.eventQueries.getById = this.db.prepare('SELECT * FROM events WHERE eventid = ? AND headId IS NULL');
-  this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE headId IS NULL AND deleted > ? ORDER BY deleted DESC');
+  this.eventQueries.getDeletedSince = this.db.prepare('SELECT * from events WHERE headId IS NULL AND deleted > ? ORDER BY deleted DESC, rowid DESC');
   this.eventQueries.getHistory = this.db.prepare('SELECT * from events WHERE headId = ? ORDER BY modified ASC');
 
   this.eventQueries.create = prepareCreateQuery(this.db, 'events', Object.keys(tableSchemas.events));
@@ -426,8 +426,11 @@ UserDatabase.prototype.getEventDeletionsStreamed = function (this: UserDatabaseI
     return readableEventsStreamForIterator(this.eventQueries.getDeletedSince.iterate(deletedSince));
   }
   // Same bound (strict), order, limit and skip as the PostgreSQL engine; head
-  // events only (history versions are never deletion records).
-  let sql = `SELECT * from events WHERE headId IS NULL AND deleted > ? ORDER BY deleted ${options?.sortAscending === true ? 'ASC' : 'DESC'}`;
+  // events only (history versions are never deletion records). Equal deletion
+  // times are ordered by rowid (the PostgreSQL engine: by id), which the index
+  // on `deleted` holds after the key: stable pages, no sort.
+  const direction = options?.sortAscending === true ? 'ASC' : 'DESC';
+  let sql = `SELECT * from events WHERE headId IS NULL AND deleted > ? ORDER BY deleted ${direction}, rowid ${direction}`;
   const params: number[] = [deletedSince];
   if (options?.limit != null || options?.skip != null) { sql += ' LIMIT ?'; params.push(options?.limit ?? -1); }
   if (options?.skip != null) { sql += ' OFFSET ?'; params.push(options.skip); }

@@ -218,7 +218,11 @@ const userEvents = ds.createUserEvents({
     const params: unknown[] = [userId, query.deletedSince];
     let idx = 3;
     let sql = `SELECT * FROM events WHERE ${conditions.join(' AND ')}`;
-    sql += ` ORDER BY deleted ${options?.sortAscending ? 'ASC' : 'DESC'}`;
+    // Ends with the id, so that records sharing a deletion time (a stream
+    // deleted with its events) come back in one order whatever the plan, and
+    // pages read with skip neither repeat nor miss one.
+    const direction = options?.sortAscending ? 'ASC' : 'DESC';
+    sql += ` ORDER BY deleted ${direction}, id ${direction}`;
     if (options?.limit != null) { sql += ` LIMIT $${idx}`; params.push(options.limit); idx++; }
     if (options?.skip != null) { sql += ` OFFSET $${idx}`; params.push(options.skip); }
     return readableStreamFromCursor(this.db, sql, params);
