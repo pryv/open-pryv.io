@@ -53,7 +53,7 @@ const ENGINES_DIR = path.join(__dirname, 'engines');
 
 // storageType → required exported methods
 const REQUIRED_EXPORTS = {
-  baseStorage: ['initStorageLayer', 'getUserAccountStorage', 'getUsersLocalIndex'],
+  baseStorage: ['initStorageLayer', 'getUserAccountStorage', 'getUsersLocalIndex', 'getTokensAtRest'],
   platformStorage: ['createPlatformDB'],
   dataStore: ['getDataStoreModule'],
   seriesStorage: ['createSeriesConnection'],

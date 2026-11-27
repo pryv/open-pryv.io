@@ -32,8 +32,8 @@ import { validateUserAuditDatabase } from '../interfaces/auditStorage/UserAuditD
 
 const PINS = {
   baseStorage: {
-    version: 1,
-    exports: ['getUserAccountStorage', 'getUsersLocalIndex', 'initStorageLayer'],
+    version: 2,
+    exports: ['getTokensAtRest', 'getUserAccountStorage', 'getUsersLocalIndex', 'initStorageLayer'],
     interfaces: {
       DeletionNoticesLocalDB: [
         'countPending',

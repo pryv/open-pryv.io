@@ -35,7 +35,7 @@ the host feature-detects are in no validator list and need no table change.
 | Storage type | Version | Since | What changed |
 |---|---|---|---|
 | `baseStorage` | 1 | the release introducing interface versions | initial |
-| `baseStorage` | 2 | the release storing access tokens at rest | accesses and sessions store a keyed hash plus an encrypted copy through the injected `tokenProtection` (init option), conditions on `token` and session ids go through the hash; the engine exports `getTokensAtRest()` (probe, protect, status, unprotect, rekey) |
+| `baseStorage` | 2 | the release storing access tokens at rest | accesses and sessions store a keyed hash plus an encrypted copy through the injected `tokenProtection` (init option), conditions on `token` and session ids go through the hash; new required export `getTokensAtRest()` (probe, protect, status, unprotect, rekey) |
 | `dataStore` | 1 | the release introducing interface versions | initial |
 | `platformStorage` | 1 | the release introducing interface versions | initial |
 | `platformStorage` | 2 | the release introducing platform setup and administrators | two new required `PlatformDB` methods: `setPlatformKvIfAbsent` (atomic insert-if-absent) and `replacePlatformKvIfValue` (atomic compare-and-set, or delete); conformance `[PLKV13]`, `[PLKV14]` |
