@@ -12,6 +12,9 @@ const require = createRequire(import.meta.url);
  * Load configuration in the following order (1st prevails)
  *
  * .0 'memory' -> empty, use when doing 'config.set()'
+ * .0b 'platform-store' -> empty at start; filled from the platform store's
+ *                       platform-wide rows once the storages are ready
+ *                       (business/src/platformConfig), replaced on each change
  * .1 'override-file' -> Loaded at from override-config.yml (if present;
  *                       skipped when `options.skipOverrideConfig: true`,
  *                       which the test harness sets so a developer's
@@ -37,6 +40,9 @@ const path = require('path');
 
 const nconf = require('nconf');
 nconf.formats.yaml = require('./lib/nconf-yaml.ts');
+
+/** Name of the scope holding the values of the platform store. */
+const PLATFORM_STORE_SCOPE = 'platform-store';
 
 /**
  * Default values for Logger
@@ -141,6 +147,12 @@ class Config {
 
     // 0. memory at top
     store.use('memory');
+
+    // 0b. platform-wide values held in the platform store: booked empty here,
+    // filled (and later replaced) with `replaceScopeConfig(PLATFORM_STORE_SCOPE, ...)`
+    // once the storages are ready. Above every file, the environment and the
+    // test scope: a row of the store wins wherever the local value comes from.
+    store.use(PLATFORM_STORE_SCOPE, { type: 'literal', store: {} });
 
     // 1. eventual override-config.yml — skipped when the test harness
     // requests it (via `skipOverrideConfig: true`) so a developer's
@@ -332,6 +344,15 @@ class Config {
   }
 
   /**
+   * The value as this process resolves it without the platform-store scope:
+   * what the files, the environment and the other scopes give.
+   */
+  getLocal (key?: string) {
+    if (!this.store) { throw (new Error('Config not yet initialized')); }
+    return resolve(this.store, key, PLATFORM_STORE_SCOPE);
+  }
+
+  /**
    * Retreive value and store info that applies
    */
   getScopeAndValue (key: string): { value: unknown; scope: string; info: string } | null {
@@ -384,7 +405,7 @@ class Config {
   }
 }
 
-export { Config };
+export { Config, PLATFORM_STORE_SCOPE };
 export type { ExtraDef };
 
 // --- value resolution across scopes ---- //
@@ -401,10 +422,11 @@ export type { ExtraDef };
  * each scope's value is copied before the merge, so no scope is ever written to
  * and the result shares nothing with the stores.
  */
-function resolve (provider: NconfStore, key?: string): unknown {
+function resolve (provider: NconfStore, key?: string, skipScope?: string): unknown {
   const objects: Record<string, unknown>[] = [];
   let found: unknown;
-  for (const scope of Object.values(provider.stores)) {
+  for (const [name, scope] of Object.entries(provider.stores)) {
+    if (name === skipScope) continue;
     const value = scope.get(key);
     if (typeof value === 'undefined') continue;
     if (value && typeof value === 'object' && !Array.isArray(value)) {

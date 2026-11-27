@@ -11,7 +11,7 @@
  */
 
 import type { ExtraDef } from './config.ts';
-import { Config } from './config.ts';
+import { Config, PLATFORM_STORE_SCOPE } from './config.ts';
 import * as logging from './logging.ts';
 
 const config = new Config();
@@ -218,6 +218,6 @@ function getConfigUnsafe (warnOnly?: boolean): ConfigInstance {
 // require('@pryv/boiler')` (and the deep `require('@pryv/boiler')` whole-
 // module pattern) both keep working under Node 24 require(esm).
 const { getLogger } = logging;
-export { boiler, getLogger, getConfig, ready, getConfigSync, getConfigUnsafe, init };
+export { boiler, getLogger, getConfig, ready, getConfigSync, getConfigUnsafe, init, PLATFORM_STORE_SCOPE };
 export type { Logger, LogFn, ConfigLike };
 export default boiler;

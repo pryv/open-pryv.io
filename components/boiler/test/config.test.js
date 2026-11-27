@@ -9,7 +9,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Config } from '../src/config.ts';
+import { Config, PLATFORM_STORE_SCOPE } from '../src/config.ts';
 
 const DEFAULT_CONFIG = `
 services:
@@ -139,6 +139,45 @@ describe('[BCFL] boiler config: override and bootstrap layers', function () {
     assert.strictEqual(config.get('b'), 'bootstrap');
     assert.strictEqual(config.get('c'), 'base');
     assert.strictEqual(config.get('d'), 'default');
+  });
+
+  it('[BCFL3] the platform-store scope outranks the files, the environment and the test scope, and can be replaced later', function () {
+    const saved = { a: process.env.a, e: process.env.e };
+    process.env.a = 'env';
+    process.env.e = 'env';
+    try {
+      const config = new Config().initSync({
+        baseConfigDir: dir,
+        extras: [{ scope: 'base-file', file: path.join(dir, 'base-config.yml') }]
+      }, logging);
+      config.injectTestConfig({ f: 'test' });
+      assert.deepStrictEqual(Object.keys(config.store.stores).slice(0, 2), ['memory', PLATFORM_STORE_SCOPE]);
+      assert.strictEqual(config.get('a'), 'override');
+      assert.strictEqual(config.get('e'), 'env');
+
+      config.replaceScopeConfig(PLATFORM_STORE_SCOPE, { a: 'store', b: 'store', c: 'store', e: 'store', f: 'store', n: { x: 1 } });
+      for (const k of ['a', 'b', 'c', 'e', 'f']) assert.strictEqual(config.get(k), 'store', k);
+      assert.strictEqual(config.getScopeAndValue('a').scope, PLATFORM_STORE_SCOPE);
+      assert.deepStrictEqual(config.get('n'), { x: 1 });
+      // what the other scopes give
+      assert.strictEqual(config.getLocal('a'), 'override');
+      assert.strictEqual(config.getLocal('e'), 'env');
+      assert.strictEqual(config.getLocal('n'), undefined);
+      // still second after a replacement
+      assert.deepStrictEqual(Object.keys(config.store.stores).slice(0, 2), ['memory', PLATFORM_STORE_SCOPE]);
+
+      config.replaceScopeConfig(PLATFORM_STORE_SCOPE, {});
+      assert.strictEqual(config.get('a'), 'override');
+      assert.strictEqual(config.get('b'), 'bootstrap');
+      assert.strictEqual(config.get('c'), 'base');
+      assert.strictEqual(config.get('f'), 'test');
+      assert.strictEqual(config.get('e'), 'env');
+      assert.strictEqual(config.get('n'), undefined);
+    } finally {
+      for (const k of Object.keys(saved)) {
+        if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+      }
+    }
   });
 
   it('[BCFL2] skipOverrideConfig skips both files', function () {

@@ -925,6 +925,21 @@ if (cluster.isPrimary) {
       }
     });
 
+    // Relay platform-configuration changes to every sibling worker so they
+    // reload the values held in the platform store at once (each also checks
+    // every platform.configPollSeconds). Sent by the worker that wrote, once
+    // it has reloaded its own (business/src/platformConfig/boot.ts).
+    cluster.on('message', (worker, msg) => {
+      if (msg && msg.type === 'platform-config:invalidate') {
+        for (const id in cluster.workers) {
+          if (cluster.workers[id] === worker) continue;
+          try { cluster.workers[id].send(msg); } catch (err) {
+            log(`[platform-config] IPC to worker ${id} failed: ${err.message}`);
+          }
+        }
+      }
+    });
+
     // Lost audit records: workers report each one, any worker can ask for the
     // totals of the core (GET /system/audit-status).
     require('audit/src/lossAggregator.ts').attach(cluster);

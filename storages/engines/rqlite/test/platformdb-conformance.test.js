@@ -12,6 +12,7 @@ const { getConfigUnsafe } = require('@pryv/boiler');
 const { DBrqlite } = require('../src/DBrqlite.ts');
 const conformanceTests = require('platform/test/conformance/PlatformDB.test').default;
 const adminStoreConformance = require('business/test/conformance/adminStore.js').default;
+const platformConfigConformance = require('business/test/conformance/platformConfig.js').default;
 
 // Target the rqlite the test config points at (config/test-config.yml, or its
 // `storages__engines__rqlite__url` env mirror). A hardcoded canonical port
@@ -45,5 +46,10 @@ describe('[RQPF] rqlite PlatformDB conformance', () => {
     const adminDb = new DBrqlite(RQLITE_URL);
     await adminDb.init();
     return adminDb;
+  });
+  platformConfigConformance(async () => {
+    const configDb = new DBrqlite(RQLITE_URL);
+    await configDb.init();
+    return configDb;
   });
 });

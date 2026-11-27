@@ -12,6 +12,17 @@
  * - notAudited: ids of all that are never recorded (reads);
  * - withoutUser: recorded ids whose call has no account of this core in its context.
  */
-export const all: readonly string[] = Object.freeze([] as string[]);
-export const notAudited: readonly string[] = Object.freeze([] as string[]);
-export const withoutUser: readonly string[] = Object.freeze([] as string[]);
+export const all: readonly string[] = Object.freeze([
+  'system.platformConfig.list',
+  'system.platformConfig.get',
+  'system.platformConfig.set',
+  'system.platformConfig.delete'
+]);
+export const notAudited: readonly string[] = Object.freeze([
+  'system.platformConfig.list',
+  'system.platformConfig.get'
+]);
+export const withoutUser: readonly string[] = Object.freeze([
+  'system.platformConfig.set',
+  'system.platformConfig.delete'
+]);

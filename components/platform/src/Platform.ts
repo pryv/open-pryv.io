@@ -908,6 +908,25 @@ class Platform {
       JSON.stringify(snapshot) +
       ' — these values MUST be identical across cores in a multi-core deployment. ' +
       'Compare hashes across core logs to detect drift. See CONFIG-SEPARATION.md.');
+    await this.#warnPlatformConfigOverrides();
+  }
+
+  /**
+   * One warning per platform-store row that hides a different value of this
+   * core's files or environment (never for a key without a row). Best-effort:
+   * a store that does not answer here is reported by the configuration load.
+   */
+  async #warnPlatformConfigOverrides (): Promise<void> {
+    const config = this.#config as unknown as { getLocal?: (key: string) => unknown };
+    if (typeof config.getLocal !== 'function') return; // a partial configuration (unit tests)
+    try {
+      const { localOverrides } = require('business/src/platformConfig/index.ts');
+      for (const { key } of await localOverrides(this.#config, this.#db)) {
+        logger.warn(`[platform-config-override] coreId=${this.coreId} key=${key}: the value held in the platform store replaces this core's local value (files or environment). Delete the store row to use the local value again.`);
+      }
+    } catch (err) {
+      logger.debug('platform configuration overrides not checked: ' + (err as Error).message);
+    }
   }
 
   /**

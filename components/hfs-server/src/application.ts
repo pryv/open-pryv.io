@@ -60,6 +60,9 @@ class NoopTracer {
 async function createContext (config: ConfigLike) {
   const storages = require('storages');
   await storages.init(config);
+  // Platform-wide values held in the platform store, before any is read.
+  // Read at boot only here (`service.eventTypes`): no periodic check.
+  await require('business/src/platformConfig/boot.ts').runPlatformConfigBoot({ config, logger: getLogger('platform-config'), poll: false });
   const influx = storages.seriesConnection;
   if (!influx) {
     throw new Error('Series storage not available.');

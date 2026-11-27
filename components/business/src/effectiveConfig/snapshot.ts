@@ -72,6 +72,8 @@ type Leaf = { segments: string[], value: unknown, rule: Rule | null, kind: Redac
 
 const SCOPE_LABELS: Record<string, string> = {
   memory: 'derived',
+  // Values held in the platform store (business/src/platformConfig).
+  'platform-store': 'platform-db',
   'override-file': 'override-file',
   'bootstrap-file': 'bootstrap-file',
   test: 'test',

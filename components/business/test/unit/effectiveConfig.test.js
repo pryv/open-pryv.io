@@ -73,7 +73,7 @@ function mergedOf (scopes) {
 
 /** Layers, highest priority first; `default-file` is the shipped default unless given. */
 function build (layers = {}, options = {}) {
-  const order = ['memory', 'override-file', 'bootstrap-file', 'test', 'argv', 'env', 'base', 'default-file'];
+  const order = ['memory', 'platform-store', 'override-file', 'bootstrap-file', 'test', 'argv', 'env', 'base', 'default-file'];
   const trees = Object.assign({ 'default-file': loadDefault() }, layers);
   if (trees.test == null) trees.test = { auth: { filesReadTokenSecret: FILES_SECRET } };
   const scopes = order.filter((n) => trees[n] != null).map((name) => ({ name, tree: trees[name] }));
@@ -332,6 +332,17 @@ describe('[CFGU] effective configuration document', function () {
     assert.equal(k['observability.otlp.headers'].source, 'platform-db');
     const sorted = Object.keys(k).slice().sort();
     assert.deepEqual(Object.keys(k), sorted);
+  });
+
+  it('[CFCB] a value of the platform store reports source platform-db; the platform digest follows the effective value', function () {
+    const local = { 'override-file': { service: { name: 'Local A' } } };
+    const stored = { 'platform-store': { service: { name: 'Stored' } } };
+    const a = build({ ...local, ...stored });
+    assert.deepEqual({ value: a.keys['service.name'].value, source: a.keys['service.name'].source }, { value: 'Stored', source: 'platform-db' });
+    // Two cores with different local values agree once the store holds the key.
+    const b = build({ 'override-file': { service: { name: 'Local B' } }, ...stored });
+    assert.equal(a.configMeta.digests.platform, b.configMeta.digests.platform);
+    assert.notEqual(build(local).configMeta.digests.platform, build({ 'override-file': { service: { name: 'Local B' } } }).configMeta.digests.platform);
   });
 
   it('[CFC7] fingerprints compare across cores without revealing secrets', function () {
