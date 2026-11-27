@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 
 import type { SessionData } from '../../../interfaces/_shared/domain.ts';
 import type { TokenProtection } from '../../../interfaces/_shared/tokenProtection.ts';
+import { keyIdPrefixLength, keyIdPrefixesForeign } from '../../../interfaces/_shared/tokenProtection.ts';
 const require = createRequire(import.meta.url);
 
 // A bearer secret: from node:crypto, not an id library.
@@ -200,17 +201,20 @@ class SessionsPG {
 
   // -- Token at rest: conversion, rollback, re-key --
 
-  /** Whether any session is still keyed by its clear id. */
+  /** Whether any session is still keyed by its clear id (`idx_session_clear`, empty in steady state). */
   async hasClearRows (): Promise<boolean> {
     const res = await this.db.query('SELECT 1 FROM sessions WHERE id_enc IS NULL LIMIT 1');
     return res.rows.length > 0;
   }
 
-  /** Whether any protected session is under another key than the configured one. */
+  /**
+   * Whether any protected session is under another key than the configured
+   * one: the smallest and the largest key-id prefix, from `idx_session_kid`.
+   */
   async hasForeignKeyRows (): Promise<boolean> {
-    const res = await this.db.query('SELECT 1 FROM sessions WHERE id_enc IS NOT NULL AND id NOT LIKE $1 LIMIT 1',
-      [this.tokenProtection.kid + '.%']);
-    return res.rows.length > 0;
+    const n = keyIdPrefixLength(this.tokenProtection.kid);
+    const res = await this.db.query(`SELECT min(left(id, ${n})) AS lo, max(left(id, ${n})) AS hi FROM sessions WHERE id_enc IS NOT NULL`);
+    return keyIdPrefixesForeign(res.rows[0] as { lo?: unknown; hi?: unknown } | undefined, this.tokenProtection.kid);
   }
 
   /**

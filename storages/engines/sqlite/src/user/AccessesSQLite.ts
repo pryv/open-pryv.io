@@ -11,7 +11,8 @@ import type { StoredAccess } from '../../../../interfaces/_shared/domain.ts';
 import type { DbRow } from './BaseStorageSQLite.ts';
 import type { SqliteDb, SqlParam } from '../types.ts';
 import type { JsonGuard, JsonSet } from '../../../../interfaces/_shared/jsonPath.ts';
-import type { TokenProtection } from '../../../../interfaces/_shared/tokenProtection.ts';
+import type { TokenProtection, ExportAccessesOptions } from '../../../../interfaces/_shared/tokenProtection.ts';
+import { itemsReportingUnreadable } from '../../../../interfaces/_shared/tokenProtection.ts';
 const require = createRequire(import.meta.url);
 const { foreignKeyError } = require('../../../../interfaces/_shared/tokenProtection.ts');
 
@@ -151,6 +152,22 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   protected itemToRow (item: Partial<AccessItem>, userId?: string | null): { id: string, head_id: SqlParam, deleted: SqlParam, data: string } {
     if (item.token == null) return super.itemToRow(item, userId);
     return super.itemToRow(this.protectData(requireUserId(userId), item as Record<string, unknown>), userId);
+  }
+
+  /**
+   * With `options.onUnreadableRow` (a whole-store read made for a report, the
+   * integrity check), a row whose token does not open is reported there and
+   * left out instead of failing the read. Without it the read throws, as every
+   * lookup does. A database holding rows under another key still fails as a
+   * whole (its first-use check).
+   */
+  exportAll (userOrUserId: UserOrId, callback: Callback<Array<AccessItem | null>>, options?: ExportAccessesOptions): void {
+    const report = options?.onUnreadableRow;
+    if (report == null) return super.exportAll(userOrUserId, callback);
+    this._userDbAnd(userOrUserId, callback, (udb) => {
+      const rows = udb.db.prepare<DbRow>('SELECT * FROM accesses').all();
+      callback(null, itemsReportingUnreadable(rows, (r: DbRow) => this.rowToItem(r, udb.userId), report));
+    });
   }
 
   rowToItem (row: DbRow, userId?: string | null): AccessItem | null {

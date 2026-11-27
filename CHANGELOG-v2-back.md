@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Access tokens at rest: cheaper start checks, concurrent conversion, report of unreadable rows
+
+- The checks every start runs no longer read whole tables. PostgreSQL migration `20261127_120300` adds
+  `idx_access_token_kid` (`left(token_hash, 9)` of protected access rows), `idx_session_kid` (`left(id, 9)` of
+  protected sessions) and `idx_session_clear` (sessions keyed by their clear id, empty in steady state); the key-id
+  guard reads the smallest and the largest prefix (`keyIdPrefixesForeign` in
+  `storages/interfaces/_shared/tokenProtection.ts`) instead of scanning for a row under another key. SQLite: the
+  shared database gets `sessions_clear` and `sessions_kid` (created at init), the same two-bound probe. Measured on
+  200 000 access rows and 50 000 sessions (PostgreSQL): the start checks went from about 60-90 ms of sequential
+  scans to index reads.
+- PostgreSQL conversion pass: a batch whose rows another process converted meanwhile (two masters starting on one
+  database) no longer ends the pass; it selects again until no clear row is left (`AccessesPG.protectClearRows`,
+  stopping only when the same first row comes back with no progress). `AccessesPG.tokenBatchSize` (default 1000)
+  sets the batch.
+- Cache: `setAccessLogic` for an access id already cached under another token drops that token from the token map.
+- `accesses.exportAll(user, callback, { onUnreadableRow })` (both engines): a row whose token does not open is
+  reported and left out instead of failing the read; `IntegrityCheck` uses it, so `bin/integrity-check.js` reports
+  such an access as an error ("integrity not verifiable") and goes on with the others, and a SQLite user database
+  under another key as an error of that user. Lookups and the plain `exportAll` still fail closed.
+  `BaseStorageSQLite._userDbAnd` is now protected.
+- Tests: `[TKMG8]`, `[TKPR1]`, `[TKPR2]`, `[TKUR1]`, `[TKUR2]` (`components/storage/test/unit/accessTokensAtRest.test.js`),
+  `[CAKY3]` (cache).
+
 ### Access tokens and session ids at rest: keyed hash plus encrypted copy
 
 - `components/business/src/accesses/tokenProtection.ts`: the protection object injected at storage init (contract in

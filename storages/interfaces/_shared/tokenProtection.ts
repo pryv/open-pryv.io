@@ -26,6 +26,49 @@ export type TokenProtection = {
   openSessionId (idHash: string, idEnc: string): string;
 };
 
+/**
+ * Length of the key-id prefix of a stored hash (the key id and its dot), as
+ * a plain integer for the probes' SQL: an index expression must repeat it
+ * as a constant, so the PostgreSQL probe indexes use 9 (8-character key id).
+ */
+export function keyIdPrefixLength (kid: string): number {
+  return Math.trunc(kid.length) + 1;
+}
+
+/**
+ * From the smallest and the largest key-id prefix of the protected rows
+ * (`lo`, `hi`; null when there is none): whether one row is under another
+ * key than `kid`. Equal bounds mean every value between them is equal too.
+ */
+export function keyIdPrefixesForeign (bounds: { lo?: unknown; hi?: unknown } | undefined, kid: string): boolean {
+  if (bounds == null || bounds.lo == null) return false;
+  const own = kid + '.';
+  return bounds.lo !== own || bounds.hi !== own;
+}
+
+/** Options of a whole-store read of accesses made for a report (the integrity check). */
+export type ExportAccessesOptions = {
+  /** Called for each row whose token does not open (`TokenUnreadableError`); the row is left out of the result. */
+  onUnreadableRow?: (accessId: unknown, reason: string) => void;
+};
+
+/**
+ * `toItem` over `rows`; a row whose token does not open is reported and left
+ * out, any other error is thrown. Lookups never use this: they fail closed.
+ */
+export function itemsReportingUnreadable<R, T> (rows: R[], toItem: (row: R) => T, report: (accessId: unknown, reason: string) => void): T[] {
+  const out: T[] = [];
+  for (const row of rows) {
+    try {
+      out.push(toItem(row));
+    } catch (err) {
+      if ((err as Error).name !== 'TokenUnreadableError') throw err;
+      report((err as Error & { accessId?: unknown }).accessId, (err as Error).message);
+    }
+  }
+  return out;
+}
+
 /** Thrown by a lookup or a boot check that meets rows protected under another key. */
 export const FOREIGN_KEY_ERROR_NAME = 'ForeignTokenKeyError';
 

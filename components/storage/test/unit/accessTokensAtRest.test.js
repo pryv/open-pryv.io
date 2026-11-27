@@ -242,6 +242,51 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       assert.strictEqual((await call(accesses, 'findOne', userId, { token }, null)).id, a.id);
     });
 
+    it('[TKUR1] a whole-store export asked to report unreadable rows returns the others and names that one; without it the export still throws', async () => {
+      const u = await indexedUserId();
+      try {
+        const good = await call(accesses, 'insertOne', u, newAccess({ token: 'tkur1-good-' + cuid() }));
+        const bad = await call(accesses, 'insertOne', u, newAccess({ token: 'tkur1-bad-' + cuid() }));
+        const raw = await rawAccess(u, bad.id);
+        const other = createTokenProtection('tkur1-other-key');
+        await rawWrite(u, bad.id, { token: null, tokenHash: raw.tokenHash, tokenEnc: other.sealAccessToken(u, raw.tokenHash, bad.token) });
+        const reported = [];
+        const items = await promisify((cb) => accesses.exportAll(u, cb, { onUnreadableRow: (id, reason) => reported.push({ id, reason }) }))();
+        assert.deepStrictEqual(items.map((x) => x.id), [good.id]);
+        assert.strictEqual(items[0].token, good.token);
+        assert.strictEqual(reported.length, 1);
+        assert.strictEqual(reported[0].id, bad.id);
+        assert.ok(!reported[0].reason.includes(bad.token), 'the reason does not carry the token');
+        await assert.rejects(call(accesses, 'exportAll', u), (err) => err.name === 'TokenUnreadableError');
+        await assert.rejects(call(accesses, 'findOne', u, { id: bad.id }, null), (err) => err.name === 'TokenUnreadableError');
+      } finally {
+        await call(accesses, 'removeAll', u);
+      }
+    });
+
+    it('[TKUR2] the integrity check reports an access whose token does not open and checks the others', async () => {
+      const u = await indexedUserId();
+      const IntegrityCheck = require('business/src/integrity/IntegrityCheck.ts').default;
+      const checker = await new IntegrityCheck().init();
+      try {
+        await call(accesses, 'insertOne', u, newAccess({ token: 'tkur2-a-' + cuid() }));
+        await call(accesses, 'insertOne', u, newAccess({ token: 'tkur2-b-' + cuid() }));
+        const bad = await call(accesses, 'insertOne', u, newAccess({ token: 'tkur2-bad-' + cuid() }));
+        const raw = await rawAccess(u, bad.id);
+        const other = createTokenProtection('tkur2-other-key');
+        await rawWrite(u, bad.id, { token: null, tokenHash: raw.tokenHash, tokenEnc: other.sealAccessToken(u, raw.tokenHash, bad.token) });
+        const report = await checker.checkUser(u);
+        assert.strictEqual(report.accesses.status, 'checked');
+        assert.strictEqual(report.accesses.checked, 3);
+        assert.strictEqual(report.accesses.errors.length, 1, JSON.stringify(report.accesses.errors));
+        assert.strictEqual(report.accesses.errors[0].accessId, bad.id);
+        assert.match(report.accesses.errors[0].error, /stored token unreadable/);
+        assert.strictEqual(report.ok, false);
+      } finally {
+        await call(accesses, 'removeAll', u);
+      }
+    });
+
     it('[TKST8] a one-character and a 500-character token round trip', async () => {
       for (const token of ['x', 'y'.repeat(500)]) {
         const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
@@ -487,6 +532,104 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       assert.ok(hashIdx != null, names.join(', '));
       assert.match(hashIdx.indexdef, /UNIQUE/);
       assert.match(hashIdx.indexdef, /head_id IS NULL/);
+    });
+
+    it('[TKMG8] PostgreSQL: a batch another process converted meanwhile does not end the pass; the rows after it are converted', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const { AccessesPG } = require('storages/engines/postgresql/src/user/AccessesPG.ts');
+      const noIntegrity = { isActive: false, set: () => {}, rowFormHash: () => '' };
+      const items = [];
+      for (let i = 0; i < 5; i++) items.push(await call(accesses, 'insertOne', userId, newAccess({ token: 'tkmg8-' + i + '-' + cuid() })));
+      for (const it of items) await rawWrite(userId, it.id, { token: it.token, tokenHash: null, tokenEnc: null });
+      const db = storages.databasePG;
+      const other = new AccessesPG(db, noIntegrity, accesses.tokenProtection);
+      let interceptions = 0;
+      // A second master on the same database converts the first batch between our select and our update.
+      const racing = {
+        query: async (sql, params) => {
+          if (interceptions === 0 && sql.startsWith('UPDATE accesses a SET token_hash')) {
+            interceptions++;
+            const [uids, ids, toks] = params;
+            for (let i = 0; i < ids.length; i++) {
+              const cols = other.protectedColumns(uids[i], toks[i]);
+              await db.query('UPDATE accesses SET token_hash = $1, token_enc = $2, token = NULL WHERE user_id = $3 AND id = $4 AND token = $5',
+                [cols.token_hash, cols.token_enc, uids[i], ids[i], toks[i]]);
+            }
+          }
+          return db.query(sql, params);
+        }
+      };
+      const first = new AccessesPG(racing, noIntegrity, accesses.tokenProtection);
+      first.tokenBatchSize = 2;
+      await first.protectClearRows();
+      assert.strictEqual(interceptions, 1);
+      for (const it of items) assert.strictEqual((await rawAccess(userId, it.id)).token, null, 'row ' + it.id + ' converted');
+      for (const it of items) assert.strictEqual((await call(accesses, 'findOne', userId, { token: it.token }, null)).id, it.id);
+    });
+
+    it('[TKPR1] the boot probe finds a row under another key whatever its key id sorts before or after the current one', async () => {
+      const kid = accesses.tokenProtection.kid;
+      const keyWithKid = (pred) => {
+        for (let i = 0; ; i++) {
+          const p = createTokenProtection('tkpr1-key-' + i + '-' + cuid());
+          if (pred(p.kid)) return p;
+        }
+      };
+      const lower = keyWithKid((k) => k < kid);
+      const higher = keyWithKid((k) => k > kid);
+      // rows under the current key around the foreign one: both bounds matter
+      await call(accesses, 'insertOne', userId, newAccess({ token: 'tkpr1-current-' + cuid() }));
+      await call(sessions, 'generate', { username: 'tkpr1-keep' }, {});
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkpr1-' + cuid() }));
+      const raw = await rawAccess(userId, a.id);
+      try {
+        for (const previous of [lower, higher]) {
+          const h = previous.hashAccessToken(userId, a.token);
+          await rawWrite(userId, a.id, { token: null, tokenHash: h, tokenEnc: previous.sealAccessToken(userId, h, a.token) });
+          if (engine === 'postgresql') {
+            await assert.rejects(tokensAtRest().probeTokensAtRest(), (err) => err.name === 'ForeignTokenKeyError', 'access under ' + previous.kid);
+          } else {
+            await assert.rejects(call(accesses, 'findOne', userId, { id: a.id }, null), (err) => err.name === 'ForeignTokenKeyError');
+          }
+        }
+        await rawWrite(userId, a.id, raw);
+        await tokensAtRest().probeTokensAtRest();
+        // a session alone under another key
+        for (const previous of [lower, higher]) {
+          const sid = 'tkpr1-session-' + cuid();
+          const sh = previous.hashSessionId(sid);
+          if (engine === 'postgresql') {
+            await storages.databasePG.query('INSERT INTO sessions (id, id_enc, data, expires) VALUES ($1, $2, $3, $4)',
+              [sh, previous.sealSessionId(sh, sid), JSON.stringify({ username: 'tkpr1-user' }), new Date(Date.now() + 3600000)]);
+          } else {
+            storageLayer.connection.getDb().prepare('INSERT INTO sessions (id, id_enc, data, expires) VALUES (?, ?, ?, ?)')
+              .run(sh, previous.sealSessionId(sh, sid), JSON.stringify({ username: 'tkpr1-user' }), Date.now() + 3600000);
+          }
+          try {
+            await assert.rejects(tokensAtRest().probeTokensAtRest(), (err) => err.name === 'ForeignTokenKeyError', 'session under ' + previous.kid);
+          } finally {
+            await call(sessions, 'remove', { username: 'tkpr1-user' });
+          }
+        }
+        await tokensAtRest().probeTokensAtRest();
+      } finally {
+        await rawWrite(userId, a.id, raw);
+        await call(sessions, 'remove', { username: 'tkpr1-keep' });
+      }
+    });
+
+    it('[TKPR2] the probe indexes are there: rows in clear and the key id of protected rows', async () => {
+      if (engine === 'postgresql') {
+        const res = await storages.databasePG.query('SELECT indexname, indexdef FROM pg_indexes WHERE indexname IN ' +
+          '(\'idx_access_token_kid\', \'idx_session_clear\', \'idx_session_kid\')');
+        const defs = Object.fromEntries(res.rows.map((r) => [r.indexname, r.indexdef]));
+        assert.match(defs.idx_access_token_kid ?? '', /left"?\(token_hash, 9\)/);
+        assert.match(defs.idx_session_clear ?? '', /id_enc IS NULL/);
+        assert.match(defs.idx_session_kid ?? '', /left"?\(id, 9\)/);
+        return;
+      }
+      const names = storageLayer.connection.getDb().prepare('SELECT name FROM sqlite_master WHERE type = \'index\' AND tbl_name = \'sessions\'').all().map((r) => r.name);
+      assert.ok(names.includes('sessions_clear') && names.includes('sessions_kid'), names.join(', '));
     });
   });
 

@@ -9,7 +9,8 @@ import { createRequire } from 'node:module';
 import type { Callback, UserOrId, Query, UpdateData, FindOptions } from 'storages/interfaces/_shared/types.ts';
 import type { StoredAccess } from 'storages/interfaces/_shared/domain.ts';
 import type { PgDbLike } from './BaseStoragePG.ts';
-import type { TokenProtection } from '../../../../interfaces/_shared/tokenProtection.ts';
+import type { TokenProtection, ExportAccessesOptions } from '../../../../interfaces/_shared/tokenProtection.ts';
+import { keyIdPrefixLength, keyIdPrefixesForeign, itemsReportingUnreadable } from '../../../../interfaces/_shared/tokenProtection.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -80,6 +81,9 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
   integrityAccesses: IntegrityAccesses;
 
   tokenProtection: TokenProtection;
+
+  /** Rows per statement of the conversion pass. */
+  tokenBatchSize: number = RECOMPUTE_BATCH_SIZE;
 
   constructor (db: PgDbLike, integrityAccesses: IntegrityAccesses, tokenProtection: TokenProtection) {
     super(db);
@@ -519,10 +523,12 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
    */
   async protectClearRows (): Promise<TokenPassResult> {
     const result: TokenPassResult = { rows: 0, skipped: 0 };
+    const batchSize = this.tokenBatchSize;
+    let idleFirstRow: string | null = null;
     for (;;) {
       // Converted rows leave the selection: always the first batch.
       const res = await this.db.query(
-        'SELECT user_id, id, token FROM accesses WHERE token IS NOT NULL ORDER BY user_id, id LIMIT $1', [RECOMPUTE_BATCH_SIZE]);
+        'SELECT user_id, id, token FROM accesses WHERE token IS NOT NULL ORDER BY user_id, id LIMIT $1', [batchSize]);
       if (res.rows.length === 0) break;
       const pairs = res.rows.map((row) => this.protectedColumns(row.user_id as string, row.token as string));
       try {
@@ -534,8 +540,17 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
           [res.rows.map((r) => r.user_id), res.rows.map((r) => r.id), res.rows.map((r) => r.token),
             pairs.map((p) => p.token_hash), pairs.map((p) => p.token_enc)]);
         result.rows += upd.rowCount;
-        // Nothing matched (rows changed meanwhile): no progress to expect here.
-        if (upd.rowCount === 0) break;
+        if (upd.rowCount === 0) {
+          // Nothing matched: another process (a second master on this
+          // database) converted these rows meanwhile. Select again rather than
+          // stop while rows remain in clear; the same first row selected twice
+          // with no progress ends the pass.
+          const first = JSON.stringify([res.rows[0].user_id, res.rows[0].id, res.rows[0].token]);
+          if (first === idleFirstRow) break;
+          idleFirstRow = first;
+          continue;
+        }
+        idleFirstRow = null;
       } catch (err) {
         if ((err as { code?: string }).code !== '23505') throw err;
         // A duplicate in the batch: row by row, the duplicate left in clear.
@@ -544,7 +559,7 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
         result.skipped += one.skipped;
         break;
       }
-      if (res.rows.length < RECOMPUTE_BATCH_SIZE) break;
+      if (res.rows.length < batchSize) break;
     }
     if (result.rows > 0 || result.skipped > 0) {
       logger.info('access tokens at rest: ' + result.rows + ' access rows protected' +
@@ -579,12 +594,17 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     return res.rows.length > 0;
   }
 
-  /** Whether any protected row is under another key than the configured one. */
+  /**
+   * Whether any protected row is under another key than the configured one.
+   * Run at every start: the smallest and the largest key-id prefix are read
+   * from `idx_access_token_kid` (same expression for an 8-character key id),
+   * not the whole table.
+   */
   async hasForeignKeyRows (): Promise<boolean> {
-    const res = await this.db.query(
-      'SELECT 1 FROM accesses WHERE token IS NULL AND token_hash IS NOT NULL AND token_hash NOT LIKE $1 LIMIT 1',
-      [this.tokenProtection.kid + '.%']);
-    return res.rows.length > 0;
+    const n = keyIdPrefixLength(this.tokenProtection.kid);
+    const res = await this.db.query(`SELECT min(left(token_hash, ${n})) AS lo, max(left(token_hash, ${n})) AS hi ` +
+      'FROM accesses WHERE token IS NULL AND token_hash IS NOT NULL');
+    return keyIdPrefixesForeign(res.rows[0], this.tokenProtection.kid);
   }
 
   async tokenStatus (): Promise<TokenStatus> {
@@ -684,6 +704,21 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     } catch (err) {
       throw tokenUnreadable(row.id, (err as Error).message);
     }
+  }
+
+  /**
+   * With `options.onUnreadableRow` (a whole-store read made for a report, the
+   * integrity check), a row whose token does not open is reported there and
+   * left out instead of failing the read. Without it the read throws, as every
+   * lookup does.
+   */
+  exportAll (userOrUserId: UserOrId, callback: Callback<Array<AccessItem | null>>, options?: ExportAccessesOptions): void {
+    const report = options?.onUnreadableRow;
+    if (report == null) return super.exportAll(userOrUserId, callback);
+    const userId = this.getUserIdFromUserOrUserId(userOrUserId);
+    this.db.query('SELECT * FROM accesses WHERE user_id = $1', [userId])
+      .then((res: { rows: AccessRow[] }) => callback(null, itemsReportingUnreadable(res.rows, (r) => this.rowToItem(r), report)))
+      .catch(callback);
   }
 
   insertMany (userOrUserId: UserOrId, accesses: Array<Partial<AccessItem>>, callback: Callback<void>): void {

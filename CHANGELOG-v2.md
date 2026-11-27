@@ -59,6 +59,10 @@ roll back or change a key.
   CMC peers keep in an access's `clientData`.
 - **`bin/access-tokens.js status`** (read-only): counts of rows in clear, under the configured key, and under other
   keys.
+- **`bin/integrity-check.js`** reports an access whose stored token does not open (copied from a core with another
+  key, or damaged) as an error of its user, "integrity not verifiable", and checks the others; API reads of that
+  access still fail. On PostgreSQL the migration of this release also adds three small indexes so the checks of
+  every start read no whole table.
 
 ### Operators (PostgreSQL): the unindexed-user guard locks per account instead of on the index row
 
