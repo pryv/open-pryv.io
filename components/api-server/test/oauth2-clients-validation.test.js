@@ -11,8 +11,10 @@ const require = createRequire(import.meta.url);
  * [OCURA] `POST /oauth2/clients/validation` on a real core: an account reads
  * the current validation level of the apps it granted (told by the
  * server-owned stamps of its accesses, never by an access name it chose),
- * and of no other client; a level change since consent shows at once; a
- * request without a personal token or with more than 50 ids is refused.
+ * and of no other client (an access the owner named, or a shared access an
+ * OAuth session created, never counts); a level change since consent shows at
+ * once; a request without a personal token (none, wrong, expired, an app's
+ * session, a delegation's) or with more than 50 ids is refused.
  */
 
 /* global initTests, initCore, coreRequest, getNewFixture, cuid */
@@ -50,7 +52,7 @@ function pkce () {
 describe('[OCURA] OAuth current validation level of the apps an account granted', function () {
   this.timeout(60000);
 
-  let fixtures, restoreConfig, platformDB, who, sessionToken;
+  let fixtures, restoreConfig, platformDB, who, sessionToken, userFixture;
   const owner = 'own' + cuid().slice(-10);
   const ids = { granted: 'Cvg.' + cuid().slice(-10), other: 'Cvo.' + cuid().slice(-10) };
 
@@ -89,6 +91,7 @@ describe('[OCURA] OAuth current validation level of the apps an account granted'
     const s = await coreRequest.post('/' + username + '/streams').set('Authorization', token).send({ id: 'a', name: 'a' });
     assert.equal(s.status, 201, JSON.stringify(s.body));
     who = { username, token };
+    userFixture = user;
 
     // The account consents to one of the two clients and gets a session.
     const { verifier, challenge } = pkce();
@@ -133,6 +136,12 @@ describe('[OCURA] OAuth current validation level of the apps an account granted'
     return coreRequest.post('/oauth2/clients/validation').send(body);
   }
 
+  // An access written storage-side (no API guard), with a session for its token when asked.
+  async function storedAccess (attrs, withSession = false) {
+    await userFixture.access(attrs);
+    if (withSession) await userFixture.session(attrs.token);
+  }
+
   it('[OCURA1] answers the granted client only; a client the account did not grant and an unknown id are left out alike', async () => {
     const res = await read({ username: who.username, userToken: who.token, clientIds: [ids.granted, ids.other, 'unknown-' + cuid().slice(-8)] });
     assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -146,6 +155,38 @@ describe('[OCURA] OAuth current validation level of the apps an account granted'
     assert.equal(made.status, 201, JSON.stringify(made.body));
     const res = await read({ username: who.username, userToken: who.token, clientIds: [ids.other] });
     assert.deepEqual([res.status, res.body], [200, { clients: {} }]);
+  });
+
+  it('[OCURA6] a shared access an OAuth session created (stamped with its dataGrantId) and named after another client gives no answer', async () => {
+    // Written storage-side with the stamp accesses.create puts on every access
+    // an OAuth session creates; its name is the app's choice.
+    const sessionAccess = (await coreRequest.get('/' + who.username + '/accesses').set('Authorization', who.token))
+      .body.accesses.find((a) => a.name === 'oauth:' + ids.granted);
+    assert.ok(sessionAccess?.clientData?.oauth?.dataGrantId, 'no stamped session found');
+    await storedAccess({ type: 'shared', name: 'oauth:' + ids.other, clientData: { oauth: { dataGrantId: sessionAccess.clientData.oauth.dataGrantId } } });
+    const listed = (await coreRequest.get('/' + who.username + '/accesses').set('Authorization', who.token))
+      .body.accesses.find((a) => a.name === 'oauth:' + ids.other);
+    assert.deepEqual([listed?.type, typeof listed?.clientData?.oauth?.dataGrantId], ['shared', 'string'], 'the stamped shared access is not listed as such');
+    const res = await read({ username: who.username, userToken: who.token, clientIds: [ids.other, ids.granted] });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(Object.keys(res.body.clients), [ids.granted]);
+  });
+
+  it('[OCURA7] a token obtained through account delegation is refused (403), an expired personal token too (401)', async () => {
+    const delegateToken = 'deleg-' + cuid();
+    await storedAccess({
+      type: 'personal',
+      token: delegateToken,
+      name: 'delegation:ocura7-parent@core',
+      clientData: { delegation: { kind: 'delegate-pat', relId: 'ocura7-rel', delegate: { username: 'ocura7-parent', hostSlug: 'core' } } },
+    }, true);
+    let res = await read({ username: who.username, userToken: delegateToken, clientIds: [ids.granted] });
+    assert.deepEqual([res.status, res.body.error], [403, 'access_denied'], JSON.stringify(res.body));
+    // A personal token whose session is gone (expired): the access alone does not sign in.
+    const expiredToken = 'expired-' + cuid();
+    await storedAccess({ type: 'personal', token: expiredToken, name: 'ocura7-expired' }, false);
+    res = await read({ username: who.username, userToken: expiredToken, clientIds: [ids.granted] });
+    assert.equal(res.status, 401, JSON.stringify(res.body));
   });
 
   it('[OCURA3] a level change since consent shows at the next read: publisher validated under a refused level is not served', async () => {
