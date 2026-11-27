@@ -81,11 +81,23 @@ describe('[ADLP] admin.localPolicy', function () {
     assert.ok(report.problems.some((p) => p.path.join('.') === 'admin.localPolicy.requireLocalScope'));
   });
 
-  it('[ADLP5] warning: a platform-only write in requireLocalScope can be held by nobody here', () => {
-    const r = describeLocalPolicy(configOf({ requireLocalScope: ['config:write'] }));
+  it('[ADLP5] warning: a platform-only write or an OAuth client / publisher permission in requireLocalScope can be held by nobody here', () => {
+    const r = describeLocalPolicy(configOf({ requireLocalScope: ['config:write', 'oauthClients:review', 'publishers:read', 'audit:read'] }));
     assert.deepEqual(r.problems, []);
-    assert.equal(r.warnings.length, 1);
+    assert.equal(r.warnings.length, 3);
     assert.match(r.warnings[0], /config:write/);
+    assert.match(r.warnings[1], /oauthClients:review/);
+    assert.match(r.warnings[2], /publishers:read/);
+  });
+
+  it('[ADLP8] a hostings hierarchy with a zone key in two regions is a problem of the administration configuration', () => {
+    const all = { hostings: { regions: { europe: { zones: { a: { hostings: { h1: {} } } } }, america: { zones: { a: { hostings: { h2: {} } } } } } } };
+    const cfg = { get: (k) => all[k] };
+    const r = describeLocalPolicy(cfg);
+    assert.equal(r.problems.length, 1);
+    assert.equal(r.problems[0].path[0], 'hostings');
+    assert.throws(() => readLocalPolicy(cfg), /zone key/);
+    assert.ok(describeAdminConfig(cfg).problems.some((p) => p.path[0] === 'hostings'), 'reported at boot and by bin/check-config.js');
   });
 
   it('[ADLP6] the portal view shows the policy and the subject\'s own local roles, never other accounts', () => {

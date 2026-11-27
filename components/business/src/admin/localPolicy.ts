@@ -5,7 +5,8 @@
  * Refer to LICENSE file
  */
 
-import { isPermission, PLATFORM_ONLY_WRITES } from './permissions.ts';
+import { isPermission, PLATFORM_ONLY_WRITES, REGION_SCOPED_PERMISSIONS } from './permissions.ts';
+import { describeHostings } from './scopes.ts';
 import type { AdminPermission } from './permissions.ts';
 import { ROLES, isRole } from './roles.ts';
 import type { Role } from './roles.ts';
@@ -20,12 +21,19 @@ import type { Role } from './roles.ts';
  *   on this core, whatever the scope of a replicated grant (any core can
  *   write a replicated row; only this core's own file protects it).
  * - `localGrants` ([]): `{ userId, role }`, this core only: the role's
- *   permissions minus the platform-only writes. A local grant counts for an
- *   account that holds an active grant in the platform store (its session and
- *   its revocation live there); for any other account it gives nothing.
+ *   permissions minus the platform-only writes and minus the OAuth client and
+ *   publisher permissions (platform-wide registries: a core-level grant never
+ *   gives them). A local grant counts for an account that holds an active
+ *   grant in the platform store (its session and its revocation live there);
+ *   for any other account it gives nothing.
+ *
+ * So on a core with `acceptReplicatedGrants: false` no session holds the
+ * OAuth client and publisher permissions (review them on a core that accepts
+ * replicated grants, or with the admin key).
  *
  * The policy binds role holders, never the admin key nor a setup session.
- * Cores holding different policies is expected.
+ * Cores holding different policies is expected. The validator also checks
+ * the `hostings` hierarchy the grant scopes are matched against (scopes.ts).
  */
 
 type ConfigReader = { get: (key: string) => unknown };
@@ -74,6 +82,9 @@ export function describeLocalPolicy (config: ConfigReader): LocalPolicyReport {
   const warnings: string[] = [];
   const problem = (path: string, message: string) => problems.push({ message: `${path} ${message}`, path: path.split('.') });
   const base = 'admin.localPolicy';
+  // The hierarchy grant scopes are matched against: a zone or hosting key
+  // listed twice would make a scope ambiguous.
+  problems.push(...describeHostings(config));
   const raw = config.get('admin:localPolicy');
   if (raw == null) return { value: DEFAULT_LOCAL_POLICY, problems, warnings };
   if (!isObject(raw)) {
@@ -101,8 +112,8 @@ export function describeLocalPolicy (config: ConfigReader): LocalPolicyReport {
           continue;
         }
         requireLocalScope.add(p);
-        if (PLATFORM_ONLY_WRITES.has(p)) {
-          warnings.push(`${base}.requireLocalScope lists ${p}, a platform-wide write that a local grant never gives: nobody holds it on this core.`);
+        if (PLATFORM_ONLY_WRITES.has(p) || REGION_SCOPED_PERMISSIONS.has(p)) {
+          warnings.push(`${base}.requireLocalScope lists ${p}, a permission on platform-wide state that a local grant never gives: nobody holds it on this core.`);
         }
       }
     }

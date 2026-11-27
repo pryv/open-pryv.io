@@ -34,8 +34,10 @@ export { SCOPE_PLATFORM, isScope } from './scopes.ts';
  *    publisher permissions come from `platform` and `region:<r>` grants only;
  * 2. nothing when this core's local policy does not accept replicated grants;
  * 3. never a permission of the policy's `requireLocalScope`;
- * 4. plus the policy's `localGrants` for the account (bundle minus the
- *    platform-only writes), when it holds an active grant in the row.
+ * 4. plus the policy's `localGrants` for the account, when it holds an
+ *    active grant in the row: the bundle minus the platform-only writes and
+ *    minus the OAuth client and publisher permissions (a local grant is a
+ *    core-level grant; those registries are platform-wide state).
  *
  * Claim codes (`admin-claim/<sha256(code)>`, TTL 15 min by default, 24 h at
  * most) carry a role and a scope fixed at mint time: whoever redeems one while
@@ -256,8 +258,9 @@ export async function revokeSessionsOf (db: AdminStore, userId: string, now: num
 /** The grants that count now: known role, scope of valid form (it may be an orphan), not expired. */
 export function activeGrants (row: RoleRow | null, now: number): RoleGrant[] {
   if (row == null || !Array.isArray(row.grants)) return [];
+  // A present expiry must be a number: a string compares by coercion.
   return row.grants.filter((g) => isPlainObject(g) && isRole(g.role) && isScope(g.scope) &&
-    (g.expiresAt == null || g.expiresAt > now));
+    (g.expiresAt == null || (typeof g.expiresAt === 'number' && g.expiresAt > now)));
 }
 
 /**
@@ -318,7 +321,7 @@ export function effectivePermissions (row: RoleRow | null, now: number, ctx: Per
     for (const local of policy.localGrants) {
       if (local.userId !== ctx.userId || !isRole(local.role)) continue;
       for (const p of ROLE_PERMISSIONS[local.role]) {
-        if (PLATFORM_ONLY_WRITES.has(p)) refuse(p, 'scope');
+        if (PLATFORM_ONLY_WRITES.has(p) || REGION_SCOPED_PERMISSIONS.has(p)) refuse(p, 'scope');
         else permissions.add(p);
       }
     }

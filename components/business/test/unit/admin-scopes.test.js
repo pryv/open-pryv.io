@@ -14,7 +14,7 @@
 
 import assert from 'node:assert/strict';
 import {
-  parseScope, isScope, coreContext, scopeCoversCore, scopeCoversRegions, scopeState, hostingsOf, placeHosting
+  parseScope, isScope, coreContext, scopeCoversCore, scopeCoversRegions, scopeState, hostingsOf, placeHosting, describeHostings
 } from '../../src/admin/scopes.ts';
 import { coreRegion } from 'oauth2/src/clientRegistry.ts';
 
@@ -135,6 +135,23 @@ describe('[ADSC] administrator grant scopes', function () {
     assert.equal(scopeState('region:default', null, ['core-a']), 'orphan');
     assert.equal(scopeState('zone:ch', null, ['core-a']), 'orphan');
     assert.equal(scopeState('core:core-a', null, ['core-a']), 'ok');
+  });
+
+  it('[ADSC9] a zone key in two regions or a hosting key in two zones is a problem; a valid hierarchy has none', () => {
+    assert.deepEqual(describeHostings(configOf({ hostings: HOSTINGS })), []);
+    assert.deepEqual(describeHostings(configOf({ hostings: null })), []);
+    const dupZone = describeHostings(configOf({
+      hostings: { regions: { europe: { zones: { a: { hostings: { h1: {} } } } }, america: { zones: { a: { hostings: { h2: {} } } } } } }
+    }));
+    assert.equal(dupZone.length, 1);
+    assert.deepEqual(dupZone[0].path, ['hostings', 'regions', 'america', 'zones', 'a']);
+    assert.match(dupZone[0].message, /europe/);
+    const dupHosting = describeHostings(configOf({
+      hostings: { regions: { europe: { zones: { ch: { hostings: { h1: {} } }, de: { hostings: { h1: {} } } } } } }
+    }));
+    assert.equal(dupHosting.length, 1);
+    assert.deepEqual(dupHosting[0].path, ['hostings', 'regions', 'europe', 'zones', 'de', 'hostings', 'h1']);
+    assert.match(dupHosting[0].message, /europe\.ch/);
   });
 
   it('[ADSC8] the OAuth client region of a core is the same walk (default without a hierarchy)', () => {

@@ -85,6 +85,42 @@ export function placeHosting (hostings: Hostings | null, hosting: string): { reg
   return null;
 }
 
+/**
+ * Problems of the `hostings` hierarchy for grant scopes: a zone key listed
+ * in two regions, or a hosting key listed in two zones, would make
+ * `zone:<id>` or `hosting:<id>` (and the place of a core) ambiguous. Never
+ * throws; problems name their key path.
+ */
+export function describeHostings (config: ConfigReader): Array<{ message: string; path: string[] }> {
+  const problems: Array<{ message: string; path: string[] }> = [];
+  const hostings = hostingsOf(config);
+  if (hostings == null) return problems;
+  const zoneSeen = new Map<string, string>();
+  const hostingSeen = new Map<string, string>();
+  for (const region of keysOf(hostings.regions)) {
+    const zones = (childOf(hostings.regions, region) as RegionNode | undefined)?.zones;
+    for (const zone of keysOf(zones)) {
+      const path = ['hostings', 'regions', region, 'zones', zone];
+      const firstRegion = zoneSeen.get(zone);
+      if (firstRegion != null) {
+        problems.push({ message: `${path.join('.')} uses the zone key '${zone}' of region '${firstRegion}' too: zone keys must be unique across regions (administrator grant scopes name a zone by its key)`, path });
+      } else {
+        zoneSeen.set(zone, region);
+      }
+      for (const hosting of keysOf((childOf(zones, zone) as ZoneNode | undefined)?.hostings)) {
+        const where = `${region}.${zone}`;
+        const first = hostingSeen.get(hosting);
+        if (first != null) {
+          problems.push({ message: `${path.join('.')}.hostings.${hosting} is also listed under ${first}: hosting keys must be unique across the hierarchy`, path: [...path, 'hostings', hosting] });
+        } else {
+          hostingSeen.set(hosting, where);
+        }
+      }
+    }
+  }
+  return problems;
+}
+
 /** The region keys of the hierarchy. */
 export function regionsOf (hostings: Hostings | null): string[] {
   return hostings == null ? [] : keysOf(hostings.regions);

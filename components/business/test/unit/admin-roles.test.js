@@ -187,6 +187,10 @@ describe('[ADRO] administrator roles', function () {
       assert.equal(hasActiveGrant(rowOf({ role: 'support', scope: 'platform', expiresAt: NOW - 1 }), NOW), false);
       assert.equal(hasActiveGrant(rowOf({ role: 'superuser', scope: 'platform' }), NOW), false);
       assert.equal(hasActiveGrant(null, NOW), false);
+      // A present expiry that is not a number makes the grant inactive (no comparison by coercion).
+      for (const expiresAt of [String(NOW + HOUR), { at: NOW + HOUR }, true]) {
+        assert.equal(hasActiveGrant(rowOf({ role: 'support', scope: 'platform', expiresAt }), NOW), false, JSON.stringify(expiresAt));
+      }
       const later = rowOf({ role: 'support', scope: 'platform', expiresAt: NOW + 1 });
       assert.ok(permissionsOf(later, NOW, { core: GVA }).has('users:read'));
       assert.equal(permissionsOf(later, NOW + 1, { core: GVA }).size, 0, 'expiry is exclusive');
@@ -217,7 +221,7 @@ describe('[ADRO] administrator roles', function () {
         core: GVA, policy: policyOf({ ...strictAudit, localGrants: [{ userId: 'u1', role: 'auditor' }] }), userId: 'u1'
       });
       assert.ok(local.permissions.has('audit:read'));
-      assert.deepEqual(local.denied, []);
+      assert.deepEqual(local.denied.map((d) => d.permission).sort(), ['oauthClients:read', 'publishers:read'], 'never from a core or local grant');
       // Owner at platform, accepted once the core lists it in localGrants.
       const owner = effectivePermissions(rowOf({ role: 'owner', scope: 'platform' }), NOW, {
         core: GVA, policy: policyOf({ ...strictAudit, localGrants: [{ userId: 'u1', role: 'owner' }] }), userId: 'u1'
@@ -265,6 +269,38 @@ describe('[ADRO] administrator roles', function () {
         core: GVA, policy: policyOf({ acceptReplicatedGrants: false, localGrants: [{ userId: 'u1', role: 'owner' }] }), userId: 'u1'
       });
       assert.deepEqual(both.denied.find((x) => x.permission === 'roles:grant'), { permission: 'roles:grant', reason: 'local-policy' });
+    });
+
+    it('[ADRO19] a local grant never gives the OAuth client and publisher permissions (denied for scope)', () => {
+      const five = [...REGION_SCOPED_PERMISSIONS].sort();
+      assert.deepEqual(five, ['oauthClients:read', 'oauthClients:review', 'oauthClients:write', 'publishers:read', 'publishers:review']);
+      for (const role of ['app-reviewer', 'owner']) {
+        const r = effectivePermissions(rowOf({ role: 'viewer', scope: 'core:core-zz' }), NOW, {
+          core: GVA, policy: policyOf({ localGrants: [{ userId: 'u1', role }] }), userId: 'u1'
+        });
+        for (const p of five) {
+          assert.ok(!r.permissions.has(p), role + ' ' + p);
+          assert.deepEqual(r.denied.find((d) => d.permission === p), { permission: p, reason: 'scope' }, role + ' ' + p);
+        }
+      }
+      // A local owner still gives the core-local rest.
+      const owner = permissionsOf(rowOf({ role: 'viewer', scope: 'core:core-zz' }), NOW, {
+        core: GVA, policy: policyOf({ localGrants: [{ userId: 'u1', role: 'owner' }] }), userId: 'u1'
+      });
+      assert.ok(owner.has('audit:read') && owner.has('users:delete'));
+      // So with acceptReplicatedGrants false, no session reviews OAuth clients on that core, even a platform owner.
+      const closed = permissionsOf(rowOf({ role: 'owner', scope: 'platform' }), NOW, {
+        core: GVA, policy: policyOf({ acceptReplicatedGrants: false, localGrants: [{ userId: 'u1', role: 'owner' }] }), userId: 'u1'
+      });
+      for (const p of five) assert.ok(!closed.has(p), p);
+    });
+
+    it('[ADRO20] a requireLocalScope permission is not given by a second replicated grant of wider scope', () => {
+      const row = rowOf({ role: 'auditor', scope: 'core:core-gva' }, { role: 'owner', scope: 'platform' }, { role: 'auditor', scope: 'region:europe' });
+      const r = effectivePermissions(row, NOW, { core: GVA, policy: policyOf({ requireLocalScope: ['audit:read'] }), userId: 'u1' });
+      assert.ok(!r.permissions.has('audit:read'));
+      assert.deepEqual(r.denied, [{ permission: 'audit:read', reason: 'local-policy' }]);
+      assert.equal(r.permissions.size, PERMISSIONS.length - 1);
     });
 
     it('[ADRO15] a permission given by one grant is not reported as denied by another', () => {
