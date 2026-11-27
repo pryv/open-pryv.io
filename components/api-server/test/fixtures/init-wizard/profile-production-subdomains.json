@@ -7,7 +7,6 @@
     "data/cluster/ca",
     "data/cluster/ca/ca.crt",
     "data/cluster/ca/ca.key",
-    "data/cluster/ca/ca.srl",
     "data/cluster/tls",
     "data/cluster/tls/ca.crt",
     "data/cluster/tls/node.crt",
