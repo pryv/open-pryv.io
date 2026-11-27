@@ -49,22 +49,34 @@
   the statement as before. `getAllAccesses` (the `:_audit:accesses` listing) reads the table by a skip scan (one
   index descent per access) plus the access ids of records without a time; `getAllActions` unchanged.
 - Tests: `storages/engines/postgresql/test/audit-stream-index.test.js` `[PGAS1]` to `[PGAS9]`, `[PGASA]` to
-  `[PGASE]` (trigger rows, updates, deletes of one record and of a 5 000-record account, `deleteUser`, fill, resume
+  `[PGASM]` (trigger rows, updates, deletes of one record and of a 5 000-record account, `deleteUser`, fill, resume
   after a stop, install repair and reset, writes during a fill, row and order equivalence of the two statements
   over 840 shapes (several accesses, alias, `%` and `_` in an id, ties, history, deleted and trashed rows, time
-  bounds, types, both directions, limits, skips), eligibility, plan (ordered primary-key scan, no sort), forged
-  and stale rows, the deletion during a batch, two fills at once, the listing, the state refresh). Conformance
-  `[ASQC]` (one access among many records, pages of 3 with ties, both engines). `[ASFL8]` (the own-trail read
-  reaches the store as one block naming the id alone, all audit engines), `[ASFL9]` (an app token is refused the
-  listings and another access's stream), `[SQQPD]` (SQLite: rowid set for one access). Mutations: the `time` join
-  removed (`[PGASA]` returns the record twice), the inner stream filter neutralised (`[PGAS7]` and `[PGASA]` fail:
-  another access's record returned), the delete trigger's lock removed (`[PGASB]` fails). Removing `OFFSET 0` did
-  not fail `[PGAS9]` on a later run: the bad plan depends on the statistics of the shared test table (it was seen
-  there once, before the fence was added).
+  bounds including `equal`, a block naming two ids, both directions, limits, skips, streamed reads with and
+  without a limit), eligibility, the exact text of the indexed statement, plan (outer side of the nested loop an
+  ordered scan of the primary key in the sort direction, no sort, read from the JSON plan), forged and stale rows,
+  the deletion during a batch, two fills at once, the listing, the state refresh, a stale fill position reset when
+  a trigger is repaired and a fill refused or reset while a trigger does not fire, a reset during a fill, an update
+  during a batch, a whole-account delete racing an insert for that account, the `TRUNCATE` not holding inserts
+  behind a read, a restore through the triggers, a fill with inserts, single deletions, account erasures and time
+  updates going on, and the record without a time (returned by the plain read, not by the indexed one: a recorded
+  decision)). api-server `[AADL1]` / `[AADL3]` on the PostgreSQL audit engine: the rows stay with a kept trail
+  (which still reads through the table) and go with an erased one. Conformance `[ASQC]` (one access among many
+  records, pages of 3 with ties, both engines). `[ASFL8]` (the own-trail read reaches the store as one block naming
+  the id alone, all audit engines), `[ASFL9]` (an app token is refused the listings and another access's stream),
+  `[SQQPD]` (SQLite: rowid set for one access). Before the fixes `[PGASF]`, `[PGASG]`, `[PGASH]`, `[PGASI]` and
+  `[PGASJ]` failed (an audit insert waited 5.5 s behind the waiting `TRUNCATE`). Mutations, each failing its test:
+  the `time` join removed (`[PGASA]`: the record twice), the inner stream filter neutralised (`[PGAS7]`,
+  `[PGASA]`), the delete trigger's lock removed (`[PGASB]`), `OFFSET 0` removed (`[PGAS8]`, the text pin), the
+  install's reset limited to a complete state (`[PGASF]`), the compare-and-set removed (`[PGASG]`), the update
+  branch's lock removed (`[PGASH]`), the `TRUNCATE` lock timeout removed (`[PGASJ]`). Removing `OFFSET 0` does not
+  fail the plan test `[PGAS9]` (5 runs, seeded with every record naming the access): on the shared test table the
+  planner estimates the new account small and picks the table first even without the fence (EXPLAIN checked), so
+  the fence is pinned by the statement text only.
 - A type filter keeps the plain statement (served by `idx_audit_type`): through the table it was slower on an
   access holding 2 % of the records (39 ms against 7 ms). The delete trigger removes the rows of an account left
-  with no audit record by one range of the key (the keyed join took 4.3 s for a 200 000-record erasure; now
-  1.3 s, 0.5 s without triggers).
+  with no audit record by one range of the key (the keyed join took 4.3 s for a 200 000-record erasure; two
+  statements 1.3 s; the one-statement form 1.5 s; 0.5 s without triggers; no drift after the runs).
 - Measured on mbp2 (PostgreSQL 16, `shared_buffers` 128 MB, 5 accounts x 200 000 records, 20 per time value; one
   busy access 60 %, 20 medium 1.9 % each, two rare ones of 50 records, newest and oldest, one without records),
   median of 7, plain / indexed: limit 20 any access 100 to 133 ms / 0.3 ms server side (1.4 ms round trip);
@@ -73,7 +85,7 @@
   281 / 1.2 ms. Fill: 31 s per million records idle (473 MB WAL), 33 s with a writer at 200 records/s including a
   stop after 20 batches and the resume; no drift afterwards. Table: 129 MB heap + 231 MB key per million rows.
   Audit insert (30 000 per side, alternating rounds): median 2.92 / 2.99 ms, p99 3.6 / 6.8 ms. Erasure of
-  200 000 records 0.5 / 1.3 s; one-record deletion 2.3 ms with triggers; 20 000 records of an account 51 / 448 ms
+  200 000 records 0.5 / 1.5 s; one-record deletion 2.3 ms with triggers; 20 000 records of an account 51 / 448 ms
   (no caller in the core). Several ids in one `any` (pre-existing LIKE path, unchanged): 100 ids 8.5 ms when the
   page fills from recent records, but 5.6 s with 80 ids that match nothing plus a rare old access (480 ids:
   33 s), one LIKE per id per row over the whole trail; only a personal token can name such a set. SQLite (no

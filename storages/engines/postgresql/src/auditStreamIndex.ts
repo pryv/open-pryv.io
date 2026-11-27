@@ -112,7 +112,7 @@ $f$;
 // Accounts left with no audit record (an erasure) lose their rows by one
 // range of the primary key each; the rows of the other deleted records are
 // removed one key at a time. Measured on the erasure of a 200 000-record
-// account: 4.3 s with keys alone, 1.3 s this way (0.5 s without triggers).
+// account: 4.3 s with keys alone, 1.5 s this way (0.5 s without triggers).
 // Finding the emptied accounts and deleting their rows is ONE statement, so
 // one snapshot: a record committed for such an account after it keeps its
 // row (invisible to the delete), one committed before makes the account not

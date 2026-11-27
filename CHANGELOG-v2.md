@@ -20,7 +20,7 @@
   Disk: about 360 MB per million audit records (one row per record naming one access; 32-character ids), about
   half the size of `audit_events` itself. Each audited API call writes one more small row per access it names:
   measured median time of an audit insert 2.92 ms without, 2.99 ms with (within noise), the slowest 1 % 3.6 ms
-  without, 6.8 ms with. Erasing the audit trail of an account of 200 000 records takes about 1.3 s instead of
+  without, 6.8 ms with. Erasing the audit trail of an account of 200 000 records takes about 1.5 s instead of
   0.5 s.
 - **First start of this release** (`migrations.autoRunOnStart`, the default; also with a SQLite base storage and
   the PostgreSQL audit engine): the core fills the table before serving, in batches of 20 000 records, saying so in
