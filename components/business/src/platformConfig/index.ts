@@ -45,6 +45,10 @@ export const SOURCE_LABEL = 'platform-db';
 const DEFAULT_POLL_SECONDS = 15;
 const MAX_POLL_SECONDS = 3600;
 const UPDATE_ATTEMPTS = 8;
+/** Waits between the attempts to bump the revision once a row landed. */
+const BUMP_RETRY_DELAYS_MS = [50, 250, 1000];
+/** The periodic check reloads unconditionally every this many checks (a missed bump heals). */
+const DEFAULT_FULL_RELOAD_EVERY = 20;
 
 export type KvStore = Pick<PlatformDB,
   'getPlatformKv' | 'setPlatformKv' | 'setPlatformKvIfAbsent' | 'replacePlatformKvIfValue' | 'listPlatformKvEntries'>;
@@ -202,19 +206,45 @@ async function bumpRev (db: KvStore): Promise<number> {
   return Number.parseInt(after as string, 10);
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Once a row landed: bumps the revision, retried with back-off. A failure is
+ * logged and never thrown (the change is made; every process picks it up at
+ * its next full reload, see startPolling). Answers the revision read back.
+ */
+async function bumpRevAfterWrite (db: KvStore, what: string): Promise<{ rev: number; revBumped: boolean }> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return { rev: await bumpRev(db), revBumped: true };
+    } catch (err) {
+      if (attempt >= BUMP_RETRY_DELAYS_MS.length) {
+        logger.error(`[platform-config-rev] ${what} written, but the revision was not bumped (${(err as Error).message}): processes load it at their next full reload`);
+        break;
+      }
+      await sleep(BUMP_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  let rev = 0;
+  try { rev = await currentRev(db); } catch { /* answered as 0 */ }
+  return { rev, revBumped: false };
+}
+
 /**
  * Writes the value of a key of the schema (validated, compare-and-set) and
- * bumps the revision. Throws UnknownKeyError, InvalidValueError.
+ * bumps the revision. Throws UnknownKeyError, InvalidValueError, or a store
+ * error when the row itself was not written; once the row is written it
+ * answers (`revBumped: false` when the revision could not be bumped).
  */
-export async function setEntry (db: KvStore, key: string, value: unknown, by: UpdatedBy): Promise<{ before: Entry | null; after: Entry; rev: number }> {
+export async function setEntry (db: KvStore, key: string, value: unknown, by: UpdatedBy): Promise<{ before: Entry | null; after: Entry; rev: number; revBumped: boolean }> {
   if (!isValidKeyName(key) || keyDef(key) == null) throw new UnknownKeyError(key);
   const errors = valueErrors(key, value);
   if (errors != null) throw new InvalidValueError(key, errors);
   const after: Entry = { key, value, updatedAt: Date.now(), updatedBy: checkUpdatedBy(by) };
   const raw = serialize(after);
   const done = await casUpdate(db, ROW_PREFIX + key, () => raw);
-  const rev = await bumpRev(db);
-  return { before: parseRow(key, done.before), after, rev };
+  const bumped = await bumpRevAfterWrite(db, `row "${key}"`);
+  return { before: parseRow(key, done.before), after, ...bumped };
 }
 
 /**
@@ -222,14 +252,14 @@ export async function setEntry (db: KvStore, key: string, value: unknown, by: Up
  * bumps the revision when there was one. A key outside the schema can be
  * deleted while a row of it is left in the store; otherwise UnknownKeyError.
  */
-export async function unsetEntry (db: KvStore, key: string, by: UpdatedBy): Promise<{ before: Entry | null; rev: number }> {
+export async function unsetEntry (db: KvStore, key: string, by: UpdatedBy): Promise<{ before: Entry | null; rev: number; revBumped: boolean }> {
   checkUpdatedBy(by);
   if (!isValidKeyName(key)) throw new UnknownKeyError(key);
   const rowKey = ROW_PREFIX + key;
   if (keyDef(key) == null && await db.getPlatformKv(rowKey) == null) throw new UnknownKeyError(key);
   const done = await casUpdate(db, rowKey, () => null);
-  if (done.before == null) return { before: null, rev: await currentRev(db) };
-  return { before: parseRow(key, done.before), rev: await bumpRev(db) };
+  if (done.before == null) return { before: null, rev: await currentRev(db), revBumped: false };
+  return { before: parseRow(key, done.before), ...await bumpRevAfterWrite(db, `deletion of row "${key}"`) };
 }
 
 /**
@@ -251,7 +281,7 @@ export async function seed (config: ScopedConfig, db: KvStore, by: UpdatedBy, ke
     if (await db.setPlatformKvIfAbsent(ROW_PREFIX + key, serialize(entry))) written.push(key);
     else skipped.push({ key, reason: 'already in the store' });
   }
-  const rev = written.length > 0 ? await bumpRev(db) : await currentRev(db);
+  const rev = written.length > 0 ? (await bumpRevAfterWrite(db, 'seed of ' + written.join(', '))).rev : await currentRev(db);
   return { written, skipped, rev };
 }
 
@@ -275,13 +305,19 @@ function setPath (tree: Record<string, unknown>, key: string, value: unknown): v
   node[segments[segments.length - 1]] = value;
 }
 
+/** Skipped rows already reported by this process (`<key>|<reason>`): once each. */
+const reportedRows = new Set<string>();
+
 /** The rows of the schema keys whose value the schema accepts. */
 async function loadableEntries (db: KvStore, warn: boolean): Promise<Entry[]> {
   const out: Entry[] = [];
   for (const entry of await listEntries(db)) {
     const problem = rowProblem(entry);
     if (problem != null) {
-      if (warn) logger.warn(`[platform-config-invalid] row "${entry.key}" skipped (${problem}): the local value stays`);
+      if (warn && !reportedRows.has(entry.key + '|' + problem)) {
+        reportedRows.add(entry.key + '|' + problem);
+        logger.warn(`[platform-config-invalid] row "${entry.key}" skipped (${problem}): the local value stays`);
+      }
       continue;
     }
     out.push(entry);
@@ -292,6 +328,17 @@ async function loadableEntries (db: KvStore, warn: boolean): Promise<Entry[]> {
 let loaded: { rev: number; keys: string[] } | null = null;
 let reloadChain: Promise<unknown> = Promise.resolve();
 
+/** The revision recorded for a core (`core-config-rev/<coreId>`), null when none or malformed. */
+async function recordedRev (db: KvStore, coreId: string): Promise<number | null> {
+  const raw = await db.getPlatformKv(CORE_REV_PREFIX + coreId);
+  try {
+    const v = JSON.parse(raw ?? 'null');
+    return v != null && Number.isSafeInteger(v.rev) ? v.rev : null;
+  } catch {
+    return null;
+  }
+}
+
 /** What this process loaded last, or null before the first load. */
 export function loadedState (): { rev: number; keys: string[] } | null {
   return loaded;
@@ -300,8 +347,9 @@ export function loadedState (): { rev: number; keys: string[] } | null {
 /**
  * Fills the `platform-store` scope of the configuration with the valid rows
  * (an unknown or invalid row is skipped with a warning) and records the
- * revision this core runs (`core-config-rev/<coreId>`). Loads run one at a
- * time in a process.
+ * revision this core runs (`core-config-rev/<coreId>`) when the recorded one
+ * differs; nothing is written while the store holds no row and was never
+ * written (an upgrade writes nothing). Loads run one at a time in a process.
  */
 export async function loadScope (config: ScopedConfig, db: KvStore, coreId: string): Promise<{ rev: number; keys: string[] }> {
   const run = reloadChain.then(async () => {
@@ -315,10 +363,12 @@ export async function loadScope (config: ScopedConfig, db: KvStore, coreId: stri
     }
     config.replaceScopeConfig(PLATFORM_STORE_SCOPE, tree);
     loaded = { rev, keys };
-    try {
-      await db.setPlatformKv(CORE_REV_PREFIX + coreId, JSON.stringify({ rev, at: Date.now() }));
-    } catch (err) {
-      logger.warn(`could not record the configuration revision of core ${coreId}: ${(err as Error).message}`);
+    if (rev !== 0 || keys.length > 0) {
+      try {
+        if (await recordedRev(db, coreId) !== rev) await db.setPlatformKv(CORE_REV_PREFIX + coreId, JSON.stringify({ rev, at: Date.now() }));
+      } catch (err) {
+        logger.warn(`could not record the configuration revision of core ${coreId}: ${(err as Error).message}`);
+      }
     }
     return { rev, keys };
   });
@@ -334,20 +384,27 @@ export function pollSeconds (config: Pick<ScopedConfig, 'get'>): number {
 
 /**
  * Checks the revision every `platform.configPollSeconds` and reloads the
- * scope when it changed. The timer does not keep the process alive; a failed
- * check keeps the values loaded and is logged once until a check succeeds.
+ * scope when it changed, and unconditionally every `fullReloadEvery` checks
+ * (default 20), so a row written without its revision bump is still loaded.
+ * The timer does not keep the process alive; a failed check keeps the values
+ * loaded and is logged once until a check succeeds.
  */
-export function startPolling (config: ScopedConfig, db: KvStore, coreId: string, onChange?: (state: { rev: number; keys: string[] }) => void): () => void {
+export function startPolling (config: ScopedConfig, db: KvStore, coreId: string,
+  onChange?: (state: { rev: number; keys: string[] }) => void, options: { fullReloadEvery?: number } = {}): () => void {
+  const fullReloadEvery = options.fullReloadEvery ?? DEFAULT_FULL_RELOAD_EVERY;
   let busy = false;
   let failing = false;
+  let checks = 0;
   const timer = setInterval(async () => {
     if (busy) return;
     busy = true;
     try {
+      checks++;
       const rev = await currentRev(db);
-      if (loaded == null || rev !== loaded.rev) {
+      const changed = loaded == null || rev !== loaded.rev;
+      if (changed || checks % fullReloadEvery === 0) {
         const state = await loadScope(config, db, coreId);
-        if (onChange != null) onChange(state);
+        if (changed && onChange != null) onChange(state);
       }
       failing = false;
     } catch (err) {
@@ -371,16 +428,16 @@ export async function localOverrides (config: ScopedConfig, db: KvStore): Promis
   return out;
 }
 
-/** The cores of `coreIds` whose processes did not load the current revision (`rev` null: never recorded). */
+/**
+ * The cores of `coreIds` whose processes did not load the current revision
+ * (`rev` null: never recorded). The record of a core is the last one any of
+ * its processes wrote: a core with one lagging process can read as current.
+ */
 export async function coresBehind (db: KvStore, coreIds: string[]): Promise<Array<{ coreId: string; rev: number | null }>> {
   const current = await currentRev(db);
   const out: Array<{ coreId: string; rev: number | null }> = [];
   for (const coreId of coreIds) {
-    let rev: number | null = null;
-    try {
-      const v = JSON.parse((await db.getPlatformKv(CORE_REV_PREFIX + coreId)) ?? 'null');
-      if (v != null && Number.isSafeInteger(v.rev)) rev = v.rev;
-    } catch { /* malformed: never recorded */ }
+    const rev = await recordedRev(db, coreId);
     if (rev == null ? current > 0 : rev < current) out.push({ coreId, rev });
   }
   return out;

@@ -21,6 +21,34 @@ const { SCHEMA, NOT_IN_STORE, isValidKeyName } = require('business/src/platformC
 const { CAPABILITY_NAMES } = require('business/src/admin/capabilities.ts');
 const { createValidator } = require('utils/src/jsonValidator.ts');
 
+/**
+ * What makes a value schema unbounded or open: a node without a type or an
+ * enum, a string without `maxLength`, an array without `maxItems` or `items`,
+ * an object without `additionalProperties: false`, a property named
+ * `__proto__`, `constructor` or `prototype`. Answers the problems found.
+ */
+function boundedSchemaProblems (schema, path = '#') {
+  const problems = [];
+  if (schema == null || typeof schema !== 'object') return [path + ': not a schema'];
+  if (Array.isArray(schema.enum)) return problems;
+  const types = Array.isArray(schema.type) ? schema.type : (schema.type != null ? [schema.type] : []);
+  if (types.length === 0) return [path + ': no type nor enum'];
+  if (types.includes('string') && typeof schema.maxLength !== 'number') problems.push(path + ': string without maxLength');
+  if (types.includes('array')) {
+    if (typeof schema.maxItems !== 'number') problems.push(path + ': array without maxItems');
+    if (schema.items == null) problems.push(path + ': array without items');
+    else problems.push(...boundedSchemaProblems(schema.items, path + '/items'));
+  }
+  if (types.includes('object')) {
+    if (schema.additionalProperties !== false) problems.push(path + ': object without additionalProperties: false');
+    for (const [name, sub] of Object.entries(schema.properties ?? {})) {
+      if (['__proto__', 'constructor', 'prototype'].includes(name)) problems.push(path + ': property ' + name);
+      else problems.push(...boundedSchemaProblems(sub, path + '/' + name));
+    }
+  }
+  return problems;
+}
+
 describe('[PLCS] platform configuration schema', function () {
   it('[PLCS1] every platform-scoped rule is in the schema or in the not-in-store list with a reason', () => {
     const missing = [];
@@ -59,6 +87,34 @@ describe('[PLCS] platform configuration schema', function () {
       assert.ok(capabilities.has(def.capability), 'capability of ' + key);
       assert.equal(validator.validateSchema(def.schema), true, 'schema of ' + key);
     }
+  });
+
+  it('[PLCS5] no schema key is a secret, an opaque or redacted value, or under a YAML-only or secret line', () => {
+    const closed = Object.entries(NOT_IN_STORE).filter(([, reason]) => reason.startsWith('secret') || reason.startsWith('YAML-only'));
+    for (const key of Object.keys(SCHEMA)) {
+      const segments = key.split('.');
+      assert.equal(findRule(segments)?.class, 'public', key + ' is shown in clear by the effective configuration');
+      for (const [pattern, reason] of closed) {
+        assert.ok(matchScore(pattern.split('.'), segments) < 0, key + ' is under ' + pattern + ' (' + reason + ')');
+      }
+    }
+  });
+
+  it('[PLCS6] value schemas are bounded and closed', () => {
+    for (const [key, def] of Object.entries(SCHEMA)) assert.deepEqual(boundedSchemaProblems(def.schema), [], 'schema of ' + key);
+    // the check itself
+    assert.deepEqual(boundedSchemaProblems({ type: 'string', maxLength: 80 }), []);
+    assert.deepEqual(boundedSchemaProblems({ type: 'integer', minimum: 1, maximum: 9 }), []);
+    assert.deepEqual(boundedSchemaProblems({ enum: ['a', 'b'] }), []);
+    assert.deepEqual(boundedSchemaProblems({ type: 'array', maxItems: 5, items: { type: 'string', maxLength: 10 } }), []);
+    assert.deepEqual(boundedSchemaProblems({ type: 'object', additionalProperties: false, properties: { a: { type: 'boolean' } } }), []);
+    assert.equal(boundedSchemaProblems({ type: 'string' }).length, 1, 'string without maxLength');
+    assert.equal(boundedSchemaProblems({ type: 'array', items: { type: 'string', maxLength: 3 } }).length, 1, 'array without maxItems');
+    assert.equal(boundedSchemaProblems({ type: 'array', maxItems: 3 }).length, 1, 'array without items');
+    assert.equal(boundedSchemaProblems({ type: 'object', properties: {} }).length, 1, 'open object');
+    assert.equal(boundedSchemaProblems({ type: 'object', additionalProperties: false, properties: { constructor: { type: 'boolean' } } }).length, 1);
+    assert.equal(boundedSchemaProblems({}).length, 1, 'no type');
+    assert.equal(boundedSchemaProblems({ type: ['string', 'object'], maxLength: 3 }).length, 1, 'an object branch must be closed too');
   });
 
   it('[PLCS4] key names: dots, letters, digits and dashes only', () => {

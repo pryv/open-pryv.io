@@ -180,6 +180,16 @@ describe('[BCFL] boiler config: override and bootstrap layers', function () {
     }
   });
 
+  it('[BCFL4] config.set() writes the memory scope, never the platform-store scope', function () {
+    const config = new Config().initSync({ baseConfigDir: dir, skipOverrideConfig: true }, logging);
+    config.replaceScopeConfig(PLATFORM_STORE_SCOPE, { a: 'store' });
+    config.set('a', 'set');
+    assert.strictEqual(config.get('a'), 'set');
+    assert.strictEqual(config.getScopeAndValue('a').scope, 'memory');
+    config.replaceScopeConfig(PLATFORM_STORE_SCOPE, {});
+    assert.strictEqual(config.get('a'), 'set', 'kept when the store scope is replaced');
+  });
+
   it('[BCFL2] skipOverrideConfig skips both files', function () {
     const config = new Config().initSync({
       baseConfigDir: dir,

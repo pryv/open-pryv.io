@@ -125,7 +125,7 @@ async function listCommand (ctx) {
     }
   }
   for (const [key, entry] of rows) {
-    if (pc.keyDef(key) == null) console.log(key + ' = ' + JSON.stringify(entry.value) + '  [ignored: not a key of this release; unset removes it]');
+    if (pc.keyDef(key) == null) console.log(key + ' = ' + JSON.stringify(entry.value) + '  [not a key of this release: ignored here, a newer core may use it]');
   }
   return 0;
 }
@@ -185,31 +185,54 @@ async function seedCommand ({ config, db, pc }, keys) {
   return 0;
 }
 
+/** Rows of this release's keys under `entries`; rows of other keys apart, under `otherKeys` (import leaves them out). */
 async function exportCommand ({ db, pc }) {
   const entries = {};
-  for (const e of await pc.listEntries(db)) entries[e.key] = e.value;
-  console.log(JSON.stringify({ rev: await pc.currentRev(db), entries }, null, 2));
+  const otherKeys = {};
+  for (const e of await pc.listEntries(db)) (pc.keyDef(e.key) != null ? entries : otherKeys)[e.key] = e.value;
+  const doc = { rev: await pc.currentRev(db), entries };
+  if (Object.keys(otherKeys).length > 0) doc.otherKeys = otherKeys;
+  console.log(JSON.stringify(doc, null, 2));
   return 0;
 }
 
+/**
+ * Sets every key of `entries` (an export's `otherKeys` are not imported).
+ * Every key and value is checked before the first write; the keys are then
+ * written one by one: if the store fails part way, the keys already written
+ * stay, and both lists are printed.
+ */
 async function importCommand ({ config, db, pc }, file) {
   const doc = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), file), 'utf8'));
   const entries = doc != null && typeof doc.entries === 'object' && doc.entries != null ? doc.entries : doc;
   if (entries == null || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('the file must hold { "entries": { key: value } } or { key: value }');
-  // Check every key and value before writing any.
+  if (doc.otherKeys != null) console.log('Not imported (keys this release does not know): ' + Object.keys(doc.otherKeys).join(', '));
   const problems = [];
   for (const [key, value] of Object.entries(entries)) {
-    if (!pc.isValidKeyName(key) || pc.keyDef(key) == null) { problems.push(key + ': not a key of this release'); continue; }
+    if (!pc.isValidKeyName(key) || pc.keyDef(key) == null) { problems.push(key + ': not a key of this release (a row of an older or newer release)'); continue; }
     if (pc.valueErrors(key, value) != null) problems.push(key + ': value refused by the schema');
   }
   if (problems.length > 0) {
     console.error('platform-config: nothing imported:\n  ' + problems.join('\n  '));
     return 1;
   }
+  const keys = Object.keys(entries);
+  const written = [];
   let rev = await pc.currentRev(db);
-  for (const [key, value] of Object.entries(entries)) rev = (await pc.setEntry(db, key, value, by(config))).rev;
-  log(config, 'import ' + Object.keys(entries).join(','));
-  console.log(Object.keys(entries).length + ' key(s) imported (revision ' + rev + ').');
+  try {
+    for (const key of keys) {
+      rev = (await pc.setEntry(db, key, entries[key], by(config))).rev;
+      written.push(key);
+    }
+  } catch (err) {
+    if (written.length > 0) log(config, 'import (partial) ' + written.join(','));
+    console.error('platform-config: the import stopped: ' + err.message);
+    console.error('  written:     ' + (written.length > 0 ? written.join(', ') : 'none'));
+    console.error('  not written: ' + keys.filter((k) => !written.includes(k)).join(', '));
+    return 1;
+  }
+  log(config, 'import ' + keys.join(','));
+  console.log(keys.length + ' key(s) imported (revision ' + rev + ').');
   return 0;
 }
 
@@ -275,8 +298,12 @@ function printUsage (stream) {
     '  node bin/platform-config.js set <key> <value>   the value as JSON, or a plain string',
     '  node bin/platform-config.js unset <key>         remove the row: the key reads the files again',
     '  node bin/platform-config.js seed [--keys a,b]   copy this core\'s current values where no row exists',
-    '  node bin/platform-config.js export              the rows as JSON',
-    '  node bin/platform-config.js import <file>       set every key of an export (or of { key: value })',
+    '  node bin/platform-config.js export              the rows as JSON (rows of keys this release does not',
+    '                                                know apart, under otherKeys)',
+    '  node bin/platform-config.js import <file>       set every key of an export\'s entries (or of { key: value });',
+    '                                                all are checked first, then written one by one: a store',
+    '                                                failure part way leaves the keys written so far (both',
+    '                                                lists are printed)',
     '',
     'Options:',
     '  --config <file>   a host-config file layered on top (multi-core joiner), as for bin/master.js',

@@ -160,6 +160,70 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
     assert.deepEqual(await platformConfig.listEntries(db), []);
   });
 
+  it('[SYPC7] deleting a row of a key this release does not know needs a recent second factor', async () => {
+    await db.setPlatformKv(platformConfig.ROW_PREFIX + 'newer.key', JSON.stringify({ value: 3, updatedAt: 1, updatedBy: { kind: 'cli', coreId } }));
+    const stale = await ownerSession(Date.now() - 60 * MIN);
+    const refused = await coreRequest.delete(BASE + '/newer.key').set('authorization', 'AdminSession ' + stale);
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
+    assert.equal(refused.body.error.data.stepUp, true);
+    assert.notEqual(await db.getPlatformKv(platformConfig.ROW_PREFIX + 'newer.key'), null, 'kept');
+    const fresh = await ownerSession(Date.now());
+    const ok = await coreRequest.delete(BASE + '/newer.key').set('authorization', 'AdminSession ' + fresh);
+    assert.equal(ok.status, 200, JSON.stringify(ok.body));
+    assert.equal(ok.body.deleted, true);
+    assert.equal(await db.getPlatformKv(platformConfig.ROW_PREFIX + 'newer.key'), null);
+  });
+
+  it('[SYPC8] the audit record of a write: key and values, never the value of a sensitive key', async function () {
+    if (config.get('audit:active') !== true) return this.skip();
+    const audit = require('audit').default;
+    const original = audit.validApiCall;
+    const records = [];
+    audit.validApiCall = async function (context, result) {
+      // What the audit records: the calls its filter keeps (reads are declared not audited).
+      if (String(context.methodId).startsWith('system.platformConfig.') && audit.filter.isAudited(context.methodId)) records.push({ methodId: context.methodId, record: context.auditIntegrityPayload });
+      return await original.call(this, context, result);
+    };
+    try {
+      assert.equal((await put('service.name', { value: 'Audited name' })).status, 200);
+      assert.equal((await put('auth.passwordComplexityMinLength', { value: 23 })).status, 200);
+      assert.equal((await put('auth.passwordComplexityMinLength', { value: 31 })).status, 200);
+      assert.equal((await coreRequest.delete(BASE + '/auth.passwordComplexityMinLength').set('authorization', adminKey)).status, 200);
+      assert.equal((await coreRequest.get(BASE).set('authorization', adminKey)).status, 200);
+      for (let i = 0; i < 20 && records.length < 4; i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      audit.validApiCall = original;
+    }
+    assert.deepEqual(records.map((r) => r.methodId), ['system.platformConfig.set', 'system.platformConfig.set', 'system.platformConfig.set', 'system.platformConfig.delete'], 'reads are not recorded');
+    const [name, first, second, removed] = records.map((r) => r.record);
+    assert.deepEqual({ key: name.key, before: name.before, after: name.after, changed: name.changed }, { key: 'service.name', before: null, after: 'Audited name', changed: true });
+    assert.equal(name.subject.via, 'admin-key');
+    assert.deepEqual({ key: first.key, before: first.before, changed: first.changed }, { key: 'auth.passwordComplexityMinLength', before: null, changed: true });
+    assert.equal(first.after.set, true);
+    assert.equal(second.before.set, true);
+    assert.equal(removed.after, null);
+    for (const r of [first, second, removed]) {
+      const text = JSON.stringify(r);
+      assert.ok(!/\b(23|31)\b/.test(text.replace(/"fingerprint":"[0-9a-f]+"/g, '')), 'no sensitive value in ' + text);
+    }
+    // The test secret is too weak for a keyed fingerprint: none at all, not an unkeyed hash.
+    if (first.after.fingerprint == null) assert.deepEqual(first.after, { set: true });
+  });
+
+  it('[SYPC9] a session whose role gives no configuration permission gets 404 on every route', async () => {
+    // Roles other than owner arrive with role management; an unknown role grants nothing.
+    const userId = 'sypcnone' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12);
+    roleUsers.push(userId);
+    await db.setPlatformKv('admin-role/' + userId, JSON.stringify({ grants: [{ role: 'support', scope: 'platform', grantedAt: Date.now() - 1000, grantedBy: 'test', via: 'grant' }], updatedAt: Date.now() - 1000 }));
+    const { token } = await sessions.createAdminSession(db, { userId, homeCore: coreId, mfaAt: Date.now(), now: Date.now(), ttlMs: 60 * MIN });
+    const auth = 'AdminSession ' + token;
+    assert.equal((await coreRequest.get(BASE).set('authorization', auth)).status, 404);
+    assert.equal((await coreRequest.get(BASE + '/service.name').set('authorization', auth)).status, 404);
+    assert.equal((await put('service.name', { value: 'x' }, auth)).status, 404);
+    assert.equal((await coreRequest.delete(BASE + '/service.name').set('authorization', auth)).status, 404);
+    assert.deepEqual(await platformConfig.listEntries(db), []);
+  });
+
   // The command-line tool runs in its own process, with the release's schema
   // (no key yet): what it can show here is the refusals, the stale-row
   // cleanup and the export.
@@ -186,10 +250,28 @@ describe('[SYPC] platform configuration in the platform store over /system', fun
       await db.setPlatformKv(platformConfig.ROW_PREFIX + 'old.key', JSON.stringify({ value: 'kept', updatedAt: 1, updatedBy: { kind: 'cli', coreId } }));
       const exported = run(['export']);
       assert.equal(exported.status, 0, exported.stderr);
-      assert.deepEqual(JSON.parse(exported.stdout.slice(exported.stdout.indexOf('{'))).entries, { 'old.key': 'kept' });
+      const doc = JSON.parse(exported.stdout.slice(exported.stdout.indexOf('{')));
+      assert.deepEqual({ entries: doc.entries, otherKeys: doc.otherKeys }, { entries: {}, otherKeys: { 'old.key': 'kept' } });
       const listed = run(['list']);
       assert.equal(listed.status, 0, listed.stderr);
-      assert.match(listed.stdout, /old\.key = "kept" {2}\[ignored: not a key of this release/);
+      assert.match(listed.stdout, /old\.key = "kept" {2}\[not a key of this release: ignored here, a newer core may use it\]/);
+      // An export imports back (its rows of other keys are left out); a row of another release is refused.
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sypc-'));
+      try {
+        fs.writeFileSync(path.join(dir, 'export.json'), JSON.stringify(doc));
+        const back = run(['import', path.join(dir, 'export.json')]);
+        assert.equal(back.status, 0, back.stderr);
+        assert.match(back.stdout, /Not imported \(keys this release does not know\): old\.key/);
+        assert.match(back.stdout, /0 key\(s\) imported/);
+        fs.writeFileSync(path.join(dir, 'stale.json'), JSON.stringify({ entries: { 'old.key': 'x' } }));
+        const stale = run(['import', path.join(dir, 'stale.json')]);
+        assert.equal(stale.status, 1);
+        assert.match(stale.stderr, /nothing imported:\n {2}old\.key: not a key of this release/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
       const unset = run(['unset', 'old.key']);
       assert.equal(unset.status, 0, unset.stderr);
       assert.equal(await db.getPlatformKv(platformConfig.ROW_PREFIX + 'old.key'), null);

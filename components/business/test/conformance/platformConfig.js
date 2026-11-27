@@ -193,5 +193,46 @@ export default function platformConfigConformance (getDB) {
       assert.equal(pc.pollSeconds(fakeConfig({ platform: { configPollSeconds: 'x' } })), 15);
       assert.equal(pc.pollSeconds(fakeConfig({ platform: { configPollSeconds: 30 } })), 30);
     });
+
+    it('[PLATCFG10] an unused store gets no write; the core revision is written only when it changes', async () => {
+      const config = fakeConfig({ service: { name: 'Local' } });
+      await pc.loadScope(config, db, 'core-a');
+      assert.deepEqual(await db.listAllPlatformKvEntries(), [], 'upgrade with no row: nothing written');
+      await pc.setEntry(db, 'service.name', 'A', BY);
+      await pc.loadScope(config, db, 'core-a');
+      const recorded = await db.getPlatformKv('core-config-rev/core-a');
+      assert.equal(JSON.parse(recorded).rev, 1);
+      await sleep(5);
+      await pc.loadScope(config, db, 'core-a');
+      assert.equal(await db.getPlatformKv('core-config-rev/core-a'), recorded, 'same revision: not written again');
+    });
+
+    it('[PLATCFG11] a write whose revision bump fails still answers; the periodic full reload loads the row', async () => {
+      // A store whose writes of the revision row fail (the row writes go through).
+      const failRev = (key) => { if (key === pc.REV_KEY) throw new Error('store unavailable (test)'); };
+      const flaky = {
+        getPlatformKv: (k) => db.getPlatformKv(k),
+        setPlatformKv: (k, v) => db.setPlatformKv(k, v),
+        setPlatformKvIfAbsent: async (k, v) => { failRev(k); return await db.setPlatformKvIfAbsent(k, v); },
+        replacePlatformKvIfValue: async (k, e, n) => { failRev(k); return await db.replacePlatformKvIfValue(k, e, n); },
+        listPlatformKvEntries: (p) => db.listPlatformKvEntries(p)
+      };
+      const config = fakeConfig({ platform: { configPollSeconds: 1 }, service: { name: 'Local' } });
+      await pc.loadScope(config, db, 'core-a');
+      const written = await pc.setEntry(flaky, 'service.name', 'Written', BY);
+      assert.deepEqual({ rev: written.rev, revBumped: written.revBumped, after: written.after.value }, { rev: 0, revBumped: false, after: 'Written' });
+      assert.equal((await pc.getEntry(db, 'service.name')).value, 'Written', 'the row landed');
+      assert.equal(await pc.currentRev(db), 0, 'the revision did not move');
+      const stop = pc.startPolling(config, db, 'core-a', undefined, { fullReloadEvery: 2 });
+      try {
+        for (let i = 0; i < 50 && config.get('service:name') !== 'Written'; i++) await sleep(100);
+        assert.equal(config.get('service:name'), 'Written', 'loaded by the full reload, with no revision change');
+      } finally {
+        stop();
+      }
+      const removed = await pc.unsetEntry(flaky, 'service.name', BY);
+      assert.deepEqual({ before: removed.before.value, revBumped: removed.revBumped }, { before: 'Written', revBumped: false });
+      assert.equal(await pc.getEntry(db, 'service.name'), null);
+    });
   });
 }

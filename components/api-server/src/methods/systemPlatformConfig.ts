@@ -4,7 +4,6 @@
  * This file is part of Pryv.io and released under BSD-Clause-3 License
  * Refer to LICENSE file
  */
-import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { ResultBag } from './_types.ts';
 import type { AdminSubject } from 'middleware/src/adminAuth.ts';
@@ -18,9 +17,9 @@ import { reloadAfterWrite, coreIdOf } from 'business/src/platformConfig/boot.ts'
 import { readAdminConfig } from 'business/src/admin/config.ts';
 import { isStepUpFresh } from 'business/src/admin/sessions.ts';
 import { lockdownView } from 'business/src/admin/lockdown.ts';
-import { fingerprint, fingerprintKey, stableStringify } from 'business/src/effectiveConfig/redact.ts';
+import { fingerprint, fingerprintKey } from 'business/src/effectiveConfig/redact.ts';
 import { factory as errors } from 'errors';
-import { ready } from '@pryv/boiler';
+import { ready, getLogger } from '@pryv/boiler';
 import * as storages from 'storages';
 import { platform } from 'platform';
 
@@ -41,10 +40,14 @@ type Context = {
   auditIntegrityPayload?: unknown;
 };
 
+/** How a key this release does not know is handled (step-up, audit): as a sensitive one. */
+const UNKNOWN_KEY_DEF: KeyDef = Object.freeze({ schema: {}, appliesAt: 'restart', sensitive: true, capability: 'config' });
+
 const STEP_UP_MESSAGE = 'This act needs a recent second factor: renew it with POST /system/admin/session/step-up, then repeat the request.';
 
 export default async function (systemAPI: { register: (...args: unknown[]) => void }): Promise<void> {
   const config: ScopedConfig = await ready();
+  const logger = getLogger('system-platform-config');
   const db = (): KvStore => storages.platformDB as KvStore;
 
   /** The keys this core's lockdown marks read-only (directly or through their capability). */
@@ -88,27 +91,44 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
   }
 
   function stepUpMissing (def: KeyDef, subject: AdminSubject | undefined): boolean {
-    if (!def.sensitive || subject?.kind !== 'session' || subject.session == null) return false;
+    if (!def.sensitive || subject?.kind !== 'session') return false;
+    // The gate always sets the session row of a session subject: without it, refuse.
+    if (subject.session == null) return true;
     return !isStepUpFresh(subject.session, Date.now(), readAdminConfig(config).session.stepUpMs);
   }
 
-  /** What an audit record shows of a value: itself, or a fingerprint for a sensitive key. */
+  /**
+   * What an audit record shows of a value: itself, or for a sensitive key a
+   * keyed fingerprint (as the effective configuration does), and nothing but
+   * its presence when there is no key to compute one with.
+   */
   function auditValue (key: string, def: KeyDef, entry: Entry | null): unknown {
     if (entry == null) return null;
     if (!def.sensitive) return entry.value;
     const fpKey = fingerprintKey(config.get('auth:filesReadTokenSecret'));
-    return {
-      fingerprint: fpKey != null
-        ? fingerprint(fpKey, key, entry.value)
-        : createHash('sha256').update(key + '\n' + stableStringify(entry.value)).digest('hex').slice(0, 16)
-    };
+    return fpKey != null ? { set: true, fingerprint: fingerprint(fpKey, key, entry.value) } : { set: true };
   }
 
   function recordAct (context: Context, key: string, def: KeyDef, before: Entry | null, after: Entry | null): void {
     const base = (context.auditIntegrityPayload != null && typeof context.auditIntegrityPayload === 'object')
       ? context.auditIntegrityPayload as Record<string, unknown>
       : {};
-    context.auditIntegrityPayload = { ...base, key, before: auditValue(key, def, before), after: auditValue(key, def, after) };
+    context.auditIntegrityPayload = {
+      ...base,
+      key,
+      before: auditValue(key, def, before),
+      after: auditValue(key, def, after),
+      changed: !isDeepStrictEqual(before?.value, after?.value)
+    };
+  }
+
+  /** After a write: reload this process; a failure is logged, never answered (the periodic check retries). */
+  async function reloadQuietly (): Promise<void> {
+    try {
+      await reloadAfterWrite(config, db());
+    } catch (err) {
+      logger.error('[platform-config] reload after a write failed (the periodic check retries): ' + (err as Error).message);
+    }
   }
 
   async function coreIds (): Promise<string[]> {
@@ -173,8 +193,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         if (err instanceof UnknownKeyError) return unknownKey(key);
         throw err;
       }
+      // The row landed: record it first, nothing after this fails the call.
       recordAct(context, key, def, written.before, written.after);
-      await reloadAfterWrite(config, db());
+      await reloadQuietly();
       result.entry = entryView(key, def, written.after);
       result.appliesAt = def.appliesAt;
       result.rev = written.rev;
@@ -186,7 +207,9 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const key = keyParam(params);
       if (key == null) return unknownKey(params.key);
       const def = keyDef(key);
-      if (def != null && stepUpMissing(def, context.adminSubject)) return errors.forbidden(STEP_UP_MESSAGE, { stepUp: true });
+      // A key this release does not know (a stale row, or a key of a newer
+      // release during an upgrade) is treated as sensitive.
+      if (stepUpMissing(def ?? UNKNOWN_KEY_DEF, context.adminSubject)) return errors.forbidden(STEP_UP_MESSAGE, { stepUp: true });
       let removed;
       try {
         removed = await unsetEntry(db(), key, updatedByOf(context.adminSubject));
@@ -195,8 +218,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         throw err;
       }
       if (removed.before != null) {
-        recordAct(context, key, def ?? { schema: {}, appliesAt: 'restart', sensitive: true, capability: 'config' }, removed.before, null);
-        await reloadAfterWrite(config, db());
+        recordAct(context, key, def ?? UNKNOWN_KEY_DEF, removed.before, null);
+        await reloadQuietly();
       }
       result.key = key;
       result.deleted = removed.before != null;
