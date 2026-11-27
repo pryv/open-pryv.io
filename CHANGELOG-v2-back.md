@@ -133,6 +133,74 @@
   `delegation-managed-resource`). `components/business/test/unit/accesses-canReadEvent.test.js`
   `[CRF1]` to `[CRF4]` (forced streams per store).
 
+### Deletion records: one order for equal deletion times
+
+- `getDeletionsStreamed` (events.get with `modifiedSince` + `includeDeletions`, read with `limit` / `skip`) ordered by
+  `deleted` alone: records sharing a deletion time (a stream deleted with its events) could come back in another order
+  from one page to the next, so pages repeated or missed records. The order of a page (`limit` or `skip` given, which
+  includes the default limit of 20 when no time range is given) now ends with the id (PostgreSQL) / rowid (SQLite), in
+  the same direction. PostgreSQL keeps reading `idx_event_deleted`, with an incremental sort over each tie group of the
+  rows read (EXPLAIN ANALYZE on 200 000 deletion records of one user, 50 per deletion time: first page of 20 0.09 to
+  0.16 ms, skip 10 000 5.6 to 16.6 ms); a read without limit or skip keeps the index order alone (the sort cost 2.8
+  times the 200 000-row read). SQLite's index on `deleted` holds the rowid after the key: no sort, same plan and time
+  measured. Tests: api-server `[EGLD1]` (both engines), `[EGLD2]` (the same without the deletion-time index, the
+  planner sorts).
+
+### PostgreSQL: a process starting during a concurrent index build no longer breaks it
+
+- The schema DDL every process runs at start (`DatabasePG` `_initSchemaOnce`) issued `CREATE INDEX IF NOT EXISTS`
+  for each index, and PostgreSQL takes the SHARE lock on the table before it looks at the name. While another
+  session built an index of `events` CONCURRENTLY (the time sort index migration, or a by-hand build), that
+  request queued every write to `events` behind it, and PostgreSQL aborted the build as a deadlock (the build waits
+  for the DDL transaction's snapshot): measured on 1.5 million events, a second process starting at any of three
+  points of the build stalled a write 3.5 to 5.5 s and made the build fail with `deadlock detected`, leaving an
+  invalid index (the starting core then fails its migration; the next start rebuilds from zero). Each of the 22
+  `CREATE [UNIQUE] INDEX IF NOT EXISTS` statements of the schema now runs only when `to_regclass(name)` finds no
+  relation of that name (`createIndexesOnlyIfMissing`), so an existing index takes no lock at all. Test
+  storages:postgresql `[PGTI9]` (a build held in its wait for old snapshots: the schema DDL of a new `DatabasePG`
+  completes and a write goes through; fails with the guard removed: the DDL then waits for the whole build, writes
+  behind it). A process of the previous release still runs the old DDL (operator notice).
+
+### Migration runner: one run at a time per PostgreSQL database
+
+- `MigrationRunner` had no cross-process lock (the migrations README said it had one): a booting core and
+  `bin/migrate.js up`, or two cores on one database, each read the version and applied every pending migration. A
+  capability may now give `withLock(fn)`; `runAll()` (not the dry run) runs the engine's pending migrations inside it
+  and reads the version once the lock is held. PostgreSQL holds a session advisory lock of its own
+  (`MIGRATIONS_LOCK_KEY`, distinct from the schema DDL key and from the time sort index migration's key) on a dedicated
+  connection for the whole run, polled with `pg_try_advisory_lock` (a waiting `pg_advisory_lock` holds a snapshot
+  that a migration's `CREATE INDEX CONCURRENTLY` waits for, through a lock session waiting for nothing: PostgreSQL
+  detects no deadlock and both would wait for ever), released in `finally`. rqlite has no lock and no migration yet
+  (README says so). Tests: storages:postgresql `[PGML1]` (two runners, each migration once), `[PGML2]` (waits for
+  another session's lock, then re-reads the version), `[PGML3]` (the time sort index migration under it, two
+  runners: built once, no hang).
+- Hardening of both locks (the migration runner's and the time sort index migration's), shared in the new
+  `src/advisoryLock.ts`:
+  - The lock connection is a `pg.Client` of its own (`DatabasePG.connectDedicated`: the main pool's settings minus
+    the time limits, TCP keepalive, application name `open-pryv.io migrations` / `open-pryv.io time sort indexes`),
+    outside the pools and ended after the run. It used to be a pooled client: with
+    `storages.engines.postgresql.max: 1` the first version read waited for a connection that never came and the
+    boot failed after 60 s, and a client could go back to the pool still holding the lock.
+  - `pg_advisory_unlock`'s result is checked: `false` (the session no longer held the lock, e.g. a transaction-mode
+    pooler in front of PostgreSQL) or a lost connection logs a warning (another runner may have run at the same
+    time) instead of passing in silence. The runner's lock connection also listens for its own 'error' (warns at
+    once) and runs a `SELECT 1` every 30 s while the migrations run, which keeps a server `idle_session_timeout` or
+    an idle-flow firewall from closing it.
+  - No maximum wait (a core must not start with pending migrations; a dead holder's connection closes, which
+    releases the lock), but the waiting process now logs the holder (pid, client address, application name, from
+    `pg_locks` joined with `pg_stat_activity`), repeats the line every 60 s with the time waited, and logs when it
+    gets the lock.
+  - `MigrationRunner` warns when it applies a migration of an engine without `withLock` (rqlite today).
+  - The test versions live in a table of the test: `[PGML]` no longer empties the shared `schema_migrations`.
+  - Tests: `[PGML1]` (no advisory lock of the key left after the runs), `[PGML4]` (a throwing migration releases
+    the lock, the next run retries it), `[PGML5]` (the dry run does not wait for a held lock), `[PGML6]` (the
+    holder's backend terminated: the waiter goes on), `[PGML7]` (the waiting log: holder pid, repeated, obtained),
+    `[PGML8]` (lock connection terminated during the run: one warning), `[PGML9]` (unlock returning false: warning;
+    fails with the result check removed), `[PGML10]` (a pool of `max: 1` runs a migration that takes a pooled
+    client; fails with the lock connection taken from the pool); api-server `[MR10]` (the unlocked-engine warning,
+    not on the dry run), `[MR11]` (fails once the rqlite migrations directory holds a migration while rqlite has no
+    `withLock`).
+
 ### Test tooling: a development core starts after `just clean-test-data`
 
 - `just clean-test-data` removes the one-time pass markers of the users directory (`accesses-token-protected.done`,
@@ -160,11 +228,12 @@
   `idx_audit_time_id` built `CONCURRENTLY` (an invalid leftover, or an index of that name with other columns, is
   dropped and built again; one being built by another session stops the run), then `idx_event_time` /
   `idx_audit_time` dropped `CONCURRENTLY` (same leading columns: every use of the old index is served by the new
-  one). The whole run holds a session advisory lock of its own on one dedicated client (an index being built
+  one). The whole run holds a session advisory lock of its own on one dedicated connection (an index being built
   concurrently reads as invalid, so two unserialized runs could drop each other's build and leave a table with no
   time index). The lock is polled with `pg_try_advisory_lock`: a session waiting in `pg_advisory_lock` holds a
-  snapshot that the holder's concurrent build waits for, a deadlock (seen in the test). The run sets
-  `statement_timeout` and `lock_timeout` to 0 (reset before the client goes back) and logs before each build. The
+  snapshot that the holder's concurrent build waits for, through a lock session waiting for nothing, so PostgreSQL
+  detects no deadlock and both wait for ever (seen in the test). The run sets `statement_timeout` and
+  `lock_timeout` to 0 and logs before each build. The
   schema DDL builds the new indexes only on a database holding neither them nor the old ones (fresh), so a boot
   never builds them without `CONCURRENTLY`. Tests `[PGTI1]` to `[PGTI4]`,
   `[PGTI6]` (two runs at once: each index built once, a third connection sees a valid time index at every look;

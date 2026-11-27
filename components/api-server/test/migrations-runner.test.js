@@ -254,6 +254,41 @@ describe('[MIGRUN] MigrationRunner', () => {
       'only the first (successful) migration should have been applied');
   });
 
+  it('[MR10] an engine without withLock applying a migration warns, once per run (not on the dry run)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'migrun-nolock-'));
+    try {
+      let v = 0;
+      const engine = {
+        id: 'mem-nolock',
+        migrationsDir: dir,
+        getVersion: async () => v,
+        setVersion: async (n) => { v = n; },
+        buildContext: () => ({ db: null })
+      };
+      fs.writeFileSync(path.join(dir, '20260414_100000_a.js'), 'module.exports = { async up () {} };');
+      fs.writeFileSync(path.join(dir, '20260414_110000_b.js'), 'module.exports = { async up () {} };');
+      const warns = [];
+      const runner = new MigrationRunner([engine], { logger: { warn: (m) => warns.push(m) } });
+      await runner.runAll({ dryRun: true });
+      assert.deepStrictEqual(warns, []);
+      await runner.runAll();
+      assert.strictEqual(warns.length, 1, warns.join('\n'));
+      assert.match(warns[0], /mem-nolock: no cross-process lock for this engine; two processes starting together may both apply 20260414_100000_a\.js/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('[MR11] no rqlite migration while rqlite has no withLock (the first one must come with a lock)', async () => {
+    const { buildMigrationsCapability } = require('storages/engines/rqlite/src/SchemaMigrations.ts');
+    const cap = buildMigrationsCapability({}, () => ({ debug () {}, info () {}, warn () {}, error () {} }));
+    if (cap.withLock != null) return;
+    const { discoverMigrations } = require('storages/interfaces/migrations/index.ts');
+    assert.deepStrictEqual(discoverMigrations(cap.migrationsDir).map(m => m.filename), [],
+      'rqlite is shared by every core: give its capability a withLock before its first migration ' +
+      '(see storages/interfaces/migrations/README.md, Concurrent cores)');
+  });
+
   it('[MR09] createMigrationRunner() wires from the live storages barrel', async () => {
     const runner = await createMigrationRunner();
     const st = await runner.status();

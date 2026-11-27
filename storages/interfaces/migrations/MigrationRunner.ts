@@ -42,6 +42,14 @@ export interface MigrationCapableEngine {
   getVersion (): Promise<number>;
   setVersion (version: number): Promise<void>;
   buildContext (): MigrationContext;
+  /**
+   * Run `fn` holding a lock shared by every process on the same database, so
+   * two runners at once (a booting core and `bin/migrate.js up`, two cores)
+   * never apply a migration twice. Optional: an engine without it runs
+   * unlocked, with a warning when it applies a migration. Not re-entrant: a
+   * migration never calls the runner.
+   */
+  withLock?<T> (fn: () => Promise<T>): Promise<T>;
 }
 
 export interface EngineStatus {
@@ -99,51 +107,69 @@ class MigrationRunner {
   async runAll ({ targetVersion, dryRun = false }: RunOptions = {}): Promise<AppliedMigration[]> {
     const applied: AppliedMigration[] = [];
     for (const engine of this.engines) {
-      const discovered = discoverMigrations(engine.migrationsDir);
-      let current = await engine.getVersion();
-      const cap = targetVersion ?? Number.POSITIVE_INFINITY;
+      // The version is read once the lock is held: a runner that waited for
+      // another one then finds its migrations applied and skips them.
+      const run = (): Promise<void> => this._runEngine(engine, applied, targetVersion, dryRun);
+      if (dryRun || engine.withLock == null) await run();
+      else await engine.withLock(run);
+    }
+    return applied;
+  }
 
-      for (const migration of discovered) {
-        if (migration.targetVersion <= current) continue;
-        if (migration.targetVersion > cap) break;
+  /**
+   * Apply (or, dry, list) one engine's pending migrations into `applied`.
+   * @private
+   */
+  async _runEngine (engine: MigrationCapableEngine, applied: AppliedMigration[], targetVersion: number | undefined, dryRun: boolean): Promise<void> {
+    const discovered = discoverMigrations(engine.migrationsDir);
+    let current = await engine.getVersion();
+    const cap = targetVersion ?? Number.POSITIVE_INFINITY;
+    let saidUnlocked = false;
 
-        if (dryRun) {
-          applied.push({
-            engineId: engine.id,
-            filename: migration.filename,
-            fromVersion: current,
-            toVersion: migration.targetVersion,
-            durationMs: 0,
-            dryRun: true
-          });
-          current = migration.targetVersion;
-          continue;
-        }
+    for (const migration of discovered) {
+      if (migration.targetVersion <= current) continue;
+      if (migration.targetVersion > cap) break;
 
-        this.logger.info(`[migrations] ${engine.id}: applying ${migration.filename} (→ v${migration.targetVersion})`);
-        const ctx = engine.buildContext();
-        const t0 = Date.now();
-        try {
-          await migration.module.up(ctx);
-        } catch (err: unknown) {
-          this.logger.error(`[migrations] ${engine.id}: ${migration.filename} FAILED: ${(err as Error).message}`);
-          throw err;
-        }
-        const durationMs = Date.now() - t0;
-        await engine.setVersion(migration.targetVersion);
-        current = migration.targetVersion;
+      if (dryRun) {
         applied.push({
           engineId: engine.id,
           filename: migration.filename,
-          fromVersion: current - 1,
-          toVersion: current,
-          durationMs,
-          dryRun: false
+          fromVersion: current,
+          toVersion: migration.targetVersion,
+          durationMs: 0,
+          dryRun: true
         });
-        this.logger.info(`[migrations] ${engine.id}: ${migration.filename} applied in ${durationMs}ms`);
+        current = migration.targetVersion;
+        continue;
       }
+
+      if (engine.withLock == null && !saidUnlocked) {
+        this.logger.warn(`[migrations] ${engine.id}: no cross-process lock for this engine; ` +
+          `two processes starting together may both apply ${migration.filename}`);
+        saidUnlocked = true;
+      }
+      this.logger.info(`[migrations] ${engine.id}: applying ${migration.filename} (→ v${migration.targetVersion})`);
+      const ctx = engine.buildContext();
+      const t0 = Date.now();
+      try {
+        await migration.module.up(ctx);
+      } catch (err: unknown) {
+        this.logger.error(`[migrations] ${engine.id}: ${migration.filename} FAILED: ${(err as Error).message}`);
+        throw err;
+      }
+      const durationMs = Date.now() - t0;
+      await engine.setVersion(migration.targetVersion);
+      current = migration.targetVersion;
+      applied.push({
+        engineId: engine.id,
+        filename: migration.filename,
+        fromVersion: current - 1,
+        toVersion: current,
+        durationMs,
+        dryRun: false
+      });
+      this.logger.info(`[migrations] ${engine.id}: ${migration.filename} applied in ${durationMs}ms`);
     }
-    return applied;
   }
 }
 
