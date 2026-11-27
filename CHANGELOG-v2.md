@@ -60,14 +60,6 @@ roll back or change a key.
 - **`bin/access-tokens.js status`** (read-only): counts of rows in clear, under the configured key, and under other
   keys.
 
-### Operators: the reference nginx vhost throttles every spelling of the OAuth endpoints
-
-- `docs/nginx-ingress-sample.conf` matched `/oauth2/token` and `/oauth2/authorize` with exact, case-sensitive
-  locations, while the core accepts any letter case and a trailing slash: `/OAuth2/token` or `/oauth2/token/` reached
-  the core through `location /`, outside the OAuth rate limits. The locations are now case-insensitive with an optional
-  trailing slash, and `/oauth2/introspect` and `/oauth2/revoke` (which check the client secret) share the token
-  endpoint's zone. If you copied the sample, update your copy. The header links the full rate-limiting recipe.
-
 ### Operators (PostgreSQL): the unindexed-user guard locks per account instead of on the index row
 
 - The guard that refuses rows for a user id missing from `users_index` no longer takes a row lock on the account's
@@ -94,176 +86,6 @@ roll back or change a key.
   default). One transaction inserting guarded rows for thousands of distinct accounts with the triggers on now fails
   with `out of shared memory`. Bulk loads use `pg_restore --disable-triggers` or `SET pryv.unindexed_writes =
   'allow'`, which take no lock (as documented for the guard).
-
-### Configuration: the same platform digest with or without `--config`
-
-- `auth.sessionMaxAge` (14 days) and `auth.passwordResetRequestMaxAge` (1 hour) are now set in `default-config.yml`
-  instead of `production-config.yml`, with the same values. A core started with `--config` (which skips
-  `production-config.yml`) used to leave both unset: the storage engines applied the same lifetimes, but
-  `GET /system/admin/config/effective?digest=true` gave that core a different platform digest from a core started
-  without `--config`, a false drift alarm. Its platform digest now changes once, to the value the other cores report.
-  Session and reset lifetimes do not change.
-
-### Install wizard: profiles, host checks, cluster start or join, PaaS mode, administration portal
-
-- **`init --profile=<name>`**: canned answers for a common install, from `bin/init.profiles/<name>.yml`: `dev`,
-  `ci`, `production-dnsless`, `production-subdomains`. Add a file there for your own. Precedence: `--config-from`
-  file, then `PRYV_INIT_<KEY>` variables, then the profile, then the default (or the prompt).
-  `init --profile=dev --non-interactive` writes a working local configuration without a single question.
-- **`init --diagnose`**: checks the host and writes nothing: config and data folders, whether the DNS and HTTP(S)
-  ports are free (with the systemd-resolved fix when port 53 is taken), the domain's NS delegation at its parent
-  zone and UDP/53 reachability. It reads the existing `pryv-config.yml`, or the answers when there is none. Exit 1
-  when a problem is found.
-- **New platform or joining a cluster** (subdomain topology; a dnsLess install is single-core and is not asked):
-  `new` (the default) also makes the core the holder of the cluster CA, as `bin/bootstrap.js init-ca-holder` does.
-  The CA, the join-token store and the core's Raft node certificate go under `data/cluster/`, and the config names
-  them (`cluster.ca.path`, `cluster.tokens.path`, `storages.engines.rqlite.tls`): back up `data/cluster/ca/`.
-  `join` writes nothing and prints the bootstrap-bundle procedure instead.
-- **`init --inside-paas`** (Dokku and similar): dnsLess and TLS `none` are imposed, the port tests of `--diagnose`
-  are skipped, and with a `DATABASE_URL` set PostgreSQL is offered first and no connection settings are written (the
-  core already reads `DATABASE_URL` at boot). The URL is checked, never printed nor written.
-- **Administration portal entry on new installs** (`portal.mode`: `pages` by default, `static` or `none`): `pages`
-  writes `hostedSites.admin` as a proxy to the portal build published on GitHub Pages for this core release, with a
-  Content-Security-Policy the core adds on the site, and `portal.site: admin`. The portal is then served at
-  `<publicUrl>/admin/` (dnsLess) or `https://admin.<domain>/`. `static` serves an unpacked build from a folder
-  (custom builds, air-gapped platforms). The name is a reserved username; `portal.site` picks another one. Nothing
-  changes for an existing configuration: the entry is written only by the wizard.
-- **Fix: a subdomain install now writes `core.id: core`.** Before, the id stayed at its default `single`, so the core
-  derived its own URL as `https://single.<domain>` (used for the OAuth issuer, certificates and calls between
-  cores) while the wizard announced, and the first boot published in DNS, `core.<domain>`. Existing platforms: do
-  not change `core.id` on a running core (accounts are mapped to their core by this id); this only affects new
-  installs.
-- Unchanged: the answers of an existing scripted install give the same files as before, plus the portal entry
-  (answer `portal.mode: none` to leave it out), plus `core.id` and the cluster CA files on a new subdomain platform.
-
-### OAuth: registration modes, validation levels and badges
-
-- **`oauth.clientRegistration.mode: delegated`** next to `curated` (still the default, unchanged behaviour): Pryv
-  accounts may also register registry clients (`origin: developer`, owned by the account), under the operator's
-  policy. The registration by a developer comes with a later release (the developer API); this release carries the
-  mode, the policy and the badges. `mode: open` (anonymous RFC 7591 registration) and any other value are now refused
-  at boot and by `bin/check-config.js` (the documentation already said so; nothing enforced it). `delegated` needs an
-  OAuth extension. New keys: `oauth.clientRegistration.whoMayRegister` (`validatedPublishers` by default, or
-  `anyAccount`, which logs a warning) and `oauth.clientRegistration.levels.{nonValidated,publisherValidated,
-  appValidated}.{consent: allow | testers | refuse, scopeTemplate, maxGrants (1 to 100 000)}`. Absent, everything is
-  allowed as before; a block with a problem is refused at boot and read anywhere else as "every level refused".
-  While the mode is `curated`, a client a developer registered is not served (authorize, consent and refresh
-  refused, `developer-clients-not-served`); its row and grants are kept.
-- **Validation level of every registry client**, decided by the server: `appValidated` for a client the operator
-  registered, or a developer's client whose app review stands; `publisherValidated` for a developer's client whose
-  owner is a validated publisher (platform row `dev-publisher/<userId>`; its display name is answered only once
-  validated), or a metadata-document client under `allowList` whose host is listed and not denied; `nonValidated`
-  otherwise (a metadata-document client under `any` included).
-- **`POST /oauth2/authorize/offer`** answers `client.validation = { level, publisher?: { name?, validated },
-  validatedAt? }` for every registry client, and `client.origin: "developer"` for a developer's client. Additive,
-  and answered in every mode, `curated` included (an operator's client is `appValidated`).
-- **Access stamp**: `clientData.oauth.client` gains `validation: { level }` (the level at the consent on the grant,
-  at the minting or refresh on a session), and a developer's client is stamped `origin: "developer"`. Additive and
-  written in every mode, `curated` included: existing grants are stamped again (with the level) at their next
-  consent, existing sessions at their next refresh.
-- **Policies**: `consent: refuse` redirects `/oauth2/authorize` back with `unauthorized_client`, refuses the
-  consent (`403 access_denied`, `reason: client-not-validated`) and **also refuses the refresh of grants already
-  given** (`400 unauthorized_client`; the refresh token is kept, an `unvalidate` into a refused level included). At
-  the consent, `403 access_denied` with `reason` `client-testers-only` (`testers`: only the client's owner account
-  for now; a client without an owner has no testers) or `client-grant-limit` (`maxGrants`: an approximate count of
-  the accounts reached, reserved before the consent is written), and `400 invalid_scope` with `reason:
-  client-scope-template` (`scopeTemplate`: the permissions the request resolved to must fit the level's template;
-  `openid` and `offline_access` are not restricted by it). `testers`, `scopeTemplate` and `maxGrants` gate new
-  consents only. `oauth.consent.granted` and `oauth.consent.refused` audit rows carry `validationLevel`.
-- **Client rows** accept `origin: operator | metadata-document | developer` (absent reads as `operator`),
-  `owner: { userId }` (developer's clients only) and `validation.app = { v, at, by, digest }`: the app review,
-  versioned. Version 1 covers the vetted fields, the display identity, `allowInsecureRedirect`, `subjectType`,
-  `maxEntries`, `dpopBoundAccessTokens`, `tokenResponseExtras`, `applicationType`, `kind`, `cmcOffers` and the owner;
-  a change of any of them drops the App Validated level.
-- **`bin/oauth-client.js`**: `show` and `list` print the origin, owner and level, and `show` the review digest of a
-  developer's client. **Possible break for scripts parsing `list`:** every line ends with two more columns (the
-  origin, `owner:<userId>` for a developer's client, and the level). `validate <clientId> --digest <digest>` records
-  the app review of the row `show` printed (refused when it changed since), `unvalidate <clientId>` withdraws it;
-  `purge-grants` and `revoke` give back the accounts counted against `maxGrants`. See `docs/oauth2.md` § 2 and § 3b.
-
-### Configuration, BREAKING: the mail switches are flat booleans
-
-- **BREAKING: `services.email.enabled` is a boolean, and each mail has its own `services.email.send...` switch.**
-  The switches that lived under `services.email.enabled` (`welcome`, `resetPassword`, `verifyEmail`, `mfaChange`,
-  `externalIdReleased`, the three `accountDeletion...` and the six `accountTransfer...`) are now keys of
-  `services.email` itself, named `send` + the former name: `sendWelcome`, `sendResetPassword`, `sendVerifyEmail`,
-  and so on. All default to `true`, as before. `services.email.enabled: false` still turns every mail off, whatever
-  the `send...` keys say; `true` (the default) leaves each mail to its own switch.
-- **A core whose configuration still holds the former shape does not start.** If `services.email.enabled` is an
-  object in any configuration source (the override file, a host or bootstrap file, an environment variable such as
-  `services__email__enabled__welcome`), the core stops at boot and names every key found with its replacement. It is
-  refused rather than read, so that a mail you switched off is never sent again because of the upgrade.
-  `bin/check-config.js` reports the same before you deploy.
-- A switch that is set to something other than `true` or `false` (an empty `enabled:`, a quoted `'false'`) is
-  refused at boot as well; it used to count as "on".
-- Nothing changes for a deployment that never set `services.email.enabled`, or set it to `true` or `false`. A
-  configuration generated by the install wizard with mail configured does hold the former shape (the wizard wrote
-  `enabled: { resetPassword, welcome, verifyEmail }`): migrate it too.
-- **Rolling back:** a former release ignores the `send...` keys and reads `enabled: true` as "every mail on", so roll
-  the configuration back together with the image, or mails you switched off are sent again.
-- Migration guide (before/after example, the 14 keys, environment variables, the boot message, rolling back):
-  [MIGRATION-services-email-enabled.md](./MIGRATION-services-email-enabled.md).
-
-### Audit: the deletion and the restore of an account are recorded in its trail
-
-- **With `audit.onUserDelete: keep`, the trail kept after an account's erasure now ends with a record of the
-  deletion.** The server writes `account.deleted` (type `audit-log/account`) in the account's own trail before it
-  removes any of the account's data, whatever erases the account: its holder or an administrator
-  (`DELETE /users/:username`), the auto-deletion sweep, the completion of an unfinished erasure,
-  `bin/erasures.js --replay`, the repair of an unfinished registration (`bin/reconcile-user-cores.js`), the
-  roll-back of an account whose creation failed. `content.source.name` says who: `holder`, `admin`,
-  `auto-deletion`, `ledger-replay` or `system` (`unknown` for an erasure recorded without its cause).
-  `content.record.trigger` is the word the erasure ledger keeps (`holder`, `admin`, `date`, `inactivity`,
-  `transfer-fallback`, `ledger-replay`, `unfinished-registration`, `system`, `unknown`). For a deletion by the
-  holder the record also holds the client address (`content.source.ip`, left out when unknown) and the personal
-  access that asked (`content.record.accessId`, and that access's stream), as `account.created` does for a
-  registration; an administrator's address is never recorded. Ids and fixed words only: no username, no address of
-  the account, no text. The sweep's own record (`account.autoDeletion.erase`) is still written, before it. With
-  `audit.onUserDelete: erase` (the default) nothing is written: the trail goes with the account. A record that
-  cannot be written is counted as a lost audit record and does not stop the erasure; one whose write has no answer
-  within 10 seconds counts as lost too, and the erasure goes on (the same bound applies to the sweep's own record).
-  The trail of an erased account stays open under `keep`, so the record of a call that was in flight can follow it.
-- Under `keep`, the roll-back of an account whose creation failed (a delegated account) leaves a trail too, as
-  before: it now reads `account.created` then `account.deleted`, for an account that was never usable.
-- **The sweep's `account.autoDeletion.erase` record no longer holds the username** (`content.record.username`): it is
-  written only under `keep`, where it outlives the account. The account's id, the trigger, the schedule and the
-  notices stay; the log lines of the sweep still name the account for the operator.
-- **A restored account has a record of its restore.** `bin/backup.js --restore` writes `account.restored` (type
-  `audit-log/account`) in the trail of each account it restores and keeps, after the records the backup held (an
-  account rolled back by `--verify-integrity` gets none). `content.source.name` is `backup`;
-  `content.record.backupDate` is the date (UTC, `YYYY-MM-DD`) of the backup's data for that account, left out when
-  the backup does not say; `content.record.target` is `new`, or `existing` when the restore replaced an account of
-  the core (`--overwrite`); `content.record.afterErasure` is `completed` when the account had been erased after the
-  backup (`--restore-erased`), `unfinished` when the restore withdrew an erasure that had stopped, and absent
-  otherwise. Accounts loaded from a v1 migration archive get the record too (they are restored from a backup). A
-  subject's own restore through the API (`pryv-account-backup`) is a series of calls, each audited as a call: it
-  writes no `account.restored`. A restore stopped by a failure after an account's data was restored (its platform
-  rows, its aliases) keeps that account, and writes its record. A record that cannot be written does not fail the
-  restore.
-- **With `audit.onUserDelete: keep`, a restore keeps the audit trail it finds.** A restore with `--overwrite`, the
-  roll-back of a restore (`--verify-integrity`) and the cleanup of a restore that failed no longer remove the
-  account's audit trail: the records written since the backup, and those of an erasure (`account.deleted`), stay,
-  and the backup's records the trail lacks are added. A restore of a kept trail therefore reads `account.deleted`,
-  then `account.restored`. With `erase` (the default) nothing changes: an overwrite replaces the trail with the
-  backup's. A roll-back under `keep` of an account that had a trail on the core before the restore leaves the
-  records the restore added to it from the backup. When the account had no trail before the restore (a new core, a
-  remapped id, an account erased under `erase`) and the roll-back or the cleanup removes the account, the trail the
-  restore created goes with it: it held the backup's records only, under an id that is no account of the core.
-- **A restore under another user id (`remapUserId`) onto the id of an erased account is refused** without
-  `--restore-erased`, as the restore of an account erased after its backup is: the erasure ledger is now read by the
-  target id too, so a backup is no longer merged into the kept trail of the erased account that held that id. With
-  `--restore-erased` the restore goes on and that id's erasure record is marked restored.
-- **The import of audit records skips the ids already there on SQLite too**, as it did on PostgreSQL: a restore onto
-  an existing trail used to stop importing the backup's records at the first one already there (a warning, the
-  rest not imported).
-- **Audit filters that list methods one by one do not include `account.deleted` and `account.restored` until you add
-  them; `account.all` and `all` do.** The breach-scope report lists both without counting them as calls (a holder's
-  deletion under the personal access that asked); the audit summary counts `account.deleted` as a write and
-  `account.restored` as other.
-- The erasure ledger's `stepsCompleted` and the record of an erasure in progress list one more step,
-  `recordAccountDeleted` (listed whether or not a record was written).
-- The type's description in the event-type catalogue covers the three actions, and drops the username of
-  `account.autoDeletion.erase`, from data-types 1.4.0.
 
 ### Account auto-deletion reset and erasure ledger: the account transfer parts
 
@@ -355,6 +177,186 @@ With the account transfer (below), the administrator reset of 2.0.0-rc.90 also h
   declined or lapsed while the claimant's invite could not be withdrawn. An accept interrupted
   before it completed is checked the same way when it is repeated. Ordinary delegation invites are
   not affected.
+
+## 2.0.0-rc.91 - 2026-11-27
+
+### Operators: the reference nginx vhost throttles every spelling of the OAuth endpoints
+
+- `docs/nginx-ingress-sample.conf` matched `/oauth2/token` and `/oauth2/authorize` with exact, case-sensitive
+  locations, while the core accepts any letter case and a trailing slash: `/OAuth2/token` or `/oauth2/token/` reached
+  the core through `location /`, outside the OAuth rate limits. The locations are now case-insensitive with an optional
+  trailing slash, and `/oauth2/introspect` and `/oauth2/revoke` (which check the client secret) share the token
+  endpoint's zone. If you copied the sample, update your copy. The header links the full rate-limiting recipe.
+
+### Configuration: the same platform digest with or without `--config`
+
+- `auth.sessionMaxAge` (14 days) and `auth.passwordResetRequestMaxAge` (1 hour) are now set in `default-config.yml`
+  instead of `production-config.yml`, with the same values. A core started with `--config` (which skips
+  `production-config.yml`) used to leave both unset: the storage engines applied the same lifetimes, but
+  `GET /system/admin/config/effective?digest=true` gave that core a different platform digest from a core started
+  without `--config`, a false drift alarm. Its platform digest now changes once, to the value the other cores report.
+  Session and reset lifetimes do not change.
+
+### Install wizard: profiles, host checks, cluster start or join, PaaS mode, administration portal
+
+- **`init --profile=<name>`**: canned answers for a common install, from `bin/init.profiles/<name>.yml`: `dev`,
+  `ci`, `production-dnsless`, `production-subdomains`. Add a file there for your own. Precedence: `--config-from`
+  file, then `PRYV_INIT_<KEY>` variables, then the profile, then the default (or the prompt).
+  `init --profile=dev --non-interactive` writes a working local configuration without a single question.
+- **`init --diagnose`**: checks the host and writes nothing: config and data folders, whether the DNS and HTTP(S)
+  ports are free (with the systemd-resolved fix when port 53 is taken), the domain's NS delegation at its parent
+  zone and UDP/53 reachability. It reads the existing `pryv-config.yml`, or the answers when there is none. Exit 1
+  when a problem is found.
+- **New platform or joining a cluster** (subdomain topology; a dnsLess install is single-core and is not asked):
+  `new` (the default) also makes the core the holder of the cluster CA, as `bin/bootstrap.js init-ca-holder` does.
+  The CA, the join-token store and the core's Raft node certificate go under `data/cluster/`, and the config names
+  them (`cluster.ca.path`, `cluster.tokens.path`, `storages.engines.rqlite.tls`): back up `data/cluster/ca/`.
+  `join` writes nothing and prints the bootstrap-bundle procedure instead.
+- **`init --inside-paas`** (Dokku and similar): dnsLess and TLS `none` are imposed, the port tests of `--diagnose`
+  are skipped, and with a `DATABASE_URL` set PostgreSQL is offered first and no connection settings are written (the
+  core already reads `DATABASE_URL` at boot). The URL is checked, never printed nor written.
+- **Administration portal entry on new installs** (`portal.mode`: `pages` by default, `static` or `none`): `pages`
+  writes `hostedSites.admin` as a proxy to the portal build published on GitHub Pages for this core release, with a
+  Content-Security-Policy the core adds on the site, and `portal.site: admin`. The portal is then served at
+  `<publicUrl>/admin/` (dnsLess) or `https://admin.<domain>/`. `static` serves an unpacked build from a folder
+  (custom builds, air-gapped platforms). The name is a reserved username; `portal.site` picks another one. Nothing
+  changes for an existing configuration: the entry is written only by the wizard.
+- **Fix: a subdomain install now writes `core.id: core`.** Before, the id stayed at its default `single`, so the core
+  derived its own URL as `https://single.<domain>` (used for the OAuth issuer, certificates and calls between
+  cores) while the wizard announced, and the first boot published in DNS, `core.<domain>`. Existing platforms: do
+  not change `core.id` on a running core (accounts are mapped to their core by this id); this only affects new
+  installs.
+- Unchanged: the answers of an existing scripted install give the same files as before, plus the portal entry
+  (answer `portal.mode: none` to leave it out), plus `core.id` and the cluster CA files on a new subdomain platform.
+
+### OAuth: registration modes, validation levels and badges
+
+- **`oauth.clientRegistration.mode: delegated`** next to `curated` (still the default, unchanged behaviour): Pryv
+  accounts may also register registry clients (`origin: developer`, owned by the account), under the operator's
+  policy. The registration by a developer comes with a later release (the developer API); this release carries the
+  mode, the policy and the badges. `mode: open` (anonymous RFC 7591 registration) and any other value are now refused
+  at boot and by `bin/check-config.js` (the documentation already said so; nothing enforced it). `delegated` needs an
+  OAuth extension. New keys: `oauth.clientRegistration.whoMayRegister` (`validatedPublishers` by default, or
+  `anyAccount`, which logs a warning) and `oauth.clientRegistration.levels.{nonValidated,publisherValidated,
+  appValidated}.{consent: allow | testers | refuse, scopeTemplate, maxGrants (1 to 100 000)}`. Absent, everything is
+  allowed as before; a block with a problem is refused at boot and read anywhere else as "every level refused".
+  While the mode is `curated`, a client a developer registered is not served (authorize, consent and refresh
+  refused, `developer-clients-not-served`); its row and grants are kept.
+- **Validation level of every registry client**, decided by the server: `appValidated` for a client the operator
+  registered, or a developer's client whose app review stands; `publisherValidated` for a developer's client whose
+  owner is a validated publisher (platform row `dev-publisher/<userId>`; its display name is answered only once
+  validated), or a metadata-document client under `allowList` whose host is listed and not denied; `nonValidated`
+  otherwise (a metadata-document client under `any` included).
+- **`POST /oauth2/authorize/offer`** answers `client.validation = { level, publisher?: { name?, validated },
+  validatedAt? }` for every registry client, and `client.origin: "developer"` for a developer's client. Additive,
+  and answered in every mode, `curated` included (an operator's client is `appValidated`).
+- **Access stamp**: `clientData.oauth.client` gains `validation: { level }` (the level at the consent on the grant,
+  at the minting or refresh on a session), and a developer's client is stamped `origin: "developer"`. Additive and
+  written in every mode, `curated` included: existing grants are stamped again (with the level) at their next
+  consent, existing sessions at their next refresh.
+- **Policies**: `consent: refuse` redirects `/oauth2/authorize` back with `unauthorized_client`, refuses the
+  consent (`403 access_denied`, `reason: client-not-validated`) and **also refuses the refresh of grants already
+  given** (`400 unauthorized_client`; the refresh token is kept, an `unvalidate` into a refused level included). At
+  the consent, `403 access_denied` with `reason` `client-testers-only` (`testers`: only the client's owner account
+  for now; a client without an owner has no testers) or `client-grant-limit` (`maxGrants`: an approximate count of
+  the accounts reached, reserved before the consent is written), and `400 invalid_scope` with `reason:
+  client-scope-template` (`scopeTemplate`: the permissions the request resolved to must fit the level's template;
+  `openid` and `offline_access` are not restricted by it). `testers`, `scopeTemplate` and `maxGrants` gate new
+  consents only. `oauth.consent.granted` and `oauth.consent.refused` audit rows carry `validationLevel`.
+- **Client rows** accept `origin: operator | metadata-document | developer` (absent reads as `operator`),
+  `owner: { userId }` (developer's clients only) and `validation.app = { v, at, by, digest }`: the app review,
+  versioned. Version 1 covers the vetted fields, the display identity, `allowInsecureRedirect`, `subjectType`,
+  `maxEntries`, `dpopBoundAccessTokens`, `tokenResponseExtras`, `applicationType`, `kind`, `cmcOffers` and the owner;
+  a change of any of them drops the App Validated level.
+- **`bin/oauth-client.js`**: `show` and `list` print the origin, owner and level, and `show` the review digest of a
+  developer's client. **Possible break for scripts parsing `list`:** every line ends with two more columns (the
+  origin, `owner:<userId>` for a developer's client, and the level). `validate <clientId> --digest <digest>` records
+  the app review of the row `show` printed (refused when it changed since), `unvalidate <clientId>` withdraws it;
+  `purge-grants` and `revoke` give back the accounts counted against `maxGrants`. See `docs/oauth2.md` § 2 and § 3b.
+
+### Configuration, BREAKING: the mail switches are flat booleans
+
+- **BREAKING: `services.email.enabled` is a boolean, and each mail has its own `services.email.send...` switch.**
+  The switches that lived under `services.email.enabled` (`welcome`, `resetPassword`, `verifyEmail`, `mfaChange`,
+  `externalIdReleased` and the three `accountDeletion...`) are now keys of
+  `services.email` itself, named `send` + the former name: `sendWelcome`, `sendResetPassword`, `sendVerifyEmail`,
+  and so on. All default to `true`, as before. `services.email.enabled: false` still turns every mail off, whatever
+  the `send...` keys say; `true` (the default) leaves each mail to its own switch.
+- **A core whose configuration still holds the former shape does not start.** If `services.email.enabled` is an
+  object in any configuration source (the override file, a host or bootstrap file, an environment variable such as
+  `services__email__enabled__welcome`), the core stops at boot and names every key found with its replacement. It is
+  refused rather than read, so that a mail you switched off is never sent again because of the upgrade.
+  `bin/check-config.js` reports the same before you deploy.
+- A switch that is set to something other than `true` or `false` (an empty `enabled:`, a quoted `'false'`) is
+  refused at boot as well; it used to count as "on".
+- Nothing changes for a deployment that never set `services.email.enabled`, or set it to `true` or `false`. A
+  configuration generated by the install wizard with mail configured does hold the former shape (the wizard wrote
+  `enabled: { resetPassword, welcome, verifyEmail }`): migrate it too.
+- **Rolling back:** a former release ignores the `send...` keys and reads `enabled: true` as "every mail on", so roll
+  the configuration back together with the image, or mails you switched off are sent again.
+- Migration guide (before/after example, the 8 keys, environment variables, the boot message, rolling back):
+  [MIGRATION-services-email-enabled.md](./MIGRATION-services-email-enabled.md).
+
+### Audit: the deletion and the restore of an account are recorded in its trail
+
+- **With `audit.onUserDelete: keep`, the trail kept after an account's erasure now ends with a record of the
+  deletion.** The server writes `account.deleted` (type `audit-log/account`) in the account's own trail before it
+  removes any of the account's data, whatever erases the account: its holder or an administrator
+  (`DELETE /users/:username`), the auto-deletion sweep, the completion of an unfinished erasure,
+  `bin/erasures.js --replay`, the repair of an unfinished registration (`bin/reconcile-user-cores.js`), the
+  roll-back of an account whose creation failed. `content.source.name` says who: `holder`, `admin`,
+  `auto-deletion`, `ledger-replay` or `system` (`unknown` for an erasure recorded without its cause).
+  `content.record.trigger` is the word the erasure ledger keeps (`holder`, `admin`, `date`, `inactivity`,
+  `ledger-replay`, `unfinished-registration`, `system`, `unknown`). For a deletion by the
+  holder the record also holds the client address (`content.source.ip`, left out when unknown) and the personal
+  access that asked (`content.record.accessId`, and that access's stream), as `account.created` does for a
+  registration; an administrator's address is never recorded. Ids and fixed words only: no username, no address of
+  the account, no text. The sweep's own record (`account.autoDeletion.erase`) is still written, before it. With
+  `audit.onUserDelete: erase` (the default) nothing is written: the trail goes with the account. A record that
+  cannot be written is counted as a lost audit record and does not stop the erasure; one whose write has no answer
+  within 10 seconds counts as lost too, and the erasure goes on (the same bound applies to the sweep's own record).
+  The trail of an erased account stays open under `keep`, so the record of a call that was in flight can follow it.
+- Under `keep`, the roll-back of an account whose creation failed (a delegated account) leaves a trail too, as
+  before: it now reads `account.created` then `account.deleted`, for an account that was never usable.
+- **The sweep's `account.autoDeletion.erase` record no longer holds the username** (`content.record.username`): it is
+  written only under `keep`, where it outlives the account. The account's id, the trigger, the schedule and the
+  notices stay; the log lines of the sweep still name the account for the operator.
+- **A restored account has a record of its restore.** `bin/backup.js --restore` writes `account.restored` (type
+  `audit-log/account`) in the trail of each account it restores and keeps, after the records the backup held (an
+  account rolled back by `--verify-integrity` gets none). `content.source.name` is `backup`;
+  `content.record.backupDate` is the date (UTC, `YYYY-MM-DD`) of the backup's data for that account, left out when
+  the backup does not say; `content.record.target` is `new`, or `existing` when the restore replaced an account of
+  the core (`--overwrite`); `content.record.afterErasure` is `completed` when the account had been erased after the
+  backup (`--restore-erased`), `unfinished` when the restore withdrew an erasure that had stopped, and absent
+  otherwise. Accounts loaded from a v1 migration archive get the record too (they are restored from a backup). A
+  subject's own restore through the API (`pryv-account-backup`) is a series of calls, each audited as a call: it
+  writes no `account.restored`. A restore stopped by a failure after an account's data was restored (its platform
+  rows, its aliases) keeps that account, and writes its record. A record that cannot be written does not fail the
+  restore.
+- **With `audit.onUserDelete: keep`, a restore keeps the audit trail it finds.** A restore with `--overwrite`, the
+  roll-back of a restore (`--verify-integrity`) and the cleanup of a restore that failed no longer remove the
+  account's audit trail: the records written since the backup, and those of an erasure (`account.deleted`), stay,
+  and the backup's records the trail lacks are added. A restore of a kept trail therefore reads `account.deleted`,
+  then `account.restored`. With `erase` (the default) nothing changes: an overwrite replaces the trail with the
+  backup's. A roll-back under `keep` of an account that had a trail on the core before the restore leaves the
+  records the restore added to it from the backup. When the account had no trail before the restore (a new core, a
+  remapped id, an account erased under `erase`) and the roll-back or the cleanup removes the account, the trail the
+  restore created goes with it: it held the backup's records only, under an id that is no account of the core.
+- **A restore under another user id (`remapUserId`) onto the id of an erased account is refused** without
+  `--restore-erased`, as the restore of an account erased after its backup is: the erasure ledger is now read by the
+  target id too, so a backup is no longer merged into the kept trail of the erased account that held that id. With
+  `--restore-erased` the restore goes on and that id's erasure record is marked restored.
+- **The import of audit records skips the ids already there on SQLite too**, as it did on PostgreSQL: a restore onto
+  an existing trail used to stop importing the backup's records at the first one already there (a warning, the
+  rest not imported).
+- **Audit filters that list methods one by one do not include `account.deleted` and `account.restored` until you add
+  them; `account.all` and `all` do.** The breach-scope report lists both without counting them as calls (a holder's
+  deletion under the personal access that asked); the audit summary counts `account.deleted` as a write and
+  `account.restored` as other.
+- The erasure ledger's `stepsCompleted` and the record of an erasure in progress list one more step,
+  `recordAccountDeleted` (listed whether or not a record was written).
+- The type's description in the event-type catalogue covers the three actions, and drops the username of
+  `account.autoDeletion.erase`, from data-types 1.4.0.
 
 ### Operators: `bin/migrate-platform.js` copies every platform row
 
