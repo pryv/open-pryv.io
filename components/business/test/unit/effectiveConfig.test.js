@@ -135,7 +135,7 @@ describe('[CFGU] effective configuration document', function () {
 
   it('[CFC0] the secret and opaque paths are classified as such', function () {
     const secrets = [
-      'auth.adminAccessKey', 'auth.filesReadTokenSecret', 'platform.piiHmacKey', 'letsEncrypt.atRestKey', 'oauth.stateKey',
+      'auth.adminAccessKey', 'auth.accessTokensKey', 'auth.filesReadTokenSecret', 'platform.piiHmacKey', 'letsEncrypt.atRestKey', 'oauth.stateKey',
       'sso.stateKey', 'sso.providers.x.clientSecret', 'oauth.signingKeys.0.privateKeyPem', 'services.mfa.methods.totp.secretsKey',
       'services.email.key', 'services.email.smtp.auth.user', 'services.email.smtp.auth.pass', 'storages.engines.postgresql.user',
       'storages.engines.postgresql.password', 'storages.engines.s3.accessKeyId', 'storages.engines.s3.secretAccessKey',

@@ -191,6 +191,13 @@ auth:
   passwordAgeMaxDays: 0
   passwordAgeMinDays: 0
   passwordPreventReuseHistoryLength: 0
+  # SECRET, YAML-only. Access tokens and personal session ids are stored as a
+  # keyed hash (the lookup key) plus an encrypted copy, never in clear. Their
+  # keys derive from this base64 32-byte key when set, else from
+  # auth.adminAccessKey (rotating that key then needs `bin/access-tokens.js
+  # rekey`: a core finding tokens under another key refuses to start). Set it
+  # to rotate auth.adminAccessKey independently. May differ between cores.
+  accessTokensKey: ''
   # Failed passwords are delayed per account, never locked out. Every check of
   # the account password counts on one tally: sign-in, account.changePassword
   # (old password), the MFA step-up by password, mfa.recover. After

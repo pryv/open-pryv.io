@@ -662,7 +662,7 @@ function _inspectAndHide (o: unknown): unknown {
 // names error codes far more often than authorization codes.)
 const SENSITIVE_KEYS = new Set(['password', 'passwordhash', 'newpassword', 'oldpassword', 'resettoken',
   'recoverycode', 'token', 'emailproof', 'invitationtoken', 'secret', 'handoff', 'refreshtoken',
-  'accesstoken', 'authorization', 'mfatoken', 'key', 'readtoken', 'passphrase', 'adminaccesskey',
+  'accesstoken', 'authorization', 'mfatoken', 'key', 'readtoken', 'passphrase', 'adminaccesskey', 'accesstokenskey',
   'filesreadtokensecret', 'atrestkey', 'piihmackey', 'access_token', 'refresh_token', 'id_token',
   'client_secret', 'clientsecret', 'code_verifier', 'cookie', 'set-cookie']);
 

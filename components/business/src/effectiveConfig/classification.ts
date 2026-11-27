@@ -91,6 +91,7 @@ const RULE_TABLE: Array<[string, RuleClass, RuleScope]> = [
   ['invitationTokens', S, p],
 
   ['auth.adminAccessKey', S, p],
+  ['auth.accessTokensKey', S, c],
   ['auth.filesReadTokenSecret', S, p],
   ['auth.passwordComplexityMinCharCategories', P, p],
   ['auth.passwordComplexityMinLength', P, p],
