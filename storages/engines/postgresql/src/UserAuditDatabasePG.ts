@@ -467,8 +467,11 @@ const TIME_BOUND_OPERATORS: Record<string, string> = { equal: '=', greater: '>',
 
 /**
  * The most access ids one read takes from audit_event_streams (one branch of
- * the merge each); above it, the plain statement. Set by measurement:
- * planning a merge of this many branches stays in the low milliseconds.
+ * the merge each); above it, the plain statement. Planning grows faster than
+ * the branch count (measured on PostgreSQL 16: 80 ids 10 ms, 500 ids 77 ms,
+ * 1 000 ids 215 ms), so the cap bounds the planning of one read to about
+ * 0.1 s, where the plain statement costs one LIKE per id per record of the
+ * trail (500 ids matching nothing on 200 000 records: 34 s).
  */
 const MULTI_MAX_IDS = 500;
 

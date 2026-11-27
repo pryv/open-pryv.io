@@ -680,6 +680,12 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
     const query = [...BASE(), one('access-x')];
     assert.deepStrictEqual(await read(u, query, { sort: { time: -1 } }, false), ['untimed', 'timed']);
     assert.deepStrictEqual(await read(u, query, { sort: { time: -1 } }, true), ['timed']);
+    // The same decision for several ids (the merge of their ranges).
+    await put(u, 'timed-y', ['access-y', 'action-y'], 20);
+    const both = [...BASE(), several(['access-x', 'access-y'])];
+    assert.ok(isMerge(buildSelectQuery(u, { query: both, options: { sort: { time: -1 } } }, true).sql));
+    assert.deepStrictEqual(await read(u, both, { sort: { time: -1 } }, false), ['untimed', 'timed-y', 'timed']);
+    assert.deepStrictEqual(await read(u, both, { sort: { time: -1 } }, true), ['timed-y', 'timed']);
   });
 
   // -- Several access ids: an ordered merge of their key ranges --
@@ -707,6 +713,8 @@ describe('[PGAS] PostgreSQL audit records indexed by access', function () {
     // Three ids: a balanced tree; 500: its nesting stays shallow.
     assert.ok(sqlOf([several(['access-x', 'access-y', 'access-z'])]).sql.includes(
       `FROM (((${branch(5, 'DESC', '')}) UNION ALL (${branch(6, 'DESC', '')})) UNION ALL (${branch(7, 'DESC', '')})) u `));
+    // The cap moves only by a deliberate edit (planning cost, see its comment).
+    assert.strictEqual(MULTI_MAX_IDS, 500);
     const many = Array.from({ length: MULTI_MAX_IDS }, (_, i) => 'access-m' + i);
     const big = sqlOf([several(many)]);
     assert.ok(isMerge(big.sql));

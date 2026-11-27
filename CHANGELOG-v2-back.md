@@ -86,7 +86,7 @@
   stop after 20 batches and the resume; no drift afterwards. Table: 129 MB heap + 231 MB key per million rows.
   Audit insert (30 000 per side, alternating rounds): median 2.92 / 2.99 ms, p99 3.6 / 6.8 ms. Erasure of
   200 000 records 0.5 / 1.5 s; one-record deletion 2.3 ms with triggers; 20 000 records of an account 51 / 448 ms
-  (no caller in the core). Several ids in one `any` (pre-existing LIKE path, unchanged): 100 ids 8.5 ms when the
+  (no caller in the core). Several ids in one `any` (the LIKE path before the merge of the next section): 100 ids 8.5 ms when the
   page fills from recent records, but 5.6 s with 80 ids that match nothing plus a rare old access (480 ids:
   33 s), one LIKE per id per row over the whole trail; only a personal token can name such a set. SQLite (no
   change; one 1-million-record audit file, a laptop): limit 20 of any access 0.1 to 0.8 ms; skip 5 000 limit 20:

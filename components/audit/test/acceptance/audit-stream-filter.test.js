@@ -210,25 +210,33 @@ describe('[ASFL] audit stream filter', function () {
       return res.body.events.map((e) => e.id);
     };
     const index = userDb.streamIndex;
-    for (const options of [{ limit: 1000 }, { limit: 3, skip: 2 }, { limit: 5, sortAscending: true }]) {
-      // Not vacuous: the indexed read is the merge of the two accesses' ranges.
+    // A page read with the statements the store sends.
+    const pageWithStatements = async (options) => {
       const statements = [];
       const iterable = userDb.readDb.queryIterable;
       userDb.readDb.queryIterable = function (sql, ...rest) {
         statements.push(sql);
         return iterable.call(this, sql, ...rest);
       };
-      let indexed;
       try {
-        indexed = await page(options);
+        return { ids: await page(options), statements };
       } finally {
         userDb.readDb.queryIterable = iterable;
       }
-      assert.ok(statements.some((sql) => sql.includes('DISTINCT ON') && sql.includes('audit_event_streams')), JSON.stringify(statements));
+    };
+    for (const options of [{ limit: 1000 }, { limit: 3, skip: 2 }, { limit: 5, sortAscending: true }]) {
+      // Not vacuous: the indexed read is the merge of the two accesses' ranges,
+      // the plain one never touches the index.
+      const merged = await pageWithStatements(options);
+      const indexed = merged.ids;
+      assert.ok(merged.statements.some((sql) => sql.includes('DISTINCT ON') && sql.includes('audit_event_streams')), JSON.stringify(merged.statements));
       let plain;
       try {
         userDb.streamIndex = { isComplete: () => false };
-        plain = await page(options);
+        const unindexed = await pageWithStatements(options);
+        plain = unindexed.ids;
+        assert.ok(unindexed.statements.length > 0, 'the plain read went through the store');
+        assert.ok(unindexed.statements.every((sql) => !sql.includes('audit_event_streams')), JSON.stringify(unindexed.statements));
       } finally {
         userDb.streamIndex = index;
       }

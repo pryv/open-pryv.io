@@ -8,8 +8,9 @@
 /**
  * `audit_event_streams`: the access stream ids of each audit record, so that
  * reading the audit trail of ONE access (what every app token may do for
- * itself) reads that access's records in time order instead of walking the
- * account's whole trail with a LIKE on `stream_ids`.
+ * itself), or of several merged in time order, reads those accesses' records
+ * in time order instead of walking the account's whole trail with a LIKE on
+ * `stream_ids`.
  *
  * One row per (record, `access-...` term): a record names several accesses
  * (an access deleted with its children), a versioned access adds an alias

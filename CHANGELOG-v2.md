@@ -16,7 +16,10 @@
 - A read naming several accesses' trails at once (a personal token asking for 2 to 500 `:_audit:access-...`
   streams in one query) uses the table too, merging the accesses' records in time order: 80 accesses holding few
   or old records, 5.5 s before, 21 ms now (480 accesses: 32 s before, 0.13 s now, most of it planning the
-  statement). With a type filter, more than 500 accesses, or a stream that is not an access (`:_audit:accesses`,
+  statement). Where the previous plan was already fast it can be slower by the time spent planning (100 accesses
+  whose recent records fill the page: 5.5 ms before, 26 ms now; 500: 22 ms before, 143 ms now), and a read without
+  limit of accesses holding most of the trail takes about twice as long (196 000 records: 1.35 s before, 3.1 s
+  now). With a type filter, more than 500 accesses, or a stream that is not an access (`:_audit:accesses`,
   an action), it reads as before. The plan follows the database's statistics: until `audit_event_streams` has been
   vacuumed once (autovacuum does it), a page of 20 next to an access holding most records can take about 0.3 s
   instead of a few milliseconds.
