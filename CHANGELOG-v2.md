@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Operators (PostgreSQL): the unindexed-user guard locks per account instead of on the index row
+
+- The guard that refuses rows for a user id missing from `users_index` no longer takes a row lock on the account's
+  index entry for every insert. Inserts take a shared per-account advisory lock (transaction scoped), and a new
+  trigger `lock_user_index_removal` on `users_index` (`BEFORE DELETE OR UPDATE OF user_id`) takes it exclusive, so
+  an account erasure still waits for the inserts in flight and no row is stored after the index entry is gone.
+  Many concurrent writers of one account no longer contend on that row. Nothing to do: installed at boot, like the
+  insert triggers; a disabled or missing `lock_user_index_removal` trigger is repaired at boot with a warning.
+  Outside READ COMMITTED (an operator default) inserts keep the row lock.
+- Do not drop or disable `lock_user_index_removal` on its own: the insert triggers rely on it. To remove the guard
+  (every process stopped), the rollback SQL of the guard gains two lines, run with the others:
+
+  ```sql
+  DROP TRIGGER IF EXISTS lock_user_index_removal ON users_index;
+  DROP FUNCTION IF EXISTS lock_user_index_removal();
+  ```
+
+  A previous release starting on the database puts its own insert body back; the extra trigger is harmless to it.
+- Advisory locks use PostgreSQL's shared lock table (about `max_locks_per_transaction` x `max_connections`, 6400 by
+  default). One transaction inserting guarded rows for thousands of distinct accounts with the triggers on now fails
+  with `out of shared memory`. Bulk loads use `pg_restore --disable-triggers` or `SET pryv.unindexed_writes =
+  'allow'`, which take no lock (as documented for the guard).
+
 ### Configuration: the same platform digest with or without `--config`
 
 - `auth.sessionMaxAge` (14 days) and `auth.passwordResetRequestMaxAge` (1 hour) are now set in `default-config.yml`

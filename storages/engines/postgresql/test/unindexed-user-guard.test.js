@@ -16,7 +16,9 @@
 import assert from 'node:assert';
 import * as helpers from '../../../test/helpers/index.js';
 import { DatabasePG } from '../src/DatabasePG.ts';
-import { GUARDED_TABLES, isUnindexedUserError } from '../src/unindexedWritesGuard.ts';
+import {
+  GUARDED_TABLES, INDEX_TRIGGER_NAME, LOCK_CLASS, ROW_LOCK_FUNCTION_SQL, installUnindexedWritesGuard, isUnindexedUserError
+} from '../src/unindexedWritesGuard.ts';
 import { userEvents } from '../src/dataStore/localUserEventsPG.ts';
 
 /** One minimal row per guarded table: [sql, params(userId, n)]. */
@@ -220,6 +222,268 @@ describe('[PGUG] PostgreSQL refusal of rows for an unindexed user id', function 
     } finally {
       await loader.query('RESET pryv.unindexed_writes').catch(() => {});
       loader.release();
+    }
+  });
+
+  // --------------------------------------------------------------------
+  // [PGAL] the lock is a per-user advisory lock: shared on insert,
+  // exclusive on the index removal (a trigger on users_index).
+  // --------------------------------------------------------------------
+
+  async function advisoryLocksOf (client) {
+    const pid = (await client.query('SELECT pg_backend_pid() AS p')).rows[0].p;
+    const res = await db.query(
+      "SELECT mode FROM pg_locks WHERE locktype = 'advisory' AND classid = $1::bigint::oid AND pid = $2", [LOCK_CLASS, pid]);
+    return res.rows.map((r) => r.mode);
+  }
+
+  async function countEvents (id = userId) {
+    return (await db.query('SELECT count(*)::int AS c FROM events WHERE user_id = $1', [id])).rows[0].c;
+  }
+
+  /** Resolves to a flag object whose `done` turns true once `promise` settles. */
+  function track (promise) {
+    const state = { done: false, promise: null };
+    state.promise = promise.then((r) => { state.done = true; return r; }, (e) => { state.done = true; throw e; });
+    return state;
+  }
+
+  it('[PGAL1] an insert holds one shared advisory lock and writes no row lock on the index entry; the escape takes none', async function () {
+    await index();
+    const writer = await db.getClient();
+    try {
+      await writer.query('BEGIN');
+      await insert(GUARDED_ROWS.events, writer);
+      assert.deepStrictEqual(await advisoryLocksOf(writer), ['ShareLock']);
+      const entry = await db.query('SELECT xmax::text AS x FROM users_index WHERE user_id = $1', [userId]);
+      assert.strictEqual(entry.rows[0].x, '0', 'a row lock was written on the index entry');
+      await writer.query("INSERT INTO events (user_id, id) SELECT $1, 'pgal-bulk-' || g FROM generate_series(1, 1000) g", [userId]);
+      assert.deepStrictEqual(await advisoryLocksOf(writer), ['ShareLock'], 'one lock for one id, whatever the row count');
+      await writer.query('ROLLBACK');
+      await writer.query('BEGIN');
+      await writer.query("SET LOCAL pryv.unindexed_writes = 'allow'");
+      await insert(GUARDED_ROWS.events, writer);
+      assert.deepStrictEqual(await advisoryLocksOf(writer), []);
+    } finally {
+      await writer.query('ROLLBACK').catch(() => {});
+      writer.release();
+    }
+  });
+
+  it('[PGAL2] an index removal in flight holds inserts back: refused once it commits, accepted if it rolls back', async function () {
+    for (const outcome of ['COMMIT', 'ROLLBACK']) {
+      await index();
+      const eraser = await db.getClient();
+      try {
+        await eraser.query('BEGIN');
+        await eraser.query('DELETE FROM users_index WHERE user_id = $1', [userId]);
+        const write = track(insert(GUARDED_ROWS.events));
+        await sleep(300);
+        assert.strictEqual(write.done, false, outcome + ': an insert passed an index removal in flight');
+        await eraser.query(outcome);
+        if (outcome === 'COMMIT') {
+          await assert.rejects(write.promise, (err) => err.code === 'PU001');
+          assert.strictEqual(await countEvents(), 0);
+        } else {
+          assert.strictEqual((await write.promise).rowCount, 1);
+          await db.query('DELETE FROM events WHERE user_id = $1', [userId]);
+          await db.query('DELETE FROM users_index WHERE user_id = $1', [userId]);
+        }
+      } finally {
+        await eraser.query('ROLLBACK').catch(() => {});
+        eraser.release();
+      }
+    }
+  });
+
+  it('[PGAL3] a transaction opened before an erasure and inserting after it stores nothing, in read committed and in repeatable read', async function () {
+    for (const begin of ['BEGIN', 'BEGIN ISOLATION LEVEL REPEATABLE READ']) {
+      await index();
+      const writer = await db.getClient();
+      try {
+        await writer.query(begin);
+        await writer.query('SELECT count(*) FROM users_index WHERE user_id = $1', [userId]); // snapshot taken
+        await db.query('DELETE FROM users_index WHERE user_id = $1', [userId]);
+        await assert.rejects(insert(GUARDED_ROWS.events, writer),
+          (err) => err.code === 'PU001' || err.code === '40001', begin);
+      } finally {
+        await writer.query('ROLLBACK').catch(() => {});
+        writer.release();
+      }
+      assert.strictEqual(await countEvents(), 0, begin);
+    }
+  });
+
+  it('[PGAL4] an index entry changing id waits for an insert in flight; a rename does not', async function () {
+    await index();
+    const newId = userId + '-moved';
+    const writer = await db.getClient();
+    try {
+      await writer.query('BEGIN');
+      await insert(GUARDED_ROWS.events, writer);
+      const rename = track(db.query('UPDATE users_index SET username = $2 WHERE user_id = $1', [userId, userId + '-renamed']));
+      await sleep(300);
+      assert.strictEqual(rename.done, true, 'a rename waited for an insert in flight');
+      await rename.promise;
+      const move = track(db.query('UPDATE users_index SET user_id = $2 WHERE user_id = $1', [userId, newId]));
+      await sleep(300);
+      assert.strictEqual(move.done, false, 'the id changed under an insert in flight');
+      await writer.query('COMMIT');
+      assert.strictEqual((await move.promise).rowCount, 1);
+      await assert.rejects(insert(GUARDED_ROWS.events), (err) => err.code === 'PU001');
+    } finally {
+      await writer.query('ROLLBACK').catch(() => {});
+      writer.release();
+      await db.query('DELETE FROM users_index WHERE user_id = $1', [newId]);
+    }
+  });
+
+  it('[PGAL5] the boot check creates a missing users_index lock trigger and enables a disabled one, with a warning', async function () {
+    const warns = [];
+    const originalWarn = db.logger.warn;
+    const outcomes = [];
+    try {
+      db.logger.warn = (msg) => { warns.push(msg); };
+      await db.query(`DROP TRIGGER ${INDEX_TRIGGER_NAME} ON users_index`);
+      outcomes.push(await db.ensureUnindexedWritesGuard());
+      await db.query(`ALTER TABLE users_index DISABLE TRIGGER ${INDEX_TRIGGER_NAME}`);
+      outcomes.push(await db.ensureUnindexedWritesGuard());
+      outcomes.push(await db.ensureUnindexedWritesGuard());
+    } finally {
+      db.logger.warn = originalWarn;
+      await db.ensureUnindexedWritesGuard();
+    }
+    assert.deepStrictEqual(outcomes.map((o) => o.users_index), ['created', 're-enabled', 'present']);
+    assert.ok(warns.some((m) => m.includes('"users_index"')), JSON.stringify(warns));
+    const state = await db.query('SELECT tgenabled AS s FROM pg_trigger WHERE tgname = $1', [INDEX_TRIGGER_NAME]);
+    assert.deepStrictEqual(state.rows.map((r) => r.s), ['O']);
+  });
+
+  it('[PGAL6] the row-lock body still holds with the users_index trigger present, and the boot check puts the advisory body back', async function () {
+    const body = async () => (await db.query("SELECT prosrc FROM pg_proc WHERE proname = 'refuse_unindexed_user'")).rows[0].prosrc;
+    try {
+      await db.query(ROW_LOCK_FUNCTION_SQL);
+      assert.ok(!(await body()).includes('pg_advisory_xact_lock_shared'));
+      await index();
+      const writer = await db.getClient();
+      try {
+        await writer.query('BEGIN');
+        await insert(GUARDED_ROWS.events, writer);
+        const removal = track(db.query('DELETE FROM users_index WHERE user_id = $1', [userId]));
+        await sleep(300);
+        assert.strictEqual(removal.done, false, 'the index entry was removed under an insert in flight');
+        await writer.query('COMMIT');
+        await removal.promise;
+        assert.strictEqual((await db.query('DELETE FROM events WHERE user_id = $1', [userId])).rowCount, 1);
+      } finally {
+        await writer.query('ROLLBACK').catch(() => {});
+        writer.release();
+      }
+    } finally {
+      await db.ensureUnindexedWritesGuard();
+    }
+    assert.ok((await body()).includes('pg_advisory_xact_lock_shared'));
+  });
+
+  it('[PGAL6b] the installer sets the removal side up before the insert body, and keeps the row-lock body when it cannot', async function () {
+    const quietLogger = { info () {}, warn () {}, error () {} };
+    function fakeClient (failIndexTrigger) {
+      const issued = [];
+      return {
+        issued,
+        async query (sql) {
+          issued.push(sql);
+          if (failIndexTrigger && sql.startsWith(`CREATE TRIGGER ${INDEX_TRIGGER_NAME}`)) {
+            throw Object.assign(new Error('injected'), { code: '42501' });
+          }
+          return { rows: [] };
+        }
+      };
+    }
+    const ok = fakeClient(false);
+    const outcome = await installUnindexedWritesGuard(ok, quietLogger, { attempts: 1 });
+    assert.strictEqual(outcome.users_index, 'created');
+    const at = (pred) => ok.issued.findIndex(pred);
+    const indexTrigger = at((s) => s.startsWith(`CREATE TRIGGER ${INDEX_TRIGGER_NAME}`));
+    const insertBody = at((s) => s.includes('FUNCTION refuse_unindexed_user()') && s.includes('pg_advisory_xact_lock_shared'));
+    assert.ok(indexTrigger >= 0 && insertBody > indexTrigger, 'order: users_index trigger, then the advisory insert body');
+
+    const failing = fakeClient(true);
+    const outcome2 = await installUnindexedWritesGuard(failing, quietLogger, { attempts: 1 });
+    assert.strictEqual(outcome2.users_index, 'failed');
+    assert.ok(!failing.issued.some((s) => s.includes('pg_advisory_xact_lock_shared')), 'advisory insert body installed without the removal side');
+    assert.ok(failing.issued.some((s) => s === ROW_LOCK_FUNCTION_SQL), 'the row-lock body is installed instead');
+  });
+
+  it('[PGAL7] two ids sharing a lock key: an erasure of one waits for the other\'s insert in flight, the probe still tells them apart', async function () {
+    const pair = await db.query(
+      "SELECT array_agg(s ORDER BY s) AS ids FROM (SELECT 'pgal7-' || g AS s FROM generate_series(1, 300000) g) x GROUP BY hashtext(s) HAVING count(*) > 1 LIMIT 1");
+    const [a, b] = pair.rows[0].ids;
+    const cleanup = async () => {
+      for (const id of [a, b]) {
+        await db.query('DELETE FROM events WHERE user_id = $1', [id]);
+        await db.query('DELETE FROM users_index WHERE user_id = $1', [id]);
+      }
+    };
+    await cleanup();
+    for (const id of [a, b]) await db.query('INSERT INTO users_index (username, user_id) VALUES ($1, $1)', [id]);
+    const writer = await db.getClient();
+    try {
+      await writer.query('BEGIN');
+      await writer.query('INSERT INTO events (user_id, id) VALUES ($1, $2)', [b, 'pgal7-b1']);
+      const removal = track(db.query('DELETE FROM users_index WHERE user_id = $1', [a]));
+      await sleep(300);
+      assert.strictEqual(removal.done, false, 'the colliding key did not serialize the erasure');
+      await writer.query('COMMIT');
+      await removal.promise;
+      await assert.rejects(db.query('INSERT INTO events (user_id, id) VALUES ($1, $2)', [a, 'pgal7-a1']), (err) => err.code === 'PU001');
+      assert.strictEqual((await db.query('INSERT INTO events (user_id, id) VALUES ($1, $2)', [b, 'pgal7-b2'])).rowCount, 1);
+    } finally {
+      await writer.query('ROLLBACK').catch(() => {});
+      writer.release();
+      await cleanup();
+    }
+  });
+
+  it('[PGAL8] under concurrent writers, an erasure (index entry, then data) leaves no row and every later insert is refused', async function () {
+    this.timeout(120000);
+    const WRITERS = 8;
+    const ITERATIONS = 15;
+    const deadline = Date.now() + 90000;
+    for (let it = 0; it < ITERATIONS && Date.now() < deadline; it++) {
+      const id = `${userId}-l${it}`;
+      await db.query('INSERT INTO users_index (username, user_id) VALUES ($1, $1)', [id]);
+      const clients = await Promise.all(Array.from({ length: WRITERS }, () => db.getClient()));
+      let seq = 0;
+      const unexpected = [];
+      const loops = clients.map(async (c, w) => {
+        for (;;) {
+          try {
+            if (w % 2 === 0) {
+              await c.query('INSERT INTO events (user_id, id) VALUES ($1, $2)', [id, `l${w}-${++seq}`]);
+            } else {
+              await c.query('BEGIN');
+              for (let k = 0; k < 3; k++) await c.query('INSERT INTO events (user_id, id) VALUES ($1, $2)', [id, `l${w}-${++seq}`]);
+              await c.query('COMMIT');
+            }
+          } catch (err) {
+            await c.query('ROLLBACK').catch(() => {});
+            if (err.code !== 'PU001') unexpected.push(err.code + ' ' + err.message);
+            return;
+          }
+        }
+      });
+      try {
+        await sleep(30 + (it % 5) * 10);
+        await db.query('DELETE FROM users_index WHERE user_id = $1', [id]);
+        await db.query('DELETE FROM events WHERE user_id = $1', [id]);
+        await Promise.all(loops);
+      } finally {
+        for (const c of clients) c.release();
+      }
+      assert.deepStrictEqual(unexpected, [], `iteration ${it}`);
+      assert.strictEqual(await countEvents(id), 0, `iteration ${it}: rows left after the erasure`);
+      await assert.rejects(db.query('INSERT INTO events (user_id, id) VALUES ($1, $2)', [id, 'late']), (err) => err.code === 'PU001');
     }
   });
 });

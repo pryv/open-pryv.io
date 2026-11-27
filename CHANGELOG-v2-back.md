@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### PostgreSQL unindexed-user guard: per-user advisory lock
+
+- `storages/engines/postgresql/src/unindexedWritesGuard.ts`: `refuse_unindexed_user()` takes
+  `pg_advisory_xact_lock_shared(LOCK_CLASS, hashtext(user_id))` then probes `users_index` without a row lock (two
+  statements, so the probe's snapshot follows the wait); outside READ COMMITTED it keeps `FOR KEY SHARE`. New
+  `lock_user_index_removal()` + trigger on `users_index` take the exclusive lock. Install order: removal side first;
+  if it cannot be installed, the insert function gets the row-lock body (`ROW_LOCK_FUNCTION_SQL`) so no state leaves
+  a hole. Outcome key `users_index`. `usersLocalIndex.ts` unchanged; the audit insert keeps its row lock.
+- Tests `[PGAL1]` to `[PGAL8]` (`storages/engines/postgresql/test/unindexed-user-guard.test.js`): one shared lock and
+  no tuple lock per insert, removal holds inserts back, read committed and repeatable read, id change versus
+  rename, boot repair, previous body coexistence and install order, colliding keys, concurrent writers versus an
+  erasure. `[PGUG*]` unchanged.
+
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 
 - `api-server/src/methods/mfa.ts`: `mfa.confirm` accepts an enrolment session only and `mfa.verify` a login session
