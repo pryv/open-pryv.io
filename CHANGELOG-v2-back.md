@@ -9,12 +9,14 @@
   `AccessLogic.isStreamForbiddenForReading` is true) or `isOutsideForcedStreams` (the forced-streams part, moved out
   of `canReadEvent`). `canReadEvent` uses it for those two parts; `components/api-server/src/methods/events.ts`
   `applyPrerequisitesForUpdate` and `checkEventForDelete` (hence `events.deleteAttachment`) refuse with
-  `errors.forbidden()` before the any-one-stream `contribute` rule. The emails and plugin-internal exclusions of
+  `errors.forbidden()` before the any-one-stream `contribute` rule, through one helper `refusalForWriteById`, which
+  also answers `unknownResource` for a deletion record (`streamIds` not an array) instead of a `TypeError`. The emails and plugin-internal exclusions of
   `canReadEvent` are not applied there: their dedicated write guards keep their own errors. HF series writes
   (`hfs-server` `definePermissions`) and `streams.delete` are left as they were.
-- Tests in `components/api-server/test/events-single-read-exclusions.test.js`: `[WRHD]` with `[WRN1]` to `[WRN5]`
-  (`none`), `[WRC1]` to `[WRC5]` (`create-only`), controls `[WRR1]` (second stream at `read`) and `[WRP1]`
-  (personal); `[WRFD]` with `[WRF1]` to `[WRF5]` (forced streams, the access stored by the fixture).
+- Tests in `components/api-server/test/events-single-read-exclusions.test.js`: `[WRHD]` with `[WRN1]` to `[WRN9]`
+  (`none`) and `[WRC1]` to `[WRC9]` (`create-only`): getOne, empty and content update, delete, deleteAttachment,
+  multipart file add, inherited grant, streamIds escape, batch; `[WRD1]` (deleted event); controls `[WRR1]`
+  (second stream at `read`) and `[WRP1]` (personal); `[WRFD]` with `[WRF1]` to `[WRF5]` (forced streams, the access stored by the fixture).
 
 ### Access tokens and session ids at rest: keyed hash plus encrypted copy
 

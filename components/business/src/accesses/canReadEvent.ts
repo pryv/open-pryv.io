@@ -69,7 +69,10 @@ async function canReadEvent (access: CanReadEventAccess, event: EventLike): Prom
  * change or delete by id an event it cannot read. Always false for a
  * personal access.
  */
-async function isEventHiddenByGrants (access: CanReadEventAccess, streamIds: readonly string[]): Promise<boolean> {
+async function isEventHiddenByGrants (
+  access: Pick<CanReadEventAccess, 'isPersonal' | 'isStreamForbiddenForReading' | 'getForcedStreamsGetEventsStreamIds' | 'isStreamWithin'>,
+  streamIds: readonly string[]
+): Promise<boolean> {
   if (access.isPersonal()) return false;
   if (await hasStreamForbiddenForReading(access, streamIds)) return true;
   return await isOutsideForcedStreams(access, streamIds);
@@ -101,8 +104,8 @@ async function isOutsideForcedStreams (
 
 /**
  * Whether any of the given streams is governed by a grant that withholds
- * reading (`none` / `create-only`, own or inherited). Always false for a
- * personal access.
+ * reading (`none` / `create-only`, own or inherited). Callers check for a
+ * personal access first (`isEventHiddenByGrants`).
  */
 async function hasStreamForbiddenForReading (
   access: Pick<CanReadEventAccess, 'isStreamForbiddenForReading'>,
@@ -123,5 +126,5 @@ function isStreamOutOfNonPersonalReach (streamId: string): boolean {
   return isEmailsStream(streamId) || isPluginInternalStream(streamId);
 }
 
-export { canReadEvent, isEventHiddenByGrants, hasStreamForbiddenForReading, isStreamOutOfNonPersonalReach };
+export { canReadEvent, isEventHiddenByGrants, isStreamOutOfNonPersonalReach };
 export default canReadEvent;

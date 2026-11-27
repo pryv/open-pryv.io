@@ -1139,12 +1139,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (!event) {
       return next(errors.unknownResource('event', params.id));
     }
-    // 0. an event hidden from this access (a stream withholds reading, or it
-    // is outside the access's forced streams) is refused as events.getOne
-    // refuses it, whatever the other streams grant
-    if (await isEventHiddenByGrants(context.access, event.streamIds ?? [])) {
-      return next(errors.forbidden());
-    }
+    // 0. a deletion record or an event hidden from this access
+    const refusal = await refusalForWriteById(context, event, params.id);
+    if (refusal != null) { return next(refusal); }
     // 1. check that have contributeContext on at least 1 existing streamId
     let canUpdateEvent = false;
     for (let i = 0; i < event.streamIds.length; i++) {
@@ -1497,6 +1494,19 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     pubsub.notifications.emit(context.user.username, pubsub.USERNAME_BASED_EVENTS_CHANGED);
     next();
   }
+  /**
+   * The refusal for a write by id (events.update, events.delete,
+   * events.deleteAttachment) on a stored event, before any permission rule:
+   * a deletion record (it keeps no streams) is unknown, and an event hidden
+   * from the access (a stream withholds reading, or it is outside the
+   * access's forced streams) is refused as events.getOne refuses it, whatever
+   * its other streams grant. Null when the write goes on to its own checks.
+   */
+  async function refusalForWriteById (context: MethodContext, event: { streamIds?: string[] | null }, id: string) {
+    if (!Array.isArray(event.streamIds)) return errors.unknownResource('event', id);
+    if (await isEventHiddenByGrants(context.access, event.streamIds)) return errors.forbidden();
+    return null;
+  }
   async function checkEventForDelete (context: MethodContext, params: EventsDeleteParams | EventsDeleteAttachmentParams, result: EventsDeleteResult | EventsDeleteAttachmentResult, next: MethodNext) {
     const eventId = params.id;
     let event;
@@ -1508,12 +1518,9 @@ export default async function (api: { register (...args: unknown[]): unknown }) 
     if (event == null) {
       return next(errors.unknownResource('event', eventId));
     }
-    // an event hidden from this access (a stream withholds reading, or it is
-    // outside the access's forced streams) is refused as events.getOne
-    // refuses it, whatever the other streams grant
-    if (await isEventHiddenByGrants(context.access, event.streamIds ?? [])) {
-      return next(errors.forbidden());
-    }
+    // a deletion record or an event hidden from this access
+    const refusal = await refusalForWriteById(context, event, eventId);
+    if (refusal != null) { return next(refusal); }
     let canDeleteEvent = false;
     for (const streamId of event.streamIds) {
       if (await context.access.canUpdateEventsOnStream(streamId)) {

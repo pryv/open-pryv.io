@@ -11,6 +11,8 @@
 - Behaviour change: an app or shared access that could update, trash or delete such an event, or remove one of its
   attachments, now gets that error and the event is left as it was. Personal accesses are unchanged, and so are
   events whose streams are each readable to the access or covered by none of its grants.
+- `events.update`, `events.delete` and `events.deleteAttachment` on the id of a deleted event now answer
+  `404 unknown-resource` (they could fail with an internal error).
 - Unchanged, by design: a producer holding `create-only` or `contribute` on one of a series event's streams may still
   append HF points to it even when it cannot read the event (no event content is returned); and `streams.delete`,
   which requires `manage` on the whole deleted subtree, still removes those streams from (or merges into the parent)

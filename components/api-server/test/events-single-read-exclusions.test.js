@@ -180,6 +180,7 @@ describe('[WRHD] write methods refuse an event the access cannot read', function
     await user.session(personal);
     await user.stream({ id: 'wrhd-a', name: 'A' });
     await user.stream({ id: 'wrhd-b', name: 'B' });
+    await user.stream({ id: 'wrhd-b-child', name: 'B child', parentId: 'wrhd-b' });
     for (const level of ['none', 'create-only']) {
       await user.access({
         token: tokenFor[level],
@@ -201,9 +202,9 @@ describe('[WRHD] write methods refuse an event the access cannot read', function
   });
 
   function eventPath (id) { return '/' + username + '/events/' + id; }
-  async function createMixed () {
+  async function createMixed (streamIds = ['wrhd-a', 'wrhd-b']) {
     const res = await coreRequest.post('/' + username + '/events').set('Authorization', personal)
-      .send({ streamIds: ['wrhd-a', 'wrhd-b'], type: 'note/txt', content: 'original' });
+      .send({ streamIds, type: 'note/txt', content: 'original' });
     assert.strictEqual(res.status, 201, JSON.stringify(res.body));
     return res.body.event;
   }
@@ -226,11 +227,11 @@ describe('[WRHD] write methods refuse an event the access cannot read', function
   }
 
   const codes = {
-    none: ['WRN1', 'WRN2', 'WRN3', 'WRN4', 'WRN5'],
-    'create-only': ['WRC1', 'WRC2', 'WRC3', 'WRC4', 'WRC5']
+    none: ['WRN1', 'WRN2', 'WRN3', 'WRN4', 'WRN5', 'WRN6', 'WRN7', 'WRN8', 'WRN9'],
+    'create-only': ['WRC1', 'WRC2', 'WRC3', 'WRC4', 'WRC5', 'WRC6', 'WRC7', 'WRC8', 'WRC9']
   };
   for (const level of ['none', 'create-only']) {
-    const [c1, c2, c3, c4, c5] = codes[level];
+    const [c1, c2, c3, c4, c5, c6, c7, c8, c9] = codes[level];
 
     it(`[${c1}] baseline: events.getOne refuses the event to a token holding the second stream at "${level}"`, async function () {
       const ev = await createMixed();
@@ -270,7 +271,69 @@ describe('[WRHD] write methods refuse an event the access cannot read', function
       const stored = await storedEvent(ev.id);
       assert.deepStrictEqual(stored.attachments.map((a) => a.id), [fileId]);
     });
+
+    it(`[${c6}] "${level}": adding a file (multipart POST /events/:id) is refused and no attachment is stored`, async function () {
+      const ev = await createMixedWithFile();
+      const res = await coreRequest.post(eventPath(ev.id)).set('Authorization', tokenFor[level])
+        .attach('file', Buffer.from('added file'), { filename: 'added.txt', contentType: 'text/plain' });
+      assertForbidden(res);
+      const stored = await storedEvent(ev.id);
+      assert.deepStrictEqual(stored.attachments.map((a) => a.id), [ev.attachments[0].id]);
+      assert.strictEqual(stored.modified, ev.modified);
+    });
+
+    it(`[${c7}] "${level}" inherited: an event on a child of the withheld stream is refused for update and delete`, async function () {
+      const ev = await createMixed(['wrhd-a', 'wrhd-b-child']);
+      assertForbidden(await coreRequest.get(eventPath(ev.id)).set('Authorization', tokenFor[level]));
+      assertForbidden(await coreRequest.put(eventPath(ev.id)).set('Authorization', tokenFor[level]).send({ content: 'changed' }));
+      assertForbidden(await coreRequest.delete(eventPath(ev.id)).set('Authorization', tokenFor[level]));
+      const stored = await storedEvent(ev.id);
+      assert.strictEqual(stored.content, 'original');
+      assert.ok(!stored.trashed, 'not trashed');
+    });
+
+    it(`[${c8}] "${level}": dropping the withheld stream through streamIds is refused, streamIds unchanged`, async function () {
+      const ev = await createMixed();
+      assertForbidden(await coreRequest.put(eventPath(ev.id)).set('Authorization', tokenFor[level]).send({ streamIds: ['wrhd-a'] }));
+      assert.deepStrictEqual((await storedEvent(ev.id)).streamIds, ['wrhd-a', 'wrhd-b']);
+    });
+
+    it(`[${c9}] "${level}": a batch call refuses events.update and events.delete`, async function () {
+      const ev = await createMixed();
+      const res = await coreRequest.post('/' + username).set('Authorization', tokenFor[level]).send([
+        { method: 'events.update', params: { id: ev.id, update: { content: 'changed' } } },
+        { method: 'events.delete', params: { id: ev.id } }
+      ]);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.strictEqual(res.body.results.length, 2, JSON.stringify(res.body));
+      for (const r of res.body.results) {
+        assert.strictEqual(r.error?.id, ErrorIds.Forbidden, JSON.stringify(r));
+        assert.strictEqual(r.event, undefined, 'no event in the refusal');
+      }
+      const stored = await storedEvent(ev.id);
+      assert.strictEqual(stored.content, 'original');
+      assert.ok(!stored.trashed, 'not trashed');
+    });
   }
+
+  it('[WRD1] update, delete and deleteAttachment of a deleted event answer unknown-resource', async function () {
+    const ev = await createMixedWithFile();
+    for (let i = 0; i < 2; i++) {
+      const del = await coreRequest.delete(eventPath(ev.id)).set('Authorization', personal);
+      assert.strictEqual(del.status, 200, JSON.stringify(del.body));
+    }
+    for (const token of [personal, readBToken]) {
+      const calls = [
+        coreRequest.put(eventPath(ev.id)).set('Authorization', token).send({ content: 'changed' }),
+        coreRequest.delete(eventPath(ev.id)).set('Authorization', token),
+        coreRequest.delete(eventPath(ev.id) + '/' + ev.attachments[0].id).set('Authorization', token)
+      ];
+      for (const res of await Promise.all(calls)) {
+        assert.strictEqual(res.status, 404, JSON.stringify(res.body));
+        assert.strictEqual(res.body.error?.id, ErrorIds.UnknownResource, JSON.stringify(res.body));
+      }
+    }
+  });
 
   it('[WRR1] control: with the second stream at "read", update and delete are accepted', async function () {
     const ev = await createMixed();
