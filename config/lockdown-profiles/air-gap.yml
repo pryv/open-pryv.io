@@ -1,0 +1,16 @@
+# Lockdown profile: air-gapped platform (no outbound connection).
+#
+# Assumes: the platform reaches no outside service, so no telemetry exporter can be
+# configured, and cores are installed from the operator's own media (no bootstrap bundle
+# issued from the API).
+# So: observability and bootstrap are not shown in the portal and cannot be changed
+# through the API on this core.
+#
+# Copy the `admin.lockdown` block into this core's configuration file (override-config.yml),
+# then restart the core. Lockdown is per core and is never edited through the API.
+# Setup, administrator roles and claim codes stay reachable whatever the profile.
+admin:
+  lockdown:
+    capabilities:
+      observability: hidden
+      bootstrap: hidden

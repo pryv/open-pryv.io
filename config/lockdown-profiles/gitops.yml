@@ -1,0 +1,24 @@
+# Lockdown profile: GitOps (the configuration lives in a repository).
+#
+# Assumes: every core's configuration files come from a repository and are deployed by a
+# pipeline, cores are added by that pipeline (no bootstrap bundle issued from the API), and
+# platform-wide settings must keep coming from the files: none is written to the platform
+# store through the API, so no store value ever hides a file value.
+# So: bootstrap is not shown, and every platform configuration key the platform store can
+# hold in this release is read-only through the API (reads still work).
+#
+# Copy the `admin.lockdown` block into this core's configuration file (override-config.yml),
+# then restart the core. Lockdown is per core and is never edited through the API.
+# Setup, administrator roles and claim codes stay reachable whatever the profile.
+admin:
+  lockdown:
+    capabilities:
+      bootstrap: hidden
+    platformConfig:
+      readonly:
+        - service.assets
+        - service.eventTypes
+        - service.home
+        - service.name
+        - service.support
+        - service.terms
