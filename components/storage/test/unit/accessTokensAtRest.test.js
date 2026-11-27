@@ -249,6 +249,48 @@ describe('[TKAR] access tokens and session ids at rest', function () {
         assert.strictEqual((await rawAccess(userId, a.id)).token, null);
       }
     });
+
+    it('[TKST9] an update setting token to null (the deletion scrub) leaves neither the token nor its pair in the stored row', async () => {
+      const token = 'tkst9-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      const b = await call(accesses, 'insertOne', userId, newAccess({ token: 'tkst9-b-' + cuid() }));
+      // the scrub's form: plain fields with `modified` (integrity recomputed)
+      const updated = await call(accesses, 'updateOne', userId, { id: a.id }, { clientData: { k: 'v' }, modified: Date.now() / 1000, token: null });
+      assert.ok(updated.token == null);
+      await call(accesses, 'updateMany', userId, { id: b.id }, { $set: { token: null } });
+      for (const id of [a.id, b.id]) {
+        const raw = await rawAccess(userId, id);
+        assert.strictEqual(raw.token, null, id);
+        assert.strictEqual(raw.tokenHash, null, id);
+        assert.strictEqual(raw.tokenEnc, null, id);
+        if (raw.raw != null) assert.ok(!raw.raw.includes('tokenHash') && !raw.raw.includes('tokenEnc'), raw.raw);
+      }
+      assert.strictEqual(await call(accesses, 'findOne', userId, { token }, null), null);
+      assert.ok((await call(accesses, 'findOne', userId, { id: a.id }, null)).token == null);
+    });
+
+    it('[TKOR1] a token clause inside $or finds by token; an operator there is refused', async () => {
+      const token = 'tkor1-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      const found = await call(accesses, 'find', userId, { $or: [{ token }, { id: 'tkor1-none' }] }, null);
+      assert.deepStrictEqual(found.map((x) => x.id), [a.id]);
+      assert.strictEqual(found[0].token, token);
+      const none = await call(accesses, 'find', userId, { $or: [{ token: 'tkor1-wrong' }, { id: 'tkor1-none' }] }, null);
+      assert.strictEqual(none.length, 0);
+      await assert.rejects(call(accesses, 'find', userId, { $or: [{ token: { $in: [token] } }] }, null), /inside \$or takes a plain value/);
+    });
+
+    it('[TKPJ1] a positive projection naming token returns the clear token', async () => {
+      const token = 'tkpj1-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      const one = await call(accesses, 'findOne', userId, { id: a.id }, { projection: { token: 1, name: 1 } });
+      assert.strictEqual(one.token, token);
+      assert.strictEqual(one.name, a.name);
+      assert.ok(!('tokenHash' in one) && !('tokenEnc' in one) && !('token_hash' in one) && !('token_enc' in one));
+      const many = await call(accesses, 'find', userId, { id: a.id }, { projection: { token: 1 } });
+      assert.strictEqual(many.length, 1);
+      assert.strictEqual(many[0].token, token);
+    });
   });
 
   describe('[TKSS] sessions', () => {
@@ -291,6 +333,18 @@ describe('[TKAR] access tokens and session ids at rest', function () {
       const exported = (await call(sessions, 'exportAll')).find((d) => d.data?.appId === 'tkss4');
       assert.strictEqual(exported._id, id);
       assert.notStrictEqual((await rawSessions()).find((r) => r.data?.appId === 'tkss4').id, id);
+    });
+
+    it('[TKSS5] touch, expireNow, destroy and removeAllExcept hand a non-string id to the callback, never throw', async () => {
+      const cases = [['touch', [42]], ['expireNow', [42]], ['destroy', [42]], ['removeAllExcept', [{ username: 'tkss-user' }, 42]]];
+      for (const [method, args] of cases) {
+        let thrown = null;
+        const err = await new Promise((resolve) => {
+          try { sessions[method](...args, (e) => resolve(e)); } catch (e) { thrown = e; resolve(null); }
+        });
+        assert.strictEqual(thrown, null, method + ' threw instead of calling back');
+        assert.match(err?.message ?? '', /session id must be a string/, method);
+      }
     });
   });
 
@@ -459,8 +513,10 @@ describe('[TKAR] access tokens and session ids at rest', function () {
           assert.strictEqual(idx.rows.length, 1);
         } else {
           assert.strictEqual(require('storages/engines/sqlite/src/user/AccessesSQLite.ts').tokenMarkerKid(), null);
+          assert.strictEqual(require('storages/engines/sqlite/src/user/AccessesSQLite.ts').tokensUnprotected(), true);
         }
         await tokensAtRest().protectTokensAtRest();
+        if (engine === 'sqlite') assert.strictEqual(require('storages/engines/sqlite/src/user/AccessesSQLite.ts').tokensUnprotected(), false);
         assert.strictEqual((await rawAccess(userId, a.id)).token, null);
         assert.notStrictEqual((await rawSessions()).find((r) => r.data?.username === 'tktl1-user').id, sid);
         assert.strictEqual((await call(accesses, 'findOne', userId, { token: a.token }, null)).id, a.id);
@@ -521,6 +577,112 @@ describe('[TKAR] access tokens and session ids at rest', function () {
         await call(sessions, 'remove', { username: 'tktl2-user' });
       }
     });
+
+    it('[TKTL4] after unprotect, a fresh storage init, status and an export leave tokens and session ids in clear; the start pass converts them', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tktl4-' + cuid() }));
+      const sid = await call(sessions, 'generate', { username: 'tktl4-user' }, {});
+      const sqliteAccesses = () => require('storages/engines/sqlite/src/user/AccessesSQLite.ts');
+      try {
+        await tokensAtRest().unprotectTokensAtRest();
+        if (engine === 'sqlite') {
+          assert.strictEqual(sqliteAccesses().tokensUnprotected(), true);
+          // as in another process: its storage init, then its first use of the user database
+          const { UserBaseStorageDb } = require('storages/engines/sqlite/src/userBaseStorage/UserBaseStorageDb.ts');
+          UserBaseStorageDb.evict(userId);
+          const fresh = {};
+          await require('storages/engines/sqlite/src/index.ts').initStorageLayer(fresh, null,
+            { tokenProtection: accesses.tokenProtection, integrityAccesses: accesses.integrityAccesses });
+          fresh.connection.close();
+        }
+        const status = await tokensAtRest().tokensAtRestStatus();
+        assert.ok(status.accesses.clear >= 1 && status.sessions.clear >= 1, JSON.stringify(status));
+        const exported = await call(accesses, 'exportAll', userId);
+        assert.strictEqual(exported.find((x) => x.id === a.id).token, a.token);
+        await call(sessions, 'exportAll');
+        const raw = await rawAccess(userId, a.id);
+        assert.strictEqual(raw.token, a.token);
+        assert.strictEqual(raw.tokenHash, null);
+        assert.strictEqual(raw.tokenEnc, null);
+        const s = (await rawSessions()).find((r) => r.data?.username === 'tktl4-user');
+        assert.strictEqual(s.id, sid);
+        assert.strictEqual(s.idEnc, null);
+        // the start (or `bin/migrate.js up`) ends the rollback state and converts
+        await tokensAtRest().protectTokensAtRest();
+        if (engine === 'sqlite') assert.strictEqual(sqliteAccesses().tokensUnprotected(), false);
+        assert.strictEqual((await rawAccess(userId, a.id)).token, null);
+        assert.notStrictEqual((await rawSessions()).find((r) => r.data?.username === 'tktl4-user').id, sid);
+        assert.strictEqual((await call(accesses, 'findOne', userId, { token: a.token }, null)).id, a.id);
+        assert.ok(await call(sessions, 'get', sid));
+      } finally {
+        await tokensAtRest().protectTokensAtRest(); // leave the store protected whatever happened above
+        await call(sessions, 'remove', { username: 'tktl4-user' });
+      }
+    });
+
+    it('[TKTL5] unprotect keeps the clear token of a row that also holds a stale pair', async () => {
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tktl5-old-' + cuid() }));
+      const stale = await rawAccess(userId, a.id);
+      const current = 'tktl5-new-' + cuid();
+      await rawWrite(userId, a.id, { token: current, tokenHash: stale.tokenHash, tokenEnc: stale.tokenEnc });
+      try {
+        await tokensAtRest().unprotectTokensAtRest();
+        const raw = await rawAccess(userId, a.id);
+        assert.strictEqual(raw.token, current);
+        assert.strictEqual(raw.tokenHash, null);
+        assert.strictEqual(raw.tokenEnc, null);
+      } finally {
+        await tokensAtRest().protectTokensAtRest();
+      }
+      assert.strictEqual((await call(accesses, 'findOne', userId, { token: current }, null)).id, a.id);
+    });
+
+    it('[TKTL6] PostgreSQL: unprotect meeting two live accesses with one token names them (ids only); with one deleted it completes', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const token = 'tktl6-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      const b = await call(accesses, 'insertOne', userId, newAccess({ token: 'tktl6-b-' + cuid() }));
+      // b in clear with a's token: what the conversion leaves (see [TKMG7])
+      await rawWrite(userId, b.id, { token, tokenHash: null, tokenEnc: null });
+      try {
+        await assert.rejects(tokensAtRest().unprotectTokensAtRest(), (err) => {
+          assert.match(err.message, /share a token/);
+          assert.ok(err.message.includes(a.id) && err.message.includes(b.id), err.message);
+          assert.ok(!err.message.includes(token), 'the message does not carry the token');
+          return true;
+        });
+        await call(accesses, 'removeOne', userId, { id: b.id });
+        await tokensAtRest().unprotectTokensAtRest();
+        const idx = await storages.databasePG.query('SELECT 1 FROM pg_indexes WHERE indexname = \'idx_access_token\'');
+        assert.strictEqual(idx.rows.length, 1);
+      } finally {
+        await call(accesses, 'removeOne', userId, { id: b.id });
+        await tokensAtRest().protectTokensAtRest();
+      }
+      assert.strictEqual((await call(accesses, 'findOne', userId, { token }, null)).id, a.id);
+    });
+
+    it('[TKTL7] PostgreSQL: rekey meeting a token already held under the configured key names the access', async function () {
+      if (engine !== 'postgresql') this.skip();
+      const previous = createTokenProtection('tktl7-previous-' + cuid());
+      const token = 'tktl7-' + cuid();
+      const a = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      const prevHash = previous.hashAccessToken(userId, token);
+      await rawWrite(userId, a.id, { token: null, tokenHash: prevHash, tokenEnc: previous.sealAccessToken(userId, prevHash, token) });
+      // created while the core refused to start: same token, under the configured key
+      const b = await call(accesses, 'insertOne', userId, newAccess({ token }));
+      try {
+        await assert.rejects(tokensAtRest().rekeyTokensAtRest([previous]), (err) => {
+          assert.match(err.message, /rekey stopped at access/);
+          assert.ok(err.message.includes(a.id), err.message);
+          assert.ok(!err.message.includes(token), 'the message does not carry the token');
+          return true;
+        });
+      } finally {
+        await call(accesses, 'removeOne', userId, { id: b.id });
+        await tokensAtRest().rekeyTokensAtRest([previous]);
+      }
+      assert.strictEqual((await call(accesses, 'findOne', userId, { token }, null)).id, a.id);
+    });
   });
 
   describe('[TKSQ] SQLite marker of another key', () => {
@@ -535,6 +697,55 @@ describe('[TKAR] access tokens and session ids at rest', function () {
         await assert.rejects(storages.getTokensAtRest().protectTokensAtRest(), (err) => err.name === 'ForeignTokenKeyError');
       } finally {
         if (saved != null) fs.writeFileSync(marker, saved); else fs.rmSync(marker, { force: true });
+      }
+    });
+
+    it('[TKSQ2] two handles on one user database convert it once: the second finds nothing to do, the rows stay consistent', async function () {
+      if (engine !== 'sqlite') this.skip();
+      const { UserBaseStorageDb } = require('storages/engines/sqlite/src/userBaseStorage/UserBaseStorageDb.ts');
+      const userId = await indexedUserId();
+      try {
+        const items = [];
+        for (let i = 0; i < 3; i++) items.push(await call(accesses, 'insertOne', userId, newAccess({ token: 'tksq2-' + i + '-' + cuid() })));
+        for (const it of items) await rawWrite(userId, it.id, { token: it.token, tokenHash: null, tokenEnc: null });
+        const h1 = await UserBaseStorageDb.forUser(userId);
+        // a second connection, as another process holds
+        const h2 = new UserBaseStorageDb(UserBaseStorageDb.existingPathForUser(userId));
+        h2.userId = userId;
+        await h2.init();
+        try {
+          assert.strictEqual(await accesses.protectClearRowsOfUser(h1), items.length);
+          assert.strictEqual(await accesses.protectClearRowsOfUser(h2), 0);
+        } finally {
+          h2.close();
+        }
+        for (const it of items) {
+          const raw = await rawAccess(userId, it.id);
+          assert.strictEqual(raw.token, null);
+          assert.strictEqual(accesses.tokenProtection.openAccessToken(userId, raw.tokenHash, raw.tokenEnc), it.token);
+          assert.strictEqual((await call(accesses, 'findOne', userId, { token: it.token }, null)).id, it.id);
+        }
+      } finally {
+        await call(accesses, 'removeAll', userId);
+      }
+    });
+
+    it('[TKSQ3] a legacy token stored as a number is converted as its string form', async function () {
+      if (engine !== 'sqlite') this.skip();
+      const userId = await indexedUserId();
+      try {
+        const a = await call(accesses, 'insertOne', userId, newAccess({ token: 'tksq3-' + cuid() }));
+        const udb = await sqliteUserDb(userId);
+        const d = JSON.parse(udb.db.prepare('SELECT data FROM accesses WHERE id = ?').get(a.id).data);
+        delete d.tokenHash; delete d.tokenEnc;
+        d.token = 1234567;
+        udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ?').run(JSON.stringify(d), a.id);
+        assert.strictEqual(await accesses.protectClearRowsOfUser(udb), 1);
+        const raw = await rawAccess(userId, a.id);
+        assert.strictEqual(raw.token, null);
+        assert.strictEqual(accesses.tokenProtection.openAccessToken(userId, raw.tokenHash, raw.tokenEnc), '1234567');
+      } finally {
+        await call(accesses, 'removeAll', userId);
       }
     });
   });

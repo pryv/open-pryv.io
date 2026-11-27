@@ -79,4 +79,77 @@ describe('[TKPA] accesses/tokenProtection', () => {
     assert.include(kids, fromDedicated.kid);
     assert.deepEqual(candidateProtectionsFromKeyText('k\n').map((x) => x.kid), [fromAdmin.kid]);
   });
+
+  it('[TKPA4] the openers refuse a version-1 envelope, even one sealed under the right key', () => {
+    const { deriveKey, encrypt } = require('../../src/acme/AtRestEncryption.ts');
+    const h = tp.hashAccessToken('user-a', 'token-1');
+    const v1 = encrypt('token-1', deriveKey('some admin key', 'access-token-enc-v1'), '', 1);
+    assert.throws(() => tp.openAccessToken('user-a', h, v1), /does not open/);
+    const sh = tp.hashSessionId('sid');
+    const sv1 = encrypt('sid', deriveKey('some admin key', 'session-id-enc-v1'), '', 1);
+    assert.throws(() => tp.openSessionId(sh, sv1), /does not open/);
+    // the same keys open their version-2 envelopes
+    assert.equal(tp.openAccessToken('user-a', h, tp.sealAccessToken('user-a', h, 'token-1')), 'token-1');
+  });
+
+  it('[TKPA5] a set auth.accessTokensKey that is a placeholder refuses the boot; empty or random passes', () => {
+    const { checkOptionalSecrets } = require('../../../../config/plugins/config-validation.js');
+    const problemsFor = (accessTokensKey) => {
+      const all = { auth: { adminAccessKey: 'admin-key-'.repeat(4), accessTokensKey } };
+      const get = (key) => key.split(':').reduce((node, seg) => (node == null ? undefined : node[seg]), all);
+      const p = [];
+      checkOptionalSecrets({ get }, p);
+      return p.filter((x) => x.payload?.path === 'auth:accessTokensKey');
+    };
+    for (const v of ['REPLACE_ME', '$' + '{ACCESS_TOKENS_KEY}', 'changeme', 42]) {
+      assert.lengthOf(problemsFor(v), 1, JSON.stringify(v));
+    }
+    for (const v of ['', undefined, crypto.randomBytes(32).toString('base64')]) {
+      assert.lengthOf(problemsFor(v), 0, JSON.stringify(v));
+    }
+  });
+
+  describe('[TKBT] the start: tokensAtRestAtBoot', () => {
+    const { tokensAtRestAtBoot } = require('storages/interfaces/_shared/tokenProtection.ts');
+    function run (autoRun, { probe, protect }) {
+      const out = { log: [], warn: [], protected: 0 };
+      const tokensAtRest = {
+        probeTokensAtRest: async () => probe,
+        protectTokensAtRest: async () => { out.protected++; return protect; }
+      };
+      const p = tokensAtRestAtBoot({ tokensAtRest, autoRun, log: (m) => out.log.push(m), warn: (m) => out.warn.push(m) });
+      return p.then(() => out);
+    }
+
+    it('[TKBT1] autoRunOnStart false: rows waiting for the conversion refuse the start, naming migrate up', async () => {
+      let err = null;
+      try { await run(false, { probe: { columnsReady: true, clearRows: true } }); } catch (e) { err = e; }
+      assert.isNotNull(err);
+      assert.match(err.message, /Refusing to start/);
+      assert.match(err.message, /bin\/migrate\.js up/);
+    });
+
+    it('[TKBT2] autoRunOnStart false: the migration pending only warns; nothing in clear is silent; nothing converted', async () => {
+      const pending = await run(false, { probe: { columnsReady: false, clearRows: true } });
+      assert.lengthOf(pending.warn, 1);
+      assert.match(pending.warn[0], /migrate\.js up/);
+      const clean = await run(false, { probe: { columnsReady: true, clearRows: false } });
+      assert.deepEqual([clean.warn, clean.log, clean.protected], [[], [], 0]);
+      assert.equal(pending.protected, 0);
+    });
+
+    it('[TKBT3] autoRunOnStart true: converts, logs the counts, warns with the remedy when rows were left in clear', async () => {
+      const res = await run(true, { protect: { accesses: 3, accessesSkipped: 2, sessions: 0, sessionsExpired: 0 } });
+      assert.equal(res.protected, 1);
+      assert.lengthOf(res.log, 1);
+      assert.include(res.log[0], 'accesses: 3');
+      assert.notInclude(res.log[0], 'accessesSkipped');
+      assert.lengthOf(res.warn, 1);
+      assert.include(res.warn[0], '2 access row(s) left in clear');
+      assert.match(res.warn[0], /delete one of the two accesses/);
+      assert.include(res.warn[0], 'access-tokens.js status');
+      const quiet = await run(true, { protect: { accesses: 0, accessesSkipped: 0, sessions: 0, sessionsExpired: 0 } });
+      assert.deepEqual([quiet.log, quiet.warn], [[], []]);
+    });
+  });
 });

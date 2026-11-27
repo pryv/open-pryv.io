@@ -31,10 +31,30 @@
   `bin/access-tokens.js` drives them.
 - Cache: the `UNSET_ACCESS_LOGIC` broker message carries `accessId` only; the receiver evicts the token its own map
   holds for that id (messages with `accessToken` still accepted).
-- Not in this change: the `/reg/access` polling state, pending deletion notices and backup files keep tokens as
+- Start: `tokensAtRestAtBoot` (`storages/interfaces/_shared/tokenProtection.ts`, called by `bin/master.js`) runs the
+  pass and warns when access rows were left in clear (`accessesSkipped`, PostgreSQL); with
+  `migrations.autoRunOnStart: false` it refuses to start while the probe reports rows the serving path will not
+  convert (PostgreSQL: columns there, rows in clear; SQLite: the `unprotect` marker present), and only warns while
+  the columns are missing.
+- Rollback state on SQLite: `unprotect` writes `accesses-token-unprotected` in the users directory first; while it
+  is there, `initStorageLayer` does not convert sessions and `AccessesSQLite.onUserDbReady` only runs the
+  foreign-key check (the handle is not marked ready), so `status`, `bin/backup.js` and other tools leave the rows
+  in clear; `protectTokensAtRest` removes it before converting. The first-use conversion compares and sets on the
+  whole stored data, converts a number or boolean legacy token to its string, and leaves (and logs) any other
+  non-string token.
+- PostgreSQL `unprotect` opens only rows without a clear token (a clear token with a stale pair keeps the clear
+  token and loses the pair) and names the live accesses sharing a token when the clear-token index cannot be
+  created; `rekey` names the access when its token is already held under the configured key; `status` lists the
+  access rows in clear (`accessesInClear`, at most 100). `SessionsPG` passes a hashing failure to the callback.
+- The openers accept version-2 envelopes only. A `token` condition inside `$or` takes a plain value (an operator
+  throws, both engines). `auth.accessTokensKey` joins the optional secrets of the boot validation.
+- Not in this change: the `/reg/access` polling state, pending deletion notices, the access `integrity` hash
+  (unkeyed, over the access including its token), CMC `clientData` credential URLs and backup files keep tokens as
   they did.
-- Tests: `[TKPA]` (business unit), `[TKAR]` with `[TKST]`, `[TKSS]`, `[TKMG]`, `[TKTL]`, `[TKSQ]`
-  (`components/storage/test/unit/accessTokensAtRest.test.js`, both engines, raw rows asserted), `[TKAP2]` (cache).
+- Tests: `[TKPA]` (business unit, `[TKPA4]` envelope version, `[TKPA5]` optional secret), `[TKBT]` (start logic,
+  same file), `[TKAR]` with
+  `[TKST]`, `[TKSS]`, `[TKMG]`, `[TKTL]`, `[TKSQ]` (`components/storage/test/unit/accessTokensAtRest.test.js`, both
+  engines, raw rows asserted), `[TKAP2]` (cache).
 
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 

@@ -193,6 +193,10 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     if (hasOrToken) {
       q.$or = (query.$or as Array<Record<string, unknown>>).map((clause) => {
         if (clause == null || !('token' in clause)) return clause;
+        // Same contract as the PostgreSQL engine: a plain value inside `$or`.
+        if (clause.token != null && typeof clause.token === 'object') {
+          throw new TypeError('accesses: a token condition inside $or takes a plain value');
+        }
         const c: Record<string, unknown> = Object.assign({}, clause);
         c.tokenHash = this.tokenCondition(uid, clause.token);
         delete c.token;
@@ -213,10 +217,16 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
   /**
    * Before the first use of a user's database in this process: refuse rows
    * protected under another key, convert the rows still holding a clear token
-   * (a database restored by file copy, or missed by the start-up walk).
+   * (a database restored by file copy, or missed by the start-up walk). After
+   * `bin/access-tokens.js unprotect` (its marker present), only the check
+   * runs: a tool run before the rollback must not protect the rows again.
    */
   protected async onUserDbReady (udb: UserDbHandle): Promise<void> {
     if (udb.readyTables?.has('accesses')) return;
+    if (tokensUnprotected()) {
+      if (this.hasForeignKeyRowsOfUser(udb)) throw foreignKeyError('access rows of user ' + requireUserId(udb.userId));
+      return; // not marked ready: converted at first use once the marker is gone
+    }
     await this.protectClearRowsOfUser(udb);
     udb.readyTables?.add('accesses');
   }
@@ -239,15 +249,24 @@ class AccessesSQLite extends BaseStorageSQLite<AccessItem> {
     if (this.hasForeignKeyRowsOfUser(udb)) throw foreignKeyError('access rows of user ' + userId);
     if (udb.db.prepare('SELECT 1 FROM accesses WHERE json_extract(data, \'$.token\') IS NOT NULL LIMIT 1').get() == null) return 0;
     let count = 0;
+    const unreadable: unknown[] = [];
     await concurrentSafeWrite.execute(() => udb.db.transaction(() => {
       const rows = udb.db.prepare<DbRow>('SELECT id, data FROM accesses WHERE json_extract(data, \'$.token\') IS NOT NULL').all();
-      const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND json_extract(data, \'$.token\') = ?');
+      // Compare-and-set on the whole stored data (one write transaction).
+      const upd = udb.db.prepare('UPDATE accesses SET data = ? WHERE id = ? AND data = ?');
       for (const row of rows) {
         const data = JSON.parse(row.data as string);
-        count += upd.run(JSON.stringify(this.protectData(userId, data)), row.id, data.token).changes;
+        // A legacy token stored as a number or a boolean: its string form.
+        if (typeof data.token === 'number' || typeof data.token === 'boolean') data.token = String(data.token);
+        if (typeof data.token !== 'string') { unreadable.push(row.id); continue; }
+        count += upd.run(JSON.stringify(this.protectData(userId, data)), row.id, row.data).changes;
       }
     }).immediate());
     if (count > 0) logger.info('access tokens at rest: ' + count + ' access rows of user ' + userId + ' protected');
+    if (unreadable.length > 0) {
+      logger.error('access tokens at rest: user ' + userId + ': access(es) ' + unreadable.map((id) => JSON.stringify(id)).join(', ') +
+        ' hold a token that is not a string; left unconverted');
+    }
     return count;
   }
 
@@ -607,12 +626,54 @@ async function eachUserAccessesDb (visit: UserDbVisitor): Promise<string[]> {
   return failed;
 }
 
-function tokenMarkerPath (): string | null {
+/**
+ * Written in the users base directory by `bin/access-tokens.js unprotect`;
+ * removed by the conversion pass of the start (`protectTokensAtRest`). While
+ * it is there, no other process converts rows (see `tokensUnprotected`).
+ */
+const TOKEN_UNPROTECTED_MARKER = 'accesses-token-unprotected';
+
+/**
+ * The users base directory, also in a process that did not initialise the
+ * users directory yet (the engine configuration names it); null when unknown.
+ */
+function usersBasePath (): string | null {
   try {
-    return path.join(_internals.userLocalDirectory.getBasePath(), TOKEN_PROTECTED_MARKER);
+    return _internals.userLocalDirectory.getBasePath();
   } catch (_e) {
-    return null;
+    const configured = (_internals.config as { path?: unknown } | undefined)?.path;
+    return typeof configured === 'string' && configured !== '' && configured !== 'REPLACE ME' ? configured : null;
   }
+}
+
+function tokenMarkerPath (): string | null {
+  const base = usersBasePath();
+  return base == null ? null : path.join(base, TOKEN_PROTECTED_MARKER);
+}
+
+function unprotectedMarkerPath (): string | null {
+  const base = usersBasePath();
+  return base == null ? null : path.join(base, TOKEN_UNPROTECTED_MARKER);
+}
+
+/**
+ * Whether `unprotect` ran and no start converted the rows since: tools and
+ * first uses then leave the rows in clear (for the previous image).
+ */
+function tokensUnprotected (): boolean {
+  const marker = unprotectedMarkerPath();
+  return marker != null && fs.existsSync(marker);
+}
+
+function writeUnprotectedMarker (): void {
+  const marker = unprotectedMarkerPath();
+  if (marker == null) throw new Error('access tokens at rest: the users directory is unknown, cannot record the rollback');
+  fs.writeFileSync(marker, 'DO NOT DELETE THIS FILE BEFORE STARTING THE PREVIOUS IMAGE - IT KEEPS THE TOKENS IN CLEAR FOR A ROLLBACK\n');
+}
+
+function removeUnprotectedMarker (): void {
+  const marker = unprotectedMarkerPath();
+  if (marker != null) fs.rmSync(marker, { force: true });
 }
 
 /** The key id recorded by the last complete walk, null when none completed. */
@@ -660,5 +721,6 @@ async function protectAccessTokensOnce (accesses: AccessesSQLite): Promise<{ row
 export {
   AccessesSQLite, duplicateIndexError, recomputeAccessesIntegrityOnce, INTEGRITY_WIRE_FORM_MARKER,
   TOKEN_PROTECTED_MARKER, protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker,
+  TOKEN_UNPROTECTED_MARKER, tokensUnprotected, writeUnprotectedMarker, removeUnprotectedMarker,
   vacuumQuietly
 };

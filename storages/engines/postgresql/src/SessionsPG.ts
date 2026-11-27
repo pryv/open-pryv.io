@@ -99,22 +99,31 @@ class SessionsPG {
       .catch(callback!);
   }
 
+  /** `key(id)` as a promise: an id that cannot be hashed rejects instead of throwing. */
+  private keyAsync (id: string): Promise<string> {
+    return new Promise((resolve) => resolve(this.key(id)));
+  }
+
   touch (id: string, callback: (err: Error | null, res?: unknown) => void): void {
     const expires = this.getNewExpirationDate();
     // An expired session is not extended (it stays expired until read).
-    this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2 AND expires > $3', [expires, this.key(id), new Date()])
+    this.keyAsync(id)
+      .then((key) => this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2 AND expires > $3', [expires, key, new Date()]))
       .then((res: PgQueryResult) => callback(null, res))
       .catch(callback);
   }
 
   expireNow (id: string, callback: (err: Error | null, res?: unknown) => void): void {
-    this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2', [new Date(), this.key(id)])
+    this.keyAsync(id)
+      .then((key) => this.db.query('UPDATE sessions SET expires = $1 WHERE id = $2', [new Date(), key]))
       .then((res: PgQueryResult) => callback(null, res))
       .catch(callback);
   }
 
   destroy (id: string, callback: (err: Error | null, res?: unknown) => void): void {
-    this._destroyKey(this.key(id), callback);
+    let key: string;
+    try { key = this.key(id); } catch (err) { return callback(err as Error); }
+    this._destroyKey(key, callback);
   }
 
   _destroyKey (key: string, callback: (err: Error | null, res?: unknown) => void): void {
@@ -144,7 +153,7 @@ class SessionsPG {
     if (keys.length === 0) return callback(new Error('removeAllExcept requires a non-empty query'));
     const conditions = keys.map((k, i) => `data->>'${k}' = $${i + 1}`);
     const values = keys.map((k) => String(query[k]));
-    values.push(this.key(exceptId));
+    try { values.push(this.key(exceptId)); } catch (err) { return callback(err as Error); }
     this.db.query(`DELETE FROM sessions WHERE ${conditions.join(' AND ')} AND id <> $${values.length}`, values)
       .then((res: unknown) => callback(null, res))
       .catch(callback);

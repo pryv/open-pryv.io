@@ -21,6 +21,15 @@
  * human-made: a dump of plain hashes of those is reversed by enumeration. The
  * key lives in the configuration only, never in the database.
  *
+ * Limit: the protection holds for server-generated tokens. While access
+ * integrity is active, each access row also stores `integrity`, an unkeyed
+ * hash of the access including its token, next to every other field it
+ * covers: a low-entropy token chosen by a caller (or a short legacy one) can
+ * still be tested offline against it from a dump.
+ *
+ * Envelopes are version 2 only (context-bound); the openers refuse any other
+ * version.
+ *
  * Key root, layered:
  *   1. `auth.accessTokensKey` (base64, 32 bytes) when set;
  *   2. else `auth.adminAccessKey`;
@@ -34,7 +43,7 @@
 import { createHmac } from 'node:crypto';
 import type { ConfigLike } from '@pryv/boiler';
 import type { TokenProtection } from 'storages/interfaces/_shared/tokenProtection.ts';
-import { deriveKey, encrypt, decrypt, KEY_BYTES } from '../acme/AtRestEncryption.ts';
+import { deriveKey, encrypt, decrypt, envelopeVersion, KEY_BYTES, ENVELOPE_VERSION } from '../acme/AtRestEncryption.ts';
 
 const PURPOSE_ACCESS_HASH = 'access-token-hash-v1';
 const PURPOSE_ACCESS_ENC = 'access-token-enc-v1';
@@ -59,6 +68,13 @@ function b64url (buf: Buffer): string {
 
 function assertString (value: unknown, what: string): asserts value is string {
   if (typeof value !== 'string') throw new TypeError(what + ' must be a string');
+}
+
+/** Open a version-2 envelope (none other is ever written here). */
+function openV2 (encoded: string, key: Buffer, context: string): string {
+  const version = envelopeVersion(encoded);
+  if (version !== ENVELOPE_VERSION) throw new Error('envelope version ' + version + ' is not accepted here');
+  return decrypt(encoded, key, context).toString('utf8');
 }
 
 /**
@@ -94,7 +110,7 @@ function createTokenProtection (root: string | Buffer): TokenProtection {
     },
     openAccessToken (userId, tokenHash, tokenEnc) {
       try {
-        return decrypt(tokenEnc, accessEncKey, accessContext(userId, tokenHash)).toString('utf8');
+        return openV2(tokenEnc, accessEncKey, accessContext(userId, tokenHash));
       } catch (err) {
         throw new TokenUnreadableError('access token envelope does not open: ' + (err as Error).message);
       }
@@ -109,7 +125,7 @@ function createTokenProtection (root: string | Buffer): TokenProtection {
     },
     openSessionId (idHash, idEnc) {
       try {
-        return decrypt(idEnc, sessionEncKey, sessionContext(idHash)).toString('utf8');
+        return openV2(idEnc, sessionEncKey, sessionContext(idHash));
       } catch (err) {
         throw new TokenUnreadableError('session id envelope does not open: ' + (err as Error).message);
       }

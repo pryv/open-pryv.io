@@ -240,20 +240,14 @@ if (cluster.isPrimary) {
     // under another key (every token would be rejected; `bin/access-tokens.js
     // rekey` re-keys them), then convert the rows still in clear (a database
     // a previous image wrote to after a rollback). A no-op probe otherwise.
-    {
-      const tokensAtRest = require('../storages/index.ts').getTokensAtRest();
-      if (autoRunMigrations) {
-        const res = await tokensAtRest.protectTokensAtRest();
-        const changed = Object.entries(res).filter(([, n]) => n > 0);
-        if (changed.length > 0) log(`[access-tokens-at-rest] ${changed.map(([k, n]) => `${k}: ${n}`).join(', ')}`);
-      } else {
-        const probe = await tokensAtRest.probeTokensAtRest();
-        if (probe.clearRows) {
-          warn('[access-tokens-at-rest] access tokens or session ids are still stored in clear and cannot be ' +
-            'looked up (autoRunOnStart=false). Run `node bin/migrate.js up` to convert them.');
-        }
-      }
-    }
+    // With autoRunOnStart=false, refuse to start while rows wait for the
+    // conversion (every token would be rejected).
+    await require('../storages/interfaces/_shared/tokenProtection.ts').tokensAtRestAtBoot({
+      tokensAtRest: require('../storages/index.ts').getTokensAtRest(),
+      autoRun: autoRunMigrations,
+      log,
+      warn
+    });
 
     // OAuth refresh tokens used to be stored with the raw token in the
     // platform-store key (replicated to every core). Move THIS core's rows to

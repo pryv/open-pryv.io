@@ -164,7 +164,7 @@ const { weakSecretReason, MIN_SECRET_LENGTH } = require('../../components/busine
 // Secrets that may be left empty while their feature is off (REQUIRED_WHEN
 // makes them required once it is on) but, once set, are held to the same rule
 // as the required ones.
-const OPTIONAL_SECRET_PATHS = ['oauth:stateKey', 'sso:stateKey'];
+const OPTIONAL_SECRET_PATHS = ['oauth:stateKey', 'sso:stateKey', 'auth:accessTokensKey'];
 
 /**
  * An optional secret that is set must be a real secret: a placeholder, an

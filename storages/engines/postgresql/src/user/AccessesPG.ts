@@ -141,6 +141,10 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     if (Array.isArray(query.$or) && query.$or.some((c) => c != null && 'token' in c)) {
       copy().$or = (query.$or as Array<Record<string, unknown>>).map((clause) => {
         if (clause == null || !('token' in clause)) return clause;
+        // The `$or` builder binds each value as a plain value: no operator here.
+        if (clause.token != null && typeof clause.token === 'object') {
+          throw new TypeError('accesses: a token condition inside $or takes a plain value');
+        }
         const c: Record<string, unknown> = Object.assign({}, clause);
         c.token_hash = this.tokenCondition(userId, clause.token);
         delete c.token;
@@ -597,23 +601,51 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
     return status;
   }
 
+  /** Rows still holding a clear token (`user_id`, `id`), at most `limit`: after a pass, the ones it left. */
+  async clearRowIds (limit: number): Promise<Array<{ userId: string; id: string }>> {
+    const res = await this.db.query(
+      'SELECT user_id, id FROM accesses WHERE token IS NOT NULL ORDER BY user_id, id LIMIT $1', [limit]);
+    return res.rows.map((r) => ({ userId: r.user_id as string, id: r.id as string }));
+  }
+
   /**
    * Rollback aid: write the clear token back and drop the pair, then restore
    * the clear-token unique index, so the image before token protection reads
-   * the table. Rows under another key cannot be opened: the run stops on the
+   * the table. The clear value is authoritative: a row holding both a clear
+   * token and a pair (a previous image wrote it after a rollback) only loses
+   * its pair. Rows under another key cannot be opened: the run stops on the
    * first one (rekey first).
    */
   async unprotectRows (): Promise<TokenPassResult> {
-    const result = await this._eachTokenRow('token_enc IS NOT NULL', async (row) => {
+    const result = await this._eachTokenRow('token IS NULL AND token_enc IS NOT NULL', async (row) => {
       const token = this.openRowToken(row);
       const upd = await this.db.query(
-        'UPDATE accesses SET token = $1, token_hash = NULL, token_enc = NULL WHERE user_id = $2 AND id = $3 AND token_enc = $4',
+        'UPDATE accesses SET token = $1, token_hash = NULL, token_enc = NULL WHERE user_id = $2 AND id = $3 AND token IS NULL AND token_enc = $4',
         [token, row.user_id, row.id, row.token_enc]);
       return upd.rowCount;
     });
-    await this.db.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_access_token ' +
-      'ON accesses(user_id, token) WHERE deleted IS NULL AND head_id IS NULL');
+    // The stale pairs: the clear token stays, the pair goes.
+    await this.db.query('UPDATE accesses SET token_hash = NULL, token_enc = NULL ' +
+      'WHERE token IS NOT NULL AND (token_hash IS NOT NULL OR token_enc IS NOT NULL)');
+    try {
+      await this.db.query('CREATE UNIQUE INDEX IF NOT EXISTS idx_access_token ' +
+        'ON accesses(user_id, token) WHERE deleted IS NULL AND head_id IS NULL');
+    } catch (err) {
+      if ((err as { code?: string }).code !== '23505') throw err;
+      throw new Error(await this.duplicateClearTokensMessage());
+    }
     return result;
+  }
+
+  /** Names (ids only) the live accesses sharing a clear token, which block the clear-token index. */
+  async duplicateClearTokensMessage (): Promise<string> {
+    const res = await this.db.query(
+      'SELECT user_id, array_agg(id ORDER BY id) AS ids FROM accesses WHERE token IS NOT NULL AND deleted IS NULL AND head_id IS NULL ' +
+      'GROUP BY user_id, token HAVING COUNT(*) > 1 ORDER BY user_id LIMIT 20');
+    const groups = res.rows.map((r) => 'user ' + JSON.stringify(r.user_id) + ': ' + (r.ids as string[]).map((id) => JSON.stringify(id)).join(', '));
+    return 'access tokens at rest: the tokens were written back, but the clear-token unique index cannot be created: ' +
+      'live accesses share a token (' + (groups.length > 0 ? groups.join('; ') : 'not found again') + '). ' +
+      'Delete all but one access of each group, then run `node bin/access-tokens.js unprotect --yes` again.';
   }
 
   /**
@@ -629,10 +661,19 @@ class AccessesPG extends BaseStoragePG<AccessItem> {
       if (from == null) return 0;
       const token = from.openAccessToken(row.user_id as string, hash, row.token_enc as string);
       const cols = this.protectedColumns(row.user_id as string, token);
-      const upd = await this.db.query(
-        'UPDATE accesses SET token_hash = $1, token_enc = $2 WHERE user_id = $3 AND id = $4 AND token_hash = $5',
-        [cols.token_hash, cols.token_enc, row.user_id, row.id, hash]);
-      return upd.rowCount;
+      try {
+        const upd = await this.db.query(
+          'UPDATE accesses SET token_hash = $1, token_enc = $2 WHERE user_id = $3 AND id = $4 AND token_hash = $5',
+          [cols.token_hash, cols.token_enc, row.user_id, row.id, hash]);
+        return upd.rowCount;
+      } catch (err) {
+        if ((err as { code?: string }).code !== '23505') throw err;
+        // Another live access already holds this token under the configured
+        // key (imported or created while the core refused to start).
+        throw new Error('access tokens at rest: rekey stopped at access ' + JSON.stringify(row.id) + ' of user ' +
+          JSON.stringify(row.user_id) + ': another live access of that user already holds the same token under the ' +
+          'configured key. Delete one of the two accesses, then run rekey again (it is idempotent).');
+      }
     });
   }
 

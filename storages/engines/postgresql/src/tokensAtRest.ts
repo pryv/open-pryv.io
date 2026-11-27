@@ -104,11 +104,20 @@ async function protectTokensAtRest (db?: PgDbLike): Promise<ProtectResult> {
   return result;
 }
 
-async function tokensAtRestStatus (db?: PgDbLike): Promise<{ kid: string; accesses: KeyStatus; sessions: KeyStatus }> {
+/** Access rows in clear listed by `status` (after a start, the rows the conversion left). */
+const MAX_CLEAR_ROWS_LISTED = 100;
+
+/** Read-only. */
+async function tokensAtRestStatus (db?: PgDbLike): Promise<{ kid: string; accesses: KeyStatus; accessesInClear: Array<{ userId: string; id: string }>; sessions: KeyStatus }> {
   const d = dbOrDefault(db);
   const tp = currentProtection();
   const { accesses, sessions } = stores(d, tp);
-  return { kid: tp.kid, accesses: await accesses.tokenStatus(), sessions: await sessions.tokenStatus() };
+  return {
+    kid: tp.kid,
+    accesses: await accesses.tokenStatus(),
+    accessesInClear: await accesses.clearRowIds(MAX_CLEAR_ROWS_LISTED),
+    sessions: await sessions.tokenStatus()
+  };
 }
 
 /** Rollback aid (core stopped): clear tokens and ids written back, the clear-token index recreated. */

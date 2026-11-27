@@ -111,8 +111,12 @@ async function runUp (runner, args) {
   if (args.dryRun || args.target != null) return;
   const tokensAtRest = require('storages').getTokensAtRest();
   const res = await tokensAtRest.protectTokensAtRest();
-  const changed = Object.entries(res).filter(([, n]) => n > 0);
+  const changed = Object.entries(res).filter(([k, n]) => n > 0 && k !== 'accessesSkipped');
   if (changed.length > 0) console.log(`Access tokens at rest: ${changed.map(([k, n]) => `${k}: ${n}`).join(', ')}`);
+  if (res.accessesSkipped > 0) {
+    const { unconvertedAccessesMessage } = require('storages/interfaces/_shared/tokenProtection.ts');
+    console.warn('WARNING: ' + unconvertedAccessesMessage(res.accessesSkipped));
+  }
 }
 
 // ---------------------------------------------------------------------------

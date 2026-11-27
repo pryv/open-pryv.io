@@ -28,7 +28,11 @@ const USAGE = `Usage:
 
 Commands:
   status      Rows per stored form: in clear, protected under the configured key,
-              protected under another key (by key id).
+              protected under another key (by key id). PostgreSQL also lists the
+              access rows in clear (accessesInClear): after a start, the ones the
+              conversion left because another live access of the same user holds
+              the same token; delete one of the two, the next start converts the
+              other. Read-only.
   rekey       Re-hash and re-seal under the configured key the rows protected under
               the previous one, after a change of auth.accessTokensKey or, when that
               is not set, of auth.adminAccessKey. The core refuses to start until
@@ -37,7 +41,9 @@ Commands:
   unprotect   Rollback aid, before starting an image that does not protect tokens
               at rest: writes the clear tokens and session ids back and restores the
               clear-token index. Start the previous image right after, without
-              running this image again (it would protect the rows again). Core stopped.
+              starting this image again (its start protects the rows again; the
+              tools of this image, status and backup included, leave them in
+              clear). Core stopped.
 
 Flags:
   --previous-key-file <path>   (rekey) file holding the previous key value

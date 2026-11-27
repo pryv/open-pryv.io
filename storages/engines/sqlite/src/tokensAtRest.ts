@@ -18,7 +18,10 @@ import type { AccessesSQLite } from './user/AccessesSQLite.ts';
 import type { SessionsSQLite } from './SessionsSQLite.ts';
 import { foreignKeyError } from '../../../interfaces/_shared/tokenProtection.ts';
 import { _internals } from './_internals.ts';
-import { protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker } from './user/AccessesSQLite.ts';
+import {
+  protectAccessTokensOnce, eachUserAccessesDb, tokenMarkerKid, writeTokenMarker, removeTokenMarker,
+  tokensUnprotected, writeUnprotectedMarker, removeUnprotectedMarker
+} from './user/AccessesSQLite.ts';
 
 type KeyStatus = { clear: number; protectedCurrentKey: number; protectedOtherKeys: Record<string, number> };
 type Layer = { accesses: AccessesSQLite; sessions: SessionsSQLite };
@@ -35,6 +38,12 @@ async function usersDirectory (): Promise<void> {
   await (_internals.userLocalDirectory as { init: () => Promise<void> }).init();
 }
 
+/**
+ * Read-only: the guard, then whether rows wait for a conversion the serving
+ * path will not run by itself. Rows in clear are otherwise converted at
+ * storage init (sessions) and at the first use of a user database
+ * (accesses); not while the `unprotect` marker is there.
+ */
 async function probeTokensAtRest (): Promise<{ columnsReady: boolean; clearRows: boolean }> {
   await usersDirectory();
   const { accesses, sessions } = layer();
@@ -42,13 +51,18 @@ async function probeTokensAtRest (): Promise<{ columnsReady: boolean; clearRows:
   const markerKid = tokenMarkerKid();
   if (markerKid != null && markerKid !== kid) throw foreignKeyError('access rows (walk marker under key id ' + markerKid + ')');
   if (sessions.hasForeignKeyRows()) throw foreignKeyError('sessions');
-  return { columnsReady: true, clearRows: markerKid == null || sessions.hasClearRows() };
+  return { columnsReady: true, clearRows: tokensUnprotected() };
 }
 
+/**
+ * The conversion pass of the start (and of `bin/migrate.js up`): ends the
+ * rollback state of `unprotect` (its marker), then converts.
+ */
 async function protectTokensAtRest (): Promise<Record<string, number>> {
   await usersDirectory();
   const { accesses, sessions } = layer();
   if (sessions.hasForeignKeyRows()) throw foreignKeyError('sessions');
+  removeUnprotectedMarker();
   const a = await protectAccessTokensOnce(accesses);
   const s = sessions.hasClearRows() ? await sessions.protectClearRows() : { rows: 0, expired: 0 };
   return { accesses: a?.rows ?? 0, accessesFailedUsers: a?.failedUsers ?? 0, sessions: s.rows, sessionsExpired: s.expired };
@@ -61,6 +75,7 @@ function addStatus (status: KeyStatus, kid: string, k: string, n: number): void 
   else status.protectedOtherKeys[k] = (status.protectedOtherKeys[k] ?? 0) + n;
 }
 
+/** Read-only (the walk visits the databases without their first-use conversion). */
 async function tokensAtRestStatus (): Promise<Record<string, unknown>> {
   await usersDirectory();
   const { accesses, sessions } = layer();
@@ -69,12 +84,25 @@ async function tokensAtRestStatus (): Promise<Record<string, unknown>> {
   const failed = await eachUserAccessesDb(async (udb: UserDbHandle) => {
     for (const r of accesses.tokenStatusOfUser(udb)) addStatus(status, kid, r.k, r.n);
   });
-  return { kid, marker: tokenMarkerKid(), accesses: status, accessesFailedUsers: failed.length, sessions: sessions.tokenStatus() };
+  return {
+    kid,
+    marker: tokenMarkerKid(),
+    unprotected: tokensUnprotected(),
+    accesses: status,
+    accessesFailedUsers: failed.length,
+    sessions: sessions.tokenStatus()
+  };
 }
 
+/**
+ * Rollback aid (core stopped). The marker is written first: from then on no
+ * process converts rows again (tools, first uses), until a start of this
+ * image (`protectTokensAtRest`) removes it.
+ */
 async function unprotectTokensAtRest (): Promise<Record<string, number>> {
   await usersDirectory();
   const { accesses, sessions } = layer();
+  writeUnprotectedMarker();
   let rows = 0;
   const failed = await eachUserAccessesDb(async (udb: UserDbHandle) => {
     if (accesses.hasForeignKeyRowsOfUser(udb)) throw foreignKeyError('access rows');

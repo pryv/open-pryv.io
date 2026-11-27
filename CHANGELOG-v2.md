@@ -10,16 +10,25 @@ roll back or change a key.
 
 - **Stored form.** Every access token and personal session id is stored as a keyed hash (HMAC-SHA256, the only
   lookup key) plus an encrypted copy (AES-256-GCM, opened when the access is read). A database dump or a stolen
-  data file no longer holds a usable token. The keys derive from the new optional **`auth.accessTokensKey`**
-  (base64, 32 bytes; SECRET, YAML only) when set, else from `auth.adminAccessKey`. Nothing to configure on an
-  existing platform. The keys never enter the database.
+  data file no longer holds a server-generated token in clear. Limit: while access integrity is active
+  (`integrity.isActive.accesses`, on by default), each access row also stores `integrity`, an unkeyed hash of the
+  access including its token, next to every other field it covers; a low-entropy token chosen by a caller, or a
+  short legacy one, can still be tested offline against it from a dump. Server-generated tokens are out of reach
+  of such a test. The keys derive from the new optional **`auth.accessTokensKey`**
+  (base64, 32 bytes; SECRET, YAML only; a placeholder value refuses the boot) when set, else from
+  `auth.adminAccessKey`. Nothing to configure on an existing platform. The keys never enter the database.
 - **First start of this release.** Before the workers start, every stored token is converted in place: live,
   deleted and history accesses, and sessions (expired sessions are removed). One HMAC, one encryption and one row
-  update per access; on PostgreSQL it is a migration (`migrations.autoRunOnStart: false`: run
-  `node bin/migrate.js up`, the core warns that tokens cannot be looked up until then). On SQLite the user
-  databases are walked once (a marker file `accesses-token-protected.done` in the users directory records it) and
-  any database the walk missed is converted at its first use. The same pass runs at every start: rows written in
-  clear since (see rollback below) are converted again.
+  update per access; on PostgreSQL it is a migration. With `migrations.autoRunOnStart: false` the core refuses to
+  start while stored tokens wait for the conversion (they could not be looked up): run `node bin/migrate.js up`,
+  then start. On SQLite the user databases are walked once (a marker file `accesses-token-protected.done` in the
+  users directory records it) and any database the walk missed is converted at its first use. The same pass runs
+  at every start: rows written in clear since (see rollback below) are converted again.
+- **An access left in clear.** On PostgreSQL, a row in clear whose token another live access of the same user
+  already holds in protected form (possible only after a rollback during which the earlier image accepted a
+  chosen token twice) cannot be converted: the start warns with the count, the row keeps its token in clear at
+  rest and cannot be looked up. `node bin/access-tokens.js status` lists such rows (`accessesInClear`). Fix:
+  delete one of the two accesses; the next start converts the other.
 - **Changing the key refuses the start.** A core that finds tokens protected under another key than the
   configured one (after changing `auth.accessTokensKey`, or `auth.adminAccessKey` while `auth.accessTokensKey` is
   not set) stops with a message naming the fix, because every app, shared and personal token would be rejected
@@ -30,16 +39,26 @@ roll back or change a key.
 - **Rollback to an earlier image.** An earlier image cannot read the new stored form: every token would be
   rejected. Before starting it, with this image and the core stopped, run `node bin/access-tokens.js unprotect
   --yes` (writes the clear tokens and session ids back and restores the clear-token index), then start the earlier
-  image without starting this one again. If the earlier image was started without `unprotect`, nothing is lost:
-  starting this image again converts back what was written in the meantime (sessions opened meanwhile included).
-  Several cores sharing one PostgreSQL database must be upgraded together.
+  image without starting this one again. The tools of this image (`status`, `bin/backup.js`, ...) leave the rows
+  in clear after `unprotect` (on SQLite a marker file `accesses-token-unprotected` records it until the next start
+  of this image); `bin/migrate.js up` is a start and converts them. If `unprotect` stops because live accesses
+  share a token, it names them: delete all but one of each, run it again. If the earlier image was started without
+  `unprotect`, nothing is lost: starting this image again converts back what was written in the meantime (sessions
+  opened meanwhile included). Several cores sharing one PostgreSQL database must be upgraded together.
 - **Old clear copies.** The upgrade cannot reach copies made before it: database dumps and backups taken earlier
   (treat them as credential stores), and, until vacuum, the old row versions in the data files. On PostgreSQL run
   `VACUUM (FULL) accesses, sessions;` once after the upgrade if the old values must be gone from the data files
   (it locks both tables while it runs). On SQLite the first start vacuums each user database it converts and the
   shared database (a database converted later, at its first use, is not: run `VACUUM` on it). Backups made by
-  `bin/backup.js` still hold the tokens in clear (they restore on a core with another key): encrypt them.
-- **`bin/access-tokens.js status`**: counts of rows in clear, under the configured key, and under other keys.
+  `bin/backup.js` still hold the tokens in clear (they restore on a core with another key): encrypt them. A
+  PostgreSQL server that logs statement parameters (`log_statement = 'all'` or `'mod'`, with the default
+  `log_parameter_max_length`) records in its log the clear tokens bound by the one-time conversion and by
+  `unprotect`: turn that logging off for the upgrade, or purge those log files after it.
+- **Not in this change.** Credentials held elsewhere in the stores stay in clear: the access `integrity` hash
+  above, the `apiEndpoint` (token included) of a pending deletion notice to a peer core, and the credential URLs
+  CMC peers keep in an access's `clientData`.
+- **`bin/access-tokens.js status`** (read-only): counts of rows in clear, under the configured key, and under other
+  keys.
 
 ### Configuration: the same platform digest with or without `--config`
 

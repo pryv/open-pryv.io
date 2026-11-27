@@ -83,7 +83,9 @@ async function initStorageLayer (storageLayer: StorageLayerLike, _connection: un
   storageLayer.sessions = sessions;
   // Sessions of a shared database written before session ids were protected:
   // converted before anything reads them (one transaction, a no-op probe after).
-  if (sessions.hasClearRows()) {
+  // Not after `bin/access-tokens.js unprotect` (its marker present): a tool run
+  // before the rollback must leave them in clear; the next start converts them.
+  if (!require('./user/AccessesSQLite.ts').tokensUnprotected() && sessions.hasClearRows()) {
     const converted = await sessions.protectClearRows();
     if (converted.rows > 0) require('./user/AccessesSQLite.ts').vacuumQuietly(sharedDb.getDb(), 'the shared database');
   }
