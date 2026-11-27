@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### PostgreSQL: one order for events sharing a time, new time index (operator notice)
+
+- `events.get` and audit reads on PostgreSQL return events (records) sharing a `time` in one order, by id in the
+  direction of the time sort: pages read with `skip` no longer repeat or miss one. SQLite already did.
+- **First start of this release on PostgreSQL** (a migration, `migrations.autoRunOnStart`; else
+  `node bin/migrate.js up`): builds the index `idx_event_time_id` on `events (user_id, time, id)` and
+  `idx_audit_time_id` on `audit_events (user_id, time, eventid)`, then drops `idx_event_time` and `idx_audit_time`,
+  which they replace. Both builds run `CONCURRENTLY`: the table stays readable and writable, the start waits for
+  the build (the log says `building idx_... CONCURRENTLY` before each one, and the time it took after). Two
+  processes running the migration at once are serialized: the second waits, then finds the indexes built.
+- **How long.** Measured on an idle test machine, data in memory (PostgreSQL 16): about 3.5 s per million rows and
+  per table (a plain build: 2.7 s). Take it as a floor, not a promise: a build slows down more than linearly once
+  the table exceeds `maintenance_work_mem`, and under write load. For a large database, measure on a copy. Disk:
+  each new index is about 1.5 times the one it replaces (74 MB instead of 50 MB per million rows with
+  32-character ids); both coexist until the old one is dropped.
+- **What can make the start longer.** A concurrent build also waits for the transactions open on the same
+  database when it starts its phases: a previous instance still serving during a zero-downtime deploy (a slow
+  client draining a streamed `events.get` keeps one open), any long session. An orchestrator's start or health
+  timeout must exceed the build: a core stopped mid-build leaves an invalid index, and the next start drops it and
+  builds again from zero, so a timeout shorter than the build never converges.
+- **Large database: build the indexes by hand before upgrading**, while the previous release serves (reads and
+  writes go on; the previous release works with the new indexes present):
+  `CREATE INDEX CONCURRENTLY idx_event_time_id ON events (user_id, time, id);` and
+  `CREATE INDEX CONCURRENTLY idx_audit_time_id ON audit_events (user_id, time, eventid);`. The migration then only
+  drops `idx_event_time` and `idx_audit_time`. A by-hand build that fails leaves an invalid index: drop it
+  (`DROP INDEX CONCURRENTLY idx_event_time_id;`) before building again (the migration would also drop and rebuild
+  it). Do not run `node bin/migrate.js up` from the new image against a database the previous release still
+  serves: it runs every pending migration of this release, not only this one.
+- **If the build fails** (disk full, a server-side limit), the core does not start; it says why. The build itself
+  runs with no statement or lock time limit, so a `statement_timeout` set on the role or the database does not
+  cancel it. The invalid index left keeps its disk until the next start drops it.
+- **With `migrations.autoRunOnStart: false`**, until `node bin/migrate.js up` runs, results are already in the new
+  order, but a restricted page sorts its time ties above the old index (slower on large accounts).
+- **Rolling back to the previous release:** at its first start it builds `idx_event_time` and `idx_audit_time`
+  again, NOT concurrently (writes on the table wait: about 2 s per million rows each). Coming back to this release
+  afterwards, the migration is recorded and does not run again: both indexes stay. Drop the old ones by hand:
+  `DROP INDEX CONCURRENTLY idx_event_time;` and `DROP INDEX CONCURRENTLY idx_audit_time;`.
+- A core using a SQLite base storage with the PostgreSQL audit engine runs no PostgreSQL migration: its existing
+  `audit_events` keeps `idx_audit_time` (the order is still fixed; a page then sorts its time ties). To get the
+  new index there, run at any time (reads and writes go on):
+  `CREATE INDEX CONCURRENTLY idx_audit_time_id ON audit_events (user_id, time, eventid);` then
+  `DROP INDEX CONCURRENTLY idx_audit_time;`. If that build fails, nothing heals it in this setup: drop the invalid
+  index (`DROP INDEX CONCURRENTLY idx_audit_time_id;`) before building again. A fresh database gets the new
+  indexes in any setup.
+- Events sharing a time come back by id on PostgreSQL and in creation order on SQLite: each engine keeps one
+  order, the two orders differ.
+
 ### Access tokens and session ids no longer stored in clear (operator notice)
 
 Nothing changes for clients: the same tokens, the same `token` and `apiEndpoint` in every response, the same

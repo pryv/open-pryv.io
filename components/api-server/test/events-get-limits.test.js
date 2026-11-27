@@ -89,41 +89,71 @@ describe('[EGLM] events.get limit, skip and streaming', function () {
   });
 
   describe('[EGLT] events sharing a time', function () {
-    const TIED = 24;
+    const TIED = 48;
     let tieStreamId;
 
     before(async function () {
-      // SQLite: equal times come back in a stable order whatever the plan.
-      // PostgreSQL has no tie-breaker yet (one without an index on
-      // (user_id, time, id) slows restricted pages down): not asserted there.
-      if (getConfigUnsafe().get('storages:base:engine') === 'postgresql') this.skip();
+      // Equal times come back in a stable order whatever the plan: the time
+      // sort ends with the row id (SQLite rowid, PostgreSQL id).
       tieStreamId = 'eglt-' + cuid.slug();
       await coreRequest.post(`/${username}/streams`).set('Authorization', token).send({ id: tieStreamId, name: tieStreamId });
-      // 6 times, 4 events each.
+      // 6 times, 8 events each, created in an order unrelated to the times.
+      const calls = [];
       for (let i = 0; i < TIED; i++) {
-        const res = await coreRequest.post(`/${username}/events`).set('Authorization', token)
-          .send({ streamIds: [tieStreamId], type: 'note/txt', content: 't' + i, time: 2000 + Math.floor(i / 4) });
-        assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+        const time = 2000 + Math.floor(((i * 29) % TIED) / 8);
+        calls.push({ method: 'events.create', params: { streamIds: [tieStreamId], type: 'note/txt', content: 't' + i, time } });
       }
+      const res = await coreRequest.post('/' + username).set('Authorization', token).send(calls);
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(res.body.results.every((r) => r.event != null), JSON.stringify(res.body.results.find((r) => r.event == null)));
     });
+
+    async function assertStablePages (sortAscending) {
+      const all = await getEvents({ streams: [tieStreamId], limit: TIED, sortAscending });
+      assert.strictEqual(all.status, 200, JSON.stringify(all.body));
+      const expected = all.body.events.map((e) => e.id);
+      assert.strictEqual(new Set(expected).size, TIED);
+      for (const limit of [3, 5, 7, 11]) {
+        const paged = [];
+        for (let skip = 0; skip < TIED; skip += limit) {
+          const res = await getEvents({ streams: [tieStreamId], limit, skip, sortAscending });
+          assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+          paged.push(...res.body.events.map((e) => e.id));
+        }
+        assert.deepStrictEqual(paged, expected, 'limit ' + limit);
+      }
+    }
 
     for (const sortAscending of [false, true]) {
       it(`[EGLT1] pages read with skip neither repeat nor miss an event (${sortAscending ? 'oldest' : 'newest'} first)`, async function () {
-        const all = await getEvents({ streams: [tieStreamId], limit: TIED, sortAscending });
-        assert.strictEqual(all.status, 200, JSON.stringify(all.body));
-        const expected = all.body.events.map((e) => e.id);
-        assert.strictEqual(new Set(expected).size, TIED);
-        for (const limit of [3, 5, 7]) {
-          const paged = [];
-          for (let skip = 0; skip < TIED; skip += limit) {
-            const res = await getEvents({ streams: [tieStreamId], limit, skip, sortAscending });
-            assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-            paged.push(...res.body.events.map((e) => e.id));
-          }
-          assert.deepStrictEqual(paged, expected, 'limit ' + limit);
-        }
+        await assertStablePages(sortAscending);
       });
     }
+
+    describe('[EGLS] PostgreSQL without the time index (the planner sorts)', function () {
+      let pg, ensureTimeIdIndexes;
+
+      before(async function () {
+        if (getConfigUnsafe().get('storages:base:engine') !== 'postgresql') this.skip();
+        ({ ensureTimeIdIndexes } = require('../../../storages/engines/postgresql/src/timeIdIndexes.ts'));
+        pg = require('../../../storages/engines/postgresql/src/_internals.ts')._internals.databasePG;
+        assert.ok(pg != null, 'the PostgreSQL database of the core');
+        // An index on time hands ties over in its own order and can hide a
+        // sort without a tie-breaker: without it, the sort decides.
+        await pg.query('DROP INDEX IF EXISTS idx_event_time_id');
+        await pg.query('DROP INDEX IF EXISTS idx_event_time');
+      });
+
+      after(async function () {
+        if (pg != null) await ensureTimeIdIndexes(pg);
+      });
+
+      for (const sortAscending of [false, true]) {
+        it(`[EGLT2] pages read with skip neither repeat nor miss an event (${sortAscending ? 'oldest' : 'newest'} first)`, async function () {
+          await assertStablePages(sortAscending);
+        });
+      }
+    });
   });
 
   describe('[EGLC] PostgreSQL cursor', function () {

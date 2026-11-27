@@ -602,7 +602,15 @@ CREATE TABLE IF NOT EXISTS events (
   deleted DOUBLE PRECISION,
   PRIMARY KEY (user_id, id)
 );
-CREATE INDEX IF NOT EXISTS idx_event_time ON events(user_id, time);
+-- Time sorts end with the id (see src/timeIdIndexes.ts): idx_event_time_id
+-- serves them. Built here on a database with neither it nor the
+-- idx_event_time it replaces (a fresh one); an existing database gets it from
+-- the migration 20261127_130000_time_id_indexes.js, built CONCURRENTLY.
+DO $$ BEGIN
+  IF to_regclass('idx_event_time_id') IS NULL AND to_regclass('idx_event_time') IS NULL THEN
+    CREATE INDEX idx_event_time_id ON events(user_id, time, id);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_event_type ON events(user_id, type);
 CREATE INDEX IF NOT EXISTS idx_event_deleted
   ON events(user_id, deleted) WHERE deleted IS NOT NULL;
@@ -841,7 +849,12 @@ CREATE TABLE IF NOT EXISTS audit_events (
   modified_by TEXT,
   PRIMARY KEY (user_id, eventid)
 );
-CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(user_id, time);
+-- Same as idx_event_time_id above (migration 20261127_130000_time_id_indexes.js).
+DO $$ BEGIN
+  IF to_regclass('idx_audit_time_id') IS NULL AND to_regclass('idx_audit_time') IS NULL THEN
+    CREATE INDEX idx_audit_time_id ON audit_events(user_id, time, eventid);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(user_id, type);
 CREATE INDEX IF NOT EXISTS idx_audit_deleted ON audit_events(user_id, deleted) WHERE deleted IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_head_id ON audit_events(user_id, head_id) WHERE head_id IS NOT NULL;
