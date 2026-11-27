@@ -12,6 +12,10 @@
   boot once a version moves (update or remove it). The six in-tree engines declare 1; nothing changes for them.
   Bump policy and history: `storages/interfaces/README.md`. `storages/README.md` rewritten from the loader (it named
   factories, files and config keys that no longer exist). Tests `[IFVA]` to `[IFVH]`.
+- `storages/test/interface-method-pins.test.js` pins, per storage type, the interface version next to the engine
+  module's required exports and each interface's required methods (read from the live validators). A contract
+  change without a matching version decision and table update fails the suite with a message saying what to bump
+  and update. Tests `[IFPA]` to `[IFPD]`.
 
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 

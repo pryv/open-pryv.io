@@ -16,8 +16,19 @@ atomicity, error contract) of an existing method, a new required internal or a c
 that only tighten what the in-tree engines already return.
 
 A bump is one commit that changes `versions.ts`, the manifest of every in-tree engine implementing that type, the
-table below and the changelog. Versions are per storage type: a change to `platformStorage` does not touch
+contract pins (next section), the history table below and the changelog. Versions are per storage type: a change to `platformStorage` does not touch
 `baseStorage` engines. An engine maintained elsewhere ships a release declaring the new version.
+
+## Contract pins
+
+[`../test/interface-method-pins.test.js`](../test/interface-method-pins.test.js) holds, per storage type, the
+version from `versions.ts`, the engine module's required exports (`REQUIRED_EXPORTS` in `../pluginLoader.ts`) and
+the required methods of each interface object, read from its validator (`validatePlatformDB`, `validateUserStorage`,
+...). The test fails when any of them moves without the table: decide whether the change breaks engines (bump the
+version if so), then update the table and the history below in the same commit. Two types have no validator list:
+`UserAccountStorage` has none, so its prototype object's own methods are pinned instead; `dataStore` pins the
+engine export only, as the DataStore object is defined and versioned by the `@pryv/datastore` SDK. Optional methods
+the host feature-detects are in no validator list and need no table change.
 
 ## History
 
