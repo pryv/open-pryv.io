@@ -33,6 +33,7 @@ import { MAX_SYNTH_ENTRIES, canonicalJson } from './scopeGrammar.ts';
 import { validatePublicJwkSet, keyMatchesAlg, CLIENT_ASSERTION_ALGS } from './jwks.ts';
 import { jwksUriProblem } from './jwksUri.ts';
 import { isLifetime } from './clientLifetimes.ts';
+import { hostingsOf, hostingOf, placeHosting } from 'business/src/admin/scopes.ts';
 import { MAX_PREVIOUS_SECRET_WINDOW_MS } from './clientSecret.ts';
 import { isMetadataClientKey, metadataClientKey, clientIdUrlSyntaxProblem } from './clientMetadataId.ts';
 import { audienceProbe } from './audienceTemplate.ts';
@@ -593,15 +594,9 @@ export function servedLogoUri (client: OAuthClient, config: { get (key: string):
  * when the hierarchy does not list its hosting.
  */
 export function coreRegion (config: { get (key: string): unknown }): string | null {
-  const hosting = String(config.get('core:hosting') || 'default');
-  const regions = (config.get('hostings') as { regions?: unknown } | null | undefined)?.regions;
-  if (regions == null || typeof regions !== 'object') return 'default';
-  for (const [key, region] of Object.entries(regions as Record<string, { zones?: Record<string, { hostings?: Record<string, unknown> }> }>)) {
-    for (const zone of Object.values(region?.zones ?? {})) {
-      if (zone?.hostings != null && Object.hasOwn(zone.hostings, hosting)) return key;
-    }
-  }
-  return null;
+  const hostings = hostingsOf(config);
+  if (hostings == null) return 'default';
+  return placeHosting(hostings, hostingOf(config))?.region ?? null;
 }
 
 /** Why a client may not be used here and now, or null when it may. */

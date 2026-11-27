@@ -417,6 +417,17 @@ if (cluster.isPrimary) {
       warn(`[setup] setup step failed: ${e.message}`);
     }
 
+    // This core's local policy on administrator grants: one line, so an
+    // operator reading the boot log knows which grants count here.
+    try {
+      const { describeLocalPolicy, localPolicyLine } = require('../components/business/src/admin/localPolicy.ts');
+      const line = `[admin] ${localPolicyLine(config)}`;
+      if (describeLocalPolicy(config).problems.length > 0) warn(line);
+      else log(line);
+    } catch (e) {
+      warn(`[admin] local policy not readable: ${e.message}`);
+    }
+
     // Keep master alive while workers run (tcp_pubsub sockets are unref'd)
     const keepAlive = setInterval(() => {}, 60000);
 

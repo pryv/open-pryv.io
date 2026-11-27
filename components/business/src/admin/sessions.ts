@@ -9,8 +9,8 @@ import { createHash } from 'node:crypto';
 import { generateToken, hashToken, isTokenShape } from './codes.ts';
 import { KEYS, checkKeyId, isPlainObject } from './store.ts';
 import type { AdminStore } from './store.ts';
-import { readRoleRow, permissionsOf } from './roles.ts';
-import type { RoleRow } from './roles.ts';
+import { readRoleRow, effectivePermissions, hasActiveGrant } from './roles.ts';
+import type { RoleRow, PermissionContext, DeniedPermission } from './roles.ts';
 import type { AdminPermission } from './permissions.ts';
 
 /**
@@ -49,7 +49,7 @@ export type SetupSession = { createdAt: number; coreId: string; expiresAt: numbe
 export type AdminSessionRow = { userId: string; homeCore: string; mfaAt: number | null; createdAt: number };
 export type AdminSession = AdminSessionRow & { expiresAt: number };
 
-export type ResolvedAdminSession = { session: AdminSession; role: RoleRow; permissions: Set<AdminPermission> };
+export type ResolvedAdminSession = { session: AdminSession; role: RoleRow; permissions: Set<AdminPermission>; denied: DeniedPermission[] };
 
 export type IssuedToken = { token: string; expiresAt: number };
 
@@ -160,19 +160,23 @@ export async function endAdminSession (db: AdminStore, token: unknown, opts: { n
 }
 
 /**
- * A session, its role row and the permissions it gives on this core now; null
- * when the session is unknown or expired, its account holds no role (or no
- * longer an active one), or its sessions were revoked after it was created.
+ * A session, its role row and the permissions it gives on this core now
+ * (`ctx`: this core and its local policy; without it, the `platform` grants
+ * alone), with the permissions of its roles refused here; null when the
+ * session is unknown or expired, its account holds no active grant, or its
+ * sessions were revoked after it was created. A session whose grants give
+ * nothing on this core resolves, with no permission: it reaches the routes
+ * that need none (its own session, the portal context).
  */
-export async function resolveAdminSession (db: AdminStore, token: unknown, now: number): Promise<ResolvedAdminSession | null> {
+export async function resolveAdminSession (db: AdminStore, token: unknown, now: number, ctx?: PermissionContext): Promise<ResolvedAdminSession | null> {
   const session = await readAdminSession(db, token);
   if (session == null) return null;
   const role = await readRoleRow(db, session.userId);
   if (role == null) return null;
   if (role.sessionsRevokedAt != null && session.createdAt <= role.sessionsRevokedAt) return null;
-  const permissions = permissionsOf(role, now);
-  if (permissions.size === 0) return null;
-  return { session, role, permissions };
+  if (!hasActiveGrant(role, now)) return null;
+  const { permissions, denied } = effectivePermissions(role, now, { core: null, ...ctx, userId: session.userId });
+  return { session, role, permissions, denied };
 }
 
 /** How far in this core's future a second factor may be stamped (the home core's clock ahead of this one). */

@@ -17,6 +17,7 @@
 //   node bin/admin.js setup finish               # setup done without a first administrator
 //   node bin/admin.js claim-code [--role owner] [--scope platform] [--ttl 15m]
 //   node bin/admin.js roles list
+//   node bin/admin.js roles grant <userId | username> --role <r> --scope <s> [--expires 30d] [--force]
 //   node bin/admin.js roles revoke <userId | username> [--role <r>] [--scope <s>] [--force]
 //   node bin/admin.js sessions revoke <userId | username>
 //
@@ -186,7 +187,7 @@ async function claimCodeCommand ({ config, db }, a) {
   const role = a.role ?? roles.ROLE_OWNER;
   const scope = a.scope ?? roles.SCOPE_PLATFORM;
   if (!roles.isRole(role)) throw new Error('--role must be one of: ' + roles.ROLES.join(', '));
-  if (!roles.isScope(scope)) throw new Error('--scope must be: ' + roles.SCOPE_PLATFORM);
+  if (!roles.isScope(scope)) throw new Error('--scope must be ' + SCOPE_GRAMMAR);
   const ttlMs = a.ttl != null ? parseTtl(a.ttl, roles.CLAIM_TTL_MAX_MS) : undefined;
   const minted = await roles.mintClaimCode(db, { role, scope, mintedBy: 'cli', now: Date.now(), ttlMs });
   const rule = '='.repeat(72);
@@ -216,18 +217,24 @@ async function rolesCommand (ctx, a) {
       return 0;
     }
     const now = Date.now();
+    const { hostingsOf, scopeState } = require('../components/business/src/admin/scopes.ts');
+    const hostings = hostingsOf(ctx.config);
+    const coreIds = await knownCoreIds(ctx);
     for (const { userId, row } of rows) {
       const username = await localUsername(userId);
       console.log(userId + (username != null ? ' (' + username + ')' : ' (not an account of this core)'));
       for (const g of row.grants) {
         const active = roles.activeGrants({ grants: [g] }, now).length === 1;
+        // An orphan scope names no region, zone, hosting or core the platform knows: it gives nothing.
+        const orphan = active && scopeState(g.scope, hostings, coreIds) === 'orphan';
         console.log('  ' + g.role + ' @ ' + g.scope + '  via ' + g.via + ' by ' + g.grantedBy + ' at ' + iso(g.grantedAt) +
-          (g.expiresAt != null ? ', expires ' + iso(g.expiresAt) : '') + (active ? '' : '  [inactive]'));
+          (g.expiresAt != null ? ', expires ' + iso(g.expiresAt) : '') + (active ? '' : '  [inactive]') + (orphan ? '  [orphan scope]' : ''));
       }
       if (row.sessionsRevokedAt != null) console.log('  sessions revoked at ' + iso(row.sessionsRevokedAt));
     }
     return 0;
   }
+  if (a.sub === 'grant') return await grantCommand(ctx, a, roles);
   // revoke
   const userId = await resolveUserId(a.target);
   let revoked;
@@ -247,6 +254,31 @@ async function rolesCommand (ctx, a) {
   await recordAct(ctx.config, 'role.deleted', { target: userId, role: a.role, scope: a.scope, force: a.force ? 'yes' : null });
   console.log('Revoked: ' + (a.role != null ? a.role + (a.scope != null ? ' @ ' + a.scope : '') : 'every grant') + ' of ' + userId +
     '. Its administrator sessions stop at their next request.');
+  return 0;
+}
+
+/** `roles grant <userId | username> --role <r> --scope <s> [--expires <when>] [--force]`. */
+async function grantCommand (ctx, a, roles) {
+  if (a.role == null || !roles.isRole(a.role)) throw new Error('--role must be one of: ' + roles.ROLES.join(', '));
+  if (a.scope == null || !roles.isScope(a.scope)) throw new Error('--scope must be ' + SCOPE_GRAMMAR);
+  const now = Date.now();
+  const expiresAt = a.expires != null ? parseExpiry(a.expires, now) : null;
+  const userId = await resolveUserId(a.target);
+  try {
+    await roles.grantRole(ctx.db, userId, { role: a.role, scope: a.scope, grantedBy: 'cli', via: 'grant', now, expiresAt, force: a.force });
+  } catch (err) {
+    if (err instanceof roles.LastOwnerError) {
+      console.error('admin: ' + err.message + ' (--force replaces it anyway; the platform is then administered with the admin key and a claim code)');
+      return 1;
+    }
+    throw err;
+  }
+  await recordAct(ctx.config, 'role.granted', { target: userId, role: a.role, scope: a.scope, expiresAt: expiresAt != null ? iso(expiresAt) : null, force: a.force ? 'yes' : null });
+  const { hostingsOf, scopeState } = require('../components/business/src/admin/scopes.ts');
+  const orphan = scopeState(a.scope, hostingsOf(ctx.config), await knownCoreIds(ctx)) === 'orphan';
+  console.log('Granted: ' + a.role + ' @ ' + a.scope + ' to ' + userId + (expiresAt != null ? ', until ' + iso(expiresAt) : '') + '.');
+  if (orphan) console.log('Note: ' + a.scope + ' names no region, zone, hosting or core this platform knows: the grant gives nothing until it does.');
+  if (a.scope !== roles.SCOPE_PLATFORM) console.log('Role management, claim codes and the other platform-wide writes need a grant at scope platform.');
   return 0;
 }
 
@@ -283,6 +315,34 @@ async function localUsername (userId) {
   } catch (_e) {
     return null;
   }
+}
+
+const SCOPE_GRAMMAR = 'platform, region:<id>, zone:<id>, hosting:<id> or core:<id> (an id is 1 to 128 of A-Z a-z 0-9 . _ -)';
+
+/** The core ids the platform store lists, this core's included. */
+async function knownCoreIds ({ config, db }) {
+  const ids = new Set([String(config.get('core:id') ?? 'single')]);
+  try {
+    for (const core of await db.getAllCoreInfos()) if (typeof core?.id === 'string') ids.add(core.id);
+  } catch (_e) { /* the core list is not readable: this core alone */ }
+  return [...ids];
+}
+
+/** `30d`, `12h`, `90m` from now, or an ISO 8601 date-time: milliseconds since the epoch, in the future. */
+function parseExpiry (raw, now) {
+  const s = String(raw).trim();
+  const m = /^(\d+)\s*([mhd])$/i.exec(s);
+  let at;
+  if (m != null) {
+    at = now + Number(m[1]) * { m: 60000, h: 3600000, d: 86400000 }[m[2].toLowerCase()];
+  } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    at = Date.parse(s);
+  } else {
+    at = NaN;
+  }
+  if (!Number.isFinite(at)) throw new Error('--expires must be a duration (90m, 12h, 30d) or an ISO 8601 date-time');
+  if (at <= now) throw new Error('--expires must be in the future');
+  return at;
 }
 
 /** `15m`, `2h`, `30` (minutes): milliseconds, more than 0 and at most `maxMs`. */
@@ -341,7 +401,7 @@ async function recordAct (config, act, fields) {
 }
 
 function parseArgs (list) {
-  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, config: null };
+  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, expires: null, config: null };
   const rest = [];
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
@@ -356,6 +416,7 @@ function parseArgs (list) {
     else if (a === '--role') out.role = value();
     else if (a === '--scope') out.scope = value();
     else if (a === '--ttl') out.ttl = value();
+    else if (a === '--expires') out.expires = value();
     else if (a === '--config') out.config = value();
     else if (a.startsWith('--')) throw new Error('unknown option ' + a);
     else rest.push(a);
@@ -377,8 +438,8 @@ function parseArgs (list) {
     case 'roles':
       out.sub = rest.shift() ?? null;
       if (out.sub === 'list' && rest.length === 0) break;
-      if (out.sub === 'revoke' && rest.length === 1) { out.target = rest[0]; break; }
-      throw new Error('roles list | roles revoke <userId | username>');
+      if ((out.sub === 'revoke' || out.sub === 'grant') && rest.length === 1) { out.target = rest[0]; break; }
+      throw new Error('roles list | roles grant <userId | username> --role <r> --scope <s> | roles revoke <userId | username>');
     case 'sessions':
       out.sub = rest.shift() ?? null;
       if (out.sub === 'revoke' && rest.length === 1) { out.target = rest[0]; break; }
@@ -404,10 +465,17 @@ function printUsage (stream) {
     '  node bin/admin.js claim-code [--role owner] [--scope platform] [--ttl 15m]',
     '                                                a one-time administrator code (default 15 min, at most 24h)',
     '  node bin/admin.js roles list                  every administrator and its grants',
+    '  node bin/admin.js roles grant <userId|username> --role <r> --scope <s> [--expires <when>] [--force]',
+    '                                                give a role at a scope (or replace that grant); <when>:',
+    '                                                90m, 12h, 30d or an ISO 8601 date-time; replacing the',
+    '                                                last lasting owner grant by an expiring one needs --force',
     '  node bin/admin.js roles revoke <userId|username> [--role <r>] [--scope <s>] [--force]',
     '                                                remove grants; the last owner grant needs --force',
     '  node bin/admin.js sessions revoke <userId|username>',
     '                                                refuse every administrator session opened until now',
+    '',
+    'Roles: owner, operator, support, auditor, app-reviewer, viewer.',
+    'Scopes: platform, region:<id>, zone:<id>, hosting:<id>, core:<id>.',
     '',
     'Options:',
     '  --config <file>   a host-config file layered on top (multi-core joiner), as for bin/master.js',

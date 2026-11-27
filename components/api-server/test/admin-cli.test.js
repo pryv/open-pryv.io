@@ -149,4 +149,37 @@ describe('[ADMC] bin/admin.js', function () {
     assert.strictEqual(await roles.readRoleRow(db, 'adcl-owner-1'), null);
     assert.strictEqual(runCli(['roles', 'revoke', 'adcl-owner-1']).status, 1, 'nothing left');
   });
+
+  it('[ADMC7] roles grant: a role at a scope, with an expiry; bad role, scope or expiry refused; the last lasting owner kept unless --force; orphan scopes flagged', async () => {
+    const now = Date.now();
+    const ok = runCli(['roles', 'grant', 'adcl-support-1', '--role', 'support', '--scope', 'core:' + coreId, '--expires', '2d']);
+    assert.strictEqual(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /Granted: support @ core:/);
+    const row = await roles.readRoleRow(db, 'adcl-support-1');
+    assert.deepStrictEqual(row.grants.map((g) => [g.role, g.scope, g.via, g.grantedBy]), [['support', 'core:' + coreId, 'grant', 'cli']]);
+    assert.ok(row.grants[0].expiresAt > now + 47 * 3600000 && row.grants[0].expiresAt < now + 49 * 3600000, 'two days');
+    const orphan = runCli(['roles', 'grant', 'adcl-support-1', '--role', 'viewer', '--scope', 'zone:nowhere']);
+    assert.strictEqual(orphan.status, 0, orphan.stderr);
+    assert.match(orphan.stdout, /names no region, zone, hosting or core/);
+    const list = runCli(['roles', 'list']);
+    assert.match(list.stdout, /viewer @ zone:nowhere .*\[orphan scope\]/);
+    assert.doesNotMatch(list.stdout, /support @ core:\S+ .*\[orphan scope\]/);
+    assert.strictEqual(runCli(['roles', 'grant', 'adcl-x', '--role', 'god', '--scope', 'platform']).status, 1, 'unknown role');
+    const badScope = runCli(['roles', 'grant', 'adcl-x', '--role', 'viewer', '--scope', 'continent:eu']);
+    assert.strictEqual(badScope.status, 1);
+    assert.match(badScope.stderr, /region:<id>/);
+    assert.strictEqual(runCli(['roles', 'grant', 'adcl-x', '--role', 'viewer', '--scope', 'platform', '--expires', '2000-01-01T00:00:00Z']).status, 1, 'past expiry');
+    assert.strictEqual(runCli(['roles', 'grant', 'adcl-x', '--role', 'viewer', '--scope', 'platform', '--expires', 'soon']).status, 1, 'unreadable expiry');
+    assert.strictEqual(runCli(['roles', 'grant', 'adcl-x', '--role', 'viewer']).status, 1, 'no scope');
+    assert.strictEqual(await roles.readRoleRow(db, 'adcl-x'), null, 'nothing written on a refusal');
+    // The last lasting owner: replacing its grant by an expiring one needs --force.
+    await roles.grantRole(db, 'adcl-owner-2', { role: 'owner', scope: 'platform', grantedBy: 'test', via: 'grant', now });
+    const kept = runCli(['roles', 'grant', 'adcl-owner-2', '--role', 'owner', '--scope', 'platform', '--expires', '1h']);
+    assert.strictEqual(kept.status, 1);
+    assert.match(kept.stderr, /last lasting owner/);
+    assert.strictEqual((await roles.readRoleRow(db, 'adcl-owner-2')).grants[0].expiresAt, undefined, 'unchanged');
+    const forced = runCli(['roles', 'grant', 'adcl-owner-2', '--role', 'owner', '--scope', 'platform', '--expires', '1h', '--force']);
+    assert.strictEqual(forced.status, 0, forced.stderr);
+    assert.ok((await roles.readRoleRow(db, 'adcl-owner-2')).grants[0].expiresAt > now);
+  });
 });
