@@ -13,6 +13,13 @@
   owner's) no longer reads every record of the account either: 280 ms before, 1.2 ms now (24 accesses). Results
   are the same rows in the same order; the stream filter that keeps one access out of another's trail is applied
   exactly as before.
+- A read naming several accesses' trails at once (a personal token asking for 2 to 500 `:_audit:access-...`
+  streams in one query) uses the table too, merging the accesses' records in time order: 80 accesses holding few
+  or old records, 5.5 s before, 21 ms now (480 accesses: 32 s before, 0.13 s now, most of it planning the
+  statement). With a type filter, more than 500 accesses, or a stream that is not an access (`:_audit:accesses`,
+  an action), it reads as before. The plan follows the database's statistics: until `audit_event_streams` has been
+  vacuumed once (autovacuum does it), a page of 20 next to an access holding most records can take about 0.3 s
+  instead of a few milliseconds.
 - **New in the database:** table `audit_event_streams` (the access ids named by each audit record), a one-row table
   `audit_event_streams_state`, two triggers on `audit_events` (`audit_event_streams_put`,
   `audit_event_streams_drop`) and their functions. Created at every start when missing; the triggers keep the table
