@@ -28,6 +28,7 @@ type Transport = {
   deliver (scope: string, eventName: string, payload: unknown): void;
   setTestDeliverHook (hook: (...args: unknown[]) => void): void;
   onConnectionStateChange (listener: (state: 'disconnected' | 'reconnected') => void): () => void;
+  flushPublished (timeoutMs: number): Promise<'routed' | 'alone' | 'unreachable'>;
 };
 type TestNotifier = { emit (eventName: string, payload?: unknown): void };
 
@@ -230,6 +231,16 @@ class PubSubFactory {
   onTransportStateChange (listener: (state: 'disconnected' | 'reconnected') => void): () => void {
     initTransport();
     return transport!.onConnectionStateChange(listener);
+  }
+
+  /**
+   * For a process about to exit: resolves once the broker routed what this
+   * process published so far ('routed'), or says nobody else is connected
+   * ('alone', this process is the broker) or no broker answered ('unreachable').
+   */
+  flushPublished (timeoutMs: number): Promise<'routed' | 'alone' | 'unreachable'> {
+    initTransport();
+    return transport!.flushPublished(timeoutMs);
   }
 
   // used by tests to detect true "OpenSource" setup

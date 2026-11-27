@@ -84,6 +84,25 @@ function deriveHostnames (config: { get: (key: string) => unknown }) {
   );
 }
 
+/**
+ * Whether the master must bind the HTTP-01 challenge listener on port 80.
+ *
+ * Only the http-01 challenge needs it. A DNS-01 deployment leaves port 80
+ * free, so a reverse proxy (or anything else) can hold it without depending
+ * on which process starts first. When the topology cannot be derived, the
+ * answer is `true`: the listener keeps its former unconditional behaviour and
+ * the orchestrator reports the configuration error itself.
+ *
+ * @param config - thing with `.get(key)` (e.g. @pryv/boiler)
+ */
+function http01ListenerNeeded (config: { get: (key: string) => unknown }): boolean {
+  try {
+    return deriveHostnames(config).challenge === 'http-01';
+  } catch {
+    return true;
+  }
+}
+
 function hostnameFromUrl (url: string) {
   try {
     return new URL(url).hostname;
@@ -92,4 +111,4 @@ function hostnameFromUrl (url: string) {
   }
 }
 
-export { deriveHostnames };
+export { deriveHostnames, http01ListenerNeeded };

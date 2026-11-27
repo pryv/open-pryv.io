@@ -30,6 +30,18 @@ node datasets/seed.js --target http://127.0.0.1:3000 --users 3 --events 50000 --
 node bin/run-benchmark.js --all --concurrency 10 --duration 30
 ```
 
+### Seeding a fresh core
+
+A fresh core keeps account registration closed until its platform setup is finished (`POST /users`
+answers 403, and the seed creates no user). Before seeding, either finish the setup
+(`node bin/admin.js setup finish` from the repository root) or keep registration open with
+`setup.registrationWhilePending: open` in `config/override-config.yml`, then restart.
+
+The seed writes the events of one access well below the API's per-access in-flight ceiling
+(`limits.requests.maxInflightPerAccess`) and retries a 429. Any write it still cannot make is
+listed at the end by reason, and the seed then exits with code 1: the seeded data is incomplete
+and the benchmark results would not compare.
+
 To compare two configurations (for example PostgreSQL and SQLite), run the cycle once per
 configuration, changing `storages` in `config/override-config.yml` and restarting between runs,
 then compare the two result files (see [Comparing Results](#comparing-results)).

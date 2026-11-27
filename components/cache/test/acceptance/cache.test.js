@@ -5,6 +5,9 @@
  * Refer to LICENSE file
  */
 
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
 /* global cache, describe, before, after, it, assert, cuid, config, initTests, initCore, coreRequest, getNewFixture, charlatan, withInjectedConfig */
 
 const STREAMS = {
@@ -87,11 +90,16 @@ describe('[CACH] Cache', function () {
     cache.clear(); // clear & reload configuration
   });
 
-  it('[FELT] Second get stream must be faster that first one', async function () {
-    // Timing-sensitive: the 15% gain assertion below jitters on noisy VMs
-    // (observed ~5-15% gain run-to-run depending on scheduler load). Retry
-    // twice so transient noise doesn't mask the real signal.
-    this.retries(3);
+  it('[FELT] A second streams.get is served from the cache: no stream storage read', async function () {
+    // Deterministic, on both engines: the stream storage reads are counted
+    // (a timing comparison only held on PostgreSQL, and not on loaded hosts).
+    const streamsStorage = (await require('storage').getStorageLayer()).streams;
+    const find = streamsStorage.find;
+    let reads = 0;
+    streamsStorage.find = function (...args) {
+      reads++;
+      return find.apply(this, args);
+    };
     function isEmpty () {
       assert.ok(cache.getStreams(username, 'local') == null);
       assert.ok(cache.getAccessLogicForToken(username, appAccess.token) == null);
@@ -106,44 +114,34 @@ describe('[CACH] Cache', function () {
       assert.ok(cache.getUserId(username));
     }
 
-    // loop 3 times and calculate average time
-    let tFirstCallWithCache = 0;
-    let tSecondCallWithCache = 0;
-    const loop = 3;
-    for (let i = 0; i < loop; i++) {
+    try {
       cache.clear(); // reset cache fully
       isEmpty();
-      const st1 = hrtime();
+      reads = 0;
       const res1 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
-      tFirstCallWithCache += hrtime(st1) / loop;
       assert.strictEqual(res1.status, 200);
+      assert.ok(reads > 0, 'a miss reads the stream storage');
 
       isFull();
-      const st2 = hrtime();
+      reads = 0;
       const res2 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
-      tSecondCallWithCache += hrtime(st2) / loop;
       assert.strictEqual(res2.status, 200);
+      assert.strictEqual(reads, 0, 'a hit reads nothing from the stream storage');
+      assert.deepStrictEqual(res2.body.streams, res1.body.streams);
+
+      await withInjectedConfig({ caching: { isActive: false } }, async () => {
+        cache.clear(); // reset cache fully
+        for (let i = 0; i < 2; i++) {
+          reads = 0;
+          const res3 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
+          assert.strictEqual(res3.status, 200);
+          assert.ok(reads > 0, 'without the cache every call reads the stream storage');
+          isEmpty();
+        }
+      });
+    } finally {
+      streamsStorage.find = find;
     }
-
-    let tNoCache = 0; // no-cache at all
-    await withInjectedConfig({ caching: { isActive: false } }, async () => {
-      cache.clear(); // reset cache fully
-      for (let i = 0; i < loop; i++) {
-        const st3 = hrtime();
-        const res3 = await coreRequest.get(streamsPath).set('Authorization', appAccess.token).query({});
-        tNoCache += hrtime(st3) / loop;
-        assert.strictEqual(res3.status, 200);
-        isEmpty();
-      }
-    });
-
-    const data = `first-with-cache: ${tFirstCallWithCache}, second-with-cache: ${tSecondCallWithCache}, no-cache: ${tNoCache}  => `;
-    assert.ok(tSecondCallWithCache < tFirstCallWithCache, 'second-with-cache streams.get should be faster than first-with-cache' + data);
-    if (process.env.IS_CI === 'true') return; // for some reason cache does not bring significant benefits during CI.
-    if (process.env.STORAGE_ENGINE === 'sqlite') return; // SQLite's per-user-file fetch is fast enough locally that cache memoization adds more overhead than it saves; the cache-hit invariant above (isFull) still verifies the integration.
-    const expectedGainPercent = 15;
-    const percentGained = Math.round((tNoCache - tSecondCallWithCache) * 100 / tNoCache);
-    assert.ok(percentGained > expectedGainPercent, `cache streams.get should be at least ${expectedGainPercent}% longer than second-with-cache ${data}`);
   });
 
   it('[XDP6] Cache should reset permissions on stream structure change when moving a stream in and out ', async () => {
@@ -164,10 +162,21 @@ describe('[CACH] Cache', function () {
     const res5 = await coreRequest.get(eventsPath).set('Authorization', appAccess.token).query({ streams: ['T'] });
     assert.strictEqual(res5.status, 403, 'should not have acces once move out of authorized scope');
   });
-});
 
-function hrtime (hrTime) {
-  const time = process.hrtime(hrTime);
-  if (hrTime == null) return time;
-  return time[0] * 1000000000 + time[1];
-}
+  it('[CDLB] Recording the deletion of a live stream drops it from the cached tree', async () => {
+    const { getMall } = require('mall');
+    const mall = await getMall();
+    const id = 'cdlb-' + cuid();
+    await mall.streams.create(user.id, { id, name: id });
+    const res1 = await coreRequest.get(streamsPath).set('Authorization', personalToken);
+    assert.strictEqual(res1.status, 200);
+    assert.ok(res1.body.streams.some((s) => s.id === id), 'the new stream is listed');
+    assert.ok(cache.getStreams(user.id, 'local'), 'the tree is cached');
+
+    await mall.streams.create(user.id, { id, deleted: Date.now() / 1000 });
+
+    const res2 = await coreRequest.get(streamsPath).set('Authorization', personalToken);
+    assert.strictEqual(res2.status, 200);
+    assert.ok(!res2.body.streams.some((s) => s.id === id), 'the deleted stream is no longer listed');
+  });
+});

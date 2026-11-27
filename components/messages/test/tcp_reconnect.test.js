@@ -278,6 +278,26 @@ describe('[PRCN] TcpPubsub reconnect after broker loss', function () {
     await waitFor(() => rawBroker.pubs.includes('evt-gap'), 8000);
   });
 
+  it('[RC26] flushPublished: routed once the broker answered after the publications, unreachable when it never answers, alone as a broker nobody joined', async () => {
+    await ackingBroker();
+    tcpPubsub.deliver('rc26-scope', 'evt-rc26a', ''); // not awaited, as a cache bust is sent
+    tcpPubsub.deliver('rc26-scope', 'evt-rc26b', '');
+    assert.strictEqual(await tcpPubsub.flushPublished(2000), 'routed');
+    assert.deepStrictEqual(rawBroker.pubs.filter((e) => e.startsWith('evt-rc26')), ['evt-rc26a', 'evt-rc26b'], 'both handled by the broker before the answer');
+
+    await ackingBroker({ subok: false, pong: true });
+    const started = Date.now();
+    assert.strictEqual(await tcpPubsub.flushPublished(300), 'unreachable');
+    assert.ok(Date.now() - started < 2000, 'bounded by the timeout');
+
+    tcpPubsub._closeForTests();
+    await rawBroker.kill();
+    rawBroker = null;
+    await tcpPubsub.init(); // the port is free: the module is the broker
+    await waitFor(() => tcpPubsub._isConnectedForTests());
+    assert.strictEqual(await tcpPubsub.flushPublished(300), 'alone');
+  });
+
   it('[RC19] tells listeners the connection dropped, then that it is back', async () => {
     const states = [];
     const remove = tcpPubsub.onConnectionStateChange((state) => states.push(state));

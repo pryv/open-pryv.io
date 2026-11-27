@@ -21,27 +21,34 @@ const cuid = require('cuid');
 const CLI = path.resolve(__dirname, '../../../bin/check-config.js');
 const REPO_ROOT = path.resolve(__dirname, '../../../');
 
-// No NODE_ENV by default: boot (and check-config) would otherwise merge the
-// matching config/<NODE_ENV>-config.yml (test-config.yml under mocha) under
-// the checked file.
-function runCheck (yamlBody, nodeEnv = null, extraEnv = {}) {
-  const file = path.join(os.tmpdir(), 'check-config-' + cuid.slug() + '.yml');
-  fs.writeFileSync(file, yamlBody);
-  // The test runner itself sets `a__b` config variables: keep only the ones a test passes.
+// The test runner itself sets `a__b` config variables: keep only the ones a
+// test passes. No NODE_ENV by default: boot (and check-config) would otherwise
+// merge the matching config/<NODE_ENV>-config.yml (test-config.yml under
+// mocha) under an override file.
+function runCli (files, nodeEnv = null, extraEnv = {}) {
   const env = Object.assign({}, process.env);
   for (const k of Object.keys(env)) if (/^[^_].*__/.test(k)) delete env[k];
   Object.assign(env, extraEnv);
   if (nodeEnv == null) delete env.NODE_ENV; else env.NODE_ENV = nodeEnv;
+  const res = spawnSync('node', [CLI, ...files], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env,
+    timeout: 30000
+  });
+  return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
+}
+
+// The body is checked as an override file (named override-config.yml, as in
+// the Docker image), the single-file case.
+function runCheck (yamlBody, nodeEnv = null, extraEnv = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-config-' + cuid.slug()));
+  const file = path.join(dir, 'override-config.yml');
+  fs.writeFileSync(file, yamlBody);
   try {
-    const res = spawnSync('node', [CLI, file], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      env,
-      timeout: 30000
-    });
-    return { status: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
+    return runCli([file], nodeEnv, extraEnv);
   } finally {
-    fs.unlinkSync(file);
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -824,6 +831,97 @@ describe('[CKPC] bin/check-config.js auth.passwordCheckConcurrency / passwordChe
     assert.match(res.stdout + res.stderr, /passwordCheckConcurrency \(8\) is not below the thread pool size \(8/);
     const below = runCheck(withAuth('  passwordCheckConcurrency: 8\n'), null, { UV_THREADPOOL_SIZE: '16' });
     assert.doesNotMatch(below.stdout + below.stderr, /thread pool size/);
+  });
+});
+
+describe('[CKLY] bin/check-config.js on a --config file with config/override-config.yml', function () {
+  this.timeout(60000);
+
+  // A two-file deployment: `--config host-config.yml`, the secrets in config/override-config.yml.
+  const HOST = BASE_WITHOUT_PII_KEY
+    .replace('  adminAccessKey: an-admin-key\n', '')
+    .replace('  filesReadTokenSecret: a-files-secret\n', '');
+  const randomSecret = () => require('node:crypto').randomBytes(32).toString('base64');
+  const SECRETS = `auth:
+  adminAccessKey: ${randomSecret()}
+  filesReadTokenSecret: ${randomSecret()}
+platform:
+  piiHmacKey: ${randomSecret()}
+`;
+  const MISSING = /auth\.adminAccessKey missing or unset[\s\S]*auth\.filesReadTokenSecret missing or unset[\s\S]*platform\.piiHmacKey missing or unset/;
+  const REPO_OVERRIDE = path.join(REPO_ROOT, 'config', 'override-config.yml');
+  let dir;
+
+  before(function () {
+    // Never touch a developer's own config/override-config.yml.
+    if (fs.existsSync(REPO_OVERRIDE)) this.skip();
+  });
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-config-ly-')); });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(REPO_OVERRIDE, { force: true });
+  });
+  const write = (name, body) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, body);
+    return file;
+  };
+
+  it('[CKLY1] the secrets in config/override-config.yml count, as at boot: 0 problems; without it they are missing', () => {
+    assert.notStrictEqual(HOST, BASE_WITHOUT_PII_KEY);
+    const host = write('host-config.yml', HOST);
+    const alone = runCli([host]);
+    assert.strictEqual(alone.status, 1, alone.stdout + alone.stderr);
+    assert.match(alone.stderr, MISSING);
+    assert.match(alone.stderr, /Override file: none \(.*config\/override-config\.yml does not exist/);
+
+    fs.writeFileSync(REPO_OVERRIDE, SECRETS);
+    const res = runCli([host]);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.ok(res.stdout.includes(`Files read, lowest precedence first: config/default-config.yml, ${host}, ${REPO_OVERRIDE}.`), res.stdout);
+    assert.match(res.stdout, /Checked as the --config file/);
+    assert.match(res.stdout, /Override file: .*config\/override-config\.yml merged above the --config file/);
+
+    // NODE_ENV=test: boot skips config/override-config.yml, so does check-config.
+    const test = runCli([host], 'test');
+    assert.strictEqual(test.status, 1, test.stdout + test.stderr);
+    assert.match(test.stderr, MISSING);
+    assert.match(test.stderr, /Override file: not read \(NODE_ENV=test/);
+  });
+
+  it('[CKLY2] the explicit form `check-config <config-file> <override-file>` reads both, in boot order', () => {
+    const res = runCli([write('host-config.yml', HOST), write('secrets.yml', SECRETS)]);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /Files read, lowest precedence first: config\/default-config\.yml, .*host-config\.yml, .*secrets\.yml\./);
+  });
+
+  it('[CKLY3] a key set in both files is taken from config/override-config.yml; the environment wins over the --config file', () => {
+    const host = write('host-config.yml', HOST + 'integrity:\n  algorithm: md5\n');
+    fs.writeFileSync(REPO_OVERRIDE, SECRETS + 'integrity:\n  algorithm: sha512\n');
+    const overrideWins = runCli([host]);
+    assert.strictEqual(overrideWins.status, 0, overrideWins.stdout + overrideWins.stderr);
+
+    const goodHost = write('good-host-config.yml', HOST + 'integrity:\n  algorithm: sha512\n');
+    fs.writeFileSync(REPO_OVERRIDE, SECRETS + 'integrity:\n  algorithm: md5\n');
+    const overrideBad = runCli([goodHost]);
+    assert.strictEqual(overrideBad.status, 1, overrideBad.stdout + overrideBad.stderr);
+    assert.match(overrideBad.stderr, /integrity\.algorithm 'md5' is not supported/);
+
+    // Unlike an override file ([CKEV2]), the --config file sits under the environment.
+    fs.writeFileSync(REPO_OVERRIDE, SECRETS);
+    const envWins = runCli([goodHost], null, { dnsLess__isActive: 'false' });
+    assert.strictEqual(envWins.status, 1, envWins.stdout + envWins.stderr);
+    assert.match(envWins.stderr, /Neither dnsLess\.isActive nor dns\.active is true/);
+    assert.match(envWins.stderr, /Environment: 1 variable\(s\) merged above the --config file/);
+  });
+
+  it('[CKLY4] a single override-config.yml is checked alone, as before: config/override-config.yml is not added to it', () => {
+    fs.writeFileSync(REPO_OVERRIDE, SECRETS + 'integrity:\n  algorithm: md5\n');
+    const file = write('override-config.yml', BASE);
+    const res = runCli([file]);
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.ok(res.stdout.includes(`Files read, lowest precedence first: config/default-config.yml, ${file}.`), res.stdout);
+    assert.match(res.stdout, /Base layer: none/);
   });
 });
 

@@ -121,6 +121,37 @@ roll back or change a key.
   with `out of shared memory`. Bulk loads use `pg_restore --disable-triggers` or `SET pryv.unindexed_writes =
   'allow'`, which take no lock (as documented for the guard).
 
+### Operators (Let's Encrypt): port 80 is bound only for the http-01 challenge
+
+- With `letsEncrypt.enabled`, the master used to bind `0.0.0.0:80` for the ACME challenge server whatever the
+  challenge, including DNS-01 deployments (`dns.active` with `dns.domain`, or a `dns.domain` cluster member with
+  `letsEncrypt.certRenewer: false`), where it only answered 404. It now binds port 80 only when the derived
+  challenge is http-01 (`dnsLess.publicUrl`, or a per-core `core.url`), and logs
+  `[acme] dns-01 challenge: port 80 not bound` otherwise. A reverse proxy in front of a DNS-01 core can now listen
+  on 80 (for an HTTPS redirect) without depending on which process starts first; before, a master started first
+  held the port and the proxy failed to start. Nothing to do for http-01 deployments. A DNS-01 deployment that
+  relied on the core's 404 on port 80 now gets a refused connection there unless something else listens.
+
+### Operators: `bin/check-config.js` reads the files boot reads with `--config`
+
+- A core started with `--config config/host-config.yml` and its secrets in `config/override-config.yml` was reported
+  with false problems (`auth.adminAccessKey`, `auth.filesReadTokenSecret`, `platform.piiHmacKey` missing): the check
+  read only the file it was given. A file not named `override-config.yml` is now checked as the `--config` file, as
+  boot reads it: `config/override-config.yml` and `config/bootstrap-config.yml` above it when present (a key set in
+  both files is taken from the override, both skipped under `NODE_ENV=test`), the environment above it, and
+  `config/<NODE_ENV>-config.yml` no longer added under it (boot does not read it with `--config`). A file named
+  `override-config.yml` is checked as before (the Docker usage `check-config /app/config/override-config.yml`).
+  `check-config <config-file> <override-file>` names both files. Every run prints the files it read.
+
+### Operators (backup): a restore into a running core invalidates its caches
+
+- `bin/backup.js --restore` (with `--overwrite` on an account the core serves) writes the storage from its own
+  process; the API workers could then serve the pre-restore stream tree and accesses (a removed access still
+  accepted) for up to `caching:accessMaxAgeSeconds`. The restore now sends the workers the same cache
+  invalidation as an account deletion, for every account it wrote (kept or rolled back), and prints
+  `Caches: the running core's workers were told ...`. When the pub/sub broker (`tcpBroker.port`) does not answer,
+  or no core is connected to it, it prints a warning instead: if the core's API is running, restart it.
+
 ### Account auto-deletion reset and erasure ledger: the account transfer parts
 
 With the account transfer (below), the administrator reset of 2.0.0-rc.90 also handles a transfer:

@@ -6,15 +6,26 @@
  * Refer to LICENSE file
  */
 
-// Validates an override-config.yml against the same REQUIRED / REQUIRED_WHEN
-// rules master.js enforces at boot — without actually booting.
+// Validates a configuration against the same REQUIRED / REQUIRED_WHEN rules
+// master.js enforces at boot, without actually booting, reading the files boot
+// reads in the order boot reads them.
 //
 // Usage:
+//   check-config <file>
+//     A file named override-config.yml is checked as boot's override file (the
+//     Docker image default, no --config): config/<NODE_ENV>-config.yml and
+//     bootstrap-config.yml next to it are read under it.
+//     Any other file is checked as the `--config <file>` boot runs with:
+//     config/override-config.yml and config/bootstrap-config.yml are read
+//     above it when present (boot skips both under NODE_ENV=test), and
+//     config/<NODE_ENV>-config.yml is not read.
+//   check-config <config-file> <override-file>
+//     Both files in boot order: the second one wins, as config/override-config.yml
+//     wins over the --config file; bootstrap-config.yml next to it is read too.
+//
 //   docker run --rm -v /host/config:/app/config \
 //     pryvio/open-pryv.io check-config /app/config/override-config.yml
-//
-// Locally:
-//   node bin/check-config.js /tmp/test-override.yml
+//   node bin/check-config.js config/host-config.yml
 //
 // Exit 0 = all checks passed.  Exit 1 = at least one problem (printed).
 
@@ -34,23 +45,56 @@ try {
 // Same secret rule as the boot validation, so the two can never disagree.
 const { weakSecretReason } = require('../config/plugins/config-validation.js');
 
-const configPath = process.argv[2];
-if (!configPath) {
-  console.error('Usage: check-config <config-path>');
+const args = process.argv.slice(2);
+if (args.length < 1 || args.length > 2) {
+  console.error('Usage: check-config <config-path>  |  check-config <config-file> <override-file>');
   process.exit(1);
 }
-const absPath = path.resolve(configPath);
-if (!fs.existsSync(absPath)) {
-  console.error(`check-config: file not found: ${absPath}`);
-  process.exit(1);
+const absPaths = args.map((p) => path.resolve(p));
+for (const p of absPaths) {
+  if (!fs.existsSync(p)) {
+    console.error(`check-config: file not found: ${p}`);
+    process.exit(1);
+  }
 }
 
-let fileConfig;
-try {
-  fileConfig = yaml.load(fs.readFileSync(absPath, 'utf8'));
-} catch (e) {
-  console.error(`check-config: failed to parse YAML: ${e.message}`);
-  process.exit(1);
+function loadYaml (filePath) {
+  try {
+    return yaml.load(fs.readFileSync(filePath, 'utf8'));
+  } catch (e) {
+    console.error(`check-config: failed to parse ${filePath}: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+// Boot (components/boiler/src/config.ts) reads, highest precedence first:
+// config/override-config.yml and config/bootstrap-config.yml (both skipped
+// under NODE_ENV=test), the environment, ONE base file (the `--config <file>`
+// argument, else config/<NODE_ENV>-config.yml), then config/default-config.yml.
+const CONFIG_DIR = path.resolve(__dirname, '..', 'config');
+const nodeEnv = process.env.NODE_ENV;
+// 'override': the checked file is the override file (Docker default);
+// 'config': the first file is the --config file, in boot's base slot.
+const mode = (absPaths.length === 1 && path.basename(absPaths[0]) === 'override-config.yml') ? 'override' : 'config';
+let overridePath = null;
+let overrideConfig = null;
+let basePath = null;
+let baseConfig = null;
+let overrideSkippedForTests = false;
+if (mode === 'override') {
+  overridePath = absPaths[0];
+  overrideConfig = loadYaml(overridePath);
+} else {
+  basePath = absPaths[0];
+  baseConfig = loadYaml(basePath);
+  if (absPaths.length === 2) {
+    overridePath = absPaths[1];
+  } else if (nodeEnv === 'test') {
+    overrideSkippedForTests = true;
+  } else if (fs.existsSync(path.join(CONFIG_DIR, 'override-config.yml'))) {
+    overridePath = path.join(CONFIG_DIR, 'override-config.yml');
+  }
+  if (overridePath != null) overrideConfig = loadYaml(overridePath);
 }
 
 function merge (base, over) {
@@ -67,28 +111,26 @@ const envConfig = new (require('nconf').Provider)().env({ parseValues: true, sep
 const envKeys = Object.keys(process.env).filter((k) => /^[^_].*__/.test(k));
 // A core joined to a cluster: `--bootstrap` wrote bootstrap-config.yml next to
 // the operator's override-config.yml; boot loads it just below that file.
-const bootstrapPath = path.join(path.dirname(absPath), 'bootstrap-config.yml');
+const bootstrapPath = overrideSkippedForTests
+  ? null
+  : path.join(overridePath != null ? path.dirname(overridePath) : CONFIG_DIR, 'bootstrap-config.yml');
 let bootstrapConfig = null;
-if (bootstrapPath !== absPath && fs.existsSync(bootstrapPath)) {
-  try {
-    bootstrapConfig = yaml.load(fs.readFileSync(bootstrapPath, 'utf8'));
-  } catch (e) {
-    console.error(`check-config: failed to parse ${bootstrapPath}: ${e.message}`);
-    process.exit(1);
-  }
+if (bootstrapPath != null && !absPaths.includes(bootstrapPath) && fs.existsSync(bootstrapPath)) {
+  bootstrapConfig = loadYaml(bootstrapPath);
 }
-// The base layer boot adds under this file when it runs as
-// config/override-config.yml without `--config` (Docker image default):
-// config/<NODE_ENV>-config.yml. With `--config <file>` no such layer is added.
-const nodeEnv = process.env.NODE_ENV;
+// The base layer boot adds under the override file when it runs without
+// `--config` (Docker image default): config/<NODE_ENV>-config.yml. With
+// `--config <file>` that file is the base layer instead.
 const baseLayerName = nodeEnv ? `config/${nodeEnv}-config.yml` : null;
-const baseLayerPath = baseLayerName ? path.resolve(__dirname, '..', baseLayerName) : null;
-let baseLayer = null;
-if (baseLayerPath != null && fs.existsSync(baseLayerPath)) {
-  try {
-    baseLayer = yaml.load(fs.readFileSync(baseLayerPath, 'utf8'));
-  } catch (e) {
-    baseLayer = null;
+if (mode === 'override') {
+  const baseLayerPath = baseLayerName ? path.resolve(__dirname, '..', baseLayerName) : null;
+  if (baseLayerPath != null && fs.existsSync(baseLayerPath)) {
+    try {
+      baseConfig = yaml.load(fs.readFileSync(baseLayerPath, 'utf8'));
+      basePath = baseLayerPath;
+    } catch (e) {
+      baseConfig = null;
+    }
   }
 }
 
@@ -102,12 +144,13 @@ try {
 }
 
 // The layers in boot's order, lowest first: default-config.yml, the base
-// layer, the environment, bootstrap-config.yml, then this file.
+// layer (the --config file, else config/<NODE_ENV>-config.yml), the
+// environment, bootstrap-config.yml, then the override file.
 // `operatorConfig` is everything above the shipped defaults: the checks that
 // depend on whether the operator set a key (rather than inheriting its
 // default) read it, as boot does. Every other check reads `config`, the
 // merged configuration boot runs with.
-const operatorConfig = merge(merge(merge(baseLayer ?? undefined, envConfig), bootstrapConfig ?? undefined), fileConfig ?? undefined);
+const operatorConfig = merge(merge(merge(baseConfig ?? undefined, envConfig), bootstrapConfig ?? undefined), overrideConfig ?? undefined);
 const config = merge(defaultConfig, operatorConfig);
 
 function get (dottedPath, from = config) {
@@ -121,15 +164,33 @@ const configReader = { get: (key) => get(key.split(':').join('.')) };
 const operatorGet = (key) => get(key.split(':').join('.'), operatorConfig);
 const coreIdentityPlugin = require('../config/plugins/core-identity.js');
 const coreIdentity = coreIdentityPlugin.deriveCoreIdentity(operatorGet);
-const baseLayerNote = baseLayer != null
-  ? `Base layer: NODE_ENV=${nodeEnv}, so boot without --config adds ${baseLayerName} under this file (and default-config.yml under both).`
-  : `Base layer: none (NODE_ENV=${nodeEnv || '<unset>'} has no config file); boot adds only default-config.yml under this file.`;
-const bootstrapNote = bootstrapConfig != null
-  ? `Bootstrap layer: ${bootstrapPath} (written by --bootstrap) merged under this file, as at boot.`
-  : null;
-const envNote = envKeys.length > 0
-  ? `Environment: ${envKeys.length} variable(s) merged under this file, as at boot (${envKeys.sort().join(', ')}).`
-  : 'Environment: no `a__b` variables set; keys can also come from the environment at boot.';
+const notes = [
+  'Files read, lowest precedence first: ' + ['config/default-config.yml', basePath, bootstrapConfig != null ? bootstrapPath : null, overridePath]
+    .filter((p) => p != null).join(', ') + '.'
+];
+if (mode === 'override') {
+  notes.push(basePath != null
+    ? `Base layer: NODE_ENV=${nodeEnv}, so boot without --config adds ${baseLayerName} under this file (and default-config.yml under both).`
+    : `Base layer: none (NODE_ENV=${nodeEnv || '<unset>'} has no config file); boot adds only default-config.yml under this file.`);
+  notes.push(envKeys.length > 0
+    ? `Environment: ${envKeys.length} variable(s) merged under this file, as at boot (${envKeys.sort().join(', ')}).`
+    : 'Environment: no `a__b` variables set; keys can also come from the environment at boot.');
+  if (bootstrapConfig != null) notes.push(`Bootstrap layer: ${bootstrapPath} (written by --bootstrap) merged under this file, as at boot.`);
+} else {
+  notes.push(`Checked as the --config file: boot reads it as its base layer${baseLayerName != null ? ` (${baseLayerName} is then not read)` : ''}, ` +
+    'under the environment, bootstrap-config.yml and override-config.yml.');
+  notes.push(envKeys.length > 0
+    ? `Environment: ${envKeys.length} variable(s) merged above the --config file, as at boot (${envKeys.sort().join(', ')}).`
+    : 'Environment: no `a__b` variables set; keys can also come from the environment at boot.');
+  if (bootstrapConfig != null) notes.push(`Bootstrap layer: ${bootstrapPath} (written by --bootstrap) merged above the --config file, as at boot.`);
+  if (overridePath != null) {
+    notes.push(`Override file: ${overridePath} merged above the --config file, as at boot: a key set in both is taken from it.`);
+  } else if (overrideSkippedForTests) {
+    notes.push('Override file: not read (NODE_ENV=test: boot skips override-config.yml and bootstrap-config.yml).');
+  } else {
+    notes.push(`Override file: none (${path.join(CONFIG_DIR, 'override-config.yml')} does not exist; boot reads it above the --config file when present).`);
+  }
+}
 
 function isMissingOrSentinel (v) {
   if (v == null) return true;
@@ -219,15 +280,15 @@ checkStateKey('sso.stateKey',
 }
 
 // The layers highest first, named like boot's scopes.
-const layers = [['override-file', fileConfig], ['bootstrap-file', bootstrapConfig], ['env', envConfig],
-  ['base', baseLayer], ['default-file', defaultConfig]];
+const layers = [['override-file', overrideConfig], ['bootstrap-file', bootstrapConfig], ['env', envConfig],
+  ['base', baseConfig], ['default-file', defaultConfig]];
 
 // services.email.enabled and services.email.send<Kind>: booleans, and the
 // former object form of `enabled` refused in every layer (the same check as
 // checkEmailSwitches in config/plugins/config-validation.js, one predicate).
 {
   const { describeEmailSwitches } = require('../components/business/src/emails/mailCapability.ts');
-  const layerInfo = { 'override-file': absPath, 'bootstrap-file': bootstrapPath, base: baseLayerPath, 'default-file': 'config/default-config.yml' };
+  const layerInfo = { 'override-file': overridePath, 'bootstrap-file': bootstrapPath, base: basePath, 'default-file': 'config/default-config.yml' };
   const switchLayers = layers.filter(([, layer]) => layer != null).map(([scope, layer]) => ({
     scope,
     info: layerInfo[scope] != null ? 'From file: ' + layerInfo[scope] : '',
@@ -757,10 +818,8 @@ try {
 
 // summary
 if (problems.length > 0) {
-  console.error(`✗ ${absPath}`);
-  console.error(`  ${baseLayerNote}`);
-  console.error(`  ${envNote}`);
-  if (bootstrapNote != null) console.error(`  ${bootstrapNote}`);
+  console.error(`✗ ${absPaths.join(' + ')}`);
+  notes.forEach(n => console.error(`  ${n}`));
   console.error(`  ${problems.length} problem(s):`);
   problems.forEach(p => console.error(`    - ${p}`));
   if (warnings.length > 0) {
@@ -770,10 +829,8 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`✓ ${absPath}`);
-console.log(`  ${baseLayerNote}`);
-console.log(`  ${envNote}`);
-if (bootstrapNote != null) console.log(`  ${bootstrapNote}`);
+console.log(`✓ ${absPaths.join(' + ')}`);
+notes.forEach(n => console.log(`  ${n}`));
 console.log('  All required-at-boot checks passed.');
 if (warnings.length > 0) {
   console.log(`  ${warnings.length} warning(s):`);
