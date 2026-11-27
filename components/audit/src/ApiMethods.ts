@@ -128,6 +128,7 @@ const ALL_METHODS = [
   'system.roles.list',
   'system.roles.delete',
   'system.portalContext.get',
+  'system.portalSettings.get',
   // Those acts recorded in the acting administrator's own trail (emitted
   // directly via audit.eventForUser() when the account is on the core).
   'admin.role.created',
@@ -253,12 +254,13 @@ const NOT_AUDITED_METHODS = [
   // the unauthenticated lookup, like auth.cores
   'auth.extIdCores',
   // reads of the setup state, an administrator's own session, the role rows
-  // and the portal context, the setup checks summary
+  // and the portal context, the setup checks summary, the public portal settings
   'system.setup.getStatus',
   'system.setup.getChecks',
   'system.adminSession.get',
   'system.roles.list',
-  'system.portalContext.get'
+  'system.portalContext.get',
+  'system.portalSettings.get'
 ];
 
 const AUDITED_METHODS = ALL_METHODS.filter(m => !NOT_AUDITED_METHODS.includes(m));

@@ -251,6 +251,27 @@ describe('[CKBL] bin/check-config.js base layer and trusted apps', function () {
   });
 });
 
+describe('[CKPS] bin/check-config.js portal next to other hosted sites', function () {
+  this.timeout(60000);
+  const WARNING = /portal\.site 'admin' shares this platform's origin with the hosted site\(s\) 'docs'/;
+  const sites = (names) => 'hostedSites:\n' + names.map((n) => `  ${n}:\n    proxy: https://example.github.io/${n}/\n`).join('') + 'portal:\n  site: admin\n';
+
+  it('[CKPS1] dnsLess: a warning names the other sites served on the portal\'s origin; none with the portal alone', () => {
+    const shared = runCheck(BASE + sites(['admin', 'docs']));
+    assert.strictEqual(shared.status, 0, shared.stdout + shared.stderr);
+    assert.match(shared.stdout + shared.stderr, WARNING);
+    const alone = runCheck(BASE + sites(['admin']));
+    assert.strictEqual(alone.status, 0, alone.stdout + alone.stderr);
+    assert.doesNotMatch(alone.stdout + alone.stderr, /shares this platform's origin/);
+  });
+
+  it('[CKPS2] DNS topology: each site has its own origin, no warning', () => {
+    const dns = BASE.replace('  isActive: true\n', '  isActive: false\n') + 'dns:\n  domain: example.org\n' + sites(['admin', 'docs']);
+    const res = runCheck(dns);
+    assert.doesNotMatch(res.stdout + res.stderr, /shares this platform's origin/);
+  });
+});
+
 describe('[CKSE] bin/check-config.js series engine with a SQLite base', function () {
   this.timeout(60000);
 

@@ -9,6 +9,7 @@ import type { MethodContext } from 'business/src/MethodContext.ts';
 import type { MethodNext } from './_types.ts';
 import { describeVerificationMail, describeMailCapability, isMailKindLive } from 'business/src/emails/mailCapability.ts';
 import { autoDeletionConfig, availableActions, availableTriggers } from './helpers/autoDeletionPolicy.ts';
+import { portalServiceInfo } from 'business/src/admin/config.ts';
 const require = createRequire(import.meta.url);
 const { deepMerge } = require('utils');
 const { ready, getLogger } = require('@pryv/boiler');
@@ -125,6 +126,14 @@ export default function (api: { register: (...args: unknown[]) => void }) {
           mailAvailable: describeMailCapability(config).ok
         };
       }
+    }
+    // Administration portal: its address and the portal contract of this core,
+    // present only when a portal is configured (`portal.site` naming a hosted
+    // site with a known topology, or `portal.url`). An explicit
+    // `service.portal` wins.
+    if (serviceInfo.portal === undefined) {
+      const portal = portalServiceInfo(config);
+      if (portal != null) serviceInfo.portal = portal;
     }
     // Surface the API version so SDKs can pick the direct-core
     // registration endpoint (>=1.6.0) — the legacy fallback POSTs to

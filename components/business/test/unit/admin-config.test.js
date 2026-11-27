@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import { describeAdminConfig, readAdminConfig, adminMfaRequired, portalUrl, setupPageUrl } from '../../src/admin/config.ts';
+import { describeAdminConfig, readAdminConfig, adminMfaRequired, portalUrl, portalSettings, portalServiceInfo, setupPageUrl } from '../../src/admin/config.ts';
 
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +44,9 @@ describe('[ADCF] setup and administration configuration', function () {
     assert.equal(v.adminAccessKeyScope, 'full');
     assert.equal(v.portal.site, null);
     assert.deepEqual(v.portal.allowedOrigins, []);
+    assert.equal(v.portal.url, null);
+    assert.deepEqual(v.portal.spaces, ['admin', 'developer']);
+    assert.deepEqual(v.portal.modules, { disabled: [], order: [] });
     assert.equal(v.setup.codeTtlMs, 24 * 3600 * 1000);
     assert.equal(v.setup.codeHash, null);
     assert.equal(v.setup.printCode, true);
@@ -109,6 +112,54 @@ describe('[ADCF] setup and administration configuration', function () {
     assert.equal(portalUrl(dns), 'https://admin.pryv.example.org/');
     assert.equal(setupPageUrl(dns), 'https://core-1.pryv.example.org/system/setup/');
     assert.equal(portalUrl(config()), null, 'no portal configured');
+  });
+
+  it('[ADCF8] portal.url, portal.spaces and portal.modules: valid values are kept, invalid ones are problems', function () {
+    const ok = config({
+      'portal:url': 'https://portal.example.com/',
+      'portal:spaces': ['admin'],
+      'portal:modules:disabled': ['users', 'x-example', 'users'],
+      'portal:modules:order': ['overview', 'config-effective']
+    });
+    assert.deepEqual(messages(ok), []);
+    const v = readAdminConfig(ok).portal;
+    assert.equal(v.url, 'https://portal.example.com/');
+    assert.deepEqual(v.spaces, ['admin']);
+    assert.deepEqual(v.modules, { disabled: ['users', 'x-example'], order: ['overview', 'config-effective'] });
+
+    for (const bad of ['ftp://portal.example.com/', 'portal.example.com', 'https://u:p@portal.example.com/', 'https://portal.example.com/?a=1', 7]) {
+      assert.match(messages(config({ 'portal:url': bad })).join('\n'), /^portal\.url must be/m, String(bad));
+    }
+    const sites = { admin: { proxy: 'https://example.github.io/portal/' } };
+    assert.match(messages(config({ 'portal:url': 'https://portal.example.com/', 'portal:site': 'admin', hostedSites: sites }))[0], /portal\.url and portal\.site are both set/);
+    for (const bad of [[], ['admin', 'admin'], ['admin', 'ops'], 'admin', [1]]) {
+      assert.match(messages(config({ 'portal:spaces': bad }))[0], /^portal\.spaces must be/, JSON.stringify(bad));
+    }
+    for (const key of ['disabled', 'order']) {
+      for (const bad of ['users', [''], ['a b'], [3], ['-x']]) {
+        assert.match(messages(config({ ['portal:modules:' + key]: bad }))[0], new RegExp('^portal\\.modules\\.' + key + ' must be'), JSON.stringify(bad));
+      }
+    }
+    // Invalid values fall back to the defaults.
+    const fallback = describeAdminConfig(config({ 'portal:spaces': ['ops'], 'portal:modules:order': 'x' })).value.portal;
+    assert.deepEqual(fallback.spaces, ['admin', 'developer']);
+    assert.deepEqual(fallback.modules.order, []);
+  });
+
+  it('[ADCF9] the portal settings and the service info field follow the configuration', function () {
+    const { PORTAL_CONTRACT } = require('../../src/admin/portalDefaults.ts');
+    assert.deepEqual(portalSettings(config()), { contract: PORTAL_CONTRACT, spaces: ['admin', 'developer'], modules: { disabled: [], order: [] } });
+    assert.deepEqual(portalSettings(config({ 'portal:spaces': ['developer'], 'portal:modules:disabled': ['users'] })),
+      { contract: PORTAL_CONTRACT, spaces: ['developer'], modules: { disabled: ['users'], order: [] } });
+    assert.equal(portalServiceInfo(config()), null, 'no portal configured');
+    const sites = { admin: { proxy: 'https://example.github.io/portal/' } };
+    // portal.site without a known address (no publicUrl, no dns.domain): absent.
+    assert.equal(portalServiceInfo(config({ 'dnsLess:isActive': false, hostedSites: sites, 'portal:site': 'admin' })), null);
+    assert.deepEqual(portalServiceInfo(config({ 'dnsLess:isActive': false, 'dns:domain': 'pryv.example.org', hostedSites: sites, 'portal:site': 'admin' })),
+      { contract: PORTAL_CONTRACT, url: 'https://admin.pryv.example.org/' });
+    const external = config({ 'portal:url': 'https://portal.example.com/' });
+    assert.deepEqual(portalServiceInfo(external), { contract: PORTAL_CONTRACT, url: 'https://portal.example.com/' });
+    assert.equal(portalUrl(external), 'https://portal.example.com/', 'its origin is the portal origin of the /system gate');
   });
 
   it('[ADCF7] the boot-time validation reports the same problems', function () {

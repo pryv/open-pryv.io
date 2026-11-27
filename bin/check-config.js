@@ -505,7 +505,19 @@ try {
 // setup.*, auth.adminAccessKeyScope, admin.session.*): the boot-time rule.
 try {
   const { describeAdminConfig } = require('../components/business/src/admin/config.ts');
-  for (const p of describeAdminConfig(configReader).problems) problems.push(p.message);
+  const report = describeAdminConfig(configReader);
+  for (const p of report.problems) problems.push(p.message);
+  // dnsLess: every hosted site is served on the API's origin, the portal's
+  // too, so a script of another site can read the administrator session the
+  // portal keeps in that origin's sessionStorage.
+  const portalSite = report.value.portal.site;
+  if (portalSite != null && configReader.get('dnsLess:isActive') === true) {
+    const { hostedSiteNames } = require('../components/business/src/hostedSites.ts');
+    const others = hostedSiteNames(configReader).filter((n) => n !== portalSite);
+    if (others.length > 0) {
+      warnings.push(`portal.site '${portalSite}' shares this platform's origin with the hosted site(s) ${others.map((n) => `'${n}'`).join(', ')} (dnsLess): their pages can read the administrator session of the portal. Host there only sites you would trust with it, or use the DNS topology, where each site has its own origin.`);
+    }
+  }
 } catch (err) {
   warnings.push(`the setup and administration keys could not be checked here (${err.message}); boot still checks them.`);
 }

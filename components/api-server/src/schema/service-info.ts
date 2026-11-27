@@ -42,7 +42,10 @@ export default function () {
     adapters: array(string(), { nullable: true }),
     // Optional root URL of the platform's account app (self-service account
     // pages); the lib-js sign-in button links to it.
-    account: string()
+    account: string(),
+    // Optional administration portal: its address and the portal contract
+    // this core implements (an integer).
+    portal: object({ contract: helpers.number(), url: string() }, { required: ['contract', 'url'] })
   }, {
     required: ['serial', 'api', 'access', 'register', 'name', 'home', 'support', 'terms', 'eventTypes'],
     additionalProperties: false

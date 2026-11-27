@@ -444,7 +444,7 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     assert.equal(await platformInUseOf(storages, coreId)(), true);
   });
 
-  it('[ADMS16] GET /system/admin/portal/context: the subject, the capabilities and the setup state', async () => {
+  it('[ADMS16] GET /system/admin/portal/context: the subject, the capabilities, the setup state and the core URL as the core list gives it', async () => {
     await ready();
     const user = await freshUser();
     const token = await owner(user);
@@ -452,10 +452,51 @@ describe('[ADMS] setup, administrator sessions, roles and claim codes', function
     assert.equal(asKey.status, 200);
     assert.equal(asKey.body.portalContext.subject.kind, 'key');
     assert.ok(Array.isArray(asKey.body.portalContext.capabilities));
+    // The core's URL in the same form as the core list (trailing slash), so the portal can match them.
+    assert.equal(asKey.body.portalContext.core.id, coreId);
+    assert.equal(asKey.body.portalContext.core.url, require('platform').platform.coreIdToUrl(coreId));
+    assert.match(asKey.body.portalContext.core.url, /\/$/);
+    const cores = await coreRequest.get('/system/admin/cores').set('authorization', adminKey);
+    assert.equal(cores.status, 200, JSON.stringify(cores.body));
+    const listed = cores.body.cores.find((c) => c.id === coreId);
+    if (listed != null) assert.equal(asKey.body.portalContext.core.url, listed.url);
     const asAdmin = await coreRequest.get('/system/admin/portal/context').set(asSession(token));
     assert.equal(asAdmin.body.portalContext.subject.userId, user.userId);
     assert.equal(asAdmin.body.portalContext.setup.state, 'ready');
     assert.equal((await coreRequest.get('/system/admin/portal/context')).status, 404);
+  });
+
+  it('[ADMS26] GET /system/portal/settings is public: the contract, the spaces and the modules from portal.*, defaults otherwise', async () => {
+    const { PORTAL_CONTRACT } = require('business/src/admin/portalDefaults.ts');
+    const res = await coreRequest.get('/system/portal/settings');
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.headers['cache-control'], 'no-store');
+    const { meta, ...body } = res.body;
+    assert.ok(meta != null);
+    assert.deepEqual(body, { contract: PORTAL_CONTRACT, spaces: ['admin', 'developer'], modules: { disabled: [], order: [] } });
+    await withInjectedConfig({ portal: { spaces: ['admin'], modules: { disabled: ['users'], order: ['overview', 'roles'] } } }, async () => {
+      const set = await coreRequest.get('/system/portal/settings');
+      assert.equal(set.status, 200);
+      assert.deepEqual(set.body.spaces, ['admin']);
+      assert.deepEqual(set.body.modules, { disabled: ['users'], order: ['overview', 'roles'] });
+    });
+    // Public: a credential changes nothing, the admin key included.
+    assert.equal((await coreRequest.get('/system/portal/settings').set('authorization', 'AdminSession ' + 'A'.repeat(43))).status, 200);
+    assert.equal((await coreRequest.get('/system/portal/settings').set('authorization', adminKey)).status, 200);
+    // The route is in the /system route table as public (the gate refuses a route it does not list).
+    const { routeMatcher } = require('api-server/src/routes/system-permissions.ts');
+    assert.deepEqual(routeMatcher()('GET', '/system/portal/settings')?.rule, { auth: 'public' });
+  });
+
+  it('[ADMS27] GET /system/portal/settings answers CORS for the portal origin (portal.url) and refuses a foreign one', async () => {
+    await withInjectedConfig({ portal: { url: 'https://portal.example.com/' } }, async () => {
+      const fromPortal = await coreRequest.get('/system/portal/settings').set('origin', 'https://portal.example.com');
+      assert.equal(fromPortal.status, 200);
+      assert.equal(fromPortal.headers['access-control-allow-origin'], 'https://portal.example.com');
+      const foreign = await coreRequest.get('/system/portal/settings').set('origin', 'https://evil.example.net');
+      assert.equal(foreign.status, 404);
+      assert.equal(foreign.headers['access-control-allow-origin'], undefined);
+    });
   });
 
   // --------------------- origin rule ----------------- //

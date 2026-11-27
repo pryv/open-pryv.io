@@ -306,6 +306,21 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
           res.end();
           return;
         }
+        if (req.url.startsWith('/docs/redirect-outside')) {
+          res.writeHead(302, { location: '/outside/x' });
+          res.end();
+          return;
+        }
+        if (req.url.startsWith('/docs/redirect-query')) {
+          res.writeHead(301, { location: `http://127.0.0.1:${upstreamPort}/docs/target/?a=1` });
+          res.end();
+          return;
+        }
+        if (req.url.startsWith('/docs/sub/redirect-relative')) {
+          res.writeHead(302, { location: 'page/' });
+          res.end();
+          return;
+        }
         res.writeHead(200, {
           'content-type': 'text/html',
           etag: '"v1"',
@@ -430,10 +445,19 @@ describe('[HSTI] hosted sites in-process dispatcher', function () {
       assert.equal(r.body, 'upstream:/docs/guide/caf%C3%A9%20menu.html');
     });
 
-    it('[HSTL] rewrites a Location inside the upstream base to the site; keeps others', async function () {
+    it('[HSTL] rewrites a Location inside the upstream base to the site; one leaving it answers 502', async function () {
       assert.equal((await get('/redirect-abs')).headers.location, '/target/');
       assert.equal((await get('/redirect-rel')).headers.location, '/other/');
-      assert.equal((await get('/redirect-away')).headers.location, 'https://elsewhere.example/x');
+      assert.equal((await get('/redirect-query')).headers.location, '/target/?a=1');
+      assert.equal((await get('/sub/redirect-relative')).headers.location, '/sub/page/');
+      // Another origin (e.g. the upstream host moved to a custom domain), or a
+      // path of the upstream outside the base: never sent to the visitor.
+      for (const p of ['/redirect-away', '/redirect-outside']) {
+        const r = await get(p);
+        assert.equal(r.status, 502, p);
+        assert.equal(r.headers.location, undefined, p);
+        assert.equal(r.headers['x-frame-options'], 'DENY', p + ': the site headers');
+      }
     });
 
     it('[HSTM] upstream status passes through; HEAD has no body; POST answers 405 without reaching upstream', async function () {
