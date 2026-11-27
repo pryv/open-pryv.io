@@ -102,6 +102,17 @@ function engineEnvFromTestConfig () {
   return env;
 }
 
+/** The auth.adminAccessKey of this workspace's test-config.yml (YAML scalar as written), or null. */
+function adminAccessKeyFromTestConfig () {
+  try {
+    const cfg = fs.readFileSync(path.resolve(SERVICE_CORE_DIR, 'config/test-config.yml'), 'utf8');
+    const m = cfg.match(/^auth:[\s\S]*?\n\s+adminAccessKey:\s*(\S+)/m);
+    return m ? m[1] : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /** Read the isolated tcpBroker port from this workspace's test-config.yml, or null. */
 function tcpBrokerPortFromTestConfig () {
   try {
@@ -146,6 +157,12 @@ if (!libJsAvailable()) {
     overlay = overlay
       .replace('port: 3001', 'port: ' + API_PORT + '\n  hfsPort: ' + HFS_PORT)
       .replaceAll('l.backloop.dev:3000', 'l.backloop.dev:' + PROXY_PORT);
+    // Access tokens are stored under keys derived from auth.adminAccessKey. On
+    // SQLite the spawned servers write into the user databases the rest of the
+    // run reads (the PostgreSQL dev servers use a database of their own), so
+    // they must derive the same keys as the test processes.
+    const testAdminKey = adminAccessKeyFromTestConfig();
+    if (testAdminKey != null) overlay = overlay.replace(/adminAccessKey: .*/, 'adminAccessKey: ' + testAdminKey);
     fs.writeFileSync(OVERRIDE_DST, overlay);
 
     // Kill leftover servers of OUR OWN from a previous run (including tcp_pubsub
