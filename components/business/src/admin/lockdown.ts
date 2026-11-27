@@ -6,6 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { APIError } from 'errors';
 import { CAPABILITY_NAMES } from './capabilities.ts';
 
 /**
@@ -29,7 +30,10 @@ import { CAPABILITY_NAMES } from './capabilities.ts';
  *   configuration keys answers 403 `admin-lockdown-key`.
  *
  * It binds every subject: administrator sessions, the setup session and the
- * admin key. It never locks reads, the session routes, setup, role listing /
+ * admin key, on the `/system` routes and on the admin-key writes outside
+ * them (`/reg/records` = dns, `/reg/admin/servers/.../rename/...` = cores,
+ * `/reg/admin/invitations/post` = invitations, account deletion by the admin
+ * key = users; see `lockdownRefusal`). It never locks reads, the session routes, setup, role listing /
  * grant / revocation, nor claim codes: the way to administer the platform is
  * restricted with `auth.adminAccessKeyScope` and roles, not here, so a copied
  * profile cannot lock an operator out of removing an administrator. Naming
@@ -220,4 +224,37 @@ export function capabilityState (config: ConfigReader, name: string): LockdownSt
 /** Whether a platform configuration key is read-only on this core. */
 export function isPlatformConfigKeyReadonly (config: ConfigReader, key: string): boolean {
   return readLockdown(config).readonlyKeys.has(key);
+}
+
+/**
+ * The refusal of a write of `capability` on this core, or null when it may
+ * go on. For every admin write, inside `/system` (the lockdown step) and
+ * outside it (the admin-key routes under `/reg`, account deletion by the
+ * admin key):
+ * - a never-locked capability: null;
+ * - an invalid `admin.lockdown` (a core does not boot with one; reachable
+ *   only when the value changes under a running process): 500
+ *   `admin-lockdown-invalid`, so a mistyped state never unlocks a write;
+ * - `readonly` or `hidden`: 403 `admin-lockdown-capability`.
+ */
+export function lockdownRefusal (config: ConfigReader, capability: string): APIError | null {
+  if (NEVER_LOCKED_CAPABILITIES.has(capability)) return null;
+  const lockdown = readLockdown(config);
+  if (lockdown.report.problems.length > 0) {
+    return new APIError('admin-lockdown-invalid',
+      'This core\'s admin.lockdown is invalid: administration writes are refused until it is fixed (see bin/check-config.js).',
+      { httpStatus: 500 });
+  }
+  if ((lockdown.capabilities.get(capability) ?? 'editable') === 'editable') return null;
+  return new APIError('admin-lockdown-capability',
+    `The capability "${capability}" is managed outside the API on this core (admin.lockdown): it cannot be changed here.`,
+    { httpStatus: 403, data: { capability } });
+}
+
+/** The refusal of a write or deletion of the platform configuration `key` on this core, or null. */
+export function lockdownKeyRefusal (config: ConfigReader, key: string): APIError | null {
+  if (!isPlatformConfigKeyReadonly(config, key)) return null;
+  return new APIError('admin-lockdown-key',
+    `The platform configuration key "${key}" is managed outside the API on this core (admin.lockdown): it cannot be changed here.`,
+    { httpStatus: 403, data: { key } });
 }

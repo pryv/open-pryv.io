@@ -219,8 +219,21 @@ describe('[ADLD] /system lockdown step', function () {
       await pass('POST', '/system/admin/claim-codes');
     });
 
-    it('[LD11] while the other capabilities of the same configuration are refused', async function () {
-      assert.equal((await call(lockdown, { method: 'PUT', path: '/system/admin/ext-id-ns/ns1', headers: {} })).id, 'admin-lockdown-capability');
+    it('[LD11] while the lockable writes of the same (invalid) configuration are refused', async function () {
+      assert.equal((await call(lockdown, { method: 'PUT', path: '/system/admin/ext-id-ns/ns1', headers: {} })).id, 'admin-lockdown-invalid');
     });
+  });
+
+  it('[LD12] an invalid lockdown (a mistyped state) refuses every lockable write with 500, never unlocks it; reads and never-locked classes pass', async function () {
+    const lockdown = adminLockdown({ rule, config: configOf({ capabilities: { extId: 'readonyl', config: 'readonly' } }) });
+    for (const [method, path] of [['PUT', '/system/admin/ext-id-ns/ns1'], ['PUT', '/system/admin/platform-config/service.home']]) {
+      const err = await call(lockdown, { method, path, headers: {} });
+      assert.equal(err?.httpStatus, 500, path);
+      assert.equal(err?.id, 'admin-lockdown-invalid', path);
+    }
+    for (const [method, path] of [['GET', '/system/admin/ext-id-ns'], ['POST', '/system/admin/erasures/lookup'], ['DELETE', '/system/admin/session'],
+      ['POST', '/system/admin/setup/code'], ['DELETE', '/system/admin/roles/u1'], ['POST', '/system/admin/claim-codes']]) {
+      assert.equal(await call(lockdown, { method, path, headers: {} }), undefined, method + ' ' + path);
+    }
   });
 });

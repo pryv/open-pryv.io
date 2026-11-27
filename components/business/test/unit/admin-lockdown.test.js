@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import {
   describeLockdown, lockdownView, withoutHiddenCapabilities, parseLockdown, readLockdown,
-  capabilityState, isPlatformConfigKeyReadonly, NEVER_LOCKED_CAPABILITIES
+  capabilityState, isPlatformConfigKeyReadonly, NEVER_LOCKED_CAPABILITIES, lockdownRefusal, lockdownKeyRefusal
 } from '../../src/admin/lockdown.ts';
 import { runLockdownBoot, LOCKDOWN_HASH_PREFIX } from '../../src/admin/lockdownBoot.ts';
 import { describeAdminConfig } from '../../src/admin/config.ts';
@@ -208,6 +208,39 @@ describe('[ADLK] admin lockdown', function () {
       assert.equal(isPlatformConfigKeyReadonly(c, key), true);
       assert.equal(isPlatformConfigKeyReadonly(c, key + 'x'), false);
       assert.equal(isPlatformConfigKeyReadonly(config(undefined), key), false);
+    });
+  });
+
+  describe('refusals', function () {
+    it('[LK21] lockdownRefusal: null when editable or never locked, 403 when locked, 500 when the configuration is invalid', function () {
+      const c = config({ capabilities: { dns: 'readonly', mail: 'hidden' } });
+      assert.equal(lockdownRefusal(c, 'users'), null);
+      for (const cap of ['dns', 'mail']) {
+        const err = lockdownRefusal(c, cap);
+        assert.equal(err.httpStatus, 403);
+        assert.equal(err.id, 'admin-lockdown-capability');
+        assert.deepEqual(err.data, { capability: cap });
+      }
+      const invalid = config({ capabilities: { dns: 'readonyl', mail: 'readonly' } });
+      for (const cap of ['dns', 'mail', 'users']) {
+        const err = lockdownRefusal(invalid, cap);
+        assert.equal(err.httpStatus, 500, cap);
+        assert.equal(err.id, 'admin-lockdown-invalid', cap);
+      }
+      for (const cap of NEVER_LOCKED_CAPABILITIES) assert.equal(lockdownRefusal(invalid, cap), null, cap);
+      assert.equal(lockdownRefusal(config(undefined), 'dns'), null);
+    });
+
+    it('[LK22] lockdownKeyRefusal: 403 admin-lockdown-key for a read-only key only', function () {
+      const keys = schemaKeys();
+      if (keys != null && keys.length === 0) return this.skip(); // the schema holds no key yet
+      const key = keys != null ? keys[0] : 'service.name';
+      const c = config({ platformConfig: { readonly: [key] } });
+      const err = lockdownKeyRefusal(c, key);
+      assert.equal(err.httpStatus, 403);
+      assert.equal(err.id, 'admin-lockdown-key');
+      assert.deepEqual(err.data, { key });
+      assert.equal(lockdownKeyRefusal(c, key + 'x'), null);
     });
   });
 

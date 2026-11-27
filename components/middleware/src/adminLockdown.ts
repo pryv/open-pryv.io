@@ -5,10 +5,9 @@
  * Refer to LICENSE file
  */
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
-import { APIError } from 'errors';
 import type { AdminRouteRule } from './adminAuth.ts';
 import { capabilityOf } from 'business/src/admin/permissions.ts';
-import { capabilityState, isPlatformConfigKeyReadonly, NEVER_LOCKED_CAPABILITIES } from 'business/src/admin/lockdown.ts';
+import { lockdownRefusal, lockdownKeyRefusal, NEVER_LOCKED_CAPABILITIES } from 'business/src/admin/lockdown.ts';
 
 /**
  * Lockdown of the `/system/*` routes, mounted right after the gate
@@ -22,7 +21,9 @@ import { capabilityState, isPlatformConfigKeyReadonly, NEVER_LOCKED_CAPABILITIES
  * - the permission's capability `readonly` or `hidden`: 403
  *   `admin-lockdown-capability`;
  * - a PUT or DELETE of a platform configuration key listed in
- *   `platformConfig.readonly`: 403 `admin-lockdown-key`.
+ *   `platformConfig.readonly`: 403 `admin-lockdown-key`;
+ * - an invalid `admin.lockdown` (changed under a running process): 500
+ *   `admin-lockdown-invalid` for every such write (fail closed).
  * Never refused: reads, the routes without a permission (sessions), routes
  * with their own credential or none, and the setup, role and claim-code
  * routes. A request the gate refused never reaches this step (its 404 comes
@@ -61,20 +62,13 @@ export default function adminLockdown (opts: AdminLockdownOptions): RequestHandl
       if (NEVER_LOCKED_CAPABILITIES.has(capability)) return next();
       if (permission.endsWith(':read')) return next();
 
-      const state = capabilityState(config, capability);
-      if (state !== 'editable') {
-        return next(new APIError('admin-lockdown-capability',
-          `The capability "${capability}" is managed outside the API on this core (admin.lockdown): it cannot be changed here.`,
-          { httpStatus: 403, data: { capability } }));
-      }
+      const refusal = lockdownRefusal(config, capability);
+      if (refusal != null) return next(refusal);
       if (permission === 'config:write' && (method === 'PUT' || method === 'DELETE')) {
         const m = PLATFORM_CONFIG_KEY_PATH.exec(req.path);
         const key = m != null ? decodeSegment(m[1]) : null;
-        if (key != null && isPlatformConfigKeyReadonly(config, key)) {
-          return next(new APIError('admin-lockdown-key',
-            `The platform configuration key "${key}" is managed outside the API on this core (admin.lockdown): it cannot be changed here.`,
-            { httpStatus: 403, data: { key } }));
-        }
+        const keyRefusal = key != null ? lockdownKeyRefusal(config, key) : null;
+        if (keyRefusal != null) return next(keyRefusal);
       }
       next();
     } catch (err) {

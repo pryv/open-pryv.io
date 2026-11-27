@@ -3,7 +3,9 @@
 # Assumes: the front proxy terminates TLS with its own certificates and the DNS zone is
 # managed at the proxy's provider, so the core neither renews certificates nor serves DNS.
 # So: certificates and DNS are not shown in the portal and cannot be changed through the
-# API on this core.
+# API on this core (the /system routes and the admin-key DNS records routes under /reg).
+# Lockdown does not switch the core's own DNS server or certificate renewal off: set
+# dns.active and letsEncrypt.enabled to false for that.
 #
 # Copy the `admin.lockdown` block into this core's configuration file (override-config.yml),
 # then restart the core. Lockdown is per core and is never edited through the API.

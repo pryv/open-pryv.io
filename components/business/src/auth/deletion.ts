@@ -22,6 +22,7 @@ const { storedWebhookIds, signalWebhooksStopped } = require('business/src/webhoo
 const errors = require('errors').factory;
 const cache = require('cache').default;
 const { isAdminKeyInFullScope } = require('middleware/src/isAdminKey.ts');
+const { lockdownRefusal } = require('business/src/admin/lockdown.ts') as typeof import('../admin/lockdown.ts');
 const { getLogger } = require('@pryv/boiler');
 const { setAuditAccessId, AuditAccessIds } = require('audit/src/MethodContextUtils.ts');
 const setAdminAuditAccessId = setAuditAccessId(AuditAccessIds.ADMIN_TOKEN);
@@ -122,6 +123,10 @@ class Deletion {
     const canDelete = this.config.get('user-account:delete') as string[];
     if (canDelete.includes('adminToken')) {
       if (isAdminKeyInFullScope(context.authorizationHeader, this.config)) {
+        // This core's admin.lockdown binds the admin key here too (capability
+        // `users`); an account's own token is never locked.
+        const locked = lockdownRefusal(this.config, 'users');
+        if (locked != null) return next(locked);
         context.deletionByAdmin = true;
         return setAdminAuditAccessId(context, params, result, next);
       }

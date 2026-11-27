@@ -22,13 +22,15 @@ const require = createRequire(import.meta.url);
  *
  * Auth: `auth:adminAccessKey` (BOOTSTRAP, must be identical across cores),
  * refused under `auth.adminAccessKeyScope: break-glass`.
- * A missing or wrong key answers 404, like the other admin routes.
+ * A missing or wrong key answers 404, like the other admin routes. Writes of
+ * the capability `dns`: a core whose `admin.lockdown` locks it answers 403.
  */
 
 const { getPlatform } = require('platform');
 const { validateDnsRecord } = require('dns-server/src/recordValidation.ts');
 const errors = require('errors').factory;
 const { isAdminKeyInFullScope } = require('middleware/src/isAdminKey.ts');
+const { lockdownRefusal } = require('business/src/admin/lockdown.ts');
 const { isPlatformNoAnswer } = require('storages/interfaces/platformStorage/noAnswer.ts');
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
@@ -64,6 +66,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
 
   expressApp.post('/reg/records', async (req: Request, res: Response, next: NextFunction) => {
     if (!isAuthorized(req)) return next(errors.unknownResource());
+    const locked = lockdownRefusal(app.config, 'dns');
+    if (locked != null) return next(locked);
 
     // Express 4 does not observe a rejected async handler: every step that
     // may throw stays inside a try, so a failure answers instead of hanging.
@@ -126,6 +130,8 @@ export default function (expressApp: ExpressApp, app: AppLike) {
 
   expressApp.delete('/reg/records/:subdomain', async (req: Request, res: Response, next: NextFunction) => {
     if (!isAuthorized(req)) return next(errors.unknownResource());
+    const locked = lockdownRefusal(app.config, 'dns');
+    if (locked != null) return next(locked);
 
     const { subdomain } = req.params;
     if (!subdomain || typeof subdomain !== 'string') {

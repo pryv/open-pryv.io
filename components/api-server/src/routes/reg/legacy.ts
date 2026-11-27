@@ -15,6 +15,7 @@ const require = createRequire(import.meta.url);
 
 const errors = require('errors').factory;
 const { isAdminKeyInFullScope } = require('middleware/src/isAdminKey.ts');
+const { lockdownRefusal } = require('business/src/admin/lockdown.ts');
 const { clientIp } = require('middleware/src/clientIp.ts');
 const { redactUrl } = require('utils/src/redactUrl.ts');
 const { coreIdProblem } = require('platform/src/coreIdentity.ts');
@@ -55,6 +56,14 @@ export default function (expressApp: ExpressApp, app: App) {
       return next(errors.unknownResource());
     }
     next();
+  }
+
+  // A write of `capability`: refused when this core's admin.lockdown locks it
+  // (after checkAdmin, so a caller without the key still gets 404).
+  function unlessLocked (capability: string) {
+    return function lockdownCheck (_req: Request, _res: Response, next: NextFunction) {
+      next(lockdownRefusal(app.config, capability) ?? undefined);
+    };
   }
 
   // =====================================================================
@@ -302,7 +311,7 @@ export default function (expressApp: ExpressApp, app: App) {
    * GET /admin/servers/:src/rename/:dst — rename server (migrate users).
    * In multi-core: updates user-to-core mappings in PlatformDB.
    */
-  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/admin/servers/:srcServerName/rename/:dstServerName', checkAdmin, unlessLocked('cores'), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const srcName = req.params.srcServerName;
       const dstName = req.params.dstServerName;
@@ -360,7 +369,7 @@ export default function (expressApp: ExpressApp, app: App) {
    * Query params: count (an integer from 1 to MAX_INVITATIONS_PER_CALL,
    * default 1), message (optional description).
    */
-  expressApp.get('/reg/admin/invitations/post', checkAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  expressApp.get('/reg/admin/invitations/post', checkAdmin, unlessLocked('invitations'), async (req: Request, res: Response, next: NextFunction) => {
     try {
       const count = req.query.count == null || req.query.count === '' ? 1 : Number(req.query.count);
       if (!Number.isInteger(count) || count < 1 || count > MAX_INVITATIONS_PER_CALL) {

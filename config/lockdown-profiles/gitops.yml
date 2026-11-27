@@ -6,6 +6,8 @@
 # store through the API, so no store value ever hides a file value.
 # So: bootstrap is not shown, and every platform configuration key the platform store can
 # hold in this release is read-only through the API (reads still work).
+# The platform configuration is platform-wide while lockdown is per core: put this block on
+# every core, or a core without it still writes these keys for the whole platform.
 #
 # Copy the `admin.lockdown` block into this core's configuration file (override-config.yml),
 # then restart the core. Lockdown is per core and is never edited through the API.
