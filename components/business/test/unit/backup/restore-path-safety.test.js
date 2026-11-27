@@ -144,7 +144,9 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       { userId: CUID2_ID, username: 'name\0' },
       { userId: CUID2_ID, username: '' },
       { userId: CUID2_ID, username: 'n'.repeat(65) },
-      { userId: CUID2_ID, username: null }
+      { userId: CUID2_ID, username: null },
+      // the audit storage's platform trail id is never an account
+      { userId: 'platform-trail', username: 'validname' }
     ];
 
     it('[BKRS1] a full restore with an invalid user id or username is refused before anything is written', async function () {
@@ -161,6 +163,8 @@ describe('[BKRS] restore from a backup that names unsafe locations', function ()
       const bad = { userId: '../../x/escape', username: 'validname' };
       await assert.rejects(() => o.restoreUser(bad.userId, makeReader([bad]), { overwrite: true }), /invalid user id or username/);
       await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }]), { overwrite: true, remapUserId: '../../x/escape' }), /invalid user id or username/);
+      await assert.rejects(() => o.restoreUser(CUID2_ID, makeReader([{ userId: CUID2_ID, username: 'validname' }]), { overwrite: true, remapUserId: 'platform-trail' }), /invalid user id or username/, 'remapped to the platform trail id');
+      await assert.rejects(() => o.restoreUser('platform-trail', makeReader([{ userId: 'platform-trail', username: 'validname' }]), { overwrite: true }), /invalid user id or username/, 'the platform trail id');
       assert.deepStrictEqual(writes, []);
     });
 

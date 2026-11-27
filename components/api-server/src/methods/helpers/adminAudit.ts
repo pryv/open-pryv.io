@@ -11,9 +11,11 @@ import type { Request, Response, NextFunction } from 'express';
 import type { MethodNext as Next, ResultBag } from '../_types.ts';
 import type { AdminSubject } from 'middleware/src/adminAuth.ts';
 import type { AdminPermission } from 'business/src/admin/permissions.ts';
-import { activeGrants, permissionsOf } from 'business/src/admin/roles.ts';
+import { activeGrants, hasActiveGrant, effectivePermissions } from 'business/src/admin/roles.ts';
+import { coreContext } from 'business/src/admin/scopes.ts';
+import { readLocalPolicy } from 'business/src/admin/localPolicy.ts';
 import { factory as errors } from 'errors';
-import { ready, getLogger } from '@pryv/boiler';
+import { ready, getLogger, getConfigSync } from '@pryv/boiler';
 import { getUsersRepository } from 'business/src/users/index.ts';
 import { SYSTEM_ROUTES } from '../../routes/system-permissions.ts';
 
@@ -22,9 +24,10 @@ import { SYSTEM_ROUTES } from '../../routes/system-permissions.ts';
  *
  * An act is recorded without a user, in the platform trail of the core: its
  * record (`content.record`) is `{ subject, target?, diff?, result? }`, where
- * `subject` = `{ via, userId?, sessionId?, role?, scope? }` (kind of subject,
- * the administrator's id, a short session id, the grant that gave the
- * route's permission), never a code, a token or a secret value. Besides the
+ * `subject` = `{ via, userId?, sessionId?, role?, scope?, localGrant? }` (kind
+ * of subject, the administrator's id, a short session id, the grant that gave
+ * the route's permission on this core, `localGrant: true` when it is one of
+ * this core's local grants), never a code, a token or a secret value. Besides the
  * platform trail, an act is recorded in the trail of the account it reads or
  * changes when that account is on this core, and in the acting
  * administrator's own trail when that account is on this core
@@ -53,6 +56,10 @@ export type AdminRecord = {
 
 const SESSION_ID_LENGTH = 16;
 
+type ConfigReader = { get: (key: string) => unknown };
+/** The grant a record names as the one that gave the route's permission on this core. */
+export type GrantStamp = { role: string; scope: string; local?: true };
+
 /** The permission of the route a method id is served by (route table), if any. */
 const permissionOfMethod: Map<string, AdminPermission> = new Map();
 for (const entry of SYSTEM_ROUTES) {
@@ -62,15 +69,31 @@ for (const entry of SYSTEM_ROUTES) {
 }
 
 /**
- * The grant of an administrator session that gives `permission`: the first
- * active one whose role holds it. Null for the admin key, a setup session, a
- * route without a permission.
+ * The grant of an administrator session that gives `permission` on this
+ * core: the first active grant of its row that gives it here (its scope
+ * covers this core and this core's local policy accepts it), else this
+ * core's local grant that gives it (`scope: core:<this core>`, `local: true`).
+ * Null for the admin key, a setup session, a route without a permission.
  */
-function grantGiving (subject: AdminSubject, permission: AdminPermission | undefined): { role: string; scope: string } | null {
+export function grantGiving (subject: AdminSubject, permission: AdminPermission | undefined, config: ConfigReader = getConfigSync()): GrantStamp | null {
   if (subject.kind !== 'session' || subject.role == null || permission == null) return null;
   const now = Date.now();
+  const core = coreContext(config);
+  const policy = readLocalPolicy(config);
+  // Replicated grants, one at a time (no userId: the local grants are not mixed in).
   for (const grant of activeGrants(subject.role, now)) {
-    if (permissionsOf({ ...subject.role, grants: [grant] }, now).has(permission)) return { role: grant.role, scope: grant.scope };
+    if (effectivePermissions({ ...subject.role, grants: [grant] }, now, { core, policy }).permissions.has(permission)) {
+      return { role: grant.role, scope: grant.scope };
+    }
+  }
+  if (subject.userId == null || !hasActiveGrant(subject.role, now)) return null;
+  for (const local of policy.localGrants) {
+    if (local.userId !== subject.userId) continue;
+    // This local grant alone (the replicated grants refused), as the gate computes it.
+    const alone = { acceptReplicatedGrants: false, requireLocalScope: policy.requireLocalScope, localGrants: [local] };
+    if (effectivePermissions(subject.role, now, { core, policy: alone, userId: subject.userId }).permissions.has(permission)) {
+      return { role: local.role, scope: 'core:' + core.coreId, local: true };
+    }
   }
   return null;
 }
@@ -93,6 +116,7 @@ function attribution (kind: 'subject' | 'personal' | 'public', context: AdminAud
     if (grant != null) {
       record.role = grant.role;
       record.scope = grant.scope;
+      if (grant.local === true) record.localGrant = true;
     }
   }
   return { accessId, subject: record };

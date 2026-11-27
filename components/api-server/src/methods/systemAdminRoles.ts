@@ -5,8 +5,8 @@
  * Refer to LICENSE file
  */
 import type { ResultBag } from './_types.ts';
-import type { AdminSubject } from 'middleware/src/adminAuth.ts';
-import { auditAs, actorOf, auditAdminAct, wrap } from './helpers/adminAudit.ts';
+import { auditAs, actorOf, auditAdminAct, setAuditDetails, wrap } from './helpers/adminAudit.ts';
+import type { AdminAuditContext } from './helpers/adminAudit.ts';
 import type { AdminStore } from 'business/src/admin/store.ts';
 import { ROLES, isRole, isScope, grantRole, readRoleRow, activeGrants, LastOwnerError } from 'business/src/admin/roles.ts';
 import type { RoleRow, RoleGrant } from 'business/src/admin/roles.ts';
@@ -34,7 +34,7 @@ import * as storages from 'storages';
  */
 
 type ConfigReader = { get: (key: string) => unknown };
-type RolesContext = { adminSubject?: AdminSubject };
+type RolesContext = AdminAuditContext;
 
 const USER_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const USERNAME_MAX_LENGTH = 100;
@@ -109,6 +109,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (expiresAt != null && (typeof expiresAt !== 'number' || !Number.isInteger(expiresAt) || expiresAt <= now)) {
         return errors.invalidParametersFormat('`expiresAt` must be a time in the future, in milliseconds since the epoch (or null: no expiry).', { expiresAt });
       }
+      // The platform trail names the account and the grant, also when the act is refused.
+      setAuditDetails(context, { target: { userId }, diff: { role, scope, expiresAt: (expiresAt as number | null | undefined) ?? null } });
       const subject = context.adminSubject;
       let row: RoleRow;
       try {

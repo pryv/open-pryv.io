@@ -2,6 +2,100 @@
 
 ## Unreleased
 
+### Administrators: six roles, grant scopes, a per-core local policy, role management, the platform trail
+
+- **Roles.** `operator`, `support`, `auditor`, `app-reviewer` and `viewer` join `owner`. Each is a fixed bundle of
+  the existing permission names (no new name); `owner` holds them all, and only `owner` holds `roles:grant`,
+  `claimCodes:mint`, `setup:write`, `delegation:write` and `bootstrap:issue`. An unknown role in a role row gives
+  nothing.
+- **Scopes.** A grant's scope is `platform`, `region:<id>`, `zone:<id>`, `hosting:<id>` or `core:<id>` (an id is 1 to
+  128 of `A-Z a-z 0-9 . _ -`), matched against this core's place in the `hostings` hierarchy (`core.hosting`,
+  `default` when unset). An id the hierarchy or the core list does not know never matches (an **orphan** grant gives
+  nothing); without a `hostings` hierarchy only `platform`, `hosting:default` and `core:<id>` can match.
+  **Platform-wide writes** (`roles:grant`, `claimCodes:mint`, `setup:write`, `config:write`, `dns:write`,
+  `mail:write`, `observability:write`, `extId:write`, `cores:write`, `bootstrap:issue`, `delegation:write`) are given
+  only by grants at scope `platform`: only a platform owner manages roles and mints claim codes. OAuth client and
+  publisher permissions come from `platform` and `region:<r>` grants only. Every other permission comes from a grant
+  whose scope covers the core serving the call.
+- **Local policy** (`admin.localPolicy`, per-core YAML, never in the platform store):
+  `acceptReplicatedGrants` (default true; false: the platform store's grants give nothing on this core),
+  `requireLocalScope` (permission names that only this core's local grants give, whatever a replicated grant's
+  scope), `localGrants` (`[{ userId, role }]`: the role on this core only, minus the platform-wide writes and the
+  OAuth client and publisher permissions). A local grant counts only for an account that holds an active grant in
+  the platform store (its session and its revocation live there). The policy binds administrator sessions, never
+  the admin key nor a setup session. The master logs the effective policy at boot; boot and
+  `bin/check-config.js` refuse an invalid one. Cores holding different policies is expected.
+- **Administrator sessions.** `POST /system/admin/session` opens for any account holding an active grant, even one
+  that gives no permission on this core (a grant scoped to another core, a local policy refusing it): before, an
+  account with no permission on its home core could not sign in. Its answer, `GET /system/admin/session` and the
+  portal context's `subject` add **`denied: [{ permission, reason: 'scope' | 'local-policy' }]`**, the permissions of
+  the account's roles not held on this core; the session read also gives this core's `localPolicy` when it is not
+  the default (with the roles it grants the caller locally, never other accounts'). Revoking a grant takes effect at
+  the next request on every core.
+- **Role management.**
+  - New `PUT /system/admin/roles/:userId` `{ role, scope, expiresAt? }` (`system.roles.set`): grants a role at a
+    scope, or replaces the grant of that role and scope. `expiresAt` is in milliseconds since the epoch, in the
+    future. Needs `roles:grant` with a recent second factor (admin key or session; not under `break-glass`).
+    Replacing the last lasting owner grant with an expiring one answers 400 `last-owner`, as the revocation does.
+  - New `GET /system/admin/roles/:userId` (`system.roles.get`, `roles:read`, break-glass) and
+    `GET /system/admin/roles/by-username/:username` (`system.roles.getByUsername`, `roles:read`): the latter answers
+    on the account's home core only (elsewhere a 400 naming the home core's URL) and is how a username becomes the
+    account id a grant needs (role rows never hold a username).
+  - Every grant in the role list, the one-account reads and the session read carries **`scopeState`**: `ok`, or
+    `orphan`.
+  - `POST /system/admin/claim-codes` accepts the six roles and every scope of the grammar; its messages list them.
+- **Platform trail.** Each core now stores the audit records of the calls without an account of this core
+  (administration acts, the account creations and deletions of `/system`, setup, sessions, roles, claim codes) in
+  its audit storage, under the reserved id `platform-trail`. Each record names who acted:
+  `content.record.subject` = `{ via: 'admin-key' | 'session' | 'setup', userId?, sessionId? (16 characters), role?,
+  scope?, localGrant? }`, where `role` and `scope` are the grant that gave the route's permission on this core; and
+  on what: `target`, `diff` (names and digests only: never a body, an address, a token or a secret value; a mail
+  template body is recorded by length and SHA-256), `result`. A refused act keeps its subject and target.
+  - **Attribution fix:** calls of the `/system` account, core and status methods made with an administrator session
+    are recorded under `admin-session` with the account (they were all recorded under `admin`).
+  - The `/system` routes served without an API method (certificates, mail templates, users validate / update /
+    delete, delegation invite / create-account, cores ack) now have method ids (`system.certs.list`,
+    `system.certs.renew`, `system.mailTemplates.list|get|set|delete`, `system.mail.sendTest`,
+    `system.users.validate`, `system.users.update`, `system.users.delete`, `system.delegation.invite`,
+    `system.delegation.createAccount`, `system.cores.ack`) and record their acts, done or refused (the reads among
+    them are not audited).
+  - `system.getUserInfo` and `system.getAccess` are now audited, in the platform trail and in the read account's own
+    trail when it is on this core (`account.readByAdmin`). An act of an administrator session is also recorded in
+    the administrator's own trail (`admin.act`) when its account is on this core; a grant or a revocation in the
+    grantee's (`admin.role.granted`, `admin.role.revoked`).
+  - New **`GET /system/admin/audit`** (`system.audit.get`, `audit:read`, not break-glass, not itself audited):
+    `fromTime`, `toTime` (seconds), `methodId`, `subject` (an account id, `admin-key` or `setup`), `target`,
+    `limit` (default 100, at most 1000), `skip` (at most 10000: read further by narrowing `toTime`); most recent
+    first; `skip` and `limit` count matching records, and `hasMore` says whether more may follow (with a `subject`
+    or `target` filter at most 20000 records are read per page: `scanLimitReached: true` then). Each core answers
+    for its own trail (no aggregation across cores). It answers 503 when audit is off or the audit storage does not
+    keep the trail.
+  - Grants, revocations, claim codes (role, scope and lifetime, never the code), claims and the first
+    administrator name the account and the role and scope in their platform-trail record, also when the act is
+    refused.
+  - **Upgrade note:** records of calls without an account, which reached syslog only, are now also stored (when
+    `audit.storage.filter` selects them): audit storage grows with administration traffic. There is no retention
+    of the platform trail in this release (as for every audit trail). The platform trail is not part of an account
+    backup, and a restore refuses `platform-trail` as an account id (in the backup or as the id an account is remapped to).
+- **`GET /system/admin/users`** takes optional `limit`, `skip` and `search` (a username prefix) and answers `total`;
+  without them the answer is unchanged.
+- **Security:** an administrator session may now hold its permission through a grant covering this core only, so
+  the account routes no longer act beyond this core for a session: `PUT /system/users` answers 404 for a username
+  with no account on this core, `POST /system/users/validate` refuses a `core` other than this one before anything
+  is reserved, and `GET /system/accesses/:accessId` on a multi-core platform answers 404 for an access of another
+  core's account. The admin key keeps the platform-wide behaviour.
+- **Fixed:** `audit.storage.filter` and `audit.syslog.filter` with `include: ['all']` and a non-empty `exclude`
+  selected nothing (`all` was read as a method id): an operator excluding a few methods lost the whole audit, in
+  syslog and in storage. They now select every audited method but the excluded ones.
+- **Upgrade note (`hostings`):** boot and `bin/check-config.js` now refuse a `hostings` hierarchy in which a zone key
+  appears in two regions or a hosting key in two zones (a `zone:` or `hosting:` scope would be ambiguous): rename
+  the duplicate before upgrading. With unchanged configuration, an existing `owner` at `platform` keeps every
+  permission on every core.
+- `bin/admin.js`: `roles grant <userId|username> --role <r> --scope <s> [--expires 90m|12h|30d|<ISO date>] [--force]`;
+  `roles list` marks orphan scopes; `audit tail [--method <id>] [--since 90m|12h|30d|<ISO date>] [--limit <n>]`
+  prints the last records of this core's platform trail (read from the audit storage, so it works while the API is
+  down).
+
 ### PostgreSQL: one order for events sharing a time, new time index (operator notice)
 
 - `events.get` and audit reads on PostgreSQL return events (records) sharing a `time` in one order, by id in the

@@ -182,4 +182,36 @@ describe('[ADMC] bin/admin.js', function () {
     assert.strictEqual(forced.status, 0, forced.stderr);
     assert.ok((await roles.readRoleRow(db, 'adcl-owner-2')).grants[0].expiresAt > now);
   });
+
+  it('[ADMC8] audit tail: the last records of the platform trail, by method and time, oldest first; bad options refused', async function () {
+    const config = await require('@pryv/boiler').getConfig();
+    const storage = require('storages').auditStorage;
+    if (config.get('audit:active') !== true || storage?.acceptsPlatformTrail?.() !== true) return this.skip();
+    const app = globalThis.app;
+    if (!app.systemAPI.has('system.roles.set')) await require('api-server/src/methods/systemAdminRoles.ts').default(app.systemAPI);
+    const adminKey = config.get('auth:adminAccessKey');
+    const ids = ['adcl-tail-1-' + Date.now(), 'adcl-tail-2-' + Date.now()];
+    for (const id of ids) {
+      const res = await globalThis.coreRequest.put('/system/admin/roles/' + id).set('authorization', adminKey).send({ role: 'viewer', scope: 'platform' });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    }
+    let tail;
+    for (let i = 0; i < 50; i++) { // the record is written once the answer is sent
+      tail = runCli(['audit', 'tail', '--method', 'system.roles.set', '--since', '10m', '--limit', '2']);
+      if (tail.stdout.includes(ids[1])) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.strictEqual(tail.status, 0, tail.stderr);
+    const lines = tail.stdout.trim().split('\n');
+    assert.strictEqual(lines.length, 2, tail.stdout);
+    assert.match(lines[0], new RegExp('system\\.roles\\.set  done  by admin-key  on \\{"userId":"' + ids[0] + '"\\}'));
+    assert.ok(lines[1].includes(ids[1]), 'the most recent last');
+    const none = runCli(['audit', 'tail', '--method', 'system.no-such-method']);
+    assert.strictEqual(none.status, 0, none.stderr);
+    assert.match(none.stdout, /No record of system\.no-such-method/);
+    assert.strictEqual(runCli(['audit', 'tail', '--limit', '0']).status, 1);
+    assert.strictEqual(runCli(['audit', 'tail', '--since', 'yesterday']).status, 1);
+    assert.strictEqual(runCli(['audit', 'tail', '--method', 'bad method']).status, 1);
+    assert.strictEqual(runCli(['audit', 'tail', 'extra']).status, 2);
+  });
 });

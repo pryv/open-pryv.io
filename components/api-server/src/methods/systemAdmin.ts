@@ -9,7 +9,7 @@ import * as nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ResultBag } from './_types.ts';
 import type { AdminSubject } from 'middleware/src/adminAuth.ts';
-import { auditAs, actorOf, auditAdminAct, wrap as wrapStep } from './helpers/adminAudit.ts';
+import { auditAs, actorOf, auditAdminAct, setAuditDetails, wrap as wrapStep } from './helpers/adminAudit.ts';
 import type { AdminStore } from 'business/src/admin/store.ts';
 import {
   readSetupState, redeemSetupCode, countSetupAttempt, pendingSetupCode, mintSetupCode, markReady
@@ -194,6 +194,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       const personal = personalOf(context);
       const now = Date.now();
       if (adminMfaRequired(config) && await factorTimeOf(personal) == null) return mfaMissing();
+      setAuditDetails(context, { target: { userId: personal.userId }, diff: { role: ROLE_OWNER, scope: SCOPE_PLATFORM } });
       const row = await grantRole(store(), personal.userId, { role: ROLE_OWNER, scope: SCOPE_PLATFORM, grantedBy: 'setup', via: 'setup', now });
       result.role = rolePayload(personal.userId, row);
       await auditAdminAct(personal.userId, 'admin.role.created', { role: ROLE_OWNER, scope: SCOPE_PLATFORM, via: 'setup' });
@@ -344,6 +345,8 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
         ttlMs = minutes * 60000;
       }
       const subject = context.adminSubject;
+      // The role and scope the code gives, never the code.
+      setAuditDetails(context, { diff: { role, scope, ttlMinutes: (params.ttlMinutes as number | undefined) ?? null } });
       const minted = await mintClaimCode(store(), { role, scope, mintedBy: actorOf(subject), now: Date.now(), ttlMs });
       result.claimCode = { code: minted.display, role, scope, expiresAt: minted.expiresAt };
       await auditAdminAct(subject?.userId, 'admin.claimCode.created', { role, scope });
@@ -362,6 +365,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (adminMfaRequired(config) && await factorTimeOf(personal) == null) return mfaMissing();
       const claimed = await claimRole(db, params.code, { userId: personal.userId, now });
       if (claimed == null) return errors.unknownResource('administrator code');
+      setAuditDetails(context, { target: { userId: personal.userId }, diff: { role: claimed.grant.role, scope: claimed.grant.scope, mintedBy: claimed.grant.mintedBy } });
       result.role = rolePayload(personal.userId, claimed.row);
       await auditAdminAct(personal.userId, 'admin.role.claimed', { role: claimed.grant.role, scope: claimed.grant.scope, mintedBy: claimed.grant.mintedBy });
     }));
@@ -390,6 +394,7 @@ export default async function (systemAPI: { register: (...args: unknown[]) => vo
       if (typeof userId !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(userId)) return errors.unknownResource('role');
       if (role != null && typeof role !== 'string') return errors.invalidParametersFormat('`role` must be a string.');
       if (scope != null && typeof scope !== 'string') return errors.invalidParametersFormat('`scope` must be a string.');
+      setAuditDetails(context, { target: { userId }, diff: { role: role ?? null, scope: scope ?? null } });
       let revoked: boolean;
       try {
         revoked = await revokeRole(store(), userId, { role: role as string | undefined, scope: scope as string | undefined, now: Date.now() });

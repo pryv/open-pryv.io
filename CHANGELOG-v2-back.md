@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Administration: roles, scopes, local policy, platform trail (internals)
+
+- `business/src/admin/scopes.ts` (new): `parseScope`, `coreContext(config)` (`{ coreId, hosting, zone, region,
+  regions, hierarchy }`), `scopeCoversCore`, `scopeCoversRegions` (for OAuth review by region), `scopeState`,
+  `hostingsOf`, `placeHosting`. The OAuth client region walk (`oauth2/src/clientRegistry.ts`) uses it. The
+  administration configuration check refuses duplicate zone or hosting keys in `hostings`.
+- `business/src/admin/roles.ts`: `ROLES` / `ROLE_PERMISSIONS` for the six roles; `effectivePermissions(row, now,
+  { core, policy, userId })` answers `{ permissions, denied }` (`permissionsOf` without a context counts `platform`
+  grants only); `hasActiveGrant`; a grant whose `expiresAt` is present but not a number is inactive.
+  `permissions.ts`: `PLATFORM_ONLY_WRITES`, `REGION_SCOPED_PERMISSIONS`.
+- `business/src/admin/localPolicy.ts`: `describeLocalPolicy` (validation, warnings for a platform-wide write or an
+  OAuth permission in `requireLocalScope`), `readLocalPolicy`, `policyView`, `localPolicyLine` (boot log line, no
+  account id). `resolveAdminSession` and the `/system` gate pass the core context and the policy; the subject
+  carries `denied`.
+- Role management: `api-server/src/methods/systemAdminRoles.ts`, `routes/system-admin-roles.ts`,
+  `routes/systemRoutes/roles.ts`, ids in `audit/src/apiMethods/adminRoles.ts`. `system.roles.set` and
+  `system.roles.delete` record `target: { userId }` and the role and scope as `diff`, also on a refusal.
+- Audit storage: the reserved id `platform-trail` (`storages/interfaces/auditStorage/AuditStorage.ts`
+  `PLATFORM_TRAIL_USER_ID`), announced by the optional method `acceptsPlatformTrail()`. PostgreSQL exempts that
+  exact id from the users-index condition of its insert; both engines refuse `deleteUser` on it; the audit
+  component skips the erased-account check for it and stores the audited calls of `WITHOUT_USER_METHODS` there
+  (syslog only with a storage without the method).
+- `api-server/src/methods/helpers/adminAudit.ts`: `auditAs`, `setAuditDetails`, `auditTarget`, `inActorTrail`,
+  `recordAdminAct` (Express-handled routes), `adminRoute`, `digestOf`, `actorOf`, `auditAdminAct`. The record's
+  `role` / `scope` is the grant that gives the route's permission on this core (`effectivePermissions` with this
+  core's context and local policy), or this core's local grant (`localGrant: true`). `methods/system.ts` uses the
+  shared `auditAs('subject')` (it set the `admin` access id for every subject). `system.listUsers` is declared
+  without a user (its record was refused as invalid).
+- `methods/systemAdminAudit.ts`: `readPlatformTrail` / `keepsPlatformTrail`, shared by `system.audit.get` and
+  `bin/admin.js audit tail`. With a `subject` or `target` filter it reads the trail in batches of 1000 and filters
+  before cutting the page (20000 records at most per page); without, it reads `limit + 1` to answer `hasMore`.
+- `system.claimCodes.create`, `system.roles.claim` and `system.setup.createFirstAdmin` set the record's target and
+  diff before their write, as `system.roles.set` / `delete` do. `RestoreOrchestrator` refuses the reserved id
+  `platform-trail` as a manifest user id or a remap target.
+- Tests: business `admin-roles`, `admin-scopes`, `admin-localPolicy`; middleware `adminAuth`; api-server
+  `[SYPM]` (scoped sessions, local policy), `[ADMR]` (role management, trail records of grants, the grant named on
+  a scoped and a local grant), `[ADMC7]` `[ADMC8]` (CLI grant, audit tail), `[SYAU]` / `[SYAS]` (platform trail,
+  attribution, trail read, users paging, session acts on this core's accounts), audit storage conformance on the
+  reserved id under `audit.onUserDelete: erase` and `keep`.
+
 ### Deletion records: one order for equal deletion times
 
 - `getDeletionsStreamed` (events.get with `modifiedSince` + `includeDeletions`, read with `limit` / `skip`) ordered by

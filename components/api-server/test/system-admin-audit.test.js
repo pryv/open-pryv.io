@@ -231,6 +231,19 @@ describe('[SYAU] platform trail, attribution, trail read and users paging', func
     res = await read({ methodId: 'system.getUserInfo', fromTime: since, target: target.username, limit: 1, skip: 1 });
     assert.equal(res.body.auditEvents.length, 1);
     assert.equal(res.body.limit, 1);
+    assert.equal(res.body.hasMore, false, 'the last matching record');
+    res = await read({ methodId: 'system.getUserInfo', fromTime: since, target: target.username, limit: 1 });
+    assert.equal(res.body.hasMore, true);
+    // The filter applies before the page is cut: records of another target in
+    // front of the matching one do not make a filtered page empty.
+    const other = await freshUser();
+    for (let i = 0; i < 3; i++) await coreRequest.get('/system/user-info/' + other.username).set('authorization', adminKey);
+    await trail(PLATFORM_TRAIL_USER_ID, 'system.getUserInfo', since, 5);
+    res = await read({ methodId: 'system.getUserInfo', fromTime: since, subject: admin.userId, limit: 1 });
+    assert.deepEqual([res.body.auditEvents.length, res.body.hasMore], [1, false], JSON.stringify(res.body).slice(0, 300));
+    res = await read({ methodId: 'system.getUserInfo', fromTime: since, limit: 1, skip: 4 });
+    assert.deepEqual([res.body.auditEvents.length, res.body.hasMore], [1, false], 'unfiltered paging: 5 records');
+    assert.equal((await read({ skip: 10001 })).status, 400, 'skip is bounded');
     res = await read({ methodId: 'system.getUserInfo', fromTime: since, target: target.username }, 'AdminSession ' + token);
     assert.equal(res.status, 200, 'an owner session reads it');
     // the read is not itself recorded

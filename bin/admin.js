@@ -20,6 +20,7 @@
 //   node bin/admin.js roles grant <userId | username> --role <r> --scope <s> [--expires 30d] [--force]
 //   node bin/admin.js roles revoke <userId | username> [--role <r>] [--scope <s>] [--force]
 //   node bin/admin.js sessions revoke <userId | username>
+//   node bin/admin.js audit tail [--method <id>] [--since 1h] [--limit 50]
 //
 // A multi-core joiner that layers a host-config file passes it with
 // `--config <file>`, as for bin/master.js. A code is printed once and never
@@ -89,6 +90,7 @@ require('@pryv/boiler').init({
       case 'claim-code': status = await claimCodeCommand(ctx, args); break;
       case 'roles': status = await rolesCommand(ctx, args); break;
       case 'sessions': status = await sessionsCommand(ctx, args); break;
+      case 'audit': status = await auditTailCommand(ctx, args); break;
       default: throw new Error('unknown command');
     }
     process.exit(status);
@@ -282,6 +284,54 @@ async function grantCommand (ctx, a, roles) {
   return 0;
 }
 
+/**
+ * `audit tail [--method <id>] [--since <when>] [--limit <n>]`: the last
+ * records of this core's platform trail (the administration acts), read from
+ * the audit storage as GET /system/admin/audit reads it, oldest first.
+ */
+async function auditTailCommand ({ config, storages }, a) {
+  const trail = require('../components/api-server/src/methods/systemAdminAudit.ts');
+  const limit = a.limit != null ? Number(a.limit) : 20;
+  if (!Number.isInteger(limit) || limit < 1 || limit > trail.AUDIT_READ_MAX_LIMIT) throw new Error('--limit must be a whole number from 1 to ' + trail.AUDIT_READ_MAX_LIMIT);
+  if (a.method != null && !/^[A-Za-z0-9._-]{1,128}$/.test(a.method)) throw new Error('--method must be a method id (letters, digits, ., _, -)');
+  const fromTime = a.since != null ? parseSince(a.since, Date.now()) / 1000 : null;
+  if (config.get('audit:active') !== true || !trail.keepsPlatformTrail(storages.auditStorage)) {
+    console.error('admin: this core keeps no platform trail: audit is off, or its audit storage does not keep the trail.');
+    return 1;
+  }
+  const { events } = await trail.readPlatformTrail(storages.auditStorage, { fromTime, methodId: a.method ?? undefined, limit, skip: 0 });
+  if (events.length === 0) {
+    console.log('No record' + (a.method != null ? ' of ' + a.method : '') + (a.since != null ? ' since ' + iso(fromTime * 1000) : '') + ' in the platform trail of this core.');
+    return 0;
+  }
+  for (const e of events.reverse()) console.log(trailLine(e));
+  return 0;
+}
+
+/** One line of a platform-trail record: when, what, done or refused, who, on what (no secret is ever recorded). */
+function trailLine (e) {
+  const action = (e.streamIds ?? []).map((s) => String(s)).find((s) => s.startsWith('action-'));
+  const methodId = action != null ? action.slice('action-'.length) : '?';
+  const record = e.content?.record ?? {};
+  const s = record.subject ?? {};
+  const who = [s.via ?? '?', s.userId, s.role != null ? s.role + '@' + s.scope + (s.localGrant ? ' (local)' : '') : null].filter((x) => x != null).join(' ');
+  const outcome = String(e.type ?? '').includes('error') ? 'refused' + (e.content?.id != null ? ' (' + e.content.id + ')' : '') : 'done';
+  const target = record.target != null ? '  on ' + JSON.stringify(record.target) : '';
+  return iso(Math.round(e.time * 1000)) + '  ' + methodId + '  ' + outcome + '  by ' + who + target;
+}
+
+/** `90m`, `12h`, `30d` ago, or an ISO 8601 date-time: milliseconds since the epoch, not in the future. */
+function parseSince (raw, now) {
+  const s = String(raw).trim();
+  const m = /^(\d+)\s*([mhd])$/i.exec(s);
+  const at = m != null
+    ? now - Number(m[1]) * { m: 60000, h: 3600000, d: 86400000 }[m[2].toLowerCase()]
+    : (/^\d{4}-\d{2}-\d{2}/.test(s) ? Date.parse(s) : NaN);
+  if (!Number.isFinite(at)) throw new Error('--since must be a duration (90m, 12h, 30d) or an ISO 8601 date-time');
+  if (at > now) throw new Error('--since must not be in the future');
+  return at;
+}
+
 async function sessionsCommand (ctx, a) {
   const roles = require('../components/business/src/admin/roles.ts');
   const userId = await resolveUserId(a.target);
@@ -401,7 +451,7 @@ async function recordAct (config, act, fields) {
 }
 
 function parseArgs (list) {
-  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, expires: null, config: null };
+  const out = { command: null, sub: null, target: null, positional: [], new: false, hash: false, force: false, role: null, scope: null, ttl: null, expires: null, method: null, since: null, limit: null, config: null };
   const rest = [];
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
@@ -417,6 +467,9 @@ function parseArgs (list) {
     else if (a === '--scope') out.scope = value();
     else if (a === '--ttl') out.ttl = value();
     else if (a === '--expires') out.expires = value();
+    else if (a === '--method') out.method = value();
+    else if (a === '--since') out.since = value();
+    else if (a === '--limit') out.limit = value();
     else if (a === '--config') out.config = value();
     else if (a.startsWith('--')) throw new Error('unknown option ' + a);
     else rest.push(a);
@@ -444,6 +497,10 @@ function parseArgs (list) {
       out.sub = rest.shift() ?? null;
       if (out.sub === 'revoke' && rest.length === 1) { out.target = rest[0]; break; }
       throw new Error('sessions revoke <userId | username>');
+    case 'audit':
+      out.sub = rest.shift() ?? null;
+      if (out.sub === 'tail' && rest.length === 0) break;
+      throw new Error('audit tail [--method <id>] [--since <when>] [--limit <n>]');
     default:
       throw new Error('unknown command ' + JSON.stringify(out.command));
   }
@@ -473,6 +530,9 @@ function printUsage (stream) {
     '                                                remove grants; the last owner grant needs --force',
     '  node bin/admin.js sessions revoke <userId|username>',
     '                                                refuse every administrator session opened until now',
+    '  node bin/admin.js audit tail [--method <id>] [--since <when>] [--limit <n>]',
+    '                                                the last records of this core\'s platform trail (default',
+    '                                                20, at most 1000); <when>: 90m, 12h, 30d or an ISO date-time',
     '',
     'Roles: owner, operator, support, auditor, app-reviewer, viewer.',
     'Scopes: platform, region:<id>, zone:<id>, hosting:<id>, core:<id>.',
