@@ -1,5 +1,6 @@
 {
   "storageTypes": ["platformStorage"],
+  "interfaceVersions": { "platformStorage": 1 },
   "entrypoint": "src/index.ts",
   "requiredInternals": [],
   "configuration": {

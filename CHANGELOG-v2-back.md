@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Storage engines: interface versions checked at boot
+
+- `storages/interfaces/versions.ts` gives each storage type an interface version (all 1). An engine's
+  `manifest.json` declares the version it implements per storage type (`interfaceVersions`; a type left out counts
+  as 1), and `storages/pluginLoader.ts` refuses to start when a discovered engine's version differs from the
+  server's, lower or higher, before loading the engine's code, naming the engine, the type and both versions. Every
+  discovered engine is checked, selected or not: an outdated engine folder left under `storages/engines/` stops the
+  boot once a version moves (update or remove it). The six in-tree engines declare 1; nothing changes for them.
+  Bump policy and history: `storages/interfaces/README.md`. `storages/README.md` rewritten from the loader (it named
+  factories, files and config keys that no longer exist). Tests `[IFVA]` to `[IFVH]`.
+
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 
 - `api-server/src/methods/mfa.ts`: `mfa.confirm` accepts an enrolment session only and `mfa.verify` a login session

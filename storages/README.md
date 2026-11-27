@@ -7,102 +7,114 @@ Storage engines are self-contained plugins that provide implementations for one 
 | Type | Purpose |
 |---|---|
 | `baseStorage` | User CRUD + global stores (Accesses, Profile, Streams, Webhooks, Sessions, etc.) |
-| `platformStorage` | Platform user registry (username/email uniqueness) |
 | `dataStore` | Events & Streams (via mall) |
+| `platformStorage` | Platform user registry (username/email uniqueness) |
 | `seriesStorage` | Time-series data (HF events) |
 | `fileStorage` | Event file attachments |
+| `auditStorage` | Per-user audit records |
 
 ## Directory Structure
 
 ```
 storages/
-  pluginLoader.js         # Discover & load engine plugins
-  internals.js            # Host capabilities registry
-  manifest-schema.js      # Manifest validator
+  index.ts                # Barrel: the single init point (storages.init())
+  pluginLoader.ts         # Discover engine plugins, check them, resolve the configured engine per type
+  internals.ts            # Host capabilities registry
+  manifest-schema.ts      # Manifest validator
 
   interfaces/             # Interface contracts per storage type
+    versions.ts           # Interface version of each storage type (see interfaces/README.md)
     baseStorage/
     platformStorage/
     seriesStorage/
     fileStorage/
+    auditStorage/
+    migrations/           # Schema migration runner shared by the engines
+    backup/               # Backup reader / writer contracts
 
   engines/                # One folder per engine
-    postgresql/
-      manifest.json
-      src/index.js
-    sqlite/
-      manifest.json
-      src/index.js
-    filesystem/
-      manifest.json
-      src/index.js
-    rqlite/
-      manifest.json
-      src/index.js
-    influxdb/
-      manifest.json
-      src/index.js
+    postgresql/           # every storage type
+    sqlite/               # baseStorage, dataStore, seriesStorage, auditStorage
+    rqlite/               # platformStorage
+    filesystem/           # fileStorage
+    s3/                   # fileStorage
+    influxdb/             # seriesStorage
 ```
+
+Each engine folder holds a `manifest.json` and the entrypoint it names (`src/index.ts`).
 
 ## Engine manifest.json
 
-Only storage–service-core integration fields. Standard package metadata (name, version) belongs in `package.json`.
+Only storage / service-core integration fields. Standard package metadata (name, version) belongs in `package.json`.
 
 ```json
 {
-  "storageTypes": ["baseStorage", "dataStore", "platformStorage", "seriesStorage"],
-  "entrypoint": "src/index.js",
-  "requiredInternals": ["userLocalDirectory"],
+  "storageTypes": ["baseStorage", "dataStore", "seriesStorage", "auditStorage"],
+  "interfaceVersions": { "baseStorage": 1, "dataStore": 1, "seriesStorage": 1, "auditStorage": 1 },
+  "entrypoint": "src/index.ts",
+  "requiredInternals": ["userLocalDirectory", "getEventFiles"],
+  "configuration": { "fields": { "path": { "type": "string", "required": true, "description": "..." } } },
   "scripts": { "setup": "scripts/setup", "start": "scripts/start" }
 }
 ```
 
-The engine name is derived from the folder name (e.g. `engines/postgresql/` → engine name `postgresql`).
-```
+- The engine name is the folder name (`engines/postgresql/` is engine `postgresql`).
+- `interfaceVersions` declares, per storage type, the interface version the engine implements; a type left out
+  counts as 1. The server refuses to start when a discovered engine's version differs from its own: see
+  [interfaces/README.md](interfaces/README.md). Every discovered engine is checked and loaded, selected or not.
+- The schema is enforced by `manifest-schema.ts`.
 
 ## Engine Entrypoint
 
-Each engine exports factory functions for the storage types it supports:
+The entrypoint exports, for each declared storage type, the functions `pluginLoader.ts` (`REQUIRED_EXPORTS`)
+requires:
 
-```js
-module.exports = {
-  createBaseStorage: async (config, internals) => { ... },
-  createDataStore: async (config, internals) => { ... },
-  createPlatformStorage: async (config, internals) => { ... },
-  createSeriesStorage: async (config, internals) => { ... }
-};
-```
+| Storage type | Required exports |
+|---|---|
+| `baseStorage` | `initStorageLayer`, `getUserAccountStorage`, `getUsersLocalIndex` |
+| `dataStore` | `getDataStoreModule` |
+| `platformStorage` | `createPlatformDB` |
+| `seriesStorage` | `createSeriesConnection` |
+| `fileStorage` | `createFileStorage` |
+| `auditStorage` | `createAuditStorage` |
+
+plus `init(config, getLogger, internals)`, called by `storages/index.ts` before any of them.
 
 ## Configuration
 
 ```yaml
 storages:
-  baseStorage:
-    engine: postgresql
-  dataStore:
-    engine: postgresql
-  platformStorage:
-    engine: rqlite
-  seriesStorage:
-    engine: postgresql
-  fileStorage:
-    engine: filesystem
-  postgresql:
-    host: localhost
-    port: 5432
-  sqlite:
-    path: var-pryv/users
+  base:
+    engine: postgresql     # baseStorage + dataStore
+  platform:
+    engine: rqlite         # platformStorage
+  series:
+    engine: postgresql     # seriesStorage
+  file:
+    engine: filesystem     # fileStorage
+  audit:
+    engine: sqlite         # auditStorage
+  engines:
+    postgresql:
+      host: 127.0.0.1
+      port: 5432
+    sqlite:
+      path: var-pryv/users
 ```
 
-Legacy config keys (`storageEngine`, `database:engine`, etc.) are supported via backward-compat mapping in `pluginLoader.js`.
+`config/default-config.yml` holds the full list with comments. A configured engine that does not declare the
+storage type it is chosen for stops the boot.
 
 ## Internals
 
-Plugins can request host capabilities via `requiredInternals` in their manifest:
+Engines request host capabilities via `requiredInternals` in their manifest. Registered by `storages/index.ts`:
 
-- `userLocalDirectory` — resolves per-user local filesystem paths
-- `accountStreams` — account streams config cache (was SystemStreamsSerializer)
-- `storeKeyValueData` — key-value store for plugin metadata
+- `databasePG`: the PostgreSQL connection, when PostgreSQL is in use
+- `storageLayer`: the storage layer instance
+- `userLocalDirectory`: resolves per-user local filesystem paths
+- `getEventFiles`: the event attachments store
+- `cache`: the cache component
+- `createUserAccountStorage`: the account storage factory
 
 
 # License

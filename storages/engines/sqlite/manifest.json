@@ -1,5 +1,6 @@
 {
   "storageTypes": ["baseStorage", "dataStore", "seriesStorage", "auditStorage"],
+  "interfaceVersions": { "baseStorage": 1, "dataStore": 1, "seriesStorage": 1, "auditStorage": 1 },
   "entrypoint": "src/index.ts",
   "requiredInternals": [
     "userLocalDirectory",
