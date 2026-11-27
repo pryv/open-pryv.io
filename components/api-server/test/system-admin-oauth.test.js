@@ -325,7 +325,8 @@ describe('[ADMO] OAuth client and publisher review over HTTP', function () {
       assert.equal((await get('/publishers/' + owner.userId, asSession(euToken))).status, 200);
       assert.ok((await get('/publishers', asSession(euToken))).body.publishers.some((p) => p.userId === owner.userId));
       if (audit != null) {
-        const rec = (await trail(PLATFORM_TRAIL_USER_ID, 'system.publishers.set', since)).find((e) => e.content.record.diff != null);
+        // (The creation may fall in the same second: the record of this decision.)
+        const rec = (await trail(PLATFORM_TRAIL_USER_ID, 'system.publishers.set', since)).find((e) => e.content.record.diff?.to?.status === 'validated');
         assert.deepEqual(rec.content.record.target, { publisherUserId: owner.userId });
         assert.deepEqual([rec.content.record.diff.from.status, rec.content.record.diff.to.status], ['pending', 'validated']);
         const owns = await trail(owner.userId, 'oauth.publisher.reviewed', since);
