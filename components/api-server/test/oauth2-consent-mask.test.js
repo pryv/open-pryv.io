@@ -30,13 +30,14 @@ describe('[OAUTH-MASK] consent hierarchical-masking guard (real tree)', function
   this.timeout(60_000);
 
   let alice; // { username, personalToken, streamsPath }
+  let fixtures;
   const A = 'mask-a-' + cuid().slice(-8); // parent
   const B = 'mask-b-' + cuid().slice(-8); // child of A
 
   before(async function () {
     await initTests();
     await initCore();
-    const fixtures = getNewFixture();
+    fixtures = getNewFixture();
     const username = 'alice-mask-' + cuid().slice(-8);
     const personalToken = cuid();
     const u = await fixtures.user(username);
@@ -46,6 +47,13 @@ describe('[OAUTH-MASK] consent hierarchical-masking guard (real tree)', function
     // Build the tree: A (root) then B under A.
     await createStream(A, null);
     await createStream(B, A);
+  });
+
+  // The user is created with a random name, so nothing else removes it: a
+  // later run that wipes the platform store (another component's suite) would
+  // find it in the repository without its platform rows.
+  after(async function () {
+    if (fixtures != null) await fixtures.clean();
   });
 
   async function createStream (id, parentId) {
