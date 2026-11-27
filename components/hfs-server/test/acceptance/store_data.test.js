@@ -358,7 +358,7 @@ describe('[SDHF] Storing data in a HF series', function () {
   // change moves them under the new name, but a late write can still leave
   // points under the former name, which the account holds as an alias.
   describe('[SDRN] DELETE of a series event after a username change', function () {
-    this.timeout(10000);
+    this.timeout(20000);
     let hfServer;
     let apiServer;
     let userId, formerName, currentName, parentStreamId, accessToken;
@@ -396,14 +396,26 @@ describe('[SDHF] Storing data in a HF series', function () {
       const usersRepository = await getUsersRepository();
       await usersRepository.changeUsername(userId, formerName, currentName, 'system');
       assert.strictEqual(await countPoints(query, `user.${currentName}`), 3, 'moved under the new name');
-      // A late write under the former name.
-      await seriesConn.createDatabase(`user.${formerName}`);
-      await seriesConn.writeMeasurement(`event.${event.id}`, [{ fields: { deltaTime: 4, value: 4 }, timestamp: 4000000 }], { database: `user.${formerName}` });
-      // The write can take a moment to read back under load.
+      // A late write under the former name. The HF worker learns of the
+      // change asynchronously and then gathers the former name's series into
+      // the new one, dropping the former namespace: a write landing before
+      // that is moved (or its directory removed while it opens). Write again
+      // until one stays under the former name.
       let late = 0;
-      for (let i = 0; i < 20 && late !== 1; i++) {
-        if (i > 0) await awaiting.delay(100);
-        late = await countPoints(query, `user.${formerName}`);
+      for (let attempt = 0; attempt < 10 && late !== 1; attempt++) {
+        try {
+          await seriesConn.createDatabase(`user.${formerName}`);
+          await seriesConn.writeMeasurement(`event.${event.id}`, [{ fields: { deltaTime: 4, value: 4 }, timestamp: 4000000 }], { database: `user.${formerName}` });
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err;
+        }
+        await awaiting.delay(300);
+        try {
+          late = await countPoints(query, `user.${formerName}`);
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err;
+          late = 0;
+        }
       }
       assert.strictEqual(late, 1, 'the late write reads back under the former name');
 
