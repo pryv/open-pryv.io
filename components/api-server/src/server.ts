@@ -79,6 +79,10 @@ class Server {
     }
     // setup test notification bus (IPC-based)
     await this.setupTestsNotificationBus();
+    // Platform-wide configuration held in the platform store, then this
+    // core's lockdown: both before any method is registered or served.
+    await require('business/src/platformConfig/boot.ts').runPlatformConfigBoot({ config, logger: this.logger });
+    await require('business/src/admin/lockdownBoot.ts').runLockdownBoot({ config, logger: this.logger });
     // register API methods
     await this.registerApiMethods();
     // Build the in-process HFS ingress dispatcher (no-op when no HFS
@@ -234,6 +238,10 @@ class Server {
   async registerApiMethods () {
     await require('./methods/system.ts').default(app.systemAPI, app.api);
     await require('./methods/systemAdmin.ts').default(app.systemAPI);
+    await require('./methods/systemAdminRoles.ts').default(app.systemAPI);
+    await require('./methods/systemAdminAudit.ts').default(app.systemAPI);
+    await require('./methods/systemPlatformConfig.ts').default(app.systemAPI);
+    await require('./methods/systemAdminOauth.ts').default(app.systemAPI);
     await require('./methods/utility.ts').default(app.api);
     await require('./methods/auth/login.ts').default(app.api);
     await require('./methods/auth/register.ts').default(app.api);
