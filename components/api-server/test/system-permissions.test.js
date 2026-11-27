@@ -24,6 +24,19 @@ const { isPermission } = require('business/src/admin/permissions.ts');
 describe('[SYPM] /system route table and admin-key scope', function () {
   this.timeout(60000);
   let adminKey, app;
+  // The users are created with random names, so nothing else removes them: a
+  // later run that wipes the platform store would find them in the repository
+  // without their platform rows.
+  const fixtureSets = [];
+  function newFixture () {
+    const fixtures = getNewFixture();
+    fixtureSets.push(fixtures);
+    return fixtures;
+  }
+
+  after(async function () {
+    for (const fixtures of fixtureSets) await fixtures.clean();
+  });
 
   before(async function () {
     await initTests();
@@ -111,7 +124,7 @@ describe('[SYPM] /system route table and admin-key scope', function () {
 
   it('[SYPM3] scope full (default): the admin key reaches the existing routes as before', async () => {
     const username = ('sypm' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
-    await getNewFixture().user(username, {});
+    await newFixture().user(username, {});
     for (const path of ['/system/admin/users', '/system/admin/cores', '/system/admin/mail/templates', '/system/check-platform-integrity',
       '/system/migrations-status', '/system/admin/ext-id-ns', '/system/admin/roles', '/system/user-info/' + username]) {
       const res = await coreRequest.get(path).set('authorization', adminKey);
@@ -139,7 +152,7 @@ describe('[SYPM] /system route table and admin-key scope', function () {
 
   it('[SYPM5] scope break-glass outside /system: the key no longer deletes accounts nor reaches /reg/records and /reg/admin; as before under full', async () => {
     const username = ('sypm' + cuid().toLowerCase().replace(/[^a-z0-9]/g, '')).slice(0, 20);
-    await getNewFixture().user(username, {});
+    await newFixture().user(username, {});
     await withInjectedConfig({ auth: { adminAccessKeyScope: 'break-glass' } }, async () => {
       const del = await coreRequest.delete('/users/' + username).set('authorization', adminKey);
       assert.notEqual(del.status, 200, 'account deletion refused: ' + del.status);
