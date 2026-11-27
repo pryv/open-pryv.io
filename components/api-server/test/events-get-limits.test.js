@@ -93,10 +93,8 @@ describe('[EGLM] events.get limit, skip and streaming', function () {
     let tieStreamId;
 
     before(async function () {
-      // SQLite: equal times come back in a stable order whatever the plan.
-      // PostgreSQL has no tie-breaker yet (one without an index on
-      // (user_id, time, id) slows restricted pages down): not asserted there.
-      if (getConfigUnsafe().get('storages:base:engine') === 'postgresql') this.skip();
+      // Equal times come back in a stable order whatever the plan: the time
+      // sort ends with the row id (SQLite rowid, PostgreSQL id).
       tieStreamId = 'eglt-' + cuid.slug();
       await coreRequest.post(`/${username}/streams`).set('Authorization', token).send({ id: tieStreamId, name: tieStreamId });
       // 6 times, 4 events each.
