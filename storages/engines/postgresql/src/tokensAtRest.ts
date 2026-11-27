@@ -9,8 +9,9 @@
  * Access tokens and session ids at rest, PostgreSQL: the conversion pass run
  * by the migration and at every start, the guard against rows under another
  * key, and the operator passes of `bin/access-tokens.js` (status, unprotect,
- * rekey). Every pass is idempotent and works row by row with compare-and-set
- * statements.
+ * rekey). The same passes seal the stored access `integrity` and the endpoint
+ * of pending deletion notices, and drop the token of deleted accesses. Every
+ * pass is idempotent and works with compare-and-set statements.
  */
 
 import { getConfigSync } from '@pryv/boiler';
@@ -20,10 +21,11 @@ import { resolveTokenProtection } from 'business/src/accesses/tokenProtection.ts
 import { _internals } from './_internals.ts';
 import { AccessesPG } from './user/AccessesPG.ts';
 import { SessionsPG } from './SessionsPG.ts';
+import { DeletionNoticesLocalPG } from './deletionNoticesLocal.ts';
 
 type PgDbLike = { query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }> };
 
-/** The passes read and write tokens only: integrity is computed on items, not here. */
+/** The token and integrity passes read and write stored values only: integrity is computed on items, not here. */
 const NO_INTEGRITY = { isActive: false, set: () => {}, rowFormHash: () => '' };
 
 type ProtectResult = {
@@ -33,8 +35,14 @@ type ProtectResult = {
   accessesSkipped: number;
   sessions: number;
   sessionsExpired: number;
+  /** Access rows whose `integrity` was sealed. */
+  integrity: number;
+  /** Deleted access rows (and history rows of deleted accesses) whose token was dropped. */
+  deletedTokens: number;
+  /** Pending deletion notices whose endpoint was sealed. */
+  deletionNotices: number;
 };
-type ProbeResult = { columnsReady: boolean; clearRows: boolean };
+type ProbeResult = { columnsReady: boolean; clearRows: boolean; clearIntegrityOnly?: boolean };
 type KeyStatus = { clear: number; protectedCurrentKey: number; protectedOtherKeys: Record<string, number> };
 
 /** The protection injected at storage init, else the configured one. */
@@ -43,8 +51,18 @@ function currentProtection (): TokenProtection {
   return resolveTokenProtection(getConfigSync());
 }
 
-function stores (db: PgDbLike, tp: TokenProtection): { accesses: AccessesPG; sessions: SessionsPG } {
-  return { accesses: new AccessesPG(db, NO_INTEGRITY, tp), sessions: new SessionsPG(db, {}, tp) };
+function stores (db: PgDbLike, tp: TokenProtection): { accesses: AccessesPG; sessions: SessionsPG; notices: DeletionNoticesLocalPG } {
+  return {
+    accesses: new AccessesPG(db, NO_INTEGRITY, tp),
+    sessions: new SessionsPG(db, {}, tp),
+    notices: new DeletionNoticesLocalPG(db as unknown as ConstructorParameters<typeof DeletionNoticesLocalPG>[0], tp)
+  };
+}
+
+/** Accesses with the configured integrity: dropping a token re-hashes the row. Loaded on use (it reads the configuration). */
+async function accessesWithIntegrity (db: PgDbLike, tp: TokenProtection): Promise<AccessesPG> {
+  const { default: integrity } = await import('business/src/integrity/index.ts');
+  return new AccessesPG(db, integrity.accesses, tp);
 }
 
 function dbOrDefault (db?: PgDbLike): PgDbLike {
@@ -66,29 +84,39 @@ async function columnsReady (db: PgDbLike): Promise<boolean> {
 async function assertNoForeignKeyRows (db: PgDbLike, tp: TokenProtection): Promise<void> {
   const { accesses, sessions } = stores(db, tp);
   if (await accesses.hasForeignKeyRows()) throw foreignKeyError('access rows');
+  if (await accesses.hasForeignKeyIntegrityRows()) throw foreignKeyError('access integrity values');
   if (await sessions.hasForeignKeyRows()) throw foreignKeyError('sessions');
 }
 
-/** Read-only: the guard, then whether rows wait for the conversion. */
+/**
+ * Read-only: the guard, then whether rows wait for the conversion. Clear
+ * `integrity` values alone (`clearIntegrityOnly`) do not break lookups: the
+ * start warns about them instead of refusing.
+ */
 async function probeTokensAtRest (db?: PgDbLike): Promise<ProbeResult> {
   const d = dbOrDefault(db);
   if (!await columnsReady(d)) return { columnsReady: false, clearRows: true };
   const tp = currentProtection();
   await assertNoForeignKeyRows(d, tp);
   const { accesses, sessions } = stores(d, tp);
-  return { columnsReady: true, clearRows: await accesses.hasClearRows() || await sessions.hasClearRows() };
+  const clearRows = await accesses.hasClearRows() || await sessions.hasClearRows();
+  return { columnsReady: true, clearRows, clearIntegrityOnly: !clearRows && await accesses.hasClearIntegrityRows() };
 }
 
 /**
  * The conversion pass: refuse rows under another key, then convert what is
- * still in clear. A no-op probe in steady state.
+ * still in clear (tokens, session ids, access `integrity`, pending deletion
+ * notices). The tokens of deleted accesses are dropped when `deletedTokens`
+ * is set (the migration) or when access rows were converted (rows a previous
+ * image wrote after a rollback, its deletions included): this image drops
+ * them at deletion. A no-op probe in steady state.
  */
-async function protectTokensAtRest (db?: PgDbLike): Promise<ProtectResult> {
+async function protectTokensAtRest (db?: PgDbLike, options: { deletedTokens?: boolean } = {}): Promise<ProtectResult> {
   const d = dbOrDefault(db);
   const tp = currentProtection();
   await assertNoForeignKeyRows(d, tp);
-  const { accesses, sessions } = stores(d, tp);
-  const result: ProtectResult = { accesses: 0, accessesSkipped: 0, sessions: 0, sessionsExpired: 0 };
+  const { accesses, sessions, notices } = stores(d, tp);
+  const result: ProtectResult = { accesses: 0, accessesSkipped: 0, sessions: 0, sessionsExpired: 0, integrity: 0, deletedTokens: 0, deletionNotices: 0 };
   if (await accesses.hasClearRows()) {
     const a = await accesses.protectClearRows();
     result.accesses = a.rows;
@@ -101,6 +129,11 @@ async function protectTokensAtRest (db?: PgDbLike): Promise<ProtectResult> {
     result.sessions = s.rows;
     result.sessionsExpired = s.expired;
   }
+  if (options.deletedTokens === true || result.accesses > 0) {
+    result.deletedTokens = await (await accessesWithIntegrity(d, tp)).dropTokensOfDeletedRows();
+  }
+  if (await accesses.hasClearIntegrityRows()) result.integrity = (await accesses.sealClearIntegrityRows()).rows;
+  result.deletionNotices = await notices.protectClearRows();
   return result;
 }
 
@@ -108,38 +141,45 @@ async function protectTokensAtRest (db?: PgDbLike): Promise<ProtectResult> {
 const MAX_CLEAR_ROWS_LISTED = 100;
 
 /** Read-only. */
-async function tokensAtRestStatus (db?: PgDbLike): Promise<{ kid: string; accesses: KeyStatus; accessesInClear: Array<{ userId: string; id: string }>; sessions: KeyStatus }> {
+async function tokensAtRestStatus (db?: PgDbLike): Promise<Record<string, unknown>> {
   const d = dbOrDefault(db);
   const tp = currentProtection();
-  const { accesses, sessions } = stores(d, tp);
+  const { accesses, sessions, notices } = stores(d, tp);
+  const accessStatus: KeyStatus = await accesses.tokenStatus();
   return {
     kid: tp.kid,
-    accesses: await accesses.tokenStatus(),
+    accesses: accessStatus,
     accessesInClear: await accesses.clearRowIds(MAX_CLEAR_ROWS_LISTED),
-    sessions: await sessions.tokenStatus()
+    accessIntegrity: await accesses.integrityStatus(),
+    sessions: await sessions.tokenStatus(),
+    deletionNotices: await notices.sealStatus()
   };
 }
 
-/** Rollback aid (core stopped): clear tokens and ids written back, the clear-token index recreated. */
-async function unprotectTokensAtRest (db?: PgDbLike): Promise<{ accesses: number; sessions: number }> {
+/** Rollback aid (core stopped): clear tokens, ids, integrity values and notice endpoints written back, the clear-token index recreated. */
+async function unprotectTokensAtRest (db?: PgDbLike): Promise<{ accesses: number; sessions: number; integrity: number; deletionNotices: number }> {
   const d = dbOrDefault(db);
   const tp = currentProtection();
   await assertNoForeignKeyRows(d, tp);
-  const { accesses, sessions } = stores(d, tp);
+  const { accesses, sessions, notices } = stores(d, tp);
   const a = await accesses.unprotectRows();
   const s = await sessions.unprotectRows();
-  return { accesses: a.rows, sessions: s.rows };
+  const i = await accesses.unsealIntegrityRows();
+  const n = await notices.unprotectRows();
+  return { accesses: a.rows, sessions: s.rows, integrity: i.rows, deletionNotices: n };
 }
 
 /** Re-key (core stopped) the rows protected under one of `previous`. */
-async function rekeyTokensAtRest (previous: TokenProtection[], db?: PgDbLike): Promise<{ accesses: number; sessions: number; remaining: boolean }> {
+async function rekeyTokensAtRest (previous: TokenProtection[], db?: PgDbLike): Promise<{ accesses: number; sessions: number; integrity: number; deletionNotices: number; remaining: boolean }> {
   const d = dbOrDefault(db);
   const tp = currentProtection();
-  const { accesses, sessions } = stores(d, tp);
+  const { accesses, sessions, notices } = stores(d, tp);
   const a = await accesses.rekeyRows(previous);
   const s = await sessions.rekeyRows(previous);
-  const remaining = await accesses.hasForeignKeyRows() || await sessions.hasForeignKeyRows();
-  return { accesses: a.rows, sessions: s.rows, remaining };
+  const i = await accesses.rekeyIntegrityRows(previous);
+  const n = await notices.rekeyRows(previous);
+  const remaining = await accesses.hasForeignKeyRows() || await accesses.hasForeignKeyIntegrityRows() || await sessions.hasForeignKeyRows();
+  return { accesses: a.rows, sessions: s.rows, integrity: i.rows, deletionNotices: n, remaining };
 }
 
 export {
