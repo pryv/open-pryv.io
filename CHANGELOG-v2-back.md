@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Storage engines: interface method pins
+
+- `storages/test/interface-method-pins.test.js` pins, per storage type, the interface version next to the engine
+  module's required exports and each interface's required methods (read from the live validators). A contract
+  change without a matching version decision and table update fails the suite with a message saying what to bump
+  and update. Tests `[IFPA]` to `[IFPD]`.
+
+### Password reset and notices: auto-deletion notices, transfer claim mails
+
+- `sendAutoDeletionMail`: the held-address check covers the stored-email branch only (`to == null`); a
+  refused notice keeps `ownerToldAt` unset (`tellOwnerStarted`, retried at each pass) and `logRefused` logs it once.
+- Checked, not guarded: the transfer claim mails go to the beneficiary's address.
+
+### Account transfer: the sweep, the record, the links
+
+- The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim
+  window instead of erasing (not counted in `maxDeletionsPerPass`); while a window is open a pass
+  completes the transfer once the claimant controls the account, cancels it on account use before a
+  claim (`inactivity`), lifts the failed-claim lock, re-sends the claim mail at +30 / +60 days, and
+  applies the fallback at its end (erasure trigger `transfer-fallback`). The life of a transfer is a
+  second key-value row next to the schedule (`TransferRecord`, key `transfer`), so a change of
+  schedule never loses it; a closed record is kept as the record.
+- The claim and decline links are derived (HMAC-SHA256 of kind, account id and a per-transfer salt
+  under a key derived from `account.autoDeletion.transfer.identitySecretsKey`, else from
+  `auth.adminAccessKey`, purpose `account-transfer-link-v1`); only the salt is stored, so a re-sent
+  link is the same and a database dump holds none. Rotating the source key invalidates the links in
+  flight.
+- The delegation methods register the owner's side of the handshake for the transfer
+  (`api-server/src/methods/helpers/transferDelegation.ts`: invite, state, withdraw); without
+  delegation on the core, transfers are not offered.
+- The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
+  `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
+
+## 2.0.0-rc.91 - 2026-11-27
+
 ### Storage engines: interface versions checked at boot
 
 - `storages/interfaces/versions.ts` gives each storage type an interface version (all 1). An engine's
@@ -12,10 +47,6 @@
   boot once a version moves (update or remove it). The six in-tree engines declare 1; nothing changes for them.
   Bump policy and history: `storages/interfaces/README.md`. `storages/README.md` rewritten from the loader (it named
   factories, files and config keys that no longer exist). Tests `[IFVA]` to `[IFVH]`.
-- `storages/test/interface-method-pins.test.js` pins, per storage type, the interface version next to the engine
-  module's required exports and each interface's required methods (read from the live validators). A contract
-  change without a matching version decision and table update fails the suite with a message saying what to bump
-  and update. Tests `[IFPA]` to `[IFPD]`.
 
 ### MFA: strict session kind in `mfa.confirm` and `mfa.verify`
 
@@ -102,36 +133,10 @@
 
 - `components/business/src/emails/mailCapability.ts`: `mailSwitchKey`, `isMailKindSwitchedOn` /
   `isMailKindSwitchedOnInConfig` (fail-closed on a non-boolean value) replace the per-site decodes of
-  `services.email.enabled` (reset, welcome, MFA, external-id, auto-deletion and transfer mails, `service.info`,
+  `services.email.enabled` (reset, welcome, MFA, external-id and auto-deletion mails, `service.info`,
   REQUIRED_WHEN, `bin/check-config.js`; `mailSwitchedOn` removed); `describeEmailSwitches` is the boot and
   check-config refusal of the former object form, over every config scope. Config classification and the pinned
   wildcard-leaves fixture follow the new keys.
-
-### Password reset and notices: auto-deletion notices, transfer claim mails
-
-- `sendAutoDeletionMail`: the held-address check covers the stored-email branch only (`to == null`); a
-  refused notice keeps `ownerToldAt` unset (`tellOwnerStarted`, retried at each pass) and `logRefused` logs it once.
-- Checked, not guarded: the transfer claim mails go to the beneficiary's address.
-
-### Account transfer: the sweep, the record, the links
-
-- The auto-deletion sweep no longer skips `transfer` policies: when one is due it opens the claim
-  window instead of erasing (not counted in `maxDeletionsPerPass`); while a window is open a pass
-  completes the transfer once the claimant controls the account, cancels it on account use before a
-  claim (`inactivity`), lifts the failed-claim lock, re-sends the claim mail at +30 / +60 days, and
-  applies the fallback at its end (erasure trigger `transfer-fallback`). The life of a transfer is a
-  second key-value row next to the schedule (`TransferRecord`, key `transfer`), so a change of
-  schedule never loses it; a closed record is kept as the record.
-- The claim and decline links are derived (HMAC-SHA256 of kind, account id and a per-transfer salt
-  under a key derived from `account.autoDeletion.transfer.identitySecretsKey`, else from
-  `auth.adminAccessKey`, purpose `account-transfer-link-v1`); only the salt is stored, so a re-sent
-  link is the same and a database dump holds none. Rotating the source key invalidates the links in
-  flight.
-- The delegation methods register the owner's side of the handshake for the transfer
-  (`api-server/src/methods/helpers/transferDelegation.ts`: invite, state, withdraw); without
-  delegation on the core, transfers are not offered.
-- The shared ends of a transfer (completed, lapsed, cancelled / declined) live in
-  `business/src/autoDeletion/transferFlow.ts`, used by the sweep and by the claim / decline methods.
 
 ### Platform setup and administrators: internals
 
