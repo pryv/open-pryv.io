@@ -118,11 +118,12 @@ URL keeps the verification mail off with a warning at every boot.
 
 ## Check before you deploy
 
-`bin/check-config.js` runs the same check on your configuration file, the bootstrap file next to it, the base layer of
-`NODE_ENV` and the environment, without starting a core:
+`bin/check-config.js` runs the same check on the files boot reads, in boot's order, and the environment, without
+starting a core. Give it the file you pass to `--config` (`config/override-config.yml` and the bootstrap file are read
+above it when present), or your `override-config.yml` when you boot without `--config`:
 
 ```bash
-node bin/check-config.js /path/to/override-config.yml
+node bin/check-config.js /path/to/host-config.yml
 ```
 
 With the Docker image:

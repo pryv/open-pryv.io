@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### SQLite: `events.get` with a stream filter no longer slows down as the stream grows
+
+- `storages/engines/sqlite` `UserDatabase`: a page sorted newest first, with a stream filter selecting fewer
+  full-text candidates than the probe cap (20 000), read every candidate row and sorted them before `LIMIT`, so a
+  restricted `events.get?limit=20` grew linearly with the events of the queried streams (measured 4.6 ms at 2 400
+  candidates, 30 ms at 18 000), then dropped to 2.4 ms once the cap switched to the `time` index walk. Such a page
+  now first walks the `time` index over the newest rows only (budget: at most half the candidates, four times the
+  uniform estimate; bound read on the `time` index alone, `INDEXED BY events_time`), and runs the rowid set when
+  that walk does not fill the page. Measured on 16 000 to 32 000 rows: 1.1 to 2.2 ms instead of 4.6 to 30 ms; a
+  stream holding only old rows pays the rowid set plus the bounded walk (10.1 vs 8.6 ms on 55 000 rows) instead
+  of the 58 ms of an unbounded walk. Ascending pages and the at-cap plan are unchanged; same rows as the rowid set
+  (tests `[SQQPB]`, `[SQQPC]`). `ANALYZE`, a WAL checkpoint, an FTS `optimize` or a larger page cache changed
+  nothing measurable. Test hook `_setBoundedWalk`.
+- SQLite, events sharing a `time`: the time sort had no tie-breaker, so equal-time events came back in an order
+  that depended on the plan (ascending rowid from the sorted rowid set, descending from a walk of the `time`
+  index). A read paged with `skip` could switch plan between pages (the bounded walk for the first pages, the rowid
+  set deeper), and then repeated some events and missed others. The time sort now ends with `rowid` in the same
+  direction (the `time` index's trailing key, so the walks keep the index with no temporary sort): pages over
+  equal-time events no longer repeat or miss rows (tests `[SQQPC]`, `[EGLT1]`). PostgreSQL still orders equal
+  times as the scan gives them: a tie-breaker there needs an index on `(user_id, time, id)` (without it, a
+  restricted page of 20 measured 3 to 4 times slower under a parallel plan).
+- Through the API (one core, 2 workers, one user seeded with 16 000 events, then events created in 2 of the
+  restricted streams): restricted `events.get?limit=20` went 12, 19, 27, 35, 43, 51 ms from 2 400 to 17 500
+  events in those streams, then 5.6 ms past 20 000; now 4.3 to 5.9 ms throughout. A personal
+  `events.get?limit=500` also had every event of the account as a candidate (its stream filter lists every
+  stream): 85 ms until the account held 20 000 events, 19 ms after; now 19 ms from the start.
+
 ### Restore cache invalidation, deterministic cache test, performance seed failures
 
 - `messages`: `pubsub.flushPublished(timeoutMs)` (tcp transport `flushPublished`) lets a short-lived process wait

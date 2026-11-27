@@ -105,6 +105,8 @@ docker run --rm \
   check-config /app/pryv/pryv-config.yml
 ```
 
+It reads the files boot reads, in boot's order, and prints them. A file named `override-config.yml` is checked as the override file (the image default, no `--config`), with `config/<NODE_ENV>-config.yml` under it. Any other file is checked as the `--config <file>` boot runs with: `config/override-config.yml` and `config/bootstrap-config.yml` are read above it when present, so a core that keeps its secrets in `config/override-config.yml` is checked as it boots. `check-config <config-file> <override-file>` names both files (the second one wins).
+
 Exit 0 = all required-at-boot checks passed. Exit 1 = at least one problem (printed). Warnings (e.g. missing `access.defaultAuthUrl`) print but don't fail.
 
 ### Minimal production config
